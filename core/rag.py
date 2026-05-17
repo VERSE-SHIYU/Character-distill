@@ -164,7 +164,7 @@ class RAGEngine:
         add_kwargs: dict[str, Any] = {"documents": filtered, "ids": ids}
         if all_characters:
             add_kwargs["metadatas"] = [
-                {"characters": self._tag_characters(chunk, all_characters)}
+                {"characters": self._tag_characters(chunk, all_characters) or ["__none__"]}
                 for chunk in filtered
             ]
         try:
