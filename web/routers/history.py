@@ -144,10 +144,10 @@ async def resume_session(
         print(f"[history] Load messages for {session_id} failed: {exc}")
         raise HTTPException(500, f"Load messages failed: {exc}") from exc
 
-    # Convert DB roles to engine roles: char → assistant, summary → system
+    # Convert DB roles to engine roles: char → assistant
     engine.history = [
         {
-            "role": "assistant" if m["role"] == "char" else "system" if m["role"] == "summary" else m["role"],
+            "role": "assistant" if m["role"] == "char" else m["role"],
             "content": m["content"],
         }
         for m in db_messages

@@ -124,7 +124,7 @@ class ChatEngine:
         1. 仅当 ``len(self.history) >= threshold`` 时触发。
         2. 取前 ``threshold - 10`` 条消息做摘要。
         3. 保留最近 10 条完整消息。
-        4. 将摘要以 ``system`` 消息插入历史开头。
+        4. 将摘要以 ``summary`` 消息插入历史开头。
 
         Args:
             threshold: 触发摘要的历史条数阈值。
@@ -172,7 +172,7 @@ class ChatEngine:
             return None
 
         summary_message = {
-            "role": "system",
+            "role": "summary",
             "content": f"历史摘要：{summary_text}",
         }
         self.history = [summary_message, *recent_messages]
@@ -207,8 +207,13 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
+        llm_history = [
+            {"role": "system" if m["role"] == "summary" else m["role"], "content": m["content"]}
+            for m in self.history
+        ]
+
         try:
-            response = self.llm.chat(system_prompt, self.history)
+            response = self.llm.chat(system_prompt, llm_history)
         except Exception as exc:
             print(f"调用 LLM 对话失败：{exc}")
             if self.history and self.history[-1].get("role") == "user":
@@ -247,10 +252,15 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
+        llm_history = [
+            {"role": "system" if m["role"] == "summary" else m["role"], "content": m["content"]}
+            for m in self.history
+        ]
+
         collected: list[str] = []
 
         try:
-            for piece in self.llm.chat_stream(system_prompt, self.history):
+            for piece in self.llm.chat_stream(system_prompt, llm_history):
                 collected.append(piece)
                 yield piece
         except Exception as exc:

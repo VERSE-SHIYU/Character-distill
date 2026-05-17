@@ -200,16 +200,16 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
 | `/api/history/{id}` | DELETE | 删除会话 |
 | `/api/history/{id}/export` | GET | 导出会话（JSON/TXT） |
 | `/api/tts/synthesize` | POST | Edge TTS 语音合成 |
+| `/api/voice/status` | GET | 语音服务状态 + 预设音色列表 |
+| `/api/voice/list` | GET | 全部音色（预设 + 自定义） |
 | `/api/voice/upload` | POST | 上传自定义音色样本 |
-| `/api/voice/list` | GET | 自定义音色列表 |
-| `/api/voice/{id}` | DELETE | 删除自定义音色 |
-| `/api/voice/preview-audio/{id}` | GET | 试听自定义音色 |
-| `/api/voice/status` | GET | 语音服务健康检查 |
-| `/api/voice/ref-audio/upload` | POST | 上传角色参考音频 |
-| `/api/voice/ref-audio/{card_id}` | GET | 查询参考音频 |
-| `/api/voice/ref-audio/{card_id}` | DELETE | 删除参考音频 |
-| `/api/voice/synthesize` | POST | GPT-SoVITS 音色克隆合成 |
-| `/api/voice/asr` | POST | FunASR 语音转文字 |
+| `/api/voice/{voice_id}` | DELETE | 删除自定义音色 |
+| `/api/voice/preview-audio/{voice_id}` | GET | 试听音色（Edge TTS / 原始文件） |
+| `/api/voice/synthesize` | POST | Edge TTS 语音合成 |
+| `/api/voice/ref-audio/{card_id}` | GET | 角色参考音频（501 未实现） |
+| `/api/voice/ref-audio/upload` | POST | 上传角色参考音频（501 未实现） |
+| `/api/voice/ref-audio/{card_id}` | DELETE | 删除角色参考音频（501 未实现） |
+| `/api/voice/asr` | POST | 语音转文字（501 未实现） |
 | `/api/settings/config` | GET | 后端配置信息（只读） |
 | `/api/wechat/*` | * | 微信公众号接入 |
 
