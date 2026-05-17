@@ -3,6 +3,8 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS texts (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    description TEXT DEFAULT '',
     content TEXT NOT NULL,
     char_count INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

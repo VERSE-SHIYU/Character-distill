@@ -1,0 +1,2 @@
+ALTER TABLE texts ADD COLUMN title TEXT DEFAULT '';
+ALTER TABLE texts ADD COLUMN description TEXT DEFAULT '';
