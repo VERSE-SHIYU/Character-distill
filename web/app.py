@@ -70,6 +70,7 @@ def run_distill(text: str, file: Any, char_name: str) -> tuple[str, Any, Any, st
             raise gr.Error("请输入文本或上传文件")
 
         chosen_name = char_name.strip()
+        chars: list[dict[str, Any]] | None = None
         if chosen_name:
             card = distiller.distill(raw_text, chosen_name)
         else:
@@ -89,8 +90,8 @@ def run_distill(text: str, file: Any, char_name: str) -> tuple[str, Any, Any, st
 
         try:
             rag = RAGEngine(cfg["rag"])
-            rag.index(raw_text)
-            engine = ChatEngine(llm, rag, card)
+            rag.index(raw_text, all_characters=chars)
+            engine = ChatEngine(llm, rag, card, all_characters=chars)
         except KeyError as exc:
             print(f"配置缺少 rag 段落：{exc}")
             raise gr.Error("配置缺少 rag 段落，请检查 config.yaml") from exc

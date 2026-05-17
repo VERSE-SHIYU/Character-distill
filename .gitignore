@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Frontend build artifacts
+web/frontend/node_modules/
+web/frontend/dist/
+data/

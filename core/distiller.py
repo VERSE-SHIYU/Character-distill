@@ -14,8 +14,16 @@ from core.schema import CharacterCard
 
 
 IDENTIFY_SYSTEM_PROMPT = (
-    '阅读以下文本，找出所有有名字且有对话或行为描写的角色。只返回 JSON 数组，格式：[{"name": "张三", '
-    '"importance": "主要", "reason": "出现频率最高的角色"}]。不要返回任何其他内容。'
+    "阅读以下文本，找出所有有名字且有对话或行为描写的角色。\n"
+    "关键要求：如果同一个人有多个称呼（全名、昵称、绰号、姓氏、官职、敬称、代称），"
+    "必须归为一组。选最常用的全名作 name，其余放入 aliases。\n"
+    '例如：魏无羡/魏婴/夷陵老祖 → name: "魏无羡", aliases: ["魏婴", "夷陵老祖"]\n'
+    '例如：汪东城/大东 → name: "汪东城", aliases: ["大东"]\n'
+    "\n"
+    "只返回 JSON 数组，格式：\n"
+    '[{"name": "主名", "aliases": ["别名1", "别名2"], '
+    '"importance": "主要/次要", "reason": "简述"}]\n'
+    "不要返回任何其他内容。"
 )
 
 DISTILL_PROMPT_BEFORE_NAME = """你是一个角色分析专家。从给定文本中精确提取角色 \""""
@@ -105,6 +113,8 @@ class Distiller:
             out: list[dict[str, Any]] = []
             for idx, item in enumerate(parsed):
                 if isinstance(item, dict):
+                    if "aliases" not in item:
+                        item["aliases"] = []
                     out.append(item)
                 else:
                     print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
@@ -131,6 +141,53 @@ class Distiller:
                 print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
                 return []
 
+    def _extract_character_paragraphs(
+        self, text: str, character_name: str, aliases: list[str]
+    ) -> str:
+        """抽取包含角色名/别名的段落及前后各2段，拼接后不超过 max_input_chars。
+
+        Args:
+            text: 原始全文。
+            character_name: 目标角色主名。
+            aliases: 角色别名列表。
+
+        Returns:
+            聚焦文本，长度不超过 ``self._max_input_chars``。
+        """
+        paragraphs = text.split("\n\n")
+        if len(paragraphs) < 3:
+            paragraphs = [
+                text[i : i + 500] for i in range(0, len(text), 500)
+            ]
+
+        match_terms = [character_name] + list(aliases)
+        matched: set[int] = set()
+        for idx, para in enumerate(paragraphs):
+            for term in match_terms:
+                if term in para:
+                    matched.add(idx)
+                    break
+
+        if not matched:
+            return text[: self._max_input_chars]
+
+        selected: set[int] = set()
+        for idx in matched:
+            lo = max(0, idx - 2)
+            hi = min(len(paragraphs), idx + 3)
+            selected.update(range(lo, hi))
+
+        ordered = sorted(selected)
+        focused = "\n\n".join(paragraphs[i] for i in ordered)
+
+        if len(focused) > self._max_input_chars:
+            focused = focused[: self._max_input_chars]
+
+        if len(focused) < 500:
+            return text[: self._max_input_chars]
+
+        return focused
+
     def distill(self, text: str, character_name: str) -> CharacterCard:
         """将文本截断后蒸馏指定角色的 ``CharacterCard``。
 
@@ -144,7 +201,13 @@ class Distiller:
         Raises:
             ValueError: JSON 经截取与大括号提取后仍无法还原为 ``CharacterCard``。
         """
-        truncated = text[: self._max_input_chars]
+        all_chars = self.identify_characters(text)
+        aliases: list[str] = []
+        for c in all_chars:
+            if c["name"] == character_name:
+                aliases = c.get("aliases", [])
+                break
+        focused_text = self._extract_character_paragraphs(text, character_name, aliases)
         try:
             schema_obj = CharacterCard.model_json_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
@@ -156,7 +219,7 @@ class Distiller:
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
         user_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "以下是需要分析的文本：\n\n" + truncated},
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + focused_text},
         ]
 
         try:

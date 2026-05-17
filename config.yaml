@@ -12,3 +12,7 @@ rag:
 
 distill:
   max_input_chars: 80000
+
+storage:
+  type: "sqlite"
+  path: "data/character_sim.db"

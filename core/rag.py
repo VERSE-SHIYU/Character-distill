@@ -93,7 +93,36 @@ class RAGEngine:
 
         return chunks
 
-    def index(self, text: str, collection_name: str = "default") -> None:
+    def _tag_characters(self, chunk_text: str, all_characters: list[dict[str, Any]]) -> list[str]:
+        """标注 chunk 中出场角色，返回主名列表。
+
+        Args:
+            chunk_text: 文本片段。
+            all_characters: 角色信息字典列表，每项含 name 和 aliases。
+
+        Returns:
+            角色主名字符串列表（去重排序）。ChromaDB 1.5+ 要求 metadata
+            数组与 ``$contains`` 配合使用。
+        """
+        found: set[str] = set()
+        lower_text = chunk_text.lower()
+        for char in all_characters:
+            name = char.get("name", "")
+            if not name:
+                continue
+            terms = [name] + char.get("aliases", [])
+            for term in terms:
+                if term.lower() in lower_text:
+                    found.add(name)
+                    break
+        return sorted(found)
+
+    def index(
+        self,
+        text: str,
+        collection_name: str = "default",
+        all_characters: list[dict[str, Any]] | None = None,
+    ) -> None:
         """重建同名集合并写入切片后的文档。
 
         Args:
@@ -123,8 +152,14 @@ class RAGEngine:
             return
 
         ids = [f"chunk_{i}" for i in range(len(filtered))]
+        add_kwargs: dict[str, Any] = {"documents": filtered, "ids": ids}
+        if all_characters:
+            add_kwargs["metadatas"] = [
+                {"characters": self._tag_characters(chunk, all_characters)}
+                for chunk in filtered
+            ]
         try:
-            collection.add(documents=filtered, ids=ids)
+            collection.add(**add_kwargs)
         except Exception as exc:
             print(f"向 Chroma collection 写入文档失败：{exc}")
             raise
@@ -132,11 +167,14 @@ class RAGEngine:
         self.collection = collection
         self.collection_name = collection_name
 
-    def query(self, query_text: str) -> list[str]:
-        """对当前集合执行相似度检索。
+    def query(
+        self, query_text: str, character_name: str | None = None
+    ) -> list[str]:
+        """对当前集合执行相似度检索，可按角色名过滤。
 
         Args:
             query_text: 查询语句。
+            character_name: 可选角色名，传入后仅返回该角色出场的片段。
 
         Returns:
             命中片段文本列表；未索引时返回空列表。
@@ -144,10 +182,16 @@ class RAGEngine:
         if self.collection is None:
             return []
 
+        where = (
+            {"characters": {"$contains": character_name}}
+            if character_name
+            else None
+        )
         try:
             results = self.collection.query(
                 query_texts=[query_text],
                 n_results=self._top_k,
+                where=where,
             )
         except Exception as exc:
             print(f"向量检索查询失败：{exc}")

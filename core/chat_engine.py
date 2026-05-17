@@ -13,18 +13,28 @@ from core.schema import CharacterCard
 class ChatEngine:
     """组合 LLM、向量检索与角色卡，维护多轮对话历史。"""
 
-    def __init__(self, llm: LLMAdapter, rag: RAGEngine, card: CharacterCard) -> None:
+    def __init__(
+        self,
+        llm: LLMAdapter,
+        rag: RAGEngine,
+        card: CharacterCard,
+        all_characters: list[dict[str, Any]] | None = None,
+    ) -> None:
         """注入模型适配器、RAG 引擎与角色卡。
 
         Args:
             llm: 大语言模型适配器。
             rag: 向量检索引擎。
             card: 结构化角色卡。
+            all_characters: 角色信息列表（含 name/aliases），传入后
+                ``chat`` / ``chat_stream`` 会自动按当前角色过滤 RAG 片段。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
+        self._all_characters = all_characters
         self.history: list[dict[str, Any]] = []
+        self.last_summary: str | None = None
 
     def build_system_prompt(self, rag_context: str = "") -> str:
         """根据角色卡拼装系统提示；可选附加 RAG 片段。
@@ -97,6 +107,68 @@ class ChatEngine:
 
         return prompt
 
+    def summarize_history(self, threshold: int = 50) -> str | None:
+        """当历史消息过长时自动压缩为摘要并替换旧记录。
+
+        规则：
+        1. 仅当 ``len(self.history) > threshold`` 时触发。
+        2. 取前 ``threshold - 10`` 条消息做摘要。
+        3. 保留最近 10 条完整消息。
+        4. 将摘要以 ``system`` 消息插入历史开头。
+
+        Args:
+            threshold: 触发摘要的历史条数阈值。
+
+        Returns:
+            生成的摘要文本；未触发或失败返回 ``None``。
+        """
+        if len(self.history) <= threshold:
+            self.last_summary = None
+            return None
+
+        keep_recent = 10
+        summarize_count = max(threshold - keep_recent, 1)
+        old_messages = self.history[:summarize_count]
+        recent_messages = self.history[-keep_recent:]
+
+        lines: list[str] = []
+        for msg in old_messages:
+            role = str(msg.get("role", "unknown"))
+            content = str(msg.get("content", "")).strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        dialog_text = "\n".join(lines)
+        if not dialog_text:
+            self.last_summary = None
+            return None
+
+        summary_prompt = (
+            "请将以下对话记录浓缩为200字以内的中文摘要，保留关键事件、情感变化和重要信息：\n"
+            f"{dialog_text}"
+        )
+
+        try:
+            summary_text = self.llm.chat(
+                "你是一个中文对话摘要助手。",
+                [{"role": "user", "content": summary_prompt}],
+            ).strip()
+        except Exception as exc:
+            print(f"生成对话摘要失败：{exc}")
+            self.last_summary = None
+            return None
+
+        if not summary_text:
+            self.last_summary = None
+            return None
+
+        summary_message = {
+            "role": "system",
+            "content": f"历史摘要：{summary_text}",
+        }
+        self.history = [summary_message, *recent_messages]
+        self.last_summary = summary_text
+        return summary_text
+
     def chat(self, user_message: str) -> tuple[str, str]:
         """非流式对话一轮，并返回模型回复与 RAG 上下文文本。
 
@@ -106,8 +178,11 @@ class ChatEngine:
         Returns:
             (模型回复, RAG 拼接上下文)。
         """
+        char_name = self.card.name if self._all_characters else None
+        where_filter = {"characters": {"$contains": char_name}} if char_name else None
+        print(f"[ChatEngine] RAG where filter: {where_filter}")
         try:
-            snippets = self.rag.query(user_message)
+            snippets = self.rag.query(user_message, character_name=char_name)
         except Exception as exc:
             print(f"RAG 检索失败：{exc}")
             raise
@@ -131,6 +206,7 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": response})
+        self.summarize_history()
         return response, rag_context
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
@@ -142,8 +218,11 @@ class ChatEngine:
         Yields:
             模型增量文本片段。
         """
+        char_name = self.card.name if self._all_characters else None
+        where_filter = {"characters": {"$contains": char_name}} if char_name else None
+        print(f"[ChatEngine] RAG where filter: {where_filter}")
         try:
-            snippets = self.rag.query(user_message)
+            snippets = self.rag.query(user_message, character_name=char_name)
         except Exception as exc:
             print(f"RAG 检索失败：{exc}")
             raise
@@ -171,7 +250,9 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": "".join(collected)})
+        self.summarize_history()
 
     def reset(self) -> None:
         """清空对话历史。"""
         self.history = []
+        self.last_summary = None
