@@ -3,10 +3,21 @@ import { postJSON, streamSSE, fetchWithTimeout } from '../api/client'
 
 const useAppStore = create((set, get) => ({
   currentView: 'home',
-  setView: (view) => set({ currentView: view }),
+  setView: (view) => {
+    const updates = { currentView: view }
+    if (view === 'home' || view === 'text') updates.currentTextTitle = ''
+    set(updates)
+  },
+
+  goBack: () => {
+    const { currentView } = get()
+    const backMap = { chat: 'character', character: 'text', text: 'home' }
+    set({ currentView: backMap[currentView] || 'home' })
+  },
 
   texts: [],
   currentTextId: null,
+  currentTextTitle: '',
 
   cards: [],
   currentCard: null,
@@ -17,11 +28,121 @@ const useAppStore = create((set, get) => ({
 
   messages: [],
   sending: false,
-  userRole: '',
-  setUserRole: (role) => set({ userRole: role }),
+  userRole: localStorage.getItem('user_role') || '',
+  setUserRole: (role) => {
+    localStorage.setItem('user_role', role)
+    set({ userRole: role })
+  },
 
   error: null,
   setError: (err) => set({ error: err }),
+
+  // Voice cloning
+  voiceStatus: { gptsovits: false, funasr: false },
+  voiceEnabled: false,
+  voiceSpeed: 1.0,
+  voiceRefInfo: null,
+
+  checkVoiceStatus: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/voice/status')
+      const data = await res.json()
+      set({ voiceStatus: data })
+    } catch {
+      // Silent fail — service detection should never bother the user
+    }
+  },
+
+  uploadRefAudio: async (file, cardId, promptText) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('card_id', cardId)
+    form.append('prompt_text', promptText)
+    const res = await fetchWithTimeout('/api/voice/ref-audio/upload', {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '上传失败' }))
+      throw new Error(err.detail || '上传失败')
+    }
+    await get().loadVoiceRef(cardId)
+    return res.json()
+  },
+
+  loadVoiceRef: async (cardId) => {
+    if (!cardId) { set({ voiceRefInfo: null }); return }
+    try {
+      const res = await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`)
+      const data = await res.json()
+      set({ voiceRefInfo: data })
+    } catch {
+      set({ voiceRefInfo: null })
+    }
+  },
+
+  deleteVoiceRef: async (cardId) => {
+    await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`, { method: 'DELETE' })
+    set({ voiceRefInfo: null })
+  },
+
+  voiceList: [],
+  loadVoices: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/voice/list')
+      const data = await res.json()
+      set({ voiceList: Array.isArray(data) ? data : [] })
+    } catch {
+      // Silent fail — voice library is non-critical
+    }
+  },
+
+  setVoiceEnabled: (bool) => set({ voiceEnabled: bool }),
+  setVoiceSpeed: (speed) => set({ voiceSpeed: speed }),
+
+  // Recording
+  isRecording: false,
+  recordingDuration: 0,
+
+  _synthesizeVoiceReply: async (reply, charIdx) => {
+    const { sessionId, voiceSpeed } = get()
+    if (!reply || !sessionId) return
+    try {
+      const res = await fetchWithTimeout('/api/voice/synthesize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, text: reply, speed: voiceSpeed }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        set((s) => {
+          const msgs = [...s.messages]
+          if (msgs[charIdx]?.role === 'char') {
+            msgs[charIdx] = { ...msgs[charIdx], audio_url: data.audio_url }
+          }
+          return { messages: msgs }
+        })
+      }
+    } catch {
+      console.warn('[store] Voice synthesis failed, falling back to text-only')
+    }
+  },
+
+  sendVoiceMessage: async (audioBlob) => {
+    const form = new FormData()
+    form.append('file', audioBlob, 'recording.webm')
+    try {
+      const res = await fetchWithTimeout('/api/voice/asr', { method: 'POST', body: form })
+      if (!res.ok) throw new Error('语音识别失败')
+      const data = await res.json()
+      if (data.text) {
+        await get().sendMessage(data.text)
+      }
+    } catch (err) {
+      console.warn('[store] Voice message failed:', err)
+      set({ error: '语音识别失败，请使用文字输入' })
+    }
+  },
 
   loadTexts: async () => {
     set({ loading: true })
@@ -35,22 +156,48 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  uploadText: async (file) => {
-    const form = new FormData()
-    form.append('file', file)
-    try {
-      const res = await fetchWithTimeout('/api/text/upload', {
-        method: 'POST',
-        body: form,
-      })
-      const record = await res.json()
-      set((s) => ({ texts: [record, ...s.texts], currentTextId: record.id }))
-      return record
-    } catch (err) {
-      console.error('[store] uploadText failed:', err)
-      set({ error: err.message })
-      throw err
-    }
+  uploadProgress: null,
+  setUploadProgress: (val) => set({ uploadProgress: val }),
+
+  uploadText: async (file, title, description) => {
+    set({ uploadProgress: 0 })
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('title', title || '')
+      formData.append('description', description || '')
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          set({ uploadProgress: Math.round((e.loaded / e.total) * 100) })
+        }
+      }
+
+      xhr.onload = () => {
+        set({ uploadProgress: null })
+        if (xhr.status === 200) {
+          const data = JSON.parse(xhr.responseText)
+          get().loadTexts()
+          resolve(data)
+        } else {
+          try {
+            const errData = JSON.parse(xhr.responseText)
+            reject(new Error(errData.detail || '上传失败'))
+          } catch {
+            reject(new Error(`上传失败 (${xhr.status})`))
+          }
+        }
+      }
+
+      xhr.onerror = () => {
+        set({ uploadProgress: null })
+        reject(new Error('网络错误'))
+      }
+
+      xhr.open('POST', '/api/text/upload')
+      xhr.send(formData)
+    })
   },
 
   deleteText: async (textId) => {
@@ -68,7 +215,13 @@ const useAppStore = create((set, get) => ({
   },
 
   selectText: (textId) => {
-    set({ currentTextId: textId, currentView: 'character' })
+    const text = get().texts.find((t) => t.id === textId)
+    set({
+      currentTextId: textId,
+      currentView: 'character',
+      currentTextTitle: text?.title || text?.filename || '',
+    })
+    get().loadCards(textId)
   },
 
   loadCards: async (textId) => {
@@ -124,22 +277,83 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  selectCard: (card) => {
+  selectCard: async (card) => {
+    let sessionId = card.session_id || null
+    const textId = card.text_id
+
+    if (!sessionId && textId) {
+      try {
+        const cardId = card.id || card.card_id
+        const result = await postJSON('/api/distill/start_session', {
+          text_id: textId,
+          card_id: cardId,
+        })
+        sessionId = result.session_id
+        card = { ...card, session_id: sessionId }
+      } catch (err) {
+        console.error('[store] selectCard create session failed:', err)
+        set({ error: err.message })
+        return
+      }
+    }
+
     set({
       currentCard: card,
-      sessionId: card.session_id || null,
+      sessionId,
       messages: card.first_message
         ? [{ role: 'char', content: card.first_message }]
         : [],
     })
+    get().loadVoiceRef(card?.id || card?.card_id || null)
   },
 
-  startChat: () => {
-    set({ currentView: 'chat' })
+  startChat: async (card) => {
+    if (!card) {
+      set({ currentView: 'chat' })
+      return
+    }
+
+    const data = typeof card.card_json === 'string'
+      ? JSON.parse(card.card_json)
+      : card.card_json || card
+    const name = data.name || card.name
+
+    let sessionId = card.session_id || null
+
+    if (!sessionId) {
+      set({ sending: true })
+      try {
+        const cardId = card.id || card.card_id
+        const result = await postJSON('/api/distill/start_session', {
+          text_id: card.text_id,
+          card_id: cardId,
+        })
+        sessionId = result.session_id
+        set({ sending: false })
+      } catch (err) {
+        console.error('[store] startChat create session failed:', err)
+        set({ error: err.message, sending: false })
+        return
+      }
+    }
+
+    const textTitle = card.text_id
+      ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
+      : get().currentTextTitle
+
+    set({
+      currentCard: { ...card, session_id: sessionId },
+      sessionId,
+      messages: data.first_message
+        ? [{ role: 'char', content: data.first_message }]
+        : [],
+      currentView: 'chat',
+      currentTextTitle: textTitle || get().currentTextTitle,
+    })
   },
 
   sendMessage: async (message) => {
-    const { sessionId, messages } = get()
+    const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return
 
     const userMsg = { role: 'user', content: message }
@@ -149,11 +363,20 @@ const useAppStore = create((set, get) => ({
       const data = await postJSON('/api/chat/send', {
         session_id: sessionId,
         message,
+        user_role: get().userRole,
       })
-      set((s) => ({
-        messages: [...s.messages, { role: 'char', content: data.reply }],
-        sending: false,
-      }))
+      set((s) => {
+        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id })
+        if (data.summary) {
+          msgs.splice(msgs.length - 2, 0, { role: 'summary', content: data.summary })
+        }
+        return { messages: msgs, sending: false }
+      })
+
+      if (voiceEnabled && voiceRefInfo?.exists) {
+        const { messages: currentMsgs } = get()
+        get()._synthesizeVoiceReply(data.reply, currentMsgs.length - 1)
+      }
     } catch (err) {
       console.error('[store] sendMessage failed:', err)
       set((s) => ({
@@ -168,17 +391,20 @@ const useAppStore = create((set, get) => ({
   },
 
   sendMessageStream: (message) => {
-    const { sessionId, messages } = get()
+    const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return () => {}
 
     const userMsg = { role: 'user', content: message }
     const charMsg = { role: 'char', content: '' }
     set({ messages: [...messages, userMsg, charMsg], sending: true, error: null })
 
+    let fullReply = ''
+
     return streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message, stream: true },
+      { session_id: sessionId, message, stream: true, user_role: get().userRole },
       (token) => {
+        fullReply += token
         set((s) => {
           const msgs = [...s.messages]
           const last = msgs[msgs.length - 1]
@@ -186,7 +412,27 @@ const useAppStore = create((set, get) => ({
           return { messages: msgs }
         })
       },
-      () => set({ sending: false }),
+      async (payload) => {
+        set((s) => {
+          const msgs = [...s.messages]
+          if (payload.user_msg_id && msgs.length >= 2) {
+            msgs[msgs.length - 2] = { ...msgs[msgs.length - 2], id: payload.user_msg_id }
+          }
+          if (payload.char_msg_id) {
+            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id }
+          }
+          if (payload.summary) {
+            const userIdx = msgs.length - 2
+            msgs.splice(userIdx, 0, { role: 'summary', content: payload.summary })
+          }
+          return { messages: msgs, sending: false }
+        })
+
+        if (voiceEnabled && voiceRefInfo?.exists && fullReply) {
+          const { messages: currentMsgs } = get()
+          get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
+        }
+      },
       (err) => {
         console.error('[store] stream failed:', err)
         set({ sending: false, error: err.message })
@@ -196,12 +442,13 @@ const useAppStore = create((set, get) => ({
 
   revokeMessage: async (index) => {
     const { sessionId, messages } = get()
-    if (!sessionId || index < 0 || index >= messages.length) return
-    set({ messages: messages.slice(0, index) })
+    const msgId = messages[index]?.id
+    if (!sessionId || msgId == null) return
+    set({ messages: messages.slice(0, index), sending: false })
     try {
       await postJSON('/api/chat/revoke', {
         session_id: sessionId,
-        message_id: index,
+        message_id: msgId,
       })
     } catch (err) {
       console.error('[store] revokeMessage failed:', err)
@@ -227,8 +474,7 @@ const useAppStore = create((set, get) => ({
 
   resumeSession: async (sessionId) => {
     try {
-      const res = await fetchWithTimeout(`/api/history/${sessionId}`)
-      const data = await res.json()
+      const data = await postJSON(`/api/history/${sessionId}/resume`, {})
       const session = data.session || {}
       const messages = (data.messages || []).map((m) => ({
         role: m.role,

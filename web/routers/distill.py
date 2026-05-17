@@ -35,6 +35,12 @@ class DistillByIdRequest(BaseModel):
     character_name: str = ""
 
 
+class StartSessionRequest(BaseModel):
+    """Create a chat session for an existing card without re-distilling."""
+    text_id: str
+    card_id: str
+
+
 class IdentifyRequest(BaseModel):
     """Legacy: identify from raw text."""
     text: str
@@ -159,19 +165,6 @@ async def reindex_rag(
     return {"reindexed_sessions": count, "characters_found": len(chars)}
 
 
-@router.get("/cards/{text_id}")
-async def list_cards(
-    text_id: str,
-    storage: SQLiteStore = Depends(get_storage),
-) -> list[dict[str, Any]]:
-    """List all distilled character cards for a text."""
-    try:
-        return await storage.list_cards(text_id)
-    except Exception as exc:
-        print(f"[distill] List cards failed: {exc}")
-        raise HTTPException(500, f"List cards failed: {exc}") from exc
-
-
 @router.get("/cards/{card_id}/export")
 async def export_card(
     card_id: str,
@@ -208,6 +201,72 @@ async def export_card(
         )
 
     raise HTTPException(400, f"Unsupported export format: {format}")
+
+
+@router.get("/cards/{text_id}")
+async def list_cards(
+    text_id: str,
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List all distilled character cards for a text."""
+    try:
+        return await storage.list_cards(text_id)
+    except Exception as exc:
+        print(f"[distill] List cards failed: {exc}")
+        raise HTTPException(500, f"List cards failed: {exc}") from exc
+
+
+@router.post("/start_session")
+async def start_session(
+    req: StartSessionRequest,
+    storage: SQLiteStore = Depends(get_storage),
+    text_manager: TextManager = Depends(get_text_manager),
+    sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
+) -> dict[str, Any]:
+    """Create a chat session for an already-distilled card.
+
+    Reads the text and card from storage, rebuilds RAG+ChatEngine,
+    injects into the in-memory ``_sessions`` dict, persists the session
+    record to SQLite, and returns the card data with ``session_id``.
+    """
+    text_rec = await storage.get_text(req.text_id)
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+    content = text_rec["content"]
+
+    card_rec = await storage.get_card(req.card_id)
+    if not card_rec:
+        raise HTTPException(404, "Card not found")
+
+    try:
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
+    except Exception as exc:
+        print(f"[distill] Parse card {req.card_id} failed: {exc}")
+        raise HTTPException(500, "Card data is corrupted") from exc
+
+    existing_cards = await storage.list_cards(req.text_id)
+    all_characters: list[dict[str, Any]] = [
+        {"name": c["name"], "aliases": []} for c in existing_cards
+    ]
+
+    try:
+        session_id = await asyncio.to_thread(
+            text_manager._create_session, content, card, all_characters
+        )
+    except Exception as exc:
+        print(f"[distill] Create session for card {req.card_id} failed: {exc}")
+        raise HTTPException(500, f"Create session failed: {exc}") from exc
+
+    try:
+        await storage.save_session(session_id, req.card_id, "", "")
+    except Exception as exc:
+        print(f"[distill] Persist session failed (non-fatal): {exc}")
+
+    result = card.model_dump()
+    result["session_id"] = session_id
+    result["card_id"] = req.card_id
+    return result
+
 
 
 # ---- Legacy compat routes (/api/identify, /api/distill) ----

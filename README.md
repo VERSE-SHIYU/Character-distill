@@ -189,12 +189,16 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
 | `/api/distill/run` | POST | 蒸馏角色卡 + 创建会话 |
 | `/api/distill/cards/{text_id}` | GET | 角色卡列表 |
 | `/api/distill/cards/{id}/export` | GET | 导出 SillyTavern v2 JSON |
+| `/api/distill/start_session` | POST | 为已有角色卡创建会话 |
+| `/api/distill/reindex/{text_id}` | POST | 重建 RAG 角色标记索引 |
 | `/api/chat/send` | POST | 发送消息（SSE 流式 / JSON） |
 | `/api/chat/revoke` | POST | 撤回消息 |
 | `/api/chat/reset` | POST | 重置对话 |
 | `/api/history/list` | GET | 会话历史列表（分页） |
 | `/api/history/{id}` | GET | 会话详情 + 消息 |
+| `/api/history/{id}/resume` | POST | 恢复会话（重建 ChatEngine） |
 | `/api/history/{id}` | DELETE | 删除会话 |
+| `/api/history/{id}/export` | GET | 导出会话（JSON/TXT） |
 | `/api/tts/synthesize` | POST | Edge TTS 语音合成 |
 | `/api/voice/upload` | POST | 上传自定义音色样本 |
 | `/api/voice/list` | GET | 自定义音色列表 |

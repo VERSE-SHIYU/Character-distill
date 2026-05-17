@@ -19,6 +19,7 @@ class ChatEngine:
         rag: RAGEngine,
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
+        user_role: str = "",
     ) -> None:
         """注入模型适配器、RAG 引擎与角色卡。
 
@@ -28,11 +29,13 @@ class ChatEngine:
             card: 结构化角色卡。
             all_characters: 角色信息列表（含 name/aliases），传入后
                 ``chat`` / ``chat_stream`` 会自动按当前角色过滤 RAG 片段。
+            user_role: 用户扮演的角色名，非空时注入 system prompt。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
         self._all_characters = all_characters
+        self.user_role: str = user_role
         self.history: list[dict[str, Any]] = []
         self.last_summary: str | None = None
 
@@ -98,6 +101,13 @@ class ChatEngine:
             "5. 回复长度适中，像真人聊天，不要写长篇大论\n"
         )
 
+        if self.user_role:
+            prompt += (
+                "\n"
+                "【对话者身份】\n"
+                f"你正在和「{self.user_role}」对话。根据你们的关系来调整态度和语气。\n"
+            )
+
         if rag_context.strip():
             prompt += (
                 "\n"
@@ -107,11 +117,11 @@ class ChatEngine:
 
         return prompt
 
-    def summarize_history(self, threshold: int = 50) -> str | None:
+    def _summarize_if_needed(self, threshold: int = 50) -> str | None:
         """当历史消息过长时自动压缩为摘要并替换旧记录。
 
         规则：
-        1. 仅当 ``len(self.history) > threshold`` 时触发。
+        1. 仅当 ``len(self.history) >= threshold`` 时触发。
         2. 取前 ``threshold - 10`` 条消息做摘要。
         3. 保留最近 10 条完整消息。
         4. 将摘要以 ``system`` 消息插入历史开头。
@@ -122,7 +132,7 @@ class ChatEngine:
         Returns:
             生成的摘要文本；未触发或失败返回 ``None``。
         """
-        if len(self.history) <= threshold:
+        if len(self.history) < threshold:
             self.last_summary = None
             return None
 
@@ -206,7 +216,7 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": response})
-        self.summarize_history()
+        self._summarize_if_needed()
         return response, rag_context
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
@@ -250,7 +260,7 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": "".join(collected)})
-        self.summarize_history()
+        self._summarize_if_needed()
 
     def reset(self) -> None:
         """清空对话历史。"""

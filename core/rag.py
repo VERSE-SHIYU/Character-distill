@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import chromadb
 from chromadb.api.models.Collection import Collection
-from chromadb.utils import embedding_functions
+
+from core.embeddings import create_safe_embedding_fn
 
 
 class RAGEngine:
@@ -14,6 +16,11 @@ class RAGEngine:
 
     def __init__(self, config: dict[str, Any]) -> None:
         """从配置字典初始化客户端、嵌入函数与集合占位字段。
+
+        Note: ChromaDB 的 EphemeralClient 并非纯内存实现——它默认向
+        ``./chroma`` 写入数据且多实例间共享同一持久化目录。
+        为避免集合名冲突导致跨 session 的集合引用失效，每个引擎
+        实例使用唯一的 UUID 作为集合名。
 
         Args:
             config: 需包含 chunk_size、chunk_overlap、top_k、embedding_model。
@@ -34,13 +41,15 @@ class RAGEngine:
             raise
 
         try:
-            self._embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=self._embedding_model,
-            )
+            self._embedding_function = create_safe_embedding_fn(self._embedding_model)
         except Exception as exc:
-            print(f"初始化 SentenceTransformerEmbeddingFunction 失败：{exc}")
+            print(f"初始化 SentenceTransformer embedding 失败：{exc}")
             raise
 
+        # Use a unique collection name per engine instance so that multiple
+        # RAGEngines (each created for a different session) do not overwrite
+        # each other's collections in the shared ChromaDB persist directory.
+        self._collection_name: str = uuid.uuid4().hex[:16]
         self.collection: Collection | None = None
         self.collection_name: str | None = None
 
@@ -101,8 +110,7 @@ class RAGEngine:
             all_characters: 角色信息字典列表，每项含 name 和 aliases。
 
         Returns:
-            角色主名字符串列表（去重排序）。ChromaDB 1.5+ 要求 metadata
-            数组与 ``$contains`` 配合使用。
+            角色主名字符串列表（去重排序）。ChromaDB 的 ``$contains`` 对列表做元素匹配。
         """
         found: set[str] = set()
         lower_text = chunk_text.lower()
@@ -120,23 +128,24 @@ class RAGEngine:
     def index(
         self,
         text: str,
-        collection_name: str = "default",
+        collection_name: str | None = None,
         all_characters: list[dict[str, Any]] | None = None,
     ) -> None:
         """重建同名集合并写入切片后的文档。
 
         Args:
             text: 待索引正文。
-            collection_name: 集合名称。
+            collection_name: 集合名称；未指定时使用实例唯一的 UUID。
         """
+        name = collection_name or self._collection_name
         try:
-            self._client.delete_collection(name=collection_name)
+            self._client.delete_collection(name=name)
         except Exception:
             pass
 
         try:
             collection = self._client.create_collection(
-                name=collection_name,
+                name=name,
                 embedding_function=self._embedding_function,
             )
         except Exception as exc:
@@ -148,7 +157,7 @@ class RAGEngine:
         if not filtered:
             print("警告：切片后没有可用的非空文本片段，跳过写入向量库")
             self.collection = collection
-            self.collection_name = collection_name
+            self.collection_name = name
             return
 
         ids = [f"chunk_{i}" for i in range(len(filtered))]
@@ -165,7 +174,7 @@ class RAGEngine:
             raise
 
         self.collection = collection
-        self.collection_name = collection_name
+        self.collection_name = name
 
     def query(
         self, query_text: str, character_name: str | None = None
@@ -194,8 +203,8 @@ class RAGEngine:
                 where=where,
             )
         except Exception as exc:
-            print(f"向量检索查询失败：{exc}")
-            raise
+            print(f"向量检索查询失败（降级返回空）：{exc}")
+            return []
 
         documents = results.get("documents")
         if not documents:

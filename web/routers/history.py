@@ -2,16 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse, Response
+from pydantic import BaseModel
 
-from deps import get_storage
+from deps import get_sessions, get_storage, get_text_manager
+from core.schema import CharacterCard
+from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api/history", tags=["history"])
+
+
+class ResumeRequest(BaseModel):
+    """Empty body placeholder — session_id comes from the URL path."""
+    pass
 
 
 @router.get("/list")
@@ -65,6 +74,96 @@ async def get_session_detail(
         print(f"[history] Get messages failed: {exc}")
         raise HTTPException(500, f"Get messages failed: {exc}") from exc
     return {"session": session, "messages": messages}
+
+
+@router.post("/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    _body: ResumeRequest,
+    storage: SQLiteStore = Depends(get_storage),
+    text_manager: TextManager = Depends(get_text_manager),
+    sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
+) -> dict[str, Any]:
+    """Rebuild the in-memory ChatEngine for a persisted session.
+
+    Used when the server has restarted (``_sessions`` dict is empty) or
+    the session was created in a different process.  Reconstructs the
+    RAG index, ChatEngine, and replays history messages so the user can
+    pick up the conversation where it left off.
+    """
+    # 1. Load session + card + text from DB
+    db_session = await storage.get_session(session_id)
+    if not db_session:
+        raise HTTPException(404, "Session not found")
+
+    card_id = db_session["card_id"]
+    card_rec = await storage.get_card(card_id)
+    if not card_rec:
+        raise HTTPException(404, "Card not found")
+
+    text_rec = await storage.get_text(card_rec["text_id"])
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+
+    # 2. Parse card
+    try:
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
+    except Exception as exc:
+        print(f"[history] Parse card {card_id} failed: {exc}")
+        raise HTTPException(500, "Card data is corrupted") from exc
+
+    # 3. Build all_characters from sibling cards
+    existing_cards = await storage.list_cards(card_rec["text_id"])
+    all_characters: list[dict[str, Any]] = [
+        {"name": c["name"], "aliases": []} for c in existing_cards
+    ]
+
+    # 4. Rebuild RAG + ChatEngine via _create_session
+    try:
+        new_session_id = await asyncio.to_thread(
+            text_manager._create_session,
+            text_rec["content"],
+            card,
+            all_characters,
+        )
+    except Exception as exc:
+        print(f"[history] Rebuild engine for {session_id} failed: {exc}")
+        raise HTTPException(500, f"Rebuild session failed: {exc}") from exc
+
+    # 5. Steal the engine into the original session_id
+    if new_session_id != session_id:
+        sessions[session_id] = sessions.pop(new_session_id, {})
+    engine = sessions[session_id].get("engine")
+    if engine is None:
+        raise HTTPException(500, "Engine not found after rebuild")
+
+    # 6. Load history from DB and inject into engine
+    try:
+        db_messages = await storage.get_messages(session_id)
+    except Exception as exc:
+        print(f"[history] Load messages for {session_id} failed: {exc}")
+        raise HTTPException(500, f"Load messages failed: {exc}") from exc
+
+    # Convert DB roles to engine roles: char → assistant, summary → system
+    engine.history = [
+        {
+            "role": "assistant" if m["role"] == "char" else "system" if m["role"] == "summary" else m["role"],
+            "content": m["content"],
+        }
+        for m in db_messages
+        if m["role"] in ("user", "char", "summary")
+    ]
+
+    # 7. Restore user_role
+    if db_session.get("user_role"):
+        engine.user_role = db_session["user_role"]
+
+    # 8. Return session detail + messages (same shape as GET)
+    frontend_messages = [
+        {"role": m["role"], "content": m["content"], "id": m["id"]}
+        for m in db_messages
+    ]
+    return {"session": db_session, "messages": frontend_messages}
 
 
 @router.delete("/{session_id}")

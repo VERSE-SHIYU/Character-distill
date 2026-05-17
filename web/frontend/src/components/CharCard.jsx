@@ -4,24 +4,34 @@ import { saveAvatar, getAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import RoleSetupModal from './RoleSetupModal'
 
 // ---- CharCard (top-level) ----
 
 export default function CharCard() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
+  const setView = useAppStore((s) => s.setView)
 
   if (!currentTextId) {
     return (
       <div className="shell-placeholder">
         <div className="shell-placeholder-inner">
-          <div className="shell-placeholder-icon">{'\u{1F4D6}'}</div>
+          <div className="shell-placeholder-icon">{'\u{1F464}'}</div>
           <div className="shell-placeholder-title">
-            {'\u8bf7\u5148\u9009\u62e9\u6587\u672c'}
+            请先选择一份文本
           </div>
           <div className="shell-placeholder-sub">
-            {'\u5728\u201c\u6587\u672c\u7ba1\u7406\u201d\u4e2d\u4e0a\u4f20\u5e76\u9009\u4e2d\u4e00\u4e2a\u6587\u672c'}
+            在"文本管理"中上传并选中一个文本
           </div>
+          <button
+            type="button"
+            className="btn-primary"
+            style={{ marginTop: 16 }}
+            onClick={() => setView('text')}
+          >
+            前往文本管理
+          </button>
         </div>
       </div>
     )
@@ -32,12 +42,29 @@ export default function CharCard() {
 
   return (
     <div className="char-panel panel">
+      {/* Breadcrumb */}
+      <nav className="breadcrumb">
+        <button type="button" className="breadcrumb-item" onClick={() => setView('text')}>
+          文本管理
+        </button>
+        <span className="breadcrumb-sep">›</span>
+        <button
+          type="button"
+          className="breadcrumb-item breadcrumb-current"
+          onClick={() => setView('text')}
+        >
+          {filename}
+        </button>
+        <span className="breadcrumb-sep">›</span>
+        <span className="breadcrumb-item breadcrumb-current">角色管理</span>
+      </nav>
+
       <header className="panel-header">
         <h1 className="panel-title">
-          {'\u89d2\u8272\u7ba1\u7406'}
+          角色管理
         </h1>
         <p className="panel-desc">
-          {'\u5f53\u524d\u6587\u672c\uff1a'}{filename}
+          当前文本：{filename}
         </p>
       </header>
       <CharPanelBody textId={currentTextId} />
@@ -64,11 +91,11 @@ function CharPanelBody({ textId }) {
       <div className="char-detail-pane">
         {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
         {currentCard ? (
-          <CardDetail card={currentCard} />
+          <CardDetail card={currentCard} textId={textId} />
         ) : (
           <div className="char-detail-empty">
             <div className="char-detail-empty-icon">{'\u{1F464}'}</div>
-            <p>{'\u9009\u62e9\u6216\u84b8\u998f\u4e00\u4e2a\u89d2\u8272\u67e5\u770b\u8be6\u60c5'}</p>
+            <p>选择或蒸馏一个角色查看详情</p>
           </div>
         )}
       </div>
@@ -109,7 +136,7 @@ function CharSidebar({ textId, cards, currentCard }) {
     <div className="char-sidebar-inner">
       <div className="char-sidebar-head">
         <h2 className="char-sidebar-title">
-          {'\u89d2\u8272\u5217\u8868'}
+          角色列表
         </h2>
         <span className="char-sidebar-count">{cards.length}</span>
       </div>
@@ -129,7 +156,7 @@ function CharSidebar({ textId, cards, currentCard }) {
                 <button
                   type="button"
                   className={`char-list-item${isActive ? ' active' : ''}`}
-                  onClick={() => selectCard({ ...c, ...cardData })}
+                  onClick={() => selectCard({ ...c, ...cardData, text_id: textId })}
                 >
                   <Avatar name={name} size={34} />
                   <div className="char-list-info">
@@ -147,7 +174,7 @@ function CharSidebar({ textId, cards, currentCard }) {
       {hasIdentified && (
         <div className="char-identified">
           <h3 className="char-identified-title">
-            {'\u8bc6\u522b\u7ed3\u679c'}
+            识别结果
           </h3>
           <ul className="char-identified-list">
             {identifiedChars.map((ch, i) => {
@@ -178,10 +205,10 @@ function CharSidebar({ textId, cards, currentCard }) {
                     onClick={() => handleDistill(name)}
                   >
                     {distillingName === name
-                      ? '\u84b8\u998f\u4e2d\u2026'
+                      ? '蒸馏中…'
                       : already
-                        ? '\u5df2\u84b8\u998f'
-                        : '\u84b8\u998f\u89d2\u8272'}
+                        ? '已蒸馏'
+                        : '蒸馏角色'}
                   </button>
                 </li>
               )
@@ -198,12 +225,12 @@ function CharSidebar({ textId, cards, currentCard }) {
             className="btn-primary char-action-btn"
             onClick={handleIdentify}
           >
-            {'\u5f00\u59cb\u84b8\u998f'}
+            开始蒸馏
           </button>
         )}
-        {identifying && <Loading text={'\u6b63\u5728\u8bc6\u522b\u89d2\u8272\u2026'} />}
+        {identifying && <Loading text="正在识别角色…" />}
         {distilling && distillingName && (
-          <Loading text={`\u6b63\u5728\u84b8\u998f ${distillingName}\u2026`} />
+          <Loading text={`正在蒸馏 ${distillingName}…`} />
         )}
         {(hasCards || hasIdentified) && !identifying && (
           <button
@@ -212,7 +239,7 @@ function CharSidebar({ textId, cards, currentCard }) {
             onClick={handleIdentify}
             disabled={identifying}
           >
-            {'\u91cd\u65b0\u8bc6\u522b'}
+            重新识别
           </button>
         )}
       </div>
@@ -222,10 +249,12 @@ function CharSidebar({ textId, cards, currentCard }) {
 
 // ---- Right: card detail view ----
 
-function CardDetail({ card }) {
+function CardDetail({ card, textId }) {
   const startChat = useAppStore((s) => s.startChat)
   const userRole = useAppStore((s) => s.userRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
+  const setView = useAppStore((s) => s.setView)
+  const [showRoleModal, setShowRoleModal] = useState(false)
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -246,9 +275,7 @@ function CardDetail({ card }) {
         setAvatarUrl(null)
       }
     })
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [card.id])
 
   const handleAvatarChange = useCallback(
@@ -261,6 +288,16 @@ function CardDetail({ card }) {
     [card.id],
   )
 
+  const handleRoleConfirm = (role) => {
+    setShowRoleModal(false)
+    startChat(card)
+  }
+
+  const handleRoleSkip = () => {
+    setShowRoleModal(false)
+    startChat(card)
+  }
+
   return (
     <div className="card-detail">
       <div className="card-detail-scroll">
@@ -270,7 +307,7 @@ function CardDetail({ card }) {
             type="button"
             className="card-avatar-btn"
             onClick={() => avatarInputRef.current?.click()}
-            title={'\u70b9\u51fb\u4e0a\u4f20\u5934\u50cf'}
+            title="点击上传头像"
           >
             <Avatar name={name} src={avatarUrl} size={72} />
             <div className="card-avatar-overlay">{'\u{1F4F7}'}</div>
@@ -292,7 +329,7 @@ function CardDetail({ card }) {
 
         {/* Personality traits */}
         {data.personality_traits?.length > 0 && (
-          <CardSection label={'\u6027\u683c\u7279\u5f81'}>
+          <CardSection label="性格特征">
             <div className="pill-list">
               {data.personality_traits.map((t, i) => (
                 <span key={i} className="pill">{t}</span>
@@ -303,17 +340,17 @@ function CardDetail({ card }) {
 
         {/* Speaking style */}
         {style.tone && (
-          <CardSection label={'\u8bed\u8a00\u98ce\u683c'}>
+          <CardSection label="语言风格">
             <div className="card-style-grid">
-              <StyleChip label={'\u8bed\u6c14'} value={style.tone} />
-              <StyleChip label={'\u53e5\u5f0f'} value={style.sentence_pattern} />
-              <StyleChip label={'\u7528\u8bcd'} value={style.vocabulary_level} />
+              <StyleChip label="语气" value={style.tone} />
+              <StyleChip label="句式" value={style.sentence_pattern} />
+              <StyleChip label="用词" value={style.vocabulary_level} />
             </div>
             {style.catchphrases?.length > 0 && (
               <div className="card-catchphrases">
                 {style.catchphrases.map((c, i) => (
                   <p key={i} className="catchphrase">
-                    {'\u201c'}{c}{'\u201d'}
+                    "  {c}  "
                   </p>
                 ))}
               </div>
@@ -323,7 +360,7 @@ function CardDetail({ card }) {
 
         {/* Values */}
         {data.values?.length > 0 && (
-          <CardSection label={'\u6838\u5fc3\u4ef7\u503c\u89c2'}>
+          <CardSection label="核心价值观">
             <div className="pill-list">
               {data.values.map((v, i) => (
                 <span key={i} className="pill pill-value">{v}</span>
@@ -334,7 +371,7 @@ function CardDetail({ card }) {
 
         {/* Key memories */}
         {data.key_memories?.length > 0 && (
-          <CardSection label={'\u5173\u952e\u8bb0\u5fc6'}>
+          <CardSection label="关键记忆">
             <ul className="card-memory-list">
               {data.key_memories.map((m, i) => (
                 <li key={i} className="card-memory-item">{m}</li>
@@ -345,7 +382,7 @@ function CardDetail({ card }) {
 
         {/* Relationships */}
         {rels.length > 0 && (
-          <CardSection label={'\u4eba\u7269\u5173\u7cfb'}>
+          <CardSection label="人物关系">
             <div className="card-rel-list">
               {rels.map((r, i) => (
                 <div key={i} className="card-rel-row">
@@ -360,7 +397,7 @@ function CardDetail({ card }) {
 
         {/* Inner tensions */}
         {data.inner_tensions?.length > 0 && (
-          <CardSection label={'\u5185\u5728\u77db\u76fe'}>
+          <CardSection label="内在矛盾">
             <div className="pill-list">
               {data.inner_tensions.map((t, i) => (
                 <span key={i} className="pill pill-tension">{t}</span>
@@ -371,40 +408,54 @@ function CardDetail({ card }) {
 
         {/* Background */}
         {data.background && (
-          <CardSection label={'\u80cc\u666f'}>
+          <CardSection label="背景">
             <p className="card-background">{data.background}</p>
           </CardSection>
         )}
 
         {/* User identity input */}
-        <CardSection label={'\u7528\u6237\u8eab\u4efd\u8bbe\u5b9a'}>
+        <CardSection label="用户身份设定">
           <input
             type="text"
             className="card-user-role-input"
-            placeholder={'\u4f8b\u5982\uff1a\u201c\u4f60\u662f\u4ed6\u7684\u65e7\u65f6\u597d\u53cb\u201d'}
+            placeholder='例如："你是他的旧时好友"'
             value={userRole}
             onChange={(e) => setUserRole(e.target.value)}
           />
         </CardSection>
       </div>
 
-      {/* Bottom: export + start chat */}
+      {/* Bottom: export + start chat + back */}
       <div className="card-footer">
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => setView('text')}
+        >
+          ← 返回文本列表
+        </button>
         <a
           href={`/api/distill/cards/${card.id}/export?format=tavern`}
           download
           className="btn-secondary card-export-btn"
         >
-          {'\u{1F4E5} \u5bfc\u51fa\u89d2\u8272\u5361'}
+          {'\u{1F4E5}'} 导出角色卡
         </a>
         <button
           type="button"
           className="btn-primary card-chat-btn"
-          onClick={startChat}
+          onClick={() => setShowRoleModal(true)}
         >
-          {'\u{1F4AC} \u5f00\u59cb\u5bf9\u8bdd'}
+          {'\u{1F4AC}'} 开始对话
         </button>
       </div>
+
+      <RoleSetupModal
+        isOpen={showRoleModal}
+        characterName={name}
+        onConfirm={handleRoleConfirm}
+        onSkip={handleRoleSkip}
+      />
     </div>
   )
 }

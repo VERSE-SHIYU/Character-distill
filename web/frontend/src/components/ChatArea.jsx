@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import { saveAvatar, getAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
+  const setView = useAppStore((s) => s.setView)
 
   if (!currentCard || !sessionId) {
     return (
@@ -12,10 +14,26 @@ export default function ChatArea() {
         <div className="shell-placeholder-inner">
           <div className="shell-placeholder-icon">{'\u{1F4AC}'}</div>
           <div className="shell-placeholder-title">
-            {'\u8bf7\u5148\u9009\u62e9\u89d2\u8272'}
+            请先选择一个角色开始对话
           </div>
           <div className="shell-placeholder-sub">
-            {'\u5728\u201c\u89d2\u8272\u7ba1\u7406\u201d\u4e2d\u84b8\u998f\u5e76\u9009\u4e2d\u4e00\u4e2a\u89d2\u8272'}
+            在"角色管理"中蒸馏并选中一个角色后即可开始聊天
+          </div>
+          <div className="home-actions" style={{ marginTop: 16 }}>
+            <button
+              type="button"
+              className="home-action-btn"
+              onClick={() => setView('character')}
+            >
+              {'\u{1F464}'} 选择已有角色
+            </button>
+            <button
+              type="button"
+              className="home-action-btn"
+              onClick={() => setView('text')}
+            >
+              {'\u{1F4C4}'} 上传新文本
+            </button>
           </div>
         </div>
       </div>
@@ -32,10 +50,15 @@ function ChatView() {
   const userRole = useAppStore((s) => s.userRole)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
+  const voiceStatus = useAppStore((s) => s.voiceStatus)
+  const isRecording = useAppStore((s) => s.isRecording)
+  const recordingDuration = useAppStore((s) => s.recordingDuration)
   const resetChat = useAppStore((s) => s.resetChat)
   const setView = useAppStore((s) => s.setView)
+  const setUserRole = useAppStore((s) => s.setUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
+  const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
 
   const cardData = typeof currentCard.card_json === 'string'
     ? JSON.parse(currentCard.card_json)
@@ -45,48 +68,114 @@ function ChatView() {
 
   const currentText = texts.find((t) => t.id === currentTextId)
   const textLabel = currentText
-    ? `${currentText.filename} (${Number(currentText.char_count || 0).toLocaleString('zh-CN')}\u5b57)`
+    ? `${currentText.filename} (${Number(currentText.char_count || 0).toLocaleString('zh-CN')}字)`
     : null
 
   const listRef = useRef(null)
   const bottomRef = useRef(null)
   const cancelStreamRef = useRef(null)
 
-  // ---- TTS global singleton ----
+  // ---- Avatar ----
+  const [avatarUrl, setAvatarUrl] = useState(null)
+  const avatarInputRef = useRef(null)
+
+  const cardId = currentCard?.id || currentCard?.card_id
+
+  useEffect(() => {
+    let cancelled = false
+    if (!cardId) {
+      setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
+      return
+    }
+    getAvatar(cardId).then((blob) => {
+      if (!cancelled && blob) {
+        setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob) })
+      } else if (!cancelled) {
+        setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
+      }
+    })
+    return () => {
+      cancelled = true
+      setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
+    }
+  }, [cardId])
+
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file || !cardId) return
+    await saveAvatar(cardId, file)
+    if (avatarUrl) URL.revokeObjectURL(avatarUrl)
+    setAvatarUrl(URL.createObjectURL(file))
+  }
+
+  // ---- Global audio player for voice bubbles ----
   const audioRef = useRef(null)
-  const [playingId, setPlayingId] = useState(null)
+  const [playingMsgId, setPlayingMsgId] = useState(null)
+
+  const playAudio = useCallback((msgId, url) => {
+    if (playingMsgId === msgId) {
+      if (audioRef.current) { audioRef.current.pause() }
+      setPlayingMsgId(null)
+      return
+    }
+    if (audioRef.current) { audioRef.current.pause() }
+    const a = new Audio(url)
+    a.onended = () => setPlayingMsgId(null)
+    a.onerror = () => setPlayingMsgId(null)
+    a.play()
+    audioRef.current = a
+    setPlayingMsgId(msgId)
+  }, [playingMsgId])
+
+  // Cleanup audio on unmount
+  useEffect(() => {
+    return () => { if (audioRef.current) audioRef.current.pause() }
+  }, [])
+
+  // ---- TTS global singleton ----
+  const ttsAudioRef = useRef(null)
+  const [ttsPlayingId, setTtsPlayingId] = useState(null)
+
+  const voiceList = useAppStore((s) => s.voiceList)
+  const loadVoices = useAppStore((s) => s.loadVoices)
+
+  useEffect(() => { loadVoices() }, [loadVoices])
 
   const playTTS = useCallback(
     async (text, msgId) => {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        URL.revokeObjectURL(audioRef.current.src)
-        audioRef.current = null
+      if (ttsAudioRef.current) {
+        ttsAudioRef.current.pause()
+        URL.revokeObjectURL(ttsAudioRef.current.src)
+        ttsAudioRef.current = null
       }
-      setPlayingId(msgId)
+      setTtsPlayingId(msgId)
+      const selectedVoice = localStorage.getItem('tts_voice') || 'xiaoxiao'
+      const isCustom = voiceList.some((v) => v.voice_id === selectedVoice)
       try {
-        const res = await fetch('/api/tts/synthesize', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice: localStorage.getItem('tts_voice') || 'xiaoxiao' }),
-        })
+        const res = isCustom
+          ? await fetch(`/api/voice/preview-audio/${selectedVoice}`)
+          : await fetch('/api/tts/synthesize', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text, voice: selectedVoice }),
+            })
         if (!res.ok) throw new Error(`TTS ${res.status}`)
         const blob = await res.blob()
         const url = URL.createObjectURL(blob)
-        audioRef.current = new Audio(url)
-        audioRef.current.onended = () => {
-          setPlayingId(null)
+        ttsAudioRef.current = new Audio(url)
+        ttsAudioRef.current.onended = () => {
+          setTtsPlayingId(null)
           URL.revokeObjectURL(url)
-          audioRef.current = null
+          ttsAudioRef.current = null
         }
-        audioRef.current.onerror = () => {
-          setPlayingId(null)
+        ttsAudioRef.current.onerror = () => {
+          setTtsPlayingId(null)
           URL.revokeObjectURL(url)
-          audioRef.current = null
+          ttsAudioRef.current = null
         }
-        await audioRef.current.play()
+        await ttsAudioRef.current.play()
       } catch {
-        setPlayingId(null)
+        setTtsPlayingId(null)
       }
     },
     [],
@@ -105,7 +194,7 @@ function ChatView() {
   )
 
   const handleReset = useCallback(() => {
-    if (!window.confirm('\u786e\u5b9a\u91cd\u7f6e\u5bf9\u8bdd\uff1f\u5386\u53f2\u6d88\u606f\u5c06\u88ab\u6e05\u7a7a\u3002')) return
+    if (!window.confirm('确定重置对话？历史消息将被清空。')) return
     if (cancelStreamRef.current) {
       cancelStreamRef.current()
       cancelStreamRef.current = null
@@ -114,9 +203,13 @@ function ChatView() {
   }, [resetChat])
 
   const handleRevoke = useCallback(
-    (index) => {
-      if (!window.confirm('\u64a4\u56de\u8be5\u6d88\u606f\u53ca\u4e4b\u540e\u7684\u6240\u6709\u6d88\u606f\uff1f')) return
-      revokeMessage(index)
+    (displayIndex) => {
+      if (!window.confirm('撤回这条消息及之后的对话？')) return
+      if (cancelStreamRef.current) {
+        cancelStreamRef.current()
+        cancelStreamRef.current = null
+      }
+      revokeMessage(displayIndex)
     },
     [revokeMessage],
   )
@@ -126,25 +219,35 @@ function ChatView() {
       {/* Top bar */}
       <div className="chat-topbar">
         <div className="chat-topbar-left">
-          <Avatar name={charName} size={36} />
+          <button
+            type="button"
+            className="chat-avatar-edit-wrap"
+            onClick={() => avatarInputRef.current?.click()}
+            title="更换头像"
+          >
+            <Avatar name={charName} src={avatarUrl} size={36} />
+            <span className="chat-avatar-edit-icon">{'\u{1F4F7}'}</span>
+          </button>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleAvatarChange}
+          />
           <div className="chat-topbar-info">
             <span className="chat-topbar-name">{charName}</span>
             {charIdentity && (
               <span className="chat-topbar-badge">{charIdentity}</span>
             )}
           </div>
-          {userRole && (
-            <span className="chat-topbar-user-badge">
-              {'\u{1F464} '}{userRole}
-            </span>
-          )}
         </div>
         <div className="chat-topbar-actions">
           <button
             type="button"
             className="chat-topbar-btn"
             onClick={handleReset}
-            title={'\u91cd\u7f6e\u5bf9\u8bdd'}
+            title="重置对话"
           >
             {'\u{1F504}'}
           </button>
@@ -152,17 +255,39 @@ function ChatView() {
             type="button"
             className="chat-topbar-btn"
             onClick={() => setView('character')}
-            title={'\u8fd4\u56de\u89d2\u8272\u5217\u8868'}
+            title="返回角色列表"
           >
             {'\u{1F464}'}
           </button>
         </div>
       </div>
 
-      {/* Context banner */}
+      {/* User role bar */}
+      <div className="user-role-bar">
+        <span className="user-role-label">我扮演：</span>
+        <input
+          type="text"
+          className="user-role-input"
+          placeholder="输入你的角色名，如：江澄"
+          value={userRole}
+          onChange={(e) => setUserRole(e.target.value)}
+          onBlur={() => setUserRole(userRole)}
+        />
+      </div>
+
+      {/* Source text context */}
       {textLabel && (
         <div className="chat-context-banner">
-          <span>{'\u{1F4D6} '}{textLabel}</span>
+          <span className="chat-context-source">
+            {'\u{1F4D6}'} 来自：
+            <button
+              type="button"
+              className="chat-context-link"
+              onClick={() => setView('character')}
+            >
+              {textLabel}
+            </button>
+          </span>
         </div>
       )}
 
@@ -181,10 +306,14 @@ function ChatView() {
               isUser={isUser}
               content={msg.content}
               charName={charName}
+              avatarUrl={avatarUrl}
               isStreaming={isStreaming}
               onRevoke={isUser ? handleRevoke : null}
               playTTS={playTTS}
-              isPlaying={playingId === i}
+              isPlaying={ttsPlayingId === i}
+              audioUrl={msg.audio_url}
+              isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
+              onPlayAudio={playAudio}
             />
           )
         })}
@@ -192,14 +321,21 @@ function ChatView() {
       </div>
 
       {/* Input */}
-      <ChatInput onSend={handleSend} disabled={sending} />
+      <ChatInput
+        onSend={handleSend}
+        disabled={sending}
+        voiceStatus={voiceStatus}
+        isRecording={isRecording}
+        recordingDuration={recordingDuration}
+        sendVoiceMessage={sendVoiceMessage}
+      />
     </div>
   )
 }
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, content, charName, isStreaming, onRevoke, playTTS, isPlaying }) {
+function MessageBubble({ index, isUser, content, charName, avatarUrl, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio }) {
   const [hovered, setHovered] = useState(false)
 
   return (
@@ -210,7 +346,7 @@ function MessageBubble({ index, isUser, content, charName, isStreaming, onRevoke
     >
       {!isUser && (
         <div className="chat-msg-avatar">
-          <Avatar name={charName} size={32} />
+          <Avatar name={charName} src={avatarUrl} size={32} />
         </div>
       )}
       <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
@@ -218,15 +354,25 @@ function MessageBubble({ index, isUser, content, charName, isStreaming, onRevoke
           {content}
           {isStreaming && <span className="chat-cursor" />}
         </span>
+        {/* Voice bubble */}
+        {!isUser && audioUrl && (
+          <div
+            className={`voice-bubble${isAudioPlaying ? ' playing' : ''}`}
+            onClick={(e) => { e.stopPropagation(); onPlayAudio(index, audioUrl) }}
+          >
+            <span className="voice-waves"><i /><i /><i /></span>
+            <span className="voice-duration">{''}</span>
+          </div>
+        )}
       </div>
       {isUser && hovered && onRevoke && (
         <button
           type="button"
           className="chat-revoke-btn"
           onClick={() => onRevoke(index)}
-          title={'\u64a4\u56de'}
+          title="撤回"
         >
-          {'\u{21A9}'}
+          {'\u{2715}'}
         </button>
       )}
       {!isUser && (
@@ -235,9 +381,9 @@ function MessageBubble({ index, isUser, content, charName, isStreaming, onRevoke
           className="tts-play-btn"
           disabled={isPlaying}
           onClick={() => playTTS(content, index)}
-          title={isPlaying ? '\u64ad\u653e\u4e2d' : '\u64ad\u653e\u8bed\u97f3'}
+          title={isPlaying ? '播放中' : '播放语音'}
         >
-          {isPlaying ? '\u23f3' : '\u{1F50A}'}
+          {isPlaying ? '⏳' : '\u{1F50A}'}
         </button>
       )}
     </div>
@@ -256,8 +402,8 @@ function SummaryBubble({ content }) {
         onClick={() => setOpen((o) => !o)}
       >
         <span className="chat-summary-icon">{'\u{1F4CB}'}</span>
-        <span>{'\u5bf9\u8bdd\u6458\u8981'}</span>
-        <span className="chat-summary-arrow">{open ? '\u25B2' : '\u25BC'}</span>
+        <span>对话摘要</span>
+        <span className="chat-summary-arrow">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
         <div className="chat-summary-body">
@@ -270,9 +416,14 @@ function SummaryBubble({ content }) {
 
 // ---- Input bar ----
 
-function ChatInput({ onSend, disabled }) {
+function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage }) {
   const [text, setText] = useState('')
   const taRef = useRef(null)
+  const mediaRecorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const timerRef = useRef(null)
+
+  const set = useAppStore.setState
 
   const handleSubmit = () => {
     if (!text.trim() || disabled) return
@@ -288,13 +439,62 @@ function ChatInput({ onSend, disabled }) {
     }
   }
 
+  // ---- Recording ----
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
+      mediaRecorderRef.current = mr
+      chunksRef.current = []
+
+      mr.ondataavailable = (e) => chunksRef.current.push(e.data)
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+        const dur = useAppStore.getState().recordingDuration
+        set({ isRecording: false, recordingDuration: 0 })
+        if (dur < 1) return // too short, cancel
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        await sendVoiceMessage(blob)
+      }
+
+      mr.start()
+      set({ isRecording: true, recordingDuration: 0 })
+      timerRef.current = setInterval(() => {
+        set((s) => ({ recordingDuration: s.recordingDuration + 1 }))
+      }, 1000)
+    } catch {
+      // Permission denied or no mic
+    }
+  }
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current?.state === 'recording') {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      mediaRecorderRef.current.stop()
+    }
+  }
+
+  // Recording UI
+  if (isRecording) {
+    return (
+      <div className="chat-input-bar recording-bar">
+        <span className="recording-dot" />
+        <span className="recording-text">{`录音中 ${recordingDuration}s`}</span>
+        <span className="recording-hint">松手发送 | 上滑取消</span>
+      </div>
+    )
+  }
+
+  const showMic = voiceStatus?.funasr
+
   return (
     <div className="chat-input-bar">
       <textarea
         ref={taRef}
         className="chat-textarea"
         rows={1}
-        placeholder={disabled ? '\u7b49\u5f85\u56de\u590d\u4e2d\u2026' : '\u8f93\u5165\u6d88\u606f\uff0cEnter \u53d1\u9001\uff0cShift+Enter \u6362\u884c'}
+        placeholder={disabled ? '等待回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -308,6 +508,20 @@ function ChatInput({ onSend, disabled }) {
       >
         {'\u{27A4}'}
       </button>
+      {showMic && (
+        <button
+          type="button"
+          className="record-btn"
+          onMouseDown={startRecording}
+          onMouseUp={stopRecording}
+          onMouseLeave={stopRecording}
+          onTouchStart={startRecording}
+          onTouchEnd={stopRecording}
+          title="按住录音"
+        >
+          {'\u{1F3A4}'}
+        </button>
+      )}
     </div>
   )
 }

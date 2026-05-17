@@ -24,6 +24,7 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     stream: bool = False
+    user_role: str = ""
 
 
 class RevokeRequest(BaseModel):
@@ -44,6 +45,7 @@ async def _do_chat(
     message: str,
     storage: SQLiteStore,
     sessions: dict[str, Any],
+    user_role: str = "",
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
     session = sessions.get(session_id)
@@ -54,6 +56,9 @@ async def _do_chat(
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
 
+    if user_role:
+        session["engine"].user_role = user_role
+
     try:
         resp, rag_ctx = await asyncio.to_thread(session["engine"].chat, msg)
     except Exception as exc:
@@ -61,13 +66,39 @@ async def _do_chat(
         raise HTTPException(500, f"Chat failed: {exc}") from exc
 
     # Dual-write to SQLite (non-fatal on failure)
+    user_msg_id = None
+    char_msg_id = None
     try:
-        await storage.save_message(session_id, "user", msg, "")
-        await storage.save_message(session_id, "char", resp, rag_ctx[:500])
+        user_rec = await storage.save_message(session_id, "user", msg, "")
+        char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500])
+        user_msg_id = user_rec["id"]
+        char_msg_id = char_rec["id"]
+        ids_to_add = [user_msg_id, char_msg_id]
+
+        # Save summary if newly generated
+        engine = session.get("engine")
+        if engine and engine.last_summary:
+            try:
+                sum_rec = await storage.save_message(
+                    session_id, "summary",
+                    f"历史摘要：{engine.last_summary}", "",
+                )
+                ids_to_add.append(sum_rec["id"])
+            except Exception as exc:
+                print(f"[chat] Save summary failed (non-fatal): {exc}")
+
+        session.setdefault("message_ids", []).extend(ids_to_add)
     except Exception as exc:
         print(f"[chat] Dual-write messages failed (non-fatal): {exc}")
 
-    return {"reply": resp, "rag_context": rag_ctx[:200]}
+    engine = session.get("engine")
+    result: dict[str, Any] = {
+        "reply": resp, "rag_context": rag_ctx[:200],
+        "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
+    }
+    if engine and engine.last_summary:
+        result["summary"] = engine.last_summary
+    return result
 
 
 async def _do_chat_stream(
@@ -75,6 +106,7 @@ async def _do_chat_stream(
     message: str,
     storage: SQLiteStore,
     sessions: dict[str, Any],
+    user_role: str = "",
 ):
     """Core streaming chat logic with SSE output."""
     session = sessions.get(session_id)
@@ -84,6 +116,9 @@ async def _do_chat_stream(
     msg = message.strip()
     if not msg:
         raise HTTPException(400, "Message cannot be empty")
+
+    if user_role:
+        session["engine"].user_role = user_role
 
     def _next_piece(stream_obj):
         """Read next stream piece with StopIteration sentinel."""
@@ -95,8 +130,10 @@ async def _do_chat_stream(
     async def _event_generator():
         tokens: list[str] = []
         rag_context = ""
+        msg_ids: list[int] = []
         try:
-            await storage.save_message(session_id, "user", msg, "")
+            user_rec = await storage.save_message(session_id, "user", msg, "")
+            msg_ids.append(user_rec["id"])
         except Exception as exc:
             print(f"[chat] Save user message failed (non-fatal): {exc}")
 
@@ -117,11 +154,32 @@ async def _do_chat_stream(
                 rag_context = ""
 
             try:
-                await storage.save_message(session_id, "char", full_reply, rag_context[:500])
+                char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500])
+                msg_ids.append(char_rec["id"])
             except Exception as exc:
                 print(f"[chat] Save assistant message failed (non-fatal): {exc}")
 
-            done_payload = {"done": True, "rag_context": rag_context[:200]}
+            if msg_ids:
+                session.setdefault("message_ids", []).extend(msg_ids)
+
+            engine = session.get("engine")
+            if engine and engine.last_summary:
+                try:
+                    sum_rec = await storage.save_message(
+                        session_id, "summary",
+                        f"历史摘要：{engine.last_summary}", "",
+                    )
+                    session.setdefault("message_ids", []).append(sum_rec["id"])
+                except Exception as exc:
+                    print(f"[chat] Save summary failed (non-fatal): {exc}")
+
+            done_payload: dict[str, Any] = {
+                "done": True, "rag_context": rag_context[:200],
+                "user_msg_id": msg_ids[0] if len(msg_ids) >= 1 else None,
+                "char_msg_id": msg_ids[1] if len(msg_ids) >= 2 else None,
+            }
+            if engine and engine.last_summary:
+                done_payload["summary"] = engine.last_summary
             yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception as exc:
             print(f"[chat] Chat stream failed: {exc}")
@@ -152,23 +210,43 @@ async def send_message(
 ) -> Any:
     """Send a message and get a JSON reply or SSE stream."""
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions)
-    return await _do_chat(req.session_id, req.message, storage, sessions)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role)
 
 
 @router.post("/revoke")
 async def revoke_messages(
     req: RevokeRequest,
     storage: SQLiteStore = Depends(get_storage),
+    sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
-    """Delete messages after (and including) a given message_id."""
+    """Delete messages starting from the given DB message id.
+
+    ``req.message_id`` is a real SQLite message row id (NOT a positional index).
+    """
+    session = sessions.get(req.session_id)
+    msg_ids: list[int] = session.get("message_ids", []) if session else []
+
+    # Find position of this DB id in tracked ids
+    try:
+        idx = msg_ids.index(req.message_id)
+    except ValueError:
+        idx = 0
+
+    # Truncate in-memory state
+    if session:
+        engine = session.get("engine")
+        if engine:
+            engine.history = engine.history[:min(idx, len(engine.history))]
+        session["message_ids"] = msg_ids[:idx]
+
+    # Delete from SQLite with the real DB id
     try:
         count = await storage.delete_messages_after(req.session_id, req.message_id)
     except Exception as exc:
         print(f"[chat] Revoke messages failed: {exc}")
         raise HTTPException(500, f"Revoke failed: {exc}") from exc
     return {"deleted": count}
-
 
 @router.post("/reset")
 async def reset_session(
@@ -188,7 +266,7 @@ async def legacy_chat(
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
-    return await _do_chat(req.session_id, req.message, storage, sessions)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role)
 
 
 @legacy_router.post("/api/reset")
