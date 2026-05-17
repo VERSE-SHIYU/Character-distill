@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+# 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
+# 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
 import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_WEB_DIR = Path(__file__).resolve().parent
-
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+import core.fix_meta_tensor  # noqa: E402  必须最先执行
+
+_WEB_DIR = Path(__file__).resolve().parent
 if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
 
@@ -25,6 +29,8 @@ from routers.chat import legacy_router as chat_legacy
 from routers.chat import router as chat_router
 from routers.history import router as history_router
 from routers.tts import router as tts_router
+from routers.voice import router as voice_router
+from routers.wechat import router as wechat_router
 from deps import get_config
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -54,6 +60,8 @@ app.include_router(distill_router)
 app.include_router(chat_router)
 app.include_router(history_router)
 app.include_router(tts_router)
+app.include_router(voice_router)
+app.include_router(wechat_router)
 
 
 @app.get("/api/settings/config")
@@ -112,6 +120,42 @@ def serve_icons() -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/manifest.json")
+def serve_manifest() -> FileResponse:
+    """PWA manifest."""
+    path = _STATIC_DIR / "manifest.json"
+    if not path.exists():
+        raise HTTPException(404, "manifest.json not found")
+    return FileResponse(path)
+
+
+@app.get("/sw.js")
+def serve_sw() -> FileResponse:
+    """Service Worker."""
+    path = _STATIC_DIR / "sw.js"
+    if not path.exists():
+        raise HTTPException(404, "sw.js not found")
+    return FileResponse(path)
+
+
+@app.get("/icon-192.png")
+def serve_icon_192() -> FileResponse:
+    """PWA icon 192x192."""
+    path = _STATIC_DIR / "icon-192.png"
+    if not path.exists():
+        raise HTTPException(404, "icon-192.png not found")
+    return FileResponse(path)
+
+
+@app.get("/icon-512.png")
+def serve_icon_512() -> FileResponse:
+    """PWA icon 512x512."""
+    path = _STATIC_DIR / "icon-512.png"
+    if not path.exists():
+        raise HTTPException(404, "icon-512.png not found")
+    return FileResponse(path)
+
+
 _assets_dir = _STATIC_DIR / "assets"
 if _assets_dir.is_dir():
     app.mount(
@@ -121,6 +165,11 @@ if _assets_dir.is_dir():
     )
 
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+# Voice cache audio files
+_voice_cache_dir = _REPO_ROOT / "data" / "voice_cache"
+_voice_cache_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/audio", StaticFiles(directory=str(_voice_cache_dir)), name="voice_audio")
 
 
 if __name__ == "__main__":

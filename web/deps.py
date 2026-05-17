@@ -82,3 +82,34 @@ def get_tts_engine():
         from speech.edge_tts_client import EdgeTTSEngine
         _tts_engine = EdgeTTSEngine()
     return _tts_engine
+
+
+_voice_client = None
+
+
+def get_voice_client():
+    """Return the VoiceCloneClient singleton."""
+    global _voice_client
+    if _voice_client is None:
+        from speech.voice_clone import VoiceCloneClient
+        voice_cfg = _config.get("voice", {})
+        _voice_client = VoiceCloneClient(
+            base_url=voice_cfg.get("gptsovits_url", "http://127.0.0.1:9880"),
+            cache_dir=voice_cfg.get("cache_dir", "data/voice_cache"),
+        )
+    return _voice_client
+
+
+_asr_client = None
+
+
+def get_asr_client():
+    """Return the ASRClient singleton."""
+    global _asr_client
+    if _asr_client is None:
+        from speech.asr_client import ASRClient
+        voice_cfg = _config.get("voice", {})
+        _asr_client = ASRClient(
+            base_url=voice_cfg.get("funasr_url", "http://127.0.0.1:10095"),
+        )
+    return _asr_client
