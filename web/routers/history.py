@@ -27,13 +27,14 @@ class ResumeRequest(BaseModel):
 async def list_sessions(
     keyword: str = Query("", description="Search keyword in messages"),
     character: str = Query("", description="Filter by character name"),
+    text_id: str = Query("", description="Filter by text_id"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Paginated session list with optional keyword and character filters."""
     try:
-        return await storage.list_sessions(keyword, character, page, page_size)
+        return await storage.list_sessions(keyword, character, text_id, page, page_size)
     except Exception as exc:
         print(f"[history] List sessions failed: {exc}")
         raise HTTPException(500, f"List sessions failed: {exc}") from exc

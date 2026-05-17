@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchWithTimeout } from '../api/client'
+import { fetchWithTimeout, postJSON } from '../api/client'
 import { applyTheme, getTheme } from '../utils/theme'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
@@ -93,7 +93,7 @@ export default function SettingsPanel() {
         audio.onerror = () => setTesting(false)
         await audio.play()
       } else {
-        const res = await fetch('/api/tts/synthesize', {
+        const res = await fetch('/api/voice/synthesize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: '你好，这是音色测试。', voice: edgeTtsVoice }),
@@ -206,13 +206,7 @@ export default function SettingsPanel() {
                 try {
                   const body = { base_url: form.base_url, model: form.model }
                   if (form.api_key) body.api_key = form.api_key
-                  const res = await fetch('/api/settings/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                  })
-                  if (!res.ok) throw new Error('保存失败')
-                  const data = await res.json()
+                  const data = await postJSON('/api/settings/config', body)
                   setConfig(data)
                   setForm((f) => ({ ...f, api_key: '' }))
                 } catch (err) {

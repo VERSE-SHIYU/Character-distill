@@ -296,14 +296,6 @@ class TextManager:
         all_characters: list[dict[str, Any]] | None = None,
     ) -> str:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
-        import os as _os
-        import torch as _torch
-
-        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        _os.environ.setdefault("ACCELERATE_CPU_DEVICE", "true")
-        _os.environ.setdefault("ACCELERATE_USE_DEVICE_MAP", "false")
-        _torch.set_default_device("cpu")
-
         rag = RAGEngine(self._rag_config)
         rag.index(text, all_characters=all_characters)
         engine = ChatEngine(self._llm, rag, card, all_characters=all_characters)

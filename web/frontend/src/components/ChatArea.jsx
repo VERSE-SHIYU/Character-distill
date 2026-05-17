@@ -155,7 +155,7 @@ function ChatView() {
       try {
         const res = isCustom
           ? await fetch(`/api/voice/preview-audio/${selectedVoice}`)
-          : await fetch('/api/tts/synthesize', {
+          : await fetch('/api/voice/synthesize', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ text, voice: selectedVoice }),

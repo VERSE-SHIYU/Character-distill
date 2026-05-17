@@ -272,7 +272,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = ?
@@ -286,7 +286,7 @@ class SQLiteStore(StorageBase):
             raise
 
     async def list_sessions(
-        self, keyword: str, character: str, page: int, page_size: int
+        self, keyword: str, character: str, text_id: str, page: int, page_size: int
     ) -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)
@@ -298,6 +298,9 @@ class SQLiteStore(StorageBase):
         if character:
             where_clauses.append("c.name = ?")
             params.append(character)
+        if text_id:
+            where_clauses.append("c.text_id = ?")
+            params.append(text_id)
         if keyword:
             where_clauses.append(
                 """

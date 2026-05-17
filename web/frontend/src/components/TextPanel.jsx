@@ -77,7 +77,7 @@ export default function TextPanel() {
   useEffect(() => {
     texts.forEach(async (t) => {
       try {
-        const res = await fetchWithTimeout(`/api/distill/cards/${t.id}`)
+        const res = await fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
         if (res.ok) {
           const data = await res.json()
           setCardCounts((cc) => ({ ...cc, [t.id]: data.length }))
