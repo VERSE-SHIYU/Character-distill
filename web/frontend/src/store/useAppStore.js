@@ -105,20 +105,22 @@ const useAppStore = create((set, get) => ({
   recordingDuration: 0,
 
   _synthesizeVoiceReply: async (reply, charIdx) => {
-    const { sessionId, voiceSpeed } = get()
+    const { sessionId } = get()
     if (!reply || !sessionId) return
     try {
+      const selectedVoice = localStorage.getItem('tts_voice') || 'xiaoxiao'
       const res = await fetchWithTimeout('/api/voice/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, text: reply, speed: voiceSpeed }),
+        body: JSON.stringify({ text: reply, voice: selectedVoice }),
       })
       if (res.ok) {
-        const data = await res.json()
+        const blob = await res.blob()
+        const audio_url = URL.createObjectURL(blob)
         set((s) => {
           const msgs = [...s.messages]
           if (msgs[charIdx]?.role === 'char') {
-            msgs[charIdx] = { ...msgs[charIdx], audio_url: data.audio_url }
+            msgs[charIdx] = { ...msgs[charIdx], audio_url }
           }
           return { messages: msgs }
         })
@@ -373,7 +375,7 @@ const useAppStore = create((set, get) => ({
         return { messages: msgs, sending: false }
       })
 
-      if (voiceEnabled && voiceRefInfo?.exists) {
+      if (voiceEnabled) {
         const { messages: currentMsgs } = get()
         get()._synthesizeVoiceReply(data.reply, currentMsgs.length - 1)
       }

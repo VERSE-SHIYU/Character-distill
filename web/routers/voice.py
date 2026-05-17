@@ -40,7 +40,12 @@ def _write_voice_library(library: list[dict[str, Any]]) -> None:
 
 @router.get("/status")
 async def voice_status() -> dict[str, Any]:
-    return {"available": True, "preset_voices": list(VOICES.keys())}
+    return {
+        "available": True,
+        "preset_voices": list(VOICES.keys()),
+        "gptsovits": False,
+        "funasr": False,
+    }
 
 
 # ---- Voice list (presets + custom) ----

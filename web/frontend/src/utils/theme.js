@@ -1,19 +1,19 @@
 const STORAGE_KEY = 'charsim-theme'
 
-/** @returns {'light' | 'dark'} */
+/** @returns {'milktea' | 'ocean'} */
 export function getTheme() {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    return v === 'dark' ? 'dark' : 'light'
+    return v === 'ocean' ? 'ocean' : 'milktea'
   } catch {
-    return 'light'
+    return 'milktea'
   }
 }
 
-/** @param {'light' | 'dark'} theme */
+/** @param {'milktea' | 'ocean'} theme */
 export function applyTheme(theme) {
-  const t = theme === 'dark' ? 'dark' : 'light'
-  document.documentElement.setAttribute('data-theme', t)
+  const t = theme === 'ocean' ? 'ocean' : 'milktea'
+  document.documentElement.className = `theme-${t}`
   try {
     localStorage.setItem(STORAGE_KEY, t)
   } catch (err) {

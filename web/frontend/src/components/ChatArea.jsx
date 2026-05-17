@@ -74,6 +74,7 @@ function ChatView() {
   const listRef = useRef(null)
   const bottomRef = useRef(null)
   const cancelStreamRef = useRef(null)
+  const userScrolledUp = useRef(false)
 
   // ---- Avatar ----
   const [avatarUrl, setAvatarUrl] = useState(null)
@@ -181,9 +182,22 @@ function ChatView() {
     [],
   )
 
+  // Smart auto-scroll: only scroll down if user is already near bottom
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = listRef.current
+    if (!el) return
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (!userScrolledUp.current || isNearBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages])
+
+  const handleScroll = useCallback(() => {
+    const el = listRef.current
+    if (!el) return
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    userScrolledUp.current = dist > 80
+  }, [])
 
   const handleSend = useCallback(
     (text) => {
@@ -292,29 +306,41 @@ function ChatView() {
       )}
 
       {/* Messages */}
-      <div className="chat-messages" ref={listRef}>
+      <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
         {messages.map((msg, i) => {
           if (msg.role === 'summary') {
             return <SummaryBubble key={i} content={msg.content} />
           }
+
+          // Time divider: show if gap from previous message > 5 min
+          const prevMsg = i > 0 ? messages[i - 1] : null
+          const showTime = prevMsg && msg.timestamp && prevMsg.timestamp
+            ? (new Date(msg.timestamp) - new Date(prevMsg.timestamp)) > 5 * 60 * 1000
+            : false
+
           const isUser = msg.role === 'user'
           const isStreaming = sending && !isUser && i === messages.length - 1
           return (
-            <MessageBubble
-              key={i}
-              index={i}
-              isUser={isUser}
-              content={msg.content}
-              charName={charName}
-              avatarUrl={avatarUrl}
-              isStreaming={isStreaming}
-              onRevoke={isUser ? handleRevoke : null}
-              playTTS={playTTS}
-              isPlaying={ttsPlayingId === i}
-              audioUrl={msg.audio_url}
-              isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
-              onPlayAudio={playAudio}
-            />
+            <div key={i}>
+              {showTime && (
+                <div className="time-divider">{formatTime(msg.timestamp)}</div>
+              )}
+              <MessageBubble
+                index={i}
+                isUser={isUser}
+                content={msg.content}
+                charName={charName}
+                avatarUrl={avatarUrl}
+                userRole={userRole}
+                isStreaming={isStreaming}
+                onRevoke={isUser ? handleRevoke : null}
+                playTTS={playTTS}
+                isPlaying={ttsPlayingId === i}
+                audioUrl={msg.audio_url}
+                isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
+                onPlayAudio={playAudio}
+              />
+            </div>
           )
         })}
         <div ref={bottomRef} />
@@ -335,8 +361,20 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, content, charName, avatarUrl, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio }) {
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const h = d.getHours()
+  const m = d.getMinutes().toString().padStart(2, '0')
+  const ap = h < 12 ? '上午' : '下午'
+  const h12 = h % 12 || 12
+  return `${ap} ${h12}:${m}`
+}
+
+function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio }) {
   const [hovered, setHovered] = useState(false)
+
+  const userInitial = (userRole || '我').charAt(0)
 
   return (
     <div
@@ -344,10 +382,12 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, isStreamin
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {!isUser && (
+      {!isUser ? (
         <div className="chat-msg-avatar">
-          <Avatar name={charName} src={avatarUrl} size={32} />
+          <Avatar name={charName} src={avatarUrl} size={36} />
         </div>
+      ) : (
+        <div className="user-avatar-circle">{userInitial}</div>
       )}
       <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
         <span className="chat-bubble-text">
@@ -383,7 +423,7 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, isStreamin
           onClick={() => playTTS(content, index)}
           title={isPlaying ? '播放中' : '播放语音'}
         >
-          {isPlaying ? '⏳' : '\u{1F50A}'}
+          {isPlaying ? '\u{23F3}' : '\u{1F50A}'}
         </button>
       )}
     </div>
@@ -490,24 +530,42 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
 
   return (
     <div className="chat-input-bar">
+      {/* Voice placeholder */}
+      <button
+        type="button"
+        className="chat-input-voice-btn"
+        title="语音输入（暂未实装）"
+        onClick={() => {}}
+      >
+        {'\u{1F399}'}
+      </button>
+
       <textarea
         ref={taRef}
         className="chat-textarea"
         rows={1}
-        placeholder={disabled ? '等待回复中…' : '输入消息，Enter 发送，Shift+Enter 换行'}
+        placeholder={disabled ? '等待回复中…' : '输入消息…'}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value)
+          // Auto-resize
+          const ta = e.target
+          ta.style.height = 'auto'
+          ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
+        }}
         onKeyDown={handleKeyDown}
         disabled={disabled}
       />
+
       <button
         type="button"
-        className="chat-send-btn btn-primary"
+        className="chat-send-btn"
         disabled={disabled || !text.trim()}
         onClick={handleSubmit}
       >
-        {'\u{27A4}'}
+        发送
       </button>
+
       {showMic && (
         <button
           type="button"

@@ -72,6 +72,14 @@ def get_config() -> dict[str, Any]:
     return dict(_config)
 
 
+def reset_llm_and_dependents() -> None:
+    """Hot-reload: recreate LLM, Distiller, and TextManager singletons after config.yaml changes."""
+    global _llm, _distiller, _text_manager
+    _llm = LLMAdapter()
+    _distiller = Distiller(_llm)
+    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions)
+
+
 _tts_engine = None
 
 

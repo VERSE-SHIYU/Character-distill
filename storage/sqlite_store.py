@@ -63,8 +63,12 @@ class SQLiteStore(StorageBase):
 
             try:
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
-                migration_path = Path(__file__).with_name("migrations") / "001_init.sql"
+                migrations_dir = Path(__file__).with_name("migrations")
+                migration_path = migrations_dir / "001_init.sql"
                 migration_sql = migration_path.read_text(encoding="utf-8")
+                voice_migration_path = migrations_dir / "002_voice.sql"
+                wechat_migration_path = migrations_dir / "003_wechat.sql"
+                title_desc_migration_path = migrations_dir / "004_title_desc.sql"
             except OSError as exc:
                 print(f"[SQLiteStore] Read migration file failed: {exc}")
                 raise
@@ -74,6 +78,32 @@ class SQLiteStore(StorageBase):
                     await conn.execute("PRAGMA foreign_keys = ON;")
                     await conn.executescript(migration_sql)
                     await conn.commit()
+
+                    # Run 002_voice migration (ALTER TABLE may fail if column exists)
+                    if voice_migration_path.exists():
+                        try:
+                            voice_sql = voice_migration_path.read_text(encoding="utf-8")
+                            await conn.executescript(voice_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Voice migration failed: {exc}")
+
+                    # Run 003_wechat migration (CREATE TABLE IF NOT EXISTS)
+                    if wechat_migration_path.exists():
+                        wechat_sql = wechat_migration_path.read_text(encoding="utf-8")
+                        await conn.executescript(wechat_sql)
+                        await conn.commit()
+
+                    # Run 004_title_desc migration (ALTER TABLE may fail if column exists)
+                    if title_desc_migration_path.exists():
+                        try:
+                            title_desc_sql = title_desc_migration_path.read_text(encoding="utf-8")
+                            await conn.executescript(title_desc_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Title/desc migration failed: {exc}")
                 self._initialized = True
             except Exception as exc:
                 print(f"[SQLiteStore] Initialize database failed: {exc}")
@@ -92,21 +122,23 @@ class SQLiteStore(StorageBase):
         """Convert sqlite row to dict."""
         return dict(row) if row is not None else None
 
-    async def save_text(self, id: str, filename: str, content: str) -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "") -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
-                        char_count = excluded.char_count
+                        char_count = excluded.char_count,
+                        title = excluded.title,
+                        description = excluded.description
                     """,
-                    (id, filename, content, char_count),
+                    (id, filename, content, char_count, title, description),
                 )
                 await conn.commit()
             return await self.get_text(id) or {}
@@ -119,7 +151,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, content, char_count, created_at FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -134,7 +166,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT id, filename, content, char_count, created_at
+                    SELECT id, filename, title, description, content, char_count, created_at
                     FROM texts
                     ORDER BY created_at DESC
                     """
@@ -347,6 +379,68 @@ class SQLiteStore(StorageBase):
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete session failed: {exc}")
+            raise
+
+    async def update_session_voice_ref(self, card_id: str, voice_ref_json: str) -> None:
+        """Update voice_ref_json for all sessions of a card."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE sessions SET voice_ref_json = ?, updated_at = CURRENT_TIMESTAMP WHERE card_id = ?",
+                    (voice_ref_json, card_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update session voice_ref failed: {exc}")
+            raise
+
+    async def get_session_voice_ref(self, card_id: str) -> str | None:
+        """Get voice_ref_json from the newest session of a card."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT voice_ref_json FROM sessions WHERE card_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get session voice_ref failed: {exc}")
+            raise
+
+    # ---- WeChat user mapping ----
+
+    async def get_wechat_user(self, openid: str) -> dict | None:
+        """Get stored wechat user mapping."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT openid, session_id, card_id, created_at FROM wechat_users WHERE openid = ?",
+                    (openid,),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get wechat user failed: {exc}")
+            raise
+
+    async def save_wechat_user(self, openid: str, session_id: str, card_id: str) -> None:
+        """Upsert wechat user mapping."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO wechat_users (openid, session_id, card_id)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(openid) DO UPDATE SET
+                        session_id = excluded.session_id,
+                        card_id = excluded.card_id
+                    """,
+                    (openid, session_id, card_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save wechat user failed: {exc}")
             raise
 
     async def save_message(

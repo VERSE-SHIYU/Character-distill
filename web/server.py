@@ -17,6 +17,10 @@ _WEB_DIR = Path(__file__).resolve().parent
 if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
 
+import yaml
+from pathlib import Path as _Path
+from pydantic import BaseModel
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -31,7 +35,7 @@ from routers.history import router as history_router
 from routers.tts import router as tts_router
 from routers.voice import router as voice_router
 from routers.wechat import router as wechat_router
-from deps import get_config
+from deps import get_config, reset_llm_and_dependents
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
 _LEGACY_STATIC_DIR = _WEB_DIR / "static"
@@ -66,16 +70,52 @@ app.include_router(wechat_router)
 
 @app.get("/api/settings/config")
 def read_settings_config() -> dict[str, str]:
-    """Read-only LLM config for settings UI (edit config.yaml to change)."""
+    """Read LLM config for settings UI."""
     try:
         llm = get_config().get("llm", {})
         return {
             "base_url": str(llm.get("base_url", "")),
             "model": str(llm.get("model", "")),
+            "api_key": "***" if llm.get("api_key") else "",
         }
     except Exception as exc:
         print(f"[server] Read settings config failed: {exc}")
         raise HTTPException(500, "Read config failed") from exc
+
+
+class UpdateConfigRequest(BaseModel):
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+
+
+@app.post("/api/settings/config")
+def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
+    """Update LLM config at runtime and persist to config.yaml."""
+    try:
+        cfg = get_config()
+        llm = cfg.setdefault("llm", {})
+        if req.base_url is not None:
+            llm["base_url"] = req.base_url
+        if req.model is not None:
+            llm["model"] = req.model
+        if req.api_key is not None and req.api_key.strip():
+            llm["api_key"] = req.api_key.strip()
+
+        cfg_path = _REPO_ROOT / "config.yaml"
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+        reset_llm_and_dependents()
+
+        return {
+            "base_url": str(llm.get("base_url", "")),
+            "model": str(llm.get("model", "")),
+            "api_key": "***" if llm.get("api_key") else "",
+        }
+    except Exception as exc:
+        print(f"[server] Update config failed: {exc}")
+        raise HTTPException(500, f"Update config failed: {exc}") from exc
 
 
 # Legacy compat: keep old /api/identify, /api/distill, /api/chat, /api/reset

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import ErrorBox from './common/ErrorBox'
 import Loading from './common/Loading'
+import { fetchWithTimeout } from '../api/client'
 
-const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log']
+const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
 
 function extOf(name) {
@@ -14,21 +15,21 @@ function extOf(name) {
 function validateFile(file) {
   const ext = extOf(file.name)
   if (!ALLOWED_EXT.includes(ext)) {
-    return `\u4e0d\u652f\u6301\u7684\u683c\u5f0f\uff0c\u4ec5\u5141\u8bb8\uff1a${ALLOWED_EXT.join(' ')}`
+    return `不支持格式，仅允许：${ALLOWED_EXT.join(' ')}`
   }
   if (file.size > MAX_BYTES) {
-    return '\u6587\u4ef6\u8d85\u8fc7 100MB \u4e0a\u9650'
+    return '文件超过 100MB 上限'
   }
   return null
 }
 
 function formatCount(n) {
-  if (n == null) return '\u2014'
+  if (n == null) return '—'
   return Number(n).toLocaleString('zh-CN')
 }
 
 function formatTime(iso) {
-  if (!iso) return '\u2014'
+  if (!iso) return '—'
   try {
     return new Date(iso).toLocaleString('zh-CN', {
       year: 'numeric',
@@ -48,6 +49,7 @@ export default function TextPanel() {
   const error = useAppStore((s) => s.error)
   const loadTexts = useAppStore((s) => s.loadTexts)
   const uploadText = useAppStore((s) => s.uploadText)
+  const uploadProgress = useAppStore((s) => s.uploadProgress)
   const deleteText = useAppStore((s) => s.deleteText)
   const selectText = useAppStore((s) => s.selectText)
   const currentTextId = useAppStore((s) => s.currentTextId)
@@ -55,15 +57,38 @@ export default function TextPanel() {
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const isUploading = uploading || uploadProgress !== null
   const [localError, setLocalError] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [expandedId, setExpandedId] = useState(null)
+  const [cardCounts, setCardCounts] = useState({})
+
+  // Upload metadata modal state
+  const [pendingFile, setPendingFile] = useState(null)
+  const [metaTitle, setMetaTitle] = useState('')
+  const [metaDesc, setMetaDesc] = useState('')
+  const [metaTitleError, setMetaTitleError] = useState('')
 
   useEffect(() => {
     loadTexts()
   }, [loadTexts])
 
+  // Load card counts for each text
+  useEffect(() => {
+    texts.forEach(async (t) => {
+      try {
+        const res = await fetchWithTimeout(`/api/distill/cards/${t.id}`)
+        if (res.ok) {
+          const data = await res.json()
+          setCardCounts((cc) => ({ ...cc, [t.id]: data.length }))
+        }
+      } catch { /* ignore */ }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [texts])
+
   const handleFiles = useCallback(
-    async (fileList) => {
+    (fileList) => {
       if (!fileList?.length) return
       setLocalError(null)
       const file = fileList[0]
@@ -72,17 +97,37 @@ export default function TextPanel() {
         setLocalError(err)
         return
       }
-      setUploading(true)
-      try {
-        await uploadText(file)
-      } catch (e) {
-        setLocalError(e.message || '\u4e0a\u4f20\u5931\u8d25')
-      } finally {
-        setUploading(false)
-      }
+      setPendingFile(file)
+      setMetaTitle('')
+      setMetaDesc('')
+      setMetaTitleError('')
     },
-    [uploadText],
+    [],
   )
+
+  const handleConfirmUpload = useCallback(async () => {
+    if (!metaTitle.trim()) {
+      setMetaTitleError('请输入标题')
+      return
+    }
+    if (!pendingFile) return
+    setUploading(true)
+    setPendingFile(null)
+    try {
+      await uploadText(pendingFile, metaTitle.trim(), metaDesc.trim())
+    } catch (e) {
+      setLocalError(e.message || '上传失败')
+    } finally {
+      setUploading(false)
+    }
+  }, [pendingFile, metaTitle, metaDesc, uploadText])
+
+  const handleCancelUpload = useCallback(() => {
+    setPendingFile(null)
+    setMetaTitle('')
+    setMetaDesc('')
+    setMetaTitleError('')
+  }, [])
 
   const onDrop = (e) => {
     e.preventDefault()
@@ -92,13 +137,13 @@ export default function TextPanel() {
 
   const onDelete = async (e, id) => {
     e.stopPropagation()
-    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u6587\u672c\uff1f\u5173\u8054\u89d2\u8272\u5361\u4e0e\u4f1a\u8bdd\u5c06\u4e00\u5e76\u5220\u9664\u3002')) return
+    if (!window.confirm('确定删除该文本？关联角色卡与会话将一并删除。')) return
     setDeletingId(id)
     setLocalError(null)
     try {
       await deleteText(id)
     } catch (err) {
-      setLocalError(err.message || '\u5220\u9664\u5931\u8d25')
+      setLocalError(err.message || '删除失败')
     } finally {
       setDeletingId(null)
     }
@@ -109,9 +154,9 @@ export default function TextPanel() {
   return (
     <div className="text-panel panel">
       <header className="panel-header">
-        <h1 className="panel-title">{'\u6587\u672c\u7ba1\u7406'}</h1>
+        <h1 className="panel-title">文本管理</h1>
         <p className="panel-desc">
-          {'\u4e0a\u4f20\u5c0f\u8bf4\u6216\u5267\u672c\uff0c\u7528\u4e8e\u89d2\u8272\u8bc6\u522b\u4e0e\u84b8\u998f'}
+          上传小说或剧本，用于角色识别与蒸馏
         </p>
       </header>
 
@@ -120,19 +165,10 @@ export default function TextPanel() {
       )}
 
       <section
-        className={`text-upload-zone${dragOver ? ' drag-over' : ''}${uploading ? ' uploading' : ''}`}
-        onDragEnter={(e) => {
-          e.preventDefault()
-          setDragOver(true)
-        }}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setDragOver(true)
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault()
-          setDragOver(false)
-        }}
+        className={`text-upload-zone${dragOver ? ' drag-over' : ''}${isUploading ? ' uploading' : ''}`}
+        onDragEnter={(e) => { e.preventDefault(); setDragOver(true) }}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+        onDragLeave={(e) => { e.preventDefault(); setDragOver(false) }}
         onDrop={onDrop}
       >
         <input
@@ -140,36 +176,40 @@ export default function TextPanel() {
           type="file"
           className="text-upload-input"
           accept={ALLOWED_EXT.join(',')}
-          onChange={(e) => {
-            handleFiles(e.target.files)
-            e.target.value = ''
-          }}
+          onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
         />
         <div className="text-upload-icon">{'\u{1F4C4}'}</div>
-        <p className="text-upload-hint">{'\u62d6\u62fd\u6587\u4ef6\u5230\u6b64\u5904\uff0c\u6216'}</p>
+        <p className="text-upload-hint">拖拽文件到此处，或</p>
         <button
           type="button"
           className="btn-primary"
-          disabled={uploading}
+          disabled={isUploading}
           onClick={() => inputRef.current?.click()}
         >
-          {uploading ? '\u4e0a\u4f20\u4e2d\u2026' : '\u9009\u62e9\u6587\u4ef6\u4e0a\u4f20'}
+          {isUploading ? '上传中…' : '选择文件上传'}
         </button>
         <p className="text-upload-meta">
-          {`\u652f\u6301 ${ALLOWED_EXT.join(' ')}\uff0c\u5355\u6587\u4ef6\u6700\u5927 100MB`}
+          {`支持 ${ALLOWED_EXT.join(' ')}，单文件最大 100MB`}
         </p>
       </section>
 
+      {uploadProgress !== null && (
+        <div className="upload-progress">
+          <div className="progress-bar" style={{ width: `${uploadProgress}%` }} />
+          <span>{uploadProgress}% 上传中...</span>
+        </div>
+      )}
+
       <section className="text-list-section">
         <div className="text-list-head">
-          <h2 className="text-list-title">{'\u5df2\u5bfc\u5165\u6587\u672c'}</h2>
-          <span className="text-list-count">{`${texts.length} \u9879`}</span>
+          <h2 className="text-list-title">已导入文本</h2>
+          <span className="text-list-count">{`${texts.length} 项`}</span>
         </div>
 
         {loading && texts.length === 0 ? (
-          <Loading text={'\u52a0\u8f7d\u5217\u8868\u2026'} />
+          <Loading text="加载列表…" />
         ) : texts.length === 0 ? (
-          <p className="text-list-empty">{'\u6682\u65e0\u6587\u672c\uff0c\u8bf7\u5148\u4e0a\u4f20'}</p>
+          <p className="text-list-empty">暂无文本，请先上传</p>
         ) : (
           <ul className="text-list">
             {texts.map((t) => (
@@ -182,31 +222,135 @@ export default function TextPanel() {
                   className="text-list-main"
                   onClick={() => selectText(t.id)}
                 >
-                  <span className="text-list-filename" title={t.filename}>
-                    {t.filename || '\u672a\u547d\u540d'}
-                  </span>
-                  <span className="text-list-chars">
-                    {`${formatCount(t.char_count)} \u5b57`}
-                  </span>
-                  <span className="text-list-time">
-                    {formatTime(t.created_at)}
-                  </span>
+                  <div className="text-list-headline">
+                    <span className="text-list-filename" title={t.title || t.filename}>
+                      {t.title || t.filename || '未命名'}
+                    </span>
+                    {cardCounts[t.id] > 0 && (
+                      <span className="text-list-badge">{cardCounts[t.id]} 个角色</span>
+                    )}
+                  </div>
+                  <div className="text-list-meta">
+                    <span className="text-list-chars">
+                      {`${formatCount(t.char_count)} 字`}
+                    </span>
+                    <span className="text-list-time">
+                      {formatTime(t.created_at)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="text-list-expand-toggle"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setExpandedId(expandedId === t.id ? null : t.id)
+                    }}
+                    title={expandedId === t.id ? '收起预览' : '展开预览'}
+                  >
+                    {expandedId === t.id ? '▲' : '▼'}
+                  </button>
                 </button>
-                <button
-                  type="button"
-                  className="text-list-delete btn-ghost"
-                  disabled={deletingId === t.id}
-                  onClick={(e) => onDelete(e, t.id)}
-                  title={'\u5220\u9664'}
-                  aria-label={'\u5220\u9664'}
-                >
-                  {deletingId === t.id ? '\u2026' : '\u5220\u9664'}
-                </button>
+
+                {t.description && (
+                  <div className="text-list-desc">{t.description}</div>
+                )}
+
+                {expandedId === t.id && t.preview && (
+                  <div className="text-list-preview">
+                    <p className="text-list-preview-text">{t.preview}{t.char_count > 300 ? '…' : ''}</p>
+                    <p className="text-list-preview-meta">
+                      {`${formatCount(t.char_count)} 字 · 已导入 ${formatTime(t.created_at)}`}
+                    </p>
+                  </div>
+                )}
+
+                <div className="text-list-actions">
+                  <button
+                    type="button"
+                    className="btn-ghost text-list-action-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      selectText(t.id)
+                    }}
+                  >
+                    管理角色
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-list-action-btn text-list-action-danger"
+                    disabled={deletingId === t.id}
+                    onClick={(e) => onDelete(e, t.id)}
+                    title="删除"
+                  >
+                    {deletingId === t.id ? '…' : '删除'}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      {/* Upload metadata modal */}
+      {pendingFile && (
+        <div className="modal-overlay" onClick={handleCancelUpload}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="modal-title">填写文本信息</h2>
+            <p className="modal-file-hint">已选择：{pendingFile.name}</p>
+
+            <label className="modal-field">
+              <span className="modal-label">
+                故事标题 <span className="modal-required">*</span>
+              </span>
+              <input
+                type="text"
+                className={`modal-input${metaTitleError ? ' modal-input-error' : ''}`}
+                placeholder="请输入故事标题"
+                value={metaTitle}
+                onChange={(e) => {
+                  setMetaTitle(e.target.value)
+                  if (metaTitleError) setMetaTitleError('')
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleConfirmUpload()
+                }}
+                autoFocus
+              />
+              {metaTitleError && (
+                <span className="modal-field-error">{metaTitleError}</span>
+              )}
+            </label>
+
+            <label className="modal-field">
+              <span className="modal-label">描述/简介</span>
+              <textarea
+                className="modal-textarea"
+                placeholder="可选，简要描述故事背景或内容"
+                rows={3}
+                value={metaDesc}
+                onChange={(e) => setMetaDesc(e.target.value)}
+              />
+            </label>
+
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary modal-cancel-btn"
+                onClick={handleCancelUpload}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn-primary modal-confirm-btn"
+                onClick={handleConfirmUpload}
+              >
+                确认上传
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

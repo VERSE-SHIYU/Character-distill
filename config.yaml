@@ -16,3 +16,21 @@ distill:
 storage:
   type: "sqlite"
   path: "data/character_sim.db"
+
+voice:
+  enabled: false
+  gptsovits_url: "http://127.0.0.1:9880"
+  funasr_url: "http://127.0.0.1:10095"
+  ref_audio_min_seconds: 30
+  ref_audio_max_seconds: 60
+  default_speed: 1.0
+  cache_dir: "data/voice_cache"
+
+wechat:
+  enabled: false
+  corp_id: ""
+  agent_id: ""
+  secret: ""
+  token: ""
+  encoding_aes_key: ""
+  default_text_id: ""
