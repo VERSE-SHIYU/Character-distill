@@ -1,4 +1,9 @@
-"""Gradio 角色模拟器：蒸馏角色卡并与角色沉浸式对话。"""
+"""Gradio 角色模拟器：蒸馏角色卡并与角色沉浸式对话。
+
+.. deprecated::
+    此 Gradio 入口已废弃。请使用 FastAPI 服务器：``python -m web.server``
+    或 ``uvicorn web.server:app --host 0.0.0.0 --port 7860``。
+"""
 
 from __future__ import annotations
 

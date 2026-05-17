@@ -229,7 +229,7 @@ const useAppStore = create((set, get) => ({
   loadCards: async (textId) => {
     if (!textId) return
     try {
-      const res = await fetchWithTimeout(`/api/distill/cards/${textId}`)
+      const res = await fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
       const data = await res.json()
       set({ cards: data })
     } catch (err) {
@@ -430,7 +430,7 @@ const useAppStore = create((set, get) => ({
           return { messages: msgs, sending: false }
         })
 
-        if (voiceEnabled && voiceRefInfo?.exists && fullReply) {
+        if (voiceEnabled && fullReply) {
           const { messages: currentMsgs } = get()
           get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
         }

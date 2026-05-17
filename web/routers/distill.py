@@ -203,7 +203,7 @@ async def export_card(
     raise HTTPException(400, f"Unsupported export format: {format}")
 
 
-@router.get("/cards/{text_id}")
+@router.get("/cards/by-text/{text_id}")
 async def list_cards(
     text_id: str,
     storage: SQLiteStore = Depends(get_storage),

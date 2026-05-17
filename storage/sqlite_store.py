@@ -335,6 +335,7 @@ class SQLiteStore(StorageBase):
                         s.avatar_data,
                         s.created_at,
                         s.updated_at,
+                        c.text_id,
                         c.name AS character_name,
                         (
                             SELECT content

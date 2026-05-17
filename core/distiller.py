@@ -98,13 +98,7 @@ class Distiller:
         Returns:
             角色信息字典列表；解析反复失败时返回空列表并打印警告。
         """
-        import os as _os
         import torch as _torch
-
-        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        _os.environ.setdefault("ACCELERATE_CPU_DEVICE", "true")
-        _os.environ.setdefault("ACCELERATE_USE_DEVICE_MAP", "false")
-        _torch.set_default_device("cpu")
 
         excerpt = text[:10000]
         messages: list[dict[str, Any]] = [{"role": "user", "content": excerpt}]
@@ -209,13 +203,7 @@ class Distiller:
         Raises:
             ValueError: JSON 经截取与大括号提取后仍无法还原为 ``CharacterCard``。
         """
-        import os as _os
         import torch as _torch
-
-        _os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-        _os.environ.setdefault("ACCELERATE_CPU_DEVICE", "true")
-        _os.environ.setdefault("ACCELERATE_USE_DEVICE_MAP", "false")
-        _torch.set_default_device("cpu")
 
         all_chars = self.identify_characters(text)
         aliases: list[str] = []

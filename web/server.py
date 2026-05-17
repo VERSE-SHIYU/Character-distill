@@ -32,7 +32,6 @@ from routers.distill import router as distill_router
 from routers.chat import legacy_router as chat_legacy
 from routers.chat import router as chat_router
 from routers.history import router as history_router
-from routers.tts import router as tts_router
 from routers.voice import router as voice_router
 from routers.wechat import router as wechat_router
 from deps import get_config, reset_llm_and_dependents
@@ -63,7 +62,6 @@ app.include_router(text_router)
 app.include_router(distill_router)
 app.include_router(chat_router)
 app.include_router(history_router)
-app.include_router(tts_router)
 app.include_router(voice_router)
 app.include_router(wechat_router)
 
@@ -157,42 +155,6 @@ def serve_icons() -> FileResponse:
     path = _STATIC_DIR / "icons.svg"
     if not path.exists():
         raise HTTPException(404, "icons.svg not found")
-    return FileResponse(path)
-
-
-@app.get("/manifest.json")
-def serve_manifest() -> FileResponse:
-    """PWA manifest."""
-    path = _STATIC_DIR / "manifest.json"
-    if not path.exists():
-        raise HTTPException(404, "manifest.json not found")
-    return FileResponse(path)
-
-
-@app.get("/sw.js")
-def serve_sw() -> FileResponse:
-    """Service Worker."""
-    path = _STATIC_DIR / "sw.js"
-    if not path.exists():
-        raise HTTPException(404, "sw.js not found")
-    return FileResponse(path)
-
-
-@app.get("/icon-192.png")
-def serve_icon_192() -> FileResponse:
-    """PWA icon 192x192."""
-    path = _STATIC_DIR / "icon-192.png"
-    if not path.exists():
-        raise HTTPException(404, "icon-192.png not found")
-    return FileResponse(path)
-
-
-@app.get("/icon-512.png")
-def serve_icon_512() -> FileResponse:
-    """PWA icon 512x512."""
-    path = _STATIC_DIR / "icon-512.png"
-    if not path.exists():
-        raise HTTPException(404, "icon-512.png not found")
     return FileResponse(path)
 
 

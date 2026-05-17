@@ -45,10 +45,10 @@ class LLMAdapter:
         self._temperature: float = float(llm_cfg["temperature"])
         self._max_tokens: int = int(llm_cfg["max_tokens"])
 
-        api_key = os.getenv("DEEPSEEK_API_KEY")
+        api_key = llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
-            print("环境变量 DEEPSEEK_API_KEY 未设置，请复制 .env.example 为 .env 并填入密钥")
-            raise RuntimeError("missing DEEPSEEK_API_KEY")
+            print("未找到 API Key：请在设置页填写，或在 .env 中设置 DEEPSEEK_API_KEY")
+            raise RuntimeError("missing API key (config.yaml or DEEPSEEK_API_KEY)")
 
         try:
             self._client = OpenAI(api_key=api_key, base_url=self._base_url)

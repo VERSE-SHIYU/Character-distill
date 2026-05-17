@@ -26,15 +26,15 @@ except Exception as exc:
     raise
 
 _storage = SQLiteStore(str(_REPO_ROOT / _config["storage"]["path"]))
-_llm = LLMAdapter()
-_distiller = Distiller(_llm)
+_llm: LLMAdapter | None = None
+_distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
 
 # {session_id: {"engine": ChatEngine, "card": CharacterCard}}
 # Transitional: kept until chat_engine migrates to storage-backed history
 _sessions: dict[str, dict[str, Any]] = {}
 
-_text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions)
+_text_manager: TextManager | None = None
 
 
 def get_storage() -> SQLiteStore:
@@ -43,12 +43,18 @@ def get_storage() -> SQLiteStore:
 
 
 def get_llm() -> LLMAdapter:
-    """Return the LLMAdapter singleton."""
+    """Return the LLMAdapter singleton (lazy-init)."""
+    global _llm
+    if _llm is None:
+        _llm = LLMAdapter()
     return _llm
 
 
 def get_distiller() -> Distiller:
-    """Return the Distiller singleton."""
+    """Return the Distiller singleton (lazy-init)."""
+    global _distiller
+    if _distiller is None:
+        _distiller = Distiller(get_llm())
     return _distiller
 
 
@@ -63,7 +69,10 @@ def get_sessions() -> dict[str, dict[str, Any]]:
 
 
 def get_text_manager() -> TextManager:
-    """Return the TextManager singleton."""
+    """Return the TextManager singleton (lazy-init)."""
+    global _text_manager
+    if _text_manager is None:
+        _text_manager = TextManager(_storage, get_distiller(), get_llm(), _rag_config, _sessions)
     return _text_manager
 
 
