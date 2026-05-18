@@ -29,3 +29,4 @@ class CharacterCard(BaseModel):
     inner_tensions: list[str]    # 1-3个内在矛盾
     background: str              # 背景摘要
     first_message: str = ""      # 角色开场白
+    dialogue_examples: list[str] = []   # 2-3轮原文对话示例，体现角色说话风格
