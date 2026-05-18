@@ -112,7 +112,7 @@ const useAppStore = create((set, get) => ({
       const res = await fetchWithTimeout('/api/voice/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: reply, voice: selectedVoice }),
+        body: JSON.stringify({ text: reply, voice: selectedVoice, card_id: get().currentCard?.id || '' }),
       })
       if (res.ok) {
         const blob = await res.blob()

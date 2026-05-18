@@ -10,14 +10,18 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from deps import get_tts_engine
+from deps import get_storage, get_tts_engine, get_voice_client
 from speech.edge_tts_client import EdgeTTSEngine, VOICES
+from speech.voice_clone import VoiceCloneClient
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
 VOICE_LIBRARY_DIR = Path("data/voice_library")
 VOICE_LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
 VOICE_LIBRARY_META = VOICE_LIBRARY_DIR / "voices.json"
+
+REF_AUDIO_DIR = Path("data/ref_audio")
+REF_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _read_voice_library() -> list[dict[str, Any]]:
@@ -39,12 +43,15 @@ def _write_voice_library(library: list[dict[str, Any]]) -> None:
 # ---- Status ----
 
 @router.get("/status")
-async def voice_status() -> dict[str, Any]:
+async def voice_status(
+    voice_client: VoiceCloneClient = Depends(get_voice_client),
+) -> dict[str, Any]:
     import yaml
 
     funasr_ok = False
     try:
-        cfg = yaml.safe_load(open("config.yaml"))
+        _repo_root = Path(__file__).resolve().parent.parent.parent
+        cfg = yaml.safe_load(open(_repo_root / "config.yaml"))
         funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
         from speech.funasr_client import FunASRClient
         funasr_client = FunASRClient(url=funasr_url)
@@ -52,10 +59,16 @@ async def voice_status() -> dict[str, Any]:
     except Exception:
         pass
 
+    gptsovits_ok = False
+    try:
+        gptsovits_ok = await voice_client.health_check()
+    except Exception:
+        pass
+
     return {
         "available": True,
         "preset_voices": list(VOICES.keys()),
-        "gptsovits": False,
+        "gptsovits": gptsovits_ok,
         "funasr": funasr_ok,
     }
 
@@ -157,42 +170,124 @@ async def preview_audio(
 async def voice_synthesize(
     request: Request,
     engine: EdgeTTSEngine = Depends(get_tts_engine),
+    storage = Depends(get_storage),
+    voice_client: VoiceCloneClient = Depends(get_voice_client),
 ) -> Response:
-    """Edge TTS synthesis. Accepts JSON body with text + optional voice key."""
+    """Synthesize speech. Uses GPT-SoVITS if ref audio exists, otherwise Edge TTS."""
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(400, "JSON body required")
 
     text = body.get("text", "")
-    voice_key = body.get("voice", "xiaoxiao")
     if not text:
         raise HTTPException(400, "text is required")
 
+    voice_key = body.get("voice", "xiaoxiao")
+    card_id = body.get("card_id", "")
+
+    # Try GPT-SoVITS if card has reference audio
+    if card_id:
+        try:
+            ref_json_str = await storage.get_session_voice_ref(card_id)
+            if ref_json_str:
+                ref_data = json.loads(ref_json_str)
+                ref_path = ref_data.get("path", "")
+                if ref_path and Path(ref_path).exists():
+                    if await voice_client.health_check():
+                        cache_path = await voice_client.synthesize(
+                            text=text,
+                            ref_audio_path=ref_path,
+                            prompt_text=ref_data.get("ref_text", ""),
+                        )
+                        audio = Path(cache_path).read_bytes()
+                        return Response(content=audio, media_type="audio/wav")
+                    else:
+                        print("[voice] GPT-SoVITS not available, falling back to Edge TTS")
+        except Exception as exc:
+            print(f"[voice] GPT-SoVITS synthesis failed, falling back to Edge TTS: {exc}")
+
+    # Fallback: Edge TTS
     voice_name = VOICES.get(voice_key, VOICES["xiaoxiao"])
     audio = await engine.synthesize(text, voice=voice_name)
     return Response(content=audio, media_type="audio/mpeg")
 
 
-# ---- Reference audio stubs (GPT-SoVITS not yet implemented) ----
+# ---- Reference audio for GPT-SoVITS voice cloning ----
 
 @router.get("/ref-audio/{card_id}")
-async def get_ref_audio(card_id: str) -> JSONResponse:
-    return JSONResponse(status_code=501, content={"detail": "Not implemented"})
+async def get_ref_audio(
+    card_id: str,
+    storage = Depends(get_storage),
+) -> JSONResponse:
+    """Get reference audio info for a character card."""
+    try:
+        ref_json_str = await storage.get_session_voice_ref(card_id)
+        if ref_json_str:
+            ref_data = json.loads(ref_json_str)
+            if ref_data.get("path") and Path(ref_data["path"]).exists():
+                return JSONResponse(ref_data)
+        return JSONResponse({"exists": False})
+    except Exception as exc:
+        print(f"[voice] Get ref audio failed: {exc}")
+        return JSONResponse({"exists": False})
 
 
 @router.post("/ref-audio/upload")
 async def upload_ref_audio(
-    file: UploadFile = File(...),
     card_id: str = Form(...),
-    prompt_text: str = Form(""),
+    ref_text: str = Form(""),
+    file: UploadFile = File(...),
+    storage = Depends(get_storage),
 ) -> JSONResponse:
-    return JSONResponse(status_code=501, content={"detail": "Not implemented"})
+    """Upload a reference audio file and bind it to a character card."""
+    ext = Path(file.filename).suffix.lower() if file.filename else ""
+    if ext not in {".wav", ".mp3", ".flac", ".ogg", ".m4a"}:
+        raise HTTPException(400, f"不支持的音频格式: {ext}")
+
+    filename = f"{card_id}_{uuid.uuid4().hex[:8]}{ext}"
+    filepath = REF_AUDIO_DIR / filename
+
+    import aiofiles
+    async with aiofiles.open(filepath, "wb") as f:
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(400, "音频文件过大，最大支持 20MB")
+        await f.write(content)
+
+    ref_json = json.dumps({
+        "path": str(filepath),
+        "filename": file.filename,
+        "ref_text": ref_text,
+        "exists": True,
+    }, ensure_ascii=False)
+
+    try:
+        await storage.update_session_voice_ref(card_id, ref_json)
+    except Exception as exc:
+        print(f"[voice] Save ref audio metadata failed: {exc}")
+
+    return JSONResponse({"ok": True, "path": str(filepath), "ref_text": ref_text, "exists": True})
 
 
 @router.delete("/ref-audio/{card_id}")
-async def delete_ref_audio(card_id: str) -> JSONResponse:
-    return JSONResponse(status_code=501, content={"detail": "Not implemented"})
+async def delete_ref_audio(
+    card_id: str,
+    storage = Depends(get_storage),
+) -> JSONResponse:
+    """Delete reference audio for a character card."""
+    try:
+        ref_json_str = await storage.get_session_voice_ref(card_id)
+        if ref_json_str:
+            ref_data = json.loads(ref_json_str)
+            filepath = ref_data.get("path")
+            if filepath and Path(filepath).exists():
+                Path(filepath).unlink()
+            await storage.update_session_voice_ref(card_id, "")
+        return JSONResponse({"ok": True})
+    except Exception as exc:
+        print(f"[voice] Delete ref audio failed: {exc}")
+        raise HTTPException(500, str(exc))
 
 
 # ---- ASR (FunASR via WebSocket) ----
@@ -208,7 +303,8 @@ async def speech_to_text(
 
     import yaml
 
-    cfg = yaml.safe_load(open("config.yaml"))
+    _repo_root = Path(__file__).resolve().parent.parent.parent
+    cfg = yaml.safe_load(open(_repo_root / "config.yaml"))
     funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
 
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
@@ -237,7 +333,11 @@ async def speech_to_text(
         with open(tmp_wav_path, "rb") as f:
             wav_data = f.read()
 
-        pcm_data = wav_data[44:] if wav_data[:4] == b"RIFF" else wav_data
+        import io as _io
+        import wave as _wave
+        _buf = _io.BytesIO(wav_data)
+        with _wave.open(_buf, "rb") as _wf:
+            pcm_data = _wf.readframes(_wf.getnframes())
 
         from speech.funasr_client import FunASRClient
         client = FunASRClient(url=funasr_url)

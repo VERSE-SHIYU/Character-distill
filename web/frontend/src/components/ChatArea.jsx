@@ -158,7 +158,7 @@ function ChatView() {
           : await fetch('/api/voice/synthesize', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text, voice: selectedVoice }),
+              body: JSON.stringify({ text, voice: selectedVoice, card_id: currentCard?.id || '' }),
             })
         if (!res.ok) throw new Error(`TTS ${res.status}`)
         const blob = await res.blob()
