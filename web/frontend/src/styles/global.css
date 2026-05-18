@@ -3348,6 +3348,26 @@ select.settings-input {
   border-radius: 20px;
 }
 
+/* Voice option layout: label fills, preview button right-aligned */
+.voice-option-label {
+  flex: 1;
+}
+
+.voice-preview-btn {
+  margin-left: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.voice-list-radio {
+  flex-shrink: 0;
+}
+
+.voice-list-radio input[type="radio"] {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 /* Toggle switch */
 .voice-toggle-row {
   display: flex;

@@ -134,6 +134,27 @@ const useAppStore = create((set, get) => ({
     }
   },
 
+  uploadCustomVoice: async (file, name) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('name', name)
+    const res = await fetchWithTimeout('/api/voice/upload', {
+      method: 'POST',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '上传失败' }))
+      throw new Error(err.detail || '上传失败')
+    }
+    await get().loadVoices()
+    return res.json()
+  },
+
+  deleteCustomVoice: async (voiceId) => {
+    await fetchWithTimeout(`/api/voice/${voiceId}`, { method: 'DELETE' })
+    await get().loadVoices()
+  },
+
   setVoiceEnabled: (bool) => set({ voiceEnabled: bool }),
   setVoiceSpeed: (speed) => set({ voiceSpeed: speed }),
 
