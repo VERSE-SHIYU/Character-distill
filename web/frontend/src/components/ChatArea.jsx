@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { saveAvatar, getAvatar } from '../store/db'
+import { compressImage } from '../utils/image'
 import Avatar from './common/Avatar'
 
 export default function ChatArea() {
@@ -119,9 +120,8 @@ function ChatView() {
     const file = e.target.files?.[0]
     if (!file || !cardId) return
     await saveAvatar(cardId, file)
-    const reader = new FileReader()
-    reader.onload = () => setCardAvatar(cardId, reader.result)
-    reader.readAsDataURL(file)
+    const dataUrl = await compressImage(file, 200)
+    setCardAvatar(cardId, dataUrl)
   }
 
   // ---- Global audio player for voice bubbles ----

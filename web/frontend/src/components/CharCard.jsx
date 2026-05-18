@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { saveAvatar, getAvatar } from '../store/db'
+import { compressImage } from '../utils/image'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -314,9 +315,8 @@ function CardDetail({ card, textId }) {
       const file = e.target.files?.[0]
       if (!file) return
       await saveAvatar(card.id, file)
-      const reader = new FileReader()
-      reader.onload = () => setCardAvatar(card.id, reader.result)
-      reader.readAsDataURL(file)
+      const dataUrl = await compressImage(file, 200)
+      setCardAvatar(card.id, dataUrl)
     },
     [card.id, setCardAvatar],
   )

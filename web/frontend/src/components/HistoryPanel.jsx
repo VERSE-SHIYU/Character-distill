@@ -70,6 +70,8 @@ export default function HistoryPanel() {
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [collapsedGroups, setCollapsedGroups] = useState({})
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(new Set())
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -211,6 +213,29 @@ export default function HistoryPanel() {
     }
   }
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return
+    if (!window.confirm(`确定删除选中的 ${selectedIds.size} 条会话？`)) return
+    for (const id of selectedIds) {
+      try {
+        await fetchWithTimeout(`/api/history/${id}`, { method: 'DELETE' })
+      } catch (err) {
+        console.error('[HistoryPanel] batch delete failed:', err)
+      }
+    }
+    setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)))
+    setSelectedIds(new Set())
+    setSelectMode(false)
+  }
+
   const toggleGroup = (textId) => {
     setCollapsedGroups((prev) => ({ ...prev, [textId]: !prev[textId] }))
   }
@@ -265,7 +290,23 @@ export default function HistoryPanel() {
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
-        {items.length > 0 && (
+        <button
+          type="button"
+          className="btn-secondary btn-sm"
+          onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()) }}
+        >
+          {selectMode ? '取消' : '多选'}
+        </button>
+        {selectMode && selectedIds.size > 0 && (
+          <button
+            type="button"
+            className="btn-danger-sm"
+            onClick={handleBatchDelete}
+          >
+            删除 ({selectedIds.size})
+          </button>
+        )}
+        {!selectMode && items.length > 0 && (
           <button
             type="button"
             className="btn-danger-sm"
@@ -294,7 +335,16 @@ export default function HistoryPanel() {
                 {!collapsedGroups[textId] && (
                 <ul className="history-list">
                   {sessionList.map((it) => (
-                    <li key={it.id} className="history-swipe-wrapper">
+                    <li key={it.id} className={`history-swipe-wrapper${selectMode ? ' select-mode' : ''}`}>
+                      {selectMode && (
+                        <input
+                          type="checkbox"
+                          className="history-checkbox"
+                          checked={selectedIds.has(it.id)}
+                          onChange={() => toggleSelect(it.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      )}
                       <div className="history-swipe-actions">
                         <button
                           type="button"
@@ -310,7 +360,7 @@ export default function HistoryPanel() {
                       <button
                         type="button"
                         className="history-item"
-                        onClick={() => openDetail(it.id)}
+                        onClick={() => selectMode ? toggleSelect(it.id) : openDetail(it.id)}
                       >
                         <Avatar name={it.character_name || '?'} size={40} />
                         <div className="history-item-body">
