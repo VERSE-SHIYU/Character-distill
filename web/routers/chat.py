@@ -200,7 +200,7 @@ async def _do_reset(
 
 # ---- New routes ----
 
-@router.post("/send")
+@router.post("/send", response_model=None)
 async def send_message(
     req: ChatRequest,
     storage: SQLiteStore = Depends(get_storage),
