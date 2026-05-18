@@ -202,13 +202,14 @@ class Distiller:
 
         return focused if focused else text[: self._max_input_chars]
 
-    def distill(self, text: str, character_name: str, rag: RAGEngine | None = None) -> CharacterCard:
+    def distill(self, text: str, character_name: str, rag: RAGEngine | None = None, all_chars: list[dict[str, Any]] | None = None) -> CharacterCard:
         """将文本截断后蒸馏指定角色的 ``CharacterCard``。
 
         Args:
             text: 原始叙事文本。
             character_name: 目标角色姓名。
             rag: 可选 RAG 引擎。传入后使用语义检索替代关键词截取。
+            all_chars: 预识别的角色列表。传入后跳过 ``identify_characters`` 调用。
 
         Returns:
             校验通过的 ``CharacterCard``。
@@ -218,15 +219,16 @@ class Distiller:
         """
         import torch as _torch
 
-        all_chars = self.identify_characters(text)
+        chars = all_chars if all_chars is not None else self.identify_characters(text)
         aliases: list[str] = []
-        for c in all_chars:
+        for c in chars:
             if c["name"] == character_name:
                 aliases = c.get("aliases", [])
                 break
 
         if rag is not None and rag.collection is not None:
-            chunks = rag.query(character_name, character_name=character_name, top_k=20)
+            query_text = f"角色{character_name}的性格特点、言行举止、重要经历、人际关系、说话风格"
+            chunks = rag.query(query_text, character_name=character_name, top_k=20)
             focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
         else:
             focused_text = self._extract_character_paragraphs(text, character_name, aliases)
@@ -274,7 +276,7 @@ class Distiller:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
 
-    def distill_stream(self, text: str, character_name: str, rag: RAGEngine | None = None):
+    def distill_stream(self, text: str, character_name: str, rag: RAGEngine | None = None, all_chars: list[dict[str, Any]] | None = None):
         """流式蒸馏，按增量产出文本片段（yield token）。
 
         复用与 ``distill`` 相同的角色识别 + 段落提取逻辑，
@@ -282,15 +284,16 @@ class Distiller:
         """
         import torch as _torch
 
-        all_chars = self.identify_characters(text)
+        chars = all_chars if all_chars is not None else self.identify_characters(text)
         aliases: list[str] = []
-        for c in all_chars:
+        for c in chars:
             if c["name"] == character_name:
                 aliases = c.get("aliases", [])
                 break
 
         if rag is not None and rag.collection is not None:
-            chunks = rag.query(character_name, character_name=character_name, top_k=20)
+            query_text = f"角色{character_name}的性格特点、言行举止、重要经历、人际关系、说话风格"
+            chunks = rag.query(query_text, character_name=character_name, top_k=20)
             focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
         else:
             focused_text = self._extract_character_paragraphs(text, character_name, aliases)

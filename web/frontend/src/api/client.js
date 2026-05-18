@@ -38,7 +38,7 @@ export async function postJSON(url, body, ms) {
   return res.json()
 }
 
-export function streamSSE(url, body, onToken, onDone, onError) {
+export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
   const controller = new AbortController()
 
   ;(async () => {
@@ -84,6 +84,9 @@ export function streamSSE(url, body, onToken, onDone, onError) {
             }
             if (payload.token !== undefined) {
               onToken(payload.token)
+            }
+            if (payload.status !== undefined && onStatus) {
+              onStatus(payload.status)
             }
           } catch { /* skip malformed lines */ }
         }

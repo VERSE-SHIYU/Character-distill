@@ -25,6 +25,7 @@ const useAppStore = create((set, get) => ({
   identifiedChars: [],
   distilling: false,
   distillTokenCount: 0,
+  distillStatus: '',
   identifying: false,
 
   messages: [],
@@ -304,13 +305,13 @@ const useAppStore = create((set, get) => ({
   },
 
   distillCharacter: (textId, characterName, force = false) => {
-    set({ distilling: true, distillTokenCount: 0, error: null })
+    set({ distilling: true, distillTokenCount: 0, distillStatus: '', error: null })
 
     const cancel = streamSSE(
       '/api/distill/run_stream',
       { text_id: textId, character_name: characterName, force },
       (token) => {
-        set((s) => ({ distillTokenCount: s.distillTokenCount + token.length }))
+        set((s) => ({ distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }))
       },
       (payload) => {
         set((s) => {
@@ -325,12 +326,20 @@ const useAppStore = create((set, get) => ({
               : [],
             distilling: false,
             distillTokenCount: 0,
+            distillStatus: '',
           }
         })
       },
       (err) => {
         console.error('[store] distillCharacter stream failed:', err)
-        set({ error: err.message, distilling: false, distillTokenCount: 0 })
+        set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '' })
+      },
+      (status) => {
+        const statusMap = {
+          identifying: '正在识别角色…',
+          distilling: '正在蒸馏…',
+        }
+        set({ distillStatus: statusMap[status] || status })
       },
     )
 

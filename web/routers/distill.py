@@ -124,8 +124,9 @@ async def distill_by_text_id(
     content = text_rec["content"]
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
-    # Build RAG for semantic paragraph retrieval
+    # Build RAG for semantic paragraph retrieval (pre-filtered to target character)
     rag = None
+    all_chars: list[dict[str, Any]] | None = None
     existing_cards = await storage.list_cards(req.text_id)
     if not req.force and any(c["name"] == char_name for c in existing_cards):
         pass  # cached — no RAG needed
@@ -135,18 +136,37 @@ async def distill_by_text_id(
             all_characters: list[dict[str, Any]] = [
                 {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
             ]
+            # Pre-filter text to only paragraphs mentioning target character
+            char_terms = [char_name]
+            for c in all_chars:
+                if c["name"] == char_name:
+                    char_terms.extend(c.get("aliases", []))
+                    break
+            paragraphs = content.split("\n\n")
+            filtered_paras = [p for p in paragraphs if any(t in p for t in char_terms)]
+            text_for_rag = "\n\n".join(filtered_paras) if filtered_paras else content
             rag = RAGEngine(rag_config)
-            rag.index(content, all_characters=all_characters)
+            rag.index(text_for_rag, all_characters=all_characters)
         except Exception as exc:
             print(f"[distill] RAG build failed (falling back to keyword): {exc}")
 
     try:
-        return await text_manager.get_or_distill(req.text_id, char_name, force=req.force, rag=rag)
+        return await text_manager.get_or_distill(
+            req.text_id, char_name, force=req.force, rag=rag, all_chars=all_chars
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
         raise HTTPException(500, f"Distill failed: {exc}") from exc
+
+
+def _next_piece(stream_obj):
+    """Read next token from a generator; returns (token, done). Thread-safe."""
+    try:
+        return next(stream_obj), False
+    except StopIteration:
+        return "", True
 
 
 @router.post("/run_stream")
@@ -167,31 +187,60 @@ async def distill_stream(
     content = text_rec["content"]
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
-    # Build RAG for semantic paragraph retrieval
-    rag = None
-    try:
-        all_chars = await asyncio.to_thread(distiller.identify_characters, content)
-        all_characters: list[dict[str, Any]] = [
-            {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
-        ]
-        rag = RAGEngine(rag_config)
-        rag.index(content, all_characters=all_characters)
-    except Exception as exc:
-        print(f"[distill] RAG build failed (falling back to keyword): {exc}")
-
     async def _event_gen():
-        full = ""
+        yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
+
+        # Identify all characters once
+        all_chars: list[dict[str, Any]] = []
         try:
-            stream = await asyncio.to_thread(
-                distiller.distill_stream, content, char_name, rag
-            )
-            for piece in stream:
-                full += piece
-                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+            all_chars = await asyncio.to_thread(distiller.identify_characters, content)
         except Exception as exc:
-            print(f"[distill] Stream failed: {exc}")
-            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
-            return
+            print(f"[distill] Identify failed (falling back): {exc}")
+
+        # Launch RAG build in background (don't block distillation on embedding)
+        rag_future = None
+        try:
+            def _build_rag():
+                char_terms = [char_name]
+                for c in all_chars:
+                    if c["name"] == char_name:
+                        char_terms.extend(c.get("aliases", []))
+                        break
+                paragraphs = content.split("\n\n")
+                filtered_paras = [p for p in paragraphs if any(t in p for t in char_terms)]
+                text_for_rag = "\n\n".join(filtered_paras) if filtered_paras else content
+                all_characters = [
+                    {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
+                ]
+                r = RAGEngine(rag_config)
+                r.index(text_for_rag, all_characters=all_characters)
+                return r
+            rag_future = asyncio.get_running_loop().run_in_executor(None, _build_rag)
+        except Exception as exc:
+            print(f"[distill] RAG build launch failed: {exc}")
+
+        # Start distillation immediately with keyword-based extraction (fast path)
+        full = ""
+        stream = distiller.distill_stream(content, char_name, None, all_chars or None)
+        while True:
+            try:
+                piece, done = await asyncio.to_thread(_next_piece, stream)
+            except Exception as exc:
+                print(f"[distill] Stream failed: {exc}")
+                yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+                return
+            if done:
+                break
+            full += piece
+            yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+
+        # Collect RAG result (may already be done)
+        rag = None
+        if rag_future is not None:
+            try:
+                rag = rag_future.result(timeout=5)
+            except Exception as exc:
+                print(f"[distill] RAG build not ready, session will build its own: {exc}")
 
         # Parse full response
         stripped = full.strip()
@@ -218,9 +267,11 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False)}\n\n"
             return
 
-        # Persist card + create session
+        # Persist card + create session (reuse existing RAG)
         try:
-            result = await text_manager.save_distilled_card(req.text_id, card)
+            result = await text_manager.save_distilled_card(
+                req.text_id, card, rag=rag, all_chars=all_chars
+            )
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"

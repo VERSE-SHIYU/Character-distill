@@ -221,6 +221,7 @@ class TextManager:
     async def get_or_distill(
         self, text_id: str, character_name: str, force: bool = False,
         rag: "RAGEngine | None" = None,
+        all_chars: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill."""
         text_rec = await self._storage.get_text(text_id)
@@ -231,14 +232,12 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id)
         card: CharacterCard | None = None
         card_id: str | None = None
-        is_cached = False
         if not force:
             for c in existing_cards:
                 if c["name"] == character_name:
                     card_id = c["id"]
                     try:
                         card = CharacterCard.model_validate_json(c["card_json"])
-                        is_cached = True
                     except Exception as exc:
                         print(f"[TextManager] Parse cached card failed: {exc}")
                         card = None
@@ -247,7 +246,7 @@ class TextManager:
         if card is None:
             try:
                 card = await asyncio.to_thread(
-                    self._distiller.distill, content, character_name, rag
+                    self._distiller.distill, content, character_name, rag, all_chars
                 )
             except Exception as exc:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
@@ -285,11 +284,11 @@ class TextManager:
                 print(f"[TextManager] Opening variation failed, using original: {exc}")
 
         try:
-            all_characters: list[dict[str, Any]] = [
+            all_characters = all_chars if all_chars else [
                 {"name": c["name"], "aliases": []} for c in existing_cards
             ]
             session_id = await asyncio.to_thread(
-                self._create_session, content, card, all_characters
+                self._create_session, content, card, all_characters, rag
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -306,21 +305,28 @@ class TextManager:
         return result
 
     async def save_distilled_card(
-        self, text_id: str, card: CharacterCard
+        self, text_id: str, card: CharacterCard,
+        rag: RAGEngine | None = None,
+        all_chars: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Persist a freshly distilled card and create its chat session."""
+        """Persist a freshly distilled card and create its chat session.
+
+        Args:
+            rag: Pre-built RAG engine. Reused if provided, avoiding duplicate indexing.
+            all_chars: Pre-identified character list with aliases for metadata tagging.
+        """
         card_id = uuid.uuid4().hex[:12]
         await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json())
 
         text_rec = await self._storage.get_text(text_id)
         content = text_rec["content"]
-        existing_cards = await self._storage.list_cards(text_id)
-        all_characters: list[dict[str, Any]] = [
-            {"name": c["name"], "aliases": []} for c in existing_cards
-        ]
+
+        if all_chars is None:
+            existing_cards = await self._storage.list_cards(text_id)
+            all_chars = [{"name": c["name"], "aliases": []} for c in existing_cards]
 
         session_id = await asyncio.to_thread(
-            self._create_session, content, card, all_characters
+            self._create_session, content, card, all_chars, rag
         )
         await self._storage.save_session(session_id, card_id, "", "")
 
@@ -346,10 +352,12 @@ class TextManager:
         text: str,
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
+        rag: RAGEngine | None = None,
     ) -> str:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
-        rag = RAGEngine(self._rag_config)
-        rag.index(text, all_characters=all_characters)
+        if rag is None:
+            rag = RAGEngine(self._rag_config)
+            rag.index(text, all_characters=all_characters)
         engine = ChatEngine(self._llm, rag, card, all_characters=all_characters, summary_threshold=self._summary_threshold)
         session_id = hashlib.md5(
             f"{card.name}_{time.time()}".encode()
