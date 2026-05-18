@@ -1,6 +1,7 @@
 distill:
   max_input_chars: 80000
 llm:
+  # api_key removed for security
   base_url: https://api.deepseek.com
   max_tokens: 4096
   model: deepseek-v4-pro

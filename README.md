@@ -20,13 +20,23 @@
 - **自定义音色库**：上传人声样本创建私人音色，管理/试听/删除
 - **音色克隆**：GPT-SoVITS 参考音频上传，角色语音回复
 - **语音输入**：FunASR 语音识别，按住录音发送消息
-- **毛玻璃 UI**：全局 glassmorphism 设计，浅色/深色主题
+- **三套精炼主题**：奶油抹茶（暖杏）、蓝色海盐（蓝绿潮汐）、樱花薰衣草（淡雅粉紫），侧边栏和设置面板一键切换，刷新保持
 - **PWA 支持**：manifest + Service Worker，可安装到桌面
 - **面包屑导航**：侧边栏实时显示当前位置路径
 - **文件缓存**：TTS 合成结果 MD5 缓存，命中 0.01s（110x 加速）
 - **SQLite 持久化**：角色卡、对话历史、文本库、音色引用全持久化
 
 ## 快速开始
+
+### 方式一：一键启动（推荐）
+
+```batch
+# 编辑 start_all.bat，确认 GPT-SoVITS 路径与你实际安装位置一致
+# 双击 start_all.bat 即可启动全部服务
+# 按 Ctrl+C 停止，或双击 stop_all.bat 清理所有进程
+```
+
+### 方式二：命令行手动启动
 
 ```bash
 git clone <repo>
@@ -101,6 +111,7 @@ Character-distill/
 │   │   │   │   ├── HistoryPanel.jsx    # 历史会话
 │   │   │   │   ├── SettingsPanel.jsx   # 设置（主题+音色+音色克隆）
 │   │   │   │   ├── VoicePanel.jsx      # 音色管理（上传+试听+删除）
+│   │   │   │   ├── ThemeSwitcher.jsx   # 三主题切换（侧边栏+设置复用）
 │   │   │   │   ├── RoleSetupModal.jsx  # 对话前身份设定模态框
 │   │   │   │   └── common/             # Avatar, Loading, ErrorBox
 │   │   │   ├── store/
@@ -132,6 +143,8 @@ Character-distill/
 │   ├── voice_cache/            # 音色克隆缓存
 │   ├── voice_library/          # 自定义音色库
 │   └── voices/                 # 参考音频
+├── start_all.bat               # 一键启动 (GPT-SoVITS → 前端build → FastAPI)
+├── stop_all.bat                # 一键停止所有服务进程
 ├── config.yaml                 # 模型/RAG/蒸馏/存储/语音配置
 ├── requirements.txt
 ├── .env.example
@@ -198,6 +211,7 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
 | `/api/history/{id}` | GET | 会话详情 + 消息 |
 | `/api/history/{id}/resume` | POST | 恢复会话（重建 ChatEngine） |
 | `/api/history/{id}` | DELETE | 删除会话 |
+| `/api/history/clear-all` | POST | 清空全部历史记录 |
 | `/api/history/{id}/export` | GET | 导出会话（JSON/TXT） |
 | `/api/tts/synthesize` | POST | Edge TTS 语音合成 |
 | `/api/voice/status` | GET | 语音服务状态 + 预设音色列表 |
@@ -206,10 +220,10 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
 | `/api/voice/{voice_id}` | DELETE | 删除自定义音色 |
 | `/api/voice/preview-audio/{voice_id}` | GET | 试听音色（Edge TTS / 原始文件） |
 | `/api/voice/synthesize` | POST | Edge TTS 语音合成 |
-| `/api/voice/ref-audio/{card_id}` | GET | 角色参考音频（501 未实现） |
-| `/api/voice/ref-audio/upload` | POST | 上传角色参考音频（501 未实现） |
-| `/api/voice/ref-audio/{card_id}` | DELETE | 删除角色参考音频（501 未实现） |
-| `/api/voice/asr` | POST | 语音转文字（501 未实现） |
+| `/api/voice/ref-audio/{card_id}` | GET | 获取角色参考音频信息 |
+| `/api/voice/ref-audio/upload` | POST | 上传角色参考音频（GPT-SoVITS） |
+| `/api/voice/ref-audio/{card_id}` | DELETE | 删除角色参考音频 |
+| `/api/voice/asr` | POST | 语音转文字（FunASR） |
 | `/api/settings/config` | GET | 后端配置信息（只读） |
 | `/api/wechat/*` | * | 微信公众号接入 |
 
@@ -320,6 +334,8 @@ voice:
 - [x] GPT-SoVITS 音色克隆 + 语音回复
 - [x] FunASR 语音输入
 - [x] 毛玻璃 UI + 面包屑导航
+- [x] 三套精炼主题 + ThemeSwitcher
+- [x] 一键启停 .bat 脚本
 - [x] PWA 可安装
 - [x] Meta tensor 三层防御
 - [ ] 局势分析（好感度 / 成功概率实时计算）
