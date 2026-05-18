@@ -141,13 +141,15 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     } catch { /* store already sets error */ }
   }
 
-  const handleDistill = async (name) => {
+  const handleDistill = async (name, force = false) => {
     setDistillingName(name)
     try {
-      await distillCharacter(textId, name)
+      await distillCharacter(textId, name, force)
     } catch { /* store already sets error */ }
     setDistillingName(null)
   }
+
+  const texts = useAppStore((s) => s.texts)
 
   const hasCards = cards.length > 0
   const hasIdentified = identifiedChars.length > 0
@@ -171,6 +173,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             const name = cardData.name || c.name
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
+            const textInfo = texts.find((t) => t.id === c.text_id)
             return (
               <li key={c.id}>
                 <button
@@ -182,6 +185,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   <Avatar name={name} size={34} />
                   <div className="char-list-info">
                     <div className="char-list-name">{name}</div>
+                    {textInfo?.filename && (
+                      <span className="char-card-source">{'\u{1F4D6}'} {textInfo.filename}</span>
+                    )}
                     <div className="char-list-identity">{identity}</div>
                   </div>
                 </button>
@@ -221,14 +227,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   )}
                   <button
                     type="button"
-                    className="btn-primary char-identified-btn"
-                    disabled={distilling || already}
-                    onClick={() => handleDistill(name)}
+                    className={`btn-primary char-identified-btn${already ? ' char-btn-redist' : ''}`}
+                    disabled={distilling}
+                    onClick={() => handleDistill(name, already)}
                   >
                     {distillingName === name
                       ? '蒸馏中…'
                       : already
-                        ? '已蒸馏'
+                        ? '重新蒸馏'
                         : '蒸馏角色'}
                   </button>
                 </li>
@@ -287,25 +293,17 @@ function CardDetail({ card, textId }) {
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
 
-  const [avatarUrl, setAvatarUrl] = useState(() => cardAvatars[card.id] || null)
+  const avatarUrl = cardAvatars[card.id] || null
   const avatarInputRef = useRef(null)
 
   useEffect(() => {
     let cancelled = false
-    const cached = cardAvatars[card.id]
-    if (cached) {
-      setAvatarUrl(cached)
-      return
-    }
+    if (cardAvatars[card.id]) return
     getAvatar(card.id).then((blob) => {
       if (!cancelled && blob) {
-        const url = URL.createObjectURL(blob)
-        setAvatarUrl(url)
         const reader = new FileReader()
         reader.onload = () => setCardAvatar(card.id, reader.result)
         reader.readAsDataURL(blob)
-      } else {
-        setAvatarUrl(null)
       }
     })
     return () => { cancelled = true }
@@ -316,8 +314,6 @@ function CardDetail({ card, textId }) {
       const file = e.target.files?.[0]
       if (!file) return
       await saveAvatar(card.id, file)
-      const url = URL.createObjectURL(file)
-      setAvatarUrl(url)
       const reader = new FileReader()
       reader.onload = () => setCardAvatar(card.id, reader.result)
       reader.readAsDataURL(file)

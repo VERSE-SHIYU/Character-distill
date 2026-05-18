@@ -77,7 +77,11 @@ function ChatView() {
   const userScrolledUp = useRef(false)
 
   // ---- Avatar ----
-  const [avatarUrl, setAvatarUrl] = useState(null)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+
+  const cardId = currentCard?.id || currentCard?.card_id
+  const avatarUrl = cardAvatars[cardId] || null
   const avatarInputRef = useRef(null)
 
   // ---- User avatar ----
@@ -98,49 +102,23 @@ function ChatView() {
     reader.readAsDataURL(file)
   }, [])
 
-  const cardId = currentCard?.id || currentCard?.card_id
-
   useEffect(() => {
     let cancelled = false
-    if (!cardId) {
-      setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
-      return
-    }
-    // Try store cache first
-    const cached = cardAvatars[cardId]
-    if (cached) {
-      setAvatarUrl(cached)
-      return
-    }
+    if (!cardId || cardAvatars[cardId]) return
     getAvatar(cardId).then((blob) => {
       if (!cancelled && blob) {
-        const url = URL.createObjectURL(blob)
-        setAvatarUrl(url)
-        // Sync to store as base64
         const reader = new FileReader()
         reader.onload = () => setCardAvatar(cardId, reader.result)
         reader.readAsDataURL(blob)
-      } else if (!cancelled) {
-        setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
       }
     })
-    return () => {
-      cancelled = true
-      setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
-    }
-  }, [cardId])
-
-  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
-  const cardAvatars = useAppStore((s) => s.cardAvatars)
+    return () => { cancelled = true }
+  }, [cardId, cardAvatars])
 
   const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0]
     if (!file || !cardId) return
     await saveAvatar(cardId, file)
-    if (avatarUrl) URL.revokeObjectURL(avatarUrl)
-    const dataUrl = URL.createObjectURL(file)
-    setAvatarUrl(dataUrl)
-    // Convert to base64 for store sync
     const reader = new FileReader()
     reader.onload = () => setCardAvatar(cardId, reader.result)
     reader.readAsDataURL(file)
@@ -176,6 +154,8 @@ function ChatView() {
 
   const voiceList = useAppStore((s) => s.voiceList)
   const loadVoices = useAppStore((s) => s.loadVoices)
+  const voiceEnabled = useAppStore((s) => s.voiceEnabled)
+  const setVoiceEnabled = useAppStore((s) => s.setVoiceEnabled)
 
   useEffect(() => { loadVoices() }, [loadVoices])
 
@@ -301,6 +281,17 @@ function ChatView() {
           </div>
         </div>
         <div className="chat-topbar-actions">
+          <div className="chat-voice-indicator">
+            <span className={`voice-dot ${voiceEnabled ? 'on' : 'off'}`} />
+            <button
+              type="button"
+              className="voice-toggle-mini"
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+              title={voiceEnabled ? '关闭语音' : '开启语音'}
+            >
+              {voiceEnabled ? '\u{1F50A}' : '\u{1F507}'}
+            </button>
+          </div>
           <button
             type="button"
             className="chat-topbar-btn"
@@ -378,6 +369,8 @@ function ChatView() {
 
           const isUser = msg.role === 'user'
           const isStreaming = sending && !isUser && i === messages.length - 1
+          const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
+          const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
           return (
             <div key={i}>
               {showTime && (
@@ -386,6 +379,7 @@ function ChatView() {
               <MessageBubble
                 index={i}
                 isUser={isUser}
+                isLastUserMsg={i === lastUserMsgIndex}
                 content={msg.content}
                 charName={charName}
                 avatarUrl={avatarUrl}
@@ -431,7 +425,7 @@ function formatTime(ts) {
   return `${ap} ${h12}:${m}`
 }
 
-function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
   const [hovered, setHovered] = useState(false)
 
   const userInitial = (userRole || '我').charAt(0)
@@ -467,7 +461,7 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, 
           </div>
         )}
       </div>
-      {isUser && onRevoke && (
+      {isUser && onRevoke && isLastUserMsg && (
         <button
           type="button"
           className="chat-revoke-btn"
@@ -483,9 +477,9 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, 
           className="tts-play-btn"
           disabled={isPlaying}
           onClick={() => playTTS(content, index)}
-          title={isPlaying ? '播放中' : '播放语音'}
+          title={isPlaying ? '合成中' : '播放语音'}
         >
-          {isPlaying ? '\u{23F3}' : '\u{1F50A}'}
+          {isPlaying ? '\u{23F3} 合成中' : '\u{1F50A} 听'}
         </button>
       )}
     </div>
@@ -586,13 +580,39 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
     }
   }
 
+  // Recording cancel
+  const cancelRecording = useCallback(() => {
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') {
+      mr.ondataavailable = null
+      mr.onstop = null
+      mr.stop()
+      mr.stream?.getTracks().forEach((t) => t.stop())
+    }
+    chunksRef.current = []
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+    set({ isRecording: false, recordingDuration: 0 })
+  }, [set])
+
+  useEffect(() => {
+    if (!isRecording) return
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') cancelRecording()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isRecording, cancelRecording])
+
   // Recording UI
   if (isRecording) {
     return (
       <div className="chat-input-bar recording-bar">
         <span className="recording-dot" />
         <span className="recording-text">{`录音中 ${recordingDuration}s`}</span>
-        <span className="recording-hint">松手发送 | 上滑取消</span>
+        <button type="button" className="recording-cancel-btn" onClick={cancelRecording}>
+          取消
+        </button>
+        <span className="recording-hint">按 Esc 取消</span>
       </div>
     )
   }

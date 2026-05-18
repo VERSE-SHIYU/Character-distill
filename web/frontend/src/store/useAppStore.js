@@ -27,6 +27,7 @@ const useAppStore = create((set, get) => ({
   identifying: false,
 
   messages: [],
+  loading: false,
   sending: false,
   userRole: localStorage.getItem('user_role') || '',
   setUserRole: (role) => {
@@ -124,12 +125,19 @@ const useAppStore = create((set, get) => ({
   _synthesizeVoiceReply: async (reply, charIdx) => {
     const { sessionId } = get()
     if (!reply || !sessionId) return
+    // Strip action/narration in parentheses before TTS
+    const ttsText = reply
+      .replace(/（[^）]*）/g, '')
+      .replace(/\([^)]*\)/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!ttsText) return
     try {
       const selectedVoice = localStorage.getItem('tts_voice') || 'xiaoxiao'
       const res = await fetchWithTimeout('/api/voice/synthesize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: reply, voice: selectedVoice, card_id: get().currentCard?.id || '' }),
+        body: JSON.stringify({ text: ttsText, voice: selectedVoice, card_id: get().currentCard?.id || '' }),
       })
       if (res.ok) {
         const blob = await res.blob()
@@ -243,6 +251,10 @@ const useAppStore = create((set, get) => ({
       currentTextId: textId,
       currentView: 'character',
       currentTextTitle: text?.title || text?.filename || '',
+      identifiedChars: [],
+      currentCard: null,
+      sessionId: null,
+      messages: [],
     })
     get().loadCards(textId)
   },
@@ -273,12 +285,13 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  distillCharacter: async (textId, characterName) => {
+  distillCharacter: async (textId, characterName, force = false) => {
     set({ distilling: true, error: null })
     try {
       const card = await postJSON('/api/distill/run', {
         text_id: textId,
         character_name: characterName,
+        force,
       })
       set((s) => {
         const exists = s.cards.some((c) => c.id === card.id)

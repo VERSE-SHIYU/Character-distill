@@ -189,22 +189,29 @@ class SQLiteStore(StorageBase):
             raise
 
     async def save_card(self, id: str, text_id: str, name: str, card_json: str) -> dict:
-        """Save or update one card record."""
+        """Save or update one card record. Upsert by text_id+name to avoid duplicates."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    """
-                    INSERT INTO cards (id, text_id, name, card_json)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        text_id = excluded.text_id,
-                        name = excluded.name,
-                        card_json = excluded.card_json
-                    """,
-                    (id, text_id, name, card_json),
+                cursor = await conn.execute(
+                    "SELECT id FROM cards WHERE text_id = ? AND name = ?",
+                    (text_id, name),
                 )
-                await conn.commit()
-            return await self.get_card(id) or {}
+                existing = await cursor.fetchone()
+                if existing:
+                    existing_id = existing[0]
+                    await conn.execute(
+                        "UPDATE cards SET card_json = ? WHERE id = ?",
+                        (card_json, existing_id),
+                    )
+                    await conn.commit()
+                    return await self.get_card(existing_id) or {}
+                else:
+                    await conn.execute(
+                        "INSERT INTO cards (id, text_id, name, card_json) VALUES (?, ?, ?, ?)",
+                        (id, text_id, name, card_json),
+                    )
+                    await conn.commit()
+                    return await self.get_card(id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Save card failed: {exc}")
             raise

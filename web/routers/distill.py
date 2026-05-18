@@ -33,6 +33,7 @@ class DistillByIdRequest(BaseModel):
     """New: distill from a stored text by text_id."""
     text_id: str
     character_name: str = ""
+    force: bool = False
 
 
 class StartSessionRequest(BaseModel):
@@ -118,7 +119,7 @@ async def distill_by_text_id(
     )
 
     try:
-        return await text_manager.get_or_distill(req.text_id, char_name)
+        return await text_manager.get_or_distill(req.text_id, char_name, force=req.force)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

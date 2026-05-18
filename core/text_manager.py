@@ -219,9 +219,9 @@ class TextManager:
         return results
 
     async def get_or_distill(
-        self, text_id: str, character_name: str
+        self, text_id: str, character_name: str, force: bool = False
     ) -> dict[str, Any]:
-        """Return a card + fresh session. Reuses a cached card when available."""
+        """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill."""
         text_rec = await self._storage.get_text(text_id)
         if not text_rec:
             raise ValueError("Text not found")
@@ -230,15 +230,18 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id)
         card: CharacterCard | None = None
         card_id: str | None = None
-        for c in existing_cards:
-            if c["name"] == character_name:
-                card_id = c["id"]
-                try:
-                    card = CharacterCard.model_validate_json(c["card_json"])
-                except Exception as exc:
-                    print(f"[TextManager] Parse cached card failed: {exc}")
-                    card = None
-                break
+        is_cached = False
+        if not force:
+            for c in existing_cards:
+                if c["name"] == character_name:
+                    card_id = c["id"]
+                    try:
+                        card = CharacterCard.model_validate_json(c["card_json"])
+                        is_cached = True
+                    except Exception as exc:
+                        print(f"[TextManager] Parse cached card failed: {exc}")
+                        card = None
+                    break
 
         if card is None:
             try:
@@ -257,6 +260,28 @@ class TextManager:
             except Exception as exc:
                 print(f"[TextManager] Save card failed: {exc}")
                 raise
+
+        # Generate a variation of the first message to avoid repetition
+        if card.first_message and self._llm:
+            try:
+                variation_prompt = (
+                    f"你是「{card.name}」。以下是你的标准开场白：\n"
+                    f"「{card.first_message}」\n\n"
+                    f"请用同样的语气、口癖和风格，重新说一句意思相近但措辞不同的开场白。"
+                    f"只输出开场白本身，不要解释。保持{card.name}的说话习惯。50字以内。"
+                )
+                opening = await asyncio.to_thread(
+                    self._llm.chat,
+                    f"你是{card.name}，保持角色风格。",
+                    [{"role": "user", "content": variation_prompt}],
+                )
+                opening = opening.strip()
+                if opening and len(opening) <= 200:
+                    card.first_message = opening
+                else:
+                    print(f"[TextManager] Opening variation invalid, using original")
+            except Exception as exc:
+                print(f"[TextManager] Opening variation failed, using original: {exc}")
 
         try:
             all_characters: list[dict[str, Any]] = [

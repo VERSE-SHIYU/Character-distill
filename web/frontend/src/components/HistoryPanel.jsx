@@ -294,7 +294,19 @@ export default function HistoryPanel() {
                 {!collapsedGroups[textId] && (
                 <ul className="history-list">
                   {sessionList.map((it) => (
-                    <li key={it.id}>
+                    <li key={it.id} className="history-swipe-wrapper">
+                      <div className="history-swipe-actions">
+                        <button
+                          type="button"
+                          className="history-swipe-delete"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (window.confirm('确定删除该会话？')) handleDelete(it.id)
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
                       <button
                         type="button"
                         className="history-item"
