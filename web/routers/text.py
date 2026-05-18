@@ -40,6 +40,8 @@ async def upload_text(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Accept a multipart file or text form field, parse format, save."""
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     if file and file.filename:
         _validate_extension(file.filename)
 

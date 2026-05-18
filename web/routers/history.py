@@ -92,6 +92,9 @@ async def resume_session(
     RAG index, ChatEngine, and replays history messages so the user can
     pick up the conversation where it left off.
     """
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
+
     # 1. Load session + card + text from DB
     db_session = await storage.get_session(session_id)
     if not db_session:
