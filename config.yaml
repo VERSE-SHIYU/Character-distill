@@ -1,37 +1,32 @@
-llm:
-  base_url: "https://api.deepseek.com"
-  model: "deepseek-v4-pro"
-  temperature: 0.7
-  max_tokens: 4096
-  summary_threshold: 50
-
-rag:
-  chunk_size: 500
-  chunk_overlap: 50
-  top_k: 3
-  embedding_model: "all-MiniLM-L6-v2"
-
 distill:
   max_input_chars: 80000
-
+llm:
+  base_url: https://api.deepseek.com
+  max_tokens: 4096
+  model: deepseek-v4-pro
+  summary_threshold: 50
+  temperature: 0.7
+rag:
+  chunk_overlap: 50
+  chunk_size: 500
+  embedding_model: all-MiniLM-L6-v2
+  top_k: 3
 storage:
-  type: "sqlite"
-  path: "data/character_sim.db"
-
+  path: data/character_sim.db
+  type: sqlite
 voice:
-  enabled: false
-  gptsovits_url: "http://127.0.0.1:9880"
-  funasr_url: "ws://127.0.0.1:10095"
-  ref_audio_min_seconds: 30
-  ref_audio_max_seconds: 60
+  cache_dir: data/voice_cache
   default_speed: 1.0
-  cache_dir: "data/voice_cache"
-
-wechat:
   enabled: false
-  corp_id: ""
-  agent_id: ""
-  secret: ""
-  token: ""
-  encoding_aes_key: ""
-  default_text_id: ""
+  funasr_url: ws://127.0.0.1:10095
+  gptsovits_url: http://127.0.0.1:9880
+  ref_audio_max_seconds: 60
+  ref_audio_min_seconds: 30
+wechat:
+  agent_id: ''
+  corp_id: ''
+  default_text_id: ''
+  enabled: false
+  encoding_aes_key: ''
+  secret: ''
+  token: ''
