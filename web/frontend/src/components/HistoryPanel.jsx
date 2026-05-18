@@ -440,7 +440,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport }
       </div>
 
       <header className="history-detail-header">
-        <Avatar name={charName} size={44} />
+        <Avatar name={charName} size={66} />
         <div className="history-detail-meta-wrap">
           <h2 className="history-detail-name">{charName}</h2>
           {session.user_role && (

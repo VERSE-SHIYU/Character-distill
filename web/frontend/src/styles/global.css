@@ -2236,13 +2236,19 @@ body {
 .chat-msg-user {
   flex-direction: row-reverse;
   justify-content: flex-start;
-  max-width: 75%;
+  max-width: 80%;
   margin-left: auto;
 }
 
 .chat-msg-avatar {
   flex-shrink: 0;
   padding-top: 2px;
+}
+
+.chat-msg-avatar img,
+.chat-msg-avatar .avatar-circle {
+  width: 66px;
+  height: 66px;
 }
 
 /* User avatar — simple circle with initials */
@@ -2294,6 +2300,8 @@ body {
   background: var(--user-bubble);
   color: var(--text);
   border-top-right-radius: 2px;
+  text-align: left;
+  max-width: none;
 }
 
 .chat-bubble-user::before {
