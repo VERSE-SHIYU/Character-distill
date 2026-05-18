@@ -169,6 +169,10 @@ async def resume_session(
         {"role": m["role"], "content": m["content"], "id": m["id"]}
         for m in db_messages
     ]
+
+    # 9. Rebuild message_ids so revoke works after resume
+    sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
+
     return {"session": db_session, "messages": frontend_messages}
 
 

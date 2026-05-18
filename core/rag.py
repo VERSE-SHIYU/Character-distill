@@ -177,13 +177,14 @@ class RAGEngine:
         self.collection_name = name
 
     def query(
-        self, query_text: str, character_name: str | None = None
+        self, query_text: str, character_name: str | None = None, top_k: int | None = None
     ) -> list[str]:
         """对当前集合执行相似度检索，可按角色名过滤。
 
         Args:
             query_text: 查询语句。
             character_name: 可选角色名，传入后仅返回该角色出场的片段。
+            top_k: 返回片段数，默认使用配置值 ``self._top_k``。
 
         Returns:
             命中片段文本列表；未索引时返回空列表。
@@ -199,7 +200,7 @@ class RAGEngine:
         try:
             results = self.collection.query(
                 query_texts=[query_text],
-                n_results=self._top_k,
+                n_results=top_k or self._top_k,
                 where=where,
             )
         except Exception as exc:

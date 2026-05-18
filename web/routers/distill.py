@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_distiller, get_sessions, get_storage, get_text_manager
+from deps import get_distiller, get_rag_config, get_sessions, get_storage, get_text_manager
 from core.distiller import Distiller
 from core.export import export_tavern_json
+from core.rag import RAGEngine
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
@@ -110,6 +112,7 @@ async def distill_by_text_id(
     storage: SQLiteStore = Depends(get_storage),
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
+    rag_config: dict[str, Any] = Depends(get_rag_config),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
     if text_manager is None:
@@ -118,17 +121,114 @@ async def distill_by_text_id(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    char_name = await _resolve_character_name(
-        text_rec["content"], req.character_name, distiller
-    )
+    content = text_rec["content"]
+    char_name = await _resolve_character_name(content, req.character_name, distiller)
+
+    # Build RAG for semantic paragraph retrieval
+    rag = None
+    existing_cards = await storage.list_cards(req.text_id)
+    if not req.force and any(c["name"] == char_name for c in existing_cards):
+        pass  # cached — no RAG needed
+    else:
+        try:
+            all_chars = await asyncio.to_thread(distiller.identify_characters, content)
+            all_characters: list[dict[str, Any]] = [
+                {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
+            ]
+            rag = RAGEngine(rag_config)
+            rag.index(content, all_characters=all_characters)
+        except Exception as exc:
+            print(f"[distill] RAG build failed (falling back to keyword): {exc}")
 
     try:
-        return await text_manager.get_or_distill(req.text_id, char_name, force=req.force)
+        return await text_manager.get_or_distill(req.text_id, char_name, force=req.force, rag=rag)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
         raise HTTPException(500, f"Distill failed: {exc}") from exc
+
+
+@router.post("/run_stream")
+async def distill_stream(
+    req: DistillByIdRequest,
+    storage: SQLiteStore = Depends(get_storage),
+    distiller: Distiller = Depends(get_distiller),
+    text_manager: TextManager = Depends(get_text_manager),
+    rag_config: dict[str, Any] = Depends(get_rag_config),
+):
+    """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
+    if text_manager is None or distiller is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
+    text_rec = await storage.get_text(req.text_id)
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+
+    content = text_rec["content"]
+    char_name = await _resolve_character_name(content, req.character_name, distiller)
+
+    # Build RAG for semantic paragraph retrieval
+    rag = None
+    try:
+        all_chars = await asyncio.to_thread(distiller.identify_characters, content)
+        all_characters: list[dict[str, Any]] = [
+            {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
+        ]
+        rag = RAGEngine(rag_config)
+        rag.index(content, all_characters=all_characters)
+    except Exception as exc:
+        print(f"[distill] RAG build failed (falling back to keyword): {exc}")
+
+    async def _event_gen():
+        full = ""
+        try:
+            stream = await asyncio.to_thread(
+                distiller.distill_stream, content, char_name, rag
+            )
+            for piece in stream:
+                full += piece
+                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            print(f"[distill] Stream failed: {exc}")
+            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+            return
+
+        # Parse full response
+        stripped = full.strip()
+        data = None
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    data = json.loads(stripped[start:end + 1])
+                except json.JSONDecodeError:
+                    pass
+
+        if data is None:
+            yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False)}\n\n"
+            return
+
+        try:
+            card = CharacterCard.model_validate(data)
+        except Exception as exc:
+            print(f"[distill] Card validation failed: {exc}")
+            yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False)}\n\n"
+            return
+
+        # Persist card + create session
+        try:
+            result = await text_manager.save_distilled_card(req.text_id, card)
+        except Exception as exc:
+            print(f"[distill] Save card failed: {exc}")
+            yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
 
 @router.post("/reindex/{text_id}")

@@ -10,6 +10,7 @@ import yaml
 from pydantic import ValidationError
 
 from adapters.llm_adapter import LLMAdapter
+from core.rag import RAGEngine
 from core.schema import CharacterCard
 
 
@@ -183,20 +184,31 @@ class Distiller:
         ordered = sorted(selected)
         focused = "\n\n".join(paragraphs[i] for i in ordered)
 
-        if len(focused) > self._max_input_chars:
-            focused = focused[: self._max_input_chars]
+        result_parts = []
+        total_len = 0
+        for i in ordered:
+            para = paragraphs[i]
+            if total_len + len(para) > self._max_input_chars:
+                break
+            result_parts.append(para)
+            total_len += len(para) + 2
 
-        if len(focused) < 500:
-            return text[: self._max_input_chars]
+        focused = "\n\n".join(result_parts)
 
-        return focused
+        if len(focused) < 500 and matched:
+            start_para = min(matched)
+            start_char = sum(len(paragraphs[i]) + 2 for i in range(start_para))
+            return text[start_char: start_char + self._max_input_chars]
 
-    def distill(self, text: str, character_name: str) -> CharacterCard:
+        return focused if focused else text[: self._max_input_chars]
+
+    def distill(self, text: str, character_name: str, rag: RAGEngine | None = None) -> CharacterCard:
         """将文本截断后蒸馏指定角色的 ``CharacterCard``。
 
         Args:
             text: 原始叙事文本。
             character_name: 目标角色姓名。
+            rag: 可选 RAG 引擎。传入后使用语义检索替代关键词截取。
 
         Returns:
             校验通过的 ``CharacterCard``。
@@ -212,7 +224,12 @@ class Distiller:
             if c["name"] == character_name:
                 aliases = c.get("aliases", [])
                 break
-        focused_text = self._extract_character_paragraphs(text, character_name, aliases)
+
+        if rag is not None and rag.collection is not None:
+            chunks = rag.query(character_name, character_name=character_name, top_k=20)
+            focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
+        else:
+            focused_text = self._extract_character_paragraphs(text, character_name, aliases)
         try:
             schema_obj = CharacterCard.model_json_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
@@ -256,3 +273,39 @@ class Distiller:
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+
+    def distill_stream(self, text: str, character_name: str, rag: RAGEngine | None = None):
+        """流式蒸馏，按增量产出文本片段（yield token）。
+
+        复用与 ``distill`` 相同的角色识别 + 段落提取逻辑，
+        仅将 ``self._llm.chat`` 替换为 ``self._llm.chat_stream``。
+        """
+        import torch as _torch
+
+        all_chars = self.identify_characters(text)
+        aliases: list[str] = []
+        for c in all_chars:
+            if c["name"] == character_name:
+                aliases = c.get("aliases", [])
+                break
+
+        if rag is not None and rag.collection is not None:
+            chunks = rag.query(character_name, character_name=character_name, top_k=20)
+            focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
+        else:
+            focused_text = self._extract_character_paragraphs(text, character_name, aliases)
+        try:
+            schema_obj = CharacterCard.model_json_schema()
+            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError) as exc:
+            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
+            raise
+
+        system_prompt = (
+            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+        )
+        user_messages: list[dict[str, Any]] = [
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + focused_text},
+        ]
+
+        yield from self._llm.chat_stream(system_prompt, user_messages)

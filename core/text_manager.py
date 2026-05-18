@@ -219,7 +219,8 @@ class TextManager:
         return results
 
     async def get_or_distill(
-        self, text_id: str, character_name: str, force: bool = False
+        self, text_id: str, character_name: str, force: bool = False,
+        rag: "RAGEngine | None" = None,
     ) -> dict[str, Any]:
         """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill."""
         text_rec = await self._storage.get_text(text_id)
@@ -246,7 +247,7 @@ class TextManager:
         if card is None:
             try:
                 card = await asyncio.to_thread(
-                    self._distiller.distill, content, character_name
+                    self._distiller.distill, content, character_name, rag
                 )
             except Exception as exc:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
@@ -298,6 +299,30 @@ class TextManager:
             await self._storage.save_session(session_id, card_id, "", "")
         except Exception as exc:
             print(f"[TextManager] Persist session failed (non-fatal): {exc}")
+
+        result = card.model_dump()
+        result["session_id"] = session_id
+        result["card_id"] = card_id
+        return result
+
+    async def save_distilled_card(
+        self, text_id: str, card: CharacterCard
+    ) -> dict[str, Any]:
+        """Persist a freshly distilled card and create its chat session."""
+        card_id = uuid.uuid4().hex[:12]
+        await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json())
+
+        text_rec = await self._storage.get_text(text_id)
+        content = text_rec["content"]
+        existing_cards = await self._storage.list_cards(text_id)
+        all_characters: list[dict[str, Any]] = [
+            {"name": c["name"], "aliases": []} for c in existing_cards
+        ]
+
+        session_id = await asyncio.to_thread(
+            self._create_session, content, card, all_characters
+        )
+        await self._storage.save_session(session_id, card_id, "", "")
 
         result = card.model_dump()
         result["session_id"] = session_id

@@ -24,6 +24,7 @@ const useAppStore = create((set, get) => ({
   sessionId: null,
   identifiedChars: [],
   distilling: false,
+  distillTokenCount: 0,
   identifying: false,
 
   messages: [],
@@ -302,61 +303,62 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  distillCharacter: async (textId, characterName, force = false) => {
-    set({ distilling: true, error: null })
-    try {
-      const card = await postJSON('/api/distill/run', {
-        text_id: textId,
-        character_name: characterName,
-        force,
-      })
-      set((s) => {
-        const exists = s.cards.some((c) => c.id === card.id)
-        return {
-          cards: exists ? s.cards : [card, ...s.cards],
-          currentCard: card,
-          sessionId: card.session_id,
-          messages: card.first_message
-            ? [{ role: 'char', content: card.first_message }]
-            : [],
-          distilling: false,
-        }
-      })
-      return card
-    } catch (err) {
-      console.error('[store] distillCharacter failed:', err)
-      set({ error: err.message, distilling: false })
-      throw err
-    }
+  distillCharacter: (textId, characterName, force = false) => {
+    set({ distilling: true, distillTokenCount: 0, error: null })
+
+    const cancel = streamSSE(
+      '/api/distill/run_stream',
+      { text_id: textId, character_name: characterName, force },
+      (token) => {
+        set((s) => ({ distillTokenCount: s.distillTokenCount + token.length }))
+      },
+      (payload) => {
+        set((s) => {
+          const card = { ...payload, id: payload.card_id }
+          const exists = s.cards.some((c) => c.id === card.id)
+          return {
+            cards: exists ? s.cards : [card, ...s.cards],
+            currentCard: card,
+            sessionId: card.session_id,
+            messages: card.first_message
+              ? [{ role: 'char', content: card.first_message }]
+              : [],
+            distilling: false,
+            distillTokenCount: 0,
+          }
+        })
+      },
+      (err) => {
+        console.error('[store] distillCharacter stream failed:', err)
+        set({ error: err.message, distilling: false, distillTokenCount: 0 })
+      },
+    )
+
+    return cancel
   },
 
   selectCard: async (card) => {
-    let sessionId = card.session_id || null
-    const textId = card.text_id
+    set({
+      currentCard: card,
+      messages: card.first_message ? [{ role: 'char', content: card.first_message }] : [],
+      currentView: 'chat',
+      resumeLoading: true,
+    })
 
-    if (!sessionId && textId) {
+    let sessionId = card.session_id || null
+    if (!sessionId && card.text_id) {
       try {
-        const cardId = card.id || card.card_id
         const result = await postJSON('/api/distill/start_session', {
-          text_id: textId,
-          card_id: cardId,
-        })
+          text_id: card.text_id,
+          card_id: card.id || card.card_id,
+        }, 120000)
         sessionId = result.session_id
-        card = { ...card, session_id: sessionId }
       } catch (err) {
-        console.error('[store] selectCard create session failed:', err)
-        set({ error: err.message })
+        set({ error: err.message, resumeLoading: false })
         return
       }
     }
-
-    set({
-      currentCard: card,
-      sessionId,
-      messages: card.first_message
-        ? [{ role: 'char', content: card.first_message }]
-        : [],
-    })
+    set({ sessionId, resumeLoading: false })
     get().loadVoiceRef(card?.id || card?.card_id || null)
   },
 

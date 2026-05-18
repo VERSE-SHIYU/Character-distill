@@ -122,12 +122,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
   const distilling = useAppStore((s) => s.distilling)
+  const distillTokenCount = useAppStore((s) => s.distillTokenCount)
   const identifyCharacters = useAppStore((s) => s.identifyCharacters)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
 
   const [distillingName, setDistillingName] = useState(null)
-  const [distillTimer, setDistillTimer] = useState(0)
-  const distillTimerRef = useRef(null)
 
   useEffect(() => {
     if (currentCard?.id) {
@@ -138,22 +137,19 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     }
   }, [currentCard?.id])
 
+  useEffect(() => {
+    if (!distilling) setDistillingName(null)
+  }, [distilling])
+
   const handleIdentify = async () => {
     try {
       await identifyCharacters(textId)
     } catch { /* store already sets error */ }
   }
 
-  const handleDistill = async (name, force = false) => {
+  const handleDistill = (name, force = false) => {
     setDistillingName(name)
-    setDistillTimer(0)
-    distillTimerRef.current = setInterval(() => { setDistillTimer((t) => t + 1) }, 1000)
-    try {
-      await distillCharacter(textId, name, force)
-    } catch { /* store already sets error */ }
-    clearInterval(distillTimerRef.current)
-    setDistillTimer(0)
-    setDistillingName(null)
+    distillCharacter(textId, name, force)
   }
 
   const texts = useAppStore((s) => s.texts)
@@ -239,7 +235,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     onClick={() => handleDistill(name, already)}
                   >
                     {distillingName === name
-                      ? `蒸馏中… ${distillTimer}s`
+                      ? `蒸馏中… ${(distillTokenCount / 1000).toFixed(1)}k字符`
                       : already
                         ? '重新蒸馏'
                         : '蒸馏角色'}
@@ -264,7 +260,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         )}
         {identifying && <Loading text="正在识别角色…" />}
         {distilling && distillingName && (
-          <Loading text={`正在蒸馏 ${distillingName}…`} />
+          <Loading text={`正在蒸馏 ${distillingName}… ${(distillTokenCount / 1000).toFixed(1)}k字符`} />
         )}
         {(hasCards || hasIdentified) && !identifying && (
           <button

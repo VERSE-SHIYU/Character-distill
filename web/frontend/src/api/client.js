@@ -6,7 +6,7 @@ export class AppError extends Error {
   }
 }
 
-export async function fetchWithTimeout(url, opts = {}, ms = 180000) {
+export async function fetchWithTimeout(url, opts = {}, ms = 600000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
   try {
@@ -29,12 +29,12 @@ export async function fetchWithTimeout(url, opts = {}, ms = 180000) {
   }
 }
 
-export async function postJSON(url, body) {
+export async function postJSON(url, body, ms) {
   const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  })
+  }, ms)
   return res.json()
 }
 

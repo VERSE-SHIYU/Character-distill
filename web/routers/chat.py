@@ -233,7 +233,14 @@ async def revoke_messages(
     try:
         idx = msg_ids.index(req.message_id)
     except ValueError:
-        idx = 0
+        # message_id not tracked in memory (e.g. after server restart);
+        # still delete from DB but skip in-memory truncation
+        try:
+            count = await storage.delete_messages_after(req.session_id, req.message_id)
+        except Exception as exc:
+            print(f"[chat] Revoke messages failed: {exc}")
+            raise HTTPException(500, f"Revoke failed: {exc}") from exc
+        return {"deleted": count}
 
     # Truncate in-memory state
     if session:
