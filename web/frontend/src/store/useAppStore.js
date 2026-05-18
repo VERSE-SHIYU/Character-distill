@@ -37,6 +37,23 @@ const useAppStore = create((set, get) => ({
   error: null,
   setError: (err) => set({ error: err }),
 
+  // Avatar sync
+  cardAvatars: {},
+  setCardAvatar: (cardId, dataUrl) => {
+    set((state) => ({
+      cardAvatars: { ...state.cardAvatars, [cardId]: dataUrl }
+    }))
+    localStorage.setItem(`card_avatar_${cardId}`, dataUrl)
+  },
+  loadCardAvatar: (cardId) => {
+    const saved = localStorage.getItem(`card_avatar_${cardId}`)
+    if (saved) {
+      set((state) => ({
+        cardAvatars: { ...state.cardAvatars, [cardId]: saved }
+      }))
+    }
+  },
+
   // Voice cloning
   voiceStatus: { gptsovits: false, funasr: false },
   voiceEnabled: false,

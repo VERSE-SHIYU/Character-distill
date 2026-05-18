@@ -1,21 +1,23 @@
 const STORAGE_KEY = 'charsim-theme'
 
-/** @returns {'milktea' | 'ocean'} */
+/** @returns {'milktea' | 'ocean' | 'sakura'} */
 export function getTheme() {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
-    return v === 'ocean' ? 'ocean' : 'milktea'
+    if (v === 'ocean') return 'ocean'
+    if (v === 'sakura') return 'sakura'
+    return 'milktea'
   } catch {
     return 'milktea'
   }
 }
 
-/** @param {'milktea' | 'ocean'} theme */
+/** @param {'milktea' | 'ocean' | 'sakura'} theme */
 export function applyTheme(theme) {
-  const t = theme === 'ocean' ? 'ocean' : 'milktea'
-  document.documentElement.className = `theme-${t}`
+  const valid = ['milktea', 'ocean', 'sakura'].includes(theme) ? theme : 'milktea'
+  document.documentElement.className = `theme-${valid}`
   try {
-    localStorage.setItem(STORAGE_KEY, t)
+    localStorage.setItem(STORAGE_KEY, valid)
   } catch (err) {
     console.error('[theme] Save theme failed:', err)
   }

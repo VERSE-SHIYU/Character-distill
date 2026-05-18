@@ -167,6 +167,19 @@ async def resume_session(
     return {"session": db_session, "messages": frontend_messages}
 
 
+@router.post("/clear-all")
+async def clear_all_sessions(
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Delete all sessions and messages."""
+    try:
+        count = await storage.clear_all_sessions()
+        return {"ok": True, "deleted": count}
+    except Exception as exc:
+        print(f"[history] Clear all sessions failed: {exc}")
+        raise HTTPException(500, f"Clear all sessions failed: {exc}") from exc
+
+
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,

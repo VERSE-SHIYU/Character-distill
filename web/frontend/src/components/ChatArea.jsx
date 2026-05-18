@@ -80,6 +80,24 @@ function ChatView() {
   const [avatarUrl, setAvatarUrl] = useState(null)
   const avatarInputRef = useRef(null)
 
+  // ---- User avatar ----
+  const [userAvatarUrl, setUserAvatarUrl] = useState(() => localStorage.getItem('user_avatar_url') || null)
+  const userAvatarInputRef = useRef(null)
+
+  const handleUserAvatarChange = useCallback((e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    setUserAvatarUrl(url)
+    const reader = new FileReader()
+    reader.onload = () => {
+      localStorage.setItem('user_avatar_url', reader.result)
+      setUserAvatarUrl(reader.result)
+      URL.revokeObjectURL(url)
+    }
+    reader.readAsDataURL(file)
+  }, [])
+
   const cardId = currentCard?.id || currentCard?.card_id
 
   useEffect(() => {
@@ -88,9 +106,20 @@ function ChatView() {
       setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
       return
     }
+    // Try store cache first
+    const cached = cardAvatars[cardId]
+    if (cached) {
+      setAvatarUrl(cached)
+      return
+    }
     getAvatar(cardId).then((blob) => {
       if (!cancelled && blob) {
-        setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(blob) })
+        const url = URL.createObjectURL(blob)
+        setAvatarUrl(url)
+        // Sync to store as base64
+        const reader = new FileReader()
+        reader.onload = () => setCardAvatar(cardId, reader.result)
+        reader.readAsDataURL(blob)
       } else if (!cancelled) {
         setAvatarUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
       }
@@ -101,12 +130,20 @@ function ChatView() {
     }
   }, [cardId])
 
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+
   const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0]
     if (!file || !cardId) return
     await saveAvatar(cardId, file)
     if (avatarUrl) URL.revokeObjectURL(avatarUrl)
-    setAvatarUrl(URL.createObjectURL(file))
+    const dataUrl = URL.createObjectURL(file)
+    setAvatarUrl(dataUrl)
+    // Convert to base64 for store sync
+    const reader = new FileReader()
+    reader.onload = () => setCardAvatar(cardId, reader.result)
+    reader.readAsDataURL(file)
   }
 
   // ---- Global audio player for voice bubbles ----
@@ -239,7 +276,7 @@ function ChatView() {
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
           >
-            <Avatar name={charName} src={avatarUrl} size={36} />
+            <Avatar name={charName} src={avatarUrl} size={44} />
             <span className="chat-avatar-edit-icon">{'\u{1F4F7}'}</span>
           </button>
           <input
@@ -248,6 +285,13 @@ function ChatView() {
             accept="image/*"
             className="sr-only"
             onChange={handleAvatarChange}
+          />
+          <input
+            ref={userAvatarInputRef}
+            type="file"
+            accept="image/*"
+            className="sr-only"
+            onChange={handleUserAvatarChange}
           />
           <div className="chat-topbar-info">
             <span className="chat-topbar-name">{charName}</span>
@@ -353,6 +397,8 @@ function ChatView() {
                 audioUrl={msg.audio_url}
                 isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
                 onPlayAudio={playAudio}
+                userAvatarUrl={userAvatarUrl}
+                onUserAvatarClick={() => userAvatarInputRef.current?.click()}
               />
             </div>
           )
@@ -385,7 +431,7 @@ function formatTime(ts) {
   return `${ap} ${h12}:${m}`
 }
 
-function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio }) {
+function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
   const [hovered, setHovered] = useState(false)
 
   const userInitial = (userRole || '我').charAt(0)
@@ -398,10 +444,12 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, 
     >
       {!isUser ? (
         <div className="chat-msg-avatar">
-          <Avatar name={charName} src={avatarUrl} size={36} />
+          <Avatar name={charName} src={avatarUrl} size={44} />
         </div>
       ) : (
-        <div className="user-avatar-circle">{userInitial}</div>
+        <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>
+          {!userAvatarUrl && userInitial}
+        </div>
       )}
       <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
         <span className="chat-bubble-text">
@@ -419,7 +467,7 @@ function MessageBubble({ index, isUser, content, charName, avatarUrl, userRole, 
           </div>
         )}
       </div>
-      {isUser && hovered && onRevoke && (
+      {isUser && onRevoke && (
         <button
           type="button"
           className="chat-revoke-btn"

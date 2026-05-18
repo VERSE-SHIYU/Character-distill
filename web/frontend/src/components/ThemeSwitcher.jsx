@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 
 const themes = [
-  { key: 'milktea', label: '\u{1F375} 奶油抹茶' },
-  { key: 'ocean', label: '\u{1F30A} 蓝色海盐' },
+  { key: 'milktea', label: '\u{1F375} 抹茶' },
+  { key: 'ocean', label: '\u{1F30A} 海盐' },
+  { key: 'sakura', label: '\u{1F338} 樱花' },
 ]
 
 export default function ThemeSwitcher() {
@@ -18,14 +19,13 @@ export default function ThemeSwitcher() {
   }, [current])
 
   return (
-    <div className="theme-switcher" style={{ display: 'flex', gap: 4, padding: '4px 10px 10px' }}>
+    <div className="theme-switcher">
       {themes.map((t) => (
         <button
           key={t.key}
           type="button"
           onClick={() => setCurrent(t.key)}
-          className={`sidebar-item${current === t.key ? ' active' : ''}`}
-          style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}
+          className={`theme-switch-btn${current === t.key ? ' active' : ''}`}
         >
           {t.label}
         </button>

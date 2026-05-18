@@ -69,6 +69,7 @@ export default function HistoryPanel() {
   const [error, setError] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState({})
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -198,6 +199,22 @@ export default function HistoryPanel() {
     } catch { /* store sets error */ }
   }
 
+  const handleClearAll = async () => {
+    if (!window.confirm('确定清空全部历史记录？此操作不可恢复。')) return
+    try {
+      await fetchWithTimeout('/api/history/clear-all', { method: 'POST' })
+      setItems([])
+      setDetail(null)
+    } catch (err) {
+      console.error('[HistoryPanel] clear-all failed:', err)
+      setError(err.message || '清空失败')
+    }
+  }
+
+  const toggleGroup = (textId) => {
+    setCollapsedGroups((prev) => ({ ...prev, [textId]: !prev[textId] }))
+  }
+
   if (detail) {
     return (
       <HistoryDetail
@@ -248,6 +265,15 @@ export default function HistoryPanel() {
             <option key={name} value={name}>{name}</option>
           ))}
         </select>
+        {items.length > 0 && (
+          <button
+            type="button"
+            className="btn-danger-sm"
+            onClick={handleClearAll}
+          >
+            清空全部
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -261,7 +287,11 @@ export default function HistoryPanel() {
             const textName = text?.filename || (textId === '__unknown__' ? '未关联文本' : textId.slice(0, 8))
             return (
               <div key={textId} className="history-group">
-                <h3 className="history-group-title">{'\u{1F4D6}'} {textName}</h3>
+                <h3 className="history-group-title" onClick={() => toggleGroup(textId)}>
+                  <span className={`history-group-arrow${collapsedGroups[textId] ? ' collapsed' : ''}`}>{collapsedGroups[textId] ? '▶' : '▼'}</span>
+                  {'\u{1F4D6}'} {textName}
+                </h3>
+                {!collapsedGroups[textId] && (
                 <ul className="history-list">
                   {sessionList.map((it) => (
                     <li key={it.id}>
@@ -291,6 +321,7 @@ export default function HistoryPanel() {
                     </li>
                   ))}
                 </ul>
+                )}
               </div>
             )
           })}

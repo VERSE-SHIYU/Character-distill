@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchWithTimeout, postJSON } from '../api/client'
-import { applyTheme, getTheme } from '../utils/theme'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import ThemeSwitcher from './ThemeSwitcher'
 
 const APP_VERSION = '0.0.0'
 const GITHUB_URL = 'https://github.com'
@@ -14,7 +14,6 @@ export default function SettingsPanel() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [theme, setTheme] = useState(getTheme)
   const [form, setForm] = useState({ base_url: '', model: '', api_key: '' })
   const [saving, setSaving] = useState(false)
   const [summaryThreshold, setSummaryThreshold] = useState(50)
@@ -113,11 +112,6 @@ export default function SettingsPanel() {
     }
   }
 
-  const setThemeMode = (mode) => {
-    applyTheme(mode)
-    setTheme(mode)
-  }
-
   // ---- Ref audio handlers ----
   const handleFileChange = (e) => {
     const f = e.target.files?.[0]
@@ -188,6 +182,9 @@ export default function SettingsPanel() {
                 onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
               />
             </label>
+            <p className="settings-hint">
+              模型能力直接影响角色扮演质量。推荐使用 deepseek-v4-pro 或 claude-sonnet-4-20250514。
+            </p>
             <label className="settings-field">
               <span className="settings-label">api_key</span>
               <input
@@ -248,20 +245,7 @@ export default function SettingsPanel() {
       <section className="settings-section">
         <h2 className="settings-section-title">主题</h2>
         <div className="settings-theme-row">
-          <button
-            type="button"
-            className={`settings-theme-btn${theme === 'milktea' ? ' active' : ''}`}
-            onClick={() => setThemeMode('milktea')}
-          >
-            {'\u{1F375} 奶油抹茶'}
-          </button>
-          <button
-            type="button"
-            className={`settings-theme-btn${theme === 'ocean' ? ' active' : ''}`}
-            onClick={() => setThemeMode('ocean')}
-          >
-            {'\u{1F30A} 蓝色海盐'}
-          </button>
+          <ThemeSwitcher />
         </div>
       </section>
 

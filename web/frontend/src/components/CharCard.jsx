@@ -80,17 +80,29 @@ function CharPanelBody({ textId }) {
   const loadCards = useAppStore((s) => s.loadCards)
   const error = useAppStore((s) => s.error)
   const setError = useAppStore((s) => s.setError)
+  const selectCard = useAppStore((s) => s.selectCard)
+  const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => {
     loadCards(textId)
   }, [textId, loadCards])
 
+  const handleSelectCard = async (card) => {
+    setDetailLoading(true)
+    try {
+      await selectCard(card)
+    } catch { /* store sets error */ }
+    setTimeout(() => setDetailLoading(false), 300)
+  }
+
   return (
     <div className="char-body">
-      <CharSidebar textId={textId} cards={cards} currentCard={currentCard} />
+      <CharSidebar textId={textId} cards={cards} currentCard={currentCard} onSelectCard={handleSelectCard} />
       <div className="char-detail-pane">
         {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
-        {currentCard ? (
+        {detailLoading ? (
+          <Loading text="加载角色…" />
+        ) : currentCard ? (
           <CardDetail card={currentCard} textId={textId} />
         ) : (
           <div className="char-detail-empty">
@@ -105,15 +117,23 @@ function CharPanelBody({ textId }) {
 
 // ---- Left: character list + identify/distill flow ----
 
-function CharSidebar({ textId, cards, currentCard }) {
+function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
   const distilling = useAppStore((s) => s.distilling)
   const identifyCharacters = useAppStore((s) => s.identifyCharacters)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
-  const selectCard = useAppStore((s) => s.selectCard)
 
   const [distillingName, setDistillingName] = useState(null)
+
+  useEffect(() => {
+    if (currentCard?.id) {
+      const el = document.querySelector(`[data-card-id="${currentCard.id}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }
+    }
+  }, [currentCard?.id])
 
   const handleIdentify = async () => {
     try {
@@ -156,7 +176,8 @@ function CharSidebar({ textId, cards, currentCard }) {
                 <button
                   type="button"
                   className={`char-list-item${isActive ? ' active' : ''}`}
-                  onClick={() => selectCard({ ...c, ...cardData, text_id: textId })}
+                  data-card-id={c.id}
+                  onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
                 >
                   <Avatar name={name} size={34} />
                   <div className="char-list-info">
@@ -263,29 +284,45 @@ function CardDetail({ card, textId }) {
   const style = data.speaking_style || {}
   const rels = data.relationships || []
 
-  const [avatarUrl, setAvatarUrl] = useState(null)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+
+  const [avatarUrl, setAvatarUrl] = useState(() => cardAvatars[card.id] || null)
   const avatarInputRef = useRef(null)
 
   useEffect(() => {
     let cancelled = false
+    const cached = cardAvatars[card.id]
+    if (cached) {
+      setAvatarUrl(cached)
+      return
+    }
     getAvatar(card.id).then((blob) => {
       if (!cancelled && blob) {
-        setAvatarUrl(URL.createObjectURL(blob))
+        const url = URL.createObjectURL(blob)
+        setAvatarUrl(url)
+        const reader = new FileReader()
+        reader.onload = () => setCardAvatar(card.id, reader.result)
+        reader.readAsDataURL(blob)
       } else {
         setAvatarUrl(null)
       }
     })
     return () => { cancelled = true }
-  }, [card.id])
+  }, [card.id, cardAvatars])
 
   const handleAvatarChange = useCallback(
     async (e) => {
       const file = e.target.files?.[0]
       if (!file) return
       await saveAvatar(card.id, file)
-      setAvatarUrl(URL.createObjectURL(file))
+      const url = URL.createObjectURL(file)
+      setAvatarUrl(url)
+      const reader = new FileReader()
+      reader.onload = () => setCardAvatar(card.id, reader.result)
+      reader.readAsDataURL(file)
     },
-    [card.id],
+    [card.id, setCardAvatar],
   )
 
   const handleRoleConfirm = (role) => {

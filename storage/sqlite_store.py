@@ -385,6 +385,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete session failed: {exc}")
             raise
 
+    async def clear_all_sessions(self) -> int:
+        """Delete all sessions and their messages. Returns count of deleted sessions."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute("DELETE FROM sessions")
+                await conn.commit()
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Clear all sessions failed: {exc}")
+            raise
+
     async def update_session_voice_ref(self, card_id: str, voice_ref_json: str) -> None:
         """Update voice_ref_json for all sessions of a card."""
         try:
