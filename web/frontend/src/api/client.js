@@ -40,6 +40,9 @@ export async function postJSON(url, body, ms) {
 
 export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
   const controller = new AbortController()
+  const timeoutMs = 600000 // 10 min total
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  let finished = false
 
   ;(async () => {
     try {
@@ -75,10 +78,12 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
           try {
             const payload = JSON.parse(line.slice(6))
             if (payload.error) {
+              finished = true
               onError(new AppError(payload.error))
               return
             }
             if (payload.done) {
+              finished = true
               onDone(payload)
               return
             }
@@ -91,10 +96,19 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
           } catch { /* skip malformed lines */ }
         }
       }
+
+      // Stream ended without done/error event — connection lost or LLM truncated
+      if (!finished) {
+        onError(new AppError('连接中断，请重试'))
+      }
     } catch (err) {
       if (err.name !== 'AbortError') {
         onError(err instanceof AppError ? err : new AppError(err.message))
+      } else if (!finished) {
+        onError(new AppError('请求超时，请重试', 408))
       }
+    } finally {
+      clearTimeout(timeoutId)
     }
   })()
 
