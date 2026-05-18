@@ -2223,20 +2223,18 @@ body {
   gap: 10px;
   padding: 4px 16px;
   width: 100%;
+  box-sizing: border-box;
   animation: fade-up 0.22s var(--ease-out);
   position: relative;
 }
 
 .chat-msg-char {
   flex-direction: row;
-  align-self: flex-start;
-  max-width: 75%;
+  justify-content: flex-start;
 }
 
 .chat-msg-user {
   flex-direction: row-reverse;
-  justify-content: flex-start;
-  max-width: 80%;
   margin-left: auto;
 }
 
@@ -2269,15 +2267,15 @@ body {
 /* Bubbles */
 .chat-bubble {
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 14px;
   font-size: 0.95rem;
   line-height: 1.7;
   word-break: break-word;
   white-space: pre-wrap;
   position: relative;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.02);
-  flex: 1;
-  min-width: 0;
+  max-width: 75%;
+  width: fit-content;
 }
 
 .chat-bubble-char {
@@ -2300,8 +2298,7 @@ body {
   background: var(--user-bubble);
   color: var(--text);
   border-top-right-radius: 2px;
-  text-align: left;
-  max-width: none;
+  margin-left: auto;
 }
 
 .chat-bubble-user::before {
@@ -2315,7 +2312,7 @@ body {
 }
 
 .chat-bubble-text {
-  display: block;
+  display: inline;
 }
 
 /* Streaming cursor */
