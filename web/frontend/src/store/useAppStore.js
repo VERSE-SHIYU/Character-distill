@@ -358,6 +358,7 @@ const useAppStore = create((set, get) => ({
       (status) => {
         const statusMap = {
           identifying: '正在识别角色…',
+          building_rag: '正在构建语义索引…',
           distilling: '正在蒸馏…',
         }
         set({ distillStatus: statusMap[status] || status })

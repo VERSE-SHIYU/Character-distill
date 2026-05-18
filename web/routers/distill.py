@@ -190,15 +190,21 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 
-        # Identify all characters once
+        # Step 1: Identify all characters
         all_chars: list[dict[str, Any]] = []
         try:
             all_chars = await asyncio.to_thread(distiller.identify_characters, content)
         except Exception as exc:
             print(f"[distill] Identify failed (falling back): {exc}")
 
-        # Launch RAG build in background (don't block distillation on embedding)
-        rag_future = None
+        all_characters: list[dict[str, Any]] = [
+            {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
+        ]
+
+        # Step 2: Build RAG first, then distill — semantic retrieval beats keyword truncation
+        yield f"data: {json.dumps({'status': 'building_rag'}, ensure_ascii=False)}\n\n"
+
+        rag = None
         try:
             def _build_rag():
                 char_terms = [char_name]
@@ -209,19 +215,21 @@ async def distill_stream(
                 paragraphs = content.split("\n\n")
                 filtered_paras = [p for p in paragraphs if any(t in p for t in char_terms)]
                 text_for_rag = "\n\n".join(filtered_paras) if filtered_paras else content
-                all_characters = [
-                    {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
-                ]
                 r = RAGEngine(rag_config)
                 r.index(text_for_rag, all_characters=all_characters)
                 return r
-            rag_future = asyncio.get_running_loop().run_in_executor(None, _build_rag)
+            rag = await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(None, _build_rag),
+                timeout=90,
+            )
+        except asyncio.TimeoutError:
+            print("[distill] RAG build timed out, falling back to keyword extraction")
         except Exception as exc:
-            print(f"[distill] RAG build launch failed: {exc}")
+            print(f"[distill] RAG build failed, falling back to keyword: {exc}")
 
-        # Start distillation immediately with keyword-based extraction (fast path)
+        # Step 3: Stream distillation (RAG-powered or keyword fallback)
         full = ""
-        stream = distiller.distill_stream(content, char_name, None, all_chars or None)
+        stream = distiller.distill_stream(content, char_name, rag, all_chars or None)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
@@ -234,15 +242,7 @@ async def distill_stream(
             full += piece
             yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
 
-        # Collect RAG result (may already be done)
-        rag = None
-        if rag_future is not None:
-            try:
-                rag = await asyncio.wait_for(rag_future, timeout=5)
-            except Exception as exc:
-                print(f"[distill] RAG build not ready, session will build its own: {exc}")
-
-        # Parse full response
+        # Step 4: Parse + validate + save
         stripped = full.strip()
         data = None
         try:
