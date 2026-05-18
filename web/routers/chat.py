@@ -242,7 +242,10 @@ async def revoke_messages(
             engine = session.get("engine")
             if engine:
                 engine.history = [
-                    {"role": m["role"], "content": m["content"]}
+                    {
+                        "role": "assistant" if m["role"] == "char" else m["role"],
+                        "content": m["content"],
+                    }
                     for m in messages if m.get("role") != "summary"
                 ]
             session["message_ids"] = [m["id"] for m in messages]
