@@ -95,10 +95,10 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
     try:
         cfg = get_config()
         llm = cfg.setdefault("llm", {})
-        if req.base_url is not None:
-            llm["base_url"] = req.base_url
-        if req.model is not None:
-            llm["model"] = req.model
+        if req.base_url is not None and req.base_url.strip():
+            llm["base_url"] = req.base_url.strip()
+        if req.model is not None and req.model.strip():
+            llm["model"] = req.model.strip()
         if req.api_key is not None and req.api_key.strip():
             llm["api_key"] = req.api_key.strip()
         if req.summary_threshold is not None:

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
 import { initTheme } from './utils/theme'
+import { fetchWithTimeout } from './api/client'
 import Sidebar from './components/Sidebar'
 import TextPanel from './components/TextPanel'
 import CharCard from './components/CharCard'
@@ -40,6 +41,8 @@ function MainContent() {
 
 export default function App() {
   const checkVoiceStatus = useAppStore((s) => s.checkVoiceStatus)
+  const setView = useAppStore((s) => s.setView)
+  const currentView = useAppStore((s) => s.currentView)
 
   useEffect(() => {
     initTheme()
@@ -48,6 +51,23 @@ export default function App() {
   useEffect(() => {
     checkVoiceStatus()
   }, [checkVoiceStatus])
+
+  // Auto-redirect to settings if LLM is not configured (check once on mount)
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetchWithTimeout('/api/settings/config')
+        const data = await res.json()
+        if (!cancelled && !data.base_url && !data.model) {
+          setView('settings')
+        }
+      } catch {
+        // Server may not be ready yet — silent
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   // Sidebar auto-hide state
   const [sidebarOpen, setSidebarOpen] = useState(false)
