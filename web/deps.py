@@ -6,9 +6,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+load_dotenv(_REPO_ROOT / ".env")
 
 import yaml
 from adapters.llm_adapter import LLMAdapter

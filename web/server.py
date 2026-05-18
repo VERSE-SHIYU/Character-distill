@@ -4,6 +4,7 @@ from __future__ import annotations
 
 # 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -72,10 +73,11 @@ def read_settings_config() -> dict[str, Any]:
     """Read LLM config for settings UI."""
     try:
         llm = get_config().get("llm", {})
+        has_key = bool(llm.get("api_key") or os.getenv("DEEPSEEK_API_KEY"))
         return {
             "base_url": str(llm.get("base_url", "")),
             "model": str(llm.get("model", "")),
-            "api_key": "***" if llm.get("api_key") else "",
+            "api_key": "***" if has_key else "",
             "summary_threshold": int(llm.get("summary_threshold", 50)),
         }
     except Exception as exc:
