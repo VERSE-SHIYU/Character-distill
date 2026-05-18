@@ -137,12 +137,11 @@ const useAppStore = create((set, get) => ({
       const res = await fetchWithTimeout('/api/voice/asr', { method: 'POST', body: form })
       if (!res.ok) throw new Error('语音识别失败')
       const data = await res.json()
-      if (data.text) {
-        await get().sendMessage(data.text)
-      }
+      return data.text || ''
     } catch (err) {
       console.warn('[store] Voice message failed:', err)
       set({ error: '语音识别失败，请使用文字输入' })
+      return ''
     }
   },
 

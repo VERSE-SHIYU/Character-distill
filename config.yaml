@@ -21,7 +21,7 @@ storage:
 voice:
   enabled: false
   gptsovits_url: "http://127.0.0.1:9880"
-  funasr_url: "http://127.0.0.1:10095"
+  funasr_url: "ws://127.0.0.1:10095"
   ref_audio_min_seconds: 30
   ref_audio_max_seconds: 60
   default_speed: 1.0

@@ -509,7 +509,16 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         set({ isRecording: false, recordingDuration: 0 })
         if (dur < 1) return // too short, cancel
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        await sendVoiceMessage(blob)
+        const asrText = await sendVoiceMessage(blob)
+        if (asrText && taRef.current) {
+          setText(asrText)
+          setTimeout(() => {
+            if (taRef.current) {
+              taRef.current.style.height = 'auto'
+              taRef.current.style.height = Math.min(taRef.current.scrollHeight, 120) + 'px'
+            }
+          }, 0)
+        }
       }
 
       mr.start()

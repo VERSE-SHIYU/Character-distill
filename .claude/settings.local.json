@@ -65,7 +65,27 @@
       "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}, %{size_download} bytes\" http://localhost:7860/api/voice/preview-audio/xiaoxiao)",
       "Bash(curl -s -X POST http://localhost:7860/api/voice/synthesize -H 'Content-Type: application/json' -d '{\"text\":\"hello\",\"voice\":\"yunxi\"}' -o /dev/null -w \"HTTP %{http_code}, %{size_download} bytes\")",
       "Bash(curl -s -X POST http://localhost:7860/api/voice/synthesize -H 'Content-Type: application/json' -d '{\"session_id\":\"x\",\"text\":\"你好\",\"speed\":1.0}' -o /dev/null -w \"HTTP %{http_code}, %{size_download} bytes\")",
-      "Bash(curl -s http://localhost:7860/api/voice/ref-audio/x)"
+      "Bash(curl -s http://localhost:7860/api/voice/ref-audio/x)",
+      "Bash(docker --version)",
+      "Bash(rtk docker *)",
+      "Bash(ffmpeg -version)",
+      "Bash(winget install *)",
+      "Bash(powershell.exe *)",
+      "Bash(where scoop *)",
+      "Bash(where choco *)",
+      "Bash(\"/c/ffmpeg/ffmpeg-8.1.1-essentials_build/bin/ffmpeg.exe\" -version)",
+      "Bash(\"/c/ffmpeg/ffmpeg-8.1.1-essentials_build/bin/ffmpeg.exe\" -y -f lavfi -i \"sine=frequency=1000:duration=1\" -ar 16000 -ac 1 -f wav /tmp/test_tone.wav)",
+      "Bash(docker version *)",
+      "Bash(docker pull *)",
+      "Bash(docker info *)",
+      "Bash(python speech/funasr_server.py)",
+      "Bash(echo \"Server PID: $!\")",
+      "Bash(rtk ps *)",
+      "Bash(tasklist)",
+      "Bash(tasklist /FI \"PID eq 32692\" /FO TABLE)",
+      "Bash(tasklist /FI \"PID eq 1372\" /FO TABLE)",
+      "Bash(echo \"Started PID: $!\")",
+      "Bash(echo \"PID=$!\")"
     ]
   }
 }

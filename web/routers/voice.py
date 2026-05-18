@@ -1,4 +1,4 @@
-"""Voice: preset Edge TTS, custom library, GPT-SoVITS stubs, ASR stub."""
+"""Voice: preset Edge TTS, custom library, GPT-SoVITS stubs, ASR via FunASR WebSocket."""
 
 from __future__ import annotations
 
@@ -40,11 +40,23 @@ def _write_voice_library(library: list[dict[str, Any]]) -> None:
 
 @router.get("/status")
 async def voice_status() -> dict[str, Any]:
+    import yaml
+
+    funasr_ok = False
+    try:
+        cfg = yaml.safe_load(open("config.yaml"))
+        funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
+        from speech.funasr_client import FunASRClient
+        funasr_client = FunASRClient(url=funasr_url)
+        funasr_ok = await funasr_client.is_available()
+    except Exception:
+        pass
+
     return {
         "available": True,
         "preset_voices": list(VOICES.keys()),
         "gptsovits": False,
-        "funasr": False,
+        "funasr": funasr_ok,
     }
 
 
@@ -183,8 +195,70 @@ async def delete_ref_audio(card_id: str) -> JSONResponse:
     return JSONResponse(status_code=501, content={"detail": "Not implemented"})
 
 
-# ---- ASR stub (FunASR not yet implemented) ----
+# ---- ASR (FunASR via WebSocket) ----
 
 @router.post("/asr")
-async def transcribe_audio() -> JSONResponse:
-    return JSONResponse(status_code=501, content={"detail": "Not implemented"})
+async def speech_to_text(
+    file: UploadFile = File(...),
+) -> JSONResponse:
+    """Convert uploaded audio to text using FunASR."""
+    import os
+    import subprocess
+    import tempfile
+
+    import yaml
+
+    cfg = yaml.safe_load(open("config.yaml"))
+    funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
+
+    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
+        content = await file.read()
+        tmp_in.write(content)
+        tmp_in_path = tmp_in.name
+
+    tmp_wav_path = tmp_in_path.replace(".webm", ".wav")
+    try:
+        import os as _os
+        _ffmpeg = _os.environ.get(
+            "FFMPEG_PATH",
+            r"C:\ffmpeg\ffmpeg-8.1.1-essentials_build\bin\ffmpeg.exe",
+        )
+        result = subprocess.run(
+            [
+                _ffmpeg, "-y", "-i", tmp_in_path,
+                "-ar", "16000", "-ac", "1", "-f", "wav",
+                tmp_wav_path,
+            ],
+            capture_output=True, timeout=15,
+        )
+        if result.returncode != 0:
+            raise HTTPException(400, f"音频转码失败: {result.stderr.decode()[:200]}")
+
+        with open(tmp_wav_path, "rb") as f:
+            wav_data = f.read()
+
+        pcm_data = wav_data[44:] if wav_data[:4] == b"RIFF" else wav_data
+
+        from speech.funasr_client import FunASRClient
+        client = FunASRClient(url=funasr_url)
+
+        if not await client.is_available():
+            raise HTTPException(503, "FunASR 服务未连接")
+
+        text = await client.recognize(pcm_data)
+        if not text.strip():
+            return JSONResponse({"text": "", "message": "未识别到语音内容"})
+
+        return JSONResponse({"text": text.strip()})
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[voice] ASR failed: {exc}")
+        raise HTTPException(500, f"语音识别失败: {str(exc)}")
+    finally:
+        for p in [tmp_in_path, tmp_wav_path]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
