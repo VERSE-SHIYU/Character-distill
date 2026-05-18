@@ -347,6 +347,8 @@ const useAppStore = create((set, get) => ({
   },
 
   selectCard: async (card) => {
+    // TODO: 如果 card.session_id 存在，应从 /api/history/{session_id}/resume 加载历史消息，
+    // 而非每次新建会话（当前行为：仅在 card 无 session_id 时创建新会话）。
     set({
       currentCard: card,
       messages: card.first_message ? [{ role: 'char', content: card.first_message }] : [],

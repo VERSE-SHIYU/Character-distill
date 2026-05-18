@@ -6,6 +6,8 @@ import asyncio
 import json
 from typing import Any
 
+from typing import Any, Union
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -147,11 +149,7 @@ async def _do_chat_stream(
                 yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
 
             full_reply = "".join(tokens)
-            try:
-                rag_context = "\n".join(session["engine"].rag.query(msg))
-            except Exception as exc:
-                print(f"[chat] Query rag context after stream failed (non-fatal): {exc}")
-                rag_context = ""
+            rag_context = getattr(session["engine"], "_last_rag_context", "") or ""
 
             try:
                 char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500])
@@ -207,7 +205,7 @@ async def send_message(
     req: ChatRequest,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
-) -> Any:
+) -> Union[dict[str, Any], StreamingResponse]:
     """Send a message and get a JSON reply or SSE stream."""
     if not sessions:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -225,36 +223,32 @@ async def revoke_messages(
     """Delete messages starting from the given DB message id.
 
     ``req.message_id`` is a real SQLite message row id (NOT a positional index).
+    After DB deletion, rebuild ``engine.history`` from remaining messages to keep
+    the in-memory context and ``message_ids`` tracking precisely in sync.
     """
     session = sessions.get(req.session_id)
-    msg_ids: list[int] = session.get("message_ids", []) if session else []
 
-    # Find position of this DB id in tracked ids
-    try:
-        idx = msg_ids.index(req.message_id)
-    except ValueError:
-        # message_id not tracked in memory (e.g. after server restart);
-        # still delete from DB but skip in-memory truncation
-        try:
-            count = await storage.delete_messages_after(req.session_id, req.message_id)
-        except Exception as exc:
-            print(f"[chat] Revoke messages failed: {exc}")
-            raise HTTPException(500, f"Revoke failed: {exc}") from exc
-        return {"deleted": count}
-
-    # Truncate in-memory state
-    if session:
-        engine = session.get("engine")
-        if engine:
-            engine.history = engine.history[:min(idx, len(engine.history))]
-        session["message_ids"] = msg_ids[:idx]
-
-    # Delete from SQLite with the real DB id
+    # Delete from SQLite first
     try:
         count = await storage.delete_messages_after(req.session_id, req.message_id)
     except Exception as exc:
         print(f"[chat] Revoke messages failed: {exc}")
         raise HTTPException(500, f"Revoke failed: {exc}") from exc
+
+    # Rebuild in-memory engine.history and message_ids from remaining DB rows
+    if session:
+        try:
+            messages = await storage.get_messages(req.session_id)
+            engine = session.get("engine")
+            if engine:
+                engine.history = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in messages if m.get("role") != "summary"
+                ]
+            session["message_ids"] = [m["id"] for m in messages]
+        except Exception as exc:
+            print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
+
     return {"deleted": count}
 
 @router.post("/reset")

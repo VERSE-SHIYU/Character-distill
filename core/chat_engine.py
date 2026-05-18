@@ -41,6 +41,7 @@ class ChatEngine:
         self.summary_threshold: int = summary_threshold
         self.history: list[dict[str, Any]] = []
         self.last_summary: str | None = None
+        self._last_rag_context: str = ""
 
     def build_system_prompt(self, rag_context: str = "") -> str:
         """根据角色卡拼装系统提示；可选附加 RAG 片段。
@@ -163,7 +164,6 @@ class ChatEngine:
             生成的摘要文本；未触发或失败返回 ``None``。
         """
         if len(self.history) < threshold:
-            self.last_summary = None
             return None
 
         keep_recent = 10
@@ -202,8 +202,8 @@ class ChatEngine:
             return None
 
         summary_message = {
-            "role": "summary",
-            "content": f"历史摘要：{summary_text}",
+            "role": "user",
+            "content": f"[对话摘要] 这是之前对话的摘要，供你了解上下文：{summary_text}",
         }
         self.history = [summary_message, *recent_messages]
         self.last_summary = summary_text
@@ -238,7 +238,7 @@ class ChatEngine:
         self.history.append({"role": "user", "content": user_message})
 
         llm_history = [
-            {"role": "system" if m["role"] == "summary" else m["role"], "content": m["content"]}
+            {"role": m["role"], "content": m["content"]}
             for m in self.history
         ]
 
@@ -273,6 +273,7 @@ class ChatEngine:
             raise
 
         rag_context = "\n".join(snippets)
+        self._last_rag_context = rag_context
 
         try:
             system_prompt = self.build_system_prompt(rag_context)
@@ -283,7 +284,7 @@ class ChatEngine:
         self.history.append({"role": "user", "content": user_message})
 
         llm_history = [
-            {"role": "system" if m["role"] == "summary" else m["role"], "content": m["content"]}
+            {"role": m["role"], "content": m["content"]}
             for m in self.history
         ]
 

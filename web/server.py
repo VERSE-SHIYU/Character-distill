@@ -93,7 +93,7 @@ class UpdateConfigRequest(BaseModel):
 
 
 @app.post("/api/settings/config")
-def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
+def update_settings_config(req: UpdateConfigRequest) -> dict[str, Any]:
     """Update LLM config at runtime and persist to config.yaml."""
     try:
         cfg = get_config()
@@ -111,6 +111,8 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
+        # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
+        # 重建 LLM/Distiller/TextManager 单例使新配置即时生效
         reset_llm_and_dependents()
 
         return {

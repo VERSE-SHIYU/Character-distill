@@ -102,15 +102,17 @@ class RAGEngine:
 
         return chunks
 
-    def _tag_characters(self, chunk_text: str, all_characters: list[dict[str, Any]]) -> list[str]:
-        """标注 chunk 中出场角色，返回主名列表。
+    @staticmethod
+    def _characters_tag(found: list[str]) -> str:
+        """Join character names into a comma-separated tag for ChromaDB ``$contains`` matching."""
+        return ",".join(found) if found else "__none__"
 
-        Args:
-            chunk_text: 文本片段。
-            all_characters: 角色信息字典列表，每项含 name 和 aliases。
+    def _tag_characters(self, chunk_text: str, all_characters: list[dict[str, Any]]) -> str:
+        """返回逗号分隔的角色名字符串，供 ChromaDB ``$contains`` 子串匹配。
 
-        Returns:
-            角色主名字符串列表（去重排序）。ChromaDB 的 ``$contains`` 对列表做元素匹配。
+        ChromaDB 的 ``$contains`` 只对字符串做子串匹配，不支持列表元素匹配。
+        将角色名列表转为逗号分隔字符串（如 ``"魏无羡,江澄"``）后，``$contains`` 即可正确命中。
+        约束：角色名不能包含逗号。
         """
         found: set[str] = set()
         lower_text = chunk_text.lower()
@@ -123,7 +125,7 @@ class RAGEngine:
                 if term.lower() in lower_text:
                     found.add(name)
                     break
-        return sorted(found)
+        return self._characters_tag(sorted(found))
 
     def index(
         self,
@@ -164,7 +166,7 @@ class RAGEngine:
         add_kwargs: dict[str, Any] = {"documents": filtered, "ids": ids}
         if all_characters:
             add_kwargs["metadatas"] = [
-                {"characters": self._tag_characters(chunk, all_characters) or ["__none__"]}
+                {"characters": self._tag_characters(chunk, all_characters)}
                 for chunk in filtered
             ]
         try:

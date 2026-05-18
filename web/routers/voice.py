@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from deps import get_storage, get_tts_engine, get_voice_client
+from deps import get_config, get_storage, get_tts_engine, get_voice_client
 from speech.edge_tts_client import EdgeTTSEngine, VOICES
 from speech.voice_clone import VoiceCloneClient
 
@@ -45,14 +45,11 @@ def _write_voice_library(library: list[dict[str, Any]]) -> None:
 @router.get("/status")
 async def voice_status(
     voice_client: VoiceCloneClient = Depends(get_voice_client),
+    config: dict[str, Any] = Depends(get_config),
 ) -> dict[str, Any]:
-    import yaml
-
     funasr_ok = False
     try:
-        _repo_root = Path(__file__).resolve().parent.parent.parent
-        cfg = yaml.safe_load(open(_repo_root / "config.yaml"))
-        funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
+        funasr_url = config.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
         from speech.funasr_client import FunASRClient
         funasr_client = FunASRClient(url=funasr_url)
         funasr_ok = await funasr_client.is_available()
@@ -295,17 +292,14 @@ async def delete_ref_audio(
 @router.post("/asr")
 async def speech_to_text(
     file: UploadFile = File(...),
+    config: dict[str, Any] = Depends(get_config),
 ) -> JSONResponse:
     """Convert uploaded audio to text using FunASR."""
     import os
     import subprocess
     import tempfile
 
-    import yaml
-
-    _repo_root = Path(__file__).resolve().parent.parent.parent
-    cfg = yaml.safe_load(open(_repo_root / "config.yaml"))
-    funasr_url = cfg.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
+    funasr_url = config.get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
 
     with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp_in:
         content = await file.read()
@@ -315,10 +309,7 @@ async def speech_to_text(
     tmp_wav_path = tmp_in_path.replace(".webm", ".wav")
     try:
         import os as _os
-        _ffmpeg = _os.environ.get(
-            "FFMPEG_PATH",
-            r"C:\ffmpeg\ffmpeg-8.1.1-essentials_build\bin\ffmpeg.exe",
-        )
+        _ffmpeg = _os.environ.get("FFMPEG_PATH", "ffmpeg")
         result = subprocess.run(
             [
                 _ffmpeg, "-y", "-i", tmp_in_path,

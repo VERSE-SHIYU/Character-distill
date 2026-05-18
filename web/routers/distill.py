@@ -238,7 +238,7 @@ async def distill_stream(
         rag = None
         if rag_future is not None:
             try:
-                rag = rag_future.result(timeout=5)
+                rag = await asyncio.wait_for(rag_future, timeout=5)
             except Exception as exc:
                 print(f"[distill] RAG build not ready, session will build its own: {exc}")
 

@@ -100,8 +100,6 @@ class Distiller:
         Returns:
             角色信息字典列表；解析反复失败时返回空列表并打印警告。
         """
-        import torch as _torch
-
         excerpt = text[:10000]
         messages: list[dict[str, Any]] = [{"role": "user", "content": excerpt}]
 
@@ -217,8 +215,6 @@ class Distiller:
         Raises:
             ValueError: JSON 经截取与大括号提取后仍无法还原为 ``CharacterCard``。
         """
-        import torch as _torch
-
         chars = all_chars if all_chars is not None else self.identify_characters(text)
         aliases: list[str] = []
         for c in chars:
@@ -282,8 +278,6 @@ class Distiller:
         复用与 ``distill`` 相同的角色识别 + 段落提取逻辑，
         仅将 ``self._llm.chat`` 替换为 ``self._llm.chat_stream``。
         """
-        import torch as _torch
-
         chars = all_chars if all_chars is not None else self.identify_characters(text)
         aliases: list[str] = []
         for c in chars:

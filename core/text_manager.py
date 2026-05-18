@@ -197,7 +197,7 @@ class TextManager:
                 continue
             try:
                 card = await asyncio.to_thread(
-                    self._distiller.distill, content, name
+                    self._distiller.distill, content, name, None, chars
                 )
             except Exception as exc:
                 print(f"[TextManager] Distill '{name}' failed, skipping: {exc}")

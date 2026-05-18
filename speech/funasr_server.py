@@ -24,11 +24,11 @@ class FunASRServer:
         self._model_error = None
 
     def _load_model(self):
-        import os
-        os.environ.setdefault(
-            "PATH",
-            r"C:\ffmpeg\ffmpeg-8.1.1-essentials_build\bin" + os.pathsep + os.environ.get("PATH", ""),
-        )
+        import os as _os
+        ffmpeg_dir = _os.environ.get("FFMPEG_PATH", "")
+        if ffmpeg_dir:
+            _sep = ";" if _os.name == "nt" else ":"
+            _os.environ["PATH"] = ffmpeg_dir + _sep + _os.environ.get("PATH", "")
         from funasr import AutoModel
         return AutoModel(
             model="paraformer-zh",
