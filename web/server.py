@@ -6,6 +6,7 @@ from __future__ import annotations
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
 import sys
 from pathlib import Path
+from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -67,7 +68,7 @@ app.include_router(wechat_router)
 
 
 @app.get("/api/settings/config")
-def read_settings_config() -> dict[str, str]:
+def read_settings_config() -> dict[str, Any]:
     """Read LLM config for settings UI."""
     try:
         llm = get_config().get("llm", {})
