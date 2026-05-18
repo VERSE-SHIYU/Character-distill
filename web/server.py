@@ -172,7 +172,10 @@ if _assets_dir.is_dir():
         name="frontend_assets",
     )
 
-app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+else:
+    print(f"[server] WARNING: Static dir {_STATIC_DIR} not found — serving API only.")
 
 # Voice cache audio files
 _voice_cache_dir = _REPO_ROOT / "data" / "voice_cache"

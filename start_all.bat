@@ -21,8 +21,18 @@ set "GPTSOVITS_PORT=9880"
 set "BACKEND_PORT=7860"
 set "FRONTEND_DEV=false"
 
+:: ---- 0. 创建兜底目录 ----
+echo [0/5] 确保静态文件目录存在...
+if not exist "%PROJECT_DIR%web\static" (
+    mkdir "%PROJECT_DIR%web\static"
+    echo        web\static 目录已创建 ✓
+) else (
+    echo        web\static 目录已存在 ✓
+)
+
 :: ---- 1. 启动 GPT-SoVITS（音色克隆服务） ----
-echo [1/4] 检查 GPT-SoVITS...
+echo.
+echo [1/5] 检查 GPT-SoVITS...
 if exist "%GPTSOVITS_DIR%\runtime\python.exe" (
     echo       启动 GPT-SoVITS API ^(端口 %GPTSOVITS_PORT%^)...
     start "GPT-SoVITS" cmd /c "cd /d "%GPTSOVITS_DIR%" && runtime\python.exe api_v2.py -a 127.0.0.1 -p %GPTSOVITS_PORT% 2>&1"
@@ -35,7 +45,7 @@ if exist "%GPTSOVITS_DIR%\runtime\python.exe" (
 
 :: ---- 2. 检查 FunASR（语音识别，需要 Docker） ----
 echo.
-echo [2/4] 检查 FunASR...
+echo [2/5] 检查 FunASR...
 docker ps 2>nul | findstr "funasr" >nul
 if %errorlevel% equ 0 (
     echo       FunASR 容器已在运行 ✓
@@ -46,26 +56,47 @@ if %errorlevel% equ 0 (
 
 :: ---- 3. 构建前端 ----
 echo.
-echo [3/4] 构建前端...
+echo [3/5] 构建前端...
 cd /d "%PROJECT_DIR%web\frontend"
+
+:: 检测 Node.js 是否可用
+where node >nul 2>&1
+if %errorlevel% neq 0 (
+    echo       [跳过] Node.js 未安装，无法构建前端
+    echo       安装 Node.js: https://nodejs.org/
+    goto :skip_frontend
+)
+
+:: 自动安装依赖
+if not exist "node_modules" (
+    echo        node_modules 缺失，正在 npm install...
+    call npm install 2>&1
+    if %errorlevel% neq 0 (
+        echo       [警告] npm install 失败，尝试继续...
+    ) else (
+        echo        npm install 完成 ✓
+    )
+)
 
 if "%FRONTEND_DEV%"=="true" (
     echo       启动 Vite 开发服务器...
     start "Frontend-Dev" cmd /c "npx vite --port 5173"
 ) else (
     echo       执行 npm run build...
-    call npx vite build >nul 2>&1
+    call npx vite build 2>&1
     if %errorlevel% equ 0 (
         echo       前端构建成功 ✓
     ) else (
-        echo       [警告] 前端构建失败，请检查 node_modules
-        echo       尝试: cd web\frontend ^&^& npm install ^&^& npm run build
+        echo       [警告] 前端构建失败，后端将以 API-only 模式启动
     )
 )
 
+:skip_frontend
+cd /d "%PROJECT_DIR%"
+
 :: ---- 4. 启动 FastAPI 后端 ----
 echo.
-echo [4/4] 启动 FastAPI 后端...
+echo [5/5] 启动 FastAPI 后端...
 cd /d "%PROJECT_DIR%"
 
 :: 加载 .env（如果存在）

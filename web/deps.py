@@ -95,12 +95,12 @@ def get_config() -> dict[str, Any]:
 
 def reset_llm_and_dependents() -> None:
     """Hot-reload: recreate LLM, Distiller, and TextManager singletons after config.yaml changes."""
-    global _llm, _distiller, _text_manager, _summary_threshold, _config
+    global _llm, _distiller, _text_manager, _summary_threshold, _config, _rag_config
     _llm = LLMAdapter()
     _distiller = Distiller(_llm)
-    # Re-read config in case it was changed in config.yaml
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
+    _rag_config = _config["rag"]
     _summary_threshold = _config.get("llm", {}).get("summary_threshold", 50)
     _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold)
 
