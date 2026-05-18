@@ -17,6 +17,7 @@ export default function SettingsPanel() {
   const [theme, setTheme] = useState(getTheme)
   const [form, setForm] = useState({ base_url: '', model: '', api_key: '' })
   const [saving, setSaving] = useState(false)
+  const [summaryThreshold, setSummaryThreshold] = useState(50)
   const [edgeTtsVoice, setEdgeTtsVoice] = useState(() => localStorage.getItem('tts_voice') || 'xiaoxiao')
   const [testing, setTesting] = useState(false)
 
@@ -65,6 +66,7 @@ export default function SettingsPanel() {
         if (!cancelled) {
           setConfig(data)
           setForm({ base_url: data.base_url || '', model: data.model || '', api_key: '' })
+          setSummaryThreshold(data.summary_threshold ?? 50)
         }
       } catch (err) {
         console.error('[SettingsPanel] load config failed:', err)
@@ -204,10 +206,11 @@ export default function SettingsPanel() {
                 setSaving(true)
                 setError(null)
                 try {
-                  const body = { base_url: form.base_url, model: form.model }
+                  const body = { base_url: form.base_url, model: form.model, summary_threshold: summaryThreshold }
                   if (form.api_key) body.api_key = form.api_key
                   const data = await postJSON('/api/settings/config', body)
                   setConfig(data)
+                  setSummaryThreshold(data.summary_threshold ?? 50)
                   setForm((f) => ({ ...f, api_key: '' }))
                 } catch (err) {
                   setError(err.message)
@@ -220,6 +223,26 @@ export default function SettingsPanel() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-section-title">对话摘要</h2>
+        <p className="settings-hint">
+          对话超过指定轮数后自动压缩历史为摘要，节省上下文
+        </p>
+        <div className="settings-fields">
+          <label className="settings-field">
+            <span className="settings-label">触发阈值（消息条数）</span>
+            <input
+              type="number"
+              className="settings-input"
+              min={10}
+              max={200}
+              value={summaryThreshold}
+              onChange={(e) => setSummaryThreshold(Number(e.target.value))}
+            />
+          </label>
+        </div>
       </section>
 
       <section className="settings-section">

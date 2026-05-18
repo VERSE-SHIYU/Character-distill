@@ -287,6 +287,20 @@ function ChatView() {
           onChange={(e) => setUserRole(e.target.value)}
           onBlur={() => setUserRole(userRole)}
         />
+        {cardData?.identity?.relationships && (
+          <div className="user-role-presets">
+            {Object.keys(cardData.identity.relationships).slice(0, 4).map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
+                onClick={() => setUserRole(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Source text context */}

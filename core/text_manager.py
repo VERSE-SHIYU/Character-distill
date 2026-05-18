@@ -34,12 +34,14 @@ class TextManager:
         llm: LLMAdapter,
         rag_config: dict[str, Any],
         sessions: dict[str, dict[str, Any]],
+        summary_threshold: int = 50,
     ) -> None:
         self._storage = storage
         self._distiller = distiller
         self._llm = llm
         self._rag_config = rag_config
         self._sessions = sessions
+        self._summary_threshold = summary_threshold
 
     # ---- Format parsing ----
 
@@ -298,7 +300,7 @@ class TextManager:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
         rag = RAGEngine(self._rag_config)
         rag.index(text, all_characters=all_characters)
-        engine = ChatEngine(self._llm, rag, card, all_characters=all_characters)
+        engine = ChatEngine(self._llm, rag, card, all_characters=all_characters, summary_threshold=self._summary_threshold)
         session_id = hashlib.md5(
             f"{card.name}_{time.time()}".encode()
         ).hexdigest()[:12]

@@ -29,6 +29,7 @@ _storage = SQLiteStore(str(_REPO_ROOT / _config["storage"]["path"]))
 _llm: LLMAdapter | None = None
 _distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
+_summary_threshold: int = _config.get("llm", {}).get("summary_threshold", 50)
 
 # {session_id: {"engine": ChatEngine, "card": CharacterCard}}
 # Transitional: kept until chat_engine migrates to storage-backed history
@@ -72,7 +73,7 @@ def get_text_manager() -> TextManager:
     """Return the TextManager singleton (lazy-init)."""
     global _text_manager
     if _text_manager is None:
-        _text_manager = TextManager(_storage, get_distiller(), get_llm(), _rag_config, _sessions)
+        _text_manager = TextManager(_storage, get_distiller(), get_llm(), _rag_config, _sessions, _summary_threshold)
     return _text_manager
 
 
@@ -83,10 +84,14 @@ def get_config() -> dict[str, Any]:
 
 def reset_llm_and_dependents() -> None:
     """Hot-reload: recreate LLM, Distiller, and TextManager singletons after config.yaml changes."""
-    global _llm, _distiller, _text_manager
+    global _llm, _distiller, _text_manager, _summary_threshold
     _llm = LLMAdapter()
     _distiller = Distiller(_llm)
-    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions)
+    # Re-read summary_threshold in case it was changed in config.yaml
+    with open(_CFG_PATH, encoding="utf-8") as _f:
+        _cfg = yaml.safe_load(_f)
+    _summary_threshold = _cfg.get("llm", {}).get("summary_threshold", 50)
+    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold)
 
 
 _tts_engine = None

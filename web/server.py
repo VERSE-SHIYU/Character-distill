@@ -75,6 +75,7 @@ def read_settings_config() -> dict[str, str]:
             "base_url": str(llm.get("base_url", "")),
             "model": str(llm.get("model", "")),
             "api_key": "***" if llm.get("api_key") else "",
+            "summary_threshold": int(llm.get("summary_threshold", 50)),
         }
     except Exception as exc:
         print(f"[server] Read settings config failed: {exc}")
@@ -85,6 +86,7 @@ class UpdateConfigRequest(BaseModel):
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
+    summary_threshold: int | None = None
 
 
 @app.post("/api/settings/config")
@@ -99,6 +101,8 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
             llm["model"] = req.model
         if req.api_key is not None and req.api_key.strip():
             llm["api_key"] = req.api_key.strip()
+        if req.summary_threshold is not None:
+            llm["summary_threshold"] = req.summary_threshold
 
         cfg_path = _REPO_ROOT / "config.yaml"
         with open(cfg_path, "w", encoding="utf-8") as f:
@@ -110,6 +114,7 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, str]:
             "base_url": str(llm.get("base_url", "")),
             "model": str(llm.get("model", "")),
             "api_key": "***" if llm.get("api_key") else "",
+            "summary_threshold": int(llm.get("summary_threshold", 50)),
         }
     except Exception as exc:
         print(f"[server] Update config failed: {exc}")

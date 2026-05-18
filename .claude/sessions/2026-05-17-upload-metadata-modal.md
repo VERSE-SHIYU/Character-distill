@@ -1,0 +1,12 @@
+### 14:30 上传文本增加元数据表单
+- **做了什么**：上传文件前弹出毛玻璃模态框，填写故事标题（必填）和描述（选填），连同文件一起提交到后端
+- **为什么**：用户需要在上传时为文本添加可读的标题和描述，便于首页卡片和列表展示
+- **影响范围**：
+  - `storage/migrations/004_title_desc.sql` — 新建，给 texts 表添加 title/description 列
+  - `storage/sqlite_store.py` — save_text/get_text/list_texts 适配新字段，迁移自动执行
+  - `core/text_manager.py` — upload_text/upload_text_from_file 透传 title/description
+  - `web/routers/text.py` — POST /api/text/upload 新增 title(必填)/description(选填) Form 参数
+  - `web/frontend/src/store/useAppStore.js` — uploadText 接受 title/description 附加到 FormData
+  - `web/frontend/src/components/TextPanel.jsx` — 新增上传前模态框逻辑，列表显示标题（fallback 文件名）和描述
+  - `web/frontend/src/components/HomePage.jsx` — 首页卡片显示标题（fallback 文件名）和描述
+  - `web/frontend/src/styles/global.css` — 新增 modal-overlay/modal-card/表单样式 + home-card-desc/text-list-desc 样式

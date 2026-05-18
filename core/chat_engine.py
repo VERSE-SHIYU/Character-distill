@@ -20,6 +20,7 @@ class ChatEngine:
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
         user_role: str = "",
+        summary_threshold: int = 50,
     ) -> None:
         """注入模型适配器、RAG 引擎与角色卡。
 
@@ -30,12 +31,14 @@ class ChatEngine:
             all_characters: 角色信息列表（含 name/aliases），传入后
                 ``chat`` / ``chat_stream`` 会自动按当前角色过滤 RAG 片段。
             user_role: 用户扮演的角色名，非空时注入 system prompt。
+            summary_threshold: 触发自动摘要的历史消息条数阈值。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
         self._all_characters = all_characters
         self.user_role: str = user_role
+        self.summary_threshold: int = summary_threshold
         self.history: list[dict[str, Any]] = []
         self.last_summary: str | None = None
 
@@ -221,7 +224,7 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": response})
-        self._summarize_if_needed()
+        self._summarize_if_needed(self.summary_threshold)
         return response, rag_context
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
@@ -270,7 +273,7 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": "".join(collected)})
-        self._summarize_if_needed()
+        self._summarize_if_needed(self.summary_threshold)
 
     def reset(self) -> None:
         """清空对话历史。"""
