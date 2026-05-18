@@ -43,19 +43,26 @@ def get_storage() -> SQLiteStore:
     return _storage
 
 
-def get_llm() -> LLMAdapter:
-    """Return the LLMAdapter singleton (lazy-init)."""
+def get_llm() -> LLMAdapter | None:
+    """Return the LLMAdapter singleton (lazy-init). Returns None if API is not configured."""
     global _llm
     if _llm is None:
-        _llm = LLMAdapter()
+        try:
+            _llm = LLMAdapter()
+        except Exception as exc:
+            print(f"[deps] LLMAdapter init failed (API not configured?): {exc}")
+            return None
     return _llm
 
 
-def get_distiller() -> Distiller:
-    """Return the Distiller singleton (lazy-init)."""
+def get_distiller() -> Distiller | None:
+    """Return the Distiller singleton (lazy-init). Returns None if LLM is unavailable."""
     global _distiller
     if _distiller is None:
-        _distiller = Distiller(get_llm())
+        llm = get_llm()
+        if llm is None:
+            return None
+        _distiller = Distiller(llm)
     return _distiller
 
 
@@ -69,11 +76,15 @@ def get_sessions() -> dict[str, dict[str, Any]]:
     return _sessions
 
 
-def get_text_manager() -> TextManager:
-    """Return the TextManager singleton (lazy-init)."""
+def get_text_manager() -> TextManager | None:
+    """Return the TextManager singleton (lazy-init). Returns None if dependencies are unavailable."""
     global _text_manager
     if _text_manager is None:
-        _text_manager = TextManager(_storage, get_distiller(), get_llm(), _rag_config, _sessions, _summary_threshold)
+        distiller = get_distiller()
+        llm = get_llm()
+        if distiller is None or llm is None:
+            return None
+        _text_manager = TextManager(_storage, distiller, llm, _rag_config, _sessions, _summary_threshold)
     return _text_manager
 
 

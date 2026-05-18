@@ -39,6 +39,22 @@ const useAppStore = create((set, get) => ({
   error: null,
   setError: (err) => set({ error: err }),
 
+  apiConfigured: false,
+
+  checkApiConfig: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/settings/config')
+      const data = await res.json()
+      const configured = !!(data.base_url && data.model && data.api_key)
+      set({ apiConfigured: configured })
+      return configured
+    } catch (err) {
+      console.error('[store] checkApiConfig failed:', err)
+      set({ apiConfigured: false })
+      return false
+    }
+  },
+
   // Avatar sync
   cardAvatars: {},
   setCardAvatar: (cardId, dataUrl) => {

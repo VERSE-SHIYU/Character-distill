@@ -20,6 +20,7 @@ export default function SettingsPanel() {
   const [edgeTtsVoice, setEdgeTtsVoice] = useState(() => localStorage.getItem('tts_voice') || 'xiaoxiao')
   const [testing, setTesting] = useState(false)
 
+  const apiConfigured = useAppStore((s) => s.apiConfigured)
   const currentCard = useAppStore((s) => s.currentCard)
   const voiceStatus = useAppStore((s) => s.voiceStatus)
   const voiceEnabled = useAppStore((s) => s.voiceEnabled)
@@ -157,6 +158,11 @@ export default function SettingsPanel() {
 
       <section className="settings-section">
         <h2 className="settings-section-title">API 配置</h2>
+        {!apiConfigured && (
+          <div className="api-config-alert">
+            {'⚠️'} 未检测到 API 配置，请填写以下信息后保存，否则无法使用聊天和蒸馏功能。
+          </div>
+        )}
         <p className="settings-hint">
           修改后点击保存即可生效，无需重启服务。
         </p>
@@ -209,6 +215,9 @@ export default function SettingsPanel() {
                   setConfig(data)
                   setSummaryThreshold(data.summary_threshold ?? 50)
                   setForm((f) => ({ ...f, api_key: '' }))
+                  // Refresh config status
+                  const configured = !!(data.base_url && data.model && data.api_key)
+                  useAppStore.setState({ apiConfigured: configured })
                 } catch (err) {
                   setError(err.message)
                 } finally {

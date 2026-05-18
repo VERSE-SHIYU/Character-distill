@@ -209,6 +209,8 @@ async def send_message(
     sessions: dict = Depends(get_sessions),
 ) -> Any:
     """Send a message and get a JSON reply or SSE stream."""
+    if not sessions:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
         return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role)
     return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role)

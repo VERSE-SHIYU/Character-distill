@@ -54,19 +54,12 @@ export default function App() {
 
   // Auto-redirect to settings if LLM is not configured (check once on mount)
   useEffect(() => {
-    let cancelled = false
     ;(async () => {
-      try {
-        const res = await fetchWithTimeout('/api/settings/config')
-        const data = await res.json()
-        if (!cancelled && !data.base_url && !data.model) {
-          setView('settings')
-        }
-      } catch {
-        // Server may not be ready yet — silent
+      const configured = await useAppStore.getState().checkApiConfig()
+      if (!configured) {
+        setView('settings')
       }
     })()
-    return () => { cancelled = true }
   }, [])
 
   // Sidebar auto-hide state

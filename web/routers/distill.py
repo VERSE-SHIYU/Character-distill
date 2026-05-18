@@ -96,6 +96,8 @@ async def identify_by_text_id(
     distiller: Distiller = Depends(get_distiller),
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
+    if distiller is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -110,6 +112,8 @@ async def distill_by_text_id(
     text_manager: TextManager = Depends(get_text_manager),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -140,6 +144,8 @@ async def reindex_rag(
     each session's RAG index to include character tags so that
     ``character_name`` filtering works in subsequent chat queries.
     """
+    if distiller is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -278,6 +284,8 @@ async def legacy_identify(
     distiller: Distiller = Depends(get_distiller),
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
+    if distiller is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     return await _do_identify(req.text, distiller)
 
 
@@ -288,6 +296,8 @@ async def legacy_distill(
     text_manager: TextManager = Depends(get_text_manager),
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
+    if distiller is None or text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text cannot be empty")
