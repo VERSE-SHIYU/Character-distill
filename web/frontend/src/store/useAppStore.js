@@ -28,6 +28,7 @@ const useAppStore = create((set, get) => ({
 
   messages: [],
   loading: false,
+  resumeLoading: false,
   sending: false,
   userRole: localStorage.getItem('user_role') || '',
   setUserRole: (role) => {
@@ -509,6 +510,7 @@ const useAppStore = create((set, get) => ({
   },
 
   resumeSession: async (sessionId) => {
+    set({ resumeLoading: true })
     try {
       const data = await postJSON(`/api/history/${sessionId}/resume`, {})
       const session = data.session || {}
@@ -528,10 +530,11 @@ const useAppStore = create((set, get) => ({
         },
         currentView: 'chat',
         error: null,
+        resumeLoading: false,
       })
     } catch (err) {
       console.error('[store] resumeSession failed:', err)
-      set({ error: err.message })
+      set({ error: err.message, resumeLoading: false })
       throw err
     }
   },

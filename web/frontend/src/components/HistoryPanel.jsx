@@ -58,6 +58,7 @@ export default function HistoryPanel() {
   const texts = useAppStore((s) => s.texts)
   const cards = useAppStore((s) => s.cards)
   const resumeSession = useAppStore((s) => s.resumeSession)
+  const resumeLoading = useAppStore((s) => s.resumeLoading)
 
   const [keyword, setKeyword] = useState('')
   const [character, setCharacter] = useState('')
@@ -411,8 +412,8 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport }
           ← 返回列表
         </button>
         <div className="history-detail-actions">
-          <button type="button" className="btn-primary history-action-sm" onClick={onContinue}>
-            继续对话
+          <button type="button" className="btn-primary history-action-sm" disabled={resumeLoading} onClick={onContinue}>
+            {resumeLoading ? '加载中…' : '继续对话'}
           </button>
           <button
             type="button"

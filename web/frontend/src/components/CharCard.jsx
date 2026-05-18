@@ -126,6 +126,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const distillCharacter = useAppStore((s) => s.distillCharacter)
 
   const [distillingName, setDistillingName] = useState(null)
+  const [distillTimer, setDistillTimer] = useState(0)
+  const distillTimerRef = useRef(null)
 
   useEffect(() => {
     if (currentCard?.id) {
@@ -144,9 +146,13 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   const handleDistill = async (name, force = false) => {
     setDistillingName(name)
+    setDistillTimer(0)
+    distillTimerRef.current = setInterval(() => { setDistillTimer((t) => t + 1) }, 1000)
     try {
       await distillCharacter(textId, name, force)
     } catch { /* store already sets error */ }
+    clearInterval(distillTimerRef.current)
+    setDistillTimer(0)
     setDistillingName(null)
   }
 
@@ -233,7 +239,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     onClick={() => handleDistill(name, already)}
                   >
                     {distillingName === name
-                      ? '蒸馏中…'
+                      ? `蒸馏中… ${distillTimer}s`
                       : already
                         ? '重新蒸馏'
                         : '蒸馏角色'}

@@ -104,6 +104,25 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Title/desc migration failed: {exc}")
+                    # Auto-deduplicate: keep only the newest card per text_id+name
+                    try:
+                        await conn.execute("""
+                            DELETE FROM cards
+                            WHERE id NOT IN (
+                                SELECT id FROM (
+                                    SELECT id, ROW_NUMBER() OVER (
+                                        PARTITION BY text_id, name
+                                        ORDER BY rowid DESC
+                                    ) AS rn
+                                    FROM cards
+                                ) WHERE rn = 1
+                            )
+                        """)
+                        await conn.commit()
+                    except Exception as exc:
+                        if "no such window function" not in str(exc).lower():
+                            print(f"[SQLiteStore] Dedup cards migration: {exc}")
+
                 self._initialized = True
             except Exception as exc:
                 print(f"[SQLiteStore] Initialize database failed: {exc}")

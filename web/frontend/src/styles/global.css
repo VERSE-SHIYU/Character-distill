@@ -2247,8 +2247,8 @@ body {
 
 /* User avatar — simple circle with initials */
 .user-avatar-circle {
-  width: 44px;
-  height: 44px;
+  width: 66px;
+  height: 66px;
   border-radius: 4px;
   background: var(--primary);
   color: #fff;
@@ -2307,7 +2307,7 @@ body {
 }
 
 .chat-bubble-text {
-  display: inline;
+  display: block;
 }
 
 /* Streaming cursor */

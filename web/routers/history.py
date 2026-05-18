@@ -119,14 +119,19 @@ async def resume_session(
         {"name": c["name"], "aliases": []} for c in existing_cards
     ]
 
-    # 4. Rebuild RAG + ChatEngine via _create_session
+    # 4. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:
-        new_session_id = await asyncio.to_thread(
-            text_manager._create_session,
-            text_rec["content"],
-            card,
-            all_characters,
+        new_session_id = await asyncio.wait_for(
+            asyncio.to_thread(
+                text_manager._create_session,
+                text_rec["content"],
+                card,
+                all_characters,
+            ),
+            timeout=120.0,
         )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "会话恢复超时，请稍后重试")
     except Exception as exc:
         print(f"[history] Rebuild engine for {session_id} failed: {exc}")
         raise HTTPException(500, f"Rebuild session failed: {exc}") from exc
