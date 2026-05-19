@@ -355,7 +355,8 @@ class Distiller:
             except Exception as exc:
                 print(f"[distiller] Chunk {i + 1}/{len(relevant)} LLM call failed: {exc}")
                 continue
-            profile_draft = new_draft
+            if new_draft.strip():
+                profile_draft = new_draft
 
             if len(profile_draft) > self._max_profile_len:
                 compressed = ""

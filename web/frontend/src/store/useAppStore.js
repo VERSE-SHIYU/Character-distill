@@ -26,6 +26,7 @@ const useAppStore = create((set, get) => ({
   distilling: false,
   distillTokenCount: 0,
   distillStatus: '',
+  distillIncrementalActive: false,
   identifying: false,
 
   messages: [],
@@ -326,13 +327,19 @@ const useAppStore = create((set, get) => ({
   },
 
   distillCharacter: (textId, characterName, force = false) => {
-    set({ distilling: true, distillTokenCount: 0, distillStatus: '', error: null })
+    set({ distilling: true, distillTokenCount: 0, distillStatus: '', distillIncrementalActive: false, error: null })
 
     const cancel = streamSSE(
       '/api/distill/run_stream',
       { text_id: textId, character_name: characterName, force },
       (token) => {
-        set((s) => ({ distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }))
+        set((s) => {
+          if (s.distillIncrementalActive) {
+            // First token after incremental phase: reset counter for final formatting
+            return { distillIncrementalActive: false, distillTokenCount: token.length, distillStatus: '正在蒸馏…' }
+          }
+          return { distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }
+        })
       },
       (payload) => {
         set((s) => {
@@ -348,20 +355,21 @@ const useAppStore = create((set, get) => ({
             distilling: false,
             distillTokenCount: 0,
             distillStatus: '',
+            distillIncrementalActive: false,
           }
         })
       },
       (err) => {
         console.error('[store] distillCharacter stream failed:', err)
-        set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '' })
+        set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '', distillIncrementalActive: false })
       },
       (payload) => {
         if (payload.status === 'compressing' && payload.current) {
-          set({ distillStatus: `正在压缩第 ${payload.current}/${payload.total} 段…` })
+          set({ distillStatus: `正在压缩第 ${payload.current}/${payload.total} 段…`, distillIncrementalActive: true })
           return
         }
         if (payload.status === 'analyzing' && payload.current) {
-          set({ distillStatus: `正在分析第 ${payload.current}/${payload.total} 段…` })
+          set({ distillStatus: `正在分析第 ${payload.current}/${payload.total} 段…`, distillIncrementalActive: true })
           return
         }
         const statusMap = {
