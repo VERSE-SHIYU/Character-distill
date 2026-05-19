@@ -69,6 +69,7 @@ function ChatView() {
   const setUserRole = useAppStore((s) => s.setUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
+  const revokeCooldown = useAppStore((s) => s.revokeCooldown)
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
 
   const cardData = typeof currentCard.card_json === 'string'
@@ -258,13 +259,13 @@ function ChatView() {
   }, [resetChat])
 
   const handleRevoke = useCallback(
-    (displayIndex) => {
-      if (!window.confirm('撤回这条消息及之后的对话？')) return
+    () => {
+      if (!window.confirm('撤回最近一条消息？')) return
       if (cancelStreamRef.current) {
         cancelStreamRef.current()
         cancelStreamRef.current = null
       }
-      revokeMessage(displayIndex)
+      revokeMessage()
     },
     [revokeMessage],
   )
@@ -410,6 +411,7 @@ function ChatView() {
                 userRole={userRole}
                 isStreaming={isStreaming}
                 onRevoke={isUser ? handleRevoke : null}
+                revokeCooldown={revokeCooldown}
                 playTTS={playTTS}
                 isPlaying={ttsPlayingId === i}
                 audioUrl={msg.audio_url}
@@ -457,7 +459,7 @@ function formatTime(ts) {
   return `${ap} ${h12}:${m}`
 }
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatarUrl, userRole, isStreaming, onRevoke, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
   const [hovered, setHovered] = useState(false)
 
   const userInitial = (userRole || '我').charAt(0)
@@ -496,11 +498,12 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatar
       {isUser && onRevoke && isLastUserMsg && (
         <button
           type="button"
-          className="chat-revoke-btn"
-          onClick={() => onRevoke(index)}
-          title="撤回"
+          className={`chat-revoke-btn${revokeCooldown ? ' revoke-cooldown' : ''}`}
+          disabled={revokeCooldown}
+          onClick={() => onRevoke()}
+          title={revokeCooldown ? '冷却中…' : '撤回'}
         >
-          {'\u{2715}'}
+          {revokeCooldown ? '⏳' : '✕'}
         </button>
       )}
       {!isUser && (

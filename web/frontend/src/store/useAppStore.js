@@ -559,20 +559,79 @@ const useAppStore = create((set, get) => ({
     )
   },
 
-  revokeMessage: async (index) => {
-    const { sessionId, messages } = get()
-    const msgId = messages[index]?.id
-    if (!sessionId || msgId == null) return
-    set({ messages: messages.slice(0, index), sending: false })
+  revokeCooldown: false,
+
+  revokeMessage: async () => {
+    const { sessionId, messages, revokeCooldown } = get()
+    if (!sessionId || revokeCooldown) return
+
+    // Find last user message
+    let lastUserIdx = -1
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { lastUserIdx = i; break }
+    }
+    if (lastUserIdx === -1) return
+
+    const lastUserMsg = messages[lastUserIdx]
+    const removeCount = (lastUserIdx + 1 < messages.length && messages[lastUserIdx + 1].role === 'char') ? 2 : 1
+
+    set((s) => ({
+      messages: [...s.messages.slice(0, lastUserIdx), ...s.messages.slice(lastUserIdx + removeCount)],
+      sending: false,
+      revokeCooldown: true,
+    }))
+
     try {
-      await postJSON('/api/chat/revoke', {
-        session_id: sessionId,
-        message_id: msgId,
-      })
+      await postJSON('/api/chat/revoke', { session_id: sessionId, message_id: lastUserMsg.id })
     } catch (err) {
       console.error('[store] revokeMessage failed:', err)
-      set({ error: err.message })
+      set({ error: err.message, revokeCooldown: false })
+      return
     }
+
+    setTimeout(() => set({ revokeCooldown: false }), 3000)
+
+    // Trigger character reaction to revocation
+    get()._sendRevokeNotice()
+  },
+
+  _sendRevokeNotice: () => {
+    const { sessionId, voiceEnabled } = get()
+    if (!sessionId) return () => {}
+
+    const hiddenMsg = '[系统提示：对方刚刚撤回了一条消息]'
+    const charMsg = { role: 'char', content: '' }
+    set((s) => ({ messages: [...s.messages, charMsg], sending: true }))
+
+    let fullReply = ''
+
+    return streamSSE(
+      '/api/chat/send',
+      { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().userRole },
+      (token) => {
+        fullReply += token
+        set((s) => {
+          const msgs = [...s.messages]
+          const last = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = { ...last, content: last.content + token }
+          return { messages: msgs }
+        })
+      },
+      (payload) => {
+        set((s) => {
+          const msgs = [...s.messages]
+          if (payload.char_msg_id) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id }
+          return { messages: msgs, sending: false }
+        })
+        if (voiceEnabled && fullReply) {
+          get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
+        }
+      },
+      (err) => {
+        console.error('[store] revoke notice failed:', err)
+        set({ sending: false, error: err.message })
+      },
+    )
   },
 
   resetChat: async () => {

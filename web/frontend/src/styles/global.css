@@ -2363,6 +2363,12 @@ body {
   opacity: 1;
 }
 
+.chat-revoke-btn.revoke-cooldown {
+  opacity: 0.5 !important;
+  cursor: not-allowed;
+  background: rgba(0, 0, 0, 0.03);
+}
+
 /* TTS play */
 .tts-play-btn {
   padding: 4px 10px;

@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
     message: str
     stream: bool = False
     user_role: str = ""
+    hidden: bool = False  # inject into LLM context without saving user msg (for revoke notice)
 
 
 class RevokeRequest(BaseModel):
@@ -48,6 +49,7 @@ async def _do_chat(
     storage: SQLiteStore,
     sessions: dict[str, Any],
     user_role: str = "",
+    hidden: bool = False,
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
     session = sessions.get(session_id)
@@ -71,9 +73,10 @@ async def _do_chat(
     user_msg_id = None
     char_msg_id = None
     try:
-        user_rec = await storage.save_message(session_id, "user", msg, "")
+        if not hidden:
+            user_rec = await storage.save_message(session_id, "user", msg, "")
+            user_msg_id = user_rec["id"]
         char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500])
-        user_msg_id = user_rec["id"]
         char_msg_id = char_rec["id"]
         ids_to_add = [user_msg_id, char_msg_id]
 
@@ -109,6 +112,7 @@ async def _do_chat_stream(
     storage: SQLiteStore,
     sessions: dict[str, Any],
     user_role: str = "",
+    hidden: bool = False,
 ):
     """Core streaming chat logic with SSE output."""
     session = sessions.get(session_id)
@@ -134,8 +138,9 @@ async def _do_chat_stream(
         rag_context = ""
         msg_ids: list[int] = []
         try:
-            user_rec = await storage.save_message(session_id, "user", msg, "")
-            msg_ids.append(user_rec["id"])
+            if not hidden:
+                user_rec = await storage.save_message(session_id, "user", msg, "")
+                msg_ids.append(user_rec["id"])
         except Exception as exc:
             print(f"[chat] Save user message failed (non-fatal): {exc}")
 
@@ -210,8 +215,8 @@ async def send_message(
     if not sessions:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
 
 
 @router.post("/revoke")
@@ -272,7 +277,7 @@ async def legacy_chat(
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
 
 
 @legacy_router.post("/api/reset")
