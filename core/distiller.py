@@ -100,8 +100,13 @@ class Distiller:
     @staticmethod
     def _map_system_prompt(character_name: str) -> str:
         return (
-            f"你是角色分析专家，正在为「{character_name}」收集人格证据。"
-            "只提取此片段中的事实，不要推断、不要总结其他片段。"
+            f"你是角色分析专家，正在为「{character_name}」收集人格证据。\n"
+            "规则：\n"
+            "1. 只提取此片段中的事实，不要推断、不要总结其他片段\n"
+            "2. 原文对话原句必须完整保留，这是最重要的\n"
+            "3. 矛盾不要调和，标注为【矛盾】并都保留\n"
+            "4. 区分角色本人的话与他人评价\n"
+            "5. 如果此片段没有该角色的任何信息，回答「无」"
         )
 
     @staticmethod
@@ -128,9 +133,12 @@ class Distiller:
         )
 
     @staticmethod
-    def _reduce_user_prompt(analyses: list[str]) -> str:
-        return "\n\n---片段分隔---\n\n".join(
-            f"[来源片段 {i + 1}]\n{a}" for i, a in enumerate(analyses)
+    def _reduce_user_prompt(analyses: list[str], character_name: str) -> str:
+        return (
+            f"以下是从多段文本中提取的关于「{character_name}」的独立分析，请整合为一份完整的角色档案：\n\n"
+            + "\n\n---片段分隔---\n\n".join(
+                f"[来源片段 {i + 1}]\n{a}" for i, a in enumerate(analyses)
+            )
         )
 
     # ── public entry points (unchanged) ────────────────────────────────
@@ -328,7 +336,7 @@ class Distiller:
 
     def _single_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (sync)."""
-        combined = self._reduce_user_prompt(raw_analyses)
+        combined = self._reduce_user_prompt(raw_analyses, character_name)
         return self._llm.chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
@@ -336,7 +344,7 @@ class Distiller:
 
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
         """Merge independent chunk analyses into a single profile (streaming)."""
-        combined = self._reduce_user_prompt(raw_analyses)
+        combined = self._reduce_user_prompt(raw_analyses, character_name)
         yield from self._llm.chat_stream(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
@@ -392,9 +400,35 @@ class Distiller:
 
         if on_progress:
             on_progress(0, total)
-        map_results = asyncio.run(
-            self._run_map_concurrent(relevant, character_name, _on_done)
-        )
+
+        # Run async Map in a dedicated thread (safe even under uvicorn async context)
+        q: queue.Queue = queue.Queue()
+
+        async def _map_wrapper():
+            results = await self._run_map_concurrent(relevant, character_name, _on_done)
+            q.put(("done", results))
+
+        def _thread_run():
+            try:
+                asyncio.run(_map_wrapper())
+            except Exception as exc:
+                q.put(("error", str(exc)))
+
+        t = threading.Thread(target=_thread_run, daemon=True)
+        t.start()
+
+        map_results: list[tuple[int, str]] = []
+        while True:
+            kind, payload = q.get()
+            if kind == "done":
+                map_results = payload
+                break
+            if kind == "error":
+                raise RuntimeError(f"Map 阶段失败：{payload}")
+            # else: progress is handled via _on_done callback already
+
+        t.join(timeout=5)
+
         if on_progress:
             on_progress(total, total)
 
