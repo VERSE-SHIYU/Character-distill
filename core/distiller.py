@@ -428,6 +428,8 @@ class Distiller:
                     ),
                     [{"role": "user", "content": prompt}],
                 ):
+                    if token == "\x00THINKING\x00":
+                        continue
                     new_draft += token
                     yield {"status": "analyzing", "current": i + 1, "total": len(relevant), "token": token}
             except Exception as exc:
@@ -448,6 +450,8 @@ class Distiller:
                     ),
                         [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
                     ):
+                        if token == "\x00THINKING\x00":
+                            continue
                         compressed += token
                         yield {"status": "compressing", "current": i + 1, "total": len(relevant), "token": token}
                 except Exception as exc:

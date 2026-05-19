@@ -334,11 +334,7 @@ const useAppStore = create((set, get) => ({
       { text_id: textId, character_name: characterName, force },
       (token) => {
         set((s) => {
-          if (s.distillIncrementalActive) {
-            // First token after incremental phase: reset counter for final formatting
-            return { distillIncrementalActive: false, distillTokenCount: token.length, distillStatus: '正在蒸馏…' }
-          }
-          return { distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }
+          return { distillIncrementalActive: false, distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }
         })
       },
       (payload) => {

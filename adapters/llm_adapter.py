@@ -52,7 +52,7 @@ class LLMAdapter:
             raise RuntimeError("missing API key (config.yaml or DEEPSEEK_API_KEY)")
 
         try:
-            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=180.0)
+            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=300.0)
         except Exception as exc:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise

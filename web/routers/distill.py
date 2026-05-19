@@ -161,17 +161,16 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 
-        # Step 1: Identify all characters to resolve aliases
-        all_chars: list[dict[str, Any]] = []
+        # Step 1: Resolve aliases — only call LLM when char_name is empty
         aliases: list[str] = []
-        try:
-            all_chars = await asyncio.to_thread(distiller.identify_characters, content)
-            for c in all_chars:
-                if c["name"] == char_name:
-                    aliases = c.get("aliases", [])
-                    break
-        except Exception as exc:
-            print(f"[distill] Identify failed (falling back): {exc}")
+        if not char_name:
+            try:
+                all_chars = await asyncio.to_thread(distiller.identify_characters, content)
+                if all_chars:
+                    char_name = all_chars[0].get("name", "")
+                    aliases = all_chars[0].get("aliases", [])
+            except Exception as exc:
+                print(f"[distill] Identify failed (falling back): {exc}")
 
         # Step 2: Incremental distillation — chunk by chunk with progress
         full = ""
