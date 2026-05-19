@@ -84,6 +84,7 @@ function ChatView() {
   const setView = useAppStore((s) => s.setView)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
+  const sessionId = useAppStore((s) => s.sessionId)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
   const revokeCooldown = useAppStore((s) => s.revokeCooldown)
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
@@ -297,7 +298,7 @@ function ChatView() {
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
           >
-            <Avatar name={charName} src={avatarUrl} size={66} />
+            <Avatar name={charName} src={avatarUrl} size={75} />
             <span className="chat-avatar-edit-icon">{'\u{1F4F7}'}</span>
           </button>
           <input
@@ -488,7 +489,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatar
     >
       {!isUser ? (
         <div className="chat-msg-avatar">
-          <Avatar name={charName} src={avatarUrl} size={40} />
+          <Avatar name={charName} src={avatarUrl} size={70} />
         </div>
       ) : (
         <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>

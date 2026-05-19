@@ -441,7 +441,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, 
       </div>
 
       <header className="history-detail-header">
-        <Avatar name={charName} size={66} />
+        <Avatar name={charName} size={75} />
         <div className="history-detail-meta-wrap">
           <h2 className="history-detail-name">{charName}</h2>
           {session.user_role && (
@@ -478,7 +478,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, 
               >
                 {!isUser && (
                   <div className="chat-msg-avatar">
-                    <Avatar name={charName} size={28} />
+                    <Avatar name={charName} size={70} />
                   </div>
                 )}
                 <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
