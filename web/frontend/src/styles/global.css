@@ -3781,15 +3781,14 @@ select.settings-input {
 }
 
 .edit-card-modal {
-  width: 560px;
-  max-height: 80vh;
-  overflow-y: auto;
+  width: min(90vw, 720px);
+  max-height: 90vh;
 }
 
 .edit-form-scroll {
-  max-height: 55vh;
+  max-height: calc(90vh - 120px);
   overflow-y: auto;
-  padding-right: 4px;
+  padding-right: 8px;
 }
 
 .edit-fieldset {

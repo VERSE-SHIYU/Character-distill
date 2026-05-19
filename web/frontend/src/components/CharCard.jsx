@@ -331,27 +331,49 @@ function CardDetail({ card, textId }) {
     [card.id, setCardAvatar],
   )
 
-  const handleRoleConfirm = async (role) => {
+  const handleRoleConfirm = (role) => {
     setShowRoleModal(false)
+    const originalFirstMessage = data.first_message || ''
+
     if (role) {
-      try {
-        const res = await postJSON('/api/distill/generate-opening', {
-          card_json: data,
-          user_role: role,
-        }, 30000)
-        if (res.opening) {
-          if (typeof card.card_json === 'string') {
-            card.card_json = JSON.stringify({ ...data, first_message: res.opening })
-          } else if (card.card_json) {
-            card.card_json.first_message = res.opening
-          }
-          card.first_message = res.opening
-        }
-      } catch (err) {
-        console.warn('[CharCard] generate-opening failed:', err)
+      // Set placeholder so startChat shows a "thinking" bubble immediately
+      const placeholder = '…'
+      data.first_message = placeholder
+      if (typeof card.card_json === 'string') {
+        card.card_json = JSON.stringify(data)
+      } else if (card.card_json) {
+        card.card_json.first_message = placeholder
       }
+      card.first_message = placeholder
     }
-    startChat(card)
+
+    startChat(card).then(() => {
+      if (!role || !originalFirstMessage) return
+      postJSON('/api/distill/generate-opening', {
+        card_json: data,
+        user_role: role,
+      }, 30000)
+        .then((res) => {
+          const opening = res.opening || originalFirstMessage
+          useAppStore.setState((s) => {
+            const msgs = [...s.messages]
+            if (msgs.length > 0 && msgs[0].role === 'char') {
+              msgs[0] = { ...msgs[0], content: opening }
+            }
+            return { messages: msgs }
+          })
+        })
+        .catch((err) => {
+          console.warn('[CharCard] generate-opening failed:', err)
+          useAppStore.setState((s) => {
+            const msgs = [...s.messages]
+            if (msgs.length > 0 && msgs[0].role === 'char') {
+              msgs[0] = { ...msgs[0], content: originalFirstMessage }
+            }
+            return { messages: msgs }
+          })
+        })
+    })
   }
 
   const handleRoleSkip = () => {
