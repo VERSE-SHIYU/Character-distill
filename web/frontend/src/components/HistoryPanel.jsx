@@ -246,6 +246,7 @@ export default function HistoryPanel() {
       <HistoryDetail
         data={detail}
         loading={detailLoading}
+        resumeLoading={resumeLoading}
         onBack={() => setDetail(null)}
         onContinue={() => handleContinue(detail.session.id)}
         onDelete={() => handleDelete(detail.session.id)}
@@ -400,7 +401,7 @@ export default function HistoryPanel() {
   )
 }
 
-function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport }) {
+function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, resumeLoading }) {
   const session = data.session || {}
   const messages = data.messages || []
   const charName = session.character_name || '?'

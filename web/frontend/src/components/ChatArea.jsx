@@ -3,13 +3,23 @@ import useAppStore from '../store/useAppStore'
 import { saveAvatar, getAvatar } from '../store/db'
 import { compressImage } from '../utils/image'
 import Avatar from './common/Avatar'
+import Loading from './common/Loading'
+import RoleSetupModal from './RoleSetupModal'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
+  const resumeLoading = useAppStore((s) => s.resumeLoading)
   const setView = useAppStore((s) => s.setView)
 
   if (!currentCard || !sessionId) {
+    if (resumeLoading) {
+      return (
+        <div className="shell-placeholder">
+          <Loading text="正在加载会话…" />
+        </div>
+      )
+    }
     return (
       <div className="shell-placeholder">
         <div className="shell-placeholder-inner">
@@ -66,6 +76,12 @@ function ChatView() {
     : currentCard.card_json || currentCard
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
+
+  const [showRoleModal, setShowRoleModal] = useState(false)
+
+  useEffect(() => {
+    if (!userRole) setShowRoleModal(true)
+  }, [])
 
   const currentText = texts.find((t) => t.id === currentTextId)
   const textLabel = currentText
@@ -408,6 +424,13 @@ function ChatView() {
         isRecording={isRecording}
         recordingDuration={recordingDuration}
         sendVoiceMessage={sendVoiceMessage}
+      />
+
+      <RoleSetupModal
+        isOpen={showRoleModal}
+        characterName={charName}
+        onConfirm={(role) => setShowRoleModal(false)}
+        onSkip={() => setShowRoleModal(false)}
       />
     </div>
   )

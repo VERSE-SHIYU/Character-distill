@@ -123,11 +123,33 @@ class TextManager:
                 data = json.loads(raw)
             except json.JSONDecodeError:
                 return raw
+            # WeChat MemoTrace/WeChatMsg export: "messages" + "conversation" format
+            if isinstance(data, dict) and isinstance(data.get("messages"), list) and "conversation" in data:
+                lines: list[str] = []
+                for m in data["messages"]:
+                    if not isinstance(m, dict):
+                        continue
+                    rt = m.get("renderType", "")
+                    if rt not in ("text", "quote"):
+                        continue
+                    sender = m.get("senderDisplayName", "")
+                    date = (m.get("createTimeText") or "")[:10]
+                    content = (m.get("content") or "").strip()
+                    if not content:
+                        continue
+                    if rt == "quote":
+                        qc = (m.get("quoteContent") or "").strip()
+                        if qc:
+                            content = f"[引用: {qc}] {content}"
+                    lines.append(f"[{date}] {sender}: {content}")
+                if lines:
+                    return "\n".join(lines)
+
             if isinstance(data, dict):
                 for key in ("text", "content", "body", "data"):
                     if key in data and isinstance(data[key], str):
                         return data[key]
-                # Wechat JSON export: extract clean dialogue transcript
+                # Wechat JSON export (schemaVersion format)
                 if isinstance(data.get("messages"), list) and "schemaVersion" in data:
                     cleaned = TextManager._parse_wechat_json(data)
                     if cleaned:
