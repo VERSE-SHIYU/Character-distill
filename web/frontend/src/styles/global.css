@@ -1,4 +1,4 @@
-/* ===== Color Themes: Milktea / Ocean / Sakura ===== */
+/* ===== Color Themes: Milktea / Ocean / Sakura / Midnight ===== */
 
 /* Default: Cream Milktea (暖杏版) */
 :root,
@@ -191,6 +191,96 @@
   --scrollbar-thumb: rgba(184, 164, 192, 0.2);
   --scrollbar-thumb-hover: rgba(184, 164, 192, 0.4);
   --accent-rgb: 184, 164, 192;
+}
+
+/* Midnight Violet (深色蓝紫版) */
+.theme-midnight {
+  --primary: #9b9ec4;
+  --primary-hover: #b0b4d4;
+  --secondary: #7b8ab0;
+  --highlight: #f2f0f8;
+  --bg-page: #1a1b22;
+  --accent: #8b9ec4;
+  --accent-hover: #a4b4d6;
+  --cool-violet: #a09cc0;
+  --smoke-blue: #8a9bb5;
+  --text-primary: #f2f0f8;
+  --text-secondary: rgba(242,240,248,0.75);
+  --glass-bg: rgba(22,22,32,0.92);
+  --glass-border: rgba(255,255,255,0.14);
+  --sidebar-bg: rgba(18,18,28,0.95);
+  --modal-bg: rgba(28,28,40,0.95);
+  --user-bubble: rgba(155,158,196,0.28);
+  --assistant-bubble: rgba(160,156,192,0.25);
+  --blob-green: rgba(138,155,181,0.10);
+  --blob-blue: rgba(155,158,196,0.12);
+  --blob-yellow: rgba(160,156,192,0.08);
+  --blob-purple: rgba(200,190,220,0.07);
+  --input-border: rgba(255,255,255,0.15);
+  --pill-bg: rgba(139,158,196,0.15);
+  --pill-border: rgba(139,158,196,0.25);
+  --pill-text: #8b9ec4;
+
+  /* Backward compat overrides */
+  --cream-green: var(--primary);
+  --cream-green-soft: var(--secondary);
+  --ice-blue: #8a9bb5;
+  --warm-yellow: var(--highlight);
+  --soft-lavender: #a09cc0;
+  --cream-white: var(--bg-page);
+  --charcoal: var(--text-primary);
+  --charcoal-dim: rgba(242,240,248,0.55);
+  --charcoal-light: rgba(242,240,248,0.35);
+  --accent-soft: rgba(155,158,196,0.12);
+  --purple: var(--soft-lavender);
+
+  --text: var(--text-primary);
+  --text-sec: var(--text-secondary);
+  --text-dim: var(--charcoal-light);
+  --green: var(--primary);
+  --yellow: var(--highlight);
+
+  --bg: var(--bg-page);
+  --card-bg: rgba(32,32,46,0.90);
+  --card-border: var(--glass-border);
+  --card-radius: 20px;
+  --card-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+  --card-blur: blur(28px) saturate(200%);
+
+  --input-bg: rgba(40,40,56,0.80);
+  --input-radius: 14px;
+
+  --scrollbar-thumb: rgba(155,158,196,0.2);
+  --scrollbar-thumb-hover: rgba(155,158,196,0.4);
+  --accent-rgb: 155, 158, 196;
+}
+
+/* Midnight theme — modal / card overrides */
+.theme-midnight .modal-card,
+.theme-midnight .edit-card-modal,
+.theme-midnight .role-setup-card {
+  background: var(--modal-bg);
+  color: var(--text-primary);
+}
+
+.theme-midnight .modal-input,
+.theme-midnight .modal-textarea,
+.theme-midnight .glass-input {
+  background: var(--input-bg);
+  color: var(--text-primary);
+  border-color: var(--input-border);
+}
+
+.theme-midnight .modal-label,
+.theme-midnight .modal-title,
+.theme-midnight .role-setup-hint,
+.theme-midnight .role-confirm-text {
+  color: var(--text-primary);
+}
+
+.theme-midnight .user-role-preset-btn {
+  color: var(--text-primary);
+  border-color: var(--glass-border);
 }
 
 /* ===== Reset ===== */

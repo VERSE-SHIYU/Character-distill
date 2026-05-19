@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 
 const themes = [
-  { key: 'milktea', label: '\u{1F375} 抹茶' },
-  { key: 'ocean', label: '\u{1F30A} 海盐' },
-  { key: 'sakura', label: '\u{1F338} 樱花' },
+  { key: 'milktea',  label: '\u{1F375} 抹茶' },
+  { key: 'ocean',    label: '\u{1F30A} 海盐' },
+  { key: 'sakura',   label: '\u{1F338} 樱花' },
+  { key: 'midnight', label: '\u{1F319} 午夜' },
 ]
 
 export default function ThemeSwitcher() {

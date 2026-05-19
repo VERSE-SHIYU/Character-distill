@@ -439,18 +439,20 @@ const useAppStore = create((set, get) => ({
     // Always create a fresh session — stale session_id from a previous server
     // instance would cause 404 "Session not found" in chat.
     set({ sending: true })
-    let sessionId = null
+    let sessionId = card.session_id || null
     try {
-      const cardId = card.id || card.card_id
-      if (!cardId || !card.text_id) {
-        set({ error: '缺少角色信息，无法创建会话', sending: false })
-        return
+      if (!sessionId) {
+        const cardId = card.id || card.card_id
+        if (!cardId || !card.text_id) {
+          set({ error: '缺少角色信息，无法创建会话', sending: false })
+          return
+        }
+        const result = await postJSON('/api/distill/start_session', {
+          text_id: card.text_id,
+          card_id: cardId,
+        })
+        sessionId = result.session_id
       }
-      const result = await postJSON('/api/distill/start_session', {
-        text_id: card.text_id,
-        card_id: cardId,
-      })
-      sessionId = result.session_id
       set({ sending: false })
     } catch (err) {
       console.error('[store] startChat create session failed:', err)
@@ -671,6 +673,7 @@ const useAppStore = create((set, get) => ({
           id: session.card_id,
           name: session.character_name,
           session_id: session.id || sessionId,
+          text_id: session.text_id,
         },
         currentView: 'chat',
         error: null,
