@@ -220,6 +220,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Claude Code
+.claude/settings.local.json
+
 # Frontend build artifacts
 web/frontend/node_modules/
 web/frontend/dist/
