@@ -47,6 +47,8 @@ F. 人际关系：与文中其他角色的关系和态度
 G. 内在矛盾（1-3个）：此人身上自相矛盾之处，以及矛盾如何影响行为
 H. 开场白：以此角色的口吻写一句开场白，用于对话开始时
 I. 对话示例（2-3轮）：从原文中提取最能体现此角色说话风格的2-3组对话交互。格式为"对方：xxx\n角色：xxx"。选择的对话必须能展示角色的口癖、语气、态度。如果原文有动作描写，用（）包裹保留，如"（冷笑）你以为你是谁？"
+J. 情感模式（2-3个）：什么情况下会生气、开心、沉默、逃避？触发条件是什么？
+K. 决策风格：面对选择时是冲动还是谨慎？靠情感还是逻辑？举例说明。
 
 ## 输出要求
 严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）：
@@ -259,6 +261,15 @@ class Distiller:
         if not relevant:
             relevant = chunks[:3]  # fallback: first 3 chunks
 
+        MAX_RELEVANT = 80
+        if len(relevant) > MAX_RELEVANT:
+            step = len(relevant) / (MAX_RELEVANT - 2)
+            sampled = [relevant[0]]
+            for i in range(1, MAX_RELEVANT - 1):
+                sampled.append(relevant[int(i * step)])
+            sampled.append(relevant[-1])
+            relevant = sampled
+
         profile_draft = ""
         for i, chunk in enumerate(relevant):
             if on_progress:
@@ -266,15 +277,30 @@ class Distiller:
 
             prompt = (
                 f"已有档案：\n{profile_draft}\n\n"
-                f"新片段：\n{chunk}\n\n"
-                f"请更新「{character_name}」的档案。"
+                f"---新片段---\n{chunk}\n---片段结束---\n\n"
+                f"请从新片段中提取「{character_name}」的新信息，更新档案。重点关注：\n"
+                f"- {character_name}说的原话（完整保留，标注场景）\n"
+                f"- 新暴露的性格特质或行为模式\n"
+                f"- 与其他角色的互动和态度变化\n"
+                f"- 任何与已有档案矛盾的地方"
             ) if profile_draft else (
-                f"新片段：\n{chunk}\n\n"
-                f"请提取「{character_name}」的档案。"
+                f"---新片段---\n{chunk}\n---片段结束---\n\n"
+                f"请从新片段中提取「{character_name}」的信息。重点关注：\n"
+                f"- {character_name}说的原话（完整保留，标注场景）\n"
+                f"- 性格特质和行为模式\n"
+                f"- 与其他角色的互动和态度"
             )
             try:
                 profile_draft = self._llm.chat(
-                    "你是角色分析专家，根据新文本更新角色档案。保留旧信息，追加新发现，保留矛盾。",
+                    (
+                        f"你是角色分析专家，正在为「{character_name}」建立人格档案。\n"
+                        "规则：\n"
+                        "1. 保留已有档案的全部信息，在此基础上追加新发现\n"
+                        "2. 重点提取：说话原文（保留口癖原话）、行为动机、情感反应、价值观冲突\n"
+                        "3. 必须保留原文对话原句作为证据，不要改写\n"
+                        "4. 发现矛盾不要调和，标注为【矛盾】保留\n"
+                        "5. 区分角色本人的话和别人对他的评价"
+                    ),
                     [{"role": "user", "content": prompt}],
                 )
             except Exception as exc:
@@ -284,7 +310,12 @@ class Distiller:
             if len(profile_draft) > self._max_profile_len:
                 try:
                     profile_draft = self._llm.chat(
-                        "压缩以下角色档案，保留关键信息和原文证据。",
+                        (
+                        f"压缩以下「{character_name}」的角色档案到{self._max_profile_len}字以内。\n"
+                        "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
+                        "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
+                        "合并重复信息，但不要删除矛盾点。"
+                    ),
                         [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
                     )
                 except Exception as exc:
@@ -303,7 +334,14 @@ class Distiller:
         try:
             reply = self._llm.chat(
                 system_prompt,
-                [{"role": "user", "content": profile_draft}],
+                [{"role": "user", "content":
+                    f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
+                    f"特别注意：\n"
+                    f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
+                    f"- dialogue_examples 必须是原文对话，不要改写\n"
+                    f"- personality_traits 每条必须附带具体场景证据\n\n"
+                    f"{profile_draft}"
+                }],
             )
         except Exception as exc:
             print(f"调用 LLM 进行最终格式化失败：{exc}")
@@ -350,15 +388,31 @@ class Distiller:
         if not relevant:
             relevant = chunks[:3]
 
+        MAX_RELEVANT = 80
+        if len(relevant) > MAX_RELEVANT:
+            step = len(relevant) / (MAX_RELEVANT - 2)
+            sampled = [relevant[0]]
+            for i in range(1, MAX_RELEVANT - 1):
+                sampled.append(relevant[int(i * step)])
+            sampled.append(relevant[-1])
+            relevant = sampled
+
         profile_draft = ""
         for i, chunk in enumerate(relevant):
             prompt = (
                 f"已有档案：\n{profile_draft}\n\n"
-                f"新片段：\n{chunk}\n\n"
-                f"请更新「{character_name}」的档案。"
+                f"---新片段---\n{chunk}\n---片段结束---\n\n"
+                f"请从新片段中提取「{character_name}」的新信息，更新档案。重点关注：\n"
+                f"- {character_name}说的原话（完整保留，标注场景）\n"
+                f"- 新暴露的性格特质或行为模式\n"
+                f"- 与其他角色的互动和态度变化\n"
+                f"- 任何与已有档案矛盾的地方"
             ) if profile_draft else (
-                f"新片段：\n{chunk}\n\n"
-                f"请提取「{character_name}」的档案。"
+                f"---新片段---\n{chunk}\n---片段结束---\n\n"
+                f"请从新片段中提取「{character_name}」的信息。重点关注：\n"
+                f"- {character_name}说的原话（完整保留，标注场景）\n"
+                f"- 性格特质和行为模式\n"
+                f"- 与其他角色的互动和态度"
             )
             new_draft = ""
             try:
@@ -378,7 +432,12 @@ class Distiller:
                 compressed = ""
                 try:
                     for token in self._llm.chat_stream(
-                        "压缩以下角色档案，保留关键信息和原文证据。",
+                        (
+                        f"压缩以下「{character_name}」的角色档案到{self._max_profile_len}字以内。\n"
+                        "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
+                        "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
+                        "合并重复信息，但不要删除矛盾点。"
+                    ),
                         [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
                     ):
                         compressed += token
@@ -400,5 +459,12 @@ class Distiller:
         )
         yield from self._llm.chat_stream(
             system_prompt,
-            [{"role": "user", "content": profile_draft}],
+            [{"role": "user", "content":
+                f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
+                f"特别注意：\n"
+                f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
+                f"- dialogue_examples 必须是原文对话，不要改写\n"
+                f"- personality_traits 每条必须附带具体场景证据\n\n"
+                f"{profile_draft}"
+            }],
         )

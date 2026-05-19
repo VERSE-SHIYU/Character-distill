@@ -98,6 +98,13 @@ class ChatEngine:
             f"{tensions_block}\n"
         )
 
+        if hasattr(card, 'emotional_patterns') and card.emotional_patterns:
+            emo_block = "\n".join(f"- {item}" for item in card.emotional_patterns)
+            prompt += f"\n【你的情感模式】\n{emo_block}\n"
+
+        if hasattr(card, 'decision_style') and card.decision_style:
+            prompt += f"\n【你的决策方式】\n{card.decision_style}\n"
+
         # few-shot 对话示例（角色一致性关键）
         if hasattr(card, 'dialogue_examples') and card.dialogue_examples:
             examples_block = "\n---\n".join(card.dialogue_examples[:3])
@@ -114,7 +121,7 @@ class ChatEngine:
             f"1. 用（）描写{card.name}的动作、神态或心理活动，穿插在对话中\n"
             "   例如：（皱了皱眉）你说什么？\n"
             "   例如：（沉默了一瞬，转过头去）……随你。\n"
-            f"2. 每次回复1-3句话，50-150字，像真人聊天\n"
+            f"2. 每次回复1-5句话，自然长度，根据情景调整——简单应答可以很短，重要剧情可以长一些，像真人聊天\n"
             "3. 不要写旁白、不要写第三人称叙述、不要写长段独白\n"
             "4. 可以主动推进对话——提问、表达情绪、做出动作\n"
         )
@@ -130,6 +137,8 @@ class ChatEngine:
             "5. 不使用现代网络用语（除非角色设定如此）\n"
             "6. 不使用 emoji 表情符号\n"
             "7. 绝不跳出角色提供 meta 评论（如\"这个角色会...\"）\n"
+            "8. 记住之前对话中的情感状态，不要突然变脸——情绪变化需要有触发事件\n"
+            "9. 对话者提到你在意的人或事时，表现出对应的情感反应\n"
         )
 
         if self.user_role:

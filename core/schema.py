@@ -30,3 +30,5 @@ class CharacterCard(BaseModel):
     background: str              # 背景摘要
     first_message: str = ""      # 角色开场白
     dialogue_examples: list[str] = []   # 2-3轮原文对话示例，体现角色说话风格
+    emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
+    decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
