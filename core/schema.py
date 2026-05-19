@@ -15,7 +15,7 @@ class Relationship(BaseModel):
     """人际关系"""
     target: str                  # 对方名字
     relation: str                # 关系类型
-    attitude: str                # 态度描述
+    attitude: str = ""           # 态度描述
 
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""

@@ -360,16 +360,25 @@ const useAppStore = create((set, get) => ({
         set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '', distillIncrementalActive: false })
       },
       (payload) => {
-        if (payload.status === 'compressing' && payload.current) {
-          set({ distillStatus: `正在压缩第 ${payload.current}/${payload.total} 段…`, distillIncrementalActive: true })
+        if (payload.status === 'analyzing') {
+          if (payload.current === 0) {
+            set({ distillStatus: `正在并发分析 ${payload.total} 个片段…`, distillIncrementalActive: true })
+          } else {
+            set({ distillStatus: `已完成 ${payload.current}/${payload.total} 个片段分析…`, distillIncrementalActive: true })
+          }
           return
         }
-        if (payload.status === 'analyzing' && payload.current) {
-          set({ distillStatus: `正在分析第 ${payload.current}/${payload.total} 段…`, distillIncrementalActive: true })
+        if (payload.status === 'merging') {
+          set({ distillStatus: '正在整合角色档案…', distillIncrementalActive: true })
+          return
+        }
+        if (payload.status === 'formatting') {
+          set({ distillStatus: '正在生成角色卡…', distillIncrementalActive: false })
           return
         }
         const statusMap = {
           identifying: '正在识别角色…',
+          compressing: '正在压缩…',
         }
         set({ distillStatus: statusMap[payload.status] || payload.status })
       },

@@ -72,3 +72,27 @@
   3. **Problem 3 — RoleSetupModal 提升到 ChatArea**：`RoleSetupModal` 仅在 `CharCard.jsx` 的"开始对话"按钮触发，历史恢复/其他路径进入聊天时缺失。修复：`ChatView` 挂载时若 `!userRole` 自动弹出 `RoleSetupModal`
   4. **微信JSON第二格式**：`_parse_content` 新增 `"messages" + "conversation"` 格式检测（MemoTrace 变体），在 `isinstance(data, dict)` 之前处理
 - **影响范围**：`ChatArea.jsx`、`HistoryPanel.jsx`、`core/text_manager.py`
+
+### 19:30 MapReduce 并发蒸馏架构完整实现
+
+- **做了什么**：按用户最终规格，完整重写 distiller.py + 更新 config.yaml + 更新前端 store
+- **为什么**：替代之前的半成品 MapReduce，新增共享方法、类常量、自动分批 Reduce
+- **影响范围**：
+  - `config.yaml` — max_profile_len: 4000 → 8000
+  - `core/distiller.py` — 新增类常量 SAFE_SINGLE_REDUCE=120, MAP_CONCURRENCY=10；新增静态 prompt 方法 `_map_system_prompt`, `_map_user_prompt`, `_reduce_system_prompt`, `_reduce_user_prompt`；新增共享异步 Map 方法 `_run_map_concurrent`；新增 `_single_reduce`, `_single_reduce_stream`, `_do_reduce`；完全重写 `distill_incremental` 和 `distill_incremental_stream`
+  - `web/frontend/src/store/useAppStore.js` — SSE 状态处理更新：analyzing(并发/进度), merging(整合), formatting(生成JSON) 三层状态
+  - `web/routers/distill.py` — 无需修改（协议兼容）
+- **关键改动**：
+  - 删除了 MAX_RELEVANT=80 采样截断 — 现在通过 MapReduce 并发直接处理全部相关片段
+  - `_do_reduce` 自动分批：超过 120 个分析时自动切成多批，递归合并
+  - `distill_incremental_stream` 中 Map 使用 as_completed 实时推送每 chunk 完成进度
+  - 新增 `formatting` 状态让前端区分"整合中"和"生成JSON中"
+
+### 验证结果
+
+| 检查项 | 期望 | 实际 |
+|--------|------|------|
+| Python语法检查 | 通过 | ✅ |
+| Distiller导入+类常量 | SAFE_SINGLE_REDUCE=120, MAP_CONCURRENCY=10 | ✅ |
+| 静态prompt方法 | 4个 | ✅ |
+| 前端build | 成功 | ✅ 279ms |

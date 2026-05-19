@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Generator
 from pathlib import Path
@@ -11,7 +12,7 @@ import os
 
 import yaml
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI, OpenAI
 
 
 class LLMAdapter:
@@ -53,6 +54,7 @@ class LLMAdapter:
 
         try:
             self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=300.0)
+            self._async_client = AsyncOpenAI(api_key=api_key, base_url=self._base_url, timeout=300.0)
         except Exception as exc:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise
@@ -88,6 +90,32 @@ class LLMAdapter:
                 else:
                     print(f"[LLMAdapter] All 3 attempts failed: {exc}")
         raise RuntimeError(f"LLM API failed after 3 attempts: {last_error}")
+
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
+        """异步非流式对话，用于 Map 阶段并发。最多重试3次。"""
+        payload = self._build_messages(system_prompt, messages)
+        last_error = None
+        for attempt in range(3):
+            try:
+                completion = await self._async_client.chat.completions.create(
+                    model=self._model,
+                    messages=payload,
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens,
+                )
+                choices = completion.choices
+                if not choices:
+                    raise RuntimeError("API returned empty choices")
+                return choices[0].message.content or ""
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    wait = (attempt + 1) * 5
+                    print(f"[LLMAdapter async] Attempt {attempt+1} failed: {exc}, retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                else:
+                    print(f"[LLMAdapter async] All 3 attempts failed: {exc}")
+        raise RuntimeError(f"Async LLM failed after 3 attempts: {last_error}")
 
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]]) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
