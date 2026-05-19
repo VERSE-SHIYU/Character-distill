@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const SIZE = 300
 const RADIUS = SIZE / 2
@@ -9,17 +9,21 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
   const canvasRef = useRef(null)
   const imageDataRef = useRef(null)
   const offsetRef = useRef({ x: 0, y: 0 })
+  const scaleRef = useRef(1.0)
   const draggingRef = useRef(false)
   const lastPosRef = useRef({ x: 0, y: 0 })
 
-  const clampOffset = useCallback((ox, oy, s) => {
+  // Keep scaleRef in sync so mouse handlers always read the latest scale
+  useEffect(() => { scaleRef.current = scale }, [scale])
+
+  const clampOffset = (ox, oy, s) => {
     const maxOff = RADIUS * (s - 1)
     if (maxOff <= 0) return { x: 0, y: 0 }
     return {
       x: Math.max(-maxOff, Math.min(maxOff, ox)),
       y: Math.max(-maxOff, Math.min(maxOff, oy)),
     }
-  }, [])
+  }
 
   const drawPreview = useCallback((img, s, offX, offY) => {
     const canvas = canvasRef.current
@@ -28,7 +32,6 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     const minDim = Math.min(img.naturalWidth, img.naturalHeight)
     const srcSize = minDim / s
 
-    // Source center, offset applied
     const cx = img.naturalWidth / 2 + offX * (srcSize / SIZE)
     const cy = img.naturalHeight / 2 + offY * (srcSize / SIZE)
     const sx = cx - srcSize / 2
@@ -45,7 +48,6 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     ctx.drawImage(img, sx, sy, srcSize, srcSize, 0, 0, SIZE, SIZE)
     ctx.restore()
 
-    // Dashed border ring
     ctx.beginPath()
     ctx.arc(RADIUS, RADIUS, RADIUS - 1, 0, Math.PI * 2)
     ctx.strokeStyle = 'rgba(255,255,255,0.6)'
@@ -55,13 +57,6 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     ctx.setLineDash([])
   }, [])
 
-  const redraw = useCallback(() => {
-    const img = imageDataRef.current
-    if (!img) return
-    const { x, y } = offsetRef.current
-    drawPreview(img, scale, x, y)
-  }, [scale, drawPreview])
-
   // Load image
   useEffect(() => {
     if (!file) return
@@ -70,26 +65,110 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     img.onload = () => {
       imageDataRef.current = img
       offsetRef.current = { x: 0, y: 0 }
+      scaleRef.current = 1.0
       setScale(1.0)
       setReady(true)
       drawPreview(img, 1.0, 0, 0)
     }
     img.src = url
     return () => URL.revokeObjectURL(url)
-  }, [file])
+  }, [file, drawPreview])
+
+  // ---- Drag: attach window listeners once, read latest values from refs ----
+  useEffect(() => {
+    const onMouseDown = (e) => {
+      // Only handle mousedown on the canvas
+      if (e.target !== canvasRef.current) return
+      e.preventDefault()
+      draggingRef.current = true
+      lastPosRef.current = { x: e.clientX, y: e.clientY }
+    }
+
+    const onMouseMove = (e) => {
+      if (!draggingRef.current) return
+      const img = imageDataRef.current
+      if (!img) return
+
+      const dx = e.clientX - lastPosRef.current.x
+      const dy = e.clientY - lastPosRef.current.y
+      lastPosRef.current = { x: e.clientX, y: e.clientY }
+
+      const s = scaleRef.current
+      const newX = offsetRef.current.x + dx
+      const newY = offsetRef.current.y + dy
+      const clamped = clampOffset(newX, newY, s)
+      offsetRef.current = clamped
+      drawPreview(img, s, clamped.x, clamped.y)
+    }
+
+    const onMouseUp = () => {
+      draggingRef.current = false
+    }
+
+    window.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [drawPreview]) // drawPreview is stable ([])
+
+  // Touch support — same pattern
+  useEffect(() => {
+    const onTouchStart = (e) => {
+      if (e.target !== canvasRef.current || e.touches.length !== 1) return
+      e.preventDefault()
+      draggingRef.current = true
+      lastPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+    }
+
+    const onTouchMove = (e) => {
+      if (!draggingRef.current || e.touches.length !== 1) return
+      const img = imageDataRef.current
+      if (!img) return
+
+      const dx = e.touches[0].clientX - lastPosRef.current.x
+      const dy = e.touches[0].clientY - lastPosRef.current.y
+      lastPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+
+      const s = scaleRef.current
+      const newX = offsetRef.current.x + dx
+      const newY = offsetRef.current.y + dy
+      const clamped = clampOffset(newX, newY, s)
+      offsetRef.current = clamped
+      drawPreview(img, s, clamped.x, clamped.y)
+    }
+
+    const onTouchEnd = () => {
+      draggingRef.current = false
+    }
+
+    window.addEventListener('touchstart', onTouchStart, { passive: false })
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    window.addEventListener('touchend', onTouchEnd)
+    return () => {
+      window.removeEventListener('touchstart', onTouchStart)
+      window.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('touchend', onTouchEnd)
+    }
+  }, [drawPreview])
 
   // Scale change
   const handleScaleChange = useCallback((v) => {
     const s = v / 100
+    scaleRef.current = s
     setScale(s)
     const clamped = clampOffset(offsetRef.current.x, offsetRef.current.y, s)
     offsetRef.current = clamped
     if (imageDataRef.current) {
       drawPreview(imageDataRef.current, s, clamped.x, clamped.y)
     }
-  }, [clampOffset, drawPreview])
+  }, [drawPreview])
 
   const handleReset = useCallback(() => {
+    scaleRef.current = 1.0
     setScale(1.0)
     offsetRef.current = { x: 0, y: 0 }
     if (imageDataRef.current) {
@@ -97,75 +176,14 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     }
   }, [drawPreview])
 
-  // ---- Drag to pan ----
-  const handleMouseDown = useCallback((e) => {
-    e.preventDefault()
-    draggingRef.current = true
-    lastPosRef.current = { x: e.clientX, y: e.clientY }
-  }, [])
-
-  const handleMouseMove = useCallback((e) => {
-    if (!draggingRef.current || !imageDataRef.current) return
-    const dx = e.clientX - lastPosRef.current.x
-    const dy = e.clientY - lastPosRef.current.y
-    lastPosRef.current = { x: e.clientX, y: e.clientY }
-
-    const newX = offsetRef.current.x + dx
-    const newY = offsetRef.current.y + dy
-    const clamped = clampOffset(newX, newY, scale)
-    offsetRef.current = clamped
-    drawPreview(imageDataRef.current, scale, clamped.x, clamped.y)
-  }, [scale, clampOffset, drawPreview])
-
-  const handleMouseUp = useCallback(() => {
-    draggingRef.current = false
-  }, [])
-
-  // Global listeners for drag
-  useEffect(() => {
-    const onMove = (e) => handleMouseMove(e)
-    const onUp = () => handleMouseUp()
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [handleMouseMove, handleMouseUp])
-
-  // Touch support
-  const handleTouchStart = useCallback((e) => {
-    if (e.touches.length === 1) {
-      e.preventDefault()
-      draggingRef.current = true
-      lastPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-    }
-  }, [])
-
-  const handleTouchMove = useCallback((e) => {
-    if (!draggingRef.current || !imageDataRef.current || e.touches.length !== 1) return
-    const dx = e.touches[0].clientX - lastPosRef.current.x
-    const dy = e.touches[0].clientY - lastPosRef.current.y
-    lastPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
-
-    const newX = offsetRef.current.x + dx
-    const newY = offsetRef.current.y + dy
-    const clamped = clampOffset(newX, newY, scale)
-    offsetRef.current = clamped
-    drawPreview(imageDataRef.current, scale, clamped.x, clamped.y)
-  }, [scale, clampOffset, drawPreview])
-
-  const handleTouchEnd = useCallback(() => {
-    draggingRef.current = false
-  }, [])
-
   // Export
   const handleConfirm = useCallback(() => {
     const img = imageDataRef.current
     if (!img) return
 
+    const s = scaleRef.current
     const minDim = Math.min(img.naturalWidth, img.naturalHeight)
-    const srcSize = minDim / scale
+    const srcSize = minDim / s
     const { x: ox, y: oy } = offsetRef.current
 
     const cx = img.naturalWidth / 2 + ox * (srcSize / SIZE)
@@ -186,7 +204,7 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
 
     const base64 = exportCanvas.toDataURL('image/jpeg', 0.85)
     onConfirm(base64)
-  }, [scale, onConfirm])
+  }, [onConfirm])
 
   if (!file) return null
 
@@ -206,10 +224,6 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
               display: ready ? 'block' : 'none',
               cursor: scale > 1 ? 'grab' : 'default',
             }}
-            onMouseDown={handleMouseDown}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
           />
         </div>
 
