@@ -342,7 +342,7 @@ const useAppStore = create((set, get) => ({
       },
       (payload) => {
         set((s) => {
-          const card = { ...payload, id: payload.card_id }
+          const card = { ...payload, id: payload.card_id, text_id: textId }
           const exists = s.cards.some((c) => c.id === card.id)
           return {
             cards: exists ? s.cards : [card, ...s.cards],
@@ -394,6 +394,7 @@ const useAppStore = create((set, get) => ({
     set({
       currentCard: card,
       currentView: 'character',
+      sessionId: null,
     })
   },
 

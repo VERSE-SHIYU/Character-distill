@@ -335,19 +335,18 @@ function CardDetail({ card, textId }) {
     setShowRoleModal(false)
     const originalFirstMessage = data.first_message || ''
 
+    // Build a copy instead of mutating card (which came from Zustand store)
+    const chatCard = { ...card }
+
     if (role) {
-      // Set placeholder so startChat shows a "thinking" bubble immediately
-      const placeholder = '…'
-      data.first_message = placeholder
-      if (typeof card.card_json === 'string') {
-        card.card_json = JSON.stringify(data)
-      } else if (card.card_json) {
-        card.card_json.first_message = placeholder
-      }
-      card.first_message = placeholder
+      const updatedData = { ...data, first_message: '…' }
+      chatCard.card_json = typeof card.card_json === 'string'
+        ? JSON.stringify(updatedData)
+        : { ...card.card_json, first_message: '…' }
+      chatCard.first_message = '…'
     }
 
-    startChat(card).then(() => {
+    startChat(chatCard).then(() => {
       if (!role || !originalFirstMessage) return
       postJSON('/api/distill/generate-opening', {
         card_json: data,
