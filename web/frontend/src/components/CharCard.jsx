@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { postJSON } from '../api/client'
-import { saveAvatar, getAvatar } from '../store/db'
-import { compressImage } from '../utils/image'
+import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
+import ImageCropModal from './common/ImageCropModal'
 
 // ---- CharCard (top-level) ----
 
@@ -293,6 +293,7 @@ function CardDetail({ card, textId }) {
   const updateCard = useAppStore((s) => s.updateCard)
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
+  const [cropFile, setCropFile] = useState(null)
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -310,26 +311,51 @@ function CardDetail({ card, textId }) {
   useEffect(() => {
     let cancelled = false
     if (cardAvatars[card.id]) return
-    getAvatar(card.id).then((blob) => {
-      if (!cancelled && blob) {
-        const reader = new FileReader()
-        reader.onload = () => setCardAvatar(card.id, reader.result)
-        reader.readAsDataURL(blob)
-      }
+    loadCardAvatar(card.id).then((dataUrl) => {
+      if (!cancelled && dataUrl) setCardAvatar(card.id, dataUrl)
     })
     return () => { cancelled = true }
   }, [card.id, cardAvatars])
 
   const handleAvatarChange = useCallback(
-    async (e) => {
+    (e) => {
       const file = e.target.files?.[0]
       if (!file) return
-      await saveAvatar(card.id, file)
-      const dataUrl = await compressImage(file, 200)
-      setCardAvatar(card.id, dataUrl)
+      setCropFile(file)
+      // Reset input so the same file can be re-selected
+      e.target.value = ''
+    },
+    [],
+  )
+
+  const handleCropConfirm = useCallback(
+    async (base64) => {
+      setCropFile(null)
+      // Save to IndexedDB (fast local cache)
+      try {
+        const res = await fetch(base64)
+        const blob = await res.blob()
+        await saveAvatar(card.id, blob)
+      } catch { /* non-fatal */ }
+      // Save to backend (permanent)
+      const cid = card.id || card.card_id
+      if (cid) {
+        try {
+          await fetch(`/api/cards/${cid}/avatar`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: base64 }),
+          })
+        } catch { /* non-fatal */ }
+      }
+      setCardAvatar(card.id, base64)
     },
     [card.id, setCardAvatar],
   )
+
+  const handleCropCancel = useCallback(() => {
+    setCropFile(null)
+  }, [])
 
   const handleRoleConfirm = (role) => {
     setShowRoleModal(false)
@@ -558,6 +584,12 @@ function CardDetail({ card, textId }) {
         cardId={card.id || card.card_id}
         onSave={handleSaveEdit}
         onClose={() => setShowEditModal(false)}
+      />
+
+      <ImageCropModal
+        file={cropFile}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
       />
     </div>
   )

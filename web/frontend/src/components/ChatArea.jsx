@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { saveAvatar, getAvatar } from '../store/db'
-import { compressImage } from '../utils/image'
+import { saveAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import RoleSetupModal from './RoleSetupModal'
+import ImageCropModal from './common/ImageCropModal'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -96,6 +96,7 @@ function ChatView() {
   const charIdentity = cardData.identity || ''
 
   const [showRoleModal, setShowRoleModal] = useState(false)
+  const [cropFile, setCropFile] = useState(null)
 
   // Font size: 0=small, 1=medium (default), 2=large
   const [fontLevel, setFontLevel] = useState(() => {
@@ -158,23 +159,38 @@ function ChatView() {
   useEffect(() => {
     let cancelled = false
     if (!cardId || cardAvatars[cardId]) return
-    getAvatar(cardId).then((blob) => {
-      if (!cancelled && blob) {
-        const reader = new FileReader()
-        reader.onload = () => setCardAvatar(cardId, reader.result)
-        reader.readAsDataURL(blob)
-      }
+    loadCardAvatar(cardId).then((dataUrl) => {
+      if (!cancelled && dataUrl) setCardAvatar(cardId, dataUrl)
     })
     return () => { cancelled = true }
   }, [cardId, cardAvatars])
 
-  const handleAvatarChange = async (e) => {
+  const handleAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
     if (!file || !cardId) return
-    await saveAvatar(cardId, file)
-    const dataUrl = await compressImage(file, 200)
-    setCardAvatar(cardId, dataUrl)
-  }
+    setCropFile(file)
+    e.target.value = ''
+  }, [cardId])
+
+  const handleCropConfirm = useCallback(async (base64) => {
+    setCropFile(null)
+    if (!cardId) return
+    try {
+      const res = await fetch(base64)
+      const blob = await res.blob()
+      await saveAvatar(cardId, blob)
+    } catch { /* non-fatal */ }
+    try {
+      await fetch(`/api/cards/${cardId}/avatar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: base64 }),
+      })
+    } catch { /* non-fatal */ }
+    setCardAvatar(cardId, base64)
+  }, [cardId, setCardAvatar])
+
+  const handleCropCancel = useCallback(() => setCropFile(null), [])
 
   // ---- Global audio player for voice bubbles ----
   const audioRef = useRef(null)
@@ -489,6 +505,12 @@ function ChatView() {
         relationships={cardData.relationships || []}
         onConfirm={(role) => setShowRoleModal(false)}
         onSkip={() => setShowRoleModal(false)}
+      />
+
+      <ImageCropModal
+        file={cropFile}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
       />
     </div>
   )

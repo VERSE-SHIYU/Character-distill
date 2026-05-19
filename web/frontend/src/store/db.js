@@ -27,3 +27,30 @@ export async function deleteAvatar(id) {
   const db = await getDB()
   await db.delete('avatars', id)
 }
+
+/**
+ * Load avatar for a card — try IndexedDB first, then backend API.
+ * Returns a data URL string or null.
+ */
+export async function loadCardAvatar(cardId) {
+  if (!cardId) return null
+  // Try local IndexedDB cache first
+  const blob = await getAvatar(cardId)
+  if (blob) {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  }
+  // Fallback to backend
+  try {
+    const res = await fetch(`/api/cards/${cardId}/avatar`)
+    if (res.ok) {
+      const { data } = await res.json()
+      if (data) return data
+    }
+  } catch { /* no backend or no avatar saved */ }
+  return null
+}
