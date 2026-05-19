@@ -73,8 +73,10 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=self._max_tokens,
                 )
-                choice = completion.choices[0].message
-                content = choice.content or ""
+                choices = completion.choices
+                if not choices:
+                    raise RuntimeError("API returned empty choices")
+                content = choices[0].message.content or ""
                 return content
             except Exception as exc:
                 last_error = exc
@@ -102,7 +104,10 @@ class LLMAdapter:
             raise
         try:
             for chunk in stream:
-                delta = chunk.choices[0].delta
+                choices = chunk.choices
+                if not choices:
+                    continue
+                delta = choices[0].delta
                 piece = delta.content
                 if piece:
                     yield piece
