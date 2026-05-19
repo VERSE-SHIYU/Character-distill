@@ -435,25 +435,27 @@ const useAppStore = create((set, get) => ({
     const data = typeof card.card_json === 'string'
       ? JSON.parse(card.card_json)
       : card.card_json || card
-    const name = data.name || card.name
 
-    let sessionId = card.session_id || null
-
-    if (!sessionId) {
-      set({ sending: true })
-      try {
-        const cardId = card.id || card.card_id
-        const result = await postJSON('/api/distill/start_session', {
-          text_id: card.text_id,
-          card_id: cardId,
-        })
-        sessionId = result.session_id
-        set({ sending: false })
-      } catch (err) {
-        console.error('[store] startChat create session failed:', err)
-        set({ error: err.message, sending: false })
+    // Always create a fresh session — stale session_id from a previous server
+    // instance would cause 404 "Session not found" in chat.
+    set({ sending: true })
+    let sessionId = null
+    try {
+      const cardId = card.id || card.card_id
+      if (!cardId || !card.text_id) {
+        set({ error: '缺少角色信息，无法创建会话', sending: false })
         return
       }
+      const result = await postJSON('/api/distill/start_session', {
+        text_id: card.text_id,
+        card_id: cardId,
+      })
+      sessionId = result.session_id
+      set({ sending: false })
+    } catch (err) {
+      console.error('[store] startChat create session failed:', err)
+      set({ error: err.message, sending: false })
+      return
     }
 
     const textTitle = card.text_id

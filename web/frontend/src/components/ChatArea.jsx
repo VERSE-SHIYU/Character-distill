@@ -11,12 +11,28 @@ export default function ChatArea() {
   const sessionId = useAppStore((s) => s.sessionId)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
   const setView = useAppStore((s) => s.setView)
+  const startChat = useAppStore((s) => s.startChat)
+
+  // Auto-recover: if we have a card but no session, try to create one
+  useEffect(() => {
+    if (currentCard && !sessionId && !resumeLoading) {
+      startChat(currentCard)
+    }
+  }, [currentCard?.id, sessionId])
 
   if (!currentCard || !sessionId) {
     if (resumeLoading) {
       return (
         <div className="shell-placeholder">
           <Loading text="正在加载会话…" />
+        </div>
+      )
+    }
+    // Show loading while recovery effect runs
+    if (currentCard && !sessionId) {
+      return (
+        <div className="shell-placeholder">
+          <Loading text="正在创建会话…" />
         </div>
       )
     }

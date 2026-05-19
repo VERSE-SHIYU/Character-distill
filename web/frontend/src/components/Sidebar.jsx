@@ -17,6 +17,7 @@ const NAV_ITEMS = [
 export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const startChat = useAppStore((s) => s.startChat)
   const currentTextTitle = useAppStore((s) => s.currentTextTitle)
   const currentCard = useAppStore((s) => s.currentCard)
   const texts = useAppStore((s) => s.texts)
@@ -49,8 +50,12 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   }
 
   const handleNav = useCallback((id) => {
+    if (id === 'chat' && currentCard) {
+      startChat(currentCard)
+      return
+    }
     setView(id)
-  }, [setView])
+  }, [setView, currentCard, startChat])
 
   let sidebarClass = 'sidebar'
   if (open && !pinned) sidebarClass += ' open'
@@ -115,7 +120,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
         <button
           type="button"
           className="sidebar-char-card"
-          onClick={() => setView('chat')}
+          onClick={() => startChat(currentCard)}
           title="进入聊天"
         >
           <Avatar name={currentCard.name} size={40} />
