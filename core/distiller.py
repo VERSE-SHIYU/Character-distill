@@ -10,7 +10,6 @@ import yaml
 from pydantic import ValidationError
 
 from adapters.llm_adapter import LLMAdapter
-from core.rag import RAGEngine
 from core.schema import CharacterCard
 
 
@@ -85,11 +84,8 @@ class Distiller:
             print("配置文件格式错误：缺少 distill 配置块")
             raise ValueError("invalid config: missing distill section")
         distill_cfg = data["distill"]
-        try:
-            self._max_input_chars: int = int(distill_cfg["max_input_chars"])
-        except (KeyError, TypeError, ValueError) as exc:
-            print(f"读取 distill.max_input_chars 失败：{exc}")
-            raise
+        self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
+        self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
 
     def identify_characters(self, text: str) -> list[dict[str, Any]]:
         """截取文本前 10000 字，调用 LLM 识别具名且有言行描写的角色。
@@ -143,91 +139,27 @@ class Distiller:
                 print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
                 return []
 
-    def _extract_character_paragraphs(
-        self, text: str, character_name: str, aliases: list[str]
-    ) -> str:
-        """抽取包含角色名/别名的段落及前后各2段，拼接后不超过 max_input_chars。
-
-        Args:
-            text: 原始全文。
-            character_name: 目标角色主名。
-            aliases: 角色别名列表。
-
-        Returns:
-            聚焦文本，长度不超过 ``self._max_input_chars``。
-        """
+    @staticmethod
+    def _split_chunks(text: str, chunk_size: int) -> list[str]:
+        """Split text into chunks of roughly chunk_size chars at paragraph boundaries."""
         paragraphs = text.split("\n\n")
-        if len(paragraphs) < 3:
-            paragraphs = [
-                text[i : i + 500] for i in range(0, len(text), 500)
-            ]
+        chunks: list[str] = []
+        current = ""
+        for para in paragraphs:
+            if len(current) + len(para) + 2 > chunk_size and current:
+                chunks.append(current)
+                current = para
+            else:
+                current = para if not current else current + "\n\n" + para
+        if current:
+            chunks.append(current)
+        return chunks
 
-        match_terms = [character_name] + list(aliases)
-        matched: set[int] = set()
-        for idx, para in enumerate(paragraphs):
-            for term in match_terms:
-                if term in para:
-                    matched.add(idx)
-                    break
+    def distill(self, text: str, character_name: str) -> CharacterCard:
+        """蒸馏指定角色的 ``CharacterCard``（简单截断模式，适合短文本）。
 
-        if not matched:
-            return text[: self._max_input_chars]
-
-        selected: set[int] = set()
-        for idx in matched:
-            lo = max(0, idx - 2)
-            hi = min(len(paragraphs), idx + 3)
-            selected.update(range(lo, hi))
-
-        ordered = sorted(selected)
-        focused = "\n\n".join(paragraphs[i] for i in ordered)
-
-        result_parts = []
-        total_len = 0
-        for i in ordered:
-            para = paragraphs[i]
-            if total_len + len(para) > self._max_input_chars:
-                break
-            result_parts.append(para)
-            total_len += len(para) + 2
-
-        focused = "\n\n".join(result_parts)
-
-        if len(focused) < 500 and matched:
-            start_para = min(matched)
-            start_char = sum(len(paragraphs[i]) + 2 for i in range(start_para))
-            return text[start_char: start_char + self._max_input_chars]
-
-        return focused if focused else text[: self._max_input_chars]
-
-    def distill(self, text: str, character_name: str, rag: RAGEngine | None = None, all_chars: list[dict[str, Any]] | None = None) -> CharacterCard:
-        """将文本截断后蒸馏指定角色的 ``CharacterCard``。
-
-        Args:
-            text: 原始叙事文本。
-            character_name: 目标角色姓名。
-            rag: 可选 RAG 引擎。传入后使用语义检索替代关键词截取。
-            all_chars: 预识别的角色列表。传入后跳过 ``identify_characters`` 调用。
-
-        Returns:
-            校验通过的 ``CharacterCard``。
-
-        Raises:
-            ValueError: JSON 经截取与大括号提取后仍无法还原为 ``CharacterCard``。
+        对于长文本，推荐使用 ``distill_incremental``。
         """
-        chars = all_chars if all_chars is not None else self.identify_characters(text)
-        aliases: list[str] = []
-        for c in chars:
-            if c["name"] == character_name:
-                aliases = c.get("aliases", [])
-                break
-
-        if rag is not None and rag.collection is not None:
-            query_text = f"角色{character_name}的性格特点、言行举止、重要经历、人际关系、说话风格"
-            chunks = rag.query(query_text, character_name=character_name, top_k=20)
-            focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
-        else:
-            focused_text = self._extract_character_paragraphs(text, character_name, aliases)
         try:
             schema_obj = CharacterCard.model_json_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
@@ -239,7 +171,7 @@ class Distiller:
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
         user_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "以下是需要分析的文本：\n\n" + focused_text},
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[:30000]},
         ]
 
         try:
@@ -272,25 +204,11 @@ class Distiller:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
 
-    def distill_stream(self, text: str, character_name: str, rag: RAGEngine | None = None, all_chars: list[dict[str, Any]] | None = None):
-        """流式蒸馏，按增量产出文本片段（yield token）。
+    def distill_stream(self, text: str, character_name: str):
+        """流式蒸馏（简单截断模式，适合短文本）。
 
-        复用与 ``distill`` 相同的角色识别 + 段落提取逻辑，
-        仅将 ``self._llm.chat`` 替换为 ``self._llm.chat_stream``。
+        对于长文本，推荐使用 ``distill_incremental_stream``。
         """
-        chars = all_chars if all_chars is not None else self.identify_characters(text)
-        aliases: list[str] = []
-        for c in chars:
-            if c["name"] == character_name:
-                aliases = c.get("aliases", [])
-                break
-
-        if rag is not None and rag.collection is not None:
-            query_text = f"角色{character_name}的性格特点、言行举止、重要经历、人际关系、说话风格"
-            chunks = rag.query(query_text, character_name=character_name, top_k=20)
-            focused_text = "\n\n".join(chunks) if chunks else self._extract_character_paragraphs(text, character_name, aliases)
-        else:
-            focused_text = self._extract_character_paragraphs(text, character_name, aliases)
         try:
             schema_obj = CharacterCard.model_json_schema()
             schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
@@ -302,7 +220,161 @@ class Distiller:
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
         user_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "以下是需要分析的文本：\n\n" + focused_text},
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[:30000]},
         ]
 
         yield from self._llm.chat_stream(system_prompt, user_messages)
+
+    def distill_incremental(
+        self,
+        text: str,
+        character_name: str,
+        aliases: list[str] | None = None,
+        on_progress: "callable | None" = None,
+    ) -> CharacterCard:
+        """增量蒸馏：逐块扫描文本，迭代更新角色档案草稿，最终格式化为 CharacterCard。
+
+        每块仅输入当前块 + 已有草稿，LLM 成本接近单次截断。
+        """
+        aliases = list(aliases) if aliases else []
+        match_terms = [character_name] + aliases
+        chunks = self._split_chunks(text, self._chunk_size)
+        relevant = [c for c in chunks if any(t in c for t in match_terms)]
+        if not relevant:
+            relevant = chunks[:3]  # fallback: first 3 chunks
+
+        profile_draft = ""
+        for i, chunk in enumerate(relevant):
+            if on_progress:
+                on_progress(i + 1, len(relevant))
+
+            prompt = (
+                f"已有档案：\n{profile_draft}\n\n"
+                f"新片段：\n{chunk}\n\n"
+                f"请更新「{character_name}」的档案。"
+            ) if profile_draft else (
+                f"新片段：\n{chunk}\n\n"
+                f"请提取「{character_name}」的档案。"
+            )
+            try:
+                profile_draft = self._llm.chat(
+                    "你是角色分析专家，根据新文本更新角色档案。保留旧信息，追加新发现，保留矛盾。",
+                    [{"role": "user", "content": prompt}],
+                )
+            except Exception as exc:
+                print(f"[distiller] Chunk {i + 1}/{len(relevant)} LLM call failed: {exc}")
+                continue
+
+            if len(profile_draft) > self._max_profile_len:
+                try:
+                    profile_draft = self._llm.chat(
+                        "压缩以下角色档案，保留关键信息和原文证据。",
+                        [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
+                    )
+                except Exception as exc:
+                    print(f"[distiller] Profile compression failed: {exc}")
+
+        try:
+            schema_obj = CharacterCard.model_json_schema()
+            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError) as exc:
+            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
+            raise
+
+        system_prompt = (
+            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+        )
+        try:
+            reply = self._llm.chat(
+                system_prompt,
+                [{"role": "user", "content": profile_draft}],
+            )
+        except Exception as exc:
+            print(f"调用 LLM 进行最终格式化失败：{exc}")
+            raise
+
+        stripped = reply.strip()
+        data: Any | None = None
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            start = stripped.find("{")
+            end = stripped.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    data = json.loads(stripped[start : end + 1])
+                except json.JSONDecodeError:
+                    pass
+
+        if data is None:
+            raise ValueError("蒸馏失败：LLM 返回格式不正确")
+
+        try:
+            return CharacterCard.model_validate(data)
+        except ValidationError as exc:
+            print(f"Pydantic 校验 CharacterCard 失败：{exc}")
+            raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+
+    def distill_incremental_stream(
+        self,
+        text: str,
+        character_name: str,
+        aliases: list[str] | None = None,
+    ):
+        """增量蒸馏流式版：逐块处理时 yield 进度事件，最终格式化阶段 yield token。
+
+        yield 值类型：
+        - dict: 进度事件，如 ``{"status": "analyzing", "current": 3, "total": 20}``
+        - str: 最终格式化阶段的 token 片段
+        """
+        aliases = list(aliases) if aliases else []
+        match_terms = [character_name] + aliases
+        chunks = self._split_chunks(text, self._chunk_size)
+        relevant = [c for c in chunks if any(t in c for t in match_terms)]
+        if not relevant:
+            relevant = chunks[:3]
+
+        profile_draft = ""
+        for i, chunk in enumerate(relevant):
+            yield {"status": "analyzing", "current": i + 1, "total": len(relevant)}
+
+            prompt = (
+                f"已有档案：\n{profile_draft}\n\n"
+                f"新片段：\n{chunk}\n\n"
+                f"请更新「{character_name}」的档案。"
+            ) if profile_draft else (
+                f"新片段：\n{chunk}\n\n"
+                f"请提取「{character_name}」的档案。"
+            )
+            try:
+                profile_draft = self._llm.chat(
+                    "你是角色分析专家，根据新文本更新角色档案。保留旧信息，追加新发现，保留矛盾。",
+                    [{"role": "user", "content": prompt}],
+                )
+            except Exception as exc:
+                print(f"[distiller] Chunk {i + 1}/{len(relevant)} LLM call failed: {exc}")
+                continue
+
+            if len(profile_draft) > self._max_profile_len:
+                try:
+                    profile_draft = self._llm.chat(
+                        "压缩以下角色档案，保留关键信息和原文证据。",
+                        [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
+                    )
+                except Exception as exc:
+                    print(f"[distiller] Profile compression failed: {exc}")
+
+        try:
+            schema_obj = CharacterCard.model_json_schema()
+            schema_str = json.dumps(schema_obj, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError) as exc:
+            print(f"生成 CharacterCard JSON Schema 失败：{exc}")
+            raise
+
+        system_prompt = (
+            DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
+        )
+        yield from self._llm.chat_stream(
+            system_prompt,
+            [{"role": "user", "content": profile_draft}],
+        )

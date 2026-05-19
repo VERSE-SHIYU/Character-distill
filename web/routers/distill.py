@@ -12,10 +12,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_distiller, get_rag_config, get_sessions, get_storage, get_text_manager
+from deps import get_distiller, get_sessions, get_storage, get_text_manager
 from core.distiller import Distiller
 from core.export import export_tavern_json
-from core.rag import RAGEngine
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
@@ -112,7 +111,6 @@ async def distill_by_text_id(
     storage: SQLiteStore = Depends(get_storage),
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
-    rag_config: dict[str, Any] = Depends(get_rag_config),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
     if text_manager is None:
@@ -124,35 +122,9 @@ async def distill_by_text_id(
     content = text_rec["content"]
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
-    # Build RAG for semantic paragraph retrieval (pre-filtered to target character)
-    rag = None
-    all_chars: list[dict[str, Any]] | None = None
-    existing_cards = await storage.list_cards(req.text_id)
-    if not req.force and any(c["name"] == char_name for c in existing_cards):
-        pass  # cached — no RAG needed
-    else:
-        try:
-            all_chars = await asyncio.to_thread(distiller.identify_characters, content)
-            all_characters: list[dict[str, Any]] = [
-                {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
-            ]
-            # Pre-filter text to only paragraphs mentioning target character
-            char_terms = [char_name]
-            for c in all_chars:
-                if c["name"] == char_name:
-                    char_terms.extend(c.get("aliases", []))
-                    break
-            paragraphs = content.split("\n\n")
-            filtered_paras = [p for p in paragraphs if any(t in p for t in char_terms)]
-            text_for_rag = "\n\n".join(filtered_paras) if filtered_paras else content
-            rag = RAGEngine(rag_config)
-            rag.index(text_for_rag, all_characters=all_characters)
-        except Exception as exc:
-            print(f"[distill] RAG build failed (falling back to keyword): {exc}")
-
     try:
         return await text_manager.get_or_distill(
-            req.text_id, char_name, force=req.force, rag=rag, all_chars=all_chars
+            req.text_id, char_name, force=req.force
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -175,7 +147,6 @@ async def distill_stream(
     storage: SQLiteStore = Depends(get_storage),
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
-    rag_config: dict[str, Any] = Depends(get_rag_config),
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
     if text_manager is None or distiller is None:
@@ -190,46 +161,21 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 
-        # Step 1: Identify all characters
+        # Step 1: Identify all characters to resolve aliases
         all_chars: list[dict[str, Any]] = []
+        aliases: list[str] = []
         try:
             all_chars = await asyncio.to_thread(distiller.identify_characters, content)
+            for c in all_chars:
+                if c["name"] == char_name:
+                    aliases = c.get("aliases", [])
+                    break
         except Exception as exc:
             print(f"[distill] Identify failed (falling back): {exc}")
 
-        all_characters: list[dict[str, Any]] = [
-            {"name": c["name"], "aliases": c.get("aliases", [])} for c in all_chars
-        ]
-
-        # Step 2: Build RAG first, then distill — semantic retrieval beats keyword truncation
-        yield f"data: {json.dumps({'status': 'building_rag'}, ensure_ascii=False)}\n\n"
-
-        rag = None
-        try:
-            def _build_rag():
-                char_terms = [char_name]
-                for c in all_chars:
-                    if c["name"] == char_name:
-                        char_terms.extend(c.get("aliases", []))
-                        break
-                paragraphs = content.split("\n\n")
-                filtered_paras = [p for p in paragraphs if any(t in p for t in char_terms)]
-                text_for_rag = "\n\n".join(filtered_paras) if filtered_paras else content
-                r = RAGEngine(rag_config)
-                r.index(text_for_rag, all_characters=all_characters)
-                return r
-            rag = await asyncio.wait_for(
-                asyncio.get_running_loop().run_in_executor(None, _build_rag),
-                timeout=90,
-            )
-        except asyncio.TimeoutError:
-            print("[distill] RAG build timed out, falling back to keyword extraction")
-        except Exception as exc:
-            print(f"[distill] RAG build failed, falling back to keyword: {exc}")
-
-        # Step 3: Stream distillation (RAG-powered or keyword fallback)
+        # Step 2: Incremental distillation — chunk by chunk with progress
         full = ""
-        stream = distiller.distill_stream(content, char_name, rag, all_chars or None)
+        stream = distiller.distill_incremental_stream(content, char_name, aliases)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
@@ -239,10 +185,14 @@ async def distill_stream(
                 return
             if done:
                 break
-            full += piece
-            yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+            if isinstance(piece, dict):
+                # Progress event from incremental chunk processing
+                yield f"data: {json.dumps(piece, ensure_ascii=False)}\n\n"
+            else:
+                full += piece
+                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
 
-        # Step 4: Parse + validate + save
+        # Step 3: Parse + validate + save
         stripped = full.strip()
         data = None
         try:
@@ -267,11 +217,9 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False)}\n\n"
             return
 
-        # Persist card + create session (reuse existing RAG)
+        # Persist card + create session (RAG built in _create_session for chat use)
         try:
-            result = await text_manager.save_distilled_card(
-                req.text_id, card, rag=rag, all_chars=all_chars
-            )
+            result = await text_manager.save_distilled_card(req.text_id, card)
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"

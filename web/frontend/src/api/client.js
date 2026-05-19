@@ -91,7 +91,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
               onToken(payload.token)
             }
             if (payload.status !== undefined && onStatus) {
-              onStatus(payload.status)
+              onStatus(payload)
             }
           } catch { /* skip malformed lines */ }
         }

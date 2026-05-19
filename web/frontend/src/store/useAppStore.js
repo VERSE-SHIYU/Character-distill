@@ -355,13 +355,15 @@ const useAppStore = create((set, get) => ({
         console.error('[store] distillCharacter stream failed:', err)
         set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '' })
       },
-      (status) => {
+      (payload) => {
+        if (payload.status === 'analyzing' && payload.current) {
+          set({ distillStatus: `正在分析第 ${payload.current}/${payload.total} 段…` })
+          return
+        }
         const statusMap = {
           identifying: '正在识别角色…',
-          building_rag: '正在构建语义索引…',
-          distilling: '正在蒸馏…',
         }
-        set({ distillStatus: statusMap[status] || status })
+        set({ distillStatus: statusMap[payload.status] || payload.status })
       },
     )
 
