@@ -70,6 +70,7 @@ class SQLiteStore(StorageBase):
                 wechat_migration_path = migrations_dir / "003_wechat.sql"
                 title_desc_migration_path = migrations_dir / "004_title_desc.sql"
                 characters_cache_path = migrations_dir / "005_characters_cache.sql"
+                card_avatar_path = migrations_dir / "006_card_avatar.sql"
             except OSError as exc:
                 print(f"[SQLiteStore] Read migration file failed: {exc}")
                 raise
@@ -115,6 +116,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Characters cache migration failed: {exc}")
+
+                    # Run 006_card_avatar migration (ALTER TABLE may fail if column exists)
+                    if card_avatar_path.exists():
+                        try:
+                            card_avatar_sql = card_avatar_path.read_text(encoding="utf-8")
+                            await conn.executescript(card_avatar_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Card avatar migration failed: {exc}")
 
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
@@ -321,6 +332,65 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] List cards failed: {exc}")
             raise
+
+    async def save_card_avatar(self, card_id: str, avatar_data: str) -> None:
+        """Save base64 avatar image for a card."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET avatar_data = ? WHERE id = ?",
+                    (avatar_data, card_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save card avatar failed: {exc}")
+            raise
+
+    async def get_card_avatar(self, card_id: str) -> str | None:
+        """Get base64 avatar image for a card, or None."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT avatar_data FROM cards WHERE id = ?",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+                return None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card avatar failed: {exc}")
+            return None
+
+    async def get_recent_card_session(self, card_id: str, exclude_id: str = "") -> dict | None:
+        """Get the most recent session for a card (excluding a given session id)."""
+        try:
+            async with await self._connect() as conn:
+                if exclude_id:
+                    cursor = await conn.execute(
+                        """
+                        SELECT id FROM sessions
+                        WHERE card_id = ? AND id != ?
+                        ORDER BY updated_at DESC LIMIT 1
+                        """,
+                        (card_id, exclude_id),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """
+                        SELECT id FROM sessions
+                        WHERE card_id = ?
+                        ORDER BY updated_at DESC LIMIT 1
+                        """,
+                        (card_id,),
+                    )
+                row = await cursor.fetchone()
+                if row:
+                    return dict(row)
+                return None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get recent card session failed: {exc}")
+            return None
 
     async def save_session(
         self, id: str, card_id: str, user_role: str, avatar_data: str

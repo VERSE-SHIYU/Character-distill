@@ -390,7 +390,7 @@ async def start_session(
     try:
         rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
         session_id = await asyncio.to_thread(
-            text_manager._create_session, content, card, all_characters, rag
+            text_manager._create_session, content, card, all_characters, rag, req.card_id
         )
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
@@ -400,6 +400,23 @@ async def start_session(
         await storage.save_session(session_id, req.card_id, "", "")
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
+
+    # Load history from the most recent old session so the character remembers
+    # previous conversations. Mem0 provides long-term memory, but short-term
+    # context (the last ~30 messages) must come from engine.history.
+    try:
+        recent = await storage.get_recent_card_session(req.card_id, exclude_id=session_id)
+        if recent:
+            old_messages = await storage.get_messages(recent["id"])
+            engine = sessions[session_id].get("engine")
+            if engine and old_messages:
+                for m in old_messages:
+                    role = "assistant" if m["role"] == "char" else m["role"]
+                    eng_role = "user" if role == "user" else "assistant"
+                    engine.history.append({"role": eng_role, "content": m["content"]})
+                print(f"[start_session] Loaded {len(old_messages)} history messages from session {recent['id']}")
+    except Exception as exc:
+        print(f"[start_session] Load history failed (non-fatal): {exc}")
 
     result = card.model_dump()
     result["session_id"] = session_id

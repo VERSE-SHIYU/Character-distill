@@ -36,6 +36,7 @@ from routers.chat import router as chat_router
 from routers.history import router as history_router
 from routers.voice import router as voice_router
 from routers.wechat import router as wechat_router
+from routers.card import router as card_router
 from deps import get_config, reset_llm_and_dependents
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -66,6 +67,7 @@ app.include_router(chat_router)
 app.include_router(history_router)
 app.include_router(voice_router)
 app.include_router(wechat_router)
+app.include_router(card_router)
 
 
 @app.get("/api/settings/config")
