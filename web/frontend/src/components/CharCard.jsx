@@ -236,9 +236,10 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     onClick={() => handleDistill(name, already)}
                   >
                     {distillingName === name
-                      ? distillTokenCount > 0
-                        ? `蒸馏中… ${(distillTokenCount / 1000).toFixed(1)}k字符`
-                        : distillStatus || '蒸馏中…'
+                      ? [
+                          distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
+                          distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
+                        ].filter(Boolean).join(' | ') || '蒸馏中…'
                       : already
                         ? '重新蒸馏'
                         : '蒸馏角色'}
@@ -263,9 +264,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         )}
         {identifying && <Loading text="正在识别角色…" />}
         {distilling && distillingName && (
-          <Loading text={distillTokenCount > 0
-            ? `正在蒸馏 ${distillingName}… ${(distillTokenCount / 1000).toFixed(1)}k字符`
-            : distillStatus || `正在蒸馏 ${distillingName}…`} />
+          <Loading text={[
+            `正在蒸馏 ${distillingName}…`,
+            distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
+            distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
+          ].filter(Boolean).join(' | ')} />
         )}
         {(hasCards || hasIdentified) && !identifying && (
           <button
