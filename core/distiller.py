@@ -297,6 +297,29 @@ class Distiller:
 
         yield from self._llm.chat_stream(system_prompt, user_messages)
 
+    def generate_opening(self, card_json: dict, user_role: str) -> str:
+        """Generate context-aware opening based on character card + user role."""
+        name = card_json.get("name", "角色")
+        identity = card_json.get("identity", "")
+        traits = "、".join(card_json.get("personality_traits", []))
+        style = card_json.get("speaking_style", {})
+        tone = style.get("tone", "")
+        catchphrases = "、".join(style.get("catchphrases", []))
+
+        prompt = (
+            f"你是「{name}」，{identity}。\n"
+            f"性格特点：{traits}\n"
+            + (f"说话语气：{tone}\n" if tone else "")
+            + (f"口癖：{catchphrases}\n" if catchphrases else "")
+            + f"\n现在「{user_role}」来找你了。请以{name}的口吻说一句开场白，"
+            "要体现你对这个人的态度和你们之间的关系。"
+            "直接说台词，不要旁白、不要动作描写。30字以内。"
+        )
+        return self._llm.chat(
+            f"你是「{name}」，请严格按照角色设定说话。只输出一句开场白，不要任何额外内容。",
+            [{"role": "user", "content": prompt}],
+        )
+
     # ── MapReduce internals ────────────────────────────────────────────
 
     async def _run_map_concurrent(

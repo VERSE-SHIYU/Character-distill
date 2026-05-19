@@ -166,10 +166,18 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 
-        # Step 1: aliases already resolved by _resolve_character_name above
+        # Resolve aliases so Map phase catches all name variants
         aliases: list[str] = []
+        try:
+            chars = await asyncio.to_thread(distiller.identify_characters, content)
+            for c in chars:
+                if c.get("name") == char_name:
+                    aliases = c.get("aliases", [])
+                    break
+        except Exception as exc:
+            print(f"[distill] Identify aliases failed: {exc}")
 
-        # Step 2: Incremental distillation — chunk by chunk with progress
+        # Incremental distillation with aliases for broader chunk matching
         full = ""
         stream = distiller.distill_incremental_stream(content, char_name, aliases)
         while True:
@@ -265,6 +273,34 @@ async def reindex_rag(
             print(f"[distill] Reindex session {sid} failed: {exc}")
 
     return {"reindexed_sessions": count, "characters_found": len(chars)}
+
+
+class UpdateCardRequest(BaseModel):
+    card_json: dict
+
+@router.patch("/card/{card_id}")
+async def update_card(
+    card_id: str,
+    req: UpdateCardRequest,
+    storage: SQLiteStore = Depends(get_storage),
+):
+    result = await storage.update_card(card_id, req.card_json)
+    return {"ok": True, "card": result}
+
+
+class GenerateOpeningRequest(BaseModel):
+    card_json: dict
+    user_role: str
+
+@router.post("/generate-opening")
+async def generate_opening(
+    req: GenerateOpeningRequest,
+    distiller: Distiller = Depends(get_distiller),
+):
+    opening = await asyncio.to_thread(
+        distiller.generate_opening, req.card_json, req.user_role
+    )
+    return {"opening": opening}
 
 
 @router.get("/cards/{card_id}/export")

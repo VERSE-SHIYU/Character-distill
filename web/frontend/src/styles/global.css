@@ -3771,6 +3771,32 @@ select.settings-input {
   box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
 }
 
+.edit-card-modal {
+  width: 560px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--input-radius);
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  font: 13px/1.5 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  color: var(--text);
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.modal-textarea:focus {
+  border-color: var(--cream-green);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
+}
+
 .modal-input::placeholder {
   color: var(--charcoal-light);
 }

@@ -37,6 +37,10 @@ class StorageBase(ABC):
         """List cards under a text ID."""
 
     @abstractmethod
+    async def update_card(self, card_id: str, card_json: dict) -> dict:
+        """Update a card's JSON and return the updated record."""
+
+    @abstractmethod
     async def save_session(
         self, id: str, card_id: str, user_role: str, avatar_data: str
     ) -> dict:

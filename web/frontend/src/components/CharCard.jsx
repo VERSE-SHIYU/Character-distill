@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import { postJSON } from '../api/client'
 import { saveAvatar, getAvatar } from '../store/db'
 import { compressImage } from '../utils/image'
 import Avatar from './common/Avatar'
@@ -292,7 +293,11 @@ function CardDetail({ card, textId }) {
   const userRole = useAppStore((s) => s.userRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const setView = useAppStore((s) => s.setView)
+  const updateCard = useAppStore((s) => s.updateCard)
   const [showRoleModal, setShowRoleModal] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editJson, setEditJson] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -331,14 +336,50 @@ function CardDetail({ card, textId }) {
     [card.id, setCardAvatar],
   )
 
-  const handleRoleConfirm = (role) => {
+  const handleRoleConfirm = async (role) => {
     setShowRoleModal(false)
+    if (role) {
+      try {
+        const res = await postJSON('/api/distill/generate-opening', {
+          card_json: data,
+          user_role: role,
+        }, 30000)
+        if (res.opening) {
+          if (typeof card.card_json === 'string') {
+            card.card_json = JSON.stringify({ ...data, first_message: res.opening })
+          } else if (card.card_json) {
+            card.card_json.first_message = res.opening
+          }
+          card.first_message = res.opening
+        }
+      } catch (err) {
+        console.warn('[CharCard] generate-opening failed:', err)
+      }
+    }
     startChat(card)
   }
 
   const handleRoleSkip = () => {
     setShowRoleModal(false)
     startChat(card)
+  }
+
+  const handleOpenEdit = () => {
+    setEditJson(JSON.stringify(data, null, 2))
+    setShowEditModal(true)
+  }
+
+  const handleSaveEdit = async () => {
+    try {
+      const parsed = JSON.parse(editJson)
+      setEditSaving(true)
+      await updateCard(card.id || card.card_id, parsed)
+      setShowEditModal(false)
+      setEditSaving(false)
+    } catch (err) {
+      setEditSaving(false)
+      alert(err.message || 'JSON 格式错误或保存失败')
+    }
   }
 
   return (
@@ -477,6 +518,13 @@ function CardDetail({ card, textId }) {
         >
           ← 返回文本列表
         </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={handleOpenEdit}
+        >
+          {'✏️'} 编辑
+        </button>
         <a
           href={`/api/distill/cards/${card.id}/export?format=tavern`}
           download
@@ -496,9 +544,45 @@ function CardDetail({ card, textId }) {
       <RoleSetupModal
         isOpen={showRoleModal}
         characterName={name}
+        relationships={rels}
         onConfirm={handleRoleConfirm}
         onSkip={handleRoleSkip}
       />
+
+      {showEditModal && (
+        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
+          <div className="modal-card edit-card-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">编辑角色卡 — {name}</div>
+            <div className="modal-field">
+              <label className="modal-label">JSON 编辑（可直接修改任意字段）</label>
+              <textarea
+                className="modal-textarea glass-input"
+                value={editJson}
+                onChange={(e) => setEditJson(e.target.value)}
+                rows={20}
+                spellCheck={false}
+              />
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-secondary glass"
+                onClick={() => setShowEditModal(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={handleSaveEdit}
+                disabled={editSaving}
+              >
+                {editSaving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

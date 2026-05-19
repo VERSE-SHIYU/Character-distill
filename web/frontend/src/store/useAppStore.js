@@ -608,6 +608,39 @@ const useAppStore = create((set, get) => ({
       throw err
     }
   },
+
+  updateCard: async (cardId, cardJson) => {
+    try {
+      const res = await fetchWithTimeout(`/api/distill/card/${cardId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ card_json: cardJson }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        set((s) => {
+          const updated = {
+            cards: s.cards.map((c) =>
+              c.id === cardId
+                ? { ...c, card_json: typeof c.card_json === 'string' ? JSON.stringify(cardJson) : cardJson }
+                : c
+            ),
+            currentCard: s.currentCard?.id === cardId
+              ? { ...s.currentCard, ...cardJson, card_json: cardJson }
+              : s.currentCard,
+          }
+          if (s.sessionId && s.currentCard?.id === cardId) {
+            updated.messages = [...s.messages, { role: 'system', content: '角色卡已更新' }]
+          }
+          return updated
+        })
+      }
+      return data
+    } catch (err) {
+      set({ error: err.message })
+      throw err
+    }
+  },
 }))
 
 export default useAppStore

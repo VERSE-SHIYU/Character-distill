@@ -429,6 +429,7 @@ function ChatView() {
       <RoleSetupModal
         isOpen={showRoleModal}
         characterName={charName}
+        relationships={cardData.relationships || []}
         onConfirm={(role) => setShowRoleModal(false)}
         onSkip={() => setShowRoleModal(false)}
       />

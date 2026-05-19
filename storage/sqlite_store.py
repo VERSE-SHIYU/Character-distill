@@ -275,6 +275,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Save card failed: {exc}")
             raise
 
+    async def update_card(self, card_id: str, card_json: dict) -> dict:
+        """Update a card's JSON content by ID."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET card_json = ? WHERE id = ?",
+                    (json.dumps(card_json, ensure_ascii=False), card_id),
+                )
+                await conn.commit()
+                return await self.get_card(card_id) or {}
+        except Exception as exc:
+            print(f"[SQLiteStore] Update card failed: {exc}")
+            raise
+
     async def get_card(self, id: str) -> dict | None:
         """Get one card record by id."""
         try:

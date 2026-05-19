@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 
-export default function RoleSetupModal({ isOpen, characterName, onConfirm, onSkip }) {
+export default function RoleSetupModal({ isOpen, characterName, relationships, onConfirm, onSkip }) {
   const userRole = useAppStore((s) => s.userRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const [role, setRole] = useState(userRole || '')
@@ -15,6 +15,10 @@ export default function RoleSetupModal({ isOpen, characterName, onConfirm, onSki
   }, [isOpen, userRole])
 
   if (!isOpen) return null
+
+  const targets = (relationships || [])
+    .map((r) => r.target)
+    .filter(Boolean)
 
   const handleConfirm = () => {
     setUserRole(role.trim())
@@ -59,6 +63,24 @@ export default function RoleSetupModal({ isOpen, characterName, onConfirm, onSki
             onKeyDown={handleKeyDown}
           />
         </div>
+
+        {targets.length > 0 && (
+          <div className="modal-field">
+            <label className="modal-label">{characterName} 认识的人（点击选择）</label>
+            <div className="user-role-presets">
+              {targets.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`user-role-preset-btn${role === t ? ' active' : ''}`}
+                  onClick={() => setRole(t)}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="modal-actions">
           <button
