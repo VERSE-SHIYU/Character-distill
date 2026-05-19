@@ -44,6 +44,64 @@ class TextManager:
         self._summary_threshold = summary_threshold
         self._text_rag_cache: dict[str, RAGEngine] = {}
 
+    @staticmethod
+    def _parse_wechat_json(data: dict) -> str:
+        """Extract text + quote messages from wechat JSON export into clean transcript.
+
+        Only ``renderType`` in (``text``, ``quote``) is kept — system / emoji /
+        image / voice / video / voip / link / file / transfer / redPacket are
+        all discarded.  Quote messages include the referenced content inline.
+        Output is one line per message: ``[2025-04-15] 发送者: 内容``.
+        """
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return ""
+
+        conv = data.get("conversation", {}) if isinstance(data.get("conversation"), dict) else {}
+        partner_name = conv.get("displayName", "") or conv.get("username", "")
+        account_name = data.get("account", "")
+
+        def _resolve_sender(msg: dict) -> str:
+            disp = (msg.get("senderDisplayName") or "").strip()
+            if disp:
+                return disp
+            user = msg.get("senderUsername", "")
+            if account_name and user == account_name:
+                return "我"
+            if partner_name:
+                return partner_name
+            return user
+
+        def _extract_quote_text(msg: dict) -> str | None:
+            quote = msg.get("quote")
+            if isinstance(quote, dict):
+                q_sender = _resolve_sender(quote)
+                q_content = (quote.get("content") or "").strip()
+                if q_content:
+                    return f"[引用 {q_sender}: {q_content}]"
+            return None
+
+        lines: list[str] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            rt = msg.get("renderType", "")
+            if rt not in ("text", "quote"):
+                continue
+
+            content = (msg.get("content") or "").strip()
+            quote_part = _extract_quote_text(msg) if rt == "quote" else None
+
+            if not content and not quote_part:
+                continue
+
+            sender = _resolve_sender(msg)
+            date_str = (msg.get("createTimeText") or "")[:10]
+            combined = f"{quote_part} {content}".strip() if quote_part else content
+            lines.append(f"[{date_str}] {sender}: {combined}")
+
+        return "\n".join(lines)
+
     # ---- Format parsing ----
 
     @staticmethod
@@ -69,6 +127,11 @@ class TextManager:
                 for key in ("text", "content", "body", "data"):
                     if key in data and isinstance(data[key], str):
                         return data[key]
+                # Wechat JSON export: extract clean dialogue transcript
+                if isinstance(data.get("messages"), list) and "schemaVersion" in data:
+                    cleaned = TextManager._parse_wechat_json(data)
+                    if cleaned:
+                        return cleaned
                 return json.dumps(data, ensure_ascii=False, indent=2)
             if isinstance(data, list):
                 parts: list[str] = []

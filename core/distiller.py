@@ -141,12 +141,28 @@ class Distiller:
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:
-        """Split text into chunks of roughly chunk_size chars at paragraph boundaries."""
+        """Split text into chunks, with fallback for texts without paragraph breaks."""
         paragraphs = text.split("\n\n")
         chunks: list[str] = []
         current = ""
         for para in paragraphs:
-            if len(current) + len(para) + 2 > chunk_size and current:
+            # 段落本身超长：先按单换行切，再按字符数强制切
+            if len(para) > chunk_size:
+                if current:
+                    chunks.append(current)
+                    current = ""
+                lines = para.split("\n")
+                for line in lines:
+                    if len(line) > chunk_size:
+                        # 强制按字符数切断
+                        for i in range(0, len(line), chunk_size):
+                            chunks.append(line[i:i + chunk_size])
+                    elif len(current) + len(line) + 1 > chunk_size and current:
+                        chunks.append(current)
+                        current = line
+                    else:
+                        current = line if not current else current + "\n" + line
+            elif len(current) + len(para) + 2 > chunk_size and current:
                 chunks.append(current)
                 current = para
             else:
