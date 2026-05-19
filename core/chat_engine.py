@@ -47,6 +47,7 @@ class ChatEngine:
         self._context_window = context_window
         self.history: list[dict[str, Any]] = []
         self._last_rag_context: str = ""
+        self.last_summary: str | None = None  # legacy compat for chat.py
 
     def build_system_prompt(self, rag_context: str = "") -> str:
         """根据角色卡拼装系统提示；可选附加 RAG 片段和 Mem0 长期记忆。"""

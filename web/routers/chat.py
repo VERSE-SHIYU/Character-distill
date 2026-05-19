@@ -12,11 +12,75 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage
+from deps import get_sessions, get_storage, get_text_manager
 from storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
+
+
+async def _ensure_session(
+    session_id: str,
+    storage: SQLiteStore,
+    sessions: dict[str, Any],
+) -> dict[str, Any]:
+    """Return in-memory session dict, auto-resuming from DB if server restarted."""
+    session = sessions.get(session_id)
+    if session is not None:
+        return session
+
+    # Server restarted — rebuild from DB
+    db_session = await storage.get_session(session_id)
+    if not db_session:
+        raise HTTPException(404, "Session not found")
+
+    from core.schema import CharacterCard
+    from deps import get_text_manager as _gtm
+    text_manager = _gtm()
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
+
+    card_id = db_session["card_id"]
+    card_rec = await storage.get_card(card_id)
+    if not card_rec:
+        raise HTTPException(404, "Card not found")
+    text_rec = await storage.get_text(card_rec["text_id"])
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+
+    try:
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
+    except Exception as exc:
+        raise HTTPException(500, "Card data is corrupted") from exc
+
+    existing_cards = await storage.list_cards(card_rec["text_id"])
+    all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
+
+    rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters)
+    new_id = await asyncio.to_thread(
+        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id
+    )
+
+    # Steal engine into the original session_id
+    if new_id != session_id:
+        sessions[session_id] = sessions.pop(new_id, {})
+    engine = sessions[session_id].get("engine")
+    if engine is None:
+        raise HTTPException(500, "Engine not found after rebuild")
+
+    # Reload history
+    db_messages = await storage.get_messages(session_id)
+    engine.history = [
+        {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
+        for m in db_messages
+        if m["role"] in ("user", "char", "summary")
+    ]
+    if db_session.get("user_role"):
+        engine.user_role = db_session["user_role"]
+    sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
+
+    print(f"[chat] Auto-resumed session {session_id} with {len(db_messages)} messages")
+    return sessions[session_id]
 
 
 # ---- Request models ----
@@ -52,9 +116,7 @@ async def _do_chat(
     hidden: bool = False,
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
-    session = sessions.get(session_id)
-    if not session:
-        raise HTTPException(404, "Session not found, please distill a character first")
+    session = await _ensure_session(session_id, storage, sessions)
 
     msg = message.strip()
     if not msg:
@@ -115,9 +177,7 @@ async def _do_chat_stream(
     hidden: bool = False,
 ):
     """Core streaming chat logic with SSE output."""
-    session = sessions.get(session_id)
-    if not session:
-        raise HTTPException(404, "Session not found, please distill a character first")
+    session = await _ensure_session(session_id, storage, sessions)
 
     msg = message.strip()
     if not msg:
@@ -194,12 +254,12 @@ async def _do_chat_stream(
 
 async def _do_reset(
     session_id: str,
+    storage: SQLiteStore,
     sessions: dict[str, Any],
 ) -> dict[str, bool]:
     """Core reset logic: clear in-memory history."""
-    session = sessions.get(session_id)
-    if session:
-        session["engine"].reset()
+    session = await _ensure_session(session_id, storage, sessions)
+    session["engine"].reset()
     return {"ok": True}
 
 
@@ -231,7 +291,7 @@ async def revoke_messages(
     After DB deletion, rebuild ``engine.history`` from remaining messages to keep
     the in-memory context and ``message_ids`` tracking precisely in sync.
     """
-    session = sessions.get(req.session_id)
+    session = await _ensure_session(req.session_id, storage, sessions)
 
     # Delete from SQLite first
     try:
@@ -241,7 +301,6 @@ async def revoke_messages(
         raise HTTPException(500, f"Revoke failed: {exc}") from exc
 
     # Rebuild in-memory engine.history and message_ids from remaining DB rows
-    if session:
         try:
             messages = await storage.get_messages(req.session_id)
             engine = session.get("engine")
@@ -262,10 +321,11 @@ async def revoke_messages(
 @router.post("/reset")
 async def reset_session(
     req: ResetRequest,
+    storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Reset the in-memory chat history (keep the character card)."""
-    return await _do_reset(req.session_id, sessions)
+    return await _do_reset(req.session_id, storage, sessions)
 
 
 # ---- Legacy compat routes (/api/chat, /api/reset) ----
@@ -283,7 +343,8 @@ async def legacy_chat(
 @legacy_router.post("/api/reset")
 async def legacy_reset(
     req: ResetRequest,
+    storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Legacy /api/reset -> same as /api/chat/reset."""
-    return await _do_reset(req.session_id, sessions)
+    return await _do_reset(req.session_id, storage, sessions)

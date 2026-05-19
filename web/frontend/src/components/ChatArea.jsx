@@ -10,15 +10,16 @@ export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
+  const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
   const startChat = useAppStore((s) => s.startChat)
 
-  // Auto-recover: if we have a card but no session, try to create one
+  // Auto-recover: only create session when user is actually on the chat view
   useEffect(() => {
-    if (currentCard && !sessionId && !resumeLoading) {
+    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading) {
       startChat(currentCard)
     }
-  }, [currentCard?.id, sessionId])
+  }, [currentView, currentCard?.id, sessionId])
 
   if (!currentCard || !sessionId) {
     if (resumeLoading) {
