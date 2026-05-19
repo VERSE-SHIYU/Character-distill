@@ -472,7 +472,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatar
     >
       {!isUser ? (
         <div className="chat-msg-avatar">
-          <Avatar name={charName} src={avatarUrl} size={66} />
+          <Avatar name={charName} src={avatarUrl} size={40} />
         </div>
       ) : (
         <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>
