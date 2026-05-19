@@ -5,11 +5,13 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
   const userRole = useAppStore((s) => s.userRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const [role, setRole] = useState(userRole || '')
+  const [step, setStep] = useState('input') // 'input' | 'confirm'
   const inputRef = useRef(null)
 
   useEffect(() => {
     if (isOpen) {
       setRole(userRole || '')
+      setStep('input')
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [isOpen, userRole])
@@ -20,25 +22,54 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
     .map((r) => r.target)
     .filter(Boolean)
 
-  const handleConfirm = () => {
-    setUserRole(role.trim())
-    onConfirm(role.trim())
+  const trimmed = role.trim()
+
+  const handleFirstConfirm = () => {
+    if (!trimmed) return
+    setUserRole(trimmed)
+    setStep('confirm')
   }
 
-  const handleSkip = () => {
-    setUserRole('')
-    onSkip()
+  const handleEnterChat = () => {
+    onConfirm(trimmed)
+  }
+
+  const handleBack = () => {
+    setStep('input')
   }
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && trimmed) {
       e.preventDefault()
-      handleConfirm()
+      handleFirstConfirm()
     }
   }
 
+  // Step 2: confirmation
+  if (step === 'confirm') {
+    return (
+      <div className="modal-overlay" onClick={handleBack}>
+        <div className="modal-card role-setup-card" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-title">确认身份</div>
+          <p className="role-confirm-text">
+            你将以 <strong>「{trimmed}」</strong> 的身份与 <strong>{characterName}</strong> 对话
+          </p>
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary glass" onClick={handleBack}>
+              ← 重新选择
+            </button>
+            <button type="button" className="btn-primary" onClick={handleEnterChat}>
+              进入对话
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Step 1: input
   return (
-    <div className="modal-overlay" onClick={handleSkip}>
+    <div className="modal-overlay" onClick={() => onSkip ? onSkip() : null}>
       <div className="modal-card role-setup-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">你要扮演谁？</div>
 
@@ -50,7 +81,7 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
 
         <div className="modal-field">
           <label className="modal-label" htmlFor="role-setup-input">
-            你的角色名
+            你的角色名 <span className="modal-label-required">（必填）</span>
           </label>
           <input
             ref={inputRef}
@@ -85,15 +116,9 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
         <div className="modal-actions">
           <button
             type="button"
-            className="btn-secondary glass"
-            onClick={handleSkip}
-          >
-            跳过
-          </button>
-          <button
-            type="button"
             className="btn-primary"
-            onClick={handleConfirm}
+            onClick={handleFirstConfirm}
+            disabled={!trimmed}
           >
             确认并开始对话
           </button>

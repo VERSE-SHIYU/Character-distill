@@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import RoleSetupModal from './RoleSetupModal'
+import EditCardModal from './EditCardModal'
 
 // ---- CharCard (top-level) ----
 
@@ -82,19 +83,15 @@ function CharPanelBody({ textId }) {
   const loadCards = useAppStore((s) => s.loadCards)
   const error = useAppStore((s) => s.error)
   const setError = useAppStore((s) => s.setError)
-  const selectCard = useAppStore((s) => s.selectCard)
+  const viewCard = useAppStore((s) => s.viewCard)
   const [detailLoading, setDetailLoading] = useState(false)
 
   useEffect(() => {
     loadCards(textId)
   }, [textId, loadCards])
 
-  const handleSelectCard = async (card) => {
-    setDetailLoading(true)
-    try {
-      await selectCard(card)
-    } catch { /* store sets error */ }
-    setTimeout(() => setDetailLoading(false), 300)
+  const handleSelectCard = (card) => {
+    viewCard(card)
   }
 
   return (
@@ -296,8 +293,6 @@ function CardDetail({ card, textId }) {
   const updateCard = useAppStore((s) => s.updateCard)
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
-  const [editJson, setEditJson] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -364,22 +359,9 @@ function CardDetail({ card, textId }) {
     startChat(card)
   }
 
-  const handleOpenEdit = () => {
-    setEditJson(JSON.stringify(data, null, 2))
-    setShowEditModal(true)
-  }
-
-  const handleSaveEdit = async () => {
-    try {
-      const parsed = JSON.parse(editJson)
-      setEditSaving(true)
-      await updateCard(card.id || card.card_id, parsed)
-      setShowEditModal(false)
-      setEditSaving(false)
-    } catch (err) {
-      setEditSaving(false)
-      alert(err.message || 'JSON 格式错误或保存失败')
-    }
+  const handleSaveEdit = async (cardJson) => {
+    await updateCard(card.id || card.card_id, cardJson)
+    setShowEditModal(false)
   }
 
   return (
@@ -521,7 +503,7 @@ function CardDetail({ card, textId }) {
         <button
           type="button"
           className="btn-secondary"
-          onClick={handleOpenEdit}
+          onClick={() => setShowEditModal(true)}
         >
           {'✏️'} 编辑
         </button>
@@ -549,40 +531,13 @@ function CardDetail({ card, textId }) {
         onSkip={handleRoleSkip}
       />
 
-      {showEditModal && (
-        <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="modal-card edit-card-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">编辑角色卡 — {name}</div>
-            <div className="modal-field">
-              <label className="modal-label">JSON 编辑（可直接修改任意字段）</label>
-              <textarea
-                className="modal-textarea glass-input"
-                value={editJson}
-                onChange={(e) => setEditJson(e.target.value)}
-                rows={20}
-                spellCheck={false}
-              />
-            </div>
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn-secondary glass"
-                onClick={() => setShowEditModal(false)}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleSaveEdit}
-                disabled={editSaving}
-              >
-                {editSaving ? '保存中…' : '保存'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <EditCardModal
+        isOpen={showEditModal}
+        data={data}
+        cardId={card.id || card.card_id}
+        onSave={handleSaveEdit}
+        onClose={() => setShowEditModal(false)}
+      />
     </div>
   )
 }

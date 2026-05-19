@@ -163,6 +163,9 @@ const useAppStore = create((set, get) => ({
   isRecording: false,
   recordingDuration: 0,
 
+  userAvatar: null,
+  setUserAvatar: (url) => set({ userAvatar: url }),
+
   _synthesizeVoiceReply: async (reply, charIdx) => {
     const { sessionId } = get()
     if (!reply || !sessionId) return
@@ -387,6 +390,13 @@ const useAppStore = create((set, get) => ({
     return cancel
   },
 
+  viewCard: (card) => {
+    set({
+      currentCard: card,
+      currentView: 'character',
+    })
+  },
+
   selectCard: async (card) => {
     // TODO: 如果 card.session_id 存在，应从 /api/history/{session_id}/resume 加载历史消息，
     // 而非每次新建会话（当前行为：仅在 card 无 session_id 时创建新会话）。
@@ -395,6 +405,7 @@ const useAppStore = create((set, get) => ({
       messages: card.first_message ? [{ role: 'char', content: card.first_message }] : [],
       currentView: 'chat',
       resumeLoading: true,
+      userAvatar: null,
     })
 
     let sessionId = card.session_id || null
@@ -456,6 +467,7 @@ const useAppStore = create((set, get) => ({
         : [],
       currentView: 'chat',
       currentTextTitle: textTitle || get().currentTextTitle,
+      userAvatar: null,
     })
   },
 

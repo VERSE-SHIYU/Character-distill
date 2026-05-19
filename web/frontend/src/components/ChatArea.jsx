@@ -102,22 +102,30 @@ function ChatView() {
   const avatarInputRef = useRef(null)
 
   // ---- User avatar ----
-  const [userAvatarUrl, setUserAvatarUrl] = useState(() => localStorage.getItem('user_avatar_url') || null)
+  const userAvatarUrl = useAppStore((s) => s.userAvatar)
+  const setUserAvatar = useAppStore((s) => s.setUserAvatar)
   const userAvatarInputRef = useRef(null)
+
+  useEffect(() => {
+    if (sessionId) {
+      const saved = localStorage.getItem(`user_avatar_${sessionId}`)
+      if (saved) setUserAvatar(saved)
+    }
+  }, [sessionId])
 
   const handleUserAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
     if (!file) return
     const url = URL.createObjectURL(file)
-    setUserAvatarUrl(url)
+    setUserAvatar(url)
     const reader = new FileReader()
     reader.onload = () => {
-      localStorage.setItem('user_avatar_url', reader.result)
-      setUserAvatarUrl(reader.result)
+      if (sessionId) localStorage.setItem(`user_avatar_${sessionId}`, reader.result)
+      setUserAvatar(reader.result)
       URL.revokeObjectURL(url)
     }
     reader.readAsDataURL(file)
-  }, [])
+  }, [sessionId, setUserAvatar])
 
   useEffect(() => {
     let cancelled = false

@@ -3777,6 +3777,58 @@ select.settings-input {
   overflow-y: auto;
 }
 
+.edit-form-scroll {
+  max-height: 55vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.edit-fieldset {
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.edit-fieldset legend {
+  padding: 0 6px;
+}
+
+.edit-rel-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.edit-rel-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-rel-del {
+  padding: 0 8px;
+  height: 42px;
+  flex-shrink: 0;
+  color: var(--danger);
+}
+
+.role-confirm-text {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin: 12px 0 20px;
+  line-height: 1.6;
+}
+
+.role-confirm-text strong {
+  color: var(--text);
+}
+
+.modal-label-required {
+  color: var(--danger);
+  font-size: 12px;
+}
+
 .modal-textarea {
   width: 100%;
   padding: 12px 14px;
