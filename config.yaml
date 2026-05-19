@@ -1,10 +1,10 @@
 distill:
-  chunk_size: 6000
-  max_profile_len: 4000
+  chunk_size: 3000
+  max_profile_len: 2000
 llm:
   # api_key 请在 .env 中设置 DEEPSEEK_API_KEY，或在 Web 设置页填写
   base_url: https://api.deepseek.com
-  max_tokens: 16384
+  max_tokens: 4096
   model: deepseek-v4-pro
   summary_threshold: 50
   temperature: 0.7
