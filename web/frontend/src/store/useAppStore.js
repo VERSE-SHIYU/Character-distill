@@ -356,6 +356,10 @@ const useAppStore = create((set, get) => ({
         set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '' })
       },
       (payload) => {
+        if (payload.status === 'compressing' && payload.current) {
+          set({ distillStatus: `正在压缩第 ${payload.current}/${payload.total} 段…` })
+          return
+        }
         if (payload.status === 'analyzing' && payload.current) {
           set({ distillStatus: `正在分析第 ${payload.current}/${payload.total} 段…` })
           return

@@ -171,7 +171,7 @@ class Distiller:
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
         user_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[:30000]},
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
         try:
@@ -220,7 +220,7 @@ class Distiller:
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
         user_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[:30000]},
+            {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
         yield from self._llm.chat_stream(system_prompt, user_messages)
@@ -324,8 +324,8 @@ class Distiller:
         """增量蒸馏流式版：逐块处理时 yield 进度事件，最终格式化阶段 yield token。
 
         yield 值类型：
-        - dict: 进度事件，如 ``{"status": "analyzing", "current": 3, "total": 20}``
-        - str: 最终格式化阶段的 token 片段
+        - dict: 进度事件或增量阶段的 token（带 phase 标记，不混入最终 card JSON）
+        - str: 最终格式化阶段的 token 片段（由 SSE 路由累积为 card JSON）
         """
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases
@@ -336,8 +336,6 @@ class Distiller:
 
         profile_draft = ""
         for i, chunk in enumerate(relevant):
-            yield {"status": "analyzing", "current": i + 1, "total": len(relevant)}
-
             prompt = (
                 f"已有档案：\n{profile_draft}\n\n"
                 f"新片段：\n{chunk}\n\n"
@@ -346,23 +344,32 @@ class Distiller:
                 f"新片段：\n{chunk}\n\n"
                 f"请提取「{character_name}」的档案。"
             )
+            new_draft = ""
             try:
-                profile_draft = self._llm.chat(
+                for token in self._llm.chat_stream(
                     "你是角色分析专家，根据新文本更新角色档案。保留旧信息，追加新发现，保留矛盾。",
                     [{"role": "user", "content": prompt}],
-                )
+                ):
+                    new_draft += token
+                    yield {"status": "analyzing", "current": i + 1, "total": len(relevant), "token": token}
             except Exception as exc:
                 print(f"[distiller] Chunk {i + 1}/{len(relevant)} LLM call failed: {exc}")
                 continue
+            profile_draft = new_draft
 
             if len(profile_draft) > self._max_profile_len:
+                compressed = ""
                 try:
-                    profile_draft = self._llm.chat(
+                    for token in self._llm.chat_stream(
                         "压缩以下角色档案，保留关键信息和原文证据。",
                         [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
-                    )
+                    ):
+                        compressed += token
+                        yield {"status": "compressing", "current": i + 1, "total": len(relevant), "token": token}
                 except Exception as exc:
                     print(f"[distiller] Profile compression failed: {exc}")
+                else:
+                    profile_draft = compressed
 
         try:
             schema_obj = CharacterCard.model_json_schema()
