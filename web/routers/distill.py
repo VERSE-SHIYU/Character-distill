@@ -99,10 +99,15 @@ async def identify_by_text_id(
     """Identify characters from a text stored in the database."""
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+    cached = await storage.get_characters(req.text_id)
+    if cached:
+        return {"characters": cached}
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    return await _do_identify(text_rec["content"], distiller)
+    result = await _do_identify(text_rec["content"], distiller)
+    await storage.save_characters(req.text_id, result["characters"])
+    return result
 
 
 @router.post("/run")

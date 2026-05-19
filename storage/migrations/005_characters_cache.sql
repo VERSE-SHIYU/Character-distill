@@ -1,0 +1,1 @@
+ALTER TABLE texts ADD COLUMN characters_json TEXT DEFAULT NULL;

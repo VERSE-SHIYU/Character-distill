@@ -1657,13 +1657,13 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 240px;
+  max-height: 480px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
 .char-identified-item {
-  padding: 10px 12px;
+  padding: 14px 16px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.45);
   border: 1px solid var(--input-border);

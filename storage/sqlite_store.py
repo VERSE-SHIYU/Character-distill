@@ -69,6 +69,7 @@ class SQLiteStore(StorageBase):
                 voice_migration_path = migrations_dir / "002_voice.sql"
                 wechat_migration_path = migrations_dir / "003_wechat.sql"
                 title_desc_migration_path = migrations_dir / "004_title_desc.sql"
+                characters_cache_path = migrations_dir / "005_characters_cache.sql"
             except OSError as exc:
                 print(f"[SQLiteStore] Read migration file failed: {exc}")
                 raise
@@ -104,6 +105,17 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Title/desc migration failed: {exc}")
+
+                    # Run 005_characters_cache migration (ALTER TABLE may fail if column exists)
+                    if characters_cache_path.exists():
+                        try:
+                            characters_cache_sql = characters_cache_path.read_text(encoding="utf-8")
+                            await conn.executescript(characters_cache_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Characters cache migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -194,6 +206,34 @@ class SQLiteStore(StorageBase):
             return [dict(row) for row in rows]
         except Exception as exc:
             print(f"[SQLiteStore] List texts failed: {exc}")
+            raise
+
+    async def save_characters(self, text_id: str, characters: list) -> None:
+        """Cache identified characters for a text."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET characters_json = ? WHERE id = ?",
+                    (json.dumps(characters, ensure_ascii=False), text_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save characters failed: {exc}")
+            raise
+
+    async def get_characters(self, text_id: str) -> list | None:
+        """Get cached identified characters for a text, or None."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT characters_json FROM texts WHERE id = ?", (text_id,)
+                )
+                row = await cursor.fetchone()
+            if row and row[0]:
+                return json.loads(row[0])
+            return None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get characters failed: {exc}")
             raise
 
     async def delete_text(self, id: str) -> bool:
