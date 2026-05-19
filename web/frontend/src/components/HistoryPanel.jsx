@@ -471,15 +471,18 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, 
               )
             }
             const isUser = msg.role === 'user'
+            const userInitial = (session.user_role || '我').charAt(0)
             return (
               <div
                 key={msg.id ?? i}
                 className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'} history-readonly-msg`}
               >
-                {!isUser && (
+                {!isUser ? (
                   <div className="chat-msg-avatar">
                     <Avatar name={charName} size={70} />
                   </div>
+                ) : (
+                  <div className="user-avatar-circle">{userInitial}</div>
                 )}
                 <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
                   {msg.content}
