@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Generator
 from typing import Any
 
@@ -21,7 +20,9 @@ class ChatEngine:
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
         user_role: str = "",
-        summary_threshold: int = 50,
+        memory_manager=None,
+        card_id: str = "",
+        context_window: int = 100,
     ) -> None:
         """注入模型适配器、RAG 引擎与角色卡。
 
@@ -32,28 +33,23 @@ class ChatEngine:
             all_characters: 角色信息列表（含 name/aliases），传入后
                 ``chat`` / ``chat_stream`` 会自动按当前角色过滤 RAG 片段。
             user_role: 用户扮演的角色名，非空时注入 system prompt。
-            summary_threshold: 触发自动摘要的历史消息条数阈值。
+            memory_manager: Mem0 MemoryManager 实例（可选）。
+            card_id: 角色卡 ID，用于 Mem0 隔离不同角色的记忆。
+            context_window: 送入 LLM 的最近历史条数上限，超出的靠 Mem0 补充。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
         self._all_characters = all_characters
         self.user_role: str = user_role
-        self.summary_threshold: int = summary_threshold
+        self._memory = memory_manager
+        self._card_id = card_id
+        self._context_window = context_window
         self.history: list[dict[str, Any]] = []
-        self.last_summary: str | None = None
         self._last_rag_context: str = ""
-        self._summary_lock = threading.Lock()
 
     def build_system_prompt(self, rag_context: str = "") -> str:
-        """根据角色卡拼装系统提示；可选附加 RAG 片段。
-
-        Args:
-            rag_context: 检索得到的原文拼接文本。
-
-        Returns:
-            完整的系统提示字符串。
-        """
+        """根据角色卡拼装系统提示；可选附加 RAG 片段和 Mem0 长期记忆。"""
         card = self.card
 
         try:
@@ -116,6 +112,25 @@ class ChatEngine:
                 f"{examples_block}\n"
             )
 
+        # 长期记忆注入（Mem0）
+        if self._memory and self._memory.enabled and self._card_id:
+            last_user_msg = ""
+            for m in reversed(self.history):
+                if m.get("role") == "user":
+                    last_user_msg = m.get("content", "")
+                    break
+            if last_user_msg:
+                memories = self._memory.search(last_user_msg, self._card_id)
+                if memories:
+                    mem_block = "\n".join(f"- {m}" for m in memories)
+                    prompt += (
+                        "\n"
+                        "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"
+                        f"{mem_block}\n"
+                        "注意：自然地在对话中体现这些记忆，不要刻意逐条复述。"
+                        "如果记忆和当前对话无关就不要提。\n"
+                    )
+
         # 输出格式引导（动作/神态/心理活动）
         prompt += (
             "\n"
@@ -160,78 +175,8 @@ class ChatEngine:
 
         return prompt
 
-    def _summarize_if_needed(self, threshold: int = 50) -> str | None:
-        """当历史消息过长时自动压缩为摘要并替换旧记录。
-
-        规则：
-        1. 仅当 ``len(self.history) >= threshold`` 时触发。
-        2. 取前 ``threshold - 10`` 条消息做摘要。
-        3. 保留最近 10 条完整消息。
-        4. 将摘要以 ``summary`` 消息插入历史开头。
-
-        Args:
-            threshold: 触发摘要的历史条数阈值。
-
-        Returns:
-            生成的摘要文本；未触发或失败返回 ``None``。
-        """
-        if len(self.history) < threshold:
-            return None
-
-        keep_recent = 10
-        summarize_count = max(threshold - keep_recent, 1)
-        old_messages = self.history[:summarize_count]
-        recent_messages = self.history[-keep_recent:]
-
-        lines: list[str] = []
-        for msg in old_messages:
-            role = str(msg.get("role", "unknown"))
-            content = str(msg.get("content", "")).strip()
-            if content:
-                lines.append(f"{role}: {content}")
-        dialog_text = "\n".join(lines)
-        if not dialog_text:
-            self.last_summary = None
-            return None
-
-        summary_prompt = (
-            "请将以下对话记录浓缩为200字以内的中文摘要，保留关键事件、情感变化和重要信息：\n"
-            f"{dialog_text}"
-        )
-
-        # 摘要 LLM 调用可能耗时长，放在锁内防止并发写 self.history
-        with self._summary_lock:
-            try:
-                summary_text = self.llm.chat(
-                    "你是一个中文对话摘要助手。",
-                    [{"role": "user", "content": summary_prompt}],
-                ).strip()
-            except Exception as exc:
-                print(f"生成对话摘要失败：{exc}")
-                self.last_summary = None
-                return None
-
-            if not summary_text:
-                self.last_summary = None
-                return None
-
-            summary_message = {
-                "role": "user",
-                "content": f"[对话摘要] 这是之前对话的摘要，供你了解上下文：{summary_text}",
-            }
-            self.history = [summary_message, *recent_messages]
-            self.last_summary = summary_text
-            return summary_text
-
     def chat(self, user_message: str) -> tuple[str, str]:
-        """非流式对话一轮，并返回模型回复与 RAG 上下文文本。
-
-        Args:
-            user_message: 用户输入。
-
-        Returns:
-            (模型回复, RAG 拼接上下文)。
-        """
+        """非流式对话一轮，并返回模型回复与 RAG 上下文文本。"""
         char_name = self.card.name if self._all_characters else None
         where_filter = {"characters": {"$contains": char_name}} if char_name else None
         print(f"[ChatEngine] RAG where filter: {where_filter}")
@@ -251,9 +196,10 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
+        cw = self._memory.context_window if self._memory else self._context_window
         llm_history = [
             {"role": m["role"], "content": m["content"]}
-            for m in self.history
+            for m in self.history[-cw:]
         ]
 
         try:
@@ -265,22 +211,20 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": response})
-        threading.Thread(
-            target=self._summarize_if_needed,
-            args=(self.summary_threshold,),
-            daemon=True,
-        ).start()
+
+        if self._memory and self._memory.enabled and self._card_id:
+            self._memory.add(
+                [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": response},
+                ],
+                self._card_id,
+            )
+
         return response, rag_context
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
-        """流式对话：逐块产出文本，结束后写入助手回复。
-
-        Args:
-            user_message: 用户输入。
-
-        Yields:
-            模型增量文本片段。
-        """
+        """流式对话：逐块产出文本，结束后写入助手回复。"""
         char_name = self.card.name if self._all_characters else None
         where_filter = {"characters": {"$contains": char_name}} if char_name else None
         print(f"[ChatEngine] RAG where filter: {where_filter}")
@@ -301,9 +245,10 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
+        cw = self._memory.context_window if self._memory else self._context_window
         llm_history = [
             {"role": m["role"], "content": m["content"]}
-            for m in self.history
+            for m in self.history[-cw:]
         ]
 
         collected: list[str] = []
@@ -318,13 +263,18 @@ class ChatEngine:
                 self.history.pop()
             raise
 
-        self.history.append({"role": "assistant", "content": "".join(collected)})
-        threading.Thread(
-            target=self._summarize_if_needed,
-            args=(self.summary_threshold,),
-            daemon=True,
-        ).start()
+        full_reply = "".join(collected)
+        self.history.append({"role": "assistant", "content": full_reply})
+
+        if self._memory and self._memory.enabled and self._card_id:
+            self._memory.add(
+                [
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": full_reply},
+                ],
+                self._card_id,
+            )
+
     def reset(self) -> None:
         """清空对话历史。"""
         self.history = []
-        self.last_summary = None

@@ -17,6 +17,7 @@ load_dotenv(_REPO_ROOT / ".env")
 import yaml
 from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
+from core.memory_manager import MemoryManager
 from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
 
@@ -40,6 +41,17 @@ _summary_threshold: int = _config.get("llm", {}).get("summary_threshold", 50)
 _sessions: dict[str, dict[str, Any]] = {}
 
 _text_manager: TextManager | None = None
+
+_memory_config: dict[str, Any] = _config.get("memory", {})
+_memory_manager: MemoryManager | None = None
+
+
+def get_memory_manager() -> MemoryManager | None:
+    """Return the MemoryManager singleton (lazy-init)."""
+    global _memory_manager
+    if _memory_manager is None:
+        _memory_manager = MemoryManager(_memory_config)
+    return _memory_manager
 
 
 def get_storage() -> SQLiteStore:
@@ -98,8 +110,8 @@ def get_config() -> dict[str, Any]:
 
 
 def reset_llm_and_dependents() -> None:
-    """Hot-reload: recreate LLM, Distiller, and TextManager singletons after config.yaml changes."""
-    global _llm, _distiller, _text_manager, _summary_threshold, _config, _rag_config
+    """Hot-reload: recreate LLM, Distiller, TextManager, and MemoryManager singletons after config.yaml changes."""
+    global _llm, _distiller, _text_manager, _summary_threshold, _config, _rag_config, _memory_config, _memory_manager
     _llm = LLMAdapter()
     _distiller = Distiller(_llm)
     with open(_CFG_PATH, encoding="utf-8") as _f:
@@ -107,6 +119,8 @@ def reset_llm_and_dependents() -> None:
     _rag_config = _config["rag"]
     _summary_threshold = _config.get("llm", {}).get("summary_threshold", 50)
     _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold)
+    _memory_config = _config.get("memory", {})
+    _memory_manager = MemoryManager(_memory_config)
 
 
 _tts_engine = None

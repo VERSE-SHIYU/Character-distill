@@ -96,7 +96,7 @@ def run_distill(text: str, file: Any, char_name: str) -> tuple[str, Any, Any, st
         try:
             rag = RAGEngine(cfg["rag"])
             rag.index(raw_text, all_characters=chars)
-            engine = ChatEngine(llm, rag, card, all_characters=chars, summary_threshold=cfg.get("llm", {}).get("summary_threshold", 50))
+            engine = ChatEngine(llm, rag, card, all_characters=chars)
         except KeyError as exc:
             print(f"配置缺少 rag 段落：{exc}")
             raise gr.Error("配置缺少 rag 段落，请检查 config.yaml") from exc

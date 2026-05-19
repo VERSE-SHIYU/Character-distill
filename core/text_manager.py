@@ -369,6 +369,7 @@ class TextManager:
             session_id = await asyncio.to_thread(
                 self._create_session, content, card, all_characters,
                 self._get_or_build_rag(text_id, content, all_characters),
+                card_id,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -402,6 +403,7 @@ class TextManager:
         session_id = await asyncio.to_thread(
             self._create_session, content, card, all_chars,
             self._get_or_build_rag(text_id, content, all_chars),
+            actual_card_id,
         )
         await self._storage.save_session(session_id, actual_card_id, "", "")
 
@@ -443,12 +445,19 @@ class TextManager:
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
         rag: RAGEngine | None = None,
+        card_id: str = "",
     ) -> str:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
         if rag is None:
             rag = RAGEngine(self._rag_config)
             rag.index(text, all_characters=all_characters)
-        engine = ChatEngine(self._llm, rag, card, all_characters=all_characters, summary_threshold=self._summary_threshold)
+        from web.deps import get_memory_manager
+        engine = ChatEngine(
+            self._llm, rag, card,
+            all_characters=all_characters,
+            memory_manager=get_memory_manager(),
+            card_id=card_id,
+        )
         session_id = hashlib.md5(
             f"{card.name}_{time.time()}".encode()
         ).hexdigest()[:12]

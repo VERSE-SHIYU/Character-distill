@@ -32,3 +32,8 @@ wechat:
   encoding_aes_key: ''
   secret: ''
   token: ''
+memory:
+  enabled: true
+  provider: "local"
+  search_top_k: 10
+  context_window: 30

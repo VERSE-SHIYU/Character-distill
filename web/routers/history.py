@@ -134,6 +134,7 @@ async def resume_session(
                 card,
                 all_characters,
                 rag,
+                card_rec["id"],
             ),
             timeout=120.0,
         )
