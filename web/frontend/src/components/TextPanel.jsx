@@ -227,7 +227,7 @@ export default function TextPanel() {
                       {t.title || t.filename || '未命名'}
                     </span>
                     {t.char_count > 80000 && (
-                      <span className="text-meta">蒸馏将截取前8万字</span>
+                      <span className="text-meta">大文本蒸馏可能需要较长时间</span>
                     )}
                     {cardCounts[t.id] > 0 && (
                       <span className="text-list-badge">{cardCounts[t.id]} 个角色</span>
