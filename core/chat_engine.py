@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Generator
 from typing import Any
 
@@ -42,6 +43,7 @@ class ChatEngine:
         self.history: list[dict[str, Any]] = []
         self.last_summary: str | None = None
         self._last_rag_context: str = ""
+        self._summary_lock = threading.Lock()
 
     def build_system_prompt(self, rag_context: str = "") -> str:
         """根据角色卡拼装系统提示；可选附加 RAG 片段。
@@ -121,8 +123,9 @@ class ChatEngine:
             f"1. 用（）描写{card.name}的动作、神态或心理活动，穿插在对话中\n"
             "   例如：（皱了皱眉）你说什么？\n"
             "   例如：（沉默了一瞬，转过头去）……随你。\n"
-            f"2. 每次回复1-5句话，自然长度，根据情景调整——简单应答可以很短，重要剧情可以长一些，像真人聊天\n"
-            "3. 不要写旁白、不要写第三人称叙述、不要写长段独白\n"
+            f"2. 每次回复控制在50-200字以内，像真实聊天一样简短自然，不要写长段独白\n"
+            "   但如果对话触发了强烈情绪（如表白、争吵、生死离别、旧伤被揭开、重大背叛、深夜崩溃），你可以写500-800字的长回复来充分表达情感，由你自行判断是否触发\n"
+            "3. 不要写旁白、不要写第三人称叙述\n"
             "4. 可以主动推进对话——提问、表达情绪、做出动作\n"
         )
 
@@ -196,27 +199,29 @@ class ChatEngine:
             f"{dialog_text}"
         )
 
-        try:
-            summary_text = self.llm.chat(
-                "你是一个中文对话摘要助手。",
-                [{"role": "user", "content": summary_prompt}],
-            ).strip()
-        except Exception as exc:
-            print(f"生成对话摘要失败：{exc}")
-            self.last_summary = None
-            return None
+        # 摘要 LLM 调用可能耗时长，放在锁内防止并发写 self.history
+        with self._summary_lock:
+            try:
+                summary_text = self.llm.chat(
+                    "你是一个中文对话摘要助手。",
+                    [{"role": "user", "content": summary_prompt}],
+                ).strip()
+            except Exception as exc:
+                print(f"生成对话摘要失败：{exc}")
+                self.last_summary = None
+                return None
 
-        if not summary_text:
-            self.last_summary = None
-            return None
+            if not summary_text:
+                self.last_summary = None
+                return None
 
-        summary_message = {
-            "role": "user",
-            "content": f"[对话摘要] 这是之前对话的摘要，供你了解上下文：{summary_text}",
-        }
-        self.history = [summary_message, *recent_messages]
-        self.last_summary = summary_text
-        return summary_text
+            summary_message = {
+                "role": "user",
+                "content": f"[对话摘要] 这是之前对话的摘要，供你了解上下文：{summary_text}",
+            }
+            self.history = [summary_message, *recent_messages]
+            self.last_summary = summary_text
+            return summary_text
 
     def chat(self, user_message: str) -> tuple[str, str]:
         """非流式对话一轮，并返回模型回复与 RAG 上下文文本。
@@ -260,7 +265,11 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": response})
-        self._summarize_if_needed(self.summary_threshold)
+        threading.Thread(
+            target=self._summarize_if_needed,
+            args=(self.summary_threshold,),
+            daemon=True,
+        ).start()
         return response, rag_context
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
@@ -310,8 +319,11 @@ class ChatEngine:
             raise
 
         self.history.append({"role": "assistant", "content": "".join(collected)})
-        self._summarize_if_needed(self.summary_threshold)
-
+        threading.Thread(
+            target=self._summarize_if_needed,
+            args=(self.summary_threshold,),
+            daemon=True,
+        ).start()
     def reset(self) -> None:
         """清空对话历史。"""
         self.history = []

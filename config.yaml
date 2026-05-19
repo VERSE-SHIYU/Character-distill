@@ -4,9 +4,9 @@ distill:
 llm:
   # api_key 请在 .env 中设置 DEEPSEEK_API_KEY，或在 Web 设置页填写
   base_url: https://api.deepseek.com
-  max_tokens: 4096
+  max_tokens: 1024
   model: deepseek-v4-pro
-  summary_threshold: 50
+  summary_threshold: 100
   temperature: 0.7
 rag:
   chunk_overlap: 50

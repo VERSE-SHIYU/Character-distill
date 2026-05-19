@@ -97,6 +97,16 @@ function ChatView() {
 
   const [showRoleModal, setShowRoleModal] = useState(false)
 
+  // Font size: 0=small, 1=medium (default), 2=large
+  const [fontLevel, setFontLevel] = useState(() => {
+    try { return parseInt(localStorage.getItem('charsim-font-level') || '1') }
+    catch { return 1 }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('charsim-font-level', String(fontLevel)) }
+    catch { /* noop */ }
+  }, [fontLevel])
+
   useEffect(() => {
     if (!userRole) setShowRoleModal(true)
   }, [])
@@ -288,7 +298,7 @@ function ChatView() {
   )
 
   return (
-    <div className="chat-area">
+    <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
       {/* Top bar */}
       <div className="chat-topbar">
         <div className="chat-topbar-left">
@@ -332,6 +342,26 @@ function ChatView() {
               title={voiceEnabled ? '关闭语音' : '开启语音'}
             >
               {voiceEnabled ? '\u{1F50A}' : '\u{1F507}'}
+            </button>
+          </div>
+          <div className="chat-font-size-ctl">
+            <button
+              type="button"
+              className="chat-topbar-btn chat-font-btn"
+              onClick={() => setFontLevel(Math.max(0, fontLevel - 1))}
+              disabled={fontLevel === 0}
+              title="缩小字体"
+            >
+              A-
+            </button>
+            <button
+              type="button"
+              className="chat-topbar-btn chat-font-btn"
+              onClick={() => setFontLevel(Math.min(2, fontLevel + 1))}
+              disabled={fontLevel === 2}
+              title="放大字体"
+            >
+              A+
             </button>
           </div>
           <button
