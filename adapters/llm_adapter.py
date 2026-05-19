@@ -72,6 +72,7 @@ class LLMAdapter:
                     messages=payload,
                     temperature=self._temperature,
                     max_tokens=self._max_tokens,
+                    extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices
                 if not choices:
@@ -98,6 +99,7 @@ class LLMAdapter:
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
                 stream=True,
+                extra_body={"enable_thinking": False},
             )
         except Exception as exc:
             print(f"调用 DeepSeek Chat API 失败（流式）：{exc}")
