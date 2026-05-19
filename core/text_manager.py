@@ -389,7 +389,9 @@ class TextManager:
     ) -> dict[str, Any]:
         """Persist a freshly distilled card and create its chat session."""
         card_id = uuid.uuid4().hex[:12]
-        await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json())
+        result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json())
+        # save_card does upsert by text_id+name — on re-distill it returns the existing ID
+        actual_card_id = result_card.get("id") or card_id
 
         text_rec = await self._storage.get_text(text_id)
         content = text_rec["content"]
@@ -401,11 +403,11 @@ class TextManager:
             self._create_session, content, card, all_chars,
             self._get_or_build_rag(text_id, content, all_chars),
         )
-        await self._storage.save_session(session_id, card_id, "", "")
+        await self._storage.save_session(session_id, actual_card_id, "", "")
 
         result = card.model_dump()
         result["session_id"] = session_id
-        result["card_id"] = card_id
+        result["card_id"] = actual_card_id
         return result
 
     async def switch_character(
