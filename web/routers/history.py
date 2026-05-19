@@ -124,12 +124,16 @@ async def resume_session(
 
     # 4. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:
+        rag = text_manager._get_or_build_rag(
+            card_rec["text_id"], text_rec["content"], all_characters
+        )
         new_session_id = await asyncio.wait_for(
             asyncio.to_thread(
                 text_manager._create_session,
                 text_rec["content"],
                 card,
                 all_characters,
+                rag,
             ),
             timeout=120.0,
         )

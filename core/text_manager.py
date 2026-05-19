@@ -42,6 +42,7 @@ class TextManager:
         self._rag_config = rag_config
         self._sessions = sessions
         self._summary_threshold = summary_threshold
+        self._text_rag_cache: dict[str, RAGEngine] = {}
 
     # ---- Format parsing ----
 
@@ -297,7 +298,8 @@ class TextManager:
                 {"name": c["name"], "aliases": []} for c in existing_cards
             ]
             session_id = await asyncio.to_thread(
-                self._create_session, content, card, all_characters
+                self._create_session, content, card, all_characters,
+                self._get_or_build_rag(text_id, content, all_characters),
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -327,7 +329,8 @@ class TextManager:
         all_chars = [{"name": c["name"], "aliases": []} for c in existing_cards]
 
         session_id = await asyncio.to_thread(
-            self._create_session, content, card, all_chars
+            self._create_session, content, card, all_chars,
+            self._get_or_build_rag(text_id, content, all_chars),
         )
         await self._storage.save_session(session_id, card_id, "", "")
 
@@ -347,6 +350,21 @@ class TextManager:
         return await self.get_or_distill(text_id, character_name)
 
     # ---- Internal helpers ----
+
+    def _get_or_build_rag(
+        self,
+        text_id: str,
+        text: str,
+        all_characters: list[dict[str, Any]] | None = None,
+    ) -> RAGEngine:
+        """返回文本级 RAG 缓存，不存在则构建并缓存。(sync)"""
+        cached = self._text_rag_cache.get(text_id)
+        if cached is not None:
+            return cached
+        rag = RAGEngine(self._rag_config)
+        rag.index(text, all_characters=all_characters)
+        self._text_rag_cache[text_id] = rag
+        return rag
 
     def _create_session(
         self,

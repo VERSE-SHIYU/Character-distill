@@ -356,8 +356,9 @@ async def start_session(
     ]
 
     try:
+        rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
         session_id = await asyncio.to_thread(
-            text_manager._create_session, content, card, all_characters
+            text_manager._create_session, content, card, all_characters, rag
         )
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
