@@ -83,7 +83,7 @@ export default function LoginPage() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="请输入用户名"
-              autoComplete="username"
+              autoComplete={tab === 'login' ? 'username' : 'off'}
               autoFocus
             />
           </div>
