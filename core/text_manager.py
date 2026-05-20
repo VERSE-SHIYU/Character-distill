@@ -163,7 +163,7 @@ class TextManager:
 
     # ---- File-based upload (PDF/DOCX support) ----
 
-    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "") -> str:
+    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story") -> str:
         """Parse an on-disk file and save to storage. Returns text_id."""
         import aiofiles
 
@@ -193,7 +193,7 @@ class TextManager:
 
         text_id = uuid.uuid4().hex[:12]
         try:
-            await self._storage.save_text(text_id, filename, parsed.strip(), title, description)
+            await self._storage.save_text(text_id, filename, parsed.strip(), title, description, text_type)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -228,7 +228,7 @@ class TextManager:
 
     # ---- Public API ----
 
-    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "") -> str:
+    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> str:
         """Parse content by file extension, save to storage, return text_id."""
         parsed = self._parse_content(filename, content).strip()
         if not parsed:
@@ -236,7 +236,7 @@ class TextManager:
 
         text_id = uuid.uuid4().hex[:12]
         try:
-            await self._storage.save_text(text_id, filename, parsed, title, description)
+            await self._storage.save_text(text_id, filename, parsed, title, description, text_type)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise

@@ -36,6 +36,7 @@ async def upload_text(
     filename: str | None = Form(None),
     title: str = Form(""),
     description: str = Form(""),
+    text_type: str = Form("story"),
     text_manager: TextManager = Depends(get_text_manager),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -59,7 +60,7 @@ async def upload_text(
 
             try:
                 text_id = await text_manager.upload_text_from_file(
-                    str(temp_path), file.filename, title, description
+                    str(temp_path), file.filename, title, description, text_type
                 )
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
@@ -71,7 +72,7 @@ async def upload_text(
         content = text
         name = filename or "pasted_text.txt"
         try:
-            text_id = await text_manager.upload_text(name, content, title, description)
+            text_id = await text_manager.upload_text(name, content, title, description, text_type)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     else:
