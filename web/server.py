@@ -41,6 +41,7 @@ from routers.wechat import router as wechat_router
 from routers.card import router as card_router
 from routers.auth import router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
+from routers.admin import router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -66,6 +67,7 @@ app.add_middleware(
 
 # ---- Mount routers ----
 app.include_router(auth_router)      # 不需要认证
+app.include_router(admin_router)
 app.include_router(text_router)
 app.include_router(distill_router)
 app.include_router(chat_router)
@@ -109,6 +111,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         user = await get_storage().get_user_by_id(user_id)
         if user is None:
             return JSONResponse({"detail": "用户不存在"}, status_code=401)
+        if user.get("is_disabled"):
+            return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
         request.state.user = user
         return await call_next(request)
 

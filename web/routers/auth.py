@@ -29,6 +29,7 @@ security_scheme = HTTPBearer(auto_error=False)
 class AuthRequest(BaseModel):
     username: str
     password: str
+    invite_code: str = ""
 
 
 class UserResponse(BaseModel):
@@ -78,6 +79,15 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
     if not req.password or len(req.password) < 4:
         raise HTTPException(400, "密码至少 4 个字符")
 
+    inv = req.invite_code.strip()
+    if not inv:
+        raise HTTPException(400, "需要邀请码才能注册")
+    invite = await storage.get_invite_code(inv)
+    if not invite:
+        raise HTTPException(400, "邀请码无效")
+    if invite.get("used_by"):
+        raise HTTPException(400, "邀请码已被使用")
+
     existing = await storage.get_user_by_username(username)
     if existing:
         raise HTTPException(409, "用户名已存在")
@@ -85,6 +95,7 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
     user = await storage.create_user(user_id, username, password_hash)
+    await storage.use_invite_code(inv, user["id"])
 
     token = _create_token(user["id"], user["username"])
     return {
