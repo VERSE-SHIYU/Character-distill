@@ -61,6 +61,38 @@
 - **为什么**：用户通过 JWT 登录后，所有 API 调用自动携带 token，token 过期/无效时自动登出
 - **影响范围**：`LoginPage.jsx`（新文件）、`api/client.js`、`App.jsx`、`Sidebar.jsx`、`useAppStore.js`、`global.css`
 
+## Part 4: 管理员系统
+
+### 17:00 Task 1: 数据迁移
+- **做了什么**：创建 migrate_data.py，将 texts/cards/sessions 中无 user_id 的历史数据归属到 Shiyu 用户
+- **影响范围**：`migrate_data.py`（新文件），迁移了 4 texts + 5 cards + 10 sessions
+
+### 17:30 Task 2 Step 1: Admin DB
+- **做了什么**：013_admin migration（is_admin/is_disabled 列 + invite_codes 表）+ 7个 admin DB 方法 + SET is_admin=1 FOR Shiyu
+- **影响范围**：`storage/migrations/013_admin.sql`、`storage/sqlite_store.py`、`storage/base.py`
+
+### 18:00 Task 2 Step 2: Admin 后端路由
+- **做了什么**：web/routers/admin.py（require_admin 依赖 + 用户管理 + 邀请码生成/列表）+ auth.py 注册加 invite_code 校验 + AuthMiddleware 加 is_disabled 检查
+- **影响范围**：`web/routers/admin.py`（新文件）、`web/server.py`、`web/routers/auth.py`
+
+### 18:30 Task 2 Step 3: Admin 前端
+- **做了什么**：AdminPanel.jsx（用户管理/邀请码两个Tab）+ Sidebar 管理员入口 + LoginPage 邀请码输入 + client.js adminAPI
+- **影响范围**：`AdminPanel.jsx`（新文件）、`client.js`、`Sidebar.jsx`、`App.jsx`、`LoginPage.jsx`、`useAppStore.js`、`global.css`
+
+### 19:00 Task 2 Step 4: 验证（12项全部通过）
+- ✅ Shiyu(admin) → GET /api/admin/users → 200，用户列表
+- ✅ Alice(非admin) → 403 "需要管理员权限"
+- ✅ Bob(非admin) → 403 "需要管理员权限"
+- ✅ 生成邀请码 → 200，返回2个码
+- ✅ 有效邀请码注册 → 200，成功
+- ✅ 重复使用邀请码 → 400 "邀请码已被使用"
+- ✅ 无效邀请码 → 400 "邀请码无效"
+- ✅ 无邀请码注册 → 400 "需要邀请码才能注册"
+- ✅ 禁用 bob → 200
+- ✅ 被禁用用户访问API → 403 "账号已被禁用"
+- ✅ 启用 bob → 200
+- ✅ 启用后访问API → 200，正常
+
 ### 16:30 Step 5: 验证
 - **测试结果**：
   1. ✅ 注册 alice/bob 两个用户成功
