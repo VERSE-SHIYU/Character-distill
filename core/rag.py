@@ -218,6 +218,70 @@ class RAGEngine:
             return []
         return list(first)
 
+    def query_with_emotion(
+        self,
+        query_text: str,
+        current_emotion: str = "平静",
+        character_name: str | None = None,
+        top_k: int = 3,
+    ) -> list[str]:
+        """情感加权检索：语义相似度 0.7 + 情感匹配 0.3。
+
+        Args:
+            query_text: 用户消息。
+            current_emotion: 当前对话情感（由调用方判断）。
+            character_name: 按角色过滤。
+            top_k: 最终返回数量。
+
+        Returns:
+            按 final_score 排序的场景文本列表。
+        """
+        if self.collection is None:
+            return []
+
+        candidates_n = min(top_k * 3, 10)
+        where = (
+            {"characters": {"$contains": character_name}}
+            if character_name else None
+        )
+        try:
+            results = self.collection.query(
+                query_texts=[query_text],
+                n_results=candidates_n,
+                where=where,
+                include=["documents", "distances", "metadatas"],
+            )
+        except Exception as exc:
+            print(f"[RAGEngine] query_with_emotion failed: {exc}")
+            return self.query(query_text, character_name, top_k)
+
+        docs = (results.get("documents") or [[]])[0]
+        dists = (results.get("distances") or [[]])[0]
+        metas = (results.get("metadatas") or [[]])[0]
+
+        if not docs:
+            return []
+
+        _EMO_DISTANCE: dict[tuple[str, str], float] = {
+            ("悲伤", "悲伤"): 1.0, ("愤怒", "愤怒"): 1.0,
+            ("温柔", "温柔"): 1.0, ("悲伤", "温柔"): 0.4,
+            ("愤怒", "悲伤"): 0.3, ("平静", "平静"): 1.0,
+        }
+
+        def emo_sim(e1: str, e2: str) -> float:
+            return _EMO_DISTANCE.get((e1, e2)) or _EMO_DISTANCE.get((e2, e1)) or 0.2
+
+        max_dist = max(dists) or 1.0
+        scored = []
+        for doc, dist, meta in zip(docs, dists, metas):
+            semantic = 1.0 - dist / max_dist
+            emotion = (meta or {}).get("emotion", "平静")
+            final = 0.7 * semantic + 0.3 * emo_sim(current_emotion, emotion)
+            scored.append((final, doc))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [doc for _, doc in scored[:top_k]]
+
     def reset(self) -> None:
         """删除当前集合并清空内存引用。"""
         name = self.collection_name

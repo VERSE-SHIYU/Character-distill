@@ -7,6 +7,7 @@ from collections.abc import Generator
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.context_engine import ContextEngine
 from core.rag import RAGEngine
 from core.schema import CharacterCard
 
@@ -51,6 +52,12 @@ class ChatEngine:
         self.history: list[dict[str, Any]] = []
         self._last_rag_context: str = ""
         self.last_summary: str | None = None  # legacy compat for chat.py
+        self._ctx_engine = ContextEngine(
+            card=card,
+            rag=rag,
+            memory_manager=memory_manager,
+            card_id=card_id,
+        )
 
     def build_system_prompt(self, rag_context: str = "") -> str:
         """根据角色卡拼装系统提示；可选附加 RAG 片段和 Mem0 长期记忆。"""
@@ -181,22 +188,9 @@ class ChatEngine:
 
     def chat(self, user_message: str) -> tuple[str, str]:
         """非流式对话一轮，并返回模型回复与 RAG 上下文文本。"""
-        char_name = self.card.name if self._all_characters else None
-        where_filter = {"characters": {"$contains": char_name}} if char_name else None
-        print(f"[ChatEngine] RAG where filter: {where_filter}")
-        try:
-            snippets = self.rag.query(user_message, character_name=char_name)
-        except Exception as exc:
-            print(f"RAG 检索失败：{exc}")
-            raise
-
-        rag_context = "\n".join(snippets)
-
-        try:
-            system_prompt = self.build_system_prompt(rag_context)
-        except Exception as exc:
-            print(f"构建系统提示失败：{exc}")
-            raise
+        system_prompt = self._ctx_engine.build(
+            self.history, user_message, self.user_role,
+        )
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -227,27 +221,15 @@ class ChatEngine:
                 self._card_id,
             )
 
-        return response, rag_context
+        return response, ""
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
         """流式对话：逐块产出文本，结束后写入助手回复。"""
-        char_name = self.card.name if self._all_characters else None
-        where_filter = {"characters": {"$contains": char_name}} if char_name else None
-        print(f"[ChatEngine] RAG where filter: {where_filter}")
-        try:
-            snippets = self.rag.query(user_message, character_name=char_name)
-        except Exception as exc:
-            print(f"RAG 检索失败：{exc}")
-            raise
+        self._last_rag_context = ""
 
-        rag_context = "\n".join(snippets)
-        self._last_rag_context = rag_context
-
-        try:
-            system_prompt = self.build_system_prompt(rag_context)
-        except Exception as exc:
-            print(f"构建系统提示失败：{exc}")
-            raise
+        system_prompt = self._ctx_engine.build(
+            self.history, user_message, self.user_role,
+        )
 
         self.history.append({"role": "user", "content": user_message})
 
