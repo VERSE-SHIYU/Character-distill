@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel
@@ -83,7 +83,7 @@ async def get_current_user(
 
 @router.post("/register")
 @limiter.limit("3/hour")
-async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+async def register(request: Request, req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
     if not username or len(username) < 2:
@@ -123,7 +123,7 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())
     if user is None:

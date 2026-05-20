@@ -63,6 +63,12 @@ else:
 app = FastAPI(title="Character Simulator API")
 
 app.state.limiter = limiter
+
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
+
+
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(SlowAPIMiddleware)
@@ -83,15 +89,6 @@ app.include_router(history_router)
 app.include_router(voice_router)
 app.include_router(wechat_router)
 app.include_router(card_router)
-
-# ---- Rate limit handler ----
-
-async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    return JSONResponse(
-        {"detail": "请求过于频繁，请稍后再试"},
-        status_code=429,
-    )
-
 
 # ---- Auth middleware ----
 from starlette.middleware.base import BaseHTTPMiddleware
