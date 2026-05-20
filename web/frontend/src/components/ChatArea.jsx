@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { saveAvatar, loadCardAvatar } from '../store/db'
+import { getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import RoleSetupModal from './RoleSetupModal'
@@ -184,7 +185,7 @@ function ChatView() {
     try {
       await fetch(`/api/cards/${cardId}/avatar`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ data: base64 }),
       })
     } catch { /* non-fatal */ }
@@ -240,10 +241,10 @@ function ChatView() {
       const isCustom = voiceList.some((v) => v.voice_id === selectedVoice)
       try {
         const res = isCustom
-          ? await fetch(`/api/voice/preview-audio/${selectedVoice}`)
+          ? await fetch(`/api/voice/preview-audio/${selectedVoice}`, { headers: { ...getAuthHeaders() } })
           : await fetch('/api/voice/synthesize', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify({ text, voice: selectedVoice, card_id: currentCard?.id || '' }),
             })
         if (!res.ok) throw new Error(`TTS ${res.status}`)

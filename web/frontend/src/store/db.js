@@ -1,4 +1,5 @@
 import { openDB } from 'idb'
+import { getAuthHeaders } from '../api/client'
 
 const DB_NAME = 'character_sim'
 const DB_VERSION = 1
@@ -46,7 +47,7 @@ export async function loadCardAvatar(cardId) {
   }
   // Fallback to backend
   try {
-    const res = await fetch(`/api/cards/${cardId}/avatar`)
+    const res = await fetch(`/api/cards/${cardId}/avatar`, { headers: { ...getAuthHeaders() } })
     if (res.ok) {
       const { data } = await res.json()
       if (data) return data

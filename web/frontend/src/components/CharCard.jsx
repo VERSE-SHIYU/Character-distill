@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { postJSON } from '../api/client'
+import { postJSON, getAuthHeaders, fetchWithTimeout } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -382,7 +382,7 @@ function CardDetail({ card, textId }) {
         try {
           await fetch(`/api/cards/${cid}/avatar`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
             body: JSON.stringify({ data: base64 }),
           })
         } catch { /* non-fatal */ }
@@ -593,13 +593,28 @@ function CardDetail({ card, textId }) {
         >
           {'✏️'} 编辑
         </button>
-        <a
-          href={`/api/distill/cards/${card.id}/export?format=tavern`}
-          download
+        <button
+          type="button"
           className="btn-secondary card-export-btn"
+          onClick={async () => {
+            try {
+              const res = await fetchWithTimeout(`/api/distill/cards/${card.id}/export?format=tavern`)
+              const blob = await res.blob()
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `${card.name}.json`
+              document.body.appendChild(a)
+              a.click()
+              a.remove()
+              URL.revokeObjectURL(url)
+            } catch (err) {
+              console.error('Export card failed:', err)
+            }
+          }}
         >
           {'\u{1F4E5}'} 导出角色卡
-        </a>
+        </button>
         <button
           type="button"
           className="btn-primary card-chat-btn"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchWithTimeout, postJSON, getMyUsage } from '../api/client'
+import { fetchWithTimeout, postJSON, getMyUsage, getAuthHeaders } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -97,7 +97,7 @@ export default function SettingsPanel() {
       } else {
         const res = await fetch('/api/voice/synthesize', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ text: '你好，这是音色测试。', voice: edgeTtsVoice }),
         })
         if (!res.ok) throw new Error(`TTS ${res.status}`)
