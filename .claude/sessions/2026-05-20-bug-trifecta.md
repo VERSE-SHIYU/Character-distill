@@ -55,3 +55,19 @@
 - **做了什么**：texts/cards/sessions 表加 user_id 列（migration 010-012）+ 所有存储方法加 user_id 参数 + 所有 web 路由从 request.state.user 读取 user_id 传入
 - **为什么**：每个用户只能看到自己的数据，实现多用户数据隔离
 - **影响范围**：`storage/migrations/010-012_*.sql`、`storage/sqlite_store.py`（6个方法）、`storage/base.py`（6个抽象方法）、`core/text_manager.py`（6个方法）、`web/routers/text.py`、`web/routers/distill.py`、`web/routers/chat.py`、`web/routers/history.py`
+
+### 16:00 Step 4: 前端登录页
+- **做了什么**：LoginPage.jsx（登录/注册切换）+ api/client.js 自动附加 Authorization header + 401 自动清除 token + Sidebar 退出按钮 + App.jsx 认证守卫
+- **为什么**：用户通过 JWT 登录后，所有 API 调用自动携带 token，token 过期/无效时自动登出
+- **影响范围**：`LoginPage.jsx`（新文件）、`api/client.js`、`App.jsx`、`Sidebar.jsx`、`useAppStore.js`、`global.css`
+
+### 16:30 Step 5: 验证
+- **测试结果**：
+  1. ✅ 注册 alice/bob 两个用户成功
+  2. ✅ Alice 上传 text，只看到自己的（data isolation）
+  3. ✅ Bob 上传 text，只看到自己的
+  4. ✅ 无 token → 401 "请先登录"
+  5. ✅ 无效 token → 401 "Token 无效"
+  6. ✅ 重复注册 → 409 "用户名已存在"
+  7. ✅ 密码错误 → 401 "用户名或密码错误"
+- **影响范围**：无代码变更，仅验证
