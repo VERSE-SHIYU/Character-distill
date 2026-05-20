@@ -199,6 +199,9 @@ async def distill_stream(
                 return
             if done:
                 break
+            if isinstance(piece, dict) and piece.get("heartbeat"):
+                yield f"data: {json.dumps({'heartbeat': True})}\n\n"
+                continue
             if isinstance(piece, dict):
                 # Progress event from incremental chunk processing
                 yield f"data: {json.dumps(piece, ensure_ascii=False)}\n\n"
