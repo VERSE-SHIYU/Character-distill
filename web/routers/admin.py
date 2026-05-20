@@ -102,3 +102,12 @@ async def list_invites(
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     return await storage.list_invite_codes()
+
+
+@router.get("/usage")
+async def admin_usage(
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """Return usage summary for all users (admin only)."""
+    return await storage.get_all_usage_summary()

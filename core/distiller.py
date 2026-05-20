@@ -77,6 +77,8 @@ class Distiller:
             config_path: 配置文件路径；默认读取仓库根目录 ``config.yaml``。
         """
         self._llm = llm
+        self._storage = None
+        self._user_id: str = ""
         root = Path(__file__).resolve().parent.parent
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
         try:
@@ -95,6 +97,22 @@ class Distiller:
         distill_cfg = data["distill"]
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
+
+    def _try_record_usage(self, action: str = "distill") -> None:
+        if not self._storage or not self._user_id:
+            return
+        usage = self._llm.last_usage
+        if not usage:
+            return
+        try:
+            asyncio.run(
+                self._storage.record_usage(
+                    self._user_id, action,
+                    usage["prompt_tokens"], usage["completion_tokens"],
+                )
+            )
+        except Exception as exc:
+            print(f"[Distiller] Record usage failed (non-fatal): {exc}")
 
     # ── static prompt helpers ──────────────────────────────────────────
 
@@ -476,18 +494,22 @@ class Distiller:
     def _single_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (sync)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        return self._llm.chat(
+        result = self._llm.chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
+        self._try_record_usage("distill_reduce")
+        return result
 
     async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (async, for concurrent batches)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        return await self._llm.async_chat(
+        result = await self._llm.async_chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
+        self._try_record_usage("distill_reduce")
+        return result
 
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
         """Merge independent chunk analyses into a single profile (streaming)."""
@@ -496,6 +518,7 @@ class Distiller:
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
+        self._try_record_usage("distill_reduce")
 
     def _do_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Auto-batching reduce: concurrent batches when > SAFE_SINGLE_REDUCE.
@@ -651,6 +674,8 @@ class Distiller:
         except Exception as exc:
             print(f"调用 LLM 进行最终格式化失败：{exc}")
             raise
+
+        self._try_record_usage("distill_format")
 
         stripped = reply.strip()
         data: Any | None = None
@@ -872,3 +897,4 @@ class Distiller:
                 f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
             }],
         )
+        self._try_record_usage("distill_format")

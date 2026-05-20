@@ -4,6 +4,7 @@ import { adminAPI } from '../api/client'
 const TABS = [
   { id: 'users', label: '用户管理' },
   { id: 'invites', label: '邀请码' },
+  { id: 'usage', label: '用户用量' },
 ]
 
 export default function AdminPanel() {
@@ -23,7 +24,7 @@ export default function AdminPanel() {
           </button>
         ))}
       </div>
-      {tab === 'users' ? <UsersTab /> : <InvitesTab />}
+      {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : <UsageTab />}
     </div>
   )
 }
@@ -268,6 +269,62 @@ function InvitesTab() {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+function UsageTab() {
+  const [data, setData] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const results = await adminAPI.getAllUsage()
+      setData(results)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const fmt = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+    return String(n)
+  }
+
+  if (loading) return <div className="admin-loading">加载中…</div>
+  if (error) return <div className="admin-error">{error}</div>
+
+  return (
+    <div className="admin-table-wrap">
+      <table className="admin-table">
+        <thead>
+          <tr>
+            <th>用户名</th>
+            <th>调用次数</th>
+            <th>输入 Token</th>
+            <th>输出 Token</th>
+            <th>最近活跃</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((r) => (
+            <tr key={r.user_id}>
+              <td>{r.username}</td>
+              <td>{r.total_calls}</td>
+              <td>{fmt(r.total_prompt_tokens)}</td>
+              <td>{fmt(r.total_completion_tokens)}</td>
+              <td>{r.last_active || '-'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

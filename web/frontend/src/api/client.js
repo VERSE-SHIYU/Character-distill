@@ -242,4 +242,10 @@ export const adminAPI = {
   generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
 
   listInvites: () => postJSON('/api/admin/invite/list', {}),
+
+  getAllUsage: () => postJSON('/api/admin/usage', {}),
+}
+
+export function getMyUsage() {
+  return fetchWithTimeout('/api/auth/usage', { headers: getAuthHeaders() })
 }

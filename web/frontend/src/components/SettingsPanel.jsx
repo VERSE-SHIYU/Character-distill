@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchWithTimeout, postJSON } from '../api/client'
+import { fetchWithTimeout, postJSON, getMyUsage } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -252,6 +252,11 @@ export default function SettingsPanel() {
       </section>
 
       <section className="settings-section">
+        <h2 className="settings-section-title">我的用量</h2>
+        <UsageCard />
+      </section>
+
+      <section className="settings-section">
         <h2 className="settings-section-title">主题</h2>
         <div className="settings-theme-row">
           <ThemeSwitcher />
@@ -454,6 +459,69 @@ export default function SettingsPanel() {
           </a>
         </p>
       </section>
+    </div>
+  )
+}
+
+function UsageCard() {
+  const [usage, setUsage] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      try {
+        const res = await getMyUsage()
+        const data = await res.json()
+        if (!cancelled) setUsage(data)
+      } catch {
+        if (!cancelled) setUsage(null)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  if (loading) return <Loading text="加载用量…" />
+  if (!usage) return <p className="settings-hint">暂无用量数据</p>
+
+  const fmt = (n) => {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+    return String(n)
+  }
+
+  return (
+    <div>
+      <div className="usage-stats-grid">
+        <div className="usage-stat-item">
+          <span className="usage-stat-value">{usage.total_calls}</span>
+          <span className="usage-stat-label">调用次数</span>
+        </div>
+        <div className="usage-stat-item">
+          <span className="usage-stat-value">{fmt(usage.total_prompt_tokens)}</span>
+          <span className="usage-stat-label">输入 Token</span>
+        </div>
+        <div className="usage-stat-item">
+          <span className="usage-stat-value">{fmt(usage.total_completion_tokens)}</span>
+          <span className="usage-stat-label">输出 Token</span>
+        </div>
+      </div>
+      {usage.by_action && Object.keys(usage.by_action).length > 0 && (
+        <div className="usage-action-list">
+          {Object.entries(usage.by_action).map(([action, stats]) => (
+            <div key={action} className="usage-action-row">
+              <span className="usage-action-name">{action}</span>
+              <span className="usage-action-count">{stats.calls} 次</span>
+              <span className="usage-action-tokens">
+                {fmt(stats.prompt_tokens)} + {fmt(stats.completion_tokens)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

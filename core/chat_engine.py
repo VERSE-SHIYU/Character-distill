@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Generator
 from typing import Any
 
@@ -45,6 +46,8 @@ class ChatEngine:
         self._memory = memory_manager
         self._card_id = card_id
         self._context_window = context_window
+        self._storage = None
+        self._user_id: str = ""
         self.history: list[dict[str, Any]] = []
         self._last_rag_context: str = ""
         self.last_summary: str | None = None  # legacy compat for chat.py
@@ -211,6 +214,8 @@ class ChatEngine:
                 self.history.pop()
             raise
 
+        self._try_record_usage("chat")
+
         self.history.append({"role": "assistant", "content": response})
 
         if self._memory and self._memory.enabled and self._card_id:
@@ -264,6 +269,8 @@ class ChatEngine:
                 self.history.pop()
             raise
 
+        self._try_record_usage("chat")
+
         full_reply = "".join(collected)
         if not full_reply.strip():
             print(f"[chat_stream] WARNING: LLM returned empty response (history={len(self.history)} messages, sp_len={len(system_prompt)} chars)")
@@ -277,6 +284,22 @@ class ChatEngine:
                 ],
                 self._card_id,
             )
+
+    def _try_record_usage(self, action: str = "chat") -> None:
+        if not self._storage or not self._user_id:
+            return
+        usage = self.llm.last_usage
+        if not usage:
+            return
+        try:
+            asyncio.run(
+                self._storage.record_usage(
+                    self._user_id, action,
+                    usage["prompt_tokens"], usage["completion_tokens"],
+                )
+            )
+        except Exception as exc:
+            print(f"[ChatEngine] Record usage failed (non-fatal): {exc}")
 
     def reset(self) -> None:
         """清空对话历史。"""

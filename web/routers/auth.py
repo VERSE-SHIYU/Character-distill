@@ -190,6 +190,15 @@ async def me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]
     return _user_response(user)
 
 
+@router.get("/usage")
+async def my_usage(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Return the current user's usage stats."""
+    return await storage.get_usage_stats(user["id"])
+
+
 # ---- Helpers ----
 
 def _create_access_token(user_id: str, username: str) -> str:

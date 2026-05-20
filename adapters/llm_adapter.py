@@ -46,6 +46,7 @@ class LLMAdapter:
         self._model: str = str(llm_cfg["model"])
         self._temperature: float = float(llm_cfg["temperature"])
         self._max_tokens: int = int(llm_cfg["max_tokens"])
+        self.last_usage: dict | None = None
 
         api_key = llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
         if not api_key:
@@ -80,6 +81,11 @@ class LLMAdapter:
                 if not choices:
                     raise RuntimeError("API returned empty choices")
                 content = choices[0].message.content or ""
+                if completion.usage:
+                    self.last_usage = {
+                        "prompt_tokens": completion.usage.prompt_tokens or 0,
+                        "completion_tokens": completion.usage.completion_tokens or 0,
+                    }
                 return content
             except Exception as exc:
                 last_error = exc
@@ -106,7 +112,13 @@ class LLMAdapter:
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")
-                return choices[0].message.content or ""
+                result = choices[0].message.content or ""
+                if completion.usage:
+                    self.last_usage = {
+                        "prompt_tokens": completion.usage.prompt_tokens or 0,
+                        "completion_tokens": completion.usage.completion_tokens or 0,
+                    }
+                return result
             except Exception as exc:
                 last_error = exc
                 if attempt < 2:
@@ -127,6 +139,7 @@ class LLMAdapter:
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
                 stream=True,
+                stream_options={"include_usage": True},
                 extra_body={"enable_thinking": False},
             )
         except Exception as exc:
@@ -134,6 +147,12 @@ class LLMAdapter:
             raise
         try:
             for chunk in stream:
+                if chunk.usage:
+                    self.last_usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens or 0,
+                        "completion_tokens": chunk.usage.completion_tokens or 0,
+                    }
+                    continue
                 choices = chunk.choices
                 if not choices:
                     continue

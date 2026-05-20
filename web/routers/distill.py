@@ -170,6 +170,9 @@ async def distill_stream(
     char_name = await _resolve_character_name(content, req.character_name, distiller)
     user_id = request.state.user.get("id", "")
 
+    distiller._storage = storage
+    distiller._user_id = user_id
+
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 

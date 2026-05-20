@@ -3302,6 +3302,64 @@ select.settings-input {
   font-weight: 600;
 }
 
+/* ---- Usage stats ---- */
+
+.usage-stats-grid {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.usage-stat-item {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.usage-stat-value {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.usage-stat-label {
+  font-size: 12px;
+  color: var(--text-sec);
+}
+
+.usage-action-list {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.usage-action-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  font-size: 13px;
+}
+
+.usage-action-name {
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 100px;
+}
+
+.usage-action-count {
+  color: var(--text-sec);
+}
+
+.usage-action-tokens {
+  color: var(--text-sec);
+  margin-left: auto;
+}
+
 .settings-about-line {
   font-size: 13.5px;
   color: var(--text-sec);

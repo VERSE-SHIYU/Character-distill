@@ -135,6 +135,9 @@ async def _do_chat(
 
     try:
         engine = session.get("engine")
+        if engine:
+            engine._storage = storage
+            engine._user_id = user_id
         sp_len = len(engine.build_system_prompt()) if engine else 0
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
         resp, rag_ctx = await asyncio.to_thread(engine.chat, msg)
@@ -218,6 +221,8 @@ async def _do_chat_stream(
 
         try:
             engine = session["engine"]
+            engine._storage = storage
+            engine._user_id = user_id
             sp_len = len(engine.build_system_prompt()) if engine else 0
             print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
             stream = engine.chat_stream(msg)
