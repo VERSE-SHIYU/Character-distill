@@ -446,10 +446,45 @@ class Distiller:
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
         return await asyncio.gather(*tasks)
 
+    async def _run_reduce_concurrent(
+        self,
+        batches: list[list[str]],
+        character_name: str,
+        on_batch_done: "callable | None" = None,
+        sem_size: int = 6,
+    ) -> list[tuple[int, str]]:
+        """Run multiple Reduce batches concurrently with a semaphore."""
+        sem = asyncio.Semaphore(sem_size)
+        done_count = [0]
+        lock = asyncio.Lock()
+
+        async def _one(i: int, batch: list[str]) -> tuple[int, str]:
+            async with sem:
+                try:
+                    result = await self._single_reduce_async(batch, character_name)
+                except Exception:
+                    result = ""
+            async with lock:
+                done_count[0] += 1
+            if on_batch_done:
+                on_batch_done(done_count[0], i, result)
+            return (i, result)
+
+        tasks = [asyncio.create_task(_one(i, b)) for i, b in enumerate(batches)]
+        return await asyncio.gather(*tasks)
+
     def _single_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (sync)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
         return self._llm.chat(
+            self._reduce_system_prompt(character_name),
+            [{"role": "user", "content": combined}],
+        )
+
+    async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
+        """Merge independent chunk analyses into a single profile (async, for concurrent batches)."""
+        combined = self._reduce_user_prompt(raw_analyses, character_name)
+        return await self._llm.async_chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
@@ -463,7 +498,7 @@ class Distiller:
         )
 
     def _do_reduce(self, raw_analyses: list[str], character_name: str) -> str:
-        """Auto-batching reduce: splits into batches when > SAFE_SINGLE_REDUCE.
+        """Auto-batching reduce: concurrent batches when > SAFE_SINGLE_REDUCE.
 
         Recurses on batch results until a single profile fits one prompt.
         """
@@ -473,7 +508,15 @@ class Distiller:
             raw_analyses[i : i + self.SAFE_SINGLE_REDUCE]
             for i in range(0, len(raw_analyses), self.SAFE_SINGLE_REDUCE)
         ]
-        merged = [self._single_reduce(b, character_name) for b in batches]
+
+        async def _concurrent() -> list[str]:
+            results = await self._run_reduce_concurrent(batches, character_name)
+            return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
+
+        try:
+            merged = asyncio.run(_concurrent())
+        except RuntimeError:
+            merged = [self._single_reduce(b, character_name) for b in batches]
         return self._do_reduce(merged, character_name)
 
     # ── MapReduce public API ───────────────────────────────────────────
@@ -750,22 +793,62 @@ class Distiller:
                 raw_analyses[i : i + self.SAFE_SINGLE_REDUCE]
                 for i in range(0, len(raw_analyses), self.SAFE_SINGLE_REDUCE)
             ]
-            batch_results: list[str] = []
-            for bi, batch in enumerate(batches):
-                yield {"status": "merging", "current": bi, "total": len(batches)}
-                pd = ""
+
+            rq: queue.Queue = queue.Queue()
+
+            def _on_batch_done(done_count: int, idx: int, result: str) -> None:
+                rq.put(("batch", done_count, idx, result))
+
+            async def _reduce_batches() -> list[tuple[int, str]]:
+                return await self._run_reduce_concurrent(
+                    batches, character_name, _on_batch_done
+                )
+
+            def _reduce_thread() -> None:
+                try:
+                    asyncio.run(_reduce_batches())
+                    rq.put(("done",))
+                except Exception as exc:
+                    rq.put(("error", str(exc)))
+
+            rt = threading.Thread(target=_reduce_thread, daemon=True)
+            rt.start()
+
+            batch_by_index: dict[int, str] = {}
+            while True:
+                item = rq.get()
+                kind = item[0]
+                if kind == "done":
+                    break
+                if kind == "error":
+                    yield {"error": f"Reduce 阶段失败：{item[1]}"}
+                    return
+                if kind == "batch":
+                    _k, done_count, idx, result = item
+                    batch_by_index[idx] = result
+                    yield {"status": "merging", "current": done_count, "total": len(batches)}
+
+            rt.join(timeout=5)
+
+            batch_results: list[str] = [
+                batch_by_index[i] for i in range(len(batches))
+                if batch_by_index.get(i, "").strip()
+            ]
+
+            yield {"heartbeat": True}
+
+            if len(batch_results) <= self.SAFE_SINGLE_REDUCE:
+                profile_draft = ""
                 tc = 0
-                for token in self._single_reduce_stream(batch, character_name):
+                for token in self._single_reduce_stream(batch_results, character_name):
                     if token == "\x00THINKING\x00":
                         continue
-                    pd += token
+                    profile_draft += token
                     tc += 1
                     if tc % 50 == 0:
                         yield {"heartbeat": True}
-                batch_results.append(pd)
-            yield {"status": "merging", "current": len(batches), "total": len(batches)}
-            yield {"heartbeat": True}
-            profile_draft = self._do_reduce(batch_results, character_name)
+            else:
+                profile_draft = self._do_reduce(batch_results, character_name)
 
         if not profile_draft.strip():
             yield {"error": "未能从文本中提取到角色信息"}
