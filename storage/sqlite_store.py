@@ -166,6 +166,17 @@ class SQLiteStore(StorageBase):
                                 if "duplicate column" not in str(exc).lower():
                                     print(f"[SQLiteStore] Migration {mig_name} failed: {exc}")
 
+                    # Run 013_admin migration (ALTER TABLE may fail if columns exist)
+                    admin_migration_path = migrations_dir / "013_admin.sql"
+                    if admin_migration_path.exists():
+                        try:
+                            admin_sql = admin_migration_path.read_text(encoding="utf-8")
+                            await conn.executescript(admin_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Admin migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -799,7 +810,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE username = ?",
                     (username,),
                 )
                 row = await cursor.fetchone()
@@ -813,11 +824,98 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, created_at FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
             return dict(row) if row else None
         except Exception as exc:
             print(f"[SQLiteStore] Get user by id failed: {exc}")
+            raise
+
+    # ---- Admin ----
+
+    async def get_all_users(self) -> list[dict]:
+        """List all users (without password_hash)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, is_admin, is_disabled, created_at FROM users ORDER BY created_at DESC"
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get all users failed: {exc}")
+            raise
+
+    async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("UPDATE users SET is_admin = ? WHERE id = ?", (int(is_admin), user_id))
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Set user admin failed: {exc}")
+            raise
+
+    async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("UPDATE users SET is_disabled = ? WHERE id = ?", (int(is_disabled), user_id))
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Set user disabled failed: {exc}")
+            raise
+
+    async def create_invite_code(self, code: str, created_by: str) -> dict:
+        import uuid as _uuid
+        cid = _uuid.uuid4().hex[:16]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO invite_codes (id, code, created_by) VALUES (?, ?, ?)",
+                    (cid, code, created_by),
+                )
+                await conn.commit()
+            return await self.get_invite_code(code) or {}
+        except Exception as exc:
+            print(f"[SQLiteStore] Create invite code failed: {exc}")
+            raise
+
+    async def get_invite_code(self, code: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, code, created_by, used_by, used_at, created_at FROM invite_codes WHERE code = ?",
+                    (code,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get invite code failed: {exc}")
+            raise
+
+    async def use_invite_code(self, code: str, used_by: str) -> None:
+        from datetime import datetime
+        now = datetime.now().isoformat()
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE invite_codes SET used_by = ?, used_at = ? WHERE code = ?",
+                    (used_by, now, code),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Use invite code failed: {exc}")
+            raise
+
+    async def list_invite_codes(self) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, code, created_by, used_by, used_at, created_at FROM invite_codes ORDER BY created_at DESC"
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List invite codes failed: {exc}")
             raise

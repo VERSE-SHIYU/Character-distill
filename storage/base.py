@@ -89,3 +89,31 @@ class StorageBase(ABC):
     @abstractmethod
     async def get_user_by_id(self, user_id: str) -> dict | None:
         """Get a user by ID."""
+
+    @abstractmethod
+    async def get_all_users(self) -> list[dict]:
+        """List all users (admin)."""
+
+    @abstractmethod
+    async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
+        """Promote or demote a user to/from admin."""
+
+    @abstractmethod
+    async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
+        """Disable or enable a user account."""
+
+    @abstractmethod
+    async def create_invite_code(self, code: str, created_by: str) -> dict:
+        """Create an invite code."""
+
+    @abstractmethod
+    async def get_invite_code(self, code: str) -> dict | None:
+        """Get an invite code record by code string."""
+
+    @abstractmethod
+    async def use_invite_code(self, code: str, used_by: str) -> None:
+        """Mark an invite code as used by a user."""
+
+    @abstractmethod
+    async def list_invite_codes(self) -> list[dict]:
+        """List all invite codes."""
