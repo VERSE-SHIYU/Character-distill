@@ -200,6 +200,9 @@ const useAppStore = create((set, get) => ({
   setVoiceEnabled: (bool) => set({ voiceEnabled: bool }),
   setVoiceSpeed: (speed) => set({ voiceSpeed: speed }),
 
+  webSearchEnabled: false,
+  setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
+
   // Recording
   isRecording: false,
   recordingDuration: 0,
@@ -570,6 +573,7 @@ const useAppStore = create((set, get) => ({
         session_id: sessionId,
         message,
         user_role: get().userRole,
+        web_search: get().webSearchEnabled,
       })
       set((s) => {
         const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id })
@@ -608,7 +612,7 @@ const useAppStore = create((set, get) => ({
 
     return streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message, stream: true, user_role: get().userRole },
+      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled },
       (token) => {
         fullReply += token
         set((s) => {

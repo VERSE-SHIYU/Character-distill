@@ -57,6 +57,7 @@ class ChatEngine:
             rag=rag,
             memory_manager=memory_manager,
             card_id=card_id,
+            llm=llm,
         )
 
     def build_system_prompt(self, rag_context: str = "") -> str:

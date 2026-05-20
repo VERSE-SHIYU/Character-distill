@@ -90,6 +90,8 @@ function ChatView() {
   const revokeMessage = useAppStore((s) => s.revokeMessage)
   const revokeCooldown = useAppStore((s) => s.revokeCooldown)
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
+  const webSearchEnabled = useAppStore((s) => s.webSearchEnabled)
+  const setWebSearchEnabled = useAppStore((s) => s.setWebSearchEnabled)
 
   const cardData = typeof currentCard.card_json === 'string'
     ? JSON.parse(currentCard.card_json)
@@ -362,6 +364,14 @@ function ChatView() {
               {voiceEnabled ? '\u{1F50A}' : '\u{1F507}'}
             </button>
           </div>
+          <button
+            type="button"
+            className={`chat-topbar-btn web-search-toggle${webSearchEnabled ? ' active' : ''}`}
+            onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+            title={webSearchEnabled ? '现实增强（角色可感知现实信息）— 点击关闭' : '现实增强（角色可感知现实信息）— 点击开启'}
+          >
+            {'\u{1F310}'}
+          </button>
           <div className="chat-font-size-ctl">
             <button
               type="button"

@@ -2303,6 +2303,16 @@ body {
   transform: scale(0.93);
 }
 
+/* Web search toggle */
+.web-search-toggle {
+  font-size: 16px;
+}
+.web-search-toggle.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Font size toggle */
 .chat-font-size-ctl {
   display: flex;

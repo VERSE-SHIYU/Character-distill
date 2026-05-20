@@ -44,11 +44,13 @@ class ContextEngine:
         rag: RAGEngine,
         memory_manager=None,
         card_id: str = "",
+        llm=None,
     ) -> None:
         self.card = card
         self.rag = rag
         self.memory = memory_manager
         self.card_id = card_id
+        self._llm = llm
         self.web_search_enabled = False
 
     # ── 公开接口 ──────────────────────────────────────────────
@@ -228,5 +230,56 @@ class ContextEngine:
         )
 
     def _search_web(self, query: str) -> str:
-        """现实增强搜索（预留接口，暂未实现）。"""
-        return ""
+        """两步分离法：搜索 → 角色过滤 → 注入。"""
+        import httpx
+
+        # 第一步：搜索（DuckDuckGo 免费 API）
+        raw_results = ""
+        try:
+            resp = httpx.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json", "no_html": 1},
+                timeout=5,
+            )
+            data = resp.json()
+            raw_results = data.get("AbstractText", "") or data.get("Abstract", "")
+            if not raw_results:
+                topics = data.get("RelatedTopics", [])
+                parts = []
+                for t in topics:
+                    if isinstance(t, dict) and t.get("Text"):
+                        parts.append(t["Text"])
+                    if len(parts) >= 3:
+                        break
+                raw_results = "\n".join(parts)
+        except Exception as exc:
+            print(f"[ContextEngine] Web search failed: {exc}")
+            return ""
+
+        if not raw_results.strip():
+            return ""
+
+        # 第二步：角色过滤器（独立 LLM 调用）
+        if not self._llm:
+            return ""
+
+        filter_prompt = (
+            f"你是「{self.card.name}」的知识过滤器。\n"
+            f"角色身份：{self.card.identity}\n"
+            f"角色背景：{self.card.background}\n\n"
+            f"以下是一段外部信息：\n{raw_results}\n\n"
+            "请判断：\n"
+            "1. 这段信息中，哪些是这个角色「可能知道」的？（根据角色的时代、身份、知识水平）\n"
+            "2. 把角色可能知道的部分，用角色的语言习惯重新表达（如「我听说过」「之前有人跟我提过」）\n"
+            "3. 角色不可能知道的信息直接丢弃\n"
+            "4. 只输出改写后的内容，不要解释\n"
+            "如果全部不适合角色知道，输出空字符串。"
+        )
+        try:
+            filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
+            if not filtered.strip():
+                return ""
+            return f"【角色的见闻感知】\n{filtered}"
+        except Exception as exc:
+            print(f"[ContextEngine] Character filter failed: {exc}")
+            return ""
