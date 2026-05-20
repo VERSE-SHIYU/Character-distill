@@ -59,6 +59,10 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     setView(id)
   }, [setView, currentCard, startChat])
 
+  const navItems = authUser?.is_admin
+    ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }]
+    : NAV_ITEMS
+
   let sidebarClass = 'sidebar'
   if (open && !pinned) sidebarClass += ' open'
   if (pinned) sidebarClass += ' pinned'
@@ -99,11 +103,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
       {isVisible && (
         <nav className="sidebar-nav">
-          {(() => {
-            const navItems = authUser?.is_admin
-              ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }]
-              : NAV_ITEMS
-            return navItems.map(({ id, icon, label }) => {
+          {navItems.map(({ id, icon, label }) => {
             const disabled = isDisabled(id)
             const count = badge(id)
             return (
@@ -118,7 +118,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
                 {count !== null && <span className="sidebar-item-badge">{count}</span>}
               </button>
             )
-          })})()}
+          })}
         </nav>
       )}
 
