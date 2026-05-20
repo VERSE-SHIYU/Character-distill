@@ -29,6 +29,7 @@ class ChatPreprocessor:
         "受不了", "太棒了", "真香", "绝了", "离谱", "恶心",
         "佩服", "崇拜", "看不起", "嫌弃",
         "不觉得", "不同意", "反对", "支持", "赞成",
+        "想你", "爱你", "恨", "烦", "怕", "累",
     }
 
     # 系统消息匹配模式
@@ -54,13 +55,27 @@ class ChatPreprocessor:
         re.compile(r"红包"),
         re.compile(r"转账"),
         re.compile(r"对方正在输入"),
+        re.compile(r"拍了拍"),
     ]
 
     # 纯标点/无内容模式
     PUNCTUATION_ONLY = re.compile(r'^[？?！!…\.\,，。、\s]+$')
 
-    # 消息行格式: [YYYY-MM-DD] 发言人: 内容
-    MSG_LINE = re.compile(r'^\[(\d{4}-\d{2}-\d{2})\]\s*([^:：]+)[：:]\s*(.*)')
+    # 消息行格式: [YYYY-MM-DD] 或 [YYYY-MM-DD HH:MM] 发言人: 内容
+    MSG_LINE = re.compile(r'^\[(\d{4}-\d{2}-\d{2})(?:\s+\d{2}:\d{2})?\]\s*([^:：]+)[：:]\s*(.*)')
+    # 无日期前缀的备用格式: 发言人: 内容
+    MSG_LINE_NO_DATE = re.compile(r'^([^:：]+)[：:]\s*(.*)')
+
+    @classmethod
+    def _parse_msg(cls, line: str):
+        """Parse a message line, returning (date_or_None, speaker, content) or None."""
+        m = cls.MSG_LINE.match(line)
+        if m:
+            return m.group(1), m.group(2).strip(), m.group(3).strip()
+        m = cls.MSG_LINE_NO_DATE.match(line)
+        if m:
+            return None, m.group(1).strip(), m.group(2).strip()
+        return None
 
     # 图片/语音/视频/表情标记
     MEDIA_MARKERS = [
@@ -72,10 +87,14 @@ class ChatPreprocessor:
 
     def preprocess(self, text: str, target_character: str = "") -> str:
         """三层清洗，返回清洗后的文本。"""
+        orig_lines = len(text.split("\n"))
         text = self._layer0_format_clean(text)
         text = self._layer1_quality_filter(text)
         if target_character:
             text = self._layer2_character_context(text, target_character)
+        new_lines = len(text.split("\n")) if text else 0
+        ratio = f"{new_lines / orig_lines * 100:.1f}%" if orig_lines > 0 else "0%"
+        print(f"[ChatPreprocessor] {orig_lines} lines → {new_lines} lines ({ratio})")
         return text
 
     # ------------------------------------------------------------------
@@ -96,6 +115,10 @@ class ChatPreprocessor:
             if self.PUNCTUATION_ONLY.match(stripped):
                 continue
 
+            # 长度 ≤ 1 的行 → 删除
+            if len(stripped) <= 1:
+                continue
+
             # 系统消息 → 删除
             if self._is_system_message(stripped):
                 continue
@@ -105,9 +128,9 @@ class ChatPreprocessor:
                 continue
 
             # 解析消息行
-            m = self.MSG_LINE.match(stripped)
-            if m:
-                date_str, speaker, content = m.group(1), m.group(2).strip(), m.group(3).strip()
+            parsed = self._parse_msg(stripped)
+            if parsed:
+                date_str, speaker, content = parsed
 
                 # 清除内容中的媒体标记
                 for marker in self.MEDIA_MARKERS:
@@ -117,12 +140,14 @@ class ChatPreprocessor:
                     continue
 
                 # 日期去重：同一天只保留第一条
-                if date_str in seen_dates:
-                    # 保留发言但去掉日期前缀
+                if date_str and date_str in seen_dates:
                     cleaned.append(f"{speaker}: {content}")
                 else:
-                    seen_dates.add(date_str)
-                    cleaned.append(f"[{date_str}] {speaker}: {content}")
+                    if date_str:
+                        seen_dates.add(date_str)
+                        cleaned.append(f"[{date_str}] {speaker}: {content}")
+                    else:
+                        cleaned.append(f"{speaker}: {content}")
             else:
                 # 非标准格式行仍保留
                 cleaned.append(stripped)
@@ -130,8 +155,8 @@ class ChatPreprocessor:
         return "\n".join(cleaned)
 
     def _is_system_message(self, line: str) -> bool:
-        # 系统消息不带发言人，或发言人为空
-        if not self.MSG_LINE.match(line):
+        parsed = self._parse_msg(line)
+        if not parsed:
             return False
         for pat in self.SYSTEM_PATTERNS:
             if pat.search(line):
@@ -139,10 +164,10 @@ class ChatPreprocessor:
         return False
 
     def _is_media_only(self, line: str) -> bool:
-        m = self.MSG_LINE.match(line)
-        if not m:
+        parsed = self._parse_msg(line)
+        if not parsed:
             return False
-        content = m.group(3).strip()
+        content = parsed[2]
         if not content:
             return False
         for marker in self.MEDIA_MARKERS:
@@ -155,14 +180,13 @@ class ChatPreprocessor:
 
     def _layer1_quality_filter(self, text: str) -> str:
         lines = text.split("\n")
-        msg_entries: list[dict] = []  # {index, speaker, content, is_opinion, is_question}
+        msg_entries: list[dict] = []
 
         for i, line in enumerate(lines):
-            m = self.MSG_LINE.match(line)
-            if not m:
+            parsed = self._parse_msg(line)
+            if not parsed:
                 continue
-            speaker = m.group(2).strip()
-            content = m.group(3).strip()
+            _, speaker, content = parsed
 
             is_opinion = self._has_opinion(content)
             is_question = content.rstrip().endswith("?") or content.rstrip().endswith("？")
@@ -226,12 +250,13 @@ class ChatPreprocessor:
         msg_entries: list[dict] = []
 
         for i, line in enumerate(lines):
-            m = self.MSG_LINE.match(line)
-            if m:
+            parsed = self._parse_msg(line)
+            if parsed:
+                _, speaker, content = parsed
                 msg_entries.append({
                     "line_index": i,
-                    "speaker": m.group(2).strip(),
-                    "content": m.group(3).strip(),
+                    "speaker": speaker,
+                    "content": content,
                     "line": line,
                 })
             else:

@@ -255,39 +255,61 @@ class Distiller:
 
     @staticmethod
     def _split_chunks_chat(text: str, chunk_size: int) -> list[str]:
-        """Split chat logs by conversation turns, keeping Q&A pairs intact.
+        """Split chat logs by date, ensuring Q&A pairs stay intact.
 
-        Each turn is a group of adjacent messages. Turns are accumulated until
-        the chunk exceeds ``chunk_size``, then a new chunk starts.
+        Lines are first grouped by date (each day = one chunk). If a day's
+        content exceeds ``chunk_size``, it is split into sub-chunks of at
+        most ``chunk_size`` characters without breaking message lines.
         """
+        import re
+        msg_line = re.compile(r'^\[(\d{4}-\d{2}-\d{2})\]')
+
         lines = text.split("\n")
         if not lines:
             return []
 
-        chunks: list[str] = []
-        current: list[str] = []
-        current_len = 0
+        # Group lines by date
+        day_groups: list[list[str]] = []
+        current_day: list[str] = []
+        current_date: str | None = None
 
         for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                if current:
-                    current.append("")
-                    current_len += 1
-                continue
-
-            line_len = len(stripped)
-
-            if current_len + line_len > chunk_size and current_len > 0:
-                chunks.append("\n".join(current))
-                current = [stripped]
-                current_len = line_len
+            m = msg_line.match(line)
+            if m:
+                date_str = m.group(1)
+                if date_str != current_date:
+                    if current_day:
+                        day_groups.append(current_day)
+                    current_day = [line]
+                    current_date = date_str
+                else:
+                    current_day.append(line)
             else:
-                current.append(stripped)
-                current_len += line_len
+                current_day.append(line)
 
-        if current:
-            chunks.append("\n".join(current))
+        if current_day:
+            day_groups.append(current_day)
+
+        # Split oversized days into sub-chunks (keep message lines intact)
+        chunks: list[str] = []
+        for day_lines in day_groups:
+            day_text = "\n".join(day_lines)
+            if len(day_text) <= chunk_size:
+                chunks.append(day_text)
+            else:
+                sub: list[str] = []
+                sub_len = 0
+                for line in day_lines:
+                    line_len = len(line) + 1  # +1 for newline
+                    if sub_len + line_len > chunk_size and sub:
+                        chunks.append("\n".join(sub))
+                        sub = [line]
+                        sub_len = len(line)
+                    else:
+                        sub.append(line)
+                        sub_len += line_len
+                if sub:
+                    chunks.append("\n".join(sub))
 
         return chunks
 
@@ -391,6 +413,7 @@ class Distiller:
         chunks: list[str],
         character_name: str,
         on_chunk_done: "callable | None" = None,
+        is_chat: bool = False,
     ) -> list[tuple[int, str]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
 
@@ -401,11 +424,13 @@ class Distiller:
         sem = asyncio.Semaphore(self.MAP_CONCURRENCY)
         done_count = [0]
         lock = asyncio.Lock()
+        map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
+        map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
         async def _one(i: int, chunk: str) -> tuple[int, str]:
             async with sem:
-                system = self._map_system_prompt(character_name)
-                user = self._map_user_prompt(chunk, character_name)
+                system = map_system_fn(character_name)
+                user = map_user_fn(chunk, character_name)
                 try:
                     result = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}]
@@ -459,6 +484,7 @@ class Distiller:
         character_name: str,
         aliases: list[str] | None = None,
         on_progress: "callable | None" = None,
+        text_type: str = "story",
     ) -> CharacterCard:
         """MapReduce 蒸馏：Map 并发分析 → Reduce 合并 → Format 输出 CharacterCard。
 
@@ -467,10 +493,22 @@ class Distiller:
             character_name: 目标角色名。
             aliases: 角色别名列表，用于过滤相关片段。
             on_progress: ``(current, total)`` 进度回调。
+            text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)。
         """
+        is_chat = text_type == "chat"
+
+        if is_chat:
+            preprocessor = ChatPreprocessor()
+            text = preprocessor.preprocess(text, character_name)
+
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases
-        chunks = self._split_chunks(text, self._chunk_size)
+
+        if is_chat:
+            chunks = self._split_chunks_chat(text, self._chunk_size)
+        else:
+            chunks = self._split_chunks(text, self._chunk_size)
+
         relevant = [c for c in chunks if any(t in c for t in match_terms)]
         if not relevant:
             relevant = chunks[:3]
@@ -492,7 +530,7 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_wrapper():
-            results = await self._run_map_concurrent(relevant, character_name, _on_done)
+            results = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
             q.put(("done", results))
 
         def _thread_run():
@@ -612,10 +650,7 @@ class Distiller:
         # Chat preprocessing
         if is_chat:
             preprocessor = ChatPreprocessor()
-            orig_lines = len(text.split("\n"))
             text = preprocessor.preprocess(text, character_name)
-            new_lines = len(text.split("\n"))
-            print(f"[distiller] Chat preprocessed: {orig_lines} lines → {new_lines} lines")
 
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases
