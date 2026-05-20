@@ -116,6 +116,17 @@ function CharPanelBody({ textId }) {
 
 // ---- Left: character list + identify/distill flow ----
 
+function loadPinnedCards() {
+  try {
+    const raw = localStorage.getItem('pinnedCards')
+    return raw ? JSON.parse(raw) : []
+  } catch { return [] }
+}
+
+function savePinnedCards(ids) {
+  localStorage.setItem('pinnedCards', JSON.stringify(ids))
+}
+
 function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
@@ -126,6 +137,25 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const distillCharacter = useAppStore((s) => s.distillCharacter)
 
   const [distillingName, setDistillingName] = useState(null)
+  const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
+
+  const togglePin = (e, cardId) => {
+    e.stopPropagation()
+    setPinnedCards((prev) => {
+      const next = prev.includes(cardId)
+        ? prev.filter((id) => id !== cardId)
+        : [...prev, cardId]
+      savePinnedCards(next)
+      return next
+    })
+  }
+
+  // Sort: pinned first, then unpinned (stable order within groups)
+  const sortedCards = [...cards].sort((a, b) => {
+    const aPinned = pinnedCards.includes(a.id) ? 0 : 1
+    const bPinned = pinnedCards.includes(b.id) ? 0 : 1
+    return aPinned - bPinned
+  })
 
   useEffect(() => {
     if (currentCard?.id) {
@@ -168,16 +198,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {/* Distilled cards list */}
       {hasCards && (
         <ul className="char-list">
-          {cards.map((c) => {
+          {sortedCards.map((c) => {
             const cardData = typeof c.card_json === 'string'
               ? JSON.parse(c.card_json)
               : c.card_json || c
             const name = cardData.name || c.name
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
+            const isPinned = pinnedCards.includes(c.id)
             const textInfo = texts.find((t) => t.id === c.text_id)
             return (
-              <li key={c.id}>
+              <li key={c.id} className="char-list-li">
                 <button
                   type="button"
                   className={`char-list-item${isActive ? ' active' : ''}`}
@@ -192,6 +223,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     )}
                     <div className="char-list-identity">{identity}</div>
                   </div>
+                </button>
+                <button
+                  type="button"
+                  className={`char-pin-btn${isPinned ? ' pinned' : ''}`}
+                  title={isPinned ? '取消置顶' : '置顶'}
+                  onClick={(e) => togglePin(e, c.id)}
+                >
+                  {'\u{1F4CC}'}
                 </button>
               </li>
             )
