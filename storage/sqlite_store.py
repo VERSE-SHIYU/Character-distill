@@ -188,6 +188,12 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Deleted_at migration failed: {exc}")
 
+                    # Run 015_refresh_tokens migration (CREATE TABLE IF NOT EXISTS — idempotent)
+                    refresh_tokens_path = migrations_dir / "015_refresh_tokens.sql"
+                    if refresh_tokens_path.exists():
+                        await conn.executescript(refresh_tokens_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1035,4 +1041,55 @@ class SQLiteStore(StorageBase):
             return [dict(r) for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] List invite codes failed: {exc}")
+            raise
+
+    # ---- Refresh tokens ----
+
+    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                    (token_hash, user_id, expires_at),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save refresh token failed: {exc}")
+            raise
+
+    async def get_refresh_token(self, token_hash: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT token_hash, user_id, expires_at, used FROM refresh_tokens WHERE token_hash = ?",
+                    (token_hash,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get refresh token failed: {exc}")
+            raise
+
+    async def mark_refresh_token_used(self, token_hash: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE refresh_tokens SET used = 1 WHERE token_hash = ?",
+                    (token_hash,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark refresh token used failed: {exc}")
+            raise
+
+    async def delete_user_refresh_tokens(self, user_id: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "DELETE FROM refresh_tokens WHERE user_id = ?",
+                    (user_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete user refresh tokens failed: {exc}")
             raise

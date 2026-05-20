@@ -5,9 +5,9 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ThemeSwitcher from './ThemeSwitcher'
 
-const APP_VERSION = '0.0.0'
-const GITHUB_URL = 'https://github.com'
-const VOICE_SETUP_LINK = 'https://github.com/your-repo#voice-setup'
+const APP_VERSION = '1.0.0'
+const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
+const VOICE_SETUP_LINK = 'https://github.com/VERSE-SHIYU/Character-distill#voice-setup'
 const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5]
 
 export default function SettingsPanel() {

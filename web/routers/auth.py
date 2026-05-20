@@ -1,8 +1,10 @@
-"""Authentication: register, login, JWT verification."""
+"""Authentication: register, login, JWT, refresh tokens, logout."""
 
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -20,7 +22,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 JWT_SECRET = os.getenv("JWT_SECRET", "character-distill-dev-secret-key-change-in-prod")
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_DAYS = 7
+JWT_EXPIRE_MINUTES = 30
+REFRESH_TOKEN_DAYS = 30
 
 password_hasher = PasswordHash.recommended()
 security_scheme = HTTPBearer(auto_error=False)
@@ -30,6 +33,10 @@ class AuthRequest(BaseModel):
     username: str
     password: str
     invite_code: str = ""
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 class UserResponse(BaseModel):
@@ -42,6 +49,7 @@ class UserResponse(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     user: UserResponse
 
@@ -58,7 +66,7 @@ async def get_current_user(
     try:
         payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token 已过期，请重新登录")
+        raise HTTPException(401, "Token 已过期")
     except jwt.InvalidTokenError:
         raise HTTPException(401, "Token 无效")
     user_id = payload.get("sub")
@@ -72,9 +80,9 @@ async def get_current_user(
 
 # ---- Routes ----
 
-@router.post("/register", response_model=TokenResponse)
+@router.post("/register")
 async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
-    """Register a new user and return JWT token."""
+    """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
     if not username or len(username) < 2:
         raise HTTPException(400, "用户名至少 2 个字符")
@@ -99,29 +107,76 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
     user = await storage.create_user(user_id, username, password_hash)
     await storage.use_invite_code(inv, user["id"])
 
-    token = _create_token(user["id"], user["username"])
+    access_token = _create_access_token(user["id"], user["username"])
+    refresh_token = await _create_refresh_token(user["id"], storage)
     return {
-        "access_token": token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": _user_response(user),
     }
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login")
 async def login(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
-    """Login with username + password, return JWT token."""
+    """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())
     if user is None:
         raise HTTPException(401, "用户名或密码错误")
     if not password_hasher.verify(req.password, user["password_hash"]):
         raise HTTPException(401, "用户名或密码错误")
 
-    token = _create_token(user["id"], user["username"])
+    access_token = _create_access_token(user["id"], user["username"])
+    refresh_token = await _create_refresh_token(user["id"], storage)
     return {
-        "access_token": token,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": _user_response(user),
     }
+
+
+@router.post("/refresh")
+async def refresh(req: RefreshRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+    """Exchange a refresh token for a new access_token + new refresh_token (rotation)."""
+    token_hash = _hash_token(req.refresh_token)
+    record = await storage.get_refresh_token(token_hash)
+    if not record:
+        raise HTTPException(401, "Refresh token 无效")
+    if record.get("used"):
+        # Token reuse detected — revoke all tokens for this user (breach protection)
+        await storage.delete_user_refresh_tokens(record["user_id"])
+        raise HTTPException(401, "Refresh token 已被使用")
+    if record.get("expires_at", "") < datetime.now(timezone.utc).isoformat():
+        raise HTTPException(401, "Refresh token 已过期")
+
+    # Mark old token as used (rotation)
+    await storage.mark_refresh_token_used(token_hash)
+
+    user = await storage.get_user_by_id(record["user_id"])
+    if not user:
+        raise HTTPException(401, "用户不存在")
+    if user.get("is_disabled"):
+        raise HTTPException(403, "账号已被禁用")
+
+    access_token = _create_access_token(user["id"], user["username"])
+    new_refresh_token = await _create_refresh_token(user["id"], storage)
+    return {
+        "access_token": access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+        "user": _user_response(user),
+    }
+
+
+@router.post("/logout")
+async def logout(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, bool]:
+    """Delete all refresh tokens for the current user."""
+    await storage.delete_user_refresh_tokens(user["id"])
+    return {"ok": True}
 
 
 @router.get("/me", response_model=UserResponse)
@@ -132,8 +187,8 @@ async def me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]
 
 # ---- Helpers ----
 
-def _create_token(user_id: str, username: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(days=JWT_EXPIRE_DAYS)
+def _create_access_token(user_id: str, username: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
         "username": username,
@@ -141,6 +196,18 @@ def _create_token(user_id: str, username: str) -> str:
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def _create_refresh_token(user_id: str, storage: SQLiteStore) -> str:
+    raw = secrets.token_urlsafe(64)
+    token_hash = _hash_token(raw)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)).isoformat()
+    await storage.save_refresh_token(token_hash, user_id, expires_at)
+    return raw
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _user_response(user: dict[str, Any]) -> dict[str, Any]:

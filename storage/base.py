@@ -141,3 +141,19 @@ class StorageBase(ABC):
     @abstractmethod
     async def list_invite_codes(self) -> list[dict]:
         """List all invite codes."""
+
+    @abstractmethod
+    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
+        """Save a refresh token hash."""
+
+    @abstractmethod
+    async def get_refresh_token(self, token_hash: str) -> dict | None:
+        """Get a refresh token record by hash."""
+
+    @abstractmethod
+    async def mark_refresh_token_used(self, token_hash: str) -> None:
+        """Mark a refresh token as used (rotation)."""
+
+    @abstractmethod
+    async def delete_user_refresh_tokens(self, user_id: str) -> None:
+        """Delete all refresh tokens for a user (logout)."""

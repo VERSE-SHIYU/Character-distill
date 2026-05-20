@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken } from '../api/client'
+import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
 
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
@@ -10,17 +10,21 @@ const useAppStore = create((set, get) => ({
   login: async (username, password) => {
     const data = await postJSON('/api/auth/login', { username, password })
     setToken(data.access_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token)
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },
 
   register: async (username, password, inviteCode = '') => {
     const data = await postJSON('/api/auth/register', { username, password, invite_code: inviteCode })
     setToken(data.access_token)
+    if (data.refresh_token) setRefreshToken(data.refresh_token)
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },
 
   logout: () => {
-    removeToken()
+    // Best-effort server-side logout
+    fetchWithTimeout('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    removeAuth()
     set({
       authUser: null,
       isLoggedIn: false,
@@ -293,7 +297,7 @@ const useAppStore = create((set, get) => ({
           get().loadTexts()
           resolve(data)
         } else {
-          if (xhr.status === 401) removeToken()
+          if (xhr.status === 401) removeAuth()
           try {
             const errData = JSON.parse(xhr.responseText)
             reject(new Error(errData.detail || '上传失败'))

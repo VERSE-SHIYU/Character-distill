@@ -81,7 +81,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from fastapi.responses import JSONResponse
 
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
 
 
