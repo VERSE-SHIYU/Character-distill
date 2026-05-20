@@ -169,3 +169,13 @@ class StorageBase(ABC):
     @abstractmethod
     async def get_all_usage_summary(self) -> list[dict]:
         """Get usage summary for all users (admin)."""
+
+    @abstractmethod
+    async def update_session_affinity(
+        self, session_id: str, affinity: int, trust: int, mood: str, guard: int
+    ) -> None:
+        """Update affinity scores for a session."""
+
+    @abstractmethod
+    async def get_session_affinity(self, session_id: str) -> dict | None:
+        """Get affinity scores for a session."""

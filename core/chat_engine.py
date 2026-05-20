@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import threading
 from collections.abc import Generator
 from typing import Any
 
@@ -49,7 +51,14 @@ class ChatEngine:
         self._context_window = context_window
         self._storage = None
         self._user_id: str = ""
+        self._session_id: str = ""
         self.history: list[dict[str, Any]] = []
+        # 四维好感度
+        self._affinity: int = 50
+        self._trust: int = 30
+        self._mood: str = "平静"
+        self._guard: int = 70
+        self._affinity_reason: str = ""
         self._last_rag_context: str = ""
         self.last_summary: str | None = None  # legacy compat for chat.py
         self._ctx_engine = ContextEngine(
@@ -222,6 +231,8 @@ class ChatEngine:
                 self._card_id,
             )
 
+        self._evaluate_affinity(user_message, response)
+
         return response, ""
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
@@ -268,6 +279,8 @@ class ChatEngine:
                 self._card_id,
             )
 
+        self._evaluate_affinity(user_message, full_reply)
+
     def _try_record_usage(self, action: str = "chat") -> None:
         if not self._storage or not self._user_id:
             return
@@ -283,6 +296,77 @@ class ChatEngine:
             )
         except Exception as exc:
             print(f"[ChatEngine] Record usage failed (non-fatal): {exc}")
+
+    def load_affinity(self, data: dict[str, Any]) -> None:
+        if not data:
+            return
+        self._affinity = data.get("affinity", 50)
+        self._trust = data.get("trust", 30)
+        self._mood = data.get("mood", "平静")
+        self._guard = data.get("guard", 70)
+
+    def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
+        """异步评估四维好感度变化。"""
+        if not self.llm:
+            return
+
+        user_role = (self.user_role or "对方").strip()
+
+        prompt = (
+            "你是情感分析专家。根据以下角色设定和对话，评估角色对对方的情感状态变化。\n\n"
+            f"角色：{self.card.name}\n"
+            f"价值观：{', '.join(self.card.values[:3])}\n"
+            f"内在矛盾：{', '.join(self.card.inner_tensions[:2])}\n"
+            f"人际关系中对话者的位置：{user_role}\n\n"
+            f"当前状态：好感={self._affinity}, 信任={self._trust}, 情绪={self._mood}, 防御={self._guard}\n\n"
+            f"对方说：{user_message}\n"
+            f"角色回复：{assistant_reply}\n\n"
+            "根据角色性格，输出 JSON（只输出 JSON）：\n"
+            '{"affinity": 数字0-100, "trust": 数字0-100, "mood": "平静/开心/悲伤/愤怒/紧张/甜蜜", '
+            '"guard": 数字0-100, "reason": "一句话原因"}\n'
+            "变化规则：\n"
+            "- 单次变化幅度不超过 ±10\n"
+            "- 踩到角色雷点（背叛、谎言、触及旧伤）→ 好感-5~-10，防御+10\n"
+            "- 温柔关心但不逼迫 → 好感+3~5，防御-3~5\n"
+            "- 表白/深情告白 → 好感±看角色性格，防御+5（害怕）\n"
+            "- 日常闲聊 → 变化 ±1~2"
+        )
+
+        storage = self._storage
+        session_id = self._session_id
+
+        def _do():
+            try:
+                reply = self.llm.chat(
+                    "你是精确的JSON输出器，只输出JSON。",
+                    [{"role": "user", "content": prompt}],
+                )
+                data = json.loads(reply.strip().strip("`").strip("json").strip())
+                self._affinity = max(0, min(100, data.get("affinity", self._affinity)))
+                self._trust = max(0, min(100, data.get("trust", self._trust)))
+                self._mood = data.get("mood", self._mood)
+                self._guard = max(0, min(100, data.get("guard", self._guard)))
+                self._affinity_reason = data.get("reason", "")
+                if storage and session_id:
+                    asyncio.run(
+                        storage.update_session_affinity(
+                            session_id, self._affinity, self._trust,
+                            self._mood, self._guard,
+                        )
+                    )
+            except Exception as exc:
+                print(f"[ChatEngine] Affinity eval failed: {exc}")
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def get_affinity(self) -> dict[str, Any]:
+        return {
+            "affinity": self._affinity,
+            "trust": self._trust,
+            "mood": self._mood,
+            "guard": self._guard,
+            "reason": self._affinity_reason,
+        }
 
     def reset(self) -> None:
         """清空对话历史。"""

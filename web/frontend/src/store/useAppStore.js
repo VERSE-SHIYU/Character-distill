@@ -203,6 +203,19 @@ const useAppStore = create((set, get) => ({
   webSearchEnabled: false,
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
+  affinity: { affinity: 50, trust: 30, mood: '平静', guard: 70, reason: '' },
+  affinityOpen: true,
+  setAffinityOpen: (val) => set({ affinityOpen: val }),
+  fetchAffinity: async () => {
+    const { sessionId } = get()
+    if (!sessionId) return
+    try {
+      const res = await fetchWithTimeout(`/api/chat/affinity/${sessionId}`)
+      const data = await res.json()
+      set({ affinity: data })
+    } catch { /* non-fatal */ }
+  },
+
   // Recording
   isRecording: false,
   recordingDuration: 0,
@@ -587,6 +600,8 @@ const useAppStore = create((set, get) => ({
         const { messages: currentMsgs } = get()
         get()._synthesizeVoiceReply(data.reply, currentMsgs.length - 1)
       }
+
+      get().fetchAffinity()
     } catch (err) {
       console.error('[store] sendMessage failed:', err)
       set((s) => ({
@@ -642,6 +657,8 @@ const useAppStore = create((set, get) => ({
           const { messages: currentMsgs } = get()
           get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
         }
+
+        get().fetchAffinity()
       },
       (err) => {
         console.error('[store] stream failed:', err)

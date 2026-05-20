@@ -2313,6 +2313,81 @@ body {
   color: var(--accent);
 }
 
+/* Affinity panel */
+.affinity-bar {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--input-border);
+  border-bottom: 1px solid var(--input-border);
+  background: rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(6px);
+}
+.affinity-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  width: 100%;
+}
+.affinity-toggle:hover {
+  background: rgba(255, 255, 255, 0.4);
+}
+.affinity-toggle-arrow {
+  font-size: 10px;
+  width: 14px;
+}
+.affinity-toggle-label {
+  margin-right: 6px;
+}
+.affinity-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.affinity-inline-icon {
+  font-size: 14px;
+}
+.affinity-detail {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 16px 8px;
+  flex-wrap: wrap;
+}
+.affinity-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.affinity-icon {
+  font-size: 16px;
+}
+.affinity-value, .affinity-inline-value {
+  min-width: 24px;
+  text-align: center;
+}
+.affinity-mood {
+  font-size: 14px;
+}
+.affinity-reason {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Font size toggle */
 .chat-font-size-ctl {
   display: flex;

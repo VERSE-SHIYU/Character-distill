@@ -83,6 +83,14 @@ async def _ensure_session(
             break
     if db_session.get("user_role"):
         engine.user_role = db_session["user_role"]
+    # Restore affinity from DB
+    engine._session_id = session_id
+    try:
+        affinity_data = await storage.get_session_affinity(session_id)
+        if affinity_data:
+            engine.load_affinity(affinity_data)
+    except Exception as exc:
+        print(f"[chat] Restore affinity failed (non-fatal): {exc}")
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
 
     print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
@@ -139,6 +147,7 @@ async def _do_chat(
         if engine:
             engine._storage = storage
             engine._user_id = user_id
+            engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
         resp, rag_ctx = await asyncio.to_thread(engine.chat, msg)
@@ -205,6 +214,9 @@ async def _do_chat_stream(
 
     engine = session.get("engine")
     if engine:
+        engine._storage = storage
+        engine._user_id = user_id
+        engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
 
     def _next_piece(stream_obj):
@@ -350,6 +362,25 @@ async def revoke_messages(
             print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
 
     return {"deleted": count}
+
+@router.get("/affinity/{session_id}")
+async def get_affinity(
+    session_id: str,
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
+    sessions: dict = Depends(get_sessions),
+) -> dict[str, Any]:
+    """Return affinity scores for a session."""
+    session = sessions.get(session_id)
+    if session and session.get("engine"):
+        return session["engine"].get_affinity()
+
+    # Fallback to DB (server restarted)
+    data = await storage.get_session_affinity(session_id)
+    if data:
+        return {"affinity": data["affinity"], "trust": data["trust"], "mood": data["mood"], "guard": data["guard"], "reason": ""}
+    return {"affinity": 50, "trust": 30, "mood": "平静", "guard": 70, "reason": ""}
+
 
 @router.post("/reset")
 async def reset_session(

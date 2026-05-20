@@ -92,6 +92,9 @@ function ChatView() {
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
   const webSearchEnabled = useAppStore((s) => s.webSearchEnabled)
   const setWebSearchEnabled = useAppStore((s) => s.setWebSearchEnabled)
+  const affinity = useAppStore((s) => s.affinity)
+  const affinityOpen = useAppStore((s) => s.affinityOpen)
+  const setAffinityOpen = useAppStore((s) => s.setAffinityOpen)
 
   const cardData = typeof currentCard.card_json === 'string'
     ? JSON.parse(currentCard.card_json)
@@ -409,6 +412,34 @@ function ChatView() {
             {'\u{1F464}'}
           </button>
         </div>
+      </div>
+
+      {/* Affinity panel */}
+      <div className="affinity-bar">
+        <button
+          type="button"
+          className="affinity-toggle"
+          onClick={() => setAffinityOpen(!affinityOpen)}
+          title={affinityOpen ? '收起情感面板' : '展开情感面板'}
+        >
+          <span className="affinity-toggle-arrow">{affinityOpen ? '▼' : '▲'}</span>
+          <span className="affinity-toggle-label">情感状态</span>
+          <AffinityInline value={affinity.affinity} icon="❤️" label="好感" />
+          <AffinityInline value={affinity.trust} icon="🤝" label="信任" />
+        </button>
+        {affinityOpen && (
+          <div className="affinity-detail">
+            <AffinityItem value={affinity.affinity} icon="❤️" label="好感" />
+            <AffinityItem value={affinity.trust} icon="🤝" label="信任" />
+            <AffinityItem value={affinity.mood} icon="😊" label="情绪" isMood />
+            <AffinityItem value={affinity.guard} icon="🛡️" label="防御" />
+            {affinity.reason && (
+              <span className="affinity-reason" title={affinity.reason}>
+                {affinity.reason}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* User role bar */}
@@ -788,5 +819,39 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         </button>
       )}
     </div>
+  )
+}
+
+// ---- Affinity helpers ----
+
+function affinityColor(value) {
+  if (value <= 30) return 'var(--affinity-low, #9ca3af)'
+  if (value <= 50) return 'var(--affinity-mid, #3b82f6)'
+  if (value <= 70) return 'var(--affinity-good, #22c55e)'
+  if (value <= 90) return 'var(--affinity-high, #f97316)'
+  return 'var(--affinity-max, #ef4444)'
+}
+
+function AffinityItem({ value, icon, label, isMood }) {
+  const color = isMood ? 'var(--accent)' : affinityColor(value)
+  return (
+    <span className="affinity-item" style={{ color }} title={`${label}: ${value}`}>
+      <span className="affinity-icon">{icon}</span>
+      {isMood ? (
+        <span className="affinity-mood">{value}</span>
+      ) : (
+        <span className="affinity-value">{value}</span>
+      )}
+    </span>
+  )
+}
+
+function AffinityInline({ value, icon, label }) {
+  const color = affinityColor(value)
+  return (
+    <span className="affinity-inline" style={{ color }} title={`${label}: ${value}`}>
+      <span className="affinity-inline-icon">{icon}</span>
+      <span className="affinity-inline-value">{value}</span>
+    </span>
   )
 }

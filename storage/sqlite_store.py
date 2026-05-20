@@ -200,6 +200,16 @@ class SQLiteStore(StorageBase):
                         await conn.executescript(usage_stats_path.read_text(encoding="utf-8"))
                         await conn.commit()
 
+                    # Run 017_affinity migration (ALTER TABLE — may fail if columns exist)
+                    affinity_migration_path = migrations_dir / "017_affinity.sql"
+                    if affinity_migration_path.exists():
+                        try:
+                            await conn.executescript(affinity_migration_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Affinity migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1165,3 +1175,34 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get all usage summary failed: {exc}")
             raise
+
+    # ---- Affinity ----
+
+    async def update_session_affinity(
+        self, session_id: str, affinity: int, trust: int, mood: str, guard: int
+    ) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE sessions
+                       SET affinity = ?, trust = ?, mood = ?, guard = ?,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (affinity, trust, mood, guard, session_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update session affinity failed: {exc}")
+
+    async def get_session_affinity(self, session_id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT affinity, trust, mood, guard FROM sessions WHERE id = ?",
+                    (session_id,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get session affinity failed: {exc}")
+            return None
