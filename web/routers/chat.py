@@ -232,7 +232,7 @@ async def _do_chat_stream(
 
             full_reply = "".join(tokens)
             if not full_reply.strip():
-                print(f"[chat] WARNING: LLM returned empty response (history={len(engine.history) if engine else 0}, sp_len={sp_len})")
+                print(f"[chat] WARNING: LLM returned empty response (history={len(engine.history) if engine else 0})")
             rag_context = getattr(session["engine"], "_last_rag_context", "") or ""
 
             try:
