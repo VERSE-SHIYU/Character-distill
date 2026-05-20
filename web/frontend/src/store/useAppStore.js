@@ -427,7 +427,6 @@ const useAppStore = create((set, get) => ({
           }
           if (payload.status === 'error') {
             set({ distilling: false })
-            setTimeout(() => get().removeDistillTask(taskId), 8000)
             return
           }
           // Continue polling

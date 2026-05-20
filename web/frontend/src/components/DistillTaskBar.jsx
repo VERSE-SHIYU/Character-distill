@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
   const setView = useAppStore((s) => s.setView)
+  const removeDistillTask = useAppStore((s) => s.removeDistillTask)
 
   if (tasks.length === 0) return null
 
@@ -32,6 +33,15 @@ export default function DistillTaskBar() {
             {!isDone && !isError && (
               <span className="distill-task-bar-track">
                 <span className="distill-task-bar-fill" style={{ width: `${t.progress_pct || 0}%` }} />
+              </span>
+            )}
+            {(isDone || isError) && (
+              <span
+                className="distill-task-close"
+                onClick={(e) => { e.stopPropagation(); removeDistillTask(t.id) }}
+                title="关闭"
+              >
+                ✕
               </span>
             )}
           </div>

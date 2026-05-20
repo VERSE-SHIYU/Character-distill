@@ -69,28 +69,25 @@ class DistillTaskRequest(BaseModel):
     force: bool = False
 
 
-def _run_distill_task(task_id: str, text_id: str, char_name: str, force: bool, user_id: str) -> None:
-    """Background thread: run distillation end-to-end, update _tasks[task_id]."""
+def _run_distill_task(
+    task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
+    content: str, text_type: str,
+) -> None:
+    """Background thread: run distillation end-to-end, update _tasks[task_id].
+
+    All I/O that requires an event loop (text read, card save) is performed
+    via ``asyncio.run()`` which creates a fresh loop per call — safe across
+    threads since each thread owns its own loop.
+    """
     try:
-        from deps import get_distiller, get_storage, get_text_manager
+        from deps import get_distiller, get_text_manager
         distiller = get_distiller()
-        storage = get_storage()
         text_manager = get_text_manager()
 
         if not distiller or not text_manager:
             with _task_lock:
                 _tasks[task_id] = {"status": "error", "message": "请先在设置页配置 API Key"}
             return
-
-        # Step 0: read text
-        text_rec = asyncio.run(storage.get_text(text_id))
-        if not text_rec:
-            with _task_lock:
-                _tasks[task_id] = {"status": "error", "message": "Text not found"}
-            return
-
-        content = text_rec["content"]
-        text_type = text_rec.get("text_type", "story")
 
         # Step 1: resolve character name
         name = char_name.strip()
@@ -276,6 +273,7 @@ async def distill_by_text_id(
 async def distill_start(
     req: DistillTaskRequest,
     request: Request,
+    storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller
@@ -283,6 +281,14 @@ async def distill_start(
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
+    # Read text content in the async endpoint so the background thread
+    # doesn't need to call asyncio storage methods (cross-thread safe).
+    text_rec = await storage.get_text(req.text_id)
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+
+    content = text_rec["content"]
+    text_type = text_rec.get("text_type", "story")
     task_id = _uuid.uuid4().hex[:12]
     user_id = request.state.user.get("id", "")
 
@@ -291,7 +297,7 @@ async def distill_start(
 
     thread = threading.Thread(
         target=_run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type),
         daemon=True,
     )
     thread.start()
