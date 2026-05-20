@@ -13,6 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from adapters.llm_adapter import LLMAdapter
+from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard
 
 
@@ -122,6 +123,31 @@ class Distiller:
         )
 
     @staticmethod
+    def _map_system_prompt_chat(character_name: str) -> str:
+        return (
+            f"你是对话分析专家，正在从聊天记录中提取「{character_name}」的说话风格和人格特征。\n"
+            "聊天记录格式为：[日期] 发言人: 内容，也可能无日期前缀。\n"
+            "规则：\n"
+            "1. 只提取此片段中的事实，不要推断\n"
+            "2. 重点关注{character_name}的说话方式、态度、情感反应\n"
+            "3. 原文对话必须完整保留，这是最重要的\n"
+            "4. 如果此片段没有{character_name}的发言，输出「无」"
+        )
+
+    @staticmethod
+    def _map_user_prompt_chat(chunk: str, character_name: str) -> str:
+        return (
+            f"---聊天记录片段---\n{chunk}\n---片段结束---\n\n"
+            f"请提取「{character_name}」在此片段中的表现：\n"
+            f"- 说话习惯：口头禅、语气词、句式结构（必须有原文例证）\n"
+            f"- 态度：对什么人、什么事表现出什么态度\n"
+            f"- 情感反应：什么话题/事件触发了什么情绪反应\n"
+            f"- 人际关系：与对话中各参与者的互动模式\n"
+            f"- 说话风格：用词水平、句子长短、是否爱用反问/感叹\n"
+            f"如该片段无{character_name}发言，输出「无」。"
+        )
+
+    @staticmethod
     def _reduce_system_prompt(character_name: str) -> str:
         return (
             f"你正在整合关于「{character_name}」的多份独立片段分析。\n"
@@ -225,6 +251,44 @@ class Distiller:
                 current = para if not current else current + "\n\n" + para
         if current:
             chunks.append(current)
+        return chunks
+
+    @staticmethod
+    def _split_chunks_chat(text: str, chunk_size: int) -> list[str]:
+        """Split chat logs by conversation turns, keeping Q&A pairs intact.
+
+        Each turn is a group of adjacent messages. Turns are accumulated until
+        the chunk exceeds ``chunk_size``, then a new chunk starts.
+        """
+        lines = text.split("\n")
+        if not lines:
+            return []
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if current:
+                    current.append("")
+                    current_len += 1
+                continue
+
+            line_len = len(stripped)
+
+            if current_len + line_len > chunk_size and current_len > 0:
+                chunks.append("\n".join(current))
+                current = [stripped]
+                current_len = line_len
+            else:
+                current.append(stripped)
+                current_len += line_len
+
+        if current:
+            chunks.append("\n".join(current))
+
         return chunks
 
     def distill(self, text: str, character_name: str) -> CharacterCard:
@@ -533,22 +597,44 @@ class Distiller:
         text: str,
         character_name: str,
         aliases: list[str] | None = None,
+        text_type: str = "story",
     ):
         """MapReduce 流式蒸馏 — 实时推送进度 + 流式 JSON 生成。
 
         yield 值类型：
         - dict: 进度事件（status: analyzing / merging / formatting / error）
         - str:  Format 阶段的 token 片段（SSE 路由累积为 card JSON）
+
+        text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)
         """
+        is_chat = text_type == "chat"
+
+        # Chat preprocessing
+        if is_chat:
+            preprocessor = ChatPreprocessor()
+            orig_lines = len(text.split("\n"))
+            text = preprocessor.preprocess(text, character_name)
+            new_lines = len(text.split("\n"))
+            print(f"[distiller] Chat preprocessed: {orig_lines} lines → {new_lines} lines")
+
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases
-        chunks = self._split_chunks(text, self._chunk_size)
+
+        if is_chat:
+            chunks = self._split_chunks_chat(text, self._chunk_size)
+        else:
+            chunks = self._split_chunks(text, self._chunk_size)
+
         relevant = [c for c in chunks if any(t in c for t in match_terms)]
         if not relevant:
             relevant = chunks[:3]
 
         total = len(relevant)
         yield {"status": "analyzing", "current": 0, "total": total}
+
+        # Select Map prompts per text type
+        map_system = self._map_system_prompt_chat if is_chat else self._map_system_prompt
+        map_user = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
         # ── Phase 1: Map — concurrent with per-chunk progress via thread+queue ──
         q: queue.Queue = queue.Queue()
@@ -560,8 +646,8 @@ class Distiller:
 
             async def _one(i: int, chunk: str) -> tuple[int, str]:
                 async with sem:
-                    system = self._map_system_prompt(character_name)
-                    user = self._map_user_prompt(chunk, character_name)
+                    system = map_system(character_name)
+                    user = map_user(chunk, character_name)
                     try:
                         result = await self._llm.async_chat(
                             system, [{"role": "user", "content": user}]

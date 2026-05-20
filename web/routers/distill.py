@@ -161,6 +161,7 @@ async def distill_stream(
         raise HTTPException(404, "Text not found")
 
     content = text_rec["content"]
+    text_type = text_rec.get("text_type", "story")
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
     async def _event_gen():
@@ -179,7 +180,7 @@ async def distill_stream(
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
-        stream = distiller.distill_incremental_stream(content, char_name, aliases)
+        stream = distiller.distill_incremental_stream(content, char_name, aliases, text_type)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
