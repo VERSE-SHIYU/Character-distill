@@ -77,3 +77,15 @@ class StorageBase(ABC):
     @abstractmethod
     async def export_session(self, session_id: str, format: str) -> str:
         """Export one session in json or txt format."""
+
+    @abstractmethod
+    async def create_user(self, id: str, username: str, password_hash: str) -> dict:
+        """Create a new user."""
+
+    @abstractmethod
+    async def get_user_by_username(self, username: str) -> dict | None:
+        """Get a user by username."""
+
+    @abstractmethod
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        """Get a user by ID."""

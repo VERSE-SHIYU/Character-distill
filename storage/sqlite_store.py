@@ -149,6 +149,12 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Original char count migration failed: {exc}")
 
+                    # Run 009_users migration (CREATE TABLE IF NOT EXISTS — idempotent)
+                    users_migration_path = migrations_dir / "009_users.sql"
+                    if users_migration_path.exists():
+                        await conn.executescript(users_migration_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -745,3 +751,47 @@ class SQLiteStore(StorageBase):
         for msg in messages:
             lines.append(f"[{msg['role']}] {msg['content']}")
         return "\n".join(lines)
+
+    async def create_user(self, id: str, username: str, password_hash: str) -> dict:
+        """Create a new user. Raises on duplicate username."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)",
+                    (id, username, password_hash),
+                )
+                await conn.commit()
+                return await self.get_user_by_username(username) or {}
+        except Exception as exc:
+            if "UNIQUE constraint" in str(exc):
+                raise ValueError("用户名已存在") from exc
+            print(f"[SQLiteStore] Create user failed: {exc}")
+            raise
+
+    async def get_user_by_username(self, username: str) -> dict | None:
+        """Get a user by username."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, password_hash, created_at FROM users WHERE username = ?",
+                    (username,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user failed: {exc}")
+            raise
+
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        """Get a user by ID."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, password_hash, created_at FROM users WHERE id = ?",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user by id failed: {exc}")
+            raise
