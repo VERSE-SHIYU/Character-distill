@@ -391,6 +391,7 @@ const useAppStore = create((set, get) => ({
   addDistillTask: (taskId, textId, characterName) => {
     const task = { id: taskId, textId, character: characterName, status: 'queued', progress_pct: 0 }
     set((s) => ({ distillTasks: [...s.distillTasks, task], distilling: true }))
+    get()._persistTasks()
 
     const poll = () => {
       fetchWithTimeout(`/api/distill/task/${taskId}`)
@@ -403,8 +404,8 @@ const useAppStore = create((set, get) => ({
                 : t,
             ),
           }))
+          get()._persistTasks()
           if (payload.status === 'done') {
-            // Fetch the completed card
             fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
               .then((r) => r.json())
               .then((cards) => {
@@ -421,15 +422,14 @@ const useAppStore = create((set, get) => ({
                 }
               })
               .catch(() => {})
-            // Auto-remove after 5 seconds
             setTimeout(() => get().removeDistillTask(taskId), 5000)
             return
           }
           if (payload.status === 'error') {
             set({ distilling: false })
+            get()._persistTasks()
             return
           }
-          // Continue polling
           setTimeout(poll, 3000)
         })
         .catch(() => {
@@ -439,11 +439,37 @@ const useAppStore = create((set, get) => ({
     setTimeout(poll, 1000)
   },
 
+  _persistTasks: () => {
+    const tasks = get().distillTasks.map((t) => ({
+      id: t.id, textId: t.textId, character: t.character, status: t.status,
+    }))
+    if (tasks.length > 0) {
+      localStorage.setItem('distill_tasks', JSON.stringify(tasks))
+    } else {
+      localStorage.removeItem('distill_tasks')
+    }
+  },
+
   removeDistillTask: (taskId) => {
     set((s) => ({
       distillTasks: s.distillTasks.filter((t) => t.id !== taskId),
       distilling: s.distillTasks.length <= 1 ? false : s.distilling,
     }))
+    get()._persistTasks()
+  },
+
+  restoreDistillTasks: () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('distill_tasks') || '[]')
+      const active = saved.filter((t) => t.status !== 'done' && t.status !== 'error')
+      if (active.length === 0) {
+        localStorage.removeItem('distill_tasks')
+        return
+      }
+      active.forEach((task) => {
+        get().addDistillTask(task.id, task.textId, task.character)
+      })
+    } catch { /* ignore */ }
   },
 
   viewCard: (card) => {

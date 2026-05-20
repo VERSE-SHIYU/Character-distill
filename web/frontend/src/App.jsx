@@ -71,6 +71,7 @@ export default function App() {
         const res = await fetchWithTimeout('/api/auth/me')
         const user = await res.json()
         useAppStore.setState({ authUser: user, isLoggedIn: true })
+        useAppStore.getState().restoreDistillTasks()
       } catch {
         logout()
         setView('login')

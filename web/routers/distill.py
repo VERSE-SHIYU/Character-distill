@@ -166,8 +166,33 @@ def _run_distill_task(
                 _tasks[task_id] = {"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name}
             return
 
-        # Step 4: persist via text_manager
-        result = asyncio.run(text_manager.save_distilled_card(text_id, card, user_id))
+        # Step 4: persist via fresh store + text_manager in a new event loop.
+        # Using the singleton text_manager's _storage would reuse a connection
+        # created in the main event loop — unsafe across threads.  Instead,
+        # build a fresh SQLiteStore + TextManager inside ``asyncio.run()`` so
+        # aiosqlite connections are bound to the thread's own event loop.
+        async def _save_card():
+            from pathlib import Path as _Path
+            from deps import get_config, get_distiller, get_llm, get_rag_config, get_sessions
+            from core.text_manager import TextManager
+            from storage.sqlite_store import SQLiteStore
+
+            cfg = get_config()
+            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
+            store = SQLiteStore(db_path)
+            await store._ensure_initialized()
+
+            tm = TextManager(
+                store,
+                get_distiller(),
+                get_llm(),
+                get_rag_config(),
+                get_sessions(),
+                cfg.get("llm", {}).get("summary_threshold", 50),
+            )
+            return await tm.save_distilled_card(text_id, card, user_id)
+
+        result = asyncio.run(_save_card())
 
         with _task_lock:
             _tasks[task_id] = {

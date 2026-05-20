@@ -78,9 +78,9 @@ export default function LoginPage() {
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="login-field">
-            <label htmlFor="login-username">用户名</label>
+            <label htmlFor={tab === 'register' ? `reg-user-${nameSuffix.current}` : 'login-username'}>用户名</label>
             <input
-              id="login-username"
+              id={tab === 'register' ? `reg-user-${nameSuffix.current}` : 'login-username'}
               type="text"
               name={tab === 'register' ? `reg-user-${nameSuffix.current}` : 'username'}
               value={username}
@@ -91,9 +91,9 @@ export default function LoginPage() {
             />
           </div>
           <div className="login-field">
-            <label htmlFor="login-password">密码</label>
+            <label htmlFor={tab === 'register' ? `reg-pass-${nameSuffix.current}` : 'login-password'}>密码</label>
             <input
-              id="login-password"
+              id={tab === 'register' ? `reg-pass-${nameSuffix.current}` : 'login-password'}
               type="password"
               name={tab === 'register' ? `reg-pass-${nameSuffix.current}` : 'password'}
               value={password}
