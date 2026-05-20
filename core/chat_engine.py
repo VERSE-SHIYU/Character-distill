@@ -265,6 +265,8 @@ class ChatEngine:
             raise
 
         full_reply = "".join(collected)
+        if not full_reply.strip():
+            print(f"[chat_stream] WARNING: LLM returned empty response (history={len(self.history)} messages, sp_len={len(system_prompt)} chars)")
         self.history.append({"role": "assistant", "content": full_reply})
 
         if self._memory and self._memory.enabled and self._card_id:

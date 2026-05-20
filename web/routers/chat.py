@@ -79,7 +79,8 @@ async def _ensure_session(
         engine.user_role = db_session["user_role"]
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
 
-    print(f"[chat] Auto-resumed session {session_id} with {len(db_messages)} messages")
+    sp_len = len(engine.build_system_prompt()) if engine else 0
+    print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
     return sessions[session_id]
 
 
@@ -205,7 +206,10 @@ async def _do_chat_stream(
             print(f"[chat] Save user message failed (non-fatal): {exc}")
 
         try:
-            stream = session["engine"].chat_stream(msg)
+            engine = session["engine"]
+            sp_len = len(engine.build_system_prompt()) if engine else 0
+            print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
+            stream = engine.chat_stream(msg)
             while True:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
                 if done:
@@ -214,6 +218,8 @@ async def _do_chat_stream(
                 yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
 
             full_reply = "".join(tokens)
+            if not full_reply.strip():
+                print(f"[chat] WARNING: LLM returned empty response (history={len(engine.history) if engine else 0}, sp_len={sp_len})")
             rag_context = getattr(session["engine"], "_last_rag_context", "") or ""
 
             try:
