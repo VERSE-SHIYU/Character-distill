@@ -67,6 +67,7 @@ const useAppStore = create((set, get) => ({
   distillTokenCount: 0,
   distillStatus: '',
   distillIncrementalActive: false,
+  distillTasks: [],
   identifying: false,
 
   messages: [],
@@ -373,65 +374,77 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  distillCharacter: (textId, characterName, force = false) => {
-    set({ distilling: true, distillTokenCount: 0, distillStatus: '', distillIncrementalActive: false, error: null })
+  distillCharacter: async (textId, characterName, force = false) => {
+    set({ error: null })
+    try {
+      const data = await postJSON('/api/distill/start', { text_id: textId, character_name: characterName, force })
+      if (data.task_id) {
+        get().addDistillTask(data.task_id, textId, characterName)
+      } else {
+        set({ error: '蒸馏启动失败' })
+      }
+    } catch (err) {
+      set({ error: err.message })
+    }
+  },
 
-    const cancel = streamSSE(
-      '/api/distill/run_stream',
-      { text_id: textId, character_name: characterName, force },
-      (token) => {
-        set((s) => {
-          return { distillIncrementalActive: false, distillTokenCount: s.distillTokenCount + token.length, distillStatus: '正在蒸馏…' }
-        })
-      },
-      (payload) => {
-        set((s) => {
-          const card = { ...payload, id: payload.card_id, text_id: textId }
-          const exists = s.cards.some((c) => c.id === card.id)
-          return {
-            cards: exists ? s.cards : [card, ...s.cards],
-            currentCard: card,
-            sessionId: card.session_id,
-            messages: card.first_message
-              ? [{ role: 'char', content: card.first_message }]
-              : [],
-            distilling: false,
-            distillTokenCount: 0,
-            distillStatus: '',
-            distillIncrementalActive: false,
-          }
-        })
-      },
-      (err) => {
-        console.error('[store] distillCharacter stream failed:', err)
-        set({ error: err.message, distilling: false, distillTokenCount: 0, distillStatus: '', distillIncrementalActive: false })
-      },
-      (payload) => {
-        if (payload.status === 'analyzing') {
-          if (payload.current === 0) {
-            set({ distillStatus: `正在并发分析 ${payload.total} 个片段…`, distillIncrementalActive: true })
-          } else {
-            set({ distillStatus: `已完成 ${payload.current}/${payload.total} 个片段分析…`, distillIncrementalActive: true })
-          }
-          return
-        }
-        if (payload.status === 'merging') {
-          set({ distillStatus: '正在整合角色档案…', distillIncrementalActive: true })
-          return
-        }
-        if (payload.status === 'formatting') {
-          set({ distillStatus: '正在生成角色卡…', distillIncrementalActive: false })
-          return
-        }
-        const statusMap = {
-          identifying: '正在识别角色…',
-          compressing: '正在压缩…',
-        }
-        set({ distillStatus: statusMap[payload.status] || payload.status })
-      },
-    )
+  addDistillTask: (taskId, textId, characterName) => {
+    const task = { id: taskId, textId, character: characterName, status: 'queued', progress_pct: 0 }
+    set((s) => ({ distillTasks: [...s.distillTasks, task], distilling: true }))
 
-    return cancel
+    const poll = () => {
+      fetchWithTimeout(`/api/distill/task/${taskId}`)
+        .then((r) => r.json())
+        .then((payload) => {
+          set((s) => ({
+            distillTasks: s.distillTasks.map((t) =>
+              t.id === taskId
+                ? { ...t, status: payload.status, progress_pct: payload.progress_pct || 0, card_id: payload.card_id, message: payload.message }
+                : t,
+            ),
+          }))
+          if (payload.status === 'done') {
+            // Fetch the completed card
+            fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
+              .then((r) => r.json())
+              .then((cards) => {
+                const card = cards.find((c) => c.name === characterName)
+                if (card) {
+                  set((s) => {
+                    const exists = s.cards.some((c) => c.id === card.id)
+                    return {
+                      cards: exists ? s.cards : [{ ...card, id: card.card_id, text_id: textId }, ...s.cards],
+                      distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
+                        ? false : true,
+                    }
+                  })
+                }
+              })
+              .catch(() => {})
+            // Auto-remove after 5 seconds
+            setTimeout(() => get().removeDistillTask(taskId), 5000)
+            return
+          }
+          if (payload.status === 'error') {
+            set({ distilling: false })
+            setTimeout(() => get().removeDistillTask(taskId), 8000)
+            return
+          }
+          // Continue polling
+          setTimeout(poll, 3000)
+        })
+        .catch(() => {
+          setTimeout(poll, 3000)
+        })
+    }
+    setTimeout(poll, 1000)
+  },
+
+  removeDistillTask: (taskId) => {
+    set((s) => ({
+      distillTasks: s.distillTasks.filter((t) => t.id !== taskId),
+      distilling: s.distillTasks.length <= 1 ? false : s.distilling,
+    }))
   },
 
   viewCard: (card) => {

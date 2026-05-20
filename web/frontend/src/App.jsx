@@ -12,6 +12,7 @@ import HomePage from './components/HomePage'
 import VoicePanel from './components/VoicePanel'
 import LoginPage from './components/LoginPage'
 import AdminPanel from './components/AdminPanel'
+import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
   home: HomePage,
@@ -173,6 +174,7 @@ export default function App() {
       <main className="main-panel">
         <MainContent />
       </main>
+      <DistillTaskBar />
     </div>
   )
 }
