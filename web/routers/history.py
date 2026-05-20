@@ -158,15 +158,20 @@ async def resume_session(
         print(f"[history] Load messages for {session_id} failed: {exc}")
         raise HTTPException(500, f"Load messages failed: {exc}") from exc
 
-    # Convert DB roles to engine roles: char → assistant
+    # Convert DB roles to engine roles, skipping summary (not a valid LLM role)
     engine.history = [
         {
             "role": "assistant" if m["role"] == "char" else m["role"],
             "content": m["content"],
         }
         for m in db_messages
-        if m["role"] in ("user", "char", "summary")
+        if m["role"] in ("user", "char")
     ]
+    # Restore last_summary from DB
+    for m in reversed(db_messages):
+        if m["role"] == "summary":
+            engine.last_summary = m["content"]
+            break
 
     # 7. Restore user_role
     if db_session.get("user_role"):

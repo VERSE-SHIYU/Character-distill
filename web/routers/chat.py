@@ -68,13 +68,18 @@ async def _ensure_session(
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
-    # Reload history
+    # Reload history (skip summary — it's not a valid LLM role)
     db_messages = await storage.get_messages(session_id)
     engine.history = [
         {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
         for m in db_messages
-        if m["role"] in ("user", "char", "summary")
+        if m["role"] in ("user", "char")
     ]
+    # Restore last_summary from DB
+    for m in reversed(db_messages):
+        if m["role"] == "summary":
+            engine.last_summary = m["content"]
+            break
     if db_session.get("user_role"):
         engine.user_role = db_session["user_role"]
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
@@ -127,7 +132,10 @@ async def _do_chat(
         session["engine"].user_role = user_role
 
     try:
-        resp, rag_ctx = await asyncio.to_thread(session["engine"].chat, msg)
+        engine = session.get("engine")
+        sp_len = len(engine.build_system_prompt()) if engine else 0
+        print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
+        resp, rag_ctx = await asyncio.to_thread(engine.chat, msg)
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")
         raise HTTPException(500, f"Chat failed: {exc}") from exc
@@ -278,7 +286,8 @@ async def send_message(
     sessions: dict = Depends(get_sessions),
 ) -> Union[dict[str, Any], StreamingResponse]:
     """Send a message and get a JSON reply or SSE stream."""
-    if not sessions:
+    from deps import get_llm
+    if get_llm() is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
         return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)

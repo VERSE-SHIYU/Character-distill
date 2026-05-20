@@ -24,8 +24,8 @@ class LLMAdapter:
         Args:
             config_path: ``config.yaml`` 路径；默认使用仓库根目录下的 ``config.yaml``。
         """
-        load_dotenv()
         root = Path(__file__).resolve().parent.parent
+        load_dotenv(root / ".env")
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
         llm_cfg: dict[str, Any]
         try:
