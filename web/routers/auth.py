@@ -36,6 +36,8 @@ class UserResponse(BaseModel):
     id: str
     username: str
     created_at: str
+    is_admin: bool = False
+    is_disabled: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -146,4 +148,6 @@ def _user_response(user: dict[str, Any]) -> dict[str, Any]:
         "id": user["id"],
         "username": user["username"],
         "created_at": user.get("created_at", ""),
+        "is_admin": bool(user.get("is_admin", False)),
+        "is_disabled": bool(user.get("is_disabled", False)),
     }
