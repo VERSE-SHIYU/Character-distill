@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import useAppStore from '../store/useAppStore'
 
 function passwordStrength(pw) {
@@ -21,6 +21,8 @@ export default function LoginPage() {
 
   const login = useAppStore((s) => s.login)
   const register = useAppStore((s) => s.register)
+
+  const nameSuffix = useRef(Date.now())
 
   const strength = useMemo(() => passwordStrength(password), [password])
 
@@ -80,6 +82,7 @@ export default function LoginPage() {
             <input
               id="login-username"
               type="text"
+              name={tab === 'register' ? `reg-user-${nameSuffix.current}` : 'username'}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="请输入用户名"
@@ -92,6 +95,7 @@ export default function LoginPage() {
             <input
               id="login-password"
               type="password"
+              name={tab === 'register' ? `reg-pass-${nameSuffix.current}` : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入密码"
@@ -111,6 +115,7 @@ export default function LoginPage() {
                 <input
                   id="login-invite"
                   type="text"
+                  name={`invite-${nameSuffix.current}`}
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
                   placeholder="请输入邀请码"
