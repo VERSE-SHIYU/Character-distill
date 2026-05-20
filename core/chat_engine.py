@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from collections.abc import Generator
 from typing import Any
@@ -341,7 +342,10 @@ class ChatEngine:
                     "你是精确的JSON输出器，只输出JSON。",
                     [{"role": "user", "content": prompt}],
                 )
-                data = json.loads(reply.strip().strip("`").strip("json").strip())
+                m = re.search(r'\{.*\}', reply, re.DOTALL)
+                if not m:
+                    return
+                data = json.loads(m.group())
                 self._affinity = max(0, min(100, data.get("affinity", self._affinity)))
                 self._trust = max(0, min(100, data.get("trust", self._trust)))
                 self._mood = data.get("mood", self._mood)

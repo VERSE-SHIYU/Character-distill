@@ -50,7 +50,7 @@ class MemoryManager:
                 "llm": {
                     "provider": "openai",
                     "config": {
-                        "model": "deepseek-v4-pro",
+                        "model": "deepseek-chat",
                         "api_key": api_key,
                         "openai_base_url": "https://api.deepseek.com/v1",
                     },

@@ -285,6 +285,13 @@ async def _do_chat_stream(
             yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception as exc:
             print(f"[chat] Chat stream failed: {exc}")
+            # Roll back DB: delete the user message already saved before stream started
+            if msg_ids:
+                try:
+                    # msg_ids[0] is the user message id saved at the top of _event_generator
+                    await storage.delete_messages_after(session_id, msg_ids[0])
+                except Exception as rollback_exc:
+                    print(f"[chat] Rollback user message failed (non-fatal): {rollback_exc}")
             err_payload = {"error": str(exc)}
             yield f"data: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
 
@@ -346,20 +353,20 @@ async def revoke_messages(
         raise HTTPException(500, f"Revoke failed: {exc}") from exc
 
     # Rebuild in-memory engine.history and message_ids from remaining DB rows
-        try:
-            messages = await storage.get_messages(req.session_id)
-            engine = session.get("engine")
-            if engine:
-                engine.history = [
-                    {
-                        "role": "assistant" if m["role"] == "char" else m["role"],
-                        "content": m["content"],
-                    }
-                    for m in messages if m.get("role") != "summary"
-                ]
-            session["message_ids"] = [m["id"] for m in messages]
-        except Exception as exc:
-            print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
+    try:
+        messages = await storage.get_messages(req.session_id)
+        engine = session.get("engine")
+        if engine:
+            engine.history = [
+                {
+                    "role": "assistant" if m["role"] == "char" else m["role"],
+                    "content": m["content"],
+                }
+                for m in messages if m.get("role") != "summary"
+            ]
+        session["message_ids"] = [m["id"] for m in messages]
+    except Exception as exc:
+        print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
 
     return {"deleted": count}
 
