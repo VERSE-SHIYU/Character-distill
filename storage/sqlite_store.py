@@ -220,7 +220,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT id, filename, title, description, content, char_count, created_at
+                    SELECT id, filename, title, description, content, char_count, created_at, text_type
                     FROM texts
                     ORDER BY created_at DESC
                     """

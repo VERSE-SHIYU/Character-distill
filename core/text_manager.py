@@ -192,8 +192,10 @@ class TextManager:
             raise ValueError("Text content is empty after parsing")
 
         cleaned = parsed.strip()
-        if len(cleaned) > 1_000_000:
-            raise ValueError("文本超过 100 万字上限，请分卷上传")
+        max_chars = 2_000_000 if text_type == "chat" else 1_000_000
+        if len(cleaned) > max_chars:
+            limit_text = "200 万" if text_type == "chat" else "100 万"
+            raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
 
         text_id = uuid.uuid4().hex[:12]
         try:
@@ -238,8 +240,10 @@ class TextManager:
         if not parsed:
             raise ValueError("Text content is empty after parsing")
 
-        if len(parsed) > 1_000_000:
-            raise ValueError("文本超过 100 万字上限，请分卷上传")
+        max_chars = 2_000_000 if text_type == "chat" else 1_000_000
+        if len(parsed) > max_chars:
+            limit_text = "200 万" if text_type == "chat" else "100 万"
+            raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
 
         text_id = uuid.uuid4().hex[:12]
         try:

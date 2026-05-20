@@ -36,12 +36,15 @@ function charCountClass(n) {
   return 'chars-red'
 }
 
-function timeEstimate(n) {
+function timeEstimate(n, textType) {
   if (n == null) return null
+  const isChat = textType === 'chat'
+  const limit = isChat ? 2000000 : 1000000
+  const limitText = isChat ? '200 万' : '100 万'
   if (n <= 100000) return { icon: '⚡', text: '预计蒸馏 1-2 分钟' }
   if (n <= 500000) return { icon: '📖', text: '预计蒸馏 3-5 分钟' }
-  if (n <= 1000000) return { icon: '📚', text: '大文本，预计蒸馏 5-8 分钟' }
-  return null
+  if (n <= limit) return { icon: '📚', text: `大文本，预计蒸馏 5-8 分钟` }
+  return { icon: '❌', text: `超出 ${limitText} 字上限，请分卷上传` }
 }
 
 function formatTime(iso) {
@@ -175,7 +178,7 @@ export default function TextPanel() {
       <header className="panel-header">
         <h1 className="panel-title">文本管理</h1>
         <p className="panel-desc">
-          上传小说或剧本，用于角色识别与蒸馏
+          上传小说、剧本或聊天记录，用于角色识别与蒸馏
         </p>
       </header>
 
@@ -208,7 +211,7 @@ export default function TextPanel() {
           {isUploading ? '上传中…' : '选择文件上传'}
         </button>
         <p className="text-upload-meta">
-          {`支持 ${ALLOWED_EXT.join(' ')}，单文件最大 100MB`}
+          {`支持 ${ALLOWED_EXT.join(' ')} · 小说上限 100 万字 · 聊天记录上限 200 万字 · 单文件最大 100MB`}
         </p>
       </section>
 
@@ -246,14 +249,8 @@ export default function TextPanel() {
                       {t.title || t.filename || '未命名'}
                     </span>
                     {(() => {
-                      const est = timeEstimate(t.char_count)
-                      if (est) {
-                        return <span className="text-meta">{est.icon} {est.text}</span>
-                      }
-                      if (t.char_count > 1000000) {
-                        return <span className="text-meta chars-red">❌ 超出 100 万字上限</span>
-                      }
-                      return null
+                      const est = timeEstimate(t.char_count, t.text_type)
+                      return est ? <span className={`text-meta${t.char_count > (t.text_type === 'chat' ? 2000000 : 1000000) ? ' chars-red' : ''}`}>{est.icon} {est.text}</span> : null
                     })()}
                     {cardCounts[t.id] > 0 && (
                       <span className="text-list-badge">{cardCounts[t.id]} 个角色</span>
