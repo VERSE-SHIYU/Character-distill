@@ -135,6 +135,19 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
         </button>
       )}
 
+      {isVisible && authUser?.is_admin && (
+        <nav className="sidebar-nav" style={{marginTop: 0, paddingTop: 0}}>
+          <button
+            type="button"
+            className={`sidebar-item${currentView === 'admin' ? ' active' : ''}`}
+            onClick={() => setView('admin')}
+          >
+            <span className="sidebar-item-icon">{'⚙'}</span>
+            <span className="sidebar-item-label">管理后台</span>
+          </button>
+        </nav>
+      )}
+
       {isVisible && <ThemeSwitcher />}
 
       {isVisible && authUser && (

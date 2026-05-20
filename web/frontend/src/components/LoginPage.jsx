@@ -5,6 +5,7 @@ export default function LoginPage() {
   const [tab, setTab] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -18,12 +19,16 @@ export default function LoginPage() {
       setError('请填写用户名和密码')
       return
     }
+    if (tab === 'register' && !inviteCode.trim()) {
+      setError('请填写邀请码')
+      return
+    }
     setLoading(true)
     try {
       if (tab === 'login') {
         await login(username.trim(), password)
       } else {
-        await register(username.trim(), password)
+        await register(username.trim(), password, inviteCode.trim())
       }
     } catch (err) {
       setError(err.message || '操作失败')
@@ -77,6 +82,20 @@ export default function LoginPage() {
               autoComplete={tab === 'login' ? 'current-password' : 'new-password'}
             />
           </div>
+
+          {tab === 'register' && (
+            <div className="login-field">
+              <label htmlFor="login-invite">邀请码</label>
+              <input
+                id="login-invite"
+                type="text"
+                value={inviteCode}
+                onChange={(e) => setInviteCode(e.target.value)}
+                placeholder="请输入邀请码"
+                autoComplete="off"
+              />
+            </div>
+          )}
 
           {error && <div className="login-error">{error}</div>}
 

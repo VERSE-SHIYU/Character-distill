@@ -13,8 +13,8 @@ const useAppStore = create((set, get) => ({
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },
 
-  register: async (username, password) => {
-    const data = await postJSON('/api/auth/register', { username, password })
+  register: async (username, password, inviteCode = '') => {
+    const data = await postJSON('/api/auth/register', { username, password, invite_code: inviteCode })
     setToken(data.access_token)
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },

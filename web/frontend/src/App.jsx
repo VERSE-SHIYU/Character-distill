@@ -11,6 +11,7 @@ import SettingsPanel from './components/SettingsPanel'
 import HomePage from './components/HomePage'
 import VoicePanel from './components/VoicePanel'
 import LoginPage from './components/LoginPage'
+import AdminPanel from './components/AdminPanel'
 
 const PANELS = {
   home: HomePage,
@@ -21,6 +22,7 @@ const PANELS = {
   settings: SettingsPanel,
   voice: VoicePanel,
   login: LoginPage,
+  admin: AdminPanel,
 }
 
 function MainContent() {

@@ -138,3 +138,17 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
 
   return () => controller.abort()
 }
+
+// ---- Admin API ----
+
+export const adminAPI = {
+  listUsers: () => postJSON('/api/admin/users', {}),
+
+  disableUser: (userId) => postJSON(`/api/admin/users/${userId}/disable`, {}),
+
+  enableUser: (userId) => postJSON(`/api/admin/users/${userId}/enable`, {}),
+
+  generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
+
+  listInvites: () => postJSON('/api/admin/invite/list', {}),
+}
