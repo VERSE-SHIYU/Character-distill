@@ -476,9 +476,10 @@ const useAppStore = create((set, get) => ({
       ? JSON.parse(card.card_json)
       : card.card_json || card
 
-    // Always create a fresh session — stale session_id from a previous server
-    // instance would cause 404 "Session not found" in chat.
-    set({ sending: true })
+    // Switch to chat view immediately so the user sees the page without waiting
+    // for start_session API to return. Placeholder "…" replaced when session is ready.
+    set({ sending: true, currentView: 'chat', messages: [{ role: 'char', content: '…' }] })
+
     let sessionId = card.session_id || null
     try {
       if (!sessionId) {
@@ -493,7 +494,6 @@ const useAppStore = create((set, get) => ({
         })
         sessionId = result.session_id
       }
-      set({ sending: false })
     } catch (err) {
       console.error('[store] startChat create session failed:', err)
       set({ error: err.message, sending: false })
@@ -507,10 +507,10 @@ const useAppStore = create((set, get) => ({
     set({
       currentCard: { ...card, session_id: sessionId },
       sessionId,
+      sending: false,
       messages: data.first_message
         ? [{ role: 'char', content: data.first_message }]
         : [],
-      currentView: 'chat',
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
     })
