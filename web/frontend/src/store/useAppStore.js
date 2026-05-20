@@ -229,7 +229,7 @@ const useAppStore = create((set, get) => ({
   uploadProgress: null,
   setUploadProgress: (val) => set({ uploadProgress: val }),
 
-  uploadText: async (file, title, description) => {
+  uploadText: async (file, title, description, textType = 'story') => {
     const MAX_SIZE = 100 * 1024 * 1024 // 100MB
     if (file.size > MAX_SIZE) {
       set({ error: `文件过大（${(file.size / 1024 / 1024).toFixed(1)}MB），最大支持 100MB` })
@@ -242,6 +242,7 @@ const useAppStore = create((set, get) => ({
       formData.append('file', file)
       formData.append('title', title || '')
       formData.append('description', description || '')
+      formData.append('text_type', textType || 'story')
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {

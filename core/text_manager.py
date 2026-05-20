@@ -191,9 +191,13 @@ class TextManager:
         if not parsed or not parsed.strip():
             raise ValueError("Text content is empty after parsing")
 
+        cleaned = parsed.strip()
+        if len(cleaned) > 1_000_000:
+            raise ValueError("文本超过 100 万字上限，请分卷上传")
+
         text_id = uuid.uuid4().hex[:12]
         try:
-            await self._storage.save_text(text_id, filename, parsed.strip(), title, description, text_type)
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -233,6 +237,9 @@ class TextManager:
         parsed = self._parse_content(filename, content).strip()
         if not parsed:
             raise ValueError("Text content is empty after parsing")
+
+        if len(parsed) > 1_000_000:
+            raise ValueError("文本超过 100 万字上限，请分卷上传")
 
         text_id = uuid.uuid4().hex[:12]
         try:

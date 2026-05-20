@@ -28,6 +28,22 @@ function formatCount(n) {
   return Number(n).toLocaleString('zh-CN')
 }
 
+function charCountClass(n) {
+  if (n == null) return ''
+  if (n <= 100000) return 'chars-green'
+  if (n <= 500000) return 'chars-blue'
+  if (n <= 1000000) return 'chars-orange'
+  return 'chars-red'
+}
+
+function timeEstimate(n) {
+  if (n == null) return null
+  if (n <= 100000) return { icon: '⚡', text: '预计蒸馏 1-2 分钟' }
+  if (n <= 500000) return { icon: '📖', text: '预计蒸馏 3-5 分钟' }
+  if (n <= 1000000) return { icon: '📚', text: '大文本，预计蒸馏 5-8 分钟' }
+  return null
+}
+
 function formatTime(iso) {
   if (!iso) return '—'
   try {
@@ -68,6 +84,7 @@ export default function TextPanel() {
   const [metaTitle, setMetaTitle] = useState('')
   const [metaDesc, setMetaDesc] = useState('')
   const [metaTitleError, setMetaTitleError] = useState('')
+  const [textType, setTextType] = useState('story')
 
   useEffect(() => {
     loadTexts()
@@ -101,6 +118,7 @@ export default function TextPanel() {
       setMetaTitle('')
       setMetaDesc('')
       setMetaTitleError('')
+      setTextType('story')
     },
     [],
   )
@@ -114,7 +132,7 @@ export default function TextPanel() {
     setUploading(true)
     setPendingFile(null)
     try {
-      await uploadText(pendingFile, metaTitle.trim(), metaDesc.trim())
+      await uploadText(pendingFile, metaTitle.trim(), metaDesc.trim(), textType)
     } catch (e) {
       setLocalError(e.message || '上传失败')
     } finally {
@@ -127,6 +145,7 @@ export default function TextPanel() {
     setMetaTitle('')
     setMetaDesc('')
     setMetaTitleError('')
+    setTextType('story')
   }, [])
 
   const onDrop = (e) => {
@@ -226,15 +245,22 @@ export default function TextPanel() {
                     <span className="text-list-filename" title={t.title || t.filename}>
                       {t.title || t.filename || '未命名'}
                     </span>
-                    {t.char_count > 80000 && (
-                      <span className="text-meta">大文本蒸馏可能需要较长时间</span>
-                    )}
+                    {(() => {
+                      const est = timeEstimate(t.char_count)
+                      if (est) {
+                        return <span className="text-meta">{est.icon} {est.text}</span>
+                      }
+                      if (t.char_count > 1000000) {
+                        return <span className="text-meta chars-red">❌ 超出 100 万字上限</span>
+                      }
+                      return null
+                    })()}
                     {cardCounts[t.id] > 0 && (
                       <span className="text-list-badge">{cardCounts[t.id]} 个角色</span>
                     )}
                   </div>
                   <div className="text-list-meta">
-                    <span className="text-list-chars">
+                    <span className={`text-list-chars ${charCountClass(t.char_count)}`}>
                       {`${formatCount(t.char_count)} 字`}
                     </span>
                     <span className="text-list-time">
@@ -334,6 +360,28 @@ export default function TextPanel() {
                 onChange={(e) => setMetaDesc(e.target.value)}
               />
             </label>
+
+            <div className="modal-field">
+              <span className="modal-label">文本类型</span>
+              <div className="text-type-picker">
+                <button
+                  type="button"
+                  className={`text-type-option${textType === 'story' ? ' active' : ''}`}
+                  onClick={() => setTextType('story')}
+                >
+                  <span className="text-type-icon">{'\u{1F4D6}'}</span>
+                  <span className="text-type-label">小说/故事/剧本</span>
+                </button>
+                <button
+                  type="button"
+                  className={`text-type-option${textType === 'chat' ? ' active' : ''}`}
+                  onClick={() => setTextType('chat')}
+                >
+                  <span className="text-type-icon">{'\u{1F4AC}'}</span>
+                  <span className="text-type-label">聊天记录</span>
+                </button>
+              </div>
+            </div>
 
             <div className="modal-actions">
               <button
