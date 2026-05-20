@@ -58,7 +58,27 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def delete_session(self, id: str) -> bool:
-        """Delete a session record by ID."""
+        """Soft-delete a session record by ID."""
+
+    @abstractmethod
+    async def clear_all_sessions(self, user_id: str = "") -> int:
+        """Soft-delete all non-deleted sessions."""
+
+    @abstractmethod
+    async def list_trash_sessions(self, user_id: str = "") -> list[dict]:
+        """List soft-deleted sessions (in trash)."""
+
+    @abstractmethod
+    async def restore_session(self, id: str) -> bool:
+        """Restore a soft-deleted session."""
+
+    @abstractmethod
+    async def purge_trash(self, user_id: str = "") -> int:
+        """Permanently delete all soft-deleted sessions."""
+
+    @abstractmethod
+    async def hard_delete_session(self, id: str) -> bool:
+        """Permanently delete one session (hard delete)."""
 
     @abstractmethod
     async def save_message(

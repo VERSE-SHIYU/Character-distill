@@ -73,6 +73,7 @@ export default function HistoryPanel() {
   const [collapsedGroups, setCollapsedGroups] = useState({})
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
+  const [trashMode, setTrashMode] = useState(false)
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -114,27 +115,35 @@ export default function HistoryPanel() {
     setter(true)
     setError(null)
     try {
-      const params = new URLSearchParams({
-        page: String(page),
-        page_size: String(PAGE_SIZE),
-      })
-      if (debouncedKeyword.trim()) params.set('keyword', debouncedKeyword.trim())
-      if (character) params.set('character', character)
-      if (textFilter) params.set('text_id', textFilter)
+      if (trashMode) {
+        // Trash mode: simple list, no filters/pagination
+        const res = await fetchWithTimeout('/api/history/trash')
+        const data = await res.json()
+        setItems(Array.isArray(data) ? data : [])
+        setHasMore(false)
+      } else {
+        const params = new URLSearchParams({
+          page: String(page),
+          page_size: String(PAGE_SIZE),
+        })
+        if (debouncedKeyword.trim()) params.set('keyword', debouncedKeyword.trim())
+        if (character) params.set('character', character)
+        if (textFilter) params.set('text_id', textFilter)
 
-      const res = await fetchWithTimeout(`/api/history/list?${params}`)
-      const data = await res.json()
-      const newItems = data.items || []
-      if (append) {
-        setItems((prev) => [...prev, ...newItems])
-      } else {
-        setItems(newItems)
-      }
-      const total = data.total ?? 0
-      if (append) {
-        setHasMore(newItems.length === PAGE_SIZE && (items.length + newItems.length) < total)
-      } else {
-        setHasMore(newItems.length === PAGE_SIZE && newItems.length < total)
+        const res = await fetchWithTimeout(`/api/history/list?${params}`)
+        const data = await res.json()
+        const newItems = data.items || []
+        if (append) {
+          setItems((prev) => [...prev, ...newItems])
+        } else {
+          setItems(newItems)
+        }
+        const total = data.total ?? 0
+        if (append) {
+          setHasMore(newItems.length === PAGE_SIZE && (items.length + newItems.length) < total)
+        } else {
+          setHasMore(newItems.length === PAGE_SIZE && newItems.length < total)
+        }
       }
     } catch (err) {
       console.error('[HistoryPanel] load failed:', err)
@@ -142,7 +151,7 @@ export default function HistoryPanel() {
     } finally {
       setter(false)
     }
-  }, [debouncedKeyword, character, textFilter])
+  }, [debouncedKeyword, character, textFilter, trashMode])
 
   // Reset + load first page on filter change
   useEffect(() => {
@@ -151,8 +160,9 @@ export default function HistoryPanel() {
     loadPage(1, false)
   }, [loadPage])
 
-  // Infinite scroll handler
+  // Infinite scroll handler (normal mode only)
   useEffect(() => {
+    if (trashMode) return
     const el = listRef.current
     if (!el) return
 
@@ -167,7 +177,7 @@ export default function HistoryPanel() {
 
     el.addEventListener('scroll', handleScroll, { passive: true })
     return () => el.removeEventListener('scroll', handleScroll)
-  }, [loadingMore, hasMore, loadPage])
+  }, [loadingMore, hasMore, loadPage, trashMode])
 
   const openDetail = async (sessionId) => {
     setDetailLoading(true)
@@ -185,7 +195,7 @@ export default function HistoryPanel() {
   }
 
   const handleDelete = async (sessionId) => {
-    if (!window.confirm('确定删除该会话？此操作不可恢复。')) return
+    if (!window.confirm('确定删除该会话？将移入回收站。')) return
     try {
       await fetchWithTimeout(`/api/history/${sessionId}`, { method: 'DELETE' })
       if (detail?.session?.id === sessionId) setDetail(null)
@@ -196,6 +206,28 @@ export default function HistoryPanel() {
     }
   }
 
+  const handleRestore = async (sessionId) => {
+    try {
+      await fetchWithTimeout(`/api/history/${sessionId}/restore`, { method: 'POST' })
+      setItems((prev) => prev.filter((it) => it.id !== sessionId))
+    } catch (err) {
+      console.error('[HistoryPanel] restore failed:', err)
+      setError(err.message || '恢复失败')
+    }
+  }
+
+  const handlePurge = async (sessionId) => {
+    if (!window.confirm('确定彻底删除该会话？此操作不可恢复。')) return
+    try {
+      await fetchWithTimeout(`/api/history/${sessionId}?permanent=true`, { method: 'DELETE' })
+      setItems((prev) => prev.filter((it) => it.id !== sessionId))
+      if (detail?.session?.id === sessionId) setDetail(null)
+    } catch (err) {
+      console.error('[HistoryPanel] purge failed:', err)
+      setError(err.message || '彻底删除失败')
+    }
+  }
+
   const handleContinue = async (sessionId) => {
     try {
       await resumeSession(sessionId)
@@ -203,14 +235,25 @@ export default function HistoryPanel() {
   }
 
   const handleClearAll = async () => {
-    if (!window.confirm('确定清空全部历史记录？此操作不可恢复。')) return
+    if (!window.confirm('确定将所有历史记录移入回收站？')) return
     try {
       await fetchWithTimeout('/api/history/clear-all', { method: 'POST' })
       setItems([])
       setDetail(null)
     } catch (err) {
       console.error('[HistoryPanel] clear-all failed:', err)
-      setError(err.message || '清空失败')
+      setError(err.message || '操作失败')
+    }
+  }
+
+  const handlePurgeTrash = async () => {
+    if (!window.confirm('确定清空回收站？所有记录将被彻底删除，不可恢复。')) return
+    try {
+      await fetchWithTimeout('/api/history/trash/purge', { method: 'DELETE' })
+      setItems([])
+    } catch (err) {
+      console.error('[HistoryPanel] purge trash failed:', err)
+      setError(err.message || '清空回收站失败')
     }
   }
 
@@ -224,7 +267,7 @@ export default function HistoryPanel() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return
-    if (!window.confirm(`确定删除选中的 ${selectedIds.size} 条会话？`)) return
+    if (!window.confirm(`确定将选中的 ${selectedIds.size} 条会话移入回收站？`)) return
     for (const id of selectedIds) {
       try {
         await fetchWithTimeout(`/api/history/${id}`, { method: 'DELETE' })
@@ -241,15 +284,37 @@ export default function HistoryPanel() {
     setCollapsedGroups((prev) => ({ ...prev, [textId]: !prev[textId] }))
   }
 
+  const switchTrashMode = (on) => {
+    setTrashMode(on)
+    setSelectMode(false)
+    setSelectedIds(new Set())
+    setDetail(null)
+    setError(null)
+    if (on) {
+      // Load trash immediately
+      setLoading(true)
+      fetchWithTimeout('/api/history/trash')
+        .then((res) => res.json())
+        .then((data) => { setItems(Array.isArray(data) ? data : []); setHasMore(false) })
+        .catch((err) => setError(err.message || '加载回收站失败'))
+        .finally(() => setLoading(false))
+    } else {
+      setItems([])
+      pageRef.current = 1
+    }
+  }
+
   if (detail) {
     return (
       <HistoryDetail
         data={detail}
         loading={detailLoading}
         resumeLoading={resumeLoading}
+        trashMode={trashMode}
         onBack={() => setDetail(null)}
         onContinue={() => handleContinue(detail.session.id)}
-        onDelete={() => handleDelete(detail.session.id)}
+        onDelete={() => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id)}
+        onRestore={() => handleRestore(detail.session.id)}
         onExport={(fmt) => downloadExport(detail.session.id, fmt)}
       />
     )
@@ -259,62 +324,85 @@ export default function HistoryPanel() {
     <div className="history-panel panel">
       <header className="panel-header">
         <h1 className="panel-title">历史记录</h1>
-        <p className="panel-desc">搜索、筛选并管理过往对话</p>
+        <p className="panel-desc">{trashMode ? '回收站 — 已删除的会话' : '搜索、筛选并管理过往对话'}</p>
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       <div className="history-toolbar">
-        <input
-          type="search"
-          className="history-search"
-          placeholder="搜索消息关键词…"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-        />
-        <select
-          className="history-filter"
-          value={textFilter}
-          onChange={(e) => setTextFilter(e.target.value)}
-        >
-          <option value="">全部文本</option>
-          {texts.map((t) => (
-            <option key={t.id} value={t.id}>{t.filename}</option>
-          ))}
-        </select>
-        <select
-          className="history-filter"
-          value={character}
-          onChange={(e) => setCharacter(e.target.value)}
-        >
-          <option value="">全部角色</option>
-          {characterOptions.map((name) => (
-            <option key={name} value={name}>{name}</option>
-          ))}
-        </select>
+        {/* Trash toggle */}
         <button
           type="button"
-          className="btn-secondary btn-sm"
-          onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()) }}
+          className={`btn-secondary btn-sm${trashMode ? ' active' : ''}`}
+          onClick={() => switchTrashMode(!trashMode)}
         >
-          {selectMode ? '取消' : '多选'}
+          {trashMode ? '← 返回列表' : '回收站'}
         </button>
-        {selectMode && selectedIds.size > 0 && (
-          <button
-            type="button"
-            className="btn-danger-sm"
-            onClick={handleBatchDelete}
-          >
-            删除 ({selectedIds.size})
-          </button>
+
+        {!trashMode && (
+          <>
+            <input
+              type="search"
+              className="history-search"
+              placeholder="搜索消息关键词…"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+            <select
+              className="history-filter"
+              value={textFilter}
+              onChange={(e) => setTextFilter(e.target.value)}
+            >
+              <option value="">全部文本</option>
+              {texts.map((t) => (
+                <option key={t.id} value={t.id}>{t.filename}</option>
+              ))}
+            </select>
+            <select
+              className="history-filter"
+              value={character}
+              onChange={(e) => setCharacter(e.target.value)}
+            >
+              <option value="">全部角色</option>
+              {characterOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => { setSelectMode(!selectMode); setSelectedIds(new Set()) }}
+            >
+              {selectMode ? '取消' : '多选'}
+            </button>
+            {selectMode && selectedIds.size > 0 && (
+              <button
+                type="button"
+                className="btn-danger-sm"
+                onClick={handleBatchDelete}
+              >
+                移入回收站 ({selectedIds.size})
+              </button>
+            )}
+            {!selectMode && items.length > 0 && (
+              <button
+                type="button"
+                className="btn-danger-sm"
+                onClick={handleClearAll}
+              >
+                移入回收站
+              </button>
+            )}
+          </>
         )}
-        {!selectMode && items.length > 0 && (
+
+        {trashMode && items.length > 0 && (
           <button
             type="button"
             className="btn-danger-sm"
-            onClick={handleClearAll}
+            onClick={handlePurgeTrash}
           >
-            清空全部
+            清空回收站
           </button>
         )}
       </div>
@@ -322,7 +410,7 @@ export default function HistoryPanel() {
       {loading ? (
         <Loading text="加载会话…" />
       ) : items.length === 0 ? (
-        <p className="history-empty">暂无匹配的会话</p>
+        <p className="history-empty">{trashMode ? '回收站为空' : '暂无匹配的会话'}</p>
       ) : (
         <div className="history-grouped" ref={listRef}>
           {Object.entries(groupedItems).map(([textId, sessionList]) => {
@@ -332,13 +420,13 @@ export default function HistoryPanel() {
               <div key={textId} className="history-group">
                 <h3 className="history-group-title" onClick={() => toggleGroup(textId)}>
                   <span className={`history-group-arrow${collapsedGroups[textId] ? ' collapsed' : ''}`}>{collapsedGroups[textId] ? '▶' : '▼'}</span>
-                  {'\u{1F4D6}'} {textName}
+                  {'📖'} {textName}
                 </h3>
                 {!collapsedGroups[textId] && (
                 <ul className="history-list">
                   {sessionList.map((it) => (
                     <li key={it.id} className={`history-swipe-wrapper${selectMode ? ' select-mode' : ''}`}>
-                      {selectMode && (
+                      {selectMode && !trashMode && (
                         <input
                           type="checkbox"
                           className="history-checkbox"
@@ -348,16 +436,41 @@ export default function HistoryPanel() {
                         />
                       )}
                       <div className="history-swipe-actions">
-                        <button
-                          type="button"
-                          className="history-swipe-delete"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (window.confirm('确定删除该会话？')) handleDelete(it.id)
-                          }}
-                        >
-                          删除
-                        </button>
+                        {trashMode ? (
+                          <>
+                            <button
+                              type="button"
+                              className="history-swipe-restore"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleRestore(it.id)
+                              }}
+                            >
+                              恢复
+                            </button>
+                            <button
+                              type="button"
+                              className="history-swipe-delete"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (window.confirm('确定彻底删除？不可恢复。')) handlePurge(it.id)
+                              }}
+                            >
+                              彻底删除
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="history-swipe-delete"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (window.confirm('确定移入回收站？')) handleDelete(it.id)
+                            }}
+                          >
+                            移入回收站
+                          </button>
+                        )}
                       </div>
                       <button
                         type="button"
@@ -392,7 +505,7 @@ export default function HistoryPanel() {
           {loadingMore && (
             <Loading text="加载更多…" />
           )}
-          {!hasMore && items.length > 0 && (
+          {!hasMore && items.length > 0 && !trashMode && (
             <p className="history-end">已加载全部会话</p>
           )}
         </div>
@@ -401,7 +514,7 @@ export default function HistoryPanel() {
   )
 }
 
-function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, resumeLoading }) {
+function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore, onExport, resumeLoading, trashMode }) {
   const session = data.session || {}
   const messages = data.messages || []
   const charName = session.character_name || '?'
@@ -413,30 +526,48 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, 
           ← 返回列表
         </button>
         <div className="history-detail-actions">
-          <button type="button" className="btn-primary history-action-sm" disabled={resumeLoading} onClick={onContinue}>
-            {resumeLoading ? '加载中…' : '继续对话'}
-          </button>
-          <button
-            type="button"
-            className="history-action-sm history-action-ghost"
-            onClick={() => onExport('json')}
-          >
-            导出 JSON
-          </button>
-          <button
-            type="button"
-            className="history-action-sm history-action-ghost"
-            onClick={() => onExport('txt')}
-          >
-            导出 TXT
-          </button>
-          <button
-            type="button"
-            className="history-action-sm history-action-danger"
-            onClick={onDelete}
-          >
-            删除
-          </button>
+          {!trashMode && (
+            <>
+              <button type="button" className="btn-primary history-action-sm" disabled={resumeLoading} onClick={onContinue}>
+                {resumeLoading ? '加载中…' : '继续对话'}
+              </button>
+              <button
+                type="button"
+                className="history-action-sm history-action-ghost"
+                onClick={() => onExport('json')}
+              >
+                导出 JSON
+              </button>
+              <button
+                type="button"
+                className="history-action-sm history-action-ghost"
+                onClick={() => onExport('txt')}
+              >
+                导出 TXT
+              </button>
+              <button
+                type="button"
+                className="history-action-sm history-action-danger"
+                onClick={onDelete}
+              >
+                移入回收站
+              </button>
+            </>
+          )}
+          {trashMode && (
+            <>
+              <button type="button" className="btn-primary history-action-sm" onClick={onRestore}>
+                恢复
+              </button>
+              <button
+                type="button"
+                className="history-action-sm history-action-danger"
+                onClick={onDelete}
+              >
+                彻底删除
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -464,7 +595,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onExport, 
               return (
                 <div key={msg.id ?? i} className="chat-summary history-readonly-summary">
                   <div className="chat-summary-toggle" style={{ cursor: 'default' }}>
-                    <span>{'\u{1F4CB}'} 对话摘要</span>
+                    <span>{'📋'} 对话摘要</span>
                   </div>
                   <div className="chat-summary-body">{msg.content}</div>
                 </div>

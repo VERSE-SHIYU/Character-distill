@@ -1,4 +1,4 @@
-"""History: list sessions, get conversation, delete, export."""
+"""History: list sessions, get conversation, delete, export, trash."""
 
 from __future__ import annotations
 
@@ -23,6 +23,8 @@ class ResumeRequest(BaseModel):
     pass
 
 
+# ---- Static-path routes first (before /{session_id} parameterized routes) ----
+
 @router.get("/list")
 async def list_sessions(
     request: Request,
@@ -41,6 +43,52 @@ async def list_sessions(
         print(f"[history] List sessions failed: {exc}")
         raise HTTPException(500, f"List sessions failed: {exc}") from exc
 
+
+@router.get("/trash")
+async def list_trash(
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List soft-deleted sessions (trash bin)."""
+    try:
+        user_id = request.state.user.get("id", "")
+        return await storage.list_trash_sessions(user_id)
+    except Exception as exc:
+        print(f"[history] List trash failed: {exc}")
+        raise HTTPException(500, f"List trash failed: {exc}") from exc
+
+
+@router.delete("/trash/purge")
+async def purge_trash(
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Permanently delete all sessions in trash."""
+    try:
+        user_id = request.state.user.get("id", "")
+        count = await storage.purge_trash(user_id)
+        return {"ok": True, "purged": count}
+    except Exception as exc:
+        print(f"[history] Purge trash failed: {exc}")
+        raise HTTPException(500, f"Purge trash failed: {exc}") from exc
+
+
+@router.post("/clear-all")
+async def clear_all_sessions(
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Soft-delete all sessions (move to trash)."""
+    try:
+        user_id = request.state.user.get("id", "")
+        count = await storage.clear_all_sessions(user_id)
+        return {"ok": True, "deleted": count}
+    except Exception as exc:
+        print(f"[history] Clear all sessions failed: {exc}")
+        raise HTTPException(500, f"Clear all sessions failed: {exc}") from exc
+
+
+# ---- Parameterized routes (/{session_id}/...) ----
 
 @router.get("/{session_id}/export")
 async def export_session(
@@ -194,27 +242,34 @@ async def resume_session(
     return {"session": db_session, "messages": frontend_messages}
 
 
-@router.post("/clear-all")
-async def clear_all_sessions(
+@router.post("/{session_id}/restore")
+async def restore_session(
+    session_id: str,
     storage: SQLiteStore = Depends(get_storage),
-) -> dict[str, Any]:
-    """Delete all sessions and messages."""
+) -> dict[str, bool]:
+    """Restore a soft-deleted session from trash."""
     try:
-        count = await storage.clear_all_sessions()
-        return {"ok": True, "deleted": count}
+        ok = await storage.restore_session(session_id)
     except Exception as exc:
-        print(f"[history] Clear all sessions failed: {exc}")
-        raise HTTPException(500, f"Clear all sessions failed: {exc}") from exc
+        print(f"[history] Restore session failed: {exc}")
+        raise HTTPException(500, f"Restore session failed: {exc}") from exc
+    if not ok:
+        raise HTTPException(404, "Session not found in trash")
+    return {"ok": True}
 
 
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
+    permanent: bool = Query(False, description="If true, hard-delete permanently"),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
-    """Delete a session and all its messages."""
+    """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
     try:
-        ok = await storage.delete_session(session_id)
+        if permanent:
+            ok = await storage.hard_delete_session(session_id)
+        else:
+            ok = await storage.delete_session(session_id)
     except Exception as exc:
         print(f"[history] Delete session failed: {exc}")
         raise HTTPException(500, f"Delete session failed: {exc}") from exc

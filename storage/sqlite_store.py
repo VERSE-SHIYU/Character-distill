@@ -177,6 +177,17 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Admin migration failed: {exc}")
 
+                    # Run 014_sessions_deleted_at migration (ALTER TABLE may fail if column exists)
+                    deleted_at_migration_path = migrations_dir / "014_sessions_deleted_at.sql"
+                    if deleted_at_migration_path.exists():
+                        try:
+                            deleted_at_sql = deleted_at_migration_path.read_text(encoding="utf-8")
+                            await conn.executescript(deleted_at_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Deleted_at migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -507,7 +518,7 @@ class SQLiteStore(StorageBase):
         safe_page_size = max(page_size, 1)
         offset = (safe_page - 1) * safe_page_size
 
-        where_clauses: list[str] = []
+        where_clauses: list[str] = ["s.deleted_at IS NULL"]
         params: list[Any] = []
         if user_id:
             where_clauses.append("s.user_id = ?")
@@ -592,25 +603,118 @@ class SQLiteStore(StorageBase):
             raise
 
     async def delete_session(self, id: str) -> bool:
-        """Delete one session."""
+        """Soft-delete one session (set deleted_at timestamp)."""
         try:
+            from datetime import datetime
+            now = datetime.now().isoformat()
             async with await self._connect() as conn:
-                cursor = await conn.execute("DELETE FROM sessions WHERE id = ?", (id,))
+                cursor = await conn.execute(
+                    "UPDATE sessions SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+                    (now, id),
+                )
                 await conn.commit()
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete session failed: {exc}")
             raise
 
-    async def clear_all_sessions(self) -> int:
-        """Delete all sessions and their messages. Returns count of deleted sessions."""
+    async def clear_all_sessions(self, user_id: str = "") -> int:
+        """Soft-delete all non-deleted sessions. Returns count of affected sessions."""
         try:
+            from datetime import datetime
+            now = datetime.now().isoformat()
             async with await self._connect() as conn:
-                cursor = await conn.execute("DELETE FROM sessions")
+                if user_id:
+                    cursor = await conn.execute(
+                        "UPDATE sessions SET deleted_at = ? WHERE deleted_at IS NULL AND user_id = ?",
+                        (now, user_id),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        "UPDATE sessions SET deleted_at = ? WHERE deleted_at IS NULL",
+                        (now,),
+                    )
                 await conn.commit()
                 return cursor.rowcount
         except Exception as exc:
             print(f"[SQLiteStore] Clear all sessions failed: {exc}")
+            raise
+
+    async def list_trash_sessions(self, user_id: str = "") -> list[dict]:
+        """List soft-deleted sessions (in trash)."""
+        try:
+            async with await self._connect() as conn:
+                if user_id:
+                    cursor = await conn.execute(
+                        """
+                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                               c.text_id, c.name AS character_name
+                        FROM sessions s
+                        JOIN cards c ON s.card_id = c.id
+                        WHERE s.deleted_at IS NOT NULL AND s.user_id = ?
+                        ORDER BY s.deleted_at DESC
+                        """,
+                        (user_id,),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """
+                        SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.deleted_at,
+                               c.text_id, c.name AS character_name
+                        FROM sessions s
+                        JOIN cards c ON s.card_id = c.id
+                        WHERE s.deleted_at IS NOT NULL
+                        ORDER BY s.deleted_at DESC
+                        """
+                    )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List trash sessions failed: {exc}")
+            raise
+
+    async def restore_session(self, id: str) -> bool:
+        """Restore a soft-deleted session (clear deleted_at)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE sessions SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL",
+                    (id,),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Restore session failed: {exc}")
+            raise
+
+    async def purge_trash(self, user_id: str = "") -> int:
+        """Permanently delete all soft-deleted sessions. Returns count."""
+        try:
+            async with await self._connect() as conn:
+                if user_id:
+                    cursor = await conn.execute(
+                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL AND user_id = ?",
+                        (user_id,),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        "DELETE FROM sessions WHERE deleted_at IS NOT NULL",
+                    )
+                await conn.commit()
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Purge trash failed: {exc}")
+            raise
+
+    async def hard_delete_session(self, id: str) -> bool:
+        """Permanently delete one session (hard delete, for trash purge of single item)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute("DELETE FROM sessions WHERE id = ?", (id,))
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Hard delete session failed: {exc}")
             raise
 
     async def update_session_voice_ref(self, card_id: str, voice_ref_json: str) -> None:

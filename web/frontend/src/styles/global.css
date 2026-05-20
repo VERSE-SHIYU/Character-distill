@@ -2815,6 +2815,22 @@ body {
   background: #dc2626;
 }
 
+.history-swipe-restore {
+  padding: 0 20px;
+  background: #22c55e;
+  color: white;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 12px 0 0 12px;
+  transition: background 0.15s ease;
+}
+
+.history-swipe-restore:hover {
+  background: #16a34a;
+}
+
 .history-list {
   list-style: none;
   display: flex;
