@@ -970,6 +970,19 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Set user disabled failed: {exc}")
             raise
 
+    async def reset_user_password(self, user_id: str, password_hash: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (password_hash, user_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Reset password failed: {exc}")
+            raise
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

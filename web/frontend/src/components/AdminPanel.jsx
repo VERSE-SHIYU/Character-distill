@@ -32,6 +32,11 @@ function UsersTab() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [resetTarget, setResetTarget] = useState(null)
+  const [newPassword, setNewPassword] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState('')
+  const [resetOk, setResetOk] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -57,6 +62,29 @@ function UsersTab() {
       await load()
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  const handleReset = async () => {
+    if (newPassword.length < 6) {
+      setResetError('新密码至少 6 个字符')
+      return
+    }
+    setResetting(true)
+    setResetError('')
+    setResetOk('')
+    try {
+      await adminAPI.resetPassword(resetTarget.id, newPassword)
+      setResetOk('密码已重置')
+      setTimeout(() => {
+        setResetTarget(null)
+        setNewPassword('')
+        setResetOk('')
+      }, 1500)
+    } catch (err) {
+      setResetError(err.message || '重置失败')
+    } finally {
+      setResetting(false)
     }
   }
 
@@ -86,18 +114,54 @@ function UsersTab() {
                 </span>
               </td>
               <td>{u.created_at || '-'}</td>
-              <td>
+              <td className="admin-actions-cell">
                 <button
                   className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
                   onClick={() => toggleDisable(u)}
                 >
                   {u.is_disabled ? '启用' : '禁用'}
                 </button>
+                <button
+                  className="admin-action-btn reset"
+                  onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
+                >
+                  重置密码
+                </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
+
+      {/* Reset password modal */}
+      {resetTarget && (
+        <div className="modal-overlay" onClick={() => setResetTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">重置密码 — {resetTarget.username}</h3>
+            <div className="modal-body">
+              <label className="login-field" style={{ margin: 0 }}>
+                <span>新密码</span>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="至少 6 个字符"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleReset()}
+                />
+              </label>
+              {resetError && <div className="login-error" style={{ marginTop: 8 }}>{resetError}</div>}
+              {resetOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{resetOk}</div>}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setResetTarget(null)}>取消</button>
+              <button className="btn-primary" onClick={handleReset} disabled={resetting}>
+                {resetting ? '重置中…' : '确认重置'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

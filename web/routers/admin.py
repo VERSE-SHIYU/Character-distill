@@ -54,6 +54,27 @@ async def enable_user(
     return {"ok": True}
 
 
+class ResetPasswordRequest(BaseModel):
+    new_password: str
+
+
+@router.patch("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    req: ResetPasswordRequest,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    if len(req.new_password) < 6:
+        raise HTTPException(400, "新密码至少 6 个字符")
+    from routers.auth import password_hasher
+    password_hash = password_hasher.hash(req.new_password)
+    ok = await storage.reset_user_password(user_id, password_hash)
+    if not ok:
+        raise HTTPException(404, "用户不存在")
+    return {"ok": True}
+
+
 # ---- Invite codes ----
 
 class GenerateInviteRequest(BaseModel):

@@ -148,6 +148,15 @@ export const adminAPI = {
 
   enableUser: (userId) => postJSON(`/api/admin/users/${userId}/enable`, {}),
 
+  resetPassword: (userId, newPassword) => fetchWithTimeout(
+    `/api/admin/users/${userId}/reset-password`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: newPassword }),
+    },
+  ),
+
   generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
 
   listInvites: () => postJSON('/api/admin/invite/list', {}),

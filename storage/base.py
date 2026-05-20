@@ -123,6 +123,10 @@ class StorageBase(ABC):
         """Disable or enable a user account."""
 
     @abstractmethod
+    async def reset_user_password(self, user_id: str, password_hash: str) -> bool:
+        """Reset a user's password (admin action)."""
+
+    @abstractmethod
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         """Create an invite code."""
 
