@@ -88,8 +88,10 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
     username = req.username.strip()
     if not username or len(username) < 2:
         raise HTTPException(400, "用户名至少 2 个字符")
-    if not req.password or len(req.password) < 4:
-        raise HTTPException(400, "密码至少 4 个字符")
+    if not req.password or len(req.password) < 8:
+        raise HTTPException(400, "密码至少 8 位，需包含字母和数字")
+    if not _is_strong_password(req.password):
+        raise HTTPException(400, "密码至少 8 位，需包含字母和数字")
 
     inv = req.invite_code.strip()
     if not inv:
@@ -211,6 +213,12 @@ async def _create_refresh_token(user_id: str, storage: SQLiteStore) -> str:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _is_strong_password(pw: str) -> bool:
+    has_letter = any(c.isalpha() for c in pw)
+    has_digit = any(c.isdigit() for c in pw)
+    return has_letter and has_digit
 
 
 def _user_response(user: dict[str, Any]) -> dict[str, Any]:

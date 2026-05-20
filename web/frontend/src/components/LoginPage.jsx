@@ -1,5 +1,15 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import useAppStore from '../store/useAppStore'
+
+function passwordStrength(pw) {
+  if (!pw) return { level: 0, label: '', color: '' }
+  const hasLetter = /[a-zA-Z]/.test(pw)
+  const hasDigit = /[0-9]/.test(pw)
+  const longEnough = pw.length >= 8
+  if (longEnough && hasLetter && hasDigit) return { level: 3, label: '强', color: '#22c55e' }
+  if (pw.length >= 6 && hasLetter && hasDigit) return { level: 2, label: '中', color: '#f59e0b' }
+  return { level: 1, label: '弱', color: '#ef4444' }
+}
 
 export default function LoginPage() {
   const [tab, setTab] = useState('login')
@@ -12,6 +22,8 @@ export default function LoginPage() {
   const login = useAppStore((s) => s.login)
   const register = useAppStore((s) => s.register)
 
+  const strength = useMemo(() => passwordStrength(password), [password])
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
@@ -21,6 +33,10 @@ export default function LoginPage() {
     }
     if (tab === 'register' && !inviteCode.trim()) {
       setError('请填写邀请码')
+      return
+    }
+    if (tab === 'register' && strength.level < 3) {
+      setError('密码至少 8 位，需包含字母和数字')
       return
     }
     setLoading(true)
@@ -84,22 +100,29 @@ export default function LoginPage() {
           </div>
 
           {tab === 'register' && (
-            <div className="login-field">
-              <label htmlFor="login-invite">邀请码</label>
-              <input
-                id="login-invite"
-                type="text"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-                placeholder="请输入邀请码"
-                autoComplete="off"
-              />
-            </div>
+            <>
+              {strength.label && (
+                <div className="login-pw-strength" style={{ marginBottom: 12 }}>
+                  <span className="login-pw-strength-bar" style={{ width: `${strength.level * 33}%`, backgroundColor: strength.color }} />
+                </div>
+              )}
+              <div className="login-field">
+                <label htmlFor="login-invite">邀请码</label>
+                <input
+                  id="login-invite"
+                  type="text"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value)}
+                  placeholder="请输入邀请码"
+                  autoComplete="off"
+                />
+              </div>
+            </>
           )}
 
           {error && <div className="login-error">{error}</div>}
 
-          <button className="login-submit" type="submit" disabled={loading}>
+          <button className="login-submit" type="submit" disabled={loading || (tab === 'register' && strength.level < 3)}>
             {loading ? '请稍候…' : tab === 'login' ? '登录' : '注册'}
           </button>
         </form>

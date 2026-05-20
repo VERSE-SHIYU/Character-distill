@@ -4674,6 +4674,20 @@ select.settings-input {
   border-radius: 8px;
 }
 
+.login-pw-strength {
+  height: 4px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.login-pw-strength-bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
 .login-submit {
   padding: 12px 0;
   border: none;
