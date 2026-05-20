@@ -141,12 +141,19 @@ export default function App() {
 
   return (
     <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}`}>
-      {/* Trigger zone */}
+      {/* Trigger zone + visible toggle when collapsed */}
       {!isSidebarVisible && (
-        <div
-          className="sidebar-trigger"
-          onMouseEnter={showSidebar}
-        />
+        <div className="sidebar-trigger" onMouseEnter={showSidebar}>
+          <button
+            type="button"
+            className="sidebar-toggle-btn"
+            onClick={togglePin}
+            title="展开侧边栏"
+            aria-label="展开侧边栏"
+          >
+            ▶
+          </button>
+        </div>
       )}
 
       <Sidebar
