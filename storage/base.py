@@ -9,7 +9,7 @@ class StorageBase(ABC):
     """Defines storage methods for texts, cards, sessions and messages."""
 
     @abstractmethod
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None) -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save text content and return the stored record."""
 
     @abstractmethod
@@ -17,7 +17,7 @@ class StorageBase(ABC):
         """Get a text record by ID."""
 
     @abstractmethod
-    async def list_texts(self) -> list[dict]:
+    async def list_texts(self, user_id: str = "") -> list[dict]:
         """List all text records."""
 
     @abstractmethod
@@ -25,7 +25,7 @@ class StorageBase(ABC):
         """Delete a text record by ID."""
 
     @abstractmethod
-    async def save_card(self, id: str, text_id: str, name: str, card_json: str) -> dict:
+    async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:
         """Save a character card and return the stored record."""
 
     @abstractmethod
@@ -33,7 +33,7 @@ class StorageBase(ABC):
         """Get a card record by ID."""
 
     @abstractmethod
-    async def list_cards(self, text_id: str) -> list[dict]:
+    async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List cards under a text ID."""
 
     @abstractmethod
@@ -42,7 +42,7 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def save_session(
-        self, id: str, card_id: str, user_role: str, avatar_data: str
+        self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = ""
     ) -> dict:
         """Save a chat session and return the stored record."""
 
@@ -52,7 +52,7 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def list_sessions(
-        self, keyword: str, character: str, text_id: str, page: int, page_size: int
+        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = ""
     ) -> dict:
         """List sessions with filters and pagination."""
 

@@ -8,7 +8,7 @@ from typing import Any
 
 from typing import Any, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -23,6 +23,7 @@ async def _ensure_session(
     session_id: str,
     storage: SQLiteStore,
     sessions: dict[str, Any],
+    user_id: str = "",
 ) -> dict[str, Any]:
     """Return in-memory session dict, auto-resuming from DB if server restarted."""
     session = sessions.get(session_id)
@@ -53,7 +54,7 @@ async def _ensure_session(
     except Exception as exc:
         raise HTTPException(500, "Card data is corrupted") from exc
 
-    existing_cards = await storage.list_cards(card_rec["text_id"])
+    existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
 
     rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters)
@@ -120,9 +121,10 @@ async def _do_chat(
     sessions: dict[str, Any],
     user_role: str = "",
     hidden: bool = False,
+    user_id: str = "",
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
-    session = await _ensure_session(session_id, storage, sessions)
+    session = await _ensure_session(session_id, storage, sessions, user_id)
 
     msg = message.strip()
     if not msg:
@@ -184,9 +186,10 @@ async def _do_chat_stream(
     sessions: dict[str, Any],
     user_role: str = "",
     hidden: bool = False,
+    user_id: str = "",
 ):
     """Core streaming chat logic with SSE output."""
-    session = await _ensure_session(session_id, storage, sessions)
+    session = await _ensure_session(session_id, storage, sessions, user_id)
 
     msg = message.strip()
     if not msg:
@@ -270,9 +273,10 @@ async def _do_reset(
     session_id: str,
     storage: SQLiteStore,
     sessions: dict[str, Any],
+    user_id: str = "",
 ) -> dict[str, bool]:
     """Core reset logic: clear in-memory history."""
-    session = await _ensure_session(session_id, storage, sessions)
+    session = await _ensure_session(session_id, storage, sessions, user_id)
     session["engine"].reset()
     return {"ok": True}
 
@@ -282,6 +286,7 @@ async def _do_reset(
 @router.post("/send", response_model=None)
 async def send_message(
     req: ChatRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> Union[dict[str, Any], StreamingResponse]:
@@ -289,14 +294,16 @@ async def send_message(
     from deps import get_llm
     if get_llm() is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+    user_id = request.state.user.get("id", "")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id)
 
 
 @router.post("/revoke")
 async def revoke_messages(
     req: RevokeRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -306,7 +313,8 @@ async def revoke_messages(
     After DB deletion, rebuild ``engine.history`` from remaining messages to keep
     the in-memory context and ``message_ids`` tracking precisely in sync.
     """
-    session = await _ensure_session(req.session_id, storage, sessions)
+    user_id = request.state.user.get("id", "")
+    session = await _ensure_session(req.session_id, storage, sessions, user_id)
 
     # Delete from SQLite first
     try:
@@ -336,11 +344,13 @@ async def revoke_messages(
 @router.post("/reset")
 async def reset_session(
     req: ResetRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Reset the in-memory chat history (keep the character card)."""
-    return await _do_reset(req.session_id, storage, sessions)
+    user_id = request.state.user.get("id", "")
+    return await _do_reset(req.session_id, storage, sessions, user_id)
 
 
 # ---- Legacy compat routes (/api/chat, /api/reset) ----
@@ -348,18 +358,22 @@ async def reset_session(
 @legacy_router.post("/api/chat")
 async def legacy_chat(
     req: ChatRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden)
+    user_id = request.state.user.get("id", "")
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id)
 
 
 @legacy_router.post("/api/reset")
 async def legacy_reset(
     req: ResetRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Legacy /api/reset -> same as /api/chat/reset."""
-    return await _do_reset(req.session_id, storage, sessions)
+    user_id = request.state.user.get("id", "")
+    return await _do_reset(req.session_id, storage, sessions, user_id)

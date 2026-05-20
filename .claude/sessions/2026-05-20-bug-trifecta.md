@@ -1,0 +1,57 @@
+# 2026-05-20 三连修 Bug
+
+### 10:00 Bug 1 修复: last_summary AttributeError
+- **做了什么**：在 `core/chat_engine.py` ChatEngine.__init__ 中添加 `self.last_summary: str | None = None`
+- **为什么**：Mem0 集成时移除了旧的摘要机制（`_summarize_if_needed`），但 `chat.py` 多处引用 `engine.last_summary`，导致 AttributeError
+- **影响范围**：`core/chat_engine.py`
+
+### 10:15 Bug 3 修复: 角色卡页面自动创建聊天
+- **做了什么**：ChatArea.jsx 的 useEffect 中增加 `currentView === 'chat'` 守卫
+- **为什么**：`viewCard` 导航到角色详情页时，currentCard 已设置但 sessionId 为空，useEffect 触发 startChat 创建了不需要的会话
+- **影响范围**：`web/frontend/src/components/ChatArea.jsx`
+
+### 10:30 Bug 2 修复: 服务重启后旧会话无法回复
+- **做了什么**：
+  1. 新增 `_ensure_session()` helper — 当 session 不在内存时自动从 DB 重建 ChatEngine、加载历史
+  2. 在 `_do_chat`、`_do_chat_stream`、`_do_reset`、`revoke_messages` 中替换 `sessions.get()` 为 `await _ensure_session()`
+- **为什么**：服务重启后 `_sessions` 内存字典为空，`sessions.get(session_id)` 返回 None → 404。`_ensure_session` 参考了 `resume_session` 的重建逻辑，实现透明恢复
+- **影响范围**：`web/routers/chat.py`（+75/-14）
+
+## Part 2: 聊天记录预处理管线
+
+### 11:00 2.2 后端 storage — texts表加text_type列
+- **做了什么**：007_text_type migration + save_text/get_text支持text_type + upload API接收参数透传
+- **为什么**：区分故事和聊天记录，蒸馏时采用不同策略
+- **影响范围**：`storage/migrations/007_text_type.sql`、`storage/sqlite_store.py`、`storage/base.py`、`core/text_manager.py`、`web/routers/text.py`
+
+### 11:40 2.3 core/chat_preprocessor.py
+- **做了什么**：ChatPreprocessor三层清洗管线（Layer 0: 日期去重 + 系统消息/媒体标记/纯标点过滤；Layer 1: 保留≥5字/观点词/Q&A对 + 剔除事务消息；Layer 2: 目标角色发言 + 上下文窗口）
+- **为什么**：微信聊天记录含大量噪音，直接蒸馏会污染角色档案
+- **影响范围**：`core/chat_preprocessor.py`（新文件，269行）
+
+### 11:55 2.4+2.5 distiller.py + distill路由
+- **做了什么**：distill_incremental_stream新增text_type；chat类型→预处理+专用Map提示词（说话习惯/态度/情感反应）+ 按对话轮次分块；distill路由读取text_type透传
+- **为什么**：聊天记录角色分析重点和小说不同——侧重说话风格/口头禅/人际关系模式
+- **影响范围**：`core/distiller.py`（+91/-4）、`web/routers/distill.py`
+
+### 12:30 2.1 前端上传组件 + 字数限制
+- **做了什么**：上传弹窗文本类型选择 + 字数颜色编码 + 时间预估 + uploadText透传text_type + 后端1M字上限校验
+- **为什么**：用户需在上传时明确类型，字数预估管理蒸馏耗时预期
+- **影响范围**：`TextPanel.jsx`、`useAppStore.js`、`global.css`、`core/text_manager.py`
+
+## Part 3: 登录系统 + 用户数据隔离
+
+### 14:00 Step 1: users 表 + DB 方法
+- **做了什么**：创建 009_users.sql migration + sqlite_store.py 中 create_user/get_user_by_username/get_user_by_id
+- **为什么**：JWT 认证需要用户持久化存储
+- **影响范围**：`storage/migrations/009_users.sql`、`storage/sqlite_store.py`、`storage/base.py`
+
+### 14:30 Step 2: Auth 路由 + JWT 中间件
+- **做了什么**：web/routers/auth.py（register/login/me + get_current_user）+ server.py AuthMiddleware 拦截所有 /api/* 路径
+- **为什么**：JWT Bearer Token 认证 + request.state.user 注入用户上下文
+- **影响范围**：`web/routers/auth.py`（新文件）、`web/server.py`
+
+### 15:00 Step 3: user_id 数据隔离
+- **做了什么**：texts/cards/sessions 表加 user_id 列（migration 010-012）+ 所有存储方法加 user_id 参数 + 所有 web 路由从 request.state.user 读取 user_id 传入
+- **为什么**：每个用户只能看到自己的数据，实现多用户数据隔离
+- **影响范围**：`storage/migrations/010-012_*.sql`、`storage/sqlite_store.py`（6个方法）、`storage/base.py`（6个抽象方法）、`core/text_manager.py`（6个方法）、`web/routers/text.py`、`web/routers/distill.py`、`web/routers/chat.py`、`web/routers/history.py`

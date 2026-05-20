@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from deps import get_storage, get_text_manager
 from core.text_manager import TextManager
@@ -31,6 +31,7 @@ def _validate_extension(filename: str) -> None:
 
 @router.post("/upload")
 async def upload_text(
+    request: Request,
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
     filename: str | None = Form(None),
@@ -43,6 +44,7 @@ async def upload_text(
     """Accept a multipart file or text form field, parse format, save."""
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+    user_id = request.state.user.get("id", "")
     cleaning_stats = None
 
     if file and file.filename:
@@ -62,7 +64,7 @@ async def upload_text(
 
             try:
                 result = await text_manager.upload_text_from_file(
-                    str(temp_path), file.filename, title, description, text_type
+                    str(temp_path), file.filename, title, description, text_type, user_id
                 )
                 text_id = result["text_id"]
                 cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
@@ -76,7 +78,7 @@ async def upload_text(
         content = text
         name = filename or "pasted_text.txt"
         try:
-            result = await text_manager.upload_text(name, content, title, description, text_type)
+            result = await text_manager.upload_text(name, content, title, description, text_type, user_id)
             text_id = result["text_id"]
             cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
         except ValueError as exc:
@@ -99,11 +101,13 @@ async def upload_text(
 
 @router.get("/list")
 async def list_texts(
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all uploaded texts (without full content body)."""
+    user_id = request.state.user.get("id", "")
     try:
-        texts = await storage.list_texts()
+        texts = await storage.list_texts(user_id)
     except Exception as exc:
         print(f"[text] List texts failed: {exc}")
         raise HTTPException(500, f"List texts failed: {exc}") from exc

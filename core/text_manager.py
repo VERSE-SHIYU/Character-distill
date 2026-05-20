@@ -164,7 +164,7 @@ class TextManager:
 
     # ---- File-based upload (PDF/DOCX support) ----
 
-    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story") -> dict[str, Any]:
+    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story", user_id: str = "") -> dict[str, Any]:
         """Parse an on-disk file and save to storage. Returns dict with text_id and char stats."""
         import aiofiles
 
@@ -212,7 +212,7 @@ class TextManager:
         text_id = uuid.uuid4().hex[:12]
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ)
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -247,7 +247,7 @@ class TextManager:
 
     # ---- Public API ----
 
-    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> dict[str, Any]:
+    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", user_id: str = "") -> dict[str, Any]:
         """Parse content by file extension, save to storage. Returns dict with text_id and char stats."""
         parsed = self._parse_content(filename, content).strip()
         if not parsed:
@@ -272,13 +272,13 @@ class TextManager:
         text_id = uuid.uuid4().hex[:12]
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ)
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
         return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
-    async def distill_all(self, text_id: str) -> list[dict[str, Any]]:
+    async def distill_all(self, text_id: str, user_id: str = "") -> list[dict[str, Any]]:
         """Identify every character in a stored text and distill each one.
 
         Skips characters that fail distillation rather than aborting the batch.
@@ -312,7 +312,7 @@ class TextManager:
             card_id = uuid.uuid4().hex[:12]
             try:
                 await self._storage.save_card(
-                    card_id, text_id, card.name, card.model_dump_json()
+                    card_id, text_id, card.name, card.model_dump_json(), user_id
                 )
             except Exception as exc:
                 print(f"[TextManager] Save card '{name}' failed, skipping: {exc}")
@@ -325,7 +325,7 @@ class TextManager:
         return results
 
     async def get_or_distill(
-        self, text_id: str, character_name: str, force: bool = False,
+        self, text_id: str, character_name: str, force: bool = False, user_id: str = "",
     ) -> dict[str, Any]:
         """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill."""
         text_rec = await self._storage.get_text(text_id)
@@ -333,7 +333,7 @@ class TextManager:
             raise ValueError("Text not found")
         content = text_rec["content"]
 
-        existing_cards = await self._storage.list_cards(text_id)
+        existing_cards = await self._storage.list_cards(text_id, user_id)
         card: CharacterCard | None = None
         card_id: str | None = None
         if not force:
@@ -370,7 +370,7 @@ class TextManager:
             card_id = uuid.uuid4().hex[:12]
             try:
                 await self._storage.save_card(
-                    card_id, text_id, card.name, card.model_dump_json()
+                    card_id, text_id, card.name, card.model_dump_json(), user_id
                 )
             except Exception as exc:
                 print(f"[TextManager] Save card failed: {exc}")
@@ -412,7 +412,7 @@ class TextManager:
             raise
 
         try:
-            await self._storage.save_session(session_id, card_id, "", "")
+            await self._storage.save_session(session_id, card_id, "", "", user_id)
         except Exception as exc:
             print(f"[TextManager] Persist session failed (non-fatal): {exc}")
 
@@ -422,18 +422,18 @@ class TextManager:
         return result
 
     async def save_distilled_card(
-        self, text_id: str, card: CharacterCard,
+        self, text_id: str, card: CharacterCard, user_id: str = "",
     ) -> dict[str, Any]:
         """Persist a freshly distilled card and create its chat session."""
         card_id = uuid.uuid4().hex[:12]
-        result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json())
+        result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json(), user_id)
         # save_card does upsert by text_id+name — on re-distill it returns the existing ID
         actual_card_id = result_card.get("id") or card_id
 
         text_rec = await self._storage.get_text(text_id)
         content = text_rec["content"]
 
-        existing_cards = await self._storage.list_cards(text_id)
+        existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = [{"name": c["name"], "aliases": []} for c in existing_cards]
 
         session_id = await asyncio.to_thread(
@@ -441,7 +441,7 @@ class TextManager:
             self._get_or_build_rag(text_id, content, all_chars),
             actual_card_id,
         )
-        await self._storage.save_session(session_id, actual_card_id, "", "")
+        await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
 
         result = card.model_dump()
         result["session_id"] = session_id
@@ -449,14 +449,14 @@ class TextManager:
         return result
 
     async def switch_character(
-        self, text_id: str, character_name: str
+        self, text_id: str, character_name: str, user_id: str = "",
     ) -> dict[str, Any]:
         """Switch to another character from the same text.
 
         Reuses the cached card if it exists, otherwise distills on the fly.
         Always creates a fresh session with a new RAG index.
         """
-        return await self.get_or_distill(text_id, character_name)
+        return await self.get_or_distill(text_id, character_name, user_id=user_id)
 
     # ---- Internal helpers ----
 

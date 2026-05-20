@@ -6,7 +6,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
@@ -25,6 +25,7 @@ class ResumeRequest(BaseModel):
 
 @router.get("/list")
 async def list_sessions(
+    request: Request,
     keyword: str = Query("", description="Search keyword in messages"),
     character: str = Query("", description="Filter by character name"),
     text_id: str = Query("", description="Filter by text_id"),
@@ -33,8 +34,9 @@ async def list_sessions(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Paginated session list with optional keyword and character filters."""
+    user_id = request.state.user.get("id", "")
     try:
-        return await storage.list_sessions(keyword, character, text_id, page, page_size)
+        return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id)
     except Exception as exc:
         print(f"[history] List sessions failed: {exc}")
         raise HTTPException(500, f"List sessions failed: {exc}") from exc
@@ -81,6 +83,7 @@ async def get_session_detail(
 async def resume_session(
     session_id: str,
     _body: ResumeRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     text_manager: TextManager = Depends(get_text_manager),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
@@ -94,6 +97,8 @@ async def resume_session(
     """
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+
+    user_id = request.state.user.get("id", "")
 
     # 1. Load session + card + text from DB
     db_session = await storage.get_session(session_id)
@@ -117,7 +122,7 @@ async def resume_session(
         raise HTTPException(500, "Card data is corrupted") from exc
 
     # 3. Build all_characters from sibling cards
-    existing_cards = await storage.list_cards(card_rec["text_id"])
+    existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters: list[dict[str, Any]] = [
         {"name": c["name"], "aliases": []} for c in existing_cards
     ]

@@ -8,7 +8,7 @@ from typing import Any
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
@@ -113,6 +113,7 @@ async def identify_by_text_id(
 @router.post("/run")
 async def distill_by_text_id(
     req: DistillByIdRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
@@ -126,10 +127,11 @@ async def distill_by_text_id(
 
     content = text_rec["content"]
     char_name = await _resolve_character_name(content, req.character_name, distiller)
+    user_id = request.state.user.get("id", "")
 
     try:
         return await text_manager.get_or_distill(
-            req.text_id, char_name, force=req.force
+            req.text_id, char_name, force=req.force, user_id=user_id
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -149,6 +151,7 @@ def _next_piece(stream_obj):
 @router.post("/run_stream")
 async def distill_stream(
     req: DistillByIdRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
@@ -163,6 +166,7 @@ async def distill_stream(
     content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
     char_name = await _resolve_character_name(content, req.character_name, distiller)
+    user_id = request.state.user.get("id", "")
 
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
@@ -224,7 +228,7 @@ async def distill_stream(
 
         # Persist card + create session (RAG built in _create_session for chat use)
         try:
-            result = await text_manager.save_distilled_card(req.text_id, card)
+            result = await text_manager.save_distilled_card(req.text_id, card, user_id)
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"
@@ -345,11 +349,13 @@ async def export_card(
 @router.get("/cards/by-text/{text_id}")
 async def list_cards(
     text_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all distilled character cards for a text."""
+    user_id = request.state.user.get("id", "")
     try:
-        return await storage.list_cards(text_id)
+        return await storage.list_cards(text_id, user_id)
     except Exception as exc:
         print(f"[distill] List cards failed: {exc}")
         raise HTTPException(500, f"List cards failed: {exc}") from exc
@@ -358,6 +364,7 @@ async def list_cards(
 @router.post("/start_session")
 async def start_session(
     req: StartSessionRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     text_manager: TextManager = Depends(get_text_manager),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
@@ -368,6 +375,7 @@ async def start_session(
     injects into the in-memory ``_sessions`` dict, persists the session
     record to SQLite, and returns the card data with ``session_id``.
     """
+    user_id = request.state.user.get("id", "")
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -383,7 +391,7 @@ async def start_session(
         print(f"[distill] Parse card {req.card_id} failed: {exc}")
         raise HTTPException(500, "Card data is corrupted") from exc
 
-    existing_cards = await storage.list_cards(req.text_id)
+    existing_cards = await storage.list_cards(req.text_id, user_id)
     all_characters: list[dict[str, Any]] = [
         {"name": c["name"], "aliases": []} for c in existing_cards
     ]
@@ -398,7 +406,7 @@ async def start_session(
         raise HTTPException(500, f"Create session failed: {exc}") from exc
 
     try:
-        await storage.save_session(session_id, req.card_id, "", "")
+        await storage.save_session(session_id, req.card_id, "", "", user_id)
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
@@ -442,6 +450,7 @@ async def legacy_identify(
 @legacy_router.post("/api/distill")
 async def legacy_distill(
     req: DistillRequest,
+    request: Request,
     distiller: Distiller = Depends(get_distiller),
     text_manager: TextManager = Depends(get_text_manager),
 ) -> dict[str, Any]:
@@ -452,8 +461,9 @@ async def legacy_distill(
     if not text:
         raise HTTPException(400, "Text cannot be empty")
 
+    user_id = request.state.user.get("id", "")
     try:
-        upload_result = await text_manager.upload_text("legacy_upload.txt", text)
+        upload_result = await text_manager.upload_text("legacy_upload.txt", text, user_id=user_id)
         text_id = upload_result["text_id"]
     except Exception as exc:
         print(f"[distill] Auto-save text failed: {exc}")
@@ -462,7 +472,7 @@ async def legacy_distill(
     char_name = await _resolve_character_name(text, req.character_name, distiller)
 
     try:
-        return await text_manager.get_or_distill(text_id, char_name)
+        return await text_manager.get_or_distill(text_id, char_name, user_id=user_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

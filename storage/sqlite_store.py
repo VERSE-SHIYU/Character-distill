@@ -155,6 +155,17 @@ class SQLiteStore(StorageBase):
                         await conn.executescript(users_migration_path.read_text(encoding="utf-8"))
                         await conn.commit()
 
+                    # Run user_id column migrations (ALTER TABLE — may fail if column exists)
+                    for mig_name in ("010_user_id_texts.sql", "011_user_id_cards.sql", "012_user_id_sessions.sql"):
+                        mig_path = migrations_dir / mig_name
+                        if mig_path.exists():
+                            try:
+                                await conn.executescript(mig_path.read_text(encoding="utf-8"))
+                                await conn.commit()
+                            except Exception as exc:
+                                if "duplicate column" not in str(exc).lower():
+                                    print(f"[SQLiteStore] Migration {mig_name} failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -192,15 +203,15 @@ class SQLiteStore(StorageBase):
         """Convert sqlite row to dict."""
         return dict(row) if row is not None else None
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None) -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
@@ -208,9 +219,10 @@ class SQLiteStore(StorageBase):
                         title = excluded.title,
                         description = excluded.description,
                         text_type = excluded.text_type,
-                        original_char_count = excluded.original_char_count
+                        original_char_count = excluded.original_char_count,
+                        user_id = excluded.user_id
                     """,
-                    (id, filename, content, char_count, title, description, text_type, original_char_count),
+                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id),
                 )
                 await conn.commit()
             return await self.get_text(id) or {}
@@ -232,17 +244,26 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get text failed: {exc}")
             raise
 
-    async def list_texts(self) -> list[dict]:
-        """List all texts in descending created order."""
+    async def list_texts(self, user_id: str = "") -> list[dict]:
+        """List texts for a user in descending created order."""
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    """
-                    SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
-                    FROM texts
-                    ORDER BY created_at DESC
-                    """
-                )
+                if user_id:
+                    cursor = await conn.execute(
+                        """
+                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
+                        FROM texts WHERE user_id = ?
+                        ORDER BY created_at DESC
+                        """, (user_id,),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """
+                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
+                        FROM texts
+                        ORDER BY created_at DESC
+                        """
+                    )
                 rows = await cursor.fetchall()
             return [dict(row) for row in rows]
         except Exception as exc:
@@ -288,13 +309,13 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete text failed: {exc}")
             raise
 
-    async def save_card(self, id: str, text_id: str, name: str, card_json: str) -> dict:
-        """Save or update one card record. Upsert by text_id+name to avoid duplicates."""
+    async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:
+        """Save or update one card record. Upsert by text_id+name+user_id to avoid duplicates."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id FROM cards WHERE text_id = ? AND name = ?",
-                    (text_id, name),
+                    "SELECT id FROM cards WHERE text_id = ? AND name = ? AND user_id = ?",
+                    (text_id, name, user_id),
                 )
                 existing = await cursor.fetchone()
                 if existing:
@@ -307,8 +328,8 @@ class SQLiteStore(StorageBase):
                     return await self.get_card(existing_id) or {}
                 else:
                     await conn.execute(
-                        "INSERT INTO cards (id, text_id, name, card_json) VALUES (?, ?, ?, ?)",
-                        (id, text_id, name, card_json),
+                        "INSERT INTO cards (id, text_id, name, card_json, user_id) VALUES (?, ?, ?, ?, ?)",
+                        (id, text_id, name, card_json, user_id),
                     )
                     await conn.commit()
                     return await self.get_card(id) or {}
@@ -344,19 +365,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get card failed: {exc}")
             raise
 
-    async def list_cards(self, text_id: str) -> list[dict]:
-        """List all cards under one text id."""
+    async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
+        """List all cards under one text id, optionally filtered by user."""
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    """
-                    SELECT id, text_id, name, card_json, created_at
-                    FROM cards
-                    WHERE text_id = ?
-                    ORDER BY created_at DESC
-                    """,
-                    (text_id,),
-                )
+                if user_id:
+                    cursor = await conn.execute(
+                        "SELECT id, text_id, name, card_json, created_at FROM cards WHERE text_id = ? AND user_id = ? ORDER BY created_at DESC",
+                        (text_id, user_id),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        "SELECT id, text_id, name, card_json, created_at FROM cards WHERE text_id = ? ORDER BY created_at DESC",
+                        (text_id,),
+                    )
                 rows = await cursor.fetchall()
             return [dict(row) for row in rows]
         except Exception as exc:
@@ -423,22 +445,23 @@ class SQLiteStore(StorageBase):
             return None
 
     async def save_session(
-        self, id: str, card_id: str, user_role: str, avatar_data: str
+        self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = ""
     ) -> dict:
         """Save or update one session record."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO sessions (id, card_id, user_role, avatar_data)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO sessions (id, card_id, user_role, avatar_data, user_id)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         card_id = excluded.card_id,
                         user_role = excluded.user_role,
                         avatar_data = excluded.avatar_data,
+                        user_id = excluded.user_id,
                         updated_at = CURRENT_TIMESTAMP
                     """,
-                    (id, card_id, user_role, avatar_data),
+                    (id, card_id, user_role, avatar_data, user_id),
                 )
                 await conn.commit()
             return await self.get_session(id) or {}
@@ -466,7 +489,7 @@ class SQLiteStore(StorageBase):
             raise
 
     async def list_sessions(
-        self, keyword: str, character: str, text_id: str, page: int, page_size: int
+        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = ""
     ) -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)
@@ -475,6 +498,9 @@ class SQLiteStore(StorageBase):
 
         where_clauses: list[str] = []
         params: list[Any] = []
+        if user_id:
+            where_clauses.append("s.user_id = ?")
+            params.append(user_id)
         if character:
             where_clauses.append("c.name = ?")
             params.append(character)
