@@ -128,9 +128,15 @@ def _run_distill_task(task_id: str, text_id: str, char_name: str, force: bool, u
                 if piece.get("heartbeat"):
                     continue
                 with _task_lock:
+                    current = piece.get("current", 0)
+                    total = piece.get("total", 1)
+                    status = piece.get("status", "analyzing")
+                    pct = int((current / total) * 100) if total > 0 else 0
                     _tasks[task_id] = {
-                        "status": "analyzing",
-                        **{k: v for k, v in piece.items() if k in ("phase", "current", "total", "progress_pct")},
+                        "status": status,
+                        "current": current,
+                        "total": total,
+                        "progress_pct": pct,
                         "character": name,
                     }
             else:
