@@ -736,10 +736,14 @@ class Distiller:
         if len(raw_analyses) <= self.SAFE_SINGLE_REDUCE:
             yield {"status": "merging", "current": 0, "total": 1}
             profile_draft = ""
+            tc = 0
             for token in self._single_reduce_stream(raw_analyses, character_name):
                 if token == "\x00THINKING\x00":
                     continue
                 profile_draft += token
+                tc += 1
+                if tc % 50 == 0:
+                    yield {"heartbeat": True}
             yield {"status": "merging", "current": 1, "total": 1}
         else:
             batches = [
@@ -750,12 +754,17 @@ class Distiller:
             for bi, batch in enumerate(batches):
                 yield {"status": "merging", "current": bi, "total": len(batches)}
                 pd = ""
+                tc = 0
                 for token in self._single_reduce_stream(batch, character_name):
                     if token == "\x00THINKING\x00":
                         continue
                     pd += token
+                    tc += 1
+                    if tc % 50 == 0:
+                        yield {"heartbeat": True}
                 batch_results.append(pd)
             yield {"status": "merging", "current": len(batches), "total": len(batches)}
+            yield {"heartbeat": True}
             profile_draft = self._do_reduce(batch_results, character_name)
 
         if not profile_draft.strip():

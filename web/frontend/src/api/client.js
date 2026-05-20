@@ -192,6 +192,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
               onDone(payload)
               return
             }
+            if (payload.heartbeat) continue
             if (payload.token !== undefined) {
               onToken(payload.token)
             }
