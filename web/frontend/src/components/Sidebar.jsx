@@ -99,7 +99,11 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
       {isVisible && (
         <nav className="sidebar-nav">
-          {NAV_ITEMS.map(({ id, icon, label }) => {
+          {(() => {
+            const navItems = authUser?.is_admin
+              ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }]
+              : NAV_ITEMS
+            return navItems.map(({ id, icon, label }) => {
             const disabled = isDisabled(id)
             const count = badge(id)
             return (
@@ -114,7 +118,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
                 {count !== null && <span className="sidebar-item-badge">{count}</span>}
               </button>
             )
-          })}
+          })})()}
         </nav>
       )}
 
@@ -133,19 +137,6 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             )}
           </div>
         </button>
-      )}
-
-      {isVisible && authUser?.is_admin && (
-        <nav className="sidebar-nav" style={{marginTop: 0, paddingTop: 0}}>
-          <button
-            type="button"
-            className={`sidebar-item${currentView === 'admin' ? ' active' : ''}`}
-            onClick={() => setView('admin')}
-          >
-            <span className="sidebar-item-icon">{'⚙'}</span>
-            <span className="sidebar-item-label">管理后台</span>
-          </button>
-        </nav>
       )}
 
       {isVisible && <ThemeSwitcher />}

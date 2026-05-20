@@ -224,7 +224,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
 // ---- Admin API ----
 
 export const adminAPI = {
-  listUsers: () => postJSON('/api/admin/users', {}),
+  listUsers: () => fetchWithTimeout('/api/admin/users').then(r => r.json()),
 
   disableUser: (userId) => postJSON(`/api/admin/users/${userId}/disable`, {}),
 
@@ -241,9 +241,9 @@ export const adminAPI = {
 
   generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
 
-  listInvites: () => postJSON('/api/admin/invite/list', {}),
+  listInvites: () => fetchWithTimeout('/api/admin/invite/list').then(r => r.json()),
 
-  getAllUsage: () => postJSON('/api/admin/usage', {}),
+  getAllUsage: () => fetchWithTimeout('/api/admin/usage').then(r => r.json()),
 }
 
 export function getMyUsage() {

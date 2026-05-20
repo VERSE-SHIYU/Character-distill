@@ -4810,6 +4810,16 @@ select.settings-input {
   padding: 32px 24px;
 }
 
+.admin-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.admin-content {
+  min-height: 200px;
+}
+
 .admin-tabs {
   display: flex;
   gap: 0;

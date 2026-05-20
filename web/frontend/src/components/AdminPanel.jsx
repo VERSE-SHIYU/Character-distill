@@ -11,20 +11,27 @@ export default function AdminPanel() {
   const [tab, setTab] = useState('users')
 
   return (
-    <div className="admin-panel">
-      <h2 className="panel-title">管理后台</h2>
-      <div className="admin-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`admin-tab${tab === t.id ? ' active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
+    <div className="admin-panel panel">
+      <header className="panel-header">
+        <h2 className="panel-title">管理后台</h2>
+        <p className="panel-desc">用户管理 · 邀请码 · 用量统计</p>
+      </header>
+      <div className="admin-body">
+        <div className="admin-tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              className={`admin-tab${tab === t.id ? ' active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="admin-content">
+          {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : <UsageTab />}
+        </div>
       </div>
-      {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : <UsageTab />}
     </div>
   )
 }
