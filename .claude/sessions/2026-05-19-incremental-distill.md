@@ -96,3 +96,47 @@
 | Distiller导入+类常量 | SAFE_SINGLE_REDUCE=120, MAP_CONCURRENCY=10 | ✅ |
 | 静态prompt方法 | 4个 | ✅ |
 | 前端build | 成功 | ✅ 279ms |
+
+### 20:00 改动5: 撤销消息逻辑修正
+
+- **做了什么**：重写 revokeMessage，仅撤回最后一轮（最后一条user+后续char），3秒冷却期，撤回后发送hidden系统提示触发角色反应
+- **为什么**：原来按index撤回会误删消息，需精确到最后一轮；冷却防重复点击；hidden消息注入LLM上下文触发角色对撤回的反应
+- **影响范围**：`web/routers/chat.py`（ChatRequest加hidden字段）、`useAppStore.js`（revokeMessage重写+新增_sendRevokeNotice）、`ChatArea.jsx`（revokeCooldown传递+MessageBubble签名更新）、`global.css`（revoke-cooldown样式）
+
+| 检查项 | 期望 | 实际 |
+|--------|------|------|
+| 前端build | 成功 | ✅ 185ms |
+
+### 20:15 改动6: 头像框统一圆形
+
+- **做了什么**：角色和用户消息气泡头像统一为40px圆形，border-radius 50%，object-fit cover，首字占位
+- **为什么**：用户头像border-radius 4px方形，角色头像66px，尺寸和形状不一致
+- **影响范围**：`ChatArea.jsx`（MessageBubble中Avatar size 66→40）、`global.css`（.chat-msg-avatar尺寸66→40px、.user-avatar-circle 66→40px + border-radius 4px→50% + 增加overflow/border/shadow匹配Avatar组件）
+
+| 检查项 | 期望 | 实际 |
+|--------|------|------|
+| 前端build | 成功 | ✅ 215ms |
+
+### 21:30 Mem0 长期记忆系统集成
+
+- **做了什么**：集成 Mem0 长期记忆，DeepSeek v4 Pro 做 LLM，sentence-transformers/all-MiniLM-L6-v2 做本地 embedding，Qdrant 本地向量存储；ChatEngine 移除旧的摘要机制，改为每次对话异步写入 Mem0，构建 system prompt 时按最新用户消息检索记忆
+- **为什么**：
+  1. 旧的 `_summarize_if_needed` 在同步调用 LLM 做摘要，阻塞 SSE 流式输出
+  2. 摘要丢失细节，Mem0 向量检索保留完整语义
+  3. 跨会话记忆持久化 — 同一角色不同对话能记住之前的事
+- **关键决策**：
+  - 使用 DeepSeek v4 Pro 而非 OpenAI（用户无 OpenAI Key）
+  - 使用本地 embedding 而非 API（免费 + 隐私）
+  - `add()` 用 daemon thread 异步写入，不阻塞对话
+  - 统一 `context_window` 控制 LLM 历史条数，30 条
+- **影响范围**：
+  - `core/memory_manager.py`（新增）— Mem0 封装，lazy import，优雅降级
+  - `core/chat_engine.py` — 删除 `_summarize_if_needed` / `summary_threshold` / `_summary_lock`；新增 `memory_manager` / `card_id` / 长期记忆注入 / 异步 add
+  - `core/text_manager.py` — `_create_session` 加 `card_id` 参数
+  - `web/deps.py` — MemoryManager 单例 + hot-reload
+  - `web/routers/history.py` — resume 传 card_id
+  - `web/app.py` — 移除 legacy ChatEngine 的 summary_threshold 参数
+  - `config.yaml` — 新增 `memory` 段 + `max_tokens: 4096→1024`
+  - `requirements.txt` — 新增 `mem0ai>=2.0.0`
+- **验证**：同步 add/search 通过；异步 daemon thread add/search 通过；delete_all 通过
+- **已知问题（已修复）**：spaCy 和 fastembed 已安装，BM25 关键词搜索已启用
