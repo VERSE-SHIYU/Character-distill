@@ -3148,7 +3148,7 @@ body {
 }
 
 .history-readonly-msg {
-  max-width: 85%;
+  /* use same layout as chat-msg — no extra width restriction */
 }
 
 .history-readonly-summary {

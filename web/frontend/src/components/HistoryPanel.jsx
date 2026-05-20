@@ -616,7 +616,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                   <div className="user-avatar-circle">{userInitial}</div>
                 )}
                 <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
-                  {msg.content}
+                  <span className="chat-bubble-text">{msg.content}</span>
                 </div>
               </div>
             )
