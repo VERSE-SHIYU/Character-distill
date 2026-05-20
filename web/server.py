@@ -28,6 +28,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+import jwt as _jwt_lib
+
 from routers.text import router as text_router
 from routers.distill import legacy_router as distill_legacy
 from routers.distill import router as distill_router
@@ -37,7 +39,9 @@ from routers.history import router as history_router
 from routers.voice import router as voice_router
 from routers.wechat import router as wechat_router
 from routers.card import router as card_router
-from deps import get_config, reset_llm_and_dependents
+from routers.auth import router as auth_router
+from routers.auth import JWT_SECRET, JWT_ALGORITHM
+from deps import get_config, get_storage, reset_llm_and_dependents
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
 _LEGACY_STATIC_DIR = _WEB_DIR / "static"
@@ -61,6 +65,7 @@ app.add_middleware(
 )
 
 # ---- Mount routers ----
+app.include_router(auth_router)      # 不需要认证
 app.include_router(text_router)
 app.include_router(distill_router)
 app.include_router(chat_router)
@@ -68,6 +73,47 @@ app.include_router(history_router)
 app.include_router(voice_router)
 app.include_router(wechat_router)
 app.include_router(card_router)
+
+# ---- Auth middleware ----
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from fastapi.responses import JSONResponse
+
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login"}
+PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Allow public paths through
+        if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/"):
+            return await call_next(request)
+
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+        if scheme.lower() != "bearer" or not token:
+            return JSONResponse({"detail": "请先登录"}, status_code=401)
+
+        try:
+            payload = _jwt_lib.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except _jwt_lib.ExpiredSignatureError:
+            return JSONResponse({"detail": "Token 已过期，请重新登录"}, status_code=401)
+        except _jwt_lib.InvalidTokenError:
+            return JSONResponse({"detail": "Token 无效"}, status_code=401)
+
+        user_id = payload.get("sub")
+        if not user_id:
+            return JSONResponse({"detail": "Token 无效"}, status_code=401)
+
+        user = await get_storage().get_user_by_id(user_id)
+        if user is None:
+            return JSONResponse({"detail": "用户不存在"}, status_code=401)
+        request.state.user = user
+        return await call_next(request)
+
+
+app.add_middleware(AuthMiddleware)
 
 
 @app.get("/api/settings/config")
