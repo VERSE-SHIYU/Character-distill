@@ -17,6 +17,11 @@ class Relationship(BaseModel):
     relation: str                # 关系类型
     attitude: str = ""           # 态度描述
 
+class ChatSession(BaseModel):
+    """对话会话元数据（P5 预留，暂不接入逻辑）"""
+    affinity_score: int = 50  # 好感度 0-100，默认 50 中立
+
+
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""
     name: str
