@@ -1,7 +1,43 @@
 import { create } from 'zustand'
-import { postJSON, streamSSE, fetchWithTimeout } from '../api/client'
+import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken } from '../api/client'
 
 const useAppStore = create((set, get) => ({
+  // ---- Auth ----
+
+  authUser: null,
+  isLoggedIn: !!getToken(),
+
+  login: async (username, password) => {
+    const data = await postJSON('/api/auth/login', { username, password })
+    setToken(data.access_token)
+    set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
+  },
+
+  register: async (username, password) => {
+    const data = await postJSON('/api/auth/register', { username, password })
+    setToken(data.access_token)
+    set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
+  },
+
+  logout: () => {
+    removeToken()
+    set({
+      authUser: null,
+      isLoggedIn: false,
+      currentView: 'home',
+      texts: [],
+      cards: [],
+      currentCard: null,
+      sessionId: null,
+      messages: [],
+      currentTextId: null,
+      currentTextTitle: '',
+      identifiedChars: [],
+    })
+  },
+
+  // ---- Navigation ----
+
   currentView: 'home',
   setView: (view) => {
     const updates = { currentView: view }
@@ -257,6 +293,7 @@ const useAppStore = create((set, get) => ({
           get().loadTexts()
           resolve(data)
         } else {
+          if (xhr.status === 401) removeToken()
           try {
             const errData = JSON.parse(xhr.responseText)
             reject(new Error(errData.detail || '上传失败'))
@@ -272,6 +309,8 @@ const useAppStore = create((set, get) => ({
       }
 
       xhr.open('POST', '/api/text/upload')
+      const token = getToken()
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
       xhr.send(formData)
     })
   },

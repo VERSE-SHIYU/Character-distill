@@ -22,6 +22,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentCard = useAppStore((s) => s.currentCard)
   const texts = useAppStore((s) => s.texts)
   const cards = useAppStore((s) => s.cards)
+  const authUser = useAppStore((s) => s.authUser)
+  const logout = useAppStore((s) => s.logout)
   const [sessionCount, setSessionCount] = useState(0)
 
   const hasTexts = texts.length > 0
@@ -134,6 +136,15 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
       )}
 
       {isVisible && <ThemeSwitcher />}
+
+      {isVisible && authUser && (
+        <div className="sidebar-user-info">
+          <span className="sidebar-user-name">{authUser.username}</span>
+          <button className="sidebar-logout-btn" onClick={logout} title="退出登录">
+            退出
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

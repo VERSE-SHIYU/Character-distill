@@ -6,17 +6,40 @@ export class AppError extends Error {
   }
 }
 
+// ---- Auth helpers ----
+
+const TOKEN_KEY = 'auth_token'
+
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY) || ''
+}
+
+export function setToken(token) {
+  localStorage.setItem(TOKEN_KEY, token)
+}
+
+export function removeToken() {
+  localStorage.removeItem(TOKEN_KEY)
+}
+
+export function getAuthHeaders() {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export async function fetchWithTimeout(url, opts = {}, ms = 600000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
   try {
-    const res = await fetch(url, { ...opts, signal: controller.signal })
+    const headers = { ...getAuthHeaders(), ...(opts.headers || {}) }
+    const res = await fetch(url, { ...opts, headers, signal: controller.signal })
     if (!res.ok) {
       let detail = `HTTP ${res.status}`
       try {
         const body = await res.json()
         if (body.detail) detail = body.detail
       } catch { /* ignore */ }
+      if (res.status === 401) removeToken()
       throw new AppError(detail, res.status)
     }
     return res
@@ -48,7 +71,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(body),
         signal: controller.signal,
       })
@@ -58,6 +81,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
           const b = await res.json()
           if (b.detail) detail = b.detail
         } catch { /* ignore */ }
+        if (res.status === 401) removeToken()
         onError(new AppError(detail, res.status))
         return
       }

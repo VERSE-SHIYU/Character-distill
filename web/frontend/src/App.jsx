@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
 import { initTheme } from './utils/theme'
-import { fetchWithTimeout } from './api/client'
+import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import TextPanel from './components/TextPanel'
 import CharCard from './components/CharCard'
@@ -10,6 +10,7 @@ import HistoryPanel from './components/HistoryPanel'
 import SettingsPanel from './components/SettingsPanel'
 import HomePage from './components/HomePage'
 import VoicePanel from './components/VoicePanel'
+import LoginPage from './components/LoginPage'
 
 const PANELS = {
   home: HomePage,
@@ -19,6 +20,7 @@ const PANELS = {
   history: HistoryPanel,
   settings: SettingsPanel,
   voice: VoicePanel,
+  login: LoginPage,
 }
 
 function MainContent() {
@@ -43,6 +45,8 @@ export default function App() {
   const checkVoiceStatus = useAppStore((s) => s.checkVoiceStatus)
   const setView = useAppStore((s) => s.setView)
   const currentView = useAppStore((s) => s.currentView)
+  const isLoggedIn = useAppStore((s) => s.isLoggedIn)
+  const logout = useAppStore((s) => s.logout)
 
   useEffect(() => {
     initTheme()
@@ -52,15 +56,42 @@ export default function App() {
     checkVoiceStatus()
   }, [checkVoiceStatus])
 
+  // Verify token on mount
+  useEffect(() => {
+    ;(async () => {
+      const token = getToken()
+      if (!token) {
+        setView('login')
+        return
+      }
+      try {
+        const res = await fetchWithTimeout('/api/auth/me')
+        const user = await res.json()
+        useAppStore.setState({ authUser: user, isLoggedIn: true })
+      } catch {
+        logout()
+        setView('login')
+      }
+    })()
+  }, [])
+
+  // Redirect to login if logged out
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setView('login')
+    }
+  }, [isLoggedIn])
+
   // Auto-redirect to settings if LLM is not configured (check once on mount)
   useEffect(() => {
     ;(async () => {
+      if (!isLoggedIn) return
       const configured = await useAppStore.getState().checkApiConfig()
       if (!configured) {
         setView('settings')
       }
     })()
-  }, [])
+  }, [isLoggedIn])
 
   // Sidebar auto-hide state
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -101,6 +132,10 @@ export default function App() {
     setSidebarOpen(false)
     setSidebarPinned(false)
   }, [])
+
+  if (currentView === 'login') {
+    return <LoginPage />
+  }
 
   return (
     <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}`}>
