@@ -5,6 +5,7 @@ from typing import Any
 
 from core.schema import CharacterCard
 from core.rag import RAGEngine
+from core.scene_indexer import _detect_emotion
 
 
 def _count_tokens(text: str) -> int:
@@ -187,10 +188,20 @@ class ContextEngine:
         return "【近期对话记录】\n" + "\n".join(reversed(lines))
 
     def _retrieve_scenes(self, query: str) -> str:
-        """从 RAG 检索相关场景片段。"""
+        """从 RAG 检索相关场景片段（情感加权）。"""
         try:
             char_name = self.card.name
-            snippets = self.rag.query(query, character_name=char_name, top_k=3)
+            current_emotion = _detect_emotion(query)
+            # 优先用情感加权检索；若集合无 emotion metadata（chunk 模式）则降级
+            if hasattr(self.rag, "query_with_emotion"):
+                snippets = self.rag.query_with_emotion(
+                    query,
+                    current_emotion=current_emotion,
+                    character_name=char_name,
+                    top_k=3,
+                )
+            else:
+                snippets = self.rag.query(query, character_name=char_name, top_k=3)
         except Exception as exc:
             print(f"[ContextEngine] scene RAG failed: {exc}")
             snippets = []

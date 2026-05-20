@@ -17,6 +17,7 @@ from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
 from core.rag import RAGEngine
+from core.scene_indexer import SceneIndexer
 from core.schema import CharacterCard
 from storage.sqlite_store import SQLiteStore
 
@@ -441,6 +442,20 @@ class TextManager:
             self._get_or_build_rag(text_id, content, all_chars),
             actual_card_id,
         )
+
+        # 升级 RAG：将 chunk 检索替换为场景检索（异步、非阻塞）
+        rag_engine = self._get_or_build_rag(text_id, content, all_chars)
+        try:
+            n = await asyncio.to_thread(
+                SceneIndexer().index_scenes,
+                content,
+                rag_engine,
+                card.name,
+            )
+            print(f"[TextManager] SceneIndexer indexed {n} scenes for '{card.name}'")
+        except Exception as exc:
+            print(f"[TextManager] SceneIndexer failed (non-fatal): {exc}")
+
         await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
 
         result = card.model_dump()
