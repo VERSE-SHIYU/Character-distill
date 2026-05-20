@@ -9,7 +9,7 @@ class StorageBase(ABC):
     """Defines storage methods for texts, cards, sessions and messages."""
 
     @abstractmethod
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None) -> dict:
         """Save text content and return the stored record."""
 
     @abstractmethod

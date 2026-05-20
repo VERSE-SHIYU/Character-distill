@@ -43,6 +43,8 @@ async def upload_text(
     """Accept a multipart file or text form field, parse format, save."""
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+    cleaning_stats = None
+
     if file and file.filename:
         _validate_extension(file.filename)
 
@@ -59,9 +61,11 @@ async def upload_text(
                     await f.write(chunk)
 
             try:
-                text_id = await text_manager.upload_text_from_file(
+                result = await text_manager.upload_text_from_file(
                     str(temp_path), file.filename, title, description, text_type
                 )
+                text_id = result["text_id"]
+                cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
         finally:
@@ -72,7 +76,9 @@ async def upload_text(
         content = text
         name = filename or "pasted_text.txt"
         try:
-            text_id = await text_manager.upload_text(name, content, title, description, text_type)
+            result = await text_manager.upload_text(name, content, title, description, text_type)
+            text_id = result["text_id"]
+            cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
     else:
@@ -86,6 +92,8 @@ async def upload_text(
 
     if record:
         record.pop("content", None)
+        if cleaning_stats:
+            record["cleaning_stats"] = cleaning_stats
     return record or {"id": text_id}
 
 
@@ -120,3 +128,4 @@ async def delete_text(
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}
+

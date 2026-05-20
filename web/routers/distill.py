@@ -453,7 +453,8 @@ async def legacy_distill(
         raise HTTPException(400, "Text cannot be empty")
 
     try:
-        text_id = await text_manager.upload_text("legacy_upload.txt", text)
+        upload_result = await text_manager.upload_text("legacy_upload.txt", text)
+        text_id = upload_result["text_id"]
     except Exception as exc:
         print(f"[distill] Auto-save text failed: {exc}")
         raise HTTPException(500, f"Save text failed: {exc}") from exc

@@ -1,0 +1,1 @@
+ALTER TABLE texts ADD COLUMN original_char_count INTEGER DEFAULT NULL;

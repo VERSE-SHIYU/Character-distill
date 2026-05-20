@@ -14,6 +14,7 @@ from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
 from core.chat_engine import ChatEngine
+from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
 from core.rag import RAGEngine
 from core.schema import CharacterCard
@@ -163,8 +164,8 @@ class TextManager:
 
     # ---- File-based upload (PDF/DOCX support) ----
 
-    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story") -> str:
-        """Parse an on-disk file and save to storage. Returns text_id."""
+    async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story") -> dict[str, Any]:
+        """Parse an on-disk file and save to storage. Returns dict with text_id and char stats."""
         import aiofiles
 
         ext = Path(filename).suffix.lower()
@@ -191,19 +192,31 @@ class TextManager:
         if not parsed or not parsed.strip():
             raise ValueError("Text content is empty after parsing")
 
-        cleaned = parsed.strip()
+        original_chars = len(parsed)
         max_chars = 2_000_000 if text_type == "chat" else 1_000_000
-        if len(cleaned) > max_chars:
+        if original_chars > max_chars:
             limit_text = "200 万" if text_type == "chat" else "100 万"
             raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
 
+        # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
+        # Layer 2 (character context) is deferred to distillation time.
+        cleaned = parsed.strip()
+        cleaned_chars = original_chars
+        if text_type == "chat":
+            preprocessor = ChatPreprocessor()
+            cleaned = preprocessor.preprocess(cleaned)  # no target → only Layer 0+1
+            cleaned_chars = len(cleaned)
+            if not cleaned.strip():
+                raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
+
         text_id = uuid.uuid4().hex[:12]
         try:
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type)
+            occ = original_chars if text_type == "chat" else None
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
-        return text_id
+        return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
     @staticmethod
     def _extract_pdf(file_path: str) -> str:
@@ -234,24 +247,36 @@ class TextManager:
 
     # ---- Public API ----
 
-    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> str:
-        """Parse content by file extension, save to storage, return text_id."""
+    async def upload_text(self, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> dict[str, Any]:
+        """Parse content by file extension, save to storage. Returns dict with text_id and char stats."""
         parsed = self._parse_content(filename, content).strip()
         if not parsed:
             raise ValueError("Text content is empty after parsing")
 
+        original_chars = len(parsed)
         max_chars = 2_000_000 if text_type == "chat" else 1_000_000
-        if len(parsed) > max_chars:
+        if original_chars > max_chars:
             limit_text = "200 万" if text_type == "chat" else "100 万"
             raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
 
+        # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
+        cleaned = parsed
+        cleaned_chars = original_chars
+        if text_type == "chat":
+            preprocessor = ChatPreprocessor()
+            cleaned = preprocessor.preprocess(cleaned)  # no target → only Layer 0+1
+            cleaned_chars = len(cleaned)
+            if not cleaned.strip():
+                raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
+
         text_id = uuid.uuid4().hex[:12]
         try:
-            await self._storage.save_text(text_id, filename, parsed, title, description, text_type)
+            occ = original_chars if text_type == "chat" else None
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
-        return text_id
+        return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
     async def distill_all(self, text_id: str) -> list[dict[str, Any]]:
         """Identify every character in a stored text and distill each one.

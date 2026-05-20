@@ -1464,6 +1464,16 @@ body {
 .chars-orange { color: #e67e22; font-weight: 600; }
 .chars-red    { color: #e74c3c; font-weight: 600; }
 
+.text-list-cleaned {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .text-list-delete {
   flex-shrink: 0;
   margin-right: 8px;

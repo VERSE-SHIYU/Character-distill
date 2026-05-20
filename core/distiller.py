@@ -497,9 +497,10 @@ class Distiller:
         """
         is_chat = text_type == "chat"
 
+        # Chat: Layer 0+1 already done at upload time; only Layer 2 here
         if is_chat:
             preprocessor = ChatPreprocessor()
-            text = preprocessor.preprocess(text, character_name)
+            text = preprocessor._layer2_character_context(text, character_name)
 
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases
@@ -648,9 +649,10 @@ class Distiller:
         is_chat = text_type == "chat"
 
         # Chat preprocessing
+        # Chat: Layer 0+1 already done at upload time; only Layer 2 here
         if is_chat:
             preprocessor = ChatPreprocessor()
-            text = preprocessor.preprocess(text, character_name)
+            text = preprocessor._layer2_character_context(text, character_name)
 
         aliases = list(aliases) if aliases else []
         match_terms = [character_name] + aliases

@@ -138,6 +138,17 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Text type migration failed: {exc}")
 
+                    # Run 008_original_char_count migration (ALTER TABLE may fail if column exists)
+                    original_char_count_path = migrations_dir / "008_original_char_count.sql"
+                    if original_char_count_path.exists():
+                        try:
+                            occ_sql = original_char_count_path.read_text(encoding="utf-8")
+                            await conn.executescript(occ_sql)
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Original char count migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -175,24 +186,25 @@ class SQLiteStore(StorageBase):
         """Convert sqlite row to dict."""
         return dict(row) if row is not None else None
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story") -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None) -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
                         char_count = excluded.char_count,
                         title = excluded.title,
                         description = excluded.description,
-                        text_type = excluded.text_type
+                        text_type = excluded.text_type,
+                        original_char_count = excluded.original_char_count
                     """,
-                    (id, filename, content, char_count, title, description, text_type),
+                    (id, filename, content, char_count, title, description, text_type, original_char_count),
                 )
                 await conn.commit()
             return await self.get_text(id) or {}
@@ -205,7 +217,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -220,7 +232,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT id, filename, title, description, content, char_count, created_at, text_type
+                    SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
                     FROM texts
                     ORDER BY created_at DESC
                     """

@@ -260,6 +260,11 @@ export default function TextPanel() {
                     <span className={`text-list-chars ${charCountClass(t.char_count)}`}>
                       {`${formatCount(t.char_count)} 字`}
                     </span>
+                    {t.text_type === 'chat' && t.original_char_count != null && t.original_char_count !== t.char_count && (
+                      <span className="text-list-cleaned">
+                        {`已清洗：${formatCount(t.original_char_count)} 字 → ${formatCount(t.char_count)} 字（保留 ${(t.char_count / t.original_char_count * 100).toFixed(0)}%）`}
+                      </span>
+                    )}
                     <span className="text-list-time">
                       {formatTime(t.created_at)}
                     </span>
