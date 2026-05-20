@@ -140,3 +140,29 @@
   - `requirements.txt` — 新增 `mem0ai>=2.0.0`
 - **验证**：同步 add/search 通过；异步 daemon thread add/search 通过；delete_all 通过
 - **已知问题（已修复）**：spaCy 和 fastembed 已安装，BM25 关键词搜索已启用
+
+### 2026-05-20 蒸馏超时修复 + Reduce 极速优化
+
+- **做了什么**：三步蒸馏性能优化，每步独立 commit
+- **为什么**：LLM 单次调用可能超 300s 限制；Reduce 阶段无心跳 SSE 连接断开；SAFE_SINGLE_REDUCE=120 单批过大；批合并串行执行慢
+- **影响范围**：
+  - `adapters/llm_adapter.py` — timeout 300→600（sync + async client）
+  - `core/distiller.py` — SSE heartbeat 每 50 token；SAFE_SINGLE_REDUCE 120→60；新增 `_single_reduce_async` / `_run_reduce_concurrent`；`_do_reduce` 并发；`distill_incremental_stream` batch Reduce 改为 thread+queue 并发
+  - `web/frontend/src/api/client.js` — streamSSE 跳过 heartbeat 事件
+
+### 2026-05-20 用量统计完成（Step 4 剩余部分）
+
+- **做了什么**：完成用量统计全链路 — LLM token计数传出、record_usage 调用、前后端 API、前端展示
+- **为什么**：之前仅完成 DB 层（migration + storage methods），缺少 LLM 侧计数和前后端展示
+- **影响范围**：
+  - `adapters/llm_adapter.py` — `last_usage` dict；chat/async_chat/chat_stream 三个方法从 `completion.usage` 取精确 token 数；chat_stream 加 `stream_options={"include_usage": True}`
+  - `core/chat_engine.py` — `_storage`/`_user_id` 字段；`_try_record_usage` helper；chat/chat_stream 后调用
+  - `core/distiller.py` — `_storage`/`_user_id` 字段；`_try_record_usage` helper；`_single_reduce`/`_single_reduce_async`/`_single_reduce_stream`/distill_incremental/distill_incremental_stream 关键 LLM 调用点记录
+  - `web/routers/auth.py` — `GET /api/auth/usage` 用户自用量
+  - `web/routers/admin.py` — `GET /api/admin/usage` 管理员全量
+  - `web/routers/chat.py` — 注入 `engine._storage`/`engine._user_id`
+  - `web/routers/distill.py` — 注入 `distiller._storage`/`distiller._user_id`
+  - `web/frontend/src/api/client.js` — `getMyUsage()` + `adminAPI.getAllUsage()`
+  - `web/frontend/src/components/SettingsPanel.jsx` — "我的用量"卡片（总调用/输入/输出 + 按 action 明细）
+  - `web/frontend/src/components/AdminPanel.jsx` — "用户用量"tab（按用户汇总表格）
+  - `web/frontend/src/styles/global.css` — usage-stats/usage-action 样式
