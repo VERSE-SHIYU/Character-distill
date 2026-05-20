@@ -23,10 +23,14 @@ import yaml
 from pathlib import Path as _Path
 from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from limiter import limiter
 
 import jwt as _jwt_lib
 
@@ -58,6 +62,10 @@ else:
 
 app = FastAPI(title="Character Simulator API")
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -76,10 +84,18 @@ app.include_router(voice_router)
 app.include_router(wechat_router)
 app.include_router(card_router)
 
+# ---- Rate limit handler ----
+
+async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        {"detail": "请求过于频繁，请稍后再试"},
+        status_code=429,
+    )
+
+
 # ---- Auth middleware ----
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from fastapi.responses import JSONResponse
 
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
+from limiter import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -81,6 +82,7 @@ async def get_current_user(
 # ---- Routes ----
 
 @router.post("/register")
+@limiter.limit("3/hour")
 async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
@@ -118,6 +120,7 @@ async def register(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)
 
 
 @router.post("/login")
+@limiter.limit("5/minute")
 async def login(req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())

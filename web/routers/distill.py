@@ -18,6 +18,7 @@ from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
+from limiter import limiter
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
@@ -149,6 +150,7 @@ def _next_piece(stream_obj):
 
 
 @router.post("/run_stream")
+@limiter.limit("16/hour")
 async def distill_stream(
     req: DistillByIdRequest,
     request: Request,
