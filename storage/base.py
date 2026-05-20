@@ -157,3 +157,15 @@ class StorageBase(ABC):
     @abstractmethod
     async def delete_user_refresh_tokens(self, user_id: str) -> None:
         """Delete all refresh tokens for a user (logout)."""
+
+    @abstractmethod
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int) -> None:
+        """Record a usage stat entry."""
+
+    @abstractmethod
+    async def get_usage_stats(self, user_id: str) -> dict:
+        """Get usage stats for a user: totals, by_day, by_action."""
+
+    @abstractmethod
+    async def get_all_usage_summary(self) -> list[dict]:
+        """Get usage summary for all users (admin)."""

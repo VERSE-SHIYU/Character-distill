@@ -194,6 +194,12 @@ class SQLiteStore(StorageBase):
                         await conn.executescript(refresh_tokens_path.read_text(encoding="utf-8"))
                         await conn.commit()
 
+                    # Run 016_usage_stats migration (CREATE TABLE IF NOT EXISTS — idempotent)
+                    usage_stats_path = migrations_dir / "016_usage_stats.sql"
+                    if usage_stats_path.exists():
+                        await conn.executescript(usage_stats_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1092,4 +1098,70 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Delete user refresh tokens failed: {exc}")
+            raise
+
+    # ---- Usage stats ----
+
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?)",
+                    (user_id, action, prompt_tokens, completion_tokens),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Record usage failed: {exc}")
+
+    async def get_usage_stats(self, user_id: str) -> dict:
+        try:
+            async with await self._connect() as conn:
+                # Totals
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = ?",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+                total = dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+
+                # By day
+                cursor = await conn.execute(
+                    "SELECT date(created_at) AS date, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = ? GROUP BY date(created_at) ORDER BY date DESC LIMIT 30",
+                    (user_id,),
+                )
+                by_day = [dict(r) for r in await cursor.fetchall()]
+
+                # By action
+                cursor = await conn.execute(
+                    "SELECT action, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = ? GROUP BY action",
+                    (user_id,),
+                )
+                by_action = {}
+                for r in await cursor.fetchall():
+                    d = dict(r)
+                    by_action[d["action"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
+
+            return {"total_calls": total["calls"], "total_prompt_tokens": total["prompt_tokens"], "total_completion_tokens": total["completion_tokens"], "by_day": by_day, "by_action": by_action}
+        except Exception as exc:
+            print(f"[SQLiteStore] Get usage stats failed: {exc}")
+            raise
+
+    async def get_all_usage_summary(self) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT u.id AS user_id, u.username,
+                       COUNT(s.id) AS total_calls,
+                       COALESCE(SUM(s.prompt_tokens), 0) AS total_prompt_tokens,
+                       COALESCE(SUM(s.completion_tokens), 0) AS total_completion_tokens,
+                       MAX(s.created_at) AS last_active
+                    FROM users u
+                    LEFT JOIN usage_stats s ON u.id = s.user_id
+                    GROUP BY u.id
+                    ORDER BY last_active DESC NULLS LAST"""
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get all usage summary failed: {exc}")
             raise
