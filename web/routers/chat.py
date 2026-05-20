@@ -85,8 +85,7 @@ async def _ensure_session(
         engine.user_role = db_session["user_role"]
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
 
-    sp_len = len(engine.build_system_prompt()) if engine else 0
-    print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
+    print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
     return sessions[session_id]
 
 
@@ -138,8 +137,7 @@ async def _do_chat(
         if engine:
             engine._storage = storage
             engine._user_id = user_id
-        sp_len = len(engine.build_system_prompt()) if engine else 0
-        print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
+        print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
         resp, rag_ctx = await asyncio.to_thread(engine.chat, msg)
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")
@@ -223,8 +221,7 @@ async def _do_chat_stream(
             engine = session["engine"]
             engine._storage = storage
             engine._user_id = user_id
-            sp_len = len(engine.build_system_prompt()) if engine else 0
-            print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages, system_prompt={sp_len} chars")
+            print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages")
             stream = engine.chat_stream(msg)
             while True:
                 piece, done = await asyncio.to_thread(_next_piece, stream)

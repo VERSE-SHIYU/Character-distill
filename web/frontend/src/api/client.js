@@ -134,8 +134,9 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
   const timeoutMs = 600000 // 10 min total
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
   let finished = false
+  let retried = false
 
-  ;(async () => {
+  async function doFetch() {
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -144,14 +145,14 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
         signal: controller.signal,
       })
       if (!res.ok) {
-        if (res.status === 401) {
+        if (res.status === 401 && !retried) {
           const newToken = await tryRefresh()
           if (newToken) {
-            onError(new AppError('Token 已刷新，请重试', 401))
-          } else {
-            removeAuth()
-            onError(new AppError('请重新登录', 401))
+            retried = true
+            return doFetch()
           }
+          removeAuth()
+          onError(new AppError('请重新登录', 401))
           return
         }
         if (res.status === 429) {
@@ -216,8 +217,9 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
     } finally {
       clearTimeout(timeoutId)
     }
-  })()
+  }
 
+  doFetch()
   return () => controller.abort()
 }
 
@@ -237,7 +239,7 @@ export const adminAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ new_password: newPassword }),
     },
-  ),
+  ).then(r => r.json()),
 
   generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
 

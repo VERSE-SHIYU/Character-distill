@@ -130,6 +130,8 @@ async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depen
         raise HTTPException(401, "用户名或密码错误")
     if not password_hasher.verify(req.password, user["password_hash"]):
         raise HTTPException(401, "用户名或密码错误")
+    if user.get("is_disabled"):
+        raise HTTPException(403, "账号已被禁用")
 
     access_token = _create_access_token(user["id"], user["username"])
     refresh_token = await _create_refresh_token(user["id"], storage)
