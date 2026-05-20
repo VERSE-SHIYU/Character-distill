@@ -9,6 +9,8 @@ from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
+from urllib.parse import quote
 
 from deps import get_storage, get_text_manager
 from core.text_manager import TextManager
@@ -116,6 +118,29 @@ async def list_texts(
         content = t.pop("content", None) or ""
         t["preview"] = content[:300]
     return texts
+
+
+@router.get("/{text_id}/download-cleaned")
+async def download_cleaned(
+    text_id: str,
+    storage: SQLiteStore = Depends(get_storage),
+) -> Response:
+    """Download cleaned plain text for chat-type imports."""
+    text_rec = await storage.get_text(text_id)
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+
+    content = text_rec.get("content", "")
+    title = text_rec.get("title", "text")
+    safe_name = quote(f"{title}_cleaned.txt")
+
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}",
+        },
+    )
 
 
 @router.delete("/{text_id}")

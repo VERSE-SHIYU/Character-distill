@@ -306,6 +306,30 @@ export default function TextPanel() {
                   >
                     管理角色
                   </button>
+                  {t.text_type === 'chat' && (
+                    <button
+                      type="button"
+                      className="btn-ghost text-list-action-btn"
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        try {
+                          const res = await fetchWithTimeout(`/api/text/${t.id}/download-cleaned`)
+                          const blob = await res.blob()
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `${t.title || 'chat'}_cleaned.txt`
+                          document.body.appendChild(a)
+                          a.click()
+                          a.remove()
+                          URL.revokeObjectURL(url)
+                        } catch { /* ignore */ }
+                      }}
+                      title="下载清洗后文本"
+                    >
+                      {'\u{1F4E5}'} 下载清洗文本
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-ghost text-list-action-btn text-list-action-danger"
