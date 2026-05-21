@@ -249,6 +249,11 @@ async def _do_chat_stream(
             print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages")
             async with session["lock"]:
                 stream = engine.chat_stream(msg)
+                # Drive generator to first yield so history.append runs under lock
+                first_piece, done = await asyncio.to_thread(_next_piece, stream)
+            if not done:
+                tokens.append(first_piece)
+                yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False)}\n\n"
             while True:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
                 if done:
@@ -387,6 +392,11 @@ async def get_affinity(
     session = sessions.get(session_id)
     if session and session.get("engine"):
         return session["engine"].get_affinity()
+
+    # Verify ownership before falling back to DB
+    db_session = await storage.get_session(session_id)
+    if db_session and db_session.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权访问此会话")
 
     # Fallback to DB (server restarted)
     data = await storage.get_session_affinity(session_id)

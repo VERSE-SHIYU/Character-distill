@@ -18,9 +18,15 @@ class AvatarSaveRequest(BaseModel):
 @router.get("/{card_id}/avatar")
 async def get_card_avatar(
     card_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Get saved avatar for a card. Returns {data: base64_string} or 404."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权访问此角色卡")
     data = await storage.get_card_avatar(card_id)
     if data is None:
         raise HTTPException(404, "Avatar not found")

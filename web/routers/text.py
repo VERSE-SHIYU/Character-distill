@@ -124,12 +124,15 @@ async def list_texts(
 @router.get("/{text_id}/download-cleaned")
 async def download_cleaned(
     text_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> Response:
     """Download cleaned plain text for chat-type imports."""
     text_rec = await storage.get_text(text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
+    if text_rec.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权下载此文本")
 
     content = text_rec.get("content", "")
     title = text_rec.get("title", "text")

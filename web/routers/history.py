@@ -266,9 +266,15 @@ async def resume_session(
 @router.post("/{session_id}/restore")
 async def restore_session(
     session_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
     """Restore a soft-deleted session from trash."""
+    session = await storage.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权操作此会话")
     try:
         ok = await storage.restore_session(session_id)
     except Exception as exc:
