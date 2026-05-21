@@ -230,13 +230,22 @@ async def resume_session(
     if db_session.get("user_role"):
         engine.user_role = db_session["user_role"]
 
-    # 8. Return session detail + messages (same shape as GET)
+    # 8. Restore affinity from DB — each session has independent scores
+    engine._session_id = session_id
+    try:
+        affinity_data = await storage.get_session_affinity(session_id)
+        if affinity_data:
+            engine.load_affinity(affinity_data)
+    except Exception as exc:
+        print(f"[history] Restore affinity failed (non-fatal): {exc}")
+
+    # 10. Return session detail + messages (same shape as GET)
     frontend_messages = [
         {"role": m["role"], "content": m["content"], "id": m["id"]}
         for m in db_messages
     ]
 
-    # 9. Rebuild message_ids so revoke works after resume
+    # 11. Rebuild message_ids so revoke works after resume
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
 
     return {"session": db_session, "messages": frontend_messages}
