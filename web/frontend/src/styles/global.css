@@ -3320,6 +3320,21 @@ body {
   color: #a03030;
 }
 
+.btn-danger {
+  height: 38px;
+  padding: 0 22px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 10px;
+  border: 1px solid rgba(220, 60, 60, 0.3);
+  background: rgba(231, 76, 60, 0.9);
+  color: #fff;
+  cursor: pointer;
+  transition: all .2s;
+}
+.btn-danger:hover { background: rgba(200, 50, 40, 0.95); }
+.btn-danger:disabled { opacity: 0.5; cursor: default; }
+
 .btn-danger-sm {
   height: 34px;
   padding: 0 14px;
@@ -5169,7 +5184,28 @@ select.settings-input {
   margin-bottom: 16px;
   font-size: 13px;
   color: #e74c3c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
+
+.admin-error-close {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(231, 76, 60, 0.15);
+  color: #e74c3c;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s;
+}
+.admin-error-close:hover { background: rgba(231, 76, 60, 0.3); }
 
 /* ---- Table ---- */
 
@@ -5357,6 +5393,16 @@ select.settings-input {
   background: rgba(231, 76, 60, 0.1);
   border-color: rgba(231, 76, 60, 0.35);
   color: #e74c3c;
+}
+
+.admin-action-btn.delete-user {
+  color: #e74c3c;
+  border-color: rgba(231, 76, 60, 0.2);
+  font-weight: 600;
+}
+.admin-action-btn.delete-user:hover {
+  background: rgba(231, 76, 60, 0.12);
+  border-color: rgba(231, 76, 60, 0.4);
 }
 
 /* ---- Batch delete row ---- */

@@ -41,6 +41,7 @@ function UsersTab() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [actionError, setActionError] = useState('')
   const [resetTarget, setResetTarget] = useState(null)
   const [newPassword, setNewPassword] = useState('')
   const [resetting, setResetting] = useState(false)
@@ -48,10 +49,13 @@ function UsersTab() {
   const [resetOk, setResetOk] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+  const [confirmName, setConfirmName] = useState('')
   const authUser = useAppStore((s) => s.authUser)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setError('')
     try {
       const data = await adminAPI.listUsers()
       setUsers(data)
@@ -73,7 +77,7 @@ function UsersTab() {
       }
       await load()
     } catch (err) {
-      setError(err.message)
+      setActionError(err.message)
     }
   }
 
@@ -102,73 +106,93 @@ function UsersTab() {
 
   const handleDelete = async () => {
     setDeleting(true)
+    setDeleteError('')
     try {
       await adminAPI.deleteUser(deleteTarget.id)
       setDeleteTarget(null)
+      setConfirmName('')
       await load()
     } catch (err) {
-      setError(err.message)
+      setDeleteError(err.message || '删除失败')
     } finally {
       setDeleting(false)
     }
   }
 
-  if (loading) return <div className="admin-loading">加载中…</div>
-  if (error) return <div className="admin-error">{error}</div>
+  const fmtDate = (iso) => {
+    if (!iso) return '-'
+    return iso.slice(0, 10)
+  }
 
   return (
     <div className="admin-card">
       <div className="admin-card-title">用户管理</div>
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>用户名</th>
-              <th>角色</th>
-              <th>状态</th>
-              <th>注册时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <tr key={u.id}>
-                <td>{u.username}</td>
-                <td>{u.is_admin ? '管理员' : '用户'}</td>
-                <td>
-                  <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
-                    {u.is_disabled ? '已禁用' : '正常'}
-                  </span>
-                </td>
-                <td>{u.created_at || '-'}</td>
-                <td className="admin-actions-cell">
-                  <button
-                    className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
-                    onClick={() => toggleDisable(u)}
-                  >
-                    {u.is_disabled ? '启用' : '禁用'}
-                  </button>
-                  <button
-                    className="admin-action-btn reset"
-                    onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
-                  >
-                    重置密码
-                  </button>
-                  {u.id !== authUser?.id && (
-                    <button
-                      className="admin-action-btn delete-invite"
-                      onClick={() => setDeleteTarget(u)}
-                      title="删除用户"
-                    >
-                      {'✕'}
-                    </button>
-                  )}
-                </td>
+      {error && (
+        <div className="admin-error-banner">
+          <span>{error}</span>
+          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
+      {actionError && (
+        <div className="admin-error-banner">
+          <span>{actionError}</span>
+          <button className="admin-error-close" onClick={() => setActionError('')}>✕</button>
+        </div>
+      )}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 120 }}>用户名</th>
+                <th style={{ minWidth: 70 }}>角色</th>
+                <th style={{ minWidth: 70 }}>状态</th>
+                <th style={{ minWidth: 100 }}>注册时间</th>
+                <th style={{ minWidth: 140 }}>操作</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.id}>
+                  <td>{u.username}</td>
+                  <td>{u.is_admin ? '管理员' : '用户'}</td>
+                  <td>
+                    <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
+                      {u.is_disabled ? '已禁用' : '正常'}
+                    </span>
+                  </td>
+                  <td>{fmtDate(u.created_at)}</td>
+                  <td className="admin-actions-cell">
+                    <button
+                      className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
+                      onClick={() => toggleDisable(u)}
+                    >
+                      {u.is_disabled ? '启用' : '禁用'}
+                    </button>
+                    <button
+                      className="admin-action-btn reset"
+                      onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
+                    >
+                      重置密码
+                    </button>
+                    {u.id !== authUser?.id && (
+                      <button
+                        className="admin-action-btn delete-user"
+                        onClick={() => { setDeleteTarget(u); setConfirmName(''); setDeleteError('') }}
+                        title="删除用户"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Reset password modal */}
       {resetTarget && (
@@ -202,17 +226,29 @@ function UsersTab() {
 
       {/* Delete user confirmation modal */}
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+        <div className="modal-overlay" onClick={() => { if (!deleting) { setDeleteTarget(null); setConfirmName('') } }}>
           <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">删除用户 — {deleteTarget.username}</h3>
             <div className="modal-body">
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.6 }}>
                 删除用户将清除其所有数据（文本、角色卡、对话、记忆），不可恢复。
               </p>
+              <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+                请输入用户名 <strong>{deleteTarget.username}</strong> 确认删除：
+              </p>
+              <input
+                className="login-input"
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={deleteTarget.username}
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && confirmName === deleteTarget.username && !deleting && handleDelete()}
+              />
+              {deleteError && <div className="login-error" style={{ marginTop: 8 }}>{deleteError}</div>}
             </div>
             <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={handleDelete} disabled={deleting}>
+              <button className="btn-ghost" onClick={() => { setDeleteTarget(null); setConfirmName('') }} disabled={deleting}>取消</button>
+              <button className="btn-danger" onClick={handleDelete} disabled={deleting || confirmName !== deleteTarget.username}>
                 {deleting ? '删除中…' : '确认删除'}
               </button>
             </div>
@@ -427,36 +463,43 @@ function UsageTab() {
     return String(n)
   }
 
-  if (loading) return <div className="admin-loading">加载中…</div>
-  if (error) return <div className="admin-error">{error}</div>
-
   return (
     <div className="admin-card">
       <div className="admin-card-title">用户用量统计</div>
-      <div className="admin-table-wrap">
-        <table className="admin-table">
-          <thead>
-            <tr>
-              <th>用户名</th>
-              <th>调用次数</th>
-              <th>输入 Token</th>
-              <th>输出 Token</th>
-              <th>最近活跃</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((r) => (
-              <tr key={r.user_id}>
-                <td>{r.username}</td>
-                <td>{r.total_calls}</td>
-                <td>{fmt(r.total_prompt_tokens)}</td>
-                <td>{fmt(r.total_completion_tokens)}</td>
-                <td>{r.last_active || '-'}</td>
+      {error && (
+        <div className="admin-error-banner">
+          <span>{error}</span>
+          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>用户名</th>
+                <th>调用次数</th>
+                <th>输入 Token</th>
+                <th>输出 Token</th>
+                <th>最近活跃</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {data.map((r) => (
+                <tr key={r.user_id}>
+                  <td>{r.username}</td>
+                  <td>{r.total_calls}</td>
+                  <td>{fmt(r.total_prompt_tokens)}</td>
+                  <td>{fmt(r.total_completion_tokens)}</td>
+                  <td>{r.last_active || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
