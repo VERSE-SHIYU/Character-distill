@@ -544,8 +544,14 @@ class UpdateCardRequest(BaseModel):
 async def update_card(
     card_id: str,
     req: UpdateCardRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ):
+    record = await storage.get_card(card_id)
+    if not record:
+        raise HTTPException(404, "Card not found")
+    if record.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权修改此角色卡")
     result = await storage.update_card(card_id, req.card_json)
     return {"ok": True, "card": result}
 
@@ -575,6 +581,7 @@ async def generate_opening(
 @router.get("/cards/{card_id}/export")
 async def export_card(
     card_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
     format: str = Query(default="tavern"),
     first_mes: str = Query(default=""),
@@ -587,6 +594,8 @@ async def export_card(
     record = await storage.get_card(card_id)
     if not record:
         raise HTTPException(404, "Card not found")
+    if record.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权导出此角色卡")
 
     try:
         card = CharacterCard.model_validate_json(record["card_json"])

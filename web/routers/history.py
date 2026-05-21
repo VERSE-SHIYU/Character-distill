@@ -92,10 +92,19 @@ async def clear_all_sessions(
 @router.get("/{session_id}/export")
 async def export_session(
     session_id: str,
+    request: Request,
     format: str = Query("json", description="Export format: json or txt"),
     storage: SQLiteStore = Depends(get_storage),
 ) -> Response:
     """Export a session as json or txt."""
+    try:
+        session = await storage.get_session(session_id)
+    except Exception:
+        raise HTTPException(404, "Session not found")
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权访问此会话")
     try:
         content = await storage.export_session(session_id, format)
     except ValueError as exc:
@@ -112,12 +121,15 @@ async def export_session(
 @router.get("/{session_id}")
 async def get_session_detail(
     session_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Get a session with its full message list."""
     session = await storage.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    if session.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权访问此会话")
     try:
         messages = await storage.get_messages(session_id)
     except Exception as exc:
@@ -270,10 +282,16 @@ async def restore_session(
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
+    request: Request,
     permanent: bool = Query(False, description="If true, hard-delete permanently"),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
     """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
+    session = await storage.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权操作此会话")
     try:
         if permanent:
             ok = await storage.hard_delete_session(session_id)

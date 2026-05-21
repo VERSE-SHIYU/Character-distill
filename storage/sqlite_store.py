@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -309,7 +310,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -430,7 +431,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at FROM cards WHERE id = ?",
+                    "SELECT id, text_id, name, card_json, created_at, user_id FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -549,7 +550,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = ?
@@ -1044,7 +1045,7 @@ class SQLiteStore(StorageBase):
         from hashlib import sha256
         key = os.getenv("FERNET_KEY")
         if not key:
-            raw = os.getenv("JWT_SECRET", "character-distill-dev-secret").encode()
+            raw = os.getenv("JWT_SECRET", "character-distill-dev-secret-key-change-in-prod").encode()
             key = base64.urlsafe_b64encode(sha256(raw).digest())
         return Fernet(key)
 
@@ -1259,45 +1260,38 @@ class SQLiteStore(StorageBase):
                 )
                 counts["sessions"] = cursor.rowcount
 
-                # 3. Delete card avatars
-                cursor = await conn.execute(
-                    "DELETE FROM card_avatars WHERE card_id IN (SELECT id FROM cards WHERE user_id = ?)",
-                    (user_id,),
-                )
-                counts["card_avatars"] = cursor.rowcount
-
-                # 4. Delete cards
+                # 3. Delete cards (avatar_data stored inline in cards table, deleted with row)
                 cursor = await conn.execute(
                     "DELETE FROM cards WHERE user_id = ?", (user_id,)
                 )
                 counts["cards"] = cursor.rowcount
 
-                # 5. Delete texts
+                # 4. Delete texts
                 cursor = await conn.execute(
                     "DELETE FROM texts WHERE user_id = ?", (user_id,)
                 )
                 counts["texts"] = cursor.rowcount
 
-                # 6. Delete usage stats
+                # 5. Delete usage stats
                 cursor = await conn.execute(
                     "DELETE FROM usage_stats WHERE user_id = ?", (user_id,)
                 )
                 counts["usage_stats"] = cursor.rowcount
 
-                # 7. Delete refresh tokens
+                # 6. Delete refresh tokens
                 cursor = await conn.execute(
                     "DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,)
                 )
                 counts["refresh_tokens"] = cursor.rowcount
 
-                # 8. Nullify invite codes created by this user
+                # 7. Nullify invite codes created by this user
                 cursor = await conn.execute(
-                    "UPDATE invite_codes SET created_by = NULL WHERE created_by = ?",
+                    "UPDATE invite_codes SET created_by = '[deleted]' WHERE created_by = ?",
                     (user_id,),
                 )
                 counts["invite_codes"] = cursor.rowcount
 
-                # 9. Delete the user
+                # 8. Delete the user
                 cursor = await conn.execute(
                     "DELETE FROM users WHERE id = ?", (user_id,)
                 )

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from deps import get_storage
@@ -31,9 +31,15 @@ async def get_card_avatar(
 async def save_card_avatar(
     card_id: str,
     body: AvatarSaveRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Save avatar image (base64) for a card."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权操作此角色卡")
     if not body.data or len(body.data) < 10:
         raise HTTPException(400, "Avatar data too short")
     try:

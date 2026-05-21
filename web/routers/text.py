@@ -147,9 +147,15 @@ async def download_cleaned(
 @router.delete("/{text_id}")
 async def delete_text(
     text_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete a text and its cascading cards/sessions."""
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "Text not found")
+    if text.get("user_id") != request.state.user.get("id", ""):
+        raise HTTPException(403, "无权删除此文本")
     try:
         ok = await storage.delete_text(text_id)
     except Exception as exc:

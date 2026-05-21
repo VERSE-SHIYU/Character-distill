@@ -23,7 +23,7 @@ import yaml
 from pathlib import Path as _Path
 from pydantic import BaseModel
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -45,7 +45,7 @@ from routers.wechat import router as wechat_router
 from routers.card import router as card_router
 from routers.auth import router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
-from routers.admin import router as admin_router
+from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -100,6 +100,7 @@ PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        request.state.user = {}  # default, prevents AttributeError on non-API paths
         path = request.url.path
         # Allow public paths through
         if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/"):
@@ -163,7 +164,10 @@ class UpdateConfigRequest(BaseModel):
 
 
 @app.post("/api/settings/config")
-def update_settings_config(req: UpdateConfigRequest) -> dict[str, Any]:
+def update_settings_config(
+    req: UpdateConfigRequest,
+    _admin: dict = Depends(require_admin),
+) -> dict[str, Any]:
     """Update LLM + voice config at runtime and persist to config.yaml."""
     try:
         cfg = get_config()
