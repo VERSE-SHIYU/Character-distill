@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -85,26 +86,50 @@ async def list_voices() -> list[dict[str, Any]]:
 
 # ---- Custom voice library CRUD ----
 
+AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
+VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+def _extract_audio_from_video(filepath: Path) -> Path:
+    """Extract audio track from video file using ffmpeg. Returns new .wav path."""
+    import subprocess
+    wav_path = filepath.with_suffix(".wav")
+    ffmpeg = os.environ.get("FFMPEG_PATH", "ffmpeg")
+    result = subprocess.run(
+        [ffmpeg, "-y", "-i", str(filepath), "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", str(wav_path)],
+        capture_output=True, timeout=60,
+    )
+    if result.returncode != 0:
+        err_msg = result.stderr.decode()[:200] if result.stderr else "unknown error"
+        raise HTTPException(400, f"视频音频提取失败: {err_msg}")
+    filepath.unlink()  # Remove original video, keep audio only
+    return wav_path
+
+
 @router.post("/upload")
 async def upload_custom_voice(
     file: UploadFile = File(...),
     name: str = Form(...),
 ) -> dict[str, Any]:
     if not file.filename:
-        raise HTTPException(400, "请选择音频文件")
+        raise HTTPException(400, "请选择音频或视频文件")
     if not name.strip():
         raise HTTPException(400, "请填写音色名称")
 
     ext = Path(file.filename).suffix.lower()
-    if ext not in (".wav", ".mp3"):
-        raise HTTPException(400, "仅支持 wav / mp3 格式")
+    if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
+        raise HTTPException(400, "仅支持音频（wav/mp3/flac）和视频（mp4/mov/avi/mkv/webm）格式")
 
     voice_id = uuid.uuid4().hex[:12]
     dest_path = VOICE_LIBRARY_DIR / f"{voice_id}{ext}"
     content = await file.read()
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(400, "文件大小不能超过 10MB")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "文件大小不能超过 20MB")
     dest_path.write_bytes(content)
+
+    # Extract audio from video
+    if ext in VIDEO_EXTS:
+        dest_path = _extract_audio_from_video(dest_path)
+        ext = ".wav"
 
     try:
         from mutagen import File as MutagenFile
@@ -237,10 +262,14 @@ async def upload_ref_audio(
     file: UploadFile = File(...),
     storage = Depends(get_storage),
 ) -> JSONResponse:
-    """Upload a reference audio file and bind it to a character card."""
+    """Upload a reference audio file and bind it to a character card.
+
+    Supports audio (wav/mp3/flac) and video (mp4/mov/avi/mkv/webm).
+    Video files are auto-converted: audio track extracted to 16kHz mono wav.
+    """
     ext = Path(file.filename).suffix.lower() if file.filename else ""
-    if ext not in {".wav", ".mp3", ".flac", ".ogg", ".m4a"}:
-        raise HTTPException(400, f"不支持的音频格式: {ext}")
+    if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
+        raise HTTPException(400, f"不支持的格式: {ext}。支持音频（wav/mp3/flac）和视频（mp4/mov/avi/mkv/webm）")
 
     filename = f"{card_id}_{uuid.uuid4().hex[:8]}{ext}"
     filepath = REF_AUDIO_DIR / filename
@@ -249,8 +278,25 @@ async def upload_ref_audio(
     async with aiofiles.open(filepath, "wb") as f:
         content = await file.read()
         if len(content) > 20 * 1024 * 1024:
-            raise HTTPException(400, "音频文件过大，最大支持 20MB")
+            raise HTTPException(400, "文件过大，最大支持 20MB")
         await f.write(content)
+
+    # Extract audio from video
+    if ext in VIDEO_EXTS:
+        import subprocess
+        wav_path = filepath.with_suffix(".wav")
+        ffmpeg = os.environ.get("FFMPEG_PATH", "ffmpeg")
+        result = subprocess.run(
+            [ffmpeg, "-y", "-i", str(filepath), "-vn", "-ar", "16000", "-ac", "1", "-f", "wav", str(wav_path)],
+            capture_output=True, timeout=60,
+        )
+        if result.returncode != 0:
+            err_msg = result.stderr.decode()[:200] if result.stderr else "unknown error"
+            filepath.unlink(missing_ok=True)
+            raise HTTPException(400, f"视频音频提取失败: {err_msg}")
+        filepath.unlink()  # Remove video, keep audio
+        filepath = wav_path
+        ext = ".wav"
 
     ref_json = json.dumps({
         "path": str(filepath),

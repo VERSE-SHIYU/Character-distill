@@ -343,7 +343,7 @@ export default function SettingsPanel() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".wav,.mp3"
+                  accept=".wav,.mp3,.flac,.mp4,.mov,.webm"
                   className="voice-file-input"
                   onChange={handleFileChange}
                 />
@@ -436,7 +436,7 @@ export default function SettingsPanel() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".wav,.mp3"
+                  accept=".wav,.mp3,.flac,.mp4,.mov,.webm"
                   className="voice-file-input"
                   onChange={(e) => {
                     const f = e.target.files?.[0]
