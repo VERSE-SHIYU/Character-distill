@@ -12,8 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from urllib.parse import quote
 
-from deps import get_storage, get_text_manager
-from core.text_manager import TextManager
+from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api/text", tags=["text"])
@@ -40,13 +39,15 @@ async def upload_text(
     title: str = Form(""),
     description: str = Form(""),
     text_type: str = Form("story"),
-    text_manager: TextManager = Depends(get_text_manager),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Accept a multipart file or text form field, parse format, save."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
-    user_id = request.state.user.get("id", "")
     cleaning_stats = None
 
     if file and file.filename:

@@ -10,9 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage, get_text_manager
+from deps import get_sessions, get_storage
 from core.schema import CharacterCard
-from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api/history", tags=["history"])
@@ -133,7 +132,6 @@ async def resume_session(
     _body: ResumeRequest,
     request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    text_manager: TextManager = Depends(get_text_manager),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Rebuild the in-memory ChatEngine for a persisted session.
@@ -143,10 +141,12 @@ async def resume_session(
     RAG index, ChatEngine, and replays history messages so the user can
     pick up the conversation where it left off.
     """
+    user_id = request.state.user.get("id", "")
+    from deps import get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
-
-    user_id = request.state.user.get("id", "")
 
     # 1. Load session + card + text from DB
     db_session = await storage.get_session(session_id)

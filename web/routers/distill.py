@@ -14,11 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_distiller, get_sessions, get_storage, get_text_manager
+from deps import get_sessions, get_storage
 from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
-from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 
@@ -71,18 +70,34 @@ class DistillTaskRequest(BaseModel):
 
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
-    content: str, text_type: str,
+    content: str, text_type: str, api_config: dict | None = None,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
     All I/O that requires an event loop (text read, card save) is performed
     via ``asyncio.run()`` which creates a fresh loop per call — safe across
     threads since each thread owns its own loop.
+
+    If *api_config* is provided (api_key, base_url, model), a per-user LLM
+    is created so distillation uses the user's own API key, not the global fallback.
     """
     try:
+        from adapters.llm_adapter import LLMAdapter
         from deps import get_distiller, get_text_manager
-        distiller = get_distiller()
-        text_manager = get_text_manager()
+
+        per_user_llm = None
+        if api_config and api_config.get("api_key"):
+            try:
+                per_user_llm = LLMAdapter(
+                    api_key=api_config["api_key"],
+                    base_url=api_config.get("base_url", "https://api.deepseek.com"),
+                    model=api_config.get("model", "deepseek-v4-pro"),
+                )
+            except Exception as exc:
+                print(f"[distill] Per-user LLM init failed, falling back: {exc}")
+
+        distiller = get_distiller(llm=per_user_llm)
+        text_manager = get_text_manager(llm=per_user_llm)
 
         if not distiller or not text_manager:
             with _task_lock:
@@ -173,7 +188,7 @@ def _run_distill_task(
         # aiosqlite connections are bound to the thread's own event loop.
         async def _save_card():
             from pathlib import Path as _Path
-            from deps import get_config, get_distiller, get_llm, get_rag_config, get_sessions
+            from deps import get_config, get_rag_config, get_sessions
             from core.text_manager import TextManager
             from storage.sqlite_store import SQLiteStore
 
@@ -182,10 +197,15 @@ def _run_distill_task(
             store = SQLiteStore(db_path)
             await store._ensure_initialized()
 
+            llm_for_save = per_user_llm
+            if llm_for_save is None:
+                from deps import get_llm
+                llm_for_save = get_llm()
+
             tm = TextManager(
                 store,
-                get_distiller(),
-                get_llm(),
+                get_distiller(llm=llm_for_save),
+                llm_for_save,
                 get_rag_config(),
                 get_sessions(),
                 cfg.get("llm", {}).get("summary_threshold", 50),
@@ -247,10 +267,14 @@ async def _resolve_character_name(
 @router.post("/identify")
 async def identify_by_text_id(
     req: IdentifyByIdRequest,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    distiller: Distiller = Depends(get_distiller),
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     cached = await storage.get_characters(req.text_id)
@@ -269,10 +293,13 @@ async def distill_by_text_id(
     req: DistillByIdRequest,
     request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    distiller: Distiller = Depends(get_distiller),
-    text_manager: TextManager = Depends(get_text_manager),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
+    text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(req.text_id)
@@ -281,7 +308,6 @@ async def distill_by_text_id(
 
     content = text_rec["content"]
     char_name = await _resolve_character_name(content, req.character_name, distiller)
-    user_id = request.state.user.get("id", "")
 
     try:
         return await text_manager.get_or_distill(
@@ -302,7 +328,23 @@ async def distill_start(
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller
-    distiller = get_distiller()
+    user_id = request.state.user.get("id", "")
+
+    # Resolve per-user LLM config for the background thread
+    api_config = await storage.get_user_api_config(user_id)
+    per_user_llm = None
+    if api_config and api_config.get("api_key"):
+        from adapters.llm_adapter import LLMAdapter
+        try:
+            per_user_llm = LLMAdapter(
+                api_key=api_config["api_key"],
+                base_url=api_config.get("base_url", "https://api.deepseek.com"),
+                model=api_config.get("model", "deepseek-v4-pro"),
+            )
+        except Exception:
+            pass
+
+    distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
@@ -315,14 +357,13 @@ async def distill_start(
     content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
     task_id = _uuid.uuid4().hex[:12]
-    user_id = request.state.user.get("id", "")
 
     with _task_lock:
         _tasks[task_id] = {"status": "queued", "progress_pct": 0}
 
     thread = threading.Thread(
         target=_run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config),
         daemon=True,
     )
     thread.start()
@@ -354,10 +395,13 @@ async def distill_stream(
     req: DistillByIdRequest,
     request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    distiller: Distiller = Depends(get_distiller),
-    text_manager: TextManager = Depends(get_text_manager),
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
+    text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None or distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(req.text_id)
@@ -367,7 +411,6 @@ async def distill_stream(
     content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
     char_name = await _resolve_character_name(content, req.character_name, distiller)
-    user_id = request.state.user.get("id", "")
 
     distiller._storage = storage
     distiller._user_id = user_id
@@ -449,8 +492,8 @@ async def distill_stream(
 @router.post("/reindex/{text_id}")
 async def reindex_rag(
     text_id: str,
+    request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    distiller: Distiller = Depends(get_distiller),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Rebuild RAG indices for all in-memory sessions with character metadata.
@@ -459,6 +502,10 @@ async def reindex_rag(
     each session's RAG index to include character tags so that
     ``character_name`` filtering works in subsequent chat queries.
     """
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     text_rec = await storage.get_text(text_id)
@@ -507,8 +554,15 @@ class GenerateOpeningRequest(BaseModel):
 @router.post("/generate-opening")
 async def generate_opening(
     req: GenerateOpeningRequest,
-    distiller: Distiller = Depends(get_distiller),
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
 ):
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
+    if distiller is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     opening = await asyncio.to_thread(
         distiller.generate_opening, req.card_json, req.user_role
     )
@@ -573,7 +627,6 @@ async def start_session(
     req: StartSessionRequest,
     request: Request,
     storage: SQLiteStore = Depends(get_storage),
-    text_manager: TextManager = Depends(get_text_manager),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Create a chat session for an already-distilled card.
@@ -583,6 +636,9 @@ async def start_session(
     record to SQLite, and returns the card data with ``session_id``.
     """
     user_id = request.state.user.get("id", "")
+    from deps import get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    text_manager = get_text_manager(llm=per_user_llm)
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -646,9 +702,14 @@ async def start_session(
 @legacy_router.post("/api/identify")
 async def legacy_identify(
     req: IdentifyRequest,
-    distiller: Distiller = Depends(get_distiller),
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     return await _do_identify(req.text, distiller)
@@ -658,17 +719,19 @@ async def legacy_identify(
 async def legacy_distill(
     req: DistillRequest,
     request: Request,
-    distiller: Distiller = Depends(get_distiller),
-    text_manager: TextManager = Depends(get_text_manager),
+    storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
+    user_id = request.state.user.get("id", "")
+    from deps import get_distiller, get_text_manager, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=per_user_llm)
+    text_manager = get_text_manager(llm=per_user_llm)
     if distiller is None or text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text cannot be empty")
-
-    user_id = request.state.user.get("id", "")
     try:
         upload_result = await text_manager.upload_text("legacy_upload.txt", text, user_id=user_id)
         text_id = upload_result["text_id"]

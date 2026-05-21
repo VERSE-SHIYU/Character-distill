@@ -112,14 +112,16 @@ def get_llm() -> LLMAdapter | None:
     return _llm
 
 
-def get_distiller() -> Distiller | None:
-    """Return the Distiller singleton (lazy-init). Returns None if LLM is unavailable."""
+def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
+    """Return the Distiller singleton (lazy-init), or a per-user instance if llm is given."""
+    if llm is not None:
+        return Distiller(llm)
     global _distiller
     if _distiller is None:
-        llm = get_llm()
-        if llm is None:
+        fallback = get_llm()
+        if fallback is None:
             return None
-        _distiller = Distiller(llm)
+        _distiller = Distiller(fallback)
     return _distiller
 
 
@@ -133,15 +135,17 @@ def get_sessions() -> dict[str, dict[str, Any]]:
     return _sessions
 
 
-def get_text_manager() -> TextManager | None:
-    """Return the TextManager singleton (lazy-init). Returns None if dependencies are unavailable."""
+def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
+    """Return the TextManager singleton (lazy-init), or a per-user instance if llm is given."""
+    if llm is not None:
+        return TextManager(_storage, Distiller(llm), llm, _rag_config, _sessions, _summary_threshold)
     global _text_manager
     if _text_manager is None:
         distiller = get_distiller()
-        llm = get_llm()
-        if distiller is None or llm is None:
+        fallback = get_llm()
+        if distiller is None or fallback is None:
             return None
-        _text_manager = TextManager(_storage, distiller, llm, _rag_config, _sessions, _summary_threshold)
+        _text_manager = TextManager(_storage, distiller, fallback, _rag_config, _sessions, _summary_threshold)
     return _text_manager
 
 

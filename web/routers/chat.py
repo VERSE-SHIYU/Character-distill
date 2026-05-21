@@ -36,8 +36,9 @@ async def _ensure_session(
         raise HTTPException(404, "Session not found")
 
     from core.schema import CharacterCard
-    from deps import get_text_manager as _gtm
-    text_manager = _gtm()
+    from deps import get_text_manager as _gtm, get_user_llm
+    per_user_llm = await get_user_llm(user_id, storage)
+    text_manager = _gtm(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
 
@@ -320,10 +321,10 @@ async def send_message(
     sessions: dict = Depends(get_sessions),
 ) -> Union[dict[str, Any], StreamingResponse]:
     """Send a message and get a JSON reply or SSE stream."""
-    from deps import get_llm
-    if get_llm() is None:
-        raise HTTPException(503, "请先在设置页配置 API Key")
+    from deps import get_user_llm
     user_id = request.state.user.get("id", "")
+    if await get_user_llm(user_id, storage) is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
         return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search)
     return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search)
