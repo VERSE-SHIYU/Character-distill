@@ -210,6 +210,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Affinity migration failed: {exc}")
 
+                    # Run 018_user_api_config migration (ALTER TABLE — may fail if columns exist)
+                    api_config_path = migrations_dir / "018_user_api_config.sql"
+                    if api_config_path.exists():
+                        try:
+                            await conn.executescript(api_config_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User API config migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1003,6 +1013,62 @@ class SQLiteStore(StorageBase):
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Reset password failed: {exc}")
+            raise
+
+    # ---- User API config ----
+
+    @staticmethod
+    def _get_fernet():
+        from cryptography.fernet import Fernet
+        import base64
+        from hashlib import sha256
+        key = os.getenv("FERNET_KEY")
+        if not key:
+            raw = os.getenv("JWT_SECRET", "character-distill-dev-secret").encode()
+            key = base64.urlsafe_b64encode(sha256(raw).digest())
+        return Fernet(key)
+
+    async def get_user_api_config(self, user_id: str) -> dict:
+        """Get a user's API config. api_key is returned decrypted."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT api_key, base_url, model FROM users WHERE id = ?",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            if not row:
+                return {"api_key": "", "base_url": "", "model": ""}
+            encrypted = row[0] or ""
+            api_key = ""
+            if encrypted:
+                try:
+                    api_key = self._get_fernet().decrypt(encrypted.encode()).decode()
+                except Exception:
+                    pass
+            return {
+                "api_key": api_key,
+                "base_url": row[1] or "https://api.deepseek.com",
+                "model": row[2] or "deepseek-v4-pro",
+            }
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user API config failed: {exc}")
+            raise
+
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str) -> None:
+        """Update a user's API config. api_key is encrypted before storage."""
+        encrypted = ""
+        if api_key:
+            encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET api_key = ?, base_url = ?, model = ? WHERE id = ?",
+                    (encrypted, base_url, model, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user API config failed: {exc}")
             raise
 
     async def create_invite_code(self, code: str, created_by: str) -> dict:

@@ -45,6 +45,47 @@ _text_manager: TextManager | None = None
 _memory_config: dict[str, Any] = _config.get("memory", {})
 _memory_manager: MemoryManager | None = None
 
+# Per-user LLM cache: user_id → LLMAdapter
+_user_llm_cache: dict[str, LLMAdapter] = {}
+
+
+def clear_user_llm_cache(user_id: str | None = None) -> None:
+    """Clear cached LLMAdapter for a user (or all if user_id is None)."""
+    global _user_llm_cache
+    if user_id is None:
+        _user_llm_cache.clear()
+    else:
+        _user_llm_cache.pop(user_id, None)
+
+
+async def get_user_llm(user_id: str, storage: SQLiteStore | None = None) -> LLMAdapter | None:
+    """Get or create a per-user LLMAdapter from their saved API config.
+
+    Falls back to the global _llm (config.yaml / DEEPSEEK_API_KEY env) if the
+    user has not configured their own API key.
+    """
+    if storage is None:
+        storage = _storage
+    cached = _user_llm_cache.get(user_id)
+    if cached is not None:
+        return cached
+
+    try:
+        config = await storage.get_user_api_config(user_id)
+        if config.get("api_key"):
+            llm = LLMAdapter(
+                api_key=config["api_key"],
+                base_url=config.get("base_url", "https://api.deepseek.com"),
+                model=config.get("model", "deepseek-v4-pro"),
+            )
+            _user_llm_cache[user_id] = llm
+            return llm
+    except Exception as exc:
+        print(f"[deps] Failed to create per-user LLM for {user_id}: {exc}")
+
+    # Fallback: global config / admin key
+    return get_llm()
+
 
 def get_memory_manager() -> MemoryManager | None:
     """Return the MemoryManager singleton (lazy-init)."""

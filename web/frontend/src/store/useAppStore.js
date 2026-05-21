@@ -87,9 +87,9 @@ const useAppStore = create((set, get) => ({
 
   checkApiConfig: async () => {
     try {
-      const res = await fetchWithTimeout('/api/settings/config')
+      const res = await fetchWithTimeout('/api/auth/me')
       const data = await res.json()
-      const configured = !!(data.base_url && data.model && data.api_key)
+      const configured = !!data.has_api_key
       set({ apiConfigured: configured })
       return configured
     } catch (err) {

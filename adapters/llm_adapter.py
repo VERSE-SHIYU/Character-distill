@@ -16,46 +16,50 @@ from openai import AsyncOpenAI, OpenAI
 
 
 class LLMAdapter:
-    """从 ``config.yaml`` 与环境变量加载配置，调用 DeepSeek Chat API。"""
+    """封装 DeepSeek Chat API 调用。
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        """初始化适配器并读取配置。
+    支持两种初始化方式：
+    1. 显式传参：``LLMAdapter(api_key=..., base_url=..., model=...)`` — 用户配置
+    2. 配置文件：``LLMAdapter(config_path=...)`` — 管理员 fallback
+    """
 
-        Args:
-            config_path: ``config.yaml`` 路径；默认使用仓库根目录下的 ``config.yaml``。
-        """
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
         root = Path(__file__).resolve().parent.parent
         load_dotenv(root / ".env")
+
+        # Load defaults from config.yaml for unspecified params
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
-        llm_cfg: dict[str, Any]
+        llm_cfg: dict[str, Any] = {}
         try:
             raw = cfg_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            print(f"读取配置文件失败：{cfg_file}，原因：{exc}")
-            raise
-        try:
             data = yaml.safe_load(raw)
-        except yaml.YAMLError as exc:
-            print(f"解析 YAML 失败：{cfg_file}，原因：{exc}")
-            raise
-        if not isinstance(data, dict) or "llm" not in data:
-            print("配置文件格式错误：缺少顶层 llm 配置块")
-            raise ValueError("invalid config: missing llm section")
-        llm_cfg = data["llm"]
-        self._base_url: str = str(llm_cfg["base_url"])
-        self._model: str = str(llm_cfg["model"])
-        self._temperature: float = float(llm_cfg["temperature"])
-        self._max_tokens: int = int(llm_cfg["max_tokens"])
+            if isinstance(data, dict) and "llm" in data:
+                llm_cfg = data["llm"]
+        except Exception:
+            pass
+
+        self._base_url = base_url or str(llm_cfg.get("base_url", "https://api.deepseek.com"))
+        self._model = model or str(llm_cfg.get("model", "deepseek-v4-pro"))
+        self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
+        self._max_tokens = max_tokens if max_tokens is not None else int(llm_cfg.get("max_tokens", 4096))
         self.last_usage: dict | None = None
 
-        api_key = llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            print("未找到 API Key：请在设置页填写，或在 .env 中设置 DEEPSEEK_API_KEY")
-            raise RuntimeError("missing API key (config.yaml or DEEPSEEK_API_KEY)")
+        resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
+        if not resolved_key:
+            raise RuntimeError("missing API key — configure in Settings or set DEEPSEEK_API_KEY")
 
         try:
-            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=600.0)
-            self._async_client = AsyncOpenAI(api_key=api_key, base_url=self._base_url, timeout=600.0)
+            self._client = OpenAI(api_key=resolved_key, base_url=self._base_url, timeout=600.0)
+            self._async_client = AsyncOpenAI(api_key=resolved_key, base_url=self._base_url, timeout=600.0)
         except Exception as exc:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise

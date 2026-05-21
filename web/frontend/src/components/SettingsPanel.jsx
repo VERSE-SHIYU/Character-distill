@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchWithTimeout, postJSON, getMyUsage, getAuthHeaders } from '../api/client'
+import { fetchWithTimeout, postJSON, getMyUsage, updateApiConfig, getAuthHeaders } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -14,8 +14,10 @@ export default function SettingsPanel() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [form, setForm] = useState({ base_url: '', model: '', api_key: '' })
+  const [apiForm, setApiForm] = useState({ base_url: '', model: '', api_key: '' })
+  const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [hasApiKey, setHasApiKey] = useState(false)
   const [summaryThreshold, setSummaryThreshold] = useState(50)
   const [edgeTtsVoice, setEdgeTtsVoice] = useState(() => localStorage.getItem('tts_voice') || 'xiaoxiao')
   const [testing, setTesting] = useState(false)
@@ -61,12 +63,25 @@ export default function SettingsPanel() {
       setLoading(true)
       setError(null)
       try {
-        const res = await fetchWithTimeout('/api/settings/config')
-        const data = await res.json()
+        // Load system config (summary_threshold, etc.)
+        const sysRes = await fetchWithTimeout('/api/settings/config')
+        const sysData = await sysRes.json()
         if (!cancelled) {
-          setConfig(data)
-          setForm({ base_url: data.base_url || '', model: data.model || '', api_key: '' })
-          setSummaryThreshold(data.summary_threshold ?? 50)
+          setConfig(sysData)
+          setSummaryThreshold(sysData.summary_threshold ?? 50)
+        }
+
+        // Load user API config from /api/auth/me
+        const meRes = await fetchWithTimeout('/api/auth/me')
+        const meData = await meRes.json()
+        if (!cancelled) {
+          setHasApiKey(meData.has_api_key)
+          setApiForm({
+            base_url: meData.base_url || 'https://api.deepseek.com',
+            model: meData.model || 'deepseek-v4-pro',
+            api_key: '',
+          })
+          useAppStore.setState({ apiConfigured: meData.has_api_key })
         }
       } catch (err) {
         console.error('[SettingsPanel] load config failed:', err)
@@ -158,13 +173,13 @@ export default function SettingsPanel() {
 
       <section className="settings-section">
         <h2 className="settings-section-title">API 配置</h2>
-        {!apiConfigured && (
+        {!hasApiKey && (
           <div className="api-config-alert">
-            {'⚠️'} 未检测到 API 配置，请填写以下信息后保存，否则无法使用聊天和蒸馏功能。
+            {'⚠️'} 请先配置 API 密钥才能使用蒸馏和对话功能
           </div>
         )}
         <p className="settings-hint">
-          修改后点击保存即可生效，无需重启服务。
+          每个用户独立配置，互不影响。修改后点击保存即可生效。
         </p>
         {loading ? (
           <Loading text="加载配置…" />
@@ -175,8 +190,8 @@ export default function SettingsPanel() {
               <input
                 type="text"
                 className="settings-input"
-                value={form.base_url}
-                onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
+                value={apiForm.base_url}
+                onChange={(e) => setApiForm((f) => ({ ...f, base_url: e.target.value }))}
               />
             </label>
             <label className="settings-field">
@@ -184,8 +199,8 @@ export default function SettingsPanel() {
               <input
                 type="text"
                 className="settings-input"
-                value={form.model}
-                onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+                value={apiForm.model}
+                onChange={(e) => setApiForm((f) => ({ ...f, model: e.target.value }))}
               />
             </label>
             <p className="settings-hint">
@@ -193,13 +208,22 @@ export default function SettingsPanel() {
             </p>
             <label className="settings-field">
               <span className="settings-label">api_key</span>
-              <input
-                type="password"
-                className="settings-input"
-                placeholder="不修改请留空"
-                value={form.api_key}
-                onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
-              />
+              <div className="settings-api-key-row">
+                <input
+                  type={showApiKey ? 'text' : 'password'}
+                  className="settings-input"
+                  placeholder="不修改请留空"
+                  value={apiForm.api_key}
+                  onChange={(e) => setApiForm((f) => ({ ...f, api_key: e.target.value }))}
+                />
+                <button
+                  type="button"
+                  className="btn-ghost settings-show-key-btn"
+                  onClick={() => setShowApiKey((v) => !v)}
+                >
+                  {showApiKey ? '隐藏' : '显示'}
+                </button>
+              </div>
             </label>
             <button
               type="button"
@@ -209,15 +233,15 @@ export default function SettingsPanel() {
                 setSaving(true)
                 setError(null)
                 try {
-                  const body = { base_url: form.base_url, model: form.model, summary_threshold: summaryThreshold }
-                  if (form.api_key) body.api_key = form.api_key
-                  const data = await postJSON('/api/settings/config', body)
-                  setConfig(data)
-                  setSummaryThreshold(data.summary_threshold ?? 50)
-                  setForm((f) => ({ ...f, api_key: '' }))
-                  // Refresh config status
-                  const configured = !!(data.base_url && data.model && data.api_key)
-                  useAppStore.setState({ apiConfigured: configured })
+                  await updateApiConfig({
+                    base_url: apiForm.base_url,
+                    model: apiForm.model,
+                    api_key: apiForm.api_key,
+                  })
+                  setApiForm((f) => ({ ...f, api_key: '' }))
+                  const hasKey = apiForm.api_key || hasApiKey
+                  setHasApiKey(hasKey)
+                  useAppStore.setState({ apiConfigured: hasKey })
                 } catch (err) {
                   setError(err.message)
                 } finally {

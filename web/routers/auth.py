@@ -46,6 +46,15 @@ class UserResponse(BaseModel):
     created_at: str
     is_admin: bool = False
     is_disabled: bool = False
+    has_api_key: bool = False
+    base_url: str = ""
+    model: str = ""
+
+
+class ApiConfigRequest(BaseModel):
+    api_key: str = ""
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-v4-pro"
 
 
 class TokenResponse(BaseModel):
@@ -186,10 +195,35 @@ async def logout(
     return {"ok": True}
 
 
-@router.get("/me", response_model=UserResponse)
-async def me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    """Return current authenticated user."""
-    return _user_response(user)
+@router.get("/me")
+async def me(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Return current authenticated user with API config status."""
+    resp = _user_response(user)
+    config = await storage.get_user_api_config(user["id"])
+    resp["has_api_key"] = bool(config.get("api_key"))
+    resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
+    resp["model"] = config.get("model", "deepseek-v4-pro")
+    return resp
+
+
+@router.patch("/api-config")
+async def update_api_config(
+    req: ApiConfigRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Update the current user's API key, base URL, and model."""
+    try:
+        await storage.update_user_api_config(
+            user["id"], req.api_key, req.base_url, req.model
+        )
+        return {"ok": True}
+    except Exception as exc:
+        print(f"[auth] Update API config failed: {exc}")
+        raise HTTPException(500, f"Update API config failed: {exc}") from exc
 
 
 @router.get("/usage")

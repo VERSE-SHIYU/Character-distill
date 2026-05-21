@@ -257,3 +257,11 @@ export const adminAPI = {
 export function getMyUsage() {
   return fetchWithTimeout('/api/auth/usage', { headers: getAuthHeaders() })
 }
+
+export function updateApiConfig(body) {
+  return fetchWithTimeout('/api/auth/api-config', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify(body),
+  }).then(r => r.json())
+}

@@ -127,6 +127,14 @@ class StorageBase(ABC):
         """Reset a user's password (admin action)."""
 
     @abstractmethod
+    async def get_user_api_config(self, user_id: str) -> dict:
+        """Get a user's API config (api_key decrypted, base_url, model)."""
+
+    @abstractmethod
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str) -> None:
+        """Update a user's API config. api_key is encrypted before storage."""
+
+    @abstractmethod
     async def delete_user(self, user_id: str) -> dict:
         """Cascade-delete a user and all their data. Returns dict with deleted counts."""
 
