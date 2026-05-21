@@ -506,7 +506,8 @@ class Distiller:
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
-        self._try_record_usage("distill_reduce")
+        usage = self._llm.last_usage
+        self._try_record_usage("distill_reduce", usage)
         return result
 
     async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
@@ -526,7 +527,8 @@ class Distiller:
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
-        self._try_record_usage("distill_reduce")
+        usage = self._llm.last_usage
+        self._try_record_usage("distill_reduce", usage)
 
     def _do_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Auto-batching reduce: concurrent batches when > SAFE_SINGLE_REDUCE.
@@ -545,8 +547,10 @@ class Distiller:
             return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
 
         try:
-            merged = asyncio.run(_concurrent())
+            asyncio.get_running_loop()
         except RuntimeError:
+            merged = asyncio.run(_concurrent())
+        else:
             merged = [self._single_reduce(b, character_name) for b in batches]
         return self._do_reduce(merged, character_name)
 
@@ -863,10 +867,13 @@ class Distiller:
 
             rt.join(timeout=5)
 
-            batch_results: list[str] = [
-                batch_by_index[i] for i in range(len(batches))
-                if batch_by_index.get(i, "").strip()
-            ]
+            batch_results: list[str] = []
+            for i in range(len(batches)):
+                result = batch_by_index.get(i, "")
+                if result.strip():
+                    batch_results.append(result)
+                else:
+                    print(f"[distiller] Reduce batch {i} returned empty, skipped")
 
             yield {"heartbeat": True}
 

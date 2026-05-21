@@ -210,22 +210,20 @@ class ChatEngine:
 
         return prompt
 
-    def chat(self, user_message: str) -> tuple[str, str]:
-        """非流式对话一轮，并返回模型回复与 RAG 上下文文本。"""
+    def chat(self, user_message: str) -> str:
+        """非流式对话一轮，返回模型回复。
+
+        History 已由 ContextEngine 嵌入 system prompt，此处只传当前消息。"""
         system_prompt = self._ctx_engine.build(
             self.history, user_message, self.user_role,
         )
 
         self.history.append({"role": "user", "content": user_message})
 
-        cw = self._memory.context_window if self._memory else self._context_window
-        llm_history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in self.history[-cw:]
-        ]
-
         try:
-            response = self.llm.chat(system_prompt, llm_history)
+            response = self.llm.chat(
+                system_prompt, [{"role": "user", "content": user_message}]
+            )
         except Exception as exc:
             print(f"调用 LLM 对话失败：{exc}")
             if self.history and self.history[-1].get("role") == "user":
@@ -247,7 +245,7 @@ class ChatEngine:
 
         self._evaluate_affinity(user_message, response)
 
-        return response, ""
+        return response
 
     def chat_stream(self, user_message: str) -> Generator[str, None, None]:
         """流式对话：逐块产出文本，结束后写入助手回复。"""
@@ -259,16 +257,12 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
-        cw = self._memory.context_window if self._memory else self._context_window
-        llm_history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in self.history[-cw:]
-        ]
-
         collected: list[str] = []
 
         try:
-            for piece in self.llm.chat_stream(system_prompt, llm_history):
+            for piece in self.llm.chat_stream(
+                system_prompt, [{"role": "user", "content": user_message}]
+            ):
                 collected.append(piece)
                 yield piece
         except Exception as exc:
@@ -407,7 +401,14 @@ class ChatEngine:
         # 遍历角色卡人际关系列表，找到匹配的用户身份
         for rel in (card.relationships or []):
             target = (rel.target or "").strip()
-            if not target or target not in user and user not in target:
+            if not target:
+                continue
+            # Guard: require ≥2 chars for substring match to avoid single-char
+            # false positives (e.g. "明" matching "明朝学生")
+            if target != user and not (
+                len(target) >= 2 and len(user) >= 2
+                and (target in user or user in target)
+            ):
                 continue
             relation = (rel.relation or "").lower()
             attitude = (rel.attitude or "").lower()

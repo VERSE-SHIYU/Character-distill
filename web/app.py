@@ -138,7 +138,7 @@ def respond(message: str, history: list | None, engine: Any) -> tuple[list, Any]
             raise gr.Error("请输入内容后再发送")
 
         try:
-            resp, _ = engine.chat(stripped)
+            resp = engine.chat(stripped)
         except Exception as exc:
             print(f"对话调用失败：{exc}")
             raise gr.Error(f"对话调用失败：{exc}") from exc
