@@ -101,8 +101,13 @@ class LLMAdapter:
                     print(f"[LLMAdapter] All 3 attempts failed: {exc}")
         raise RuntimeError(f"LLM API failed after 3 attempts: {last_error}")
 
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
-        """异步非流式对话，用于 Map 阶段并发。最多重试3次。"""
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> tuple[str, dict | None]:
+        """异步非流式对话，用于 Map 阶段并发。最多重试3次。
+
+        Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
+        "completion_tokens": N}`` or *None*.  Callers are responsible for
+        aggregating usage across concurrent calls instead of relying on the
+        shared ``last_usage`` attribute.  """
         payload = self._build_messages(system_prompt, messages)
         last_error = None
         for attempt in range(3):
@@ -117,7 +122,13 @@ class LLMAdapter:
                 if not choices:
                     raise RuntimeError("API returned empty choices")
                 result = choices[0].message.content or ""
-                return result
+                usage = None
+                if completion.usage:
+                    usage = {
+                        "prompt_tokens": completion.usage.prompt_tokens or 0,
+                        "completion_tokens": completion.usage.completion_tokens or 0,
+                    }
+                return result, usage
             except Exception as exc:
                 last_error = exc
                 if attempt < 2:

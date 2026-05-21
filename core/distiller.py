@@ -98,22 +98,29 @@ class Distiller:
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
 
-    def _try_record_usage(self, action: str = "distill") -> None:
+    def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
         if not self._storage or not self._user_id:
             return
-        usage = self._llm.last_usage
+        if usage is None:
+            usage = self._llm.last_usage
         if not usage:
             return
-        try:
-            model = getattr(self._llm, '_model', '') or ''
-            asyncio.run(
-                self._storage.record_usage(
-                    self._user_id, action,
-                    usage["prompt_tokens"], usage["completion_tokens"], model,
+        storage = self._storage
+        user_id = self._user_id
+        model = getattr(self._llm, '_model', '') or ''
+        pt, ct = usage["prompt_tokens"], usage["completion_tokens"]
+
+        def _do():
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(
+                    storage.record_usage(user_id, action, pt, ct, model)
                 )
-            )
-        except Exception as exc:
-            print(f"[Distiller] Record usage failed (non-fatal): {exc}")
+                loop.close()
+            except Exception as exc:
+                print(f"[Distiller] Record usage failed (non-fatal): {exc}")
+
+        threading.Thread(target=_do, daemon=True).start()
 
     # ── static prompt helpers ──────────────────────────────────────────
 
@@ -451,7 +458,7 @@ class Distiller:
                 system = map_system_fn(character_name)
                 user = map_user_fn(chunk, character_name)
                 try:
-                    result = await self._llm.async_chat(
+                    result, _ = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}]
                     )
                 except Exception:
@@ -505,11 +512,11 @@ class Distiller:
     async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (async, for concurrent batches)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
-        result = await self._llm.async_chat(
+        result, usage = await self._llm.async_chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
         )
-        self._try_record_usage("distill_reduce")
+        self._try_record_usage("distill_reduce", usage)
         return result
 
     def _single_reduce_stream(self, raw_analyses: list[str], character_name: str):
@@ -755,7 +762,7 @@ class Distiller:
                     system = map_system(character_name)
                     user = map_user(chunk, character_name)
                     try:
-                        result = await self._llm.async_chat(
+                        result, _ = await self._llm.async_chat(
                             system, [{"role": "user", "content": user}]
                         )
                     except Exception:
