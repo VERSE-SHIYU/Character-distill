@@ -1134,6 +1134,91 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete user refresh tokens failed: {exc}")
             raise
 
+    async def get_user_card_ids(self, user_id: str) -> list[str]:
+        """Get all card IDs owned by a user (for Mem0 cleanup)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM cards WHERE user_id = ?", (user_id,)
+                )
+                rows = await cursor.fetchall()
+            return [row[0] for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user card ids failed: {exc}")
+            raise
+
+    async def delete_user(self, user_id: str) -> dict:
+        """Cascade-delete a user: texts → cards → sessions → messages → stats → tokens → user."""
+        counts = {}
+        try:
+            async with await self._connect() as conn:
+                # 1. Delete messages belonging to user's sessions
+                cursor = await conn.execute(
+                    "DELETE FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE user_id = ?)",
+                    (user_id,),
+                )
+                counts["messages"] = cursor.rowcount
+
+                # 2. Delete sessions
+                cursor = await conn.execute(
+                    "DELETE FROM sessions WHERE user_id = ?", (user_id,)
+                )
+                counts["sessions"] = cursor.rowcount
+
+                # 3. Delete card avatars
+                cursor = await conn.execute(
+                    "DELETE FROM card_avatars WHERE card_id IN (SELECT id FROM cards WHERE user_id = ?)",
+                    (user_id,),
+                )
+                counts["card_avatars"] = cursor.rowcount
+
+                # 4. Delete cards
+                cursor = await conn.execute(
+                    "DELETE FROM cards WHERE user_id = ?", (user_id,)
+                )
+                counts["cards"] = cursor.rowcount
+
+                # 5. Delete texts
+                cursor = await conn.execute(
+                    "DELETE FROM texts WHERE user_id = ?", (user_id,)
+                )
+                counts["texts"] = cursor.rowcount
+
+                # 6. Delete usage stats
+                cursor = await conn.execute(
+                    "DELETE FROM usage_stats WHERE user_id = ?", (user_id,)
+                )
+                counts["usage_stats"] = cursor.rowcount
+
+                # 7. Delete refresh tokens
+                cursor = await conn.execute(
+                    "DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,)
+                )
+                counts["refresh_tokens"] = cursor.rowcount
+
+                # 8. Nullify invite codes created by this user
+                cursor = await conn.execute(
+                    "UPDATE invite_codes SET created_by = NULL WHERE created_by = ?",
+                    (user_id,),
+                )
+                counts["invite_codes"] = cursor.rowcount
+
+                # 9. Delete the user
+                cursor = await conn.execute(
+                    "DELETE FROM users WHERE id = ?", (user_id,)
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError("用户不存在")
+                counts["user"] = 1
+
+                await conn.commit()
+            return counts
+        except ValueError:
+            raise
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete user failed: {exc}")
+            raise
+
     # ---- Usage stats ----
 
     async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int) -> None:

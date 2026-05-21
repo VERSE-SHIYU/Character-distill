@@ -10,8 +10,9 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from routers.auth import get_current_user
-from deps import get_storage
+from deps import get_storage, get_memory_manager
 from storage.sqlite_store import SQLiteStore
+from core.memory_manager import MemoryManager
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -73,6 +74,36 @@ async def reset_user_password(
     if not ok:
         raise HTTPException(404, "用户不存在")
     return {"ok": True}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
+) -> dict[str, Any]:
+    """Cascade-delete a user: texts, cards, sessions, messages, stats, tokens, Mem0 memories."""
+    if user_id == admin_user.get("id"):
+        raise HTTPException(400, "不能删除自己的账号")
+
+    # Clean up Mem0 memories for each card owned by the user
+    try:
+        card_ids = await storage.get_user_card_ids(user_id)
+        if memory_manager and memory_manager.enabled:
+            for cid in card_ids:
+                memory_manager.delete_all(cid)
+    except Exception as exc:
+        print(f"[admin] Mem0 cleanup for user {user_id} failed (non-fatal): {exc}")
+
+    try:
+        counts = await storage.delete_user(user_id)
+        return {"ok": True, "deleted": counts}
+    except ValueError:
+        raise HTTPException(404, "用户不存在")
+    except Exception as exc:
+        print(f"[admin] Delete user failed: {exc}")
+        raise HTTPException(500, f"Delete user failed: {exc}") from exc
 
 
 # ---- Invite codes ----

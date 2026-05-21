@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { adminAPI } from '../api/client'
+import useAppStore from '../store/useAppStore'
 
 const TABS = [
   { id: 'users', label: '用户管理' },
@@ -45,6 +46,9 @@ function UsersTab() {
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
   const [resetOk, setResetOk] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const authUser = useAppStore((s) => s.authUser)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,6 +100,19 @@ function UsersTab() {
     }
   }
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await adminAPI.deleteUser(deleteTarget.id)
+      setDeleteTarget(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (loading) return <div className="admin-loading">加载中…</div>
   if (error) return <div className="admin-error">{error}</div>
 
@@ -137,6 +154,15 @@ function UsersTab() {
                   >
                     重置密码
                   </button>
+                  {u.id !== authUser?.id && (
+                    <button
+                      className="admin-action-btn delete-invite"
+                      onClick={() => setDeleteTarget(u)}
+                      title="删除用户"
+                    >
+                      {'✕'}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -168,6 +194,26 @@ function UsersTab() {
               <button className="btn-ghost" onClick={() => setResetTarget(null)}>取消</button>
               <button className="btn-primary" onClick={handleReset} disabled={resetting}>
                 {resetting ? '重置中…' : '确认重置'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete user confirmation modal */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">删除用户 — {deleteTarget.username}</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0, lineHeight: 1.6 }}>
+                删除用户将清除其所有数据（文本、角色卡、对话、记忆），不可恢复。
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="btn-primary" onClick={handleDelete} disabled={deleting}>
+                {deleting ? '删除中…' : '确认删除'}
               </button>
             </div>
           </div>

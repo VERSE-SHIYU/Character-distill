@@ -127,6 +127,14 @@ class StorageBase(ABC):
         """Reset a user's password (admin action)."""
 
     @abstractmethod
+    async def delete_user(self, user_id: str) -> dict:
+        """Cascade-delete a user and all their data. Returns dict with deleted counts."""
+
+    @abstractmethod
+    async def get_user_card_ids(self, user_id: str) -> list[str]:
+        """Get all card IDs owned by a user (for Mem0 cleanup)."""
+
+    @abstractmethod
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         """Create an invite code."""
 
