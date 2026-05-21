@@ -1076,16 +1076,24 @@ class SQLiteStore(StorageBase):
             raise
 
     async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str) -> None:
-        """Update a user's API config. api_key is encrypted before storage."""
-        encrypted = ""
-        if api_key:
-            encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+        """Update a user's API config. api_key is encrypted before storage.
+
+        Only updates api_key when a non-empty value is provided, so a blank
+        api_key in the request does not overwrite an existing encrypted key.
+        """
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE users SET api_key = ?, base_url = ?, model = ? WHERE id = ?",
-                    (encrypted, base_url, model, user_id),
-                )
+                if api_key:
+                    encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                    await conn.execute(
+                        "UPDATE users SET api_key = ?, base_url = ?, model = ? WHERE id = ?",
+                        (encrypted, base_url, model, user_id),
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE users SET base_url = ?, model = ? WHERE id = ?",
+                        (base_url, model, user_id),
+                    )
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user API config failed: {exc}")

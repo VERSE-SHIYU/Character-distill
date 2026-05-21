@@ -15,7 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel
 
-from deps import get_storage
+from deps import clear_user_llm_cache, get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 
@@ -220,6 +220,7 @@ async def update_api_config(
         await storage.update_user_api_config(
             user["id"], req.api_key, req.base_url, req.model
         )
+        clear_user_llm_cache(user["id"])
         return {"ok": True}
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
