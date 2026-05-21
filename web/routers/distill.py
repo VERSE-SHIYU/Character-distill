@@ -104,10 +104,14 @@ def _run_distill_task(
                 _tasks[task_id] = {"status": "error", "message": "请先在设置页配置 API Key"}
             return
 
-        # Step 1: resolve character name
+        # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
-        if not name:
+        aliases: list[str] = []
+        try:
             chars = distiller.identify_characters(content)
+        except Exception:
+            chars = []
+        if not name:
             if not chars:
                 with _task_lock:
                     _tasks[task_id] = {"status": "error", "message": "No characters identified"}
@@ -117,17 +121,10 @@ def _run_distill_task(
                 with _task_lock:
                     _tasks[task_id] = {"status": "error", "message": "Identified result missing name"}
                 return
-
-        # Resolve aliases
-        aliases: list[str] = []
-        try:
-            chars = distiller.identify_characters(content)
-            for c in chars:
-                if c.get("name") == name:
-                    aliases = c.get("aliases", [])
-                    break
-        except Exception:
-            pass
+        for c in chars:
+            if c.get("name") == name:
+                aliases = c.get("aliases", [])
+                break
 
         with _task_lock:
             _tasks[task_id] = {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 0, "character": name}
@@ -413,7 +410,7 @@ async def distill_stream(
 
     content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
-    char_name = await _resolve_character_name(content, req.character_name, distiller)
+    char_name = req.character_name.strip()
 
     distiller._storage = storage
     distiller._user_id = user_id
@@ -421,16 +418,26 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
 
-        # Resolve aliases so Map phase catches all name variants
+        # ONE LLM call: resolve name (if needed) + aliases
+        nonlocal char_name
         aliases: list[str] = []
         try:
             chars = await asyncio.to_thread(distiller.identify_characters, content)
-            for c in chars:
-                if c.get("name") == char_name:
-                    aliases = c.get("aliases", [])
-                    break
         except Exception as exc:
-            print(f"[distill] Identify aliases failed: {exc}")
+            print(f"[distill] Identify failed: {exc}")
+            chars = []
+        if not char_name:
+            if not chars:
+                yield f"data: {json.dumps({'error': '未识别到任何角色'}, ensure_ascii=False)}\n\n"
+                return
+            char_name = chars[0].get("name", "")
+            if not char_name:
+                yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False)}\n\n"
+                return
+        for c in chars:
+            if c.get("name") == char_name:
+                aliases = c.get("aliases", [])
+                break
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
