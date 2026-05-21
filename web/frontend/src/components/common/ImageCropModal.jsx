@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const SIZE = 300
+const SIZE = 200
 const RADIUS = SIZE / 2
 
 export default function ImageCropModal({ file, onConfirm, onCancel }) {

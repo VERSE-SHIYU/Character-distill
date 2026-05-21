@@ -142,27 +142,34 @@ function ChatView() {
   const userAvatarUrl = useAppStore((s) => s.userAvatar)
   const setUserAvatar = useAppStore((s) => s.setUserAvatar)
   const userAvatarInputRef = useRef(null)
+  const [userCropFile, setUserCropFile] = useState(null)
 
   useEffect(() => {
     if (sessionId) {
       const saved = localStorage.getItem(`user_avatar_${sessionId}`)
       if (saved) setUserAvatar(saved)
+    } else {
+      const globalAvatar = localStorage.getItem('user_avatar')
+      if (globalAvatar) setUserAvatar(globalAvatar)
     }
   }, [sessionId])
 
   const handleUserAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    const url = URL.createObjectURL(file)
-    setUserAvatar(url)
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (sessionId) localStorage.setItem(`user_avatar_${sessionId}`, reader.result)
-      setUserAvatar(reader.result)
-      URL.revokeObjectURL(url)
-    }
-    reader.readAsDataURL(file)
-  }, [sessionId, setUserAvatar])
+    setUserCropFile(file)
+    e.target.value = ''
+  }, [])
+
+  const handleUserCropConfirm = useCallback((base64) => {
+    setUserCropFile(null)
+    setUserAvatar(base64)
+    const { sessionId } = useAppStore.getState()
+    if (sessionId) localStorage.setItem(`user_avatar_${sessionId}`, base64)
+    localStorage.setItem('user_avatar', base64)
+  }, [setUserAvatar])
+
+  const handleUserCropCancel = useCallback(() => setUserCropFile(null), [])
 
   useEffect(() => {
     let cancelled = false
@@ -560,6 +567,11 @@ function ChatView() {
         file={cropFile}
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
+      />
+      <ImageCropModal
+        file={userCropFile}
+        onConfirm={handleUserCropConfirm}
+        onCancel={handleUserCropCancel}
       />
     </div>
   )
