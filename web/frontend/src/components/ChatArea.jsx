@@ -367,14 +367,19 @@ function ChatView() {
               {voiceEnabled ? '\u{1F50A}' : '\u{1F507}'}
             </button>
           </div>
-          <button
-            type="button"
-            className={`chat-topbar-btn web-search-toggle${webSearchEnabled ? ' active' : ''}`}
-            onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-            title={webSearchEnabled ? '现实增强（角色可感知现实信息）— 点击关闭' : '现实增强（角色可感知现实信息）— 点击开启'}
-          >
-            {'\u{1F310}'}
-          </button>
+          <div className="chat-web-search-ctl">
+            <button
+              type="button"
+              className={`chat-topbar-btn web-search-toggle${webSearchEnabled ? ' active' : ''}`}
+              onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+              title={webSearchEnabled ? '关闭现实增强' : '开启现实增强'}
+            >
+              {'\u{1F310}'}
+            </button>
+            <span className={`web-search-label${webSearchEnabled ? ' active' : ''}`}>
+              {webSearchEnabled ? '现实增强：开' : '现实增强：关'}
+            </span>
+          </div>
           <div className="chat-font-size-ctl">
             <button
               type="button"

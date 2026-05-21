@@ -2312,6 +2312,21 @@ body {
   border-color: var(--accent);
   color: var(--accent);
 }
+.chat-web-search-ctl {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.web-search-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+.web-search-label.active {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 /* Affinity panel */
 .affinity-bar {
