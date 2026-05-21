@@ -245,6 +245,10 @@ export const adminAPI = {
 
   listInvites: () => fetchWithTimeout('/api/admin/invite/list').then(r => r.json()),
 
+  deleteInvite: (code) => fetchWithTimeout(`/api/admin/invite/${encodeURIComponent(code)}`, { method: 'DELETE' }).then(r => r.json()),
+
+  deleteUsedInvites: () => fetchWithTimeout('/api/admin/invites/used', { method: 'DELETE' }).then(r => r.json()),
+
   getAllUsage: () => fetchWithTimeout('/api/admin/usage').then(r => r.json()),
 }
 

@@ -143,6 +143,14 @@ class StorageBase(ABC):
         """List all invite codes."""
 
     @abstractmethod
+    async def delete_invite_code(self, code: str) -> bool:
+        """Delete a single invite code by its code string."""
+
+    @abstractmethod
+    async def delete_used_invites(self) -> int:
+        """Delete all used invite codes, return count deleted."""
+
+    @abstractmethod
     async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
         """Save a refresh token hash."""
 

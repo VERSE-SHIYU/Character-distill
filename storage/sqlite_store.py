@@ -1059,6 +1059,30 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List invite codes failed: {exc}")
             raise
 
+    async def delete_invite_code(self, code: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM invite_codes WHERE code = ?", (code,)
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete invite code failed: {exc}")
+            raise
+
+    async def delete_used_invites(self) -> int:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM invite_codes WHERE used_by IS NOT NULL"
+                )
+                await conn.commit()
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete used invites failed: {exc}")
+            raise
+
     # ---- Refresh tokens ----
 
     async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:

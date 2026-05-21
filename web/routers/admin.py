@@ -104,6 +104,39 @@ async def list_invites(
     return await storage.list_invite_codes()
 
 
+@router.delete("/invite/{code}")
+async def delete_invite(
+    code: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Delete a single invite code."""
+    try:
+        ok = await storage.delete_invite_code(code)
+        if not ok:
+            raise HTTPException(404, "邀请码不存在")
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[admin] Delete invite failed: {exc}")
+        raise HTTPException(500, f"Delete invite failed: {exc}") from exc
+
+
+@router.delete("/invites/used")
+async def delete_used_invites(
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Delete all used invite codes."""
+    try:
+        count = await storage.delete_used_invites()
+        return {"ok": True, "deleted": count}
+    except Exception as exc:
+        print(f"[admin] Delete used invites failed: {exc}")
+        raise HTTPException(500, f"Delete used invites failed: {exc}") from exc
+
+
 @router.get("/usage")
 async def admin_usage(
     _admin: dict = Depends(require_admin),

@@ -184,6 +184,9 @@ function InvitesTab() {
   const [count, setCount] = useState(1)
   const [generating, setGenerating] = useState(false)
   const [copied, setCopied] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+  const [batchDeleting, setBatchDeleting] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -217,6 +220,33 @@ function InvitesTab() {
       setTimeout(() => setCopied(''), 2000)
     }).catch(() => {})
   }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await adminAPI.deleteInvite(deleteTarget)
+      setDeleteTarget(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    setBatchDeleting(true)
+    try {
+      await adminAPI.deleteUsedInvites()
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
+  const usedCount = codes.filter((c) => c.used_by).length
 
   if (loading) return <div className="admin-loading">加载中…</div>
 
@@ -265,7 +295,7 @@ function InvitesTab() {
                 <td>{c.used_by || '-'}</td>
                 <td>{c.used_at || '-'}</td>
                 <td>{c.created_at || '-'}</td>
-                <td>
+                <td className="admin-actions-cell">
                   {!c.used_by && (
                     <button
                       className="admin-action-btn copy"
@@ -274,12 +304,54 @@ function InvitesTab() {
                       {copied === c.code ? '已复制' : '复制'}
                     </button>
                   )}
+                  <button
+                    className="admin-action-btn delete-invite"
+                    onClick={() => setDeleteTarget(c.code)}
+                    title="删除邀请码"
+                  >
+                    ✕
+                  </button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {usedCount > 0 && (
+        <div className="invite-batch-row">
+          <span className="invite-batch-hint">{usedCount} 个已使用的邀请码</span>
+          <button
+            className="admin-action-btn delete-invite"
+            onClick={handleBatchDelete}
+            disabled={batchDeleting}
+          >
+            {batchDeleting ? '删除中…' : '批量删除已使用的邀请码'}
+          </button>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">确定删除此邀请码？</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 14, color: 'var(--text-secondary)', wordBreak: 'break-all', margin: 0 }}>
+                <code style={{ fontSize: 13, background: 'rgba(0,0,0,0.04)', padding: '3px 8px', borderRadius: 4 }}>
+                  {deleteTarget}
+                </code>
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="btn-primary" onClick={handleDelete} disabled={deleting}>
+                {deleting ? '删除中…' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

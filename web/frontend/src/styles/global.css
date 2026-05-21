@@ -5174,6 +5174,38 @@ select.settings-input {
   word-break: break-all;
 }
 
+/* ---- Delete button ---- */
+
+.admin-action-btn.delete-invite {
+  color: #e74c3c;
+  border-color: transparent;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 5px 10px;
+}
+
+.admin-action-btn.delete-invite:hover {
+  background: rgba(231, 76, 60, 0.1);
+  border-color: rgba(231, 76, 60, 0.35);
+  color: #e74c3c;
+}
+
+/* ---- Batch delete row ---- */
+
+.invite-batch-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--input-border);
+}
+
+.invite-batch-hint {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 /* ==================== Distill Task Bar ==================== */
 
 .distill-task-bar {
