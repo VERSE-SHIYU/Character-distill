@@ -135,15 +135,18 @@ app.add_middleware(AuthMiddleware)
 
 @app.get("/api/settings/config")
 def read_settings_config() -> dict[str, Any]:
-    """Read LLM config for settings UI."""
+    """Read LLM + voice config for settings UI."""
     try:
         llm = get_config().get("llm", {})
+        voice = get_config().get("voice", {})
         has_key = bool(llm.get("api_key") or os.getenv("DEEPSEEK_API_KEY"))
         return {
             "base_url": str(llm.get("base_url", "")),
             "model": str(llm.get("model", "")),
             "api_key": "***" if has_key else "",
             "summary_threshold": int(llm.get("summary_threshold", 50)),
+            "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
+            "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
         }
     except Exception as exc:
         print(f"[server] Read settings config failed: {exc}")
@@ -155,11 +158,13 @@ class UpdateConfigRequest(BaseModel):
     model: str | None = None
     api_key: str | None = None
     summary_threshold: int | None = None
+    gptsovits_url: str | None = None
+    funasr_url: str | None = None
 
 
 @app.post("/api/settings/config")
 def update_settings_config(req: UpdateConfigRequest) -> dict[str, Any]:
-    """Update LLM config at runtime and persist to config.yaml."""
+    """Update LLM + voice config at runtime and persist to config.yaml."""
     try:
         cfg = get_config()
         llm = cfg.setdefault("llm", {})
@@ -171,6 +176,12 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, Any]:
             llm["api_key"] = req.api_key.strip()
         if req.summary_threshold is not None:
             llm["summary_threshold"] = req.summary_threshold
+
+        voice = cfg.setdefault("voice", {})
+        if req.gptsovits_url is not None and req.gptsovits_url.strip():
+            voice["gptsovits_url"] = req.gptsovits_url.strip()
+        if req.funasr_url is not None and req.funasr_url.strip():
+            voice["funasr_url"] = req.funasr_url.strip()
 
         cfg_path = _REPO_ROOT / "config.yaml"
         with open(cfg_path, "w", encoding="utf-8") as f:
@@ -185,10 +196,46 @@ def update_settings_config(req: UpdateConfigRequest) -> dict[str, Any]:
             "model": str(llm.get("model", "")),
             "api_key": "***" if llm.get("api_key") else "",
             "summary_threshold": int(llm.get("summary_threshold", 50)),
+            "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
+            "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
         }
     except Exception as exc:
         print(f"[server] Update config failed: {exc}")
         raise HTTPException(500, f"Update config failed: {exc}") from exc
+
+
+@app.post("/api/settings/test-gptsovits")
+async def test_gptsovits_connection(req: Request) -> dict[str, Any]:
+    """Test GPT-SoVITS connectivity."""
+    try:
+        body = await req.json()
+        url = body.get("url", "").strip()
+        if not url:
+            url = get_config().get("voice", {}).get("gptsovits_url", "http://127.0.0.1:9880")
+        from speech.voice_clone import VoiceCloneClient
+        vc = VoiceCloneClient(base_url=url)
+        ok = await vc.health_check()
+        return {"ok": ok, "url": url}
+    except Exception as exc:
+        print(f"[server] Test GPT-SoVITS failed: {exc}")
+        return {"ok": False, "url": "", "error": str(exc)}
+
+
+@app.post("/api/settings/test-funasr")
+async def test_funasr_connection(req: Request) -> dict[str, Any]:
+    """Test FunASR connectivity."""
+    try:
+        body = await req.json()
+        url = body.get("url", "").strip()
+        if not url:
+            url = get_config().get("voice", {}).get("funasr_url", "ws://127.0.0.1:10095")
+        from speech.funasr_client import FunASRClient
+        client = FunASRClient(url=url)
+        ok = await client.is_available()
+        return {"ok": ok, "url": url}
+    except Exception as exc:
+        print(f"[server] Test FunASR failed: {exc}")
+        return {"ok": False, "url": "", "error": str(exc)}
 
 
 # Legacy compat: keep old /api/identify, /api/distill, /api/chat, /api/reset

@@ -22,6 +22,12 @@ export default function SettingsPanel() {
   const [summaryThreshold, setSummaryThreshold] = useState(50)
   const [edgeTtsVoice, setEdgeTtsVoice] = useState(() => localStorage.getItem('tts_voice') || 'xiaoxiao')
   const [testing, setTesting] = useState(false)
+  const [gptsovitsUrl, setGptsovitsUrl] = useState('http://127.0.0.1:9880')
+  const [funasrUrl, setFunasrUrl] = useState('ws://127.0.0.1:10095')
+  const [testingGpt, setTestingGpt] = useState(false)
+  const [testingFunasr, setTestingFunasr] = useState(false)
+  const [gptTestResult, setGptTestResult] = useState(null)
+  const [funasrTestResult, setFunasrTestResult] = useState(null)
 
   const apiConfigured = useAppStore((s) => s.apiConfigured)
   const currentCard = useAppStore((s) => s.currentCard)
@@ -70,6 +76,8 @@ export default function SettingsPanel() {
         if (!cancelled) {
           setConfig(sysData)
           setSummaryThreshold(sysData.summary_threshold ?? 50)
+          setGptsovitsUrl(sysData.gptsovits_url || 'http://127.0.0.1:9880')
+          setFunasrUrl(sysData.funasr_url || 'ws://127.0.0.1:10095')
         }
 
         // Load user API config from /api/auth/me
@@ -471,6 +479,113 @@ export default function SettingsPanel() {
           </a>
         </p>
       )}
+
+      {/* ---- Voice service config ---- */}
+      <section className="settings-section">
+        <h2 className="settings-section-title">语音服务地址</h2>
+
+        <label className="settings-field">
+          <span className="settings-label">GPT-SoVITS 地址</span>
+          <div className="voice-config-row">
+            <input
+              type="text"
+              className="settings-input"
+              placeholder="http://127.0.0.1:9880"
+              value={gptsovitsUrl}
+              onChange={(e) => { setGptsovitsUrl(e.target.value); setGptTestResult(null) }}
+            />
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={testingGpt}
+              onClick={async () => {
+                setTestingGpt(true)
+                setGptTestResult(null)
+                try {
+                  const res = await fetchWithTimeout('/api/settings/test-gptsovits', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: gptsovitsUrl }),
+                  })
+                  const data = await res.json()
+                  setGptTestResult(data.ok ? 'ok' : `连接失败: ${data.error || '无响应'}`)
+                } catch (err) {
+                  setGptTestResult(`连接失败: ${err.message}`)
+                } finally {
+                  setTestingGpt(false)
+                }
+              }}
+            >
+              {testingGpt ? '检测中…' : '测试连接'}
+            </button>
+          </div>
+          {gptTestResult && (
+            <span className={gptTestResult === 'ok' ? 'voice-test-ok' : 'voice-test-fail'}>
+              {gptTestResult === 'ok' ? '✅ 连接成功' : `❌ ${gptTestResult}`}
+            </span>
+          )}
+        </label>
+
+        <label className="settings-field">
+          <span className="settings-label">FunASR 地址</span>
+          <div className="voice-config-row">
+            <input
+              type="text"
+              className="settings-input"
+              placeholder="ws://127.0.0.1:10095"
+              value={funasrUrl}
+              onChange={(e) => { setFunasrUrl(e.target.value); setFunasrTestResult(null) }}
+            />
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={testingFunasr}
+              onClick={async () => {
+                setTestingFunasr(true)
+                setFunasrTestResult(null)
+                try {
+                  const res = await fetchWithTimeout('/api/settings/test-funasr', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: funasrUrl }),
+                  })
+                  const data = await res.json()
+                  setFunasrTestResult(data.ok ? 'ok' : `连接失败: ${data.error || '无响应'}`)
+                } catch (err) {
+                  setFunasrTestResult(`连接失败: ${err.message}`)
+                } finally {
+                  setTestingFunasr(false)
+                }
+              }}
+            >
+              {testingFunasr ? '检测中…' : '测试连接'}
+            </button>
+          </div>
+          {funasrTestResult && (
+            <span className={funasrTestResult === 'ok' ? 'voice-test-ok' : 'voice-test-fail'}>
+              {funasrTestResult === 'ok' ? '✅ 连接成功' : `❌ ${funasrTestResult}`}
+            </span>
+          )}
+        </label>
+
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ marginTop: 12 }}
+          onClick={async () => {
+            try {
+              await fetchWithTimeout('/api/settings/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ gptsovits_url: gptsovitsUrl, funasr_url: funasrUrl }),
+              })
+              useAppStore.getState().checkVoiceStatus()
+            } catch {}
+          }}
+        >
+          保存语音服务地址
+        </button>
+      </section>
 
       <section className="settings-section settings-about">
         <h2 className="settings-section-title">关于</h2>

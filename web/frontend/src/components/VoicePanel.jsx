@@ -467,6 +467,10 @@ export default function VoicePanel() {
         <h3 className="voice-options-title">服务状态</h3>
         <div className="voice-status">
           <p>
+            <span className="voice-status-dot">{'\u{1F7E2}'}</span>
+            Edge TTS: 可用（微软免费）
+          </p>
+          <p>
             <span className="voice-status-dot">{voiceStatus.gptsovits ? '\u{1F7E2}' : '\u{1F534}'}</span>
             GPT-SoVITS: {voiceStatus.gptsovits ? '已连接' : '未连接'}
           </p>

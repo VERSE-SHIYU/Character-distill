@@ -4018,6 +4018,30 @@ select.settings-input {
   color: #e74c3c;
 }
 
+/* ===== Voice service config ===== */
+.voice-config-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.voice-config-row .settings-input {
+  flex: 1;
+}
+.voice-test-ok {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #5a9c5e;
+  font-weight: 500;
+}
+.voice-test-fail {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #e74c3c;
+  font-weight: 500;
+}
+
 /* ===== Voice Bubble (WeChat-style) ===== */
 .voice-bubble {
   display: inline-flex;
