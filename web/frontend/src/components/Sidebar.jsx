@@ -52,8 +52,12 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   }
 
   const handleNav = useCallback((id) => {
-    if (id === 'chat' && currentCard) {
-      startChat(currentCard)
+    if (id === 'chat') {
+      if (currentCard) {
+        startChat(currentCard)
+        return
+      }
+      alert('请先选择角色并开始对话')
       return
     }
     setView(id)
@@ -126,8 +130,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
         <button
           type="button"
           className="sidebar-char-card"
-          onClick={() => startChat(currentCard)}
-          title="进入聊天"
+          onClick={() => setView('character')}
+          title="查看角色详情"
         >
           <Avatar name={currentCard.name} size={40} />
           <div className="sidebar-char-info">
