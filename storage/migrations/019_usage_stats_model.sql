@@ -1,0 +1,1 @@
+ALTER TABLE usage_stats ADD COLUMN model TEXT DEFAULT '';

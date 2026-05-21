@@ -289,10 +289,11 @@ class ChatEngine:
         if not usage:
             return
         try:
+            model = getattr(self.llm, '_model', '') or ''
             asyncio.run(
                 self._storage.record_usage(
                     self._user_id, action,
-                    usage["prompt_tokens"], usage["completion_tokens"],
+                    usage["prompt_tokens"], usage["completion_tokens"], model,
                 )
             )
         except Exception as exc:

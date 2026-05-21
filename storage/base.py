@@ -183,7 +183,7 @@ class StorageBase(ABC):
         """Delete all refresh tokens for a user (logout)."""
 
     @abstractmethod
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "") -> None:
         """Record a usage stat entry."""
 
     @abstractmethod

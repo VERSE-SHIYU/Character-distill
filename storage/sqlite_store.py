@@ -220,6 +220,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] User API config migration failed: {exc}")
 
+                    # Run 019_usage_stats_model migration (ALTER TABLE — may fail if column exists)
+                    usage_model_path = migrations_dir / "019_usage_stats_model.sql"
+                    if usage_model_path.exists():
+                        try:
+                            await conn.executescript(usage_model_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Usage stats model migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1287,12 +1297,12 @@ class SQLiteStore(StorageBase):
 
     # ---- Usage stats ----
 
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "") -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens) VALUES (?, ?, ?, ?)",
-                    (user_id, action, prompt_tokens, completion_tokens),
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model) VALUES (?, ?, ?, ?, ?)",
+                    (user_id, action, prompt_tokens, completion_tokens, model),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -1326,7 +1336,17 @@ class SQLiteStore(StorageBase):
                     d = dict(r)
                     by_action[d["action"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
 
-            return {"total_calls": total["calls"], "total_prompt_tokens": total["prompt_tokens"], "total_completion_tokens": total["completion_tokens"], "by_day": by_day, "by_action": by_action}
+                # By model
+                cursor = await conn.execute(
+                    "SELECT model, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = ? AND model != '' GROUP BY model",
+                    (user_id,),
+                )
+                by_model = {}
+                for r in await cursor.fetchall():
+                    d = dict(r)
+                    by_model[d["model"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
+
+            return {"total_calls": total["calls"], "total_prompt_tokens": total["prompt_tokens"], "total_completion_tokens": total["completion_tokens"], "by_day": by_day, "by_action": by_action, "by_model": by_model}
         except Exception as exc:
             print(f"[SQLiteStore] Get usage stats failed: {exc}")
             raise

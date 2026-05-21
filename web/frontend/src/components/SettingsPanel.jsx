@@ -546,6 +546,20 @@ function UsageCard() {
           ))}
         </div>
       )}
+      {usage.by_model && Object.keys(usage.by_model).length > 0 && (
+        <div className="usage-action-list">
+          <p className="settings-hint" style={{ marginBottom: 8 }}>按模型</p>
+          {Object.entries(usage.by_model).map(([model, stats]) => (
+            <div key={model} className="usage-action-row">
+              <span className="usage-action-name">{model}</span>
+              <span className="usage-action-count">{stats.calls} 次</span>
+              <span className="usage-action-tokens">
+                {fmt(stats.prompt_tokens)} + {fmt(stats.completion_tokens)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
