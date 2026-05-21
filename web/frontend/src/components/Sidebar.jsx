@@ -54,14 +54,14 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const handleNav = useCallback((id) => {
     if (id === 'chat') {
       if (currentCard) {
-        startChat(currentCard)
+        setView('character')
         return
       }
       alert('请先选择角色并开始对话')
       return
     }
     setView(id)
-  }, [setView, currentCard, startChat])
+  }, [setView, currentCard])
 
   const navItems = authUser?.is_admin
     ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }]
