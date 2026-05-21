@@ -284,6 +284,146 @@
   border-color: var(--glass-border);
 }
 
+/* Midnight — ensure text contrast on dark backgrounds */
+.theme-midnight .settings-label,
+.theme-midnight .settings-hint,
+.theme-midnight .panel-desc,
+.theme-midnight .panel-title {
+  color: var(--text-primary);
+}
+
+.theme-midnight .settings-section-title {
+  color: var(--highlight);
+}
+
+.theme-midnight .settings-input,
+.theme-midnight .settings-input::placeholder {
+  color: var(--text-primary);
+}
+
+.theme-midnight .settings-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.theme-midnight .card-avatar-btn {
+  background: var(--input-bg);
+  border-color: var(--glass-border);
+}
+
+/* Error / success / warning readability */
+.theme-midnight .error-box,
+.theme-midnight .error-message {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.25);
+}
+
+.theme-midnight .success-message,
+.theme-midnight .voice-msg-success {
+  color: #6ee7b7;
+}
+
+.theme-midnight .voice-msg-error {
+  color: #ff6b6b;
+}
+
+/* Affinity panel */
+.theme-midnight .affinity-panel,
+.theme-midnight .affinity-card {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  color: var(--text-primary);
+}
+
+.theme-midnight .affinity-stat-label,
+.theme-midnight .affinity-mood,
+.theme-midnight .affinity-reason {
+  color: var(--text-secondary);
+}
+
+/* Char card detail */
+.theme-midnight .card-detail-section,
+.theme-midnight .card-detail-field {
+  color: var(--text-primary);
+}
+
+.theme-midnight .card-detail-label {
+  color: var(--text-secondary);
+}
+
+.theme-midnight .chars-green { color: #4ade80; font-weight: 600; }
+.theme-midnight .chars-blue  { color: #60a5fa; font-weight: 600; }
+.theme-midnight .chars-orange { color: #fb923c; font-weight: 600; }
+.theme-midnight .chars-red   { color: #f87171; font-weight: 600; }
+
+/* Usage stats, action rows */
+.theme-midnight .usage-action-name {
+  color: var(--text-primary);
+}
+
+.theme-midnight .usage-action-count,
+.theme-midnight .usage-action-tokens {
+  color: var(--text-secondary);
+}
+
+/* Voice guide card */
+.theme-midnight .voice-guide-card {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+}
+
+.theme-midnight .voice-guide-desc {
+  color: var(--text-secondary);
+}
+
+.theme-midnight .voice-configured-card {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+}
+
+/* Settings about section */
+.theme-midnight .settings-about-line,
+.theme-midnight .settings-link {
+  color: var(--text-secondary);
+}
+
+.theme-midnight .settings-link:hover {
+  color: var(--highlight);
+}
+
+/* Distill task list */
+.theme-midnight .distill-task-item {
+  color: var(--text-primary);
+}
+
+/* API config alert — keep amber but on dark bg */
+.theme-midnight .api-config-alert {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.10);
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+/* Dropdown / select */
+.theme-midnight select.settings-input {
+  background: var(--input-bg);
+  color: var(--text-primary);
+}
+
+.theme-midnight select.settings-input option {
+  background: #1a1b22;
+  color: var(--text-primary);
+}
+
+/* Scrollbar */
+.theme-midnight ::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+}
+
+.theme-midnight ::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
 /* ===== Reset ===== */
 *,
 *::before,
