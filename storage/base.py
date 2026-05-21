@@ -196,7 +196,7 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def update_session_affinity(
-        self, session_id: str, affinity: int, trust: int, mood: str, guard: int
+        self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:
         """Update affinity scores for a session."""
 

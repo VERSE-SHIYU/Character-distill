@@ -230,6 +230,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Usage stats model migration failed: {exc}")
 
+                    # Run 020_affinity_reason migration
+                    reason_path = migrations_dir / "020_affinity_reason.sql"
+                    if reason_path.exists():
+                        try:
+                            await conn.executescript(reason_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Affinity reason migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -1374,16 +1384,17 @@ class SQLiteStore(StorageBase):
     # ---- Affinity ----
 
     async def update_session_affinity(
-        self, session_id: str, affinity: int, trust: int, mood: str, guard: int
+        self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     """UPDATE sessions
                        SET affinity = ?, trust = ?, mood = ?, guard = ?,
+                           affinity_reason = ?,
                            updated_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
-                    (affinity, trust, mood, guard, session_id),
+                    (affinity, trust, mood, guard, reason, session_id),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -1393,7 +1404,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT affinity, trust, mood, guard FROM sessions WHERE id = ?",
+                    "SELECT affinity, trust, mood, guard, affinity_reason as reason FROM sessions WHERE id = ?",
                     (session_id,),
                 )
                 row = await cursor.fetchone()

@@ -60,6 +60,19 @@ class ChatEngine:
         self._mood: str = "平静"
         self._guard: int = 70
         self._affinity_reason: str = ""
+
+        # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
+        if not self._session_id:
+            try:
+                init_data = self._compute_initial_affinity(card, user_role)
+                self._affinity = max(0, min(100, init_data.get("affinity", 50)))
+                self._trust = max(0, min(100, init_data.get("trust", 30)))
+                self._mood = init_data.get("mood", "平静")
+                self._guard = max(0, min(100, init_data.get("guard", 70)))
+                self._affinity_reason = init_data.get("reason", "")
+            except Exception as exc:
+                print(f"[ChatEngine] Initial affinity calc failed, using defaults: {exc}")
+
         self._last_rag_context: str = ""
         self.last_summary: str | None = None  # legacy compat for chat.py
         self._ctx_engine = ContextEngine(
@@ -306,6 +319,7 @@ class ChatEngine:
         self._trust = data.get("trust", 30)
         self._mood = data.get("mood", "平静")
         self._guard = data.get("guard", 70)
+        self._affinity_reason = data.get("reason", "")
 
     def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
         """异步评估四维好感度变化。"""
@@ -356,13 +370,97 @@ class ChatEngine:
                     asyncio.run(
                         storage.update_session_affinity(
                             session_id, self._affinity, self._trust,
-                            self._mood, self._guard,
+                            self._mood, self._guard, self._affinity_reason,
                         )
                     )
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _compute_initial_affinity(
+        self,
+        card: CharacterCard,
+        user_role: str,
+    ) -> dict[str, Any]:
+        """根据角色卡人际关系 + 用户扮演身份，动态计算初始四维好感度。
+
+        关系判定优先级：亲密度 > 对立度 > 普通相识 > 陌生人。
+        """
+        user = (user_role or "").strip()
+
+        # 无身份：默认陌生人
+        if not user:
+            return {
+                "affinity": 50, "trust": 30, "mood": "平静", "guard": 70,
+                "reason": f"{card.name} 对陌生人保持中立",
+            }
+
+        # 遍历角色卡人际关系列表，找到匹配的用户身份
+        for rel in (card.relationships or []):
+            target = (rel.target or "").strip()
+            if not target or target not in user and user not in target:
+                continue
+            relation = (rel.relation or "").lower()
+            attitude = (rel.attitude or "").lower()
+
+            # 1) 亲密关系
+            _close = ["朋友", "兄弟", "姐妹", "挚友", "搭档", "队友",
+                       "恋人", "情侣", "夫妻", "家人", "亲人",
+                       "父子", "父女", "母子", "母女"]
+            if any(w in relation for w in _close):
+                has_conflict = any(w in attitude for w in ["矛盾", "复杂", "爱恨", "疏远", "冷战"])
+                if has_conflict:
+                    return {
+                        "affinity": 70, "trust": 55, "mood": "紧张", "guard": 68,
+                        "reason": f"{card.name} 与 {target}（{rel.relation}）关系复杂，心存芥蒂",
+                    }
+                return {
+                    "affinity": 82, "trust": 72, "mood": "开心", "guard": 48,
+                    "reason": f"{card.name} 视 {target} 为{rel.relation}",
+                }
+
+            # 2) 对立关系
+            _hostile = ["敌人", "仇人", "对手", "情敌", "死敌"]
+            if any(w in relation for w in _hostile):
+                return {
+                    "affinity": 22, "trust": 15, "mood": "紧张", "guard": 92,
+                    "reason": f"{card.name} 视 {target} 为{rel.relation}，充满敌意",
+                }
+
+            # 3) 普通相识
+            _acquaintance = ["同学", "同事", "邻居", "认识", "普通", "路人", "同行"]
+            if any(w in relation for w in _acquaintance):
+                return {
+                    "affinity": 60, "trust": 42, "mood": "平静", "guard": 62,
+                    "reason": f"{card.name} 认识 {target}（{rel.relation}），关系普通",
+                }
+
+            # 4) 其他已知关系（兜底）
+            return {
+                "affinity": 55, "trust": 40, "mood": "平静", "guard": 65,
+                "reason": f"{card.name} 与 {target} 是{rel.relation}",
+            }
+
+        # 未匹配到任何关系 → 陌生人。根据 user_role 语义微调
+        _fan_words = ["粉丝", "歌迷", "影迷", "书迷"]
+        _neutral = ["路人", "陌生人", "顾客", "记者", "学生"]
+        if any(w in user for w in _fan_words):
+            return {
+                "affinity": 65, "trust": 40, "mood": "开心", "guard": 55,
+                "reason": f"{card.name} 对{user}保持友好但有所保留",
+            }
+        if any(w in user for w in _neutral) or "路" in user:
+            return {
+                "affinity": 45, "trust": 25, "mood": "平静", "guard": 82,
+                "reason": f"{card.name} 对陌生人{user}保持警惕",
+            }
+
+        # 完全未知身份
+        return {
+            "affinity": 48, "trust": 28, "mood": "平静", "guard": 75,
+            "reason": f"{card.name} 不认识{user}，态度谨慎",
+        }
 
     def get_affinity(self) -> dict[str, Any]:
         return {
