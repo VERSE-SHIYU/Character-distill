@@ -100,46 +100,49 @@ function UsersTab() {
   if (error) return <div className="admin-error">{error}</div>
 
   return (
-    <div className="admin-table-wrap">
-      <table className="admin-table">
-        <thead>
-          <tr>
-            <th>用户名</th>
-            <th>角色</th>
-            <th>状态</th>
-            <th>注册时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id}>
-              <td>{u.username}</td>
-              <td>{u.is_admin ? '管理员' : '用户'}</td>
-              <td>
-                <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
-                  {u.is_disabled ? '已禁用' : '正常'}
-                </span>
-              </td>
-              <td>{u.created_at || '-'}</td>
-              <td className="admin-actions-cell">
-                <button
-                  className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
-                  onClick={() => toggleDisable(u)}
-                >
-                  {u.is_disabled ? '启用' : '禁用'}
-                </button>
-                <button
-                  className="admin-action-btn reset"
-                  onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
-                >
-                  重置密码
-                </button>
-              </td>
+    <div className="admin-card">
+      <div className="admin-card-title">用户管理</div>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>用户名</th>
+              <th>角色</th>
+              <th>状态</th>
+              <th>注册时间</th>
+              <th>操作</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id}>
+                <td>{u.username}</td>
+                <td>{u.is_admin ? '管理员' : '用户'}</td>
+                <td>
+                  <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
+                    {u.is_disabled ? '已禁用' : '正常'}
+                  </span>
+                </td>
+                <td>{u.created_at || '-'}</td>
+                <td className="admin-actions-cell">
+                  <button
+                    className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
+                    onClick={() => toggleDisable(u)}
+                  >
+                    {u.is_disabled ? '启用' : '禁用'}
+                  </button>
+                  <button
+                    className="admin-action-btn reset"
+                    onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
+                  >
+                    重置密码
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       {/* Reset password modal */}
       {resetTarget && (
@@ -218,8 +221,9 @@ function InvitesTab() {
   if (loading) return <div className="admin-loading">加载中…</div>
 
   return (
-    <div>
-      {error && <div className="admin-error">{error}</div>}
+    <div className="admin-card">
+      <div className="admin-card-title">邀请码管理</div>
+      {error && <div className="admin-error-banner">{error}</div>}
 
       <div className="invite-generate-row">
         <input
@@ -309,29 +313,32 @@ function UsageTab() {
   if (error) return <div className="admin-error">{error}</div>
 
   return (
-    <div className="admin-table-wrap">
-      <table className="admin-table">
-        <thead>
-          <tr>
-            <th>用户名</th>
-            <th>调用次数</th>
-            <th>输入 Token</th>
-            <th>输出 Token</th>
-            <th>最近活跃</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((r) => (
-            <tr key={r.user_id}>
-              <td>{r.username}</td>
-              <td>{r.total_calls}</td>
-              <td>{fmt(r.total_prompt_tokens)}</td>
-              <td>{fmt(r.total_completion_tokens)}</td>
-              <td>{r.last_active || '-'}</td>
+    <div className="admin-card">
+      <div className="admin-card-title">用户用量统计</div>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>用户名</th>
+              <th>调用次数</th>
+              <th>输入 Token</th>
+              <th>输出 Token</th>
+              <th>最近活跃</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {data.map((r) => (
+              <tr key={r.user_id}>
+                <td>{r.username}</td>
+                <td>{r.total_calls}</td>
+                <td>{fmt(r.total_prompt_tokens)}</td>
+                <td>{fmt(r.total_completion_tokens)}</td>
+                <td>{r.last_active || '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

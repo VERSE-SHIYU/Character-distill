@@ -4905,7 +4905,7 @@ select.settings-input {
 /* ==================== Admin Panel ==================== */
 
 .admin-panel {
-  max-width: 900px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 32px 24px;
 }
@@ -4913,31 +4913,39 @@ select.settings-input {
 .admin-body {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 24px;
 }
 
 .admin-content {
   min-height: 200px;
 }
 
+/* ---- Tab switcher ---- */
+
 .admin-tabs {
   display: flex;
   gap: 0;
-  margin-bottom: 24px;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--pill-bg);
   width: fit-content;
+  border: 1px solid var(--pill-border);
 }
 
 .admin-tab {
-  padding: 10px 20px;
+  padding: 10px 24px;
   border: none;
   background: transparent;
   font-size: 14px;
+  font-weight: 500;
   color: var(--text-dim);
   cursor: pointer;
-  transition: all .2s;
+  transition: all .25s;
+}
+
+.admin-tab:hover:not(.active) {
+  color: var(--text-primary);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 .admin-tab.active {
@@ -4945,12 +4953,37 @@ select.settings-input {
   color: var(--accent);
   font-weight: 600;
   border-radius: 10px;
+  margin: 2px;
+  box-shadow: 0 1px 4px rgba(var(--accent-rgb), 0.15);
 }
+
+/* ---- Glass card wrapper ---- */
+
+.admin-card {
+  background: var(--glass-bg);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  padding: 28px;
+}
+
+.admin-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--input-border);
+}
+
+/* ---- Loading / Error ---- */
 
 .admin-loading,
 .admin-error {
   text-align: center;
-  padding: 40px 0;
+  padding: 48px 0;
   color: var(--text-dim);
   font-size: 14px;
 }
@@ -4959,8 +4992,21 @@ select.settings-input {
   color: #e74c3c;
 }
 
+.admin-error-banner {
+  background: rgba(231, 76, 60, 0.06);
+  border: 1px solid rgba(231, 76, 60, 0.2);
+  border-radius: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #e74c3c;
+}
+
+/* ---- Table ---- */
+
 .admin-table-wrap {
   overflow-x: auto;
+  border-radius: 10px;
 }
 
 .admin-table {
@@ -4972,8 +5018,7 @@ select.settings-input {
 .admin-table th,
 .admin-table td {
   text-align: left;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--input-border);
+  padding: 12px 16px;
 }
 
 .admin-table th {
@@ -4982,18 +5027,34 @@ select.settings-input {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: .5px;
+  border-bottom: 2px solid var(--input-border);
+  white-space: nowrap;
 }
 
 .admin-table td {
   color: var(--text-primary);
+  border-bottom: 1px solid var(--input-border);
 }
+
+/* Zebra striping */
+.admin-table tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Hover highlight */
+.admin-table tbody tr:hover {
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+/* ---- Status badges ---- */
 
 .admin-status {
   font-size: 12px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 6px;
-  background: rgba(111, 173, 116, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
+  font-weight: 500;
 }
 
 .admin-status.disabled {
@@ -5001,25 +5062,40 @@ select.settings-input {
   color: #e74c3c;
 }
 
+/* ---- Action buttons (compact glass) ---- */
+
+.admin-actions-cell {
+  display: flex;
+  gap: 8px;
+}
+
 .admin-action-btn {
-  padding: 4px 12px;
-  border: 1px solid var(--pill-border);
-  border-radius: 6px;
-  background: transparent;
+  padding: 5px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(8px) saturate(140%);
+  -webkit-backdrop-filter: blur(8px) saturate(140%);
   font-size: 12px;
+  font-weight: 500;
+  color: var(--text-primary);
   cursor: pointer;
   transition: all .2s;
-  color: var(--text-dim);
+}
+
+.admin-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .admin-action-btn.disable:hover {
-  background: rgba(231, 76, 60, 0.08);
-  border-color: rgba(231, 76, 60, 0.3);
+  background: rgba(231, 76, 60, 0.1);
+  border-color: rgba(231, 76, 60, 0.35);
   color: #e74c3c;
 }
 
 .admin-action-btn.enable:hover {
-  background: rgba(111, 173, 116, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -5029,29 +5105,44 @@ select.settings-input {
 }
 
 .admin-action-btn.copy:hover {
-  background: rgba(111, 173, 116, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
 }
+
+.admin-action-btn.reset:hover {
+  background: rgba(var(--accent-rgb), 0.10);
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
+}
+
+/* ---- Invite code section ---- */
 
 .invite-generate-row {
   display: flex;
   gap: 12px;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .invite-count-input {
-  width: 70px;
-  padding: 8px 10px;
-  border: 1px solid var(--input-border);
+  width: 72px;
+  padding: 9px 12px;
+  border: 1px solid var(--glass-border);
   border-radius: 10px;
-  background: var(--input-bg);
+  background: var(--glass-bg);
   font-size: 14px;
   color: var(--text-primary);
   text-align: center;
+  transition: border-color .2s;
+}
+
+.invite-count-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.12);
 }
 
 .invite-generate-btn {
-  padding: 8px 18px;
+  padding: 9px 22px;
   border: none;
   border-radius: 10px;
   background: var(--accent);
@@ -5059,19 +5150,27 @@ select.settings-input {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background .2s;
+  transition: all .2s;
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
 }
 
-.invite-generate-btn:hover {
+.invite-generate-btn:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35);
+}
+
+.invite-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .invite-code-cell code {
-  font-family: monospace;
+  font-family: "SF Mono", "Fira Code", monospace;
   font-size: 12px;
-  background: rgba(0,0,0,0.04);
-  padding: 3px 8px;
-  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 4px 10px;
+  border-radius: 5px;
   word-break: break-all;
 }
 
