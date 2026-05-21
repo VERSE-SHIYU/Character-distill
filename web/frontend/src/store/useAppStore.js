@@ -411,8 +411,24 @@ const useAppStore = create((set, get) => ({
 
     const poll = () => {
       fetchWithTimeout(`/api/distill/task/${taskId}`)
-        .then((r) => r.json())
+        .then((r) => {
+          if (r.status === 404) {
+            set((s) => ({
+              distillTasks: s.distillTasks.map((t) =>
+                t.id === taskId
+                  ? { ...t, status: 'error', message: '服务已重启，任务丢失，请重新蒸馏' }
+                  : t,
+              ),
+              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
+                ? false : s.distilling,
+            }))
+            get()._persistTasks()
+            return
+          }
+          return r.json()
+        })
         .then((payload) => {
+          if (!payload) return
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
               t.id === taskId
@@ -442,7 +458,10 @@ const useAppStore = create((set, get) => ({
             return
           }
           if (payload.status === 'error') {
-            set({ distilling: false })
+            set((s) => ({
+              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
+                ? false : s.distilling,
+            }))
             get()._persistTasks()
             return
           }
@@ -482,9 +501,20 @@ const useAppStore = create((set, get) => ({
         localStorage.removeItem('distill_tasks')
         return
       }
-      active.forEach((task) => {
-        get().addDistillTask(task.id, task.textId, task.character)
-      })
+      // Probe first task to verify it still exists on server
+      fetchWithTimeout(`/api/distill/task/${active[0].id}`)
+        .then((r) => {
+          if (r.status !== 404) {
+            active.forEach((task) => {
+              get().addDistillTask(task.id, task.textId, task.character)
+            })
+          } else {
+            localStorage.removeItem('distill_tasks')
+          }
+        })
+        .catch(() => {
+          localStorage.removeItem('distill_tasks')
+        })
     } catch { /* ignore */ }
   },
 
