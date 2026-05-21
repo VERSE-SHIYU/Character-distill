@@ -99,19 +99,19 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  // Avatar sync
+  // Avatar sync — keyed by sessionId for per-conversation isolation
   cardAvatars: {},
-  setCardAvatar: (cardId, dataUrl) => {
+  setCardAvatar: (key, dataUrl) => {
     set((state) => ({
-      cardAvatars: { ...state.cardAvatars, [cardId]: dataUrl }
+      cardAvatars: { ...state.cardAvatars, [key]: dataUrl }
     }))
-    localStorage.setItem(`card_avatar_${cardId}`, dataUrl)
+    localStorage.setItem(`avatar_${key}`, dataUrl)
   },
-  loadCardAvatar: (cardId) => {
-    const saved = localStorage.getItem(`card_avatar_${cardId}`)
+  loadCardAvatar: (key) => {
+    const saved = localStorage.getItem(`avatar_${key}`)
     if (saved) {
       set((state) => ({
-        cardAvatars: { ...state.cardAvatars, [cardId]: saved }
+        cardAvatars: { ...state.cardAvatars, [key]: saved }
       }))
     }
   },

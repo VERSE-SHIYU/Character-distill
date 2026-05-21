@@ -134,7 +134,8 @@ function ChatView() {
   const cardAvatars = useAppStore((s) => s.cardAvatars)
 
   const cardId = currentCard?.id || currentCard?.card_id
-  const avatarUrl = cardAvatars[cardId] || null
+  const avatarKey = sessionId  // per-session isolation, not per-card
+  const avatarUrl = cardAvatars[avatarKey] || null
   const avatarInputRef = useRef(null)
 
   // ---- User avatar ----
@@ -165,27 +166,27 @@ function ChatView() {
 
   useEffect(() => {
     let cancelled = false
-    if (!cardId || cardAvatars[cardId]) return
-    loadCardAvatar(cardId).then((dataUrl) => {
-      if (!cancelled && dataUrl) setCardAvatar(cardId, dataUrl)
+    if (!avatarKey || cardAvatars[avatarKey]) return
+    loadCardAvatar(avatarKey).then((dataUrl) => {
+      if (!cancelled && dataUrl) setCardAvatar(avatarKey, dataUrl)
     })
     return () => { cancelled = true }
-  }, [cardId, cardAvatars])
+  }, [avatarKey, cardAvatars])
 
   const handleAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
-    if (!file || !cardId) return
+    if (!file || !cardId || !avatarKey) return
     setCropFile(file)
     e.target.value = ''
-  }, [cardId])
+  }, [cardId, avatarKey])
 
   const handleCropConfirm = useCallback(async (base64) => {
     setCropFile(null)
-    if (!cardId) return
+    if (!cardId || !avatarKey) return
     try {
       const res = await fetch(base64)
       const blob = await res.blob()
-      await saveAvatar(cardId, blob)
+      await saveAvatar(avatarKey, blob)
     } catch { /* non-fatal */ }
     try {
       await fetch(`/api/cards/${cardId}/avatar`, {
@@ -194,8 +195,8 @@ function ChatView() {
         body: JSON.stringify({ data: base64 }),
       })
     } catch { /* non-fatal */ }
-    setCardAvatar(cardId, base64)
-  }, [cardId, setCardAvatar])
+    setCardAvatar(avatarKey, base64)
+  }, [cardId, avatarKey, setCardAvatar])
 
   const handleCropCancel = useCallback(() => setCropFile(null), [])
 
