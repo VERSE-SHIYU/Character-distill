@@ -148,9 +148,9 @@ class Distiller:
             "聊天记录格式为：[日期] 发言人: 内容，也可能无日期前缀。\n"
             "规则：\n"
             "1. 只提取此片段中的事实，不要推断\n"
-            "2. 重点关注{character_name}的说话方式、态度、情感反应\n"
+            f"2. 重点关注{character_name}的说话方式、态度、情感反应\n"
             "3. 原文对话必须完整保留，这是最重要的\n"
-            "4. 如果此片段没有{character_name}的发言，输出「无」"
+            f"4. 如果此片段没有{character_name}的发言，输出「无」"
         )
 
     @staticmethod

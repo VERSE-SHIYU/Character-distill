@@ -117,11 +117,6 @@ class LLMAdapter:
                 if not choices:
                     raise RuntimeError("API returned empty choices")
                 result = choices[0].message.content or ""
-                if completion.usage:
-                    self.last_usage = {
-                        "prompt_tokens": completion.usage.prompt_tokens or 0,
-                        "completion_tokens": completion.usage.completion_tokens or 0,
-                    }
                 return result
             except Exception as exc:
                 last_error = exc

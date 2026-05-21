@@ -104,7 +104,6 @@ class ChatPreprocessor:
     def _layer0_format_clean(self, text: str) -> str:
         lines = text.split("\n")
         cleaned: list[str] = []
-        seen_dates: set[str] = set()
 
         for line in lines:
             stripped = line.strip()
@@ -139,15 +138,11 @@ class ChatPreprocessor:
                 if not content:
                     continue
 
-                # 日期去重：同一天只保留第一条
-                if date_str and date_str in seen_dates:
-                    cleaned.append(f"{speaker}: {content}")
+                # 保留日期前缀（distiller 按天分组依赖 [YYYY-MM-DD] 前缀）
+                if date_str:
+                    cleaned.append(f"[{date_str}] {speaker}: {content}")
                 else:
-                    if date_str:
-                        seen_dates.add(date_str)
-                        cleaned.append(f"[{date_str}] {speaker}: {content}")
-                    else:
-                        cleaned.append(f"{speaker}: {content}")
+                    cleaned.append(f"{speaker}: {content}")
             else:
                 # 非标准格式行仍保留
                 cleaned.append(stripped)

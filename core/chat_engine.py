@@ -301,16 +301,22 @@ class ChatEngine:
         usage = self.llm.last_usage
         if not usage:
             return
-        try:
-            model = getattr(self.llm, '_model', '') or ''
-            asyncio.run(
-                self._storage.record_usage(
-                    self._user_id, action,
-                    usage["prompt_tokens"], usage["completion_tokens"], model,
+        storage = self._storage
+        user_id = self._user_id
+        model = getattr(self.llm, '_model', '') or ''
+        pt, ct = usage["prompt_tokens"], usage["completion_tokens"]
+
+        def _do():
+            try:
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(
+                    storage.record_usage(user_id, action, pt, ct, model)
                 )
-            )
-        except Exception as exc:
-            print(f"[ChatEngine] Record usage failed (non-fatal): {exc}")
+                loop.close()
+            except Exception as exc:
+                print(f"[ChatEngine] Record usage failed (non-fatal): {exc}")
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def load_affinity(self, data: dict[str, Any]) -> None:
         if not data:
@@ -367,12 +373,14 @@ class ChatEngine:
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
                 self._affinity_reason = data.get("reason", "")
                 if storage and session_id:
-                    asyncio.run(
+                    loop = asyncio.new_event_loop()
+                    loop.run_until_complete(
                         storage.update_session_affinity(
                             session_id, self._affinity, self._trust,
                             self._mood, self._guard, self._affinity_reason,
                         )
                     )
+                    loop.close()
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
 

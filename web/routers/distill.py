@@ -378,6 +378,9 @@ async def distill_task_status(task_id: str) -> dict[str, Any]:
         task = _tasks.get(task_id)
     if task is None:
         raise HTTPException(404, "Task not found")
+    if task.get("status") in ("done", "error"):
+        with _task_lock:
+            _tasks.pop(task_id, None)
     return task
 
 
