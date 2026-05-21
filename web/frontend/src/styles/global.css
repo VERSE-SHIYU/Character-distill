@@ -2829,6 +2829,11 @@ body {
   opacity: 0.8;
 }
 
+.chat-input-voice-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* ===== History Panel ===== */
 .history-panel.panel {
   padding-bottom: 16px;

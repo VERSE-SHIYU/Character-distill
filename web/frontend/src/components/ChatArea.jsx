@@ -770,19 +770,33 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
     )
   }
 
-  const showMic = voiceStatus?.funasr
+  const funasrReady = voiceStatus?.funasr
 
   return (
     <div className="chat-input-bar">
-      {/* Voice placeholder */}
-      <button
-        type="button"
-        className="chat-input-voice-btn"
-        title="语音输入（暂未实装）"
-        onClick={() => {}}
-      >
-        {'\u{1F399}'}
-      </button>
+      {funasrReady ? (
+        <button
+          type="button"
+          className="record-btn"
+          onMouseDown={startRecording}
+          onMouseUp={stopRecording}
+          onMouseLeave={stopRecording}
+          onTouchStart={startRecording}
+          onTouchEnd={stopRecording}
+          title="按住录音"
+        >
+          {'\u{1F3A4}'}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="chat-input-voice-btn"
+          title="需要配置语音识别服务"
+          disabled
+        >
+          {'\u{1F399}'}
+        </button>
+      )}
 
       <textarea
         ref={taRef}
@@ -809,21 +823,6 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
       >
         发送
       </button>
-
-      {showMic && (
-        <button
-          type="button"
-          className="record-btn"
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onMouseLeave={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          title="按住录音"
-        >
-          {'\u{1F3A4}'}
-        </button>
-      )}
     </div>
   )
 }
