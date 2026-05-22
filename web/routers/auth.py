@@ -287,6 +287,7 @@ async def change_password(
         raise HTTPException(400, "新密码需包含字母和数字")
     new_hash = password_hasher.hash(req.new_password)
     await storage.update_user_password(user["id"], new_hash)
+    await storage.delete_user_refresh_tokens(user["id"])
     return {"ok": True}
 
 

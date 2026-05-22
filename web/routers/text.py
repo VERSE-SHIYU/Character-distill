@@ -15,6 +15,7 @@ from urllib.parse import quote
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/text", tags=["text"])
 
@@ -35,6 +36,7 @@ def _validate_extension(filename: str) -> None:
 @limiter.limit("5/minute")
 async def upload_text(
     request: Request,
+    user: dict = Depends(get_current_user),
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
     filename: str | None = Form(None),
@@ -44,7 +46,7 @@ async def upload_text(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Accept a multipart file or text form field, parse format, save."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
@@ -107,10 +109,11 @@ async def upload_text(
 @router.get("/list")
 async def list_texts(
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all uploaded texts (without full content body)."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     try:
         texts = await storage.list_texts(user_id)
     except Exception as exc:
@@ -127,13 +130,14 @@ async def list_texts(
 async def download_cleaned(
     text_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> Response:
     """Download cleaned plain text for chat-type imports."""
     text_rec = await storage.get_text(text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    if text_rec.get("user_id") != request.state.user.get("id", ""):
+    if text_rec.get("user_id") != user["id"]:
         raise HTTPException(403, "无权下载此文本")
 
     content = text_rec.get("content", "")
@@ -153,13 +157,14 @@ async def download_cleaned(
 async def delete_text(
     text_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete a text and its cascading cards/sessions."""
     text = await storage.get_text(text_id)
     if not text:
         raise HTTPException(404, "Text not found")
-    if text.get("user_id") != request.state.user.get("id", ""):
+    if text.get("user_id") != user["id"]:
         raise HTTPException(403, "无权删除此文本")
     try:
         ok = await storage.delete_text(text_id)

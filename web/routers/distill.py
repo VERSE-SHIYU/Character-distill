@@ -18,8 +18,10 @@ from deps import get_sessions, get_storage
 from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
+from core.scene_indexer import SceneIndexer
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
@@ -210,7 +212,20 @@ def _run_distill_task(
                 get_sessions(),
                 cfg.get("llm", {}).get("summary_threshold", 50),
             )
-            return await tm.save_distilled_card(text_id, card, user_id)
+            result = await tm.save_distilled_card(text_id, card, user_id)
+            # Build scene index for emotion-weighted retrieval
+            try:
+                rag = getattr(tm, 'rag', None)
+                if rag and rag.collection:
+                    card_id = result.get("card_id", "")
+                    scene_count = SceneIndexer().index_scenes(
+                        content, rag, card.name,
+                        collection_name=f"scenes_{card_id}",
+                    )
+                    print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
+            except Exception as exc:
+                print(f"[distill] Scene index failed (non-fatal): {exc}")
+            return result
 
         result = asyncio.run(_save_card())
 
@@ -268,10 +283,11 @@ async def _resolve_character_name(
 async def identify_by_text_id(
     req: IdentifyByIdRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -292,10 +308,11 @@ async def identify_by_text_id(
 async def distill_by_text_id(
     req: DistillByIdRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -310,9 +327,21 @@ async def distill_by_text_id(
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
     try:
-        return await text_manager.get_or_distill(
+        result = await text_manager.get_or_distill(
             req.text_id, char_name, force=req.force, user_id=user_id
         )
+        # Build scene index on first distill (non-cached)
+        try:
+            rag = getattr(text_manager, 'rag', None)
+            if rag and rag.collection:
+                card_id = result.get("card_id", "")
+                SceneIndexer().index_scenes(
+                    content, rag, char_name,
+                    collection_name=f"scenes_{card_id}",
+                )
+        except Exception as exc:
+            print(f"[distill] Scene index failed (non-fatal): {exc}")
+        return result
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
@@ -324,11 +353,12 @@ async def distill_by_text_id(
 async def distill_start(
     req: DistillTaskRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
 
     # Resolve per-user LLM config for the background thread
     api_config = await storage.get_user_api_config(user_id)
@@ -408,10 +438,11 @@ def _next_piece(stream_obj):
 async def distill_stream(
     req: DistillByIdRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -508,6 +539,19 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"
             return
 
+        # Build scene index
+        try:
+            rag = getattr(text_manager, 'rag', None)
+            if rag and rag.collection:
+                card_id = result.get("card_id", "")
+                scene_count = SceneIndexer().index_scenes(
+                    content, rag, char_name,
+                    collection_name=f"scenes_{card_id}",
+                )
+                print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
+        except Exception as exc:
+            print(f"[distill] Scene index failed (non-fatal): {exc}")
+
         yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
@@ -517,6 +561,7 @@ async def distill_stream(
 async def reindex_rag(
     text_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -526,7 +571,7 @@ async def reindex_rag(
     each session's RAG index to include character tags so that
     ``character_name`` filtering works in subsequent chat queries.
     """
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -566,12 +611,13 @@ async def update_card(
     card_id: str,
     req: UpdateCardRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ):
     record = await storage.get_card(card_id)
     if not record:
         raise HTTPException(404, "Card not found")
-    if record.get("user_id") != request.state.user.get("id", ""):
+    if record.get("user_id") != user["id"]:
         raise HTTPException(403, "无权修改此角色卡")
     result = await storage.update_card(card_id, req.card_json)
     return {"ok": True, "card": result}
@@ -585,9 +631,10 @@ class GenerateOpeningRequest(BaseModel):
 async def generate_opening(
     req: GenerateOpeningRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ):
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -603,6 +650,7 @@ async def generate_opening(
 async def export_card(
     card_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     format: str = Query(default="tavern"),
     first_mes: str = Query(default=""),
@@ -615,7 +663,7 @@ async def export_card(
     record = await storage.get_card(card_id)
     if not record:
         raise HTTPException(404, "Card not found")
-    if record.get("user_id") != request.state.user.get("id", ""):
+    if record.get("user_id") != user["id"]:
         raise HTTPException(403, "无权导出此角色卡")
 
     try:
@@ -644,10 +692,11 @@ async def export_card(
 async def list_cards(
     text_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all distilled character cards for a text."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     try:
         return await storage.list_cards(text_id, user_id)
     except Exception as exc:
@@ -659,6 +708,7 @@ async def list_cards(
 async def start_session(
     req: StartSessionRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -668,7 +718,7 @@ async def start_session(
     injects into the in-memory ``_sessions`` dict, persists the session
     record to SQLite, and returns the card data with ``session_id``.
     """
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
@@ -736,10 +786,11 @@ async def start_session(
 async def legacy_identify(
     req: IdentifyRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
@@ -752,10 +803,11 @@ async def legacy_identify(
 async def legacy_distill(
     req: DistillRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_distiller, get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)

@@ -15,6 +15,7 @@ from deps import get_config, get_storage, get_tts_engine, get_voice_client
 from speech.edge_tts_client import EdgeTTSEngine, VOICES
 from speech.voice_clone import VoiceCloneClient
 from limiter import limiter
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
@@ -46,6 +47,7 @@ def _write_voice_library(library: list[dict[str, Any]]) -> None:
 
 @router.get("/status")
 async def voice_status(
+    user: dict = Depends(get_current_user),
     voice_client: VoiceCloneClient = Depends(get_voice_client),
     config: dict[str, Any] = Depends(get_config),
 ) -> dict[str, Any]:
@@ -75,7 +77,9 @@ async def voice_status(
 # ---- Voice list (presets + custom) ----
 
 @router.get("/list")
-async def list_voices() -> list[dict[str, Any]]:
+async def list_voices(
+    user: dict = Depends(get_current_user),
+) -> list[dict[str, Any]]:
     presets: list[dict[str, Any]] = [
         {"voice_id": k, "name": k, "type": "preset"} for k in VOICES
     ]
@@ -110,6 +114,7 @@ def _extract_audio_from_video(filepath: Path) -> Path:
 async def upload_custom_voice(
     file: UploadFile = File(...),
     name: str = Form(...),
+    user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     if not file.filename:
         raise HTTPException(400, "请选择音频或视频文件")
@@ -155,7 +160,10 @@ async def upload_custom_voice(
 
 
 @router.delete("/{voice_id}")
-async def delete_custom_voice(voice_id: str) -> dict[str, bool]:
+async def delete_custom_voice(
+    voice_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, bool]:
     library = _read_voice_library()
     entry = next((v for v in library if v["voice_id"] == voice_id), None)
     if entry:
@@ -171,6 +179,7 @@ async def delete_custom_voice(voice_id: str) -> dict[str, bool]:
 @router.get("/preview-audio/{voice_id}")
 async def preview_audio(
     voice_id: str,
+    user: dict = Depends(get_current_user),
     engine: EdgeTTSEngine = Depends(get_tts_engine),
 ) -> Response:
     # If it's a custom voice, serve the raw file
@@ -193,6 +202,7 @@ async def preview_audio(
 @limiter.limit("20/minute")
 async def voice_synthesize(
     request: Request,
+    user: dict = Depends(get_current_user),
     engine: EdgeTTSEngine = Depends(get_tts_engine),
     storage = Depends(get_storage),
     voice_client: VoiceCloneClient = Depends(get_voice_client),
@@ -242,6 +252,7 @@ async def voice_synthesize(
 @router.get("/ref-audio/{card_id}")
 async def get_ref_audio(
     card_id: str,
+    user: dict = Depends(get_current_user),
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Get reference audio info for a character card."""
@@ -262,6 +273,7 @@ async def upload_ref_audio(
     card_id: str = Form(...),
     ref_text: str = Form(""),
     file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Upload a reference audio file and bind it to a character card.
@@ -318,6 +330,7 @@ async def upload_ref_audio(
 @router.delete("/ref-audio/{card_id}")
 async def delete_ref_audio(
     card_id: str,
+    user: dict = Depends(get_current_user),
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Delete reference audio for a character card."""
@@ -340,6 +353,7 @@ async def delete_ref_audio(
 @router.post("/asr")
 async def speech_to_text(
     file: UploadFile = File(...),
+    user: dict = Depends(get_current_user),
     config: dict[str, Any] = Depends(get_config),
 ) -> JSONResponse:
     """Convert uploaded audio to text using FunASR."""

@@ -617,7 +617,7 @@ const useAppStore = create((set, get) => ({
         web_search: get().webSearchEnabled,
       })
       set((s) => {
-        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id })
+        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false })
         if (data.summary) {
           msgs.splice(msgs.length - 2, 0, { role: 'summary', content: data.summary })
         }
@@ -677,6 +677,9 @@ const useAppStore = create((set, get) => ({
           if (payload.summary) {
             const userIdx = msgs.length - 2
             msgs.splice(userIdx, 0, { role: 'summary', content: payload.summary })
+          }
+          if (payload.retracted) {
+            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
           }
           return { messages: msgs, sending: false }
         })

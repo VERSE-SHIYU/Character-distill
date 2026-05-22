@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import threading
 from collections.abc import Generator
@@ -503,3 +504,19 @@ class ChatEngine:
     def reset(self) -> None:
         """清空对话历史。"""
         self.history = []
+
+    def _should_retract(self, reply: str) -> bool:
+        """轻量判断：角色是否会后悔说这句话。"""
+        if not self.llm or not self.card:
+            return False
+        prompt = (
+            f"你是「{self.card.name}」，性格：{self.card.identity}\n"
+            f"你刚才说了：「{reply}」\n"
+            f"根据你的性格，你会后悔说这句话并想撤回吗？"
+            f"只回答 true 或 false，不要解释。"
+        )
+        try:
+            result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            return "true" in result.strip().lower()
+        except Exception:
+            return False

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard
 from storage.sqlite_store import SQLiteStore
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -27,6 +28,7 @@ class ResumeRequest(BaseModel):
 @router.get("/list")
 async def list_sessions(
     request: Request,
+    user: dict = Depends(get_current_user),
     keyword: str = Query("", description="Search keyword in messages"),
     character: str = Query("", description="Filter by character name"),
     text_id: str = Query("", description="Filter by text_id"),
@@ -35,7 +37,7 @@ async def list_sessions(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Paginated session list with optional keyword and character filters."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     try:
         return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id)
     except Exception as exc:
@@ -46,11 +48,12 @@ async def list_sessions(
 @router.get("/trash")
 async def list_trash(
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted sessions (trash bin)."""
     try:
-        user_id = request.state.user.get("id", "")
+        user_id = user["id"]
         return await storage.list_trash_sessions(user_id)
     except Exception as exc:
         print(f"[history] List trash failed: {exc}")
@@ -60,11 +63,12 @@ async def list_trash(
 @router.delete("/trash/purge")
 async def purge_trash(
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Permanently delete all sessions in trash."""
     try:
-        user_id = request.state.user.get("id", "")
+        user_id = user["id"]
         count = await storage.purge_trash(user_id)
         return {"ok": True, "purged": count}
     except Exception as exc:
@@ -75,11 +79,12 @@ async def purge_trash(
 @router.post("/clear-all")
 async def clear_all_sessions(
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Soft-delete all sessions (move to trash)."""
     try:
-        user_id = request.state.user.get("id", "")
+        user_id = user["id"]
         count = await storage.clear_all_sessions(user_id)
         return {"ok": True, "deleted": count}
     except Exception as exc:
@@ -93,6 +98,7 @@ async def clear_all_sessions(
 async def export_session(
     session_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     format: str = Query("json", description="Export format: json or txt"),
     storage: SQLiteStore = Depends(get_storage),
 ) -> Response:
@@ -103,7 +109,7 @@ async def export_session(
         raise HTTPException(404, "Session not found")
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != request.state.user.get("id", ""):
+    if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此会话")
     try:
         content = await storage.export_session(session_id, format)
@@ -122,13 +128,14 @@ async def export_session(
 async def get_session_detail(
     session_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Get a session with its full message list."""
     session = await storage.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != request.state.user.get("id", ""):
+    if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此会话")
     try:
         messages = await storage.get_messages(session_id)
@@ -143,6 +150,7 @@ async def resume_session(
     session_id: str,
     _body: ResumeRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -153,7 +161,7 @@ async def resume_session(
     RAG index, ChatEngine, and replays history messages so the user can
     pick up the conversation where it left off.
     """
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
@@ -267,13 +275,14 @@ async def resume_session(
 async def restore_session(
     session_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
     """Restore a soft-deleted session from trash."""
     session = await storage.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != request.state.user.get("id", ""):
+    if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权操作此会话")
     try:
         ok = await storage.restore_session(session_id)
@@ -289,6 +298,7 @@ async def restore_session(
 async def delete_session(
     session_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     permanent: bool = Query(False, description="If true, hard-delete permanently"),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, bool]:
@@ -296,7 +306,7 @@ async def delete_session(
     session = await storage.get_session(session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != request.state.user.get("id", ""):
+    if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权操作此会话")
     try:
         if permanent:

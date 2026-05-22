@@ -1,0 +1,1 @@
+ALTER TABLE messages ADD COLUMN retracted INTEGER DEFAULT 0;

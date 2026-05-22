@@ -5682,3 +5682,29 @@ select.settings-input {
   align-self: flex-start;
   margin-top: 4px;
 }
+
+/* ---- Retracted message ---- */
+
+.msg-retracted {
+  color: var(--text-dim);
+  font-size: 0.85em;
+  cursor: pointer;
+  font-style: italic;
+  user-select: none;
+}
+
+.retracted-peek {
+  margin-left: 8px;
+  color: var(--accent);
+  font-size: 0.8em;
+  font-style: normal;
+}
+
+.retracted-original {
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg-secondary, #f3f4f6);
+  border-radius: 8px;
+  font-style: normal;
+  color: var(--text);
+}

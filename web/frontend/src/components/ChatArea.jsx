@@ -544,6 +544,7 @@ function ChatView() {
                 isUser={isUser}
                 isLastUserMsg={i === lastUserMsgIndex}
                 content={msg.content}
+                retracted={msg.retracted}
                 charName={charName}
                 avatarUrl={avatarUrl}
                 userRole={userRole}
@@ -609,8 +610,9 @@ function formatTime(ts) {
   return `${ap} ${h12}:${m}`
 }
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
   const [hovered, setHovered] = useState(false)
+  const [showRetracted, setShowRetracted] = useState(false)
 
   const userInitial = (userRole || '我').charAt(0)
 
@@ -630,10 +632,22 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, charName, avatar
         </div>
       )}
       <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
-        <span className="chat-bubble-text">
-          {content}
-          {isStreaming && <span className="chat-cursor" />}
-        </span>
+        {!isUser && retracted ? (
+          <span className="chat-bubble-text">
+            <div className="msg-retracted" onClick={() => setShowRetracted(!showRetracted)}>
+              <span className="retracted-text">对方撤回了一条消息</span>
+              <span className="retracted-peek">{showRetracted ? '收起' : '点击偷看'}</span>
+              {showRetracted && (
+                <div className="retracted-original">{content}</div>
+              )}
+            </div>
+          </span>
+        ) : (
+          <span className="chat-bubble-text">
+            {content}
+            {isStreaming && <span className="chat-cursor" />}
+          </span>
+        )}
         {/* Voice bubble */}
         {!isUser && audioUrl && (
           <div

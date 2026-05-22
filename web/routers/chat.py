@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from typing import Any
 
 from typing import Any, Union
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from deps import get_sessions, get_storage, get_text_manager
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
+from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -191,8 +193,14 @@ async def _do_chat(
         print(f"[chat] Dual-write messages failed (non-fatal): {exc}")
 
     engine = session.get("engine")
+    retracted = False
+    if engine and random.random() < 0.2:
+        try:
+            retracted = await asyncio.to_thread(engine._should_retract, resp)
+        except Exception:
+            retracted = False
     result: dict[str, Any] = {
-        "reply": resp, "rag_context": rag_ctx[:200],
+        "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
     }
     if engine and engine.last_summary:
@@ -289,8 +297,15 @@ async def _do_chat_stream(
                 except Exception as exc:
                     print(f"[chat] Save summary failed (non-fatal): {exc}")
 
+            retracted = False
+            if engine and random.random() < 0.2:
+                try:
+                    retracted = await asyncio.to_thread(engine._should_retract, full_reply)
+                except Exception:
+                    retracted = False
+
             done_payload: dict[str, Any] = {
-                "done": True, "rag_context": rag_context[:200],
+                "done": True, "retracted": retracted, "rag_context": rag_context[:200],
                 "user_msg_id": msg_ids[0] if len(msg_ids) >= 1 else None,
                 "char_msg_id": msg_ids[1] if len(msg_ids) >= 2 else None,
             }
@@ -331,12 +346,13 @@ async def _do_reset(
 async def send_message(
     req: ChatRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> Union[dict[str, Any], StreamingResponse]:
     """Send a message and get a JSON reply or SSE stream."""
     from deps import get_user_llm
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     if len(req.message) > MAX_MESSAGE_LENGTH:
         raise HTTPException(400, f"消息过长，最多{MAX_MESSAGE_LENGTH}字")
     if await get_user_llm(user_id, storage) is None:
@@ -350,6 +366,7 @@ async def send_message(
 async def revoke_messages(
     req: RevokeRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -359,7 +376,7 @@ async def revoke_messages(
     After DB deletion, rebuild ``engine.history`` from remaining messages to keep
     the in-memory context and ``message_ids`` tracking precisely in sync.
     """
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     session = await _ensure_session(req.session_id, storage, sessions, user_id)
 
     # Delete from SQLite first
@@ -391,6 +408,7 @@ async def revoke_messages(
 async def get_affinity(
     session_id: str,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
@@ -401,7 +419,7 @@ async def get_affinity(
 
     # Verify ownership before falling back to DB
     db_session = await storage.get_session(session_id)
-    if db_session and db_session.get("user_id") != request.state.user.get("id", ""):
+    if db_session and db_session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此会话")
 
     # Fallback to DB (server restarted)
@@ -415,11 +433,12 @@ async def get_affinity(
 async def reset_session(
     req: ResetRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Reset the in-memory chat history (keep the character card)."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     return await _do_reset(req.session_id, storage, sessions, user_id)
 
 
@@ -429,11 +448,12 @@ async def reset_session(
 async def legacy_chat(
     req: ChatRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search)
 
 
@@ -441,9 +461,10 @@ async def legacy_chat(
 async def legacy_reset(
     req: ResetRequest,
     request: Request,
+    user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Legacy /api/reset -> same as /api/chat/reset."""
-    user_id = request.state.user.get("id", "")
+    user_id = user["id"]
     return await _do_reset(req.session_id, storage, sessions, user_id)

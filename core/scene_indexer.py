@@ -12,11 +12,12 @@ from core.rag import RAGEngine
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
-    "悲伤": ["哭", "泪", "痛", "绝望", "失去", "离开", "死", "心碎"],
-    "愤怒": ["愤", "怒", "骂", "恨", "滚", "混蛋", "不可原谅"],
-    "温柔": ["温柔", "轻声", "微笑", "牵手", "抱", "安慰"],
-    "紧张": ["心跳", "颤抖", "屏住呼吸", "慌", "紧张"],
-    "平静": [],  # 默认
+    "悲伤": ["哭", "泪", "痛", "绝望", "失去", "离开", "死", "心碎", "委屈", "难过", "心疼", "再见", "遗憾", "孤独"],
+    "愤怒": ["愤", "怒", "骂", "恨", "滚", "混蛋", "不可原谅", "凭什么", "够了", "闭嘴", "讨厌", "受够"],
+    "温柔": ["温柔", "轻声", "微笑", "牵手", "抱", "安慰", "陪着", "没关系", "乖", "别怕", "在呢", "心疼你"],
+    "紧张": ["心跳", "颤抖", "屏住呼吸", "慌", "紧张", "害怕", "不敢", "怎么办", "糟了", "完了"],
+    "委屈": ["为什么不理", "算了", "随便", "不想说", "无所谓", "你不在乎", "是我的错", "对不起打扰了", "我走"],
+    "平静": [],
 }
 
 
@@ -85,6 +86,9 @@ class SceneIndexer:
 
     def _split_scenes(self, text: str) -> list[str]:
         """按场景边界切分，每段保持 200-1000 字。"""
+        if re.search(r'^\[\d{4}-\d{2}-\d{2}\]', text, re.MULTILINE):
+            return self._split_chat_scenes(text)
+
         parts = self.SCENE_BREAKS.split(text)
         scenes: list[str] = []
         for p in parts:
@@ -96,4 +100,30 @@ class SceneIndexer:
                 scenes.extend(sub)
             else:
                 scenes.append(p)
+        return scenes
+
+    def _split_chat_scenes(self, text: str) -> list[str]:
+        """按日期分组，每天一个场景。"""
+        lines = text.strip().split('\n')
+        scenes: list[str] = []
+        current_day = None
+        current_lines: list[str] = []
+
+        date_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2})\]')
+        for line in lines:
+            m = date_re.match(line)
+            day = m.group(1) if m else current_day
+            if day != current_day and current_lines:
+                scene = '\n'.join(current_lines)
+                if len(scene.strip()) > 50:
+                    scenes.append(scene)
+                current_lines = []
+            current_day = day
+            current_lines.append(line)
+
+        if current_lines:
+            scene = '\n'.join(current_lines)
+            if len(scene.strip()) > 50:
+                scenes.append(scene)
+
         return scenes
