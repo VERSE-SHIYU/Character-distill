@@ -14,7 +14,7 @@ bantime  = 3600
 [openresty-cc]
 enabled  = true
 filter   = openresty-cc
-logpath  = /var/log/openresty/access.log
+logpath  = /var/log/openresty/waf.log
 maxretry = 100
 findtime = 10
 bantime  = 600

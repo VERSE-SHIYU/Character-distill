@@ -14,14 +14,14 @@ local function deny(rule, msg)
     log_block(rule, msg or "")
     ngx.status = 403
     ngx.say("Forbidden")
-    ngx.exit(403)
+    return ngx.exit(403)
 end
 
 -- 1. 拦截非标准请求方法
 local method = ngx.req.get_method()
 local allowed = { GET = true, POST = true, PATCH = true, DELETE = true, OPTIONS = true, HEAD = true }
 if not allowed[method] then
-    deny("METHOD", method)
+    return deny("METHOD", method)
 end
 
 -- 2. SQL注入检测 (URI + query args)
@@ -34,7 +34,7 @@ local sqli_patterns = {
 }
 for _, p in ipairs(sqli_patterns) do
     if ngx.re.find(uri, p, "jo") or ngx.re.find(args, p, "jo") then
-        deny("SQLI", ngx.var.request_uri)
+        return deny("SQLI", ngx.var.request_uri)
     end
 end
 
@@ -42,7 +42,7 @@ end
 local xss_patterns = { "<script", "javascript:", "onerror=", "onload=", "<iframe", "<img%s+.*on" }
 for _, p in ipairs(xss_patterns) do
     if ngx.re.find(args, p, "jo") then
-        deny("XSS", ngx.var.request_uri)
+        return deny("XSS", ngx.var.request_uri)
     end
 end
 
@@ -51,6 +51,6 @@ local ua = ngx.var.http_user_agent or ""
 local bad_ua = { "scrapy", "nikto", "sqlmap", "masscan", "nmap", "zgrab", "gobuster" }
 for _, p in ipairs(bad_ua) do
     if ngx.re.find(ua:lower(), p, "jo") then
-        deny("BAD_UA", ua)
+        return deny("BAD_UA", ua)
     end
 end
