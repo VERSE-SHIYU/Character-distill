@@ -85,20 +85,6 @@ const useAppStore = create((set, get) => ({
 
   apiConfigured: false,
 
-  checkApiConfig: async () => {
-    try {
-      const res = await fetchWithTimeout('/api/auth/me')
-      const data = await res.json()
-      const configured = !!data.has_api_key
-      set({ apiConfigured: configured })
-      return configured
-    } catch (err) {
-      console.error('[store] checkApiConfig failed:', err)
-      set({ apiConfigured: false })
-      return false
-    }
-  },
-
   // Avatar sync — keyed by sessionId for per-conversation isolation
   cardAvatars: {},
   setCardAvatar: (key, dataUrl) => {

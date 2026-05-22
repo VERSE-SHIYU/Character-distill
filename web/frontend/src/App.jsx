@@ -60,7 +60,7 @@ export default function App() {
     checkVoiceStatus()
   }, [checkVoiceStatus])
 
-  // Verify token on mount
+  // Verify token on mount + check API config (single /api/auth/me call)
   useEffect(() => {
     ;(async () => {
       const token = getToken()
@@ -74,6 +74,12 @@ export default function App() {
         const user = await res.json()
         useAppStore.setState({ authUser: user, isLoggedIn: true })
         useAppStore.getState().restoreDistillTasks()
+
+        const configured = !!user.has_api_key
+        useAppStore.setState({ apiConfigured: configured })
+        if (!configured) {
+          setView('settings')
+        }
       } catch {
         logout()
         setView('login')
@@ -88,17 +94,6 @@ export default function App() {
     if (!isLoggedIn) {
       setView('login')
     }
-  }, [isLoggedIn])
-
-  // Auto-redirect to settings if LLM is not configured (check once on mount)
-  useEffect(() => {
-    ;(async () => {
-      if (!isLoggedIn) return
-      const configured = await useAppStore.getState().checkApiConfig()
-      if (!configured) {
-        setView('settings')
-      }
-    })()
   }, [isLoggedIn])
 
   // Sidebar auto-hide state
