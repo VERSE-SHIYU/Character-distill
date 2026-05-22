@@ -12,3 +12,7 @@ web/frontend/dist
 *.db
 *.db-journal
 .DS_Store
+content/
+*.mp3
+.claude/
+
