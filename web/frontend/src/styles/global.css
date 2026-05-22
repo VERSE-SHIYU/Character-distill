@@ -2604,6 +2604,12 @@ body {
   font-size: 12px;
 }
 
+.user-role-locked {
+  font-weight: 600;
+  color: var(--text-primary);
+  user-select: none;
+}
+
 /* Context banner */
 .chat-context-banner {
   flex-shrink: 0;

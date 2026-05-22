@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 
-export default function RoleSetupModal({ isOpen, characterName, relationships, onConfirm, onSkip }) {
+export default function RoleSetupModal({ isOpen, characterName, relationships, textType, onConfirm, onSkip }) {
   const userRole = useAppStore((s) => s.userRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const [role, setRole] = useState(userRole || '')
@@ -67,6 +67,8 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
     )
   }
 
+  const isChatType = textType === 'chat'
+
   // Step 1: input
   return (
     <div className="modal-overlay" onClick={() => onSkip ? onSkip() : null}>
@@ -83,16 +85,20 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, o
           <label className="modal-label" htmlFor="role-setup-input">
             你的角色名 <span className="modal-label-required">（必填）</span>
           </label>
-          <input
-            ref={inputRef}
-            id="role-setup-input"
-            type="text"
-            className="modal-input glass-input"
-            placeholder="输入你的角色名，如：魏无羡"
-            value={role}
-            onChange={(e) => setRole(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
+          {isChatType ? (
+            <p className="role-setup-hint">聊天记录模式：请从下方选择你在对话中的身份</p>
+          ) : (
+            <input
+              ref={inputRef}
+              id="role-setup-input"
+              type="text"
+              className="modal-input glass-input"
+              placeholder="输入你的角色名，如：魏无羡"
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+          )}
         </div>
 
         {targets.length > 0 && (

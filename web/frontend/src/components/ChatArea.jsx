@@ -458,27 +458,33 @@ function ChatView() {
       {/* User role bar */}
       <div className="user-role-bar">
         <span className="user-role-label">我扮演：</span>
-        <input
-          type="text"
-          className="user-role-input"
-          placeholder="输入你的角色名，如：江澄"
-          value={userRole}
-          onChange={(e) => setUserRole(e.target.value)}
-          onBlur={() => setUserRole(userRole)}
-        />
-        {cardData?.identity?.relationships && (
-          <div className="user-role-presets">
-            {Object.keys(cardData.identity.relationships).slice(0, 4).map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
-                onClick={() => setUserRole(name)}
-              >
-                {name}
-              </button>
-            ))}
-          </div>
+        {messages.length > 1 ? (
+          <span className="user-role-locked">{userRole || '未设定'}</span>
+        ) : (
+          <>
+            <input
+              type="text"
+              className="user-role-input"
+              placeholder="输入你的角色名，如：江澄"
+              value={userRole}
+              onChange={(e) => setUserRole(e.target.value)}
+              onBlur={() => setUserRole(userRole)}
+            />
+            {cardData?.identity?.relationships && (
+              <div className="user-role-presets">
+                {Object.keys(cardData.identity.relationships).slice(0, 4).map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
+                    onClick={() => setUserRole(name)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -559,6 +565,7 @@ function ChatView() {
         isOpen={showRoleModal}
         characterName={charName}
         relationships={cardData.relationships || []}
+        textType={currentCard?.text_type || 'story'}
         onConfirm={(role) => setShowRoleModal(false)}
         onSkip={() => setShowRoleModal(false)}
       />
