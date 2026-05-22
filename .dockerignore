@@ -1,0 +1,14 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+data/
+.env
+.venv
+venv/
+node_modules
+web/frontend/node_modules
+web/frontend/dist
+*.db
+*.db-journal
+.DS_Store
