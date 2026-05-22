@@ -5,7 +5,7 @@ const useAppStore = create((set, get) => ({
   // ---- Auth ----
 
   authUser: null,
-  isLoggedIn: !!getToken(),
+  isLoggedIn: false,
 
   login: async (username, password) => {
     const data = await postJSON('/api/auth/login', { username, password })

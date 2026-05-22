@@ -50,6 +50,7 @@ export default function App() {
   const currentView = useAppStore((s) => s.currentView)
   const isLoggedIn = useAppStore((s) => s.isLoggedIn)
   const logout = useAppStore((s) => s.logout)
+  const [authChecking, setAuthChecking] = useState(true)
 
   useEffect(() => {
     initTheme()
@@ -65,6 +66,7 @@ export default function App() {
       const token = getToken()
       if (!token) {
         setView('login')
+        setAuthChecking(false)
         return
       }
       try {
@@ -75,6 +77,8 @@ export default function App() {
       } catch {
         logout()
         setView('login')
+      } finally {
+        setAuthChecking(false)
       }
     })()
   }, [])
@@ -136,6 +140,10 @@ export default function App() {
     setSidebarOpen(false)
     setSidebarPinned(false)
   }, [])
+
+  if (authChecking) {
+    return <div className="admin-loading">验证登录状态…</div>
+  }
 
   if (currentView === 'login') {
     return <LoginPage />
