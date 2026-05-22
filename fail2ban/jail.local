@@ -1,0 +1,20 @@
+[DEFAULT]
+bantime = 3600
+findtime = 60
+maxretry = 10
+
+[openresty-waf]
+enabled  = true
+filter   = openresty-waf
+logpath  = /var/log/nginx/waf.log
+maxretry = 10
+findtime = 60
+bantime  = 3600
+
+[openresty-cc]
+enabled  = true
+filter   = openresty-cc
+logpath  = /var/log/nginx/access.log
+maxretry = 100
+findtime = 10
+bantime  = 600

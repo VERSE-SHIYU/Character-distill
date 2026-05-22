@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from deps import get_config, get_storage, get_tts_engine, get_voice_client
 from speech.edge_tts_client import EdgeTTSEngine, VOICES
 from speech.voice_clone import VoiceCloneClient
+from limiter import limiter
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
 
@@ -189,6 +190,7 @@ async def preview_audio(
 
 
 @router.post("/synthesize")
+@limiter.limit("20/minute")
 async def voice_synthesize(
     request: Request,
     engine: EdgeTTSEngine = Depends(get_tts_engine),

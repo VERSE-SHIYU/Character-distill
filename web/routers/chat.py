@@ -14,9 +14,12 @@ from pydantic import BaseModel
 
 from deps import get_sessions, get_storage, get_text_manager
 from storage.sqlite_store import SQLiteStore
+from limiter import limiter
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
+
+MAX_MESSAGE_LENGTH = 5000
 
 
 async def _ensure_session(
@@ -324,6 +327,7 @@ async def _do_reset(
 # ---- New routes ----
 
 @router.post("/send", response_model=None)
+@limiter.limit("30/minute")
 async def send_message(
     req: ChatRequest,
     request: Request,
@@ -333,6 +337,8 @@ async def send_message(
     """Send a message and get a JSON reply or SSE stream."""
     from deps import get_user_llm
     user_id = request.state.user.get("id", "")
+    if len(req.message) > MAX_MESSAGE_LENGTH:
+        raise HTTPException(400, f"消息过长，最多{MAX_MESSAGE_LENGTH}字")
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:

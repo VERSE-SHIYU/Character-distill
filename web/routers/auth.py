@@ -21,7 +21,12 @@ from limiter import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-JWT_SECRET = os.getenv("JWT_SECRET", "character-distill-dev-secret-key-change-in-prod")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET or JWT_SECRET == "character-distill-dev-secret-key-change-in-prod":
+    raise RuntimeError(
+        "JWT_SECRET 未设置或使用了默认值！"
+        "请在 .env 中设置: JWT_SECRET=$(openssl rand -hex 32)"
+    )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30

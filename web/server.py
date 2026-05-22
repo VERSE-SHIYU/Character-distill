@@ -32,6 +32,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import limiter
 
+from security import SecurityHeadersMiddleware
+
 import jwt as _jwt_lib
 
 from routers.text import router as text_router
@@ -79,12 +81,25 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    import traceback
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "服务器内部错误，请稍后重试"},
+    )
+
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://yourdomain.cn").split(",")
+
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # ---- Mount routers ----
@@ -143,8 +158,10 @@ app.add_middleware(AuthMiddleware)
 
 
 @app.get("/api/settings/config")
-def read_settings_config() -> dict[str, Any]:
-    """Read LLM + voice config for settings UI."""
+def read_settings_config(
+    _admin: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    """Read LLM + voice config for settings UI (admin only)."""
     try:
         llm = get_config().get("llm", {})
         voice = get_config().get("voice", {})

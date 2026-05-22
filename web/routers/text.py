@@ -14,13 +14,14 @@ from urllib.parse import quote
 
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
+from limiter import limiter
 
 router = APIRouter(prefix="/api/text", tags=["text"])
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".log", ".pdf", ".docx"}
 
 
@@ -31,6 +32,7 @@ def _validate_extension(filename: str) -> None:
 
 
 @router.post("/upload")
+@limiter.limit("5/minute")
 async def upload_text(
     request: Request,
     file: UploadFile | None = File(None),
@@ -62,7 +64,7 @@ async def upload_text(
                     if total_size > MAX_FILE_SIZE:
                         await f.close()
                         os.unlink(temp_path)
-                        raise HTTPException(413, "文件超过100MB限制")
+                        raise HTTPException(413, "文件超过10MB限制")
                     await f.write(chunk)
 
             try:
