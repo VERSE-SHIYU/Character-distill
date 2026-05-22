@@ -1,4 +1,5 @@
 import useAppStore from '../store/useAppStore'
+import { fetchWithTimeout } from '../api/client'
 
 export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
@@ -33,6 +34,19 @@ export default function DistillTaskBar() {
             {!isDone && !isError && (
               <span className="distill-task-bar-track">
                 <span className="distill-task-bar-fill" style={{ width: `${t.progress_pct || 0}%` }} />
+              </span>
+            )}
+            {!isDone && !isError && (
+              <span
+                className="distill-task-close"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  fetchWithTimeout(`/api/distill/task/${t.id}`, { method: 'DELETE' }).catch(() => {})
+                  removeDistillTask(t.id)
+                }}
+                title="取消蒸馏"
+              >
+                ✕
               </span>
             )}
             {(isDone || isError) && (

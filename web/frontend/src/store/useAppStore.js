@@ -483,20 +483,13 @@ const useAppStore = create((set, get) => ({
         localStorage.removeItem('distill_tasks')
         return
       }
-      // Probe first task to verify it still exists on server
-      fetchWithTimeout(`/api/distill/task/${active[0].id}`)
-        .then((r) => {
-          if (r.status !== 404) {
-            active.forEach((task) => {
-              get().addDistillTask(task.id, task.textId, task.character)
-            })
-          } else {
-            localStorage.removeItem('distill_tasks')
-          }
-        })
-        .catch(() => {
-          localStorage.removeItem('distill_tasks')
-        })
+      const marked = active.map((t) => ({
+        ...t,
+        status: 'error',
+        message: '服务已重启，请重新蒸馏',
+      }))
+      set({ distillTasks: marked, distilling: false })
+      get()._persistTasks()
     } catch { /* ignore */ }
   },
 

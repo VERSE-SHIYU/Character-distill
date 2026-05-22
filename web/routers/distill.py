@@ -133,6 +133,9 @@ def _run_distill_task(
         full = ""
         stream = distiller.distill_incremental_stream(content, name, aliases, text_type)
         for piece in stream:
+            with _task_lock:
+                if _tasks.get(task_id, {}).get("status") == "error":
+                    return
             if isinstance(piece, dict):
                 if piece.get("heartbeat"):
                     continue
@@ -379,6 +382,17 @@ async def distill_task_status(task_id: str) -> dict[str, Any]:
         with _task_lock:
             _tasks.pop(task_id, None)
     return task
+
+
+@router.delete("/task/{task_id}")
+async def cancel_distill_task(task_id: str) -> dict[str, bool]:
+    """Cancel a running distillation task."""
+    with _task_lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            raise HTTPException(404, "Task not found")
+        _tasks[task_id] = {"status": "error", "message": "已取消"}
+    return {"ok": True}
 
 
 def _next_piece(stream_obj):
