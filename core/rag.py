@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
 import chromadb
@@ -35,7 +34,7 @@ class RAGEngine:
             raise
 
         try:
-            self._client = chromadb.EphemeralClient()
+            self._client = chromadb.PersistentClient(path="./data/chroma_db")
         except Exception as exc:
             print(f"初始化 Chroma EphemeralClient 失败：{exc}")
             raise
@@ -46,10 +45,7 @@ class RAGEngine:
             print(f"初始化 SentenceTransformer embedding 失败：{exc}")
             raise
 
-        # Use a unique collection name per engine instance so that multiple
-        # RAGEngines (each created for a different session) do not overwrite
-        # each other's collections in the shared ChromaDB persist directory.
-        self._collection_name: str = uuid.uuid4().hex[:16]
+        self._collection_name: str = ""
         self.collection: Collection | None = None
         self.collection_name: str | None = None
 
@@ -281,6 +277,21 @@ class RAGEngine:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [doc for _, doc in scored[:top_k]]
+
+    def load_existing(self, collection_name: str) -> bool:
+        """Try to load an existing persistent collection. Returns True on success."""
+        try:
+            col = self._client.get_collection(
+                name=collection_name,
+                embedding_function=self._embedding_function,
+            )
+            if col.count() > 0:
+                self.collection = col
+                self.collection_name = collection_name
+                return True
+        except Exception:
+            pass
+        return False
 
     def reset(self) -> None:
         """删除当前集合并清空内存引用。"""

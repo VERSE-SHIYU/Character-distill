@@ -485,8 +485,13 @@ class TextManager:
         cached = self._text_rag_cache.get(text_id)
         if cached is not None:
             return cached
+        col_name = f"text_{text_id}"
         rag = RAGEngine(self._rag_config)
-        rag.index(text, all_characters=all_characters)
+        # Try loading existing persistent index first (survives restart)
+        if rag.load_existing(col_name):
+            self._text_rag_cache[text_id] = rag
+            return rag
+        rag.index(text, collection_name=col_name, all_characters=all_characters)
         self._text_rag_cache[text_id] = rag
         return rag
 

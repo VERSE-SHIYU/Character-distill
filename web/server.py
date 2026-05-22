@@ -65,6 +65,14 @@ app = FastAPI(title="Character Simulator API")
 app.state.limiter = limiter
 
 
+@app.on_event("startup")
+async def _preload_embedding():
+    """Preload SentenceTransformer model so first chat is fast (1-2s instead of 5s)."""
+    from core.embeddings import create_safe_embedding_fn
+    create_safe_embedding_fn()
+    print("[startup] Embedding model preloaded")
+
+
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     return JSONResponse({"detail": "请求过于频繁，请稍后再试"}, status_code=429)
 
