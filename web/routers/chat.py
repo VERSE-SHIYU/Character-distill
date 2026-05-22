@@ -413,14 +413,16 @@ async def get_affinity(
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Return affinity scores for a session."""
+    # Always verify ownership via DB first
+    db_session = await storage.get_session(session_id)
+    if not db_session:
+        raise HTTPException(404, "Session not found")
+    if db_session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此会话")
+
     session = sessions.get(session_id)
     if session and session.get("engine"):
         return session["engine"].get_affinity()
-
-    # Verify ownership before falling back to DB
-    db_session = await storage.get_session(session_id)
-    if db_session and db_session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此会话")
 
     # Fallback to DB (server restarted)
     data = await storage.get_session_affinity(session_id)

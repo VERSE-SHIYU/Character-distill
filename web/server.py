@@ -62,7 +62,7 @@ else:
         "or `npm run dev` for Vite dev server."
     )
 
-app = FastAPI(title="Character Simulator API")
+app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None)
 
 app.state.limiter = limiter
 
@@ -117,7 +117,7 @@ app.include_router(card_router)
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/health"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
 
 
@@ -155,6 +155,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(AuthMiddleware)
+
+
+@app.get("/api/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 
 @app.get("/api/settings/config")
@@ -234,7 +239,7 @@ def update_settings_config(
 
 
 @app.post("/api/settings/test-gptsovits")
-async def test_gptsovits_connection(req: Request) -> dict[str, Any]:
+async def test_gptsovits_connection(req: Request, _admin: dict = Depends(require_admin)) -> dict[str, Any]:
     """Test GPT-SoVITS connectivity."""
     try:
         body = await req.json()
@@ -251,7 +256,7 @@ async def test_gptsovits_connection(req: Request) -> dict[str, Any]:
 
 
 @app.post("/api/settings/test-funasr")
-async def test_funasr_connection(req: Request) -> dict[str, Any]:
+async def test_funasr_connection(req: Request, _admin: dict = Depends(require_admin)) -> dict[str, Any]:
     """Test FunASR connectivity."""
     try:
         body = await req.json()

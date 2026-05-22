@@ -115,6 +115,14 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
     inv = req.invite_code.strip()
     if not inv:
         raise HTTPException(400, "需要邀请码才能注册")
+
+    # Seed invite: if no codes exist and ADMIN_INVITE_CODE is set, auto-create
+    admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
+    if admin_seed and inv == admin_seed:
+        existing_codes = await storage.list_invite_codes()
+        if not existing_codes:
+            await storage.create_invite_code(admin_seed, "system")
+
     invite = await storage.get_invite_code(inv)
     if not invite:
         raise HTTPException(400, "邀请码无效")
@@ -129,6 +137,11 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
     password_hash = password_hasher.hash(req.password)
     user = await storage.create_user(user_id, username, password_hash)
     await storage.use_invite_code(inv, user["id"])
+
+    # First user with seed code becomes admin
+    if admin_seed and inv == admin_seed:
+        await storage.set_user_admin(user["id"], True)
+        user["is_admin"] = True
 
     access_token = _create_access_token(user["id"], user["username"])
     refresh_token = await _create_refresh_token(user["id"], storage)

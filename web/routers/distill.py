@@ -389,7 +389,7 @@ async def distill_start(
     task_id = _uuid.uuid4().hex[:12]
 
     with _task_lock:
-        _tasks[task_id] = {"status": "queued", "progress_pct": 0}
+        _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id}
 
     thread = threading.Thread(
         target=_run_distill_task,
@@ -402,12 +402,17 @@ async def distill_start(
 
 
 @router.get("/task/{task_id}")
-async def distill_task_status(task_id: str) -> dict[str, Any]:
+async def distill_task_status(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
     """Poll distillation task status."""
     with _task_lock:
         task = _tasks.get(task_id)
     if task is None:
         raise HTTPException(404, "Task not found")
+    if task.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此任务")
     if task.get("status") in ("done", "error"):
         with _task_lock:
             _tasks.pop(task_id, None)
@@ -415,12 +420,17 @@ async def distill_task_status(task_id: str) -> dict[str, Any]:
 
 
 @router.delete("/task/{task_id}")
-async def cancel_distill_task(task_id: str) -> dict[str, bool]:
+async def cancel_distill_task(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, bool]:
     """Cancel a running distillation task."""
     with _task_lock:
         task = _tasks.get(task_id)
         if task is None:
             raise HTTPException(404, "Task not found")
+        if task.get("user_id") != user["id"]:
+            raise HTTPException(403, "无权操作此任务")
         _tasks[task_id] = {"status": "error", "message": "已取消"}
     return {"ok": True}
 

@@ -3,7 +3,7 @@
 set -e
 
 BACKUP_DIR="${BACKUP_DIR:-/home/ubuntu/backups}"
-DB_PATH="${DB_PATH:-/home/ubuntu/Character-distill/data/charsim.db}"
+DB_PATH="${DB_PATH:-/home/ubuntu/Character-distill/data/character_sim.db}"
 DATE=$(date +%Y%m%d_%H%M%S)
 
 mkdir -p "$BACKUP_DIR"

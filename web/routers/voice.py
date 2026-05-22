@@ -84,9 +84,10 @@ async def list_voices(
         {"voice_id": k, "name": k, "type": "preset"} for k in VOICES
     ]
     customs = _read_voice_library()
-    for entry in customs:
+    user_customs = [e for e in customs if e.get("user_id") == user["id"]]
+    for entry in user_customs:
         entry.setdefault("type", "custom")
-    return presets + customs
+    return presets + user_customs
 
 
 # ---- Custom voice library CRUD ----
@@ -151,6 +152,7 @@ async def upload_custom_voice(
         "ext": ext,
         "duration": duration,
         "type": "custom",
+        "user_id": user["id"],
         "created_at": datetime.now().isoformat(),
     }
     library = _read_voice_library()
@@ -166,11 +168,14 @@ async def delete_custom_voice(
 ) -> dict[str, bool]:
     library = _read_voice_library()
     entry = next((v for v in library if v["voice_id"] == voice_id), None)
-    if entry:
-        ext = entry.get("ext", ".wav")
-        (VOICE_LIBRARY_DIR / f"{voice_id}{ext}").unlink(missing_ok=True)
-        library = [v for v in library if v["voice_id"] != voice_id]
-        _write_voice_library(library)
+    if entry is None:
+        raise HTTPException(404, "音色不存在")
+    if entry.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权删除此音色")
+    ext = entry.get("ext", ".wav")
+    (VOICE_LIBRARY_DIR / f"{voice_id}{ext}").unlink(missing_ok=True)
+    library = [v for v in library if v["voice_id"] != voice_id]
+    _write_voice_library(library)
     return {"ok": True}
 
 
@@ -256,6 +261,11 @@ async def get_ref_audio(
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Get reference audio info for a character card."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "角色卡不存在")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此角色卡")
     try:
         ref_json_str = await storage.get_session_voice_ref(card_id)
         if ref_json_str:
@@ -281,6 +291,12 @@ async def upload_ref_audio(
     Supports audio (wav/mp3/flac) and video (mp4/mov/avi/mkv/webm).
     Video files are auto-converted: audio track extracted to 16kHz mono wav.
     """
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "角色卡不存在")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此角色卡")
+
     ext = Path(file.filename).suffix.lower() if file.filename else ""
     if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
         raise HTTPException(400, f"不支持的格式: {ext}。支持音频（wav/mp3/flac）和视频（mp4/mov/avi/mkv/webm）")
@@ -334,6 +350,11 @@ async def delete_ref_audio(
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Delete reference audio for a character card."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "角色卡不存在")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此角色卡")
     try:
         ref_json_str = await storage.get_session_voice_ref(card_id)
         if ref_json_str:

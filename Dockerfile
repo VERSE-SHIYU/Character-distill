@@ -41,6 +41,6 @@ EXPOSE 7860
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/docs')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/api/health')" || exit 1
 
 CMD ["python", "-m", "web.server"]
