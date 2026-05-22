@@ -397,24 +397,8 @@ const useAppStore = create((set, get) => ({
 
     const poll = () => {
       fetchWithTimeout(`/api/distill/task/${taskId}`)
-        .then((r) => {
-          if (r.status === 404) {
-            set((s) => ({
-              distillTasks: s.distillTasks.map((t) =>
-                t.id === taskId
-                  ? { ...t, status: 'error', message: '服务已重启，任务丢失，请重新蒸馏' }
-                  : t,
-              ),
-              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
-                ? false : s.distilling,
-            }))
-            get()._persistTasks()
-            return
-          }
-          return r.json()
-        })
+        .then((r) => r.json())
         .then((payload) => {
-          if (!payload) return
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
               t.id === taskId
@@ -453,7 +437,19 @@ const useAppStore = create((set, get) => ({
           }
           setTimeout(poll, 3000)
         })
-        .catch(() => {
+        .catch((err) => {
+          if (err.status === 404 || err.status === 401) {
+            set((s) => ({
+              distillTasks: s.distillTasks.map((t) =>
+                t.id === taskId
+                  ? { ...t, status: 'error', message: '服务已重启，任务丢失，请重新蒸馏' }
+                  : t,
+              ),
+              distilling: false,
+            }))
+            get()._persistTasks()
+            return
+          }
           setTimeout(poll, 3000)
         })
     }
