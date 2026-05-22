@@ -26,6 +26,13 @@ end
 -- 阈值: 10秒内100次请求则封10分钟
 if count > 100 then
     cc_ban:set(ip, now + 600, 600)
+    -- 写入日志供Fail2Ban检测
+    local f = io.open("/var/log/openresty/waf.log", "a")
+    if f then
+        f:write(string.format("%s [CC] %s request_count=%d\n",
+            ngx.var.time_iso8601, ip, count))
+        f:close()
+    end
     ngx.status = 429
     ngx.say("Too Many Requests")
     ngx.exit(429)

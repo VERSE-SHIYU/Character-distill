@@ -26,7 +26,7 @@ end
 
 -- 2. SQL注入检测 (URI + query args)
 local uri = ngx.var.uri:lower()
-local args = ngx.var.query_string:lower()
+local args = (ngx.var.query_string or ""):lower()
 local sqli_patterns = {
     "union%s+select", "select%s+.*from", "insert%s+into", "drop%s+table",
     "exec%s+", "information_schema", "or%s+1%s*=%s*1", "'%s*or%s+'",

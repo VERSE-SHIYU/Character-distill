@@ -33,7 +33,7 @@ services:
   fail2ban:
     image: crazymax/fail2ban:latest
     volumes:
-      - nginx_logs:/var/log/nginx:ro
+      - nginx_logs:/var/log/openresty:ro
       - ./fail2ban/jail.local:/etc/fail2ban/jail.local:ro
       - ./fail2ban/filter.d:/etc/fail2ban/filter.d:ro
     cap_add:
@@ -44,12 +44,12 @@ services:
       - prod
 
   goaccess:
-    image: xavierh/goaccess-for-nginxproxymanager:latest
+    image: allinurl/goaccess:latest
     volumes:
-      - nginx_logs:/opt/log:ro
+      - nginx_logs:/var/log/openresty:ro
     ports:
       - "127.0.0.1:7890:7890"
-    command: --real-time-html -f /opt/log/access.log -o /opt/log/report.html --log-format=COMBINED
+    command: --real-time-html -f /var/log/openresty/access.log -o /var/log/openresty/report.html --log-format=COMBINED
     restart: unless-stopped
 
 networks:
