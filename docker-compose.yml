@@ -1,9 +1,6 @@
-version: "3.8"
-
 services:
   charsim:
     build: .
-    container_name: charsim
     ports:
       - "7860:7860"
     volumes:
