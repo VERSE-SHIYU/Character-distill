@@ -1100,6 +1100,45 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update user API config failed: {exc}")
             raise
 
+    async def update_user_avatar(self, user_id: str, avatar_data: str) -> None:
+        """Store base64 avatar for a user."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET avatar_data = ? WHERE id = ?",
+                    (avatar_data, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user avatar failed: {exc}")
+            raise
+
+    async def update_user_password(self, user_id: str, password_hash: str) -> None:
+        """Update a user's password hash."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    (password_hash, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user password failed: {exc}")
+            raise
+
+    async def get_user_avatar(self, user_id: str) -> str:
+        """Get base64 avatar for a user, empty string if none."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT avatar_data FROM users WHERE id = ?", (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row and row[0] else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user avatar failed: {exc}")
+            raise
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

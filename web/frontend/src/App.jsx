@@ -12,6 +12,7 @@ import HomePage from './components/HomePage'
 import VoicePanel from './components/VoicePanel'
 import LoginPage from './components/LoginPage'
 import AdminPanel from './components/AdminPanel'
+import ProfilePage from './components/ProfilePage'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -24,6 +25,7 @@ const PANELS = {
   voice: VoicePanel,
   login: LoginPage,
   admin: AdminPanel,
+  profile: ProfilePage,
 }
 
 function MainContent() {
@@ -73,6 +75,9 @@ export default function App() {
         const res = await fetchWithTimeout('/api/auth/me')
         const user = await res.json()
         useAppStore.setState({ authUser: user, isLoggedIn: true })
+        if (user.avatar_data) {
+          useAppStore.setState({ userAvatar: user.avatar_data })
+        }
         useAppStore.getState().restoreDistillTasks()
 
         const configured = !!user.has_api_key

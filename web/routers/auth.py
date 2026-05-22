@@ -62,6 +62,11 @@ class ApiConfigRequest(BaseModel):
     model: str = "deepseek-v4-pro"
 
 
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
@@ -211,6 +216,7 @@ async def me(
     resp["has_api_key"] = bool(config.get("api_key"))
     resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
     resp["model"] = config.get("model", "deepseek-v4-pro")
+    resp["avatar_data"] = await storage.get_user_avatar(user["id"])
     return resp
 
 
@@ -239,6 +245,49 @@ async def my_usage(
 ) -> dict[str, Any]:
     """Return the current user's usage stats."""
     return await storage.get_usage_stats(user["id"])
+
+
+@router.put("/avatar")
+@limiter.limit("10/minute")
+async def update_avatar(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    body = await request.json()
+    avatar = body.get("avatar_data", "")
+    if len(avatar) > 150_000:
+        raise HTTPException(400, "头像过大，请压缩后上传")
+    await storage.update_user_avatar(user["id"], avatar)
+    return {"ok": True}
+
+
+@router.get("/avatar")
+async def get_avatar(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    data = await storage.get_user_avatar(user["id"])
+    return {"avatar_data": data}
+
+
+@router.put("/password")
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    req: ChangePasswordRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    if not password_hasher.verify(req.old_password, user["password_hash"]):
+        raise HTTPException(400, "当前密码错误")
+    if not req.new_password or len(req.new_password) < 8:
+        raise HTTPException(400, "新密码至少 8 位")
+    if not _is_strong_password(req.new_password):
+        raise HTTPException(400, "新密码需包含字母和数字")
+    new_hash = password_hasher.hash(req.new_password)
+    await storage.update_user_password(user["id"], new_hash)
+    return {"ok": True}
 
 
 # ---- Helpers ----

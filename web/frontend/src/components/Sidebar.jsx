@@ -10,8 +10,9 @@ const NAV_ITEMS = [
   { id: 'character', icon: '\u{1F464}', label: '角色管理' },
   { id: 'chat', icon: '\u{1F4AC}', label: '聊天' },
   { id: 'history', icon: '\u{1F4DA}', label: '历史' },
-  { id: 'settings', icon: '⚙️', label: '设置' },
   { id: 'voice', icon: '\u{1F399}', label: '音色管理' },
+  { id: 'profile', icon: '\u{1F464}', label: '个人资料' },
+  { id: 'settings', icon: '⚙️', label: '设置' },
 ]
 
 export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
@@ -47,8 +48,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
   function isDisabled(id) {
     if (id === 'text') return false
-    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice') return false
-    return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'voice'
+    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile') return false
+    return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'voice' && id !== 'profile'
   }
 
   const handleNav = useCallback((id) => {

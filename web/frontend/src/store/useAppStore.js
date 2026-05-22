@@ -209,6 +209,29 @@ const useAppStore = create((set, get) => ({
   userAvatar: null,
   setUserAvatar: (url) => set({ userAvatar: url }),
 
+  loadUserAvatar: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/auth/avatar')
+      const data = await res.json()
+      if (data.avatar_data) {
+        set({ userAvatar: data.avatar_data })
+      }
+    } catch { /* non-fatal */ }
+  },
+
+  saveUserAvatar: async (base64) => {
+    const res = await fetchWithTimeout('/api/auth/avatar', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ avatar_data: base64 }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '保存失败' }))
+      throw new Error(err.detail || '保存失败')
+    }
+    return res.json()
+  },
+
   _synthesizeVoiceReply: async (reply, charIdx) => {
     const { sessionId } = get()
     if (!reply || !sessionId) return

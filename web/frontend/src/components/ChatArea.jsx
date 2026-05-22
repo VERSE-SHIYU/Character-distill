@@ -144,14 +144,24 @@ function ChatView() {
   const userAvatarInputRef = useRef(null)
   const [userCropFile, setUserCropFile] = useState(null)
 
+  // 3-level user avatar fallback: session-local > global store (DB) > initials
   useEffect(() => {
     if (sessionId) {
-      const saved = localStorage.getItem(`user_avatar_${sessionId}`)
-      if (saved) setUserAvatar(saved)
-    } else {
-      const globalAvatar = localStorage.getItem('user_avatar')
-      if (globalAvatar) setUserAvatar(globalAvatar)
+      const sessionAvatar = localStorage.getItem(`user_avatar_${sessionId}`)
+      if (sessionAvatar) {
+        setUserAvatar(sessionAvatar)
+        return
+      }
     }
+    // Fall back to global avatar from store (loaded from DB via /api/auth/me)
+    const globalFromStore = useAppStore.getState().userAvatar
+    if (globalFromStore) {
+      setUserAvatar(globalFromStore)
+      return
+    }
+    // Last resort: legacy localStorage global key
+    const legacyAvatar = localStorage.getItem('user_avatar')
+    if (legacyAvatar) setUserAvatar(legacyAvatar)
   }, [sessionId])
 
   const handleUserAvatarChange = useCallback((e) => {
@@ -161,12 +171,15 @@ function ChatView() {
     e.target.value = ''
   }, [])
 
-  const handleUserCropConfirm = useCallback((base64) => {
+  const handleUserCropConfirm = useCallback(async (base64) => {
     setUserCropFile(null)
     setUserAvatar(base64)
     const { sessionId } = useAppStore.getState()
     if (sessionId) localStorage.setItem(`user_avatar_${sessionId}`, base64)
-    localStorage.setItem('user_avatar', base64)
+    // Persist to backend
+    try {
+      await useAppStore.getState().saveUserAvatar(base64)
+    } catch { /* non-fatal — localStorage still works offline */ }
   }, [setUserAvatar])
 
   const handleUserCropCancel = useCallback(() => setUserCropFile(null), [])
