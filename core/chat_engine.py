@@ -315,6 +315,26 @@ class ChatEngine:
     def load_affinity(self, data: dict[str, Any]) -> None:
         if not data:
             return
+        # If DB still holds the hardcoded defaults, this session was never
+        # evaluated — recompute from the current card's relationship settings
+        # in case the card has been updated (e.g. "stranger" → "friend").
+        is_default = (
+            data.get("affinity") == 50
+            and data.get("trust") == 30
+            and data.get("mood") == "平静"
+            and data.get("guard") == 70
+        )
+        if is_default and self.card and self.user_role:
+            try:
+                init = self._compute_initial_affinity(self.card, self.user_role)
+                self._affinity = max(0, min(100, init.get("affinity", 50)))
+                self._trust = max(0, min(100, init.get("trust", 30)))
+                self._mood = init.get("mood", "平静")
+                self._guard = max(0, min(100, init.get("guard", 70)))
+                self._affinity_reason = init.get("reason", "")
+                return
+            except Exception:
+                pass
         self._affinity = data.get("affinity", 50)
         self._trust = data.get("trust", 30)
         self._mood = data.get("mood", "平静")
