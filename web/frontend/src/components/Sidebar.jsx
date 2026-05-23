@@ -8,6 +8,8 @@ const NAV_ITEMS = [
   { id: 'home', icon: '\u{1F3E0}', label: '主页' },
   { id: 'text', icon: '\u{1F4C1}', label: '文本管理' },
   { id: 'character', icon: '\u{1F464}', label: '角色管理' },
+  { id: 'market', icon: '\u{1F30D}', label: '角色市场' },
+  { id: 'groupChat', icon: '\u{1F465}', label: '群聊' },
   { id: 'chat', icon: '\u{1F4AC}', label: '聊天' },
   { id: 'history', icon: '\u{1F4DA}', label: '历史' },
   { id: 'voice', icon: '\u{1F399}', label: '音色管理' },
@@ -48,7 +50,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
   function isDisabled(id) {
     if (id === 'text') return false
-    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile') return false
+    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile' || id === 'market' || id === 'groupChat') return false
     return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'voice' && id !== 'profile'
   }
 

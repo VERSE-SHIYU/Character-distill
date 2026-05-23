@@ -13,6 +13,8 @@ import VoicePanel from './components/VoicePanel'
 import LoginPage from './components/LoginPage'
 import AdminPanel from './components/AdminPanel'
 import ProfilePage from './components/ProfilePage'
+import MarketPage from './components/MarketPage'
+import GroupChatPage from './components/GroupChatPage'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -26,6 +28,8 @@ const PANELS = {
   login: LoginPage,
   admin: AdminPanel,
   profile: ProfilePage,
+  market: MarketPage,
+  groupChat: GroupChatPage,
 }
 
 function MainContent() {

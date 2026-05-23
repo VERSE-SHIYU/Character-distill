@@ -277,17 +277,39 @@ class SQLiteStore(StorageBase):
                         await conn.executescript(vc_path.read_text(encoding="utf-8"))
                         await conn.commit()
 
+                    # Run 025_market migration (ALTER TABLE may fail if column exists)
+                    market_path = migrations_dir / "025_market.sql"
+                    if market_path.exists():
+                        try:
+                            await conn.executescript(market_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Market migration failed: {exc}")
+
+                    # Run 026_group_sessions migration (CREATE TABLE IF NOT EXISTS + ALTER TABLE)
+                    group_path = migrations_dir / "026_group_sessions.sql"
+                    if group_path.exists():
+                        try:
+                            await conn.executescript(group_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Group sessions migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
+                    # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
                         await conn.execute("""
                             DELETE FROM cards
-                            WHERE id NOT IN (
+                            WHERE forked_from = '' AND id NOT IN (
                                 SELECT id FROM (
                                     SELECT id, ROW_NUMBER() OVER (
                                         PARTITION BY text_id, name
                                         ORDER BY rowid DESC
                                     ) AS rn
                                     FROM cards
+                                    WHERE forked_from = ''
                                 ) WHERE rn = 1
                             )
                         """)
@@ -467,7 +489,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, user_id FROM cards WHERE id = ?",
+                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -482,12 +504,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at FROM cards WHERE text_id = ? AND user_id = ? ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND user_id = ? ORDER BY created_at DESC",
                         (text_id, user_id),
                     )
                 else:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at FROM cards WHERE text_id = ? ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? ORDER BY created_at DESC",
                         (text_id,),
                     )
                 rows = await cursor.fetchall()
@@ -524,6 +546,187 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get card avatar failed: {exc}")
             return None
+
+    # ── Market / public card methods ──────────────────────────
+
+    async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new") -> list[dict]:
+        """List public cards with pagination and sorting (hot=likes, new=created_at)."""
+        try:
+            order = "c.likes DESC, c.created_at DESC" if sort == "hot" else "c.created_at DESC"
+            offset = (page - 1) * page_size
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                              c.forked_from, c.likes, c.created_at,
+                              COALESCE(u.username, '') AS author_name
+                        FROM cards c
+                        LEFT JOIN users u ON u.id = c.user_id
+                        WHERE c.visibility = 'public'
+                        ORDER BY {order}
+                        LIMIT ? OFFSET ?""",
+                    (page_size, offset),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List public cards failed: {exc}")
+            raise
+
+    async def list_public_cards_total(self) -> int:
+        """Return total count of public cards (for pagination)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public'"
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] List public cards total failed: {exc}")
+            return 0
+
+    async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
+        """Search public cards by name match (case-insensitive)."""
+        try:
+            offset = (page - 1) * page_size
+            pattern = f"%{keyword}%"
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                              c.forked_from, c.likes, c.created_at,
+                              COALESCE(u.username, '') AS author_name
+                        FROM cards c
+                        LEFT JOIN users u ON u.id = c.user_id
+                        WHERE c.visibility = 'public' AND c.name LIKE ?
+                        ORDER BY c.likes DESC, c.created_at DESC
+                        LIMIT ? OFFSET ?""",
+                    (pattern, page_size, offset),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Search public cards failed: {exc}")
+            raise
+
+    async def search_public_cards_total(self, keyword: str) -> int:
+        """Return total count of matching public cards."""
+        try:
+            pattern = f"%{keyword}%"
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND name LIKE ?",
+                    (pattern,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Search public cards total failed: {exc}")
+            return 0
+
+    async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
+        """Deep copy a public card for a new user. Returns the new card dict."""
+        original = await self.get_card(card_id)
+        if not original:
+            return None
+        # Verify the original is public
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT visibility FROM cards WHERE id = ?", (card_id,)
+                )
+                row = await cursor.fetchone()
+                if not row or row[0] != "public":
+                    return None
+        except Exception as exc:
+            print(f"[SQLiteStore] Fork card visibility check failed: {exc}")
+            return None
+
+        try:
+            text_id = new_text_id or original["text_id"]
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO cards (id, text_id, name, card_json, user_id, avatar_data, forked_from, visibility)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'private')""",
+                    (new_id, text_id, original["name"],
+                     original.get("card_json", "{}"), new_user_id,
+                     await self.get_card_avatar(card_id) or "", card_id),
+                )
+                await conn.commit()
+            return await self.get_card(new_id)
+        except Exception as exc:
+            print(f"[SQLiteStore] Fork card failed: {exc}")
+            raise
+
+    async def toggle_like(self, card_id: str, user_id: str) -> dict:
+        """Toggle like status. Returns {'liked': bool, 'likes': int}."""
+        try:
+            async with await self._connect() as conn:
+                # Check if already liked
+                cursor = await conn.execute(
+                    "SELECT 1 FROM card_likes WHERE user_id = ? AND card_id = ?",
+                    (user_id, card_id),
+                )
+                liked = await cursor.fetchone() is not None
+
+                if liked:
+                    await conn.execute(
+                        "DELETE FROM card_likes WHERE user_id = ? AND card_id = ?",
+                        (user_id, card_id),
+                    )
+                    await conn.execute(
+                        "UPDATE cards SET likes = max(0, likes - 1) WHERE id = ?",
+                        (card_id,),
+                    )
+                else:
+                    await conn.execute(
+                        "INSERT INTO card_likes (user_id, card_id) VALUES (?, ?)",
+                        (user_id, card_id),
+                    )
+                    await conn.execute(
+                        "UPDATE cards SET likes = likes + 1 WHERE id = ?",
+                        (card_id,),
+                    )
+                await conn.commit()
+
+                # Read updated likes count
+                cursor = await conn.execute(
+                    "SELECT likes FROM cards WHERE id = ?", (card_id,)
+                )
+                row = await cursor.fetchone()
+                new_count = row[0] if row else 0
+            return {"liked": not liked, "likes": new_count}
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle like failed: {exc}")
+            raise
+
+    async def update_card_visibility(self, card_id: str, visibility: str) -> bool:
+        """Set card visibility to 'public' or 'private'."""
+        if visibility not in ("public", "private"):
+            return False
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET visibility = ? WHERE id = ?",
+                    (visibility, card_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Update card visibility failed: {exc}")
+            return False
+
+    async def get_liked_card_ids(self, user_id: str) -> list[str]:
+        """Return all card IDs the user has liked (for frontend highlight)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT card_id FROM card_likes WHERE user_id = ?", (user_id,)
+                )
+                rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get liked card ids failed: {exc}")
+            return []
 
     async def get_recent_card_session(self, card_id: str, exclude_id: str = "") -> dict | None:
         """Get the most recent session for a card (excluding a given session id)."""
@@ -919,6 +1122,103 @@ class SQLiteStore(StorageBase):
             return [dict(row) for row in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get messages failed: {exc}")
+            raise
+
+    # ── group sessions ────────────────────────────────────────────────
+
+    async def create_group_session(
+        self, id: str, name: str, card_ids: list[str], user_id: str
+    ) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO group_sessions (id, name, card_ids, user_id)
+                       VALUES (?, ?, ?, ?)""",
+                    (id, name, json.dumps(card_ids), user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Create group session failed: {exc}")
+            raise
+
+    async def get_group_session(self, id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, name, card_ids, user_id, created_at FROM group_sessions WHERE id = ?",
+                    (id,),
+                )
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            d = dict(row)
+            d["card_ids"] = json.loads(d["card_ids"])
+            return d
+        except Exception as exc:
+            print(f"[SQLiteStore] Get group session failed: {exc}")
+            raise
+
+    async def list_group_sessions(self, user_id: str) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, name, card_ids, user_id, created_at
+                       FROM group_sessions
+                       WHERE user_id = ?
+                       ORDER BY created_at DESC""",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                d = dict(row)
+                d["card_ids"] = json.loads(d["card_ids"])
+                results.append(d)
+            return results
+        except Exception as exc:
+            print(f"[SQLiteStore] List group sessions failed: {exc}")
+            raise
+
+    async def save_group_message(
+        self, group_id: str, speaker: str, role: str, content: str, speaker_card_id: str = ""
+    ) -> int:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (group_id, speaker, role, content, speaker_card_id),
+                )
+                await conn.commit()
+                return cursor.lastrowid
+        except Exception as exc:
+            print(f"[SQLiteStore] Save group message failed: {exc}")
+            raise
+
+    async def get_group_messages(self, group_id: str) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, group_id, speaker, role, content, speaker_card_id, created_at
+                       FROM group_messages
+                       WHERE group_id = ?
+                       ORDER BY id ASC""",
+                    (group_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get group messages failed: {exc}")
+            raise
+
+    async def delete_group_session(self, id: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM group_messages WHERE group_id = ?", (id,))
+                await conn.execute("DELETE FROM group_sessions WHERE id = ?", (id,))
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete group session failed: {exc}")
             raise
 
     async def delete_messages_after(self, session_id: str, message_id: int) -> int:
