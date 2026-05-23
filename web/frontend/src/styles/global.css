@@ -4693,50 +4693,202 @@ select.settings-input {
   flex-direction: row;
   justify-content: space-around;
   align-items: center;
-  padding: 18px 20px;
-  margin-bottom: 24px;
+  padding: 10px 16px;
+  margin-bottom: 20px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: 12px;
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
+  height: 52px;
 }
 
 .home-stats-item {
-  text-align: center;
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
 }
 
 .home-stats-num {
-  font-size: 28px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--primary);
-  line-height: 1.2;
+  line-height: 1;
 }
 
 .home-stats-label {
   font-size: 12px;
   color: var(--text-dim);
-  margin-top: 2px;
 }
 
 .home-stats-divider {
   width: 1px;
-  height: 36px;
+  height: 24px;
   background: var(--glass-border);
-  align-self: center;
+  flex-shrink: 0;
 }
 
 .home-section-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
+}
+
+/* Character card grid — 3 columns, fixed 120px height */
+.home-card-section {
+  flex: 1;
+  min-height: 0;
+}
+
+.home-char-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .home-char-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.home-char-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  height: 120px;
+  cursor: pointer;
+  border: 1px solid var(--glass-border);
+  text-align: center;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.home-char-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+
+.home-char-card-text {
+  min-width: 0;
+  width: 100%;
+}
+
+.home-char-card-text .home-char-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-char-card-text .home-char-identity {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+/* No chars empty state */
+.home-no-chars {
+  text-align: center;
+  padding: 48px 20px;
+}
+
+/* Recent sessions */
+.home-recent-section {
+  margin-top: 24px;
+  flex-shrink: 0;
 }
 
 .home-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
+}
+
+.home-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  height: 52px;
+  cursor: pointer;
+  border: 1px solid var(--glass-border);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: background 0.15s;
+}
+
+.home-recent-item:hover {
+  background: var(--hover-bg);
+}
+
+.home-recent-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.home-recent-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-recent-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-preview {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-recent-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.home-recent-loading {
+  font-size: 11px;
+  color: var(--primary);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .home-actions {

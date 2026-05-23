@@ -23,9 +23,14 @@ function fmtTime(iso) {
 }
 
 function previewText(text, max = 60) {
-  if (!text) return '暂无消息'
+  if (!text) return ''
   const one = text.replace(/\s+/g, ' ').trim()
   return one.length > max ? `${one.slice(0, max)}…` : one
+}
+
+function truncate(str, max) {
+  if (!str) return ''
+  return str.length > max ? `${str.slice(0, max)}…` : str
 }
 
 function parseCardJson(card) {
@@ -48,24 +53,14 @@ export default function HomePage() {
   const [allCards, setAllCards] = useState([])
   const [cardsLoading, setCardsLoading] = useState(true)
   const [recentSessions, setRecentSessions] = useState([])
-  const [sessionsLoading, setSessionsLoading] = useState(true)
-  const [error, setError] = useState(null)
   const [resumingId, setResumingId] = useState(null)
 
-  // Load texts if not loaded
   useEffect(() => {
-    if (texts.length === 0) {
-      loadTexts()
-    }
+    if (texts.length === 0) loadTexts()
   }, [])
 
-  // Load all cards from all texts
   const loadAllCards = useCallback(async () => {
-    if (texts.length === 0) {
-      setAllCards([])
-      setCardsLoading(false)
-      return
-    }
+    if (texts.length === 0) { setAllCards([]); setCardsLoading(false); return }
     setCardsLoading(true)
     try {
       const results = await Promise.all(
@@ -75,74 +70,47 @@ export default function HomePage() {
             .catch(() => []),
         ),
       )
-      // Merge and deduplicate by card id
       const merged = []
       const seen = new Set()
       for (const list of results) {
         for (const card of list) {
-          if (!seen.has(card.id || card.card_id)) {
-            seen.add(card.id || card.card_id)
-            merged.push(card)
-          }
+          const key = card.id || card.card_id
+          if (!seen.has(key)) { seen.add(key); merged.push(card) }
         }
       }
       setAllCards(merged)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setCardsLoading(false)
-    }
+    } catch {} finally { setCardsLoading(false) }
   }, [texts])
 
-  useEffect(() => {
-    loadAllCards()
-  }, [loadAllCards])
+  useEffect(() => { loadAllCards() }, [loadAllCards])
 
-  // Load recent 3 sessions
   useEffect(() => {
     let cancelled = false
-    setSessionsLoading(true)
     fetchWithTimeout('/api/history/list?page=1&page_size=3')
       .then((r) => r.json())
-      .then((data) => {
-        if (!cancelled) {
-          setRecentSessions(data.items || [])
-          setSessionsLoading(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSessionsLoading(false)
-      })
+      .then((data) => { if (!cancelled) setRecentSessions(data.items || []) })
+      .catch(() => {})
     return () => { cancelled = true }
   }, [])
 
   const handleCardClick = async (card) => {
-    const textId = card.text_id
-    const textTitle = texts.find((t) => t.id === textId)?.title || ''
     const cardData = parseCardJson(card)
-    await startChat({ ...card, ...cardData, text_id: textId })
+    await startChat({ ...card, ...cardData, text_id: card.text_id })
   }
 
   const handleResume = async (sessionId) => {
     setResumingId(sessionId)
-    try {
-      await resumeSession(sessionId)
-    } catch {
-      setResumingId(null)
-    }
+    try { await resumeSession(sessionId) } catch { setResumingId(null) }
   }
 
   const cardCount = allCards.length
-  const sessionCount = recentSessions.length > 0
-    ? Math.max(recentSessions.length, recentSessions[0].total || 0)
-    : 0
   const textCount = texts.length
 
   return (
     <div className="home-page panel">
       {/* API Key alert */}
       {!apiConfigured && authUser && (
-        <div className="api-config-alert" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => setView('settings')}>
+        <div className="api-config-alert" style={{ marginBottom: 16, cursor: 'pointer' }} onClick={() => setView('settings')}>
           请先配置 API Key 才能开始对话
         </div>
       )}
@@ -150,29 +118,29 @@ export default function HomePage() {
       {/* Stats bar */}
       <div className="home-stats-bar">
         <div className="home-stats-item">
-          <div className="home-stats-num">{cardCount}</div>
-          <div className="home-stats-label">个角色</div>
+          <span className="home-stats-num">{cardCount}</span>
+          <span className="home-stats-label"> 个角色</span>
         </div>
         <div className="home-stats-divider" />
         <div className="home-stats-item">
-          <div className="home-stats-num">{sessionCount > 0 ? sessionCount : '-'}</div>
-          <div className="home-stats-label">次对话</div>
+          <span className="home-stats-num">{recentSessions.length > 0 ? recentSessions.length : '-'}</span>
+          <span className="home-stats-label"> 次对话</span>
         </div>
         <div className="home-stats-divider" />
         <div className="home-stats-item">
-          <div className="home-stats-num">{textCount}</div>
-          <div className="home-stats-label">份文本</div>
+          <span className="home-stats-num">{textCount}</span>
+          <span className="home-stats-label"> 份文本</span>
         </div>
       </div>
 
       {/* Character card grid */}
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div className="home-card-section">
         <h2 className="home-section-title">角色卡片</h2>
         {cardsLoading ? (
           <div className="admin-loading">加载中…</div>
         ) : allCards.length === 0 ? (
-          <div className="home-no-chars" style={{ padding: '48px 20px' }}>
-            <p style={{ fontSize: 15, marginBottom: 16 }}>还没有角色，去蒸馏一个</p>
+          <div className="home-no-chars">
+            <p style={{ fontSize: 14, marginBottom: 12, color: 'var(--text-dim)' }}>还没有角色，去蒸馏一个</p>
             <button type="button" className="btn-primary" onClick={() => setView('text')}>
               上传文本开始蒸馏
             </button>
@@ -183,28 +151,17 @@ export default function HomePage() {
               const data = parseCardJson(card)
               const name = data.name || card.name || '?'
               const identity = data.identity || ''
-              const traits = data.personality_traits || []
               return (
                 <button
                   key={card.id || card.card_id}
                   type="button"
-                  className="home-char-item"
+                  className="home-char-card"
                   onClick={() => handleCardClick(card)}
                 >
-                  <Avatar name={name} size={40} />
-                  <div className="home-char-info">
+                  <Avatar name={name} size={48} />
+                  <div className="home-char-card-text">
                     <span className="home-char-name">{name}</span>
-                    {identity && <span className="home-char-identity">{identity}</span>}
-                    {traits.length > 0 && (
-                      <div className="home-char-tags">
-                        {traits.slice(0, 2).map((t, i) => (
-                          <span key={i} className="home-char-tag">{t}</span>
-                        ))}
-                        {traits.length > 2 && (
-                          <span className="home-char-tag">+{traits.length - 2}</span>
-                        )}
-                      </div>
-                    )}
+                    {identity && <span className="home-char-identity">{truncate(identity, 20)}</span>}
                   </div>
                 </button>
               )
@@ -215,33 +172,24 @@ export default function HomePage() {
 
       {/* Recent sessions */}
       {recentSessions.length > 0 && (
-        <div style={{ marginTop: 24, flexShrink: 0 }}>
+        <div className="home-recent-section">
           <h2 className="home-section-title">最近对话</h2>
           <div className="home-recent-list">
             {recentSessions.map((s) => (
               <button
                 key={s.id}
                 type="button"
-                className="home-char-item"
-                style={{ alignItems: 'center' }}
+                className="home-recent-item"
                 onClick={() => handleResume(s.id)}
                 disabled={resumingId === s.id}
               >
-                <Avatar name={s.character_name || '?'} size={40} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <span className="home-char-name">{s.character_name}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
-                      {fmtTime(s.last_message_at || s.updated_at)}
-                    </span>
-                  </div>
-                  <span className="home-char-identity" style={{ marginTop: 0 }}>
-                    {previewText(s.last_message)}
-                  </span>
+                <Avatar name={s.character_name || '?'} size={36} />
+                <div className="home-recent-body">
+                  <span className="home-recent-name">{s.character_name}</span>
+                  <span className="home-recent-preview">{previewText(s.last_message)}</span>
                 </div>
-                {resumingId === s.id && (
-                  <span style={{ fontSize: 11, color: 'var(--primary)', marginLeft: 8 }}>加载中…</span>
-                )}
+                <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
               </button>
             ))}
           </div>
