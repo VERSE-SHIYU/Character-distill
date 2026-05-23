@@ -297,6 +297,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Group sessions migration failed: {exc}")
 
+                    # Run 027_voice_to_cards migration (ALTER TABLE cards + data migration)
+                    voice_to_cards_path = migrations_dir / "027_voice_to_cards.sql"
+                    if voice_to_cards_path.exists():
+                        try:
+                            await conn.executescript(voice_to_cards_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Voice to cards migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1010,30 +1020,30 @@ class SQLiteStore(StorageBase):
             raise
 
     async def update_session_voice_ref(self, card_id: str, voice_ref_json: str) -> None:
-        """Update voice_ref_json for all sessions of a card."""
+        """Update voice_ref_json on the card (not session) for voice cloning reference audio."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE sessions SET voice_ref_json = ?, updated_at = CURRENT_TIMESTAMP WHERE card_id = ?",
+                    "UPDATE cards SET voice_ref_json = ? WHERE id = ?",
                     (voice_ref_json, card_id),
                 )
                 await conn.commit()
         except Exception as exc:
-            print(f"[SQLiteStore] Update session voice_ref failed: {exc}")
+            print(f"[SQLiteStore] Update card voice_ref failed: {exc}")
             raise
 
     async def get_session_voice_ref(self, card_id: str) -> str | None:
-        """Get voice_ref_json from the newest session of a card."""
+        """Get voice_ref_json from the card (not session)."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT voice_ref_json FROM sessions WHERE card_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    "SELECT voice_ref_json FROM cards WHERE id = ?",
                     (card_id,),
                 )
                 row = await cursor.fetchone()
-            return row[0] if row else None
+            return row[0] if row and row[0] else None
         except Exception as exc:
-            print(f"[SQLiteStore] Get session voice_ref failed: {exc}")
+            print(f"[SQLiteStore] Get card voice_ref failed: {exc}")
             raise
 
     # ---- WeChat user mapping ----
