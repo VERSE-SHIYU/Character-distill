@@ -69,8 +69,8 @@ export default function VoicePanel() {
     const file = e.target.files?.[0]
     if (!file) return
     const ext = file.name.split('.').pop()?.toLowerCase()
-    if (!['wav', 'mp3', 'flac', 'mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
-      setCustomError('仅支持 wav/mp3/flac 音频和 mp4/mov 等视频格式')
+    if (!['wav', 'mp3', 'flac', 'ogg', 'm4a', 'mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext)) {
+      setCustomError('仅支持 wav/mp3/flac/ogg/m4a 音频和 mp4/mov 等视频格式')
       return
     }
     if (file.size > 20 * 1024 * 1024) {
@@ -287,7 +287,7 @@ export default function VoicePanel() {
       <div className="voice-section">
         <h3 className="voice-options-title">上传自定义音色</h3>
         <p className="voice-guide-desc">
-          支持音频（wav/mp3/flac）和视频（mp4/mov）文件，视频将自动提取音频。
+          支持音频（wav/mp3/flac/ogg/m4a）和视频（mp4/mov）文件，视频将自动提取音频。
         </p>
         <div className="voice-upload-section">
           <div className="voice-upload-area">
@@ -295,7 +295,7 @@ export default function VoicePanel() {
               ref={customInputRef}
               type="file"
               className="voice-file-input"
-              accept=".wav,.mp3,.flac,.mp4,.mov,.webm"
+              accept=".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm"
               onChange={handleCustomFileSelect}
             />
             <button
@@ -417,7 +417,7 @@ export default function VoicePanel() {
             </div>
             <p className="voice-guide-desc">
               上传 30-60 秒的角色语音作为参考，GPT-SoVITS 将克隆该音色用于对话。
-              支持音频（wav/mp3/flac）和视频（mp4/mov）文件，视频将自动提取音频，最大 20MB。
+              支持音频（wav/mp3/flac/ogg/m4a）和视频（mp4/mov）文件，视频将自动提取音频，最大 20MB。
             </p>
             <div className="voice-upload-area">
               <input

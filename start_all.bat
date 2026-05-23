@@ -16,7 +16,7 @@ echo.
 
 :: ---- 配置区（按需修改） ----
 set "PROJECT_DIR=%~dp0"
-set "GPTSOVITS_DIR=E:\Program Files (x86)\GPT-SoVITS-v4-20250422fix\GPT-SoVITS-v4-20250422fix"
+set "GPTSOVITS_DIR=%~dp0services\gptsovits\GPT-SoVITS-v4-20250422fix"
 set "GPTSOVITS_PORT=9880"
 set "BACKEND_PORT=7860"
 set "FRONTEND_DEV=false"

@@ -216,13 +216,24 @@ class ChatEngine:
 
         return prompt
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str, voice_mode: bool = False) -> str:
         """非流式对话一轮，返回模型回复。
 
-        History 已由 ContextEngine 嵌入 system prompt，此处只传当前消息。"""
+        History 已由 ContextEngine 嵌入 system prompt，此处只传当前消息。
+        voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
         system_prompt = self._ctx_engine.build(
             self.history, user_message, self.user_role,
         )
+
+        if voice_mode:
+            system_prompt += (
+                "\n\n【语音模式——重要】\n"
+                "当前为语音模式。严格遵循：\n"
+                "1. 禁止使用任何括号（包括（）和「」等）描写动作、神态、心理活动或旁白\n"
+                "2. 禁止输出任何非对话内容，只输出角色直接说出口的话语\n"
+                "3. 不要添加任何舞台指示、动作描写或表情描写\n"
+                "4. 直接说出角色想说的话，就像在真实语音通话中一样"
+            )
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -253,13 +264,23 @@ class ChatEngine:
 
         return response
 
-    def chat_stream(self, user_message: str) -> Generator[str, None, None]:
+    def chat_stream(self, user_message: str, voice_mode: bool = False) -> Generator[str, None, None]:
         """流式对话：逐块产出文本，结束后写入助手回复。"""
         self._last_rag_context = ""
 
         system_prompt = self._ctx_engine.build(
             self.history, user_message, self.user_role,
         )
+
+        if voice_mode:
+            system_prompt += (
+                "\n\n【语音模式——重要】\n"
+                "当前为语音模式。严格遵循：\n"
+                "1. 禁止使用任何括号（包括（）和「」等）描写动作、神态、心理活动或旁白\n"
+                "2. 禁止输出任何非对话内容，只输出角色直接说出口的话语\n"
+                "3. 不要添加任何舞台指示、动作描写或表情描写\n"
+                "4. 直接说出角色想说的话，就像在真实语音通话中一样"
+            )
 
         self.history.append({"role": "user", "content": user_message})
 

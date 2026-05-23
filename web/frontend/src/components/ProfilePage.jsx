@@ -121,6 +121,11 @@ export default function ProfilePage() {
       setBindError(true)
       return
     }
+    if (bindEmail === email) {
+      setBindMsg('新邮箱不能与当前邮箱相同')
+      setBindError(true)
+      return
+    }
     setBindSent(true)
     setBindCountdown(60)
     const timer = setInterval(() => {

@@ -228,6 +228,8 @@ web/frontend/node_modules/
 web/frontend/dist/
 data/
 content/
+services/gptsovits/*
+!services/gptsovits/README.md
 
 # Test audio artifacts
 *.mp3

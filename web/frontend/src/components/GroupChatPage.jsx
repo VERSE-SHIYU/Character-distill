@@ -19,6 +19,8 @@ export default function GroupChatPage() {
   const [groupName, setGroupName] = useState('')
   const [allCards, setAllCards] = useState([])
   const [selectedCardIds, setSelectedCardIds] = useState([])
+  const [cardsByText, setCardsByText] = useState({})
+  const [selectedTextId, setSelectedTextId] = useState('')
 
   const loadGroups = useCallback(async () => {
     setLoading(true)
@@ -70,23 +72,34 @@ export default function GroupChatPage() {
     setShowCreate(true)
     setGroupName('')
     setSelectedCardIds([])
+    setSelectedTextId('')
     setError(null)
 
-    // Load all cards across all texts
-    const all = []
+    // Load cards grouped by text_id
+    const grouped = {}
     for (const text of texts) {
       try {
         const res = await fetchWithTimeout(`/api/distill/cards/by-text/${text.id}`)
         const data = await res.json()
+        const cards = []
         for (const c of data) {
           const cardData = typeof c.card_json === 'string'
             ? JSON.parse(c.card_json)
             : c.card_json || {}
-          all.push({ ...c, name: cardData.name || c.name || '?' })
+          cards.push({ ...c, name: cardData.name || c.name || '?' })
         }
+        if (cards.length > 0) grouped[text.id] = cards
       } catch { /* skip failed texts */ }
     }
-    setAllCards(all)
+    setCardsByText(grouped)
+
+    // Auto-select if only one text has cards
+    const textIds = Object.keys(grouped)
+    if (textIds.length === 1) setSelectedTextId(textIds[0])
+
+    // Flat list for group-list name resolution
+    const flat = Object.values(grouped).flat()
+    setAllCards(flat)
   }
 
   function toggleCard(cardId) {
@@ -318,30 +331,65 @@ export default function GroupChatPage() {
             </div>
 
             <div style={{ padding: '0 20px 12px' }}>
-              <label className="modal-label">选择角色（至少选 2 个）</label>
-              <div className="group-create-card-list">
-                {allCards.length === 0 && (
+              <label className="modal-label">选择文本</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {texts.filter((t) => cardsByText[t.id]?.length).length === 0 ? (
                   <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 8 }}>
                     请先在文本管理中蒸馏角色卡
                   </div>
+                ) : (
+                  texts
+                    .filter((t) => cardsByText[t.id]?.length)
+                    .map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        className={`text-tab${selectedTextId === t.id ? ' active' : ''}`}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 8,
+                          border: '1px solid var(--glass-border)',
+                          background: selectedTextId === t.id ? 'var(--primary)' : 'var(--glass-bg)',
+                          color: selectedTextId === t.id ? '#fff' : 'var(--text)',
+                          cursor: 'pointer',
+                          fontSize: 13,
+                        }}
+                        onClick={() => { setSelectedTextId(t.id); setSelectedCardIds([]) }}
+                      >
+                        {t.name || t.id.slice(0, 8)}
+                      </button>
+                    ))
                 )}
-                {allCards.map((c) => {
-                  const cardId = c.id || c.card_id
-                  const selected = selectedCardIds.includes(cardId)
-                  return (
-                    <div
-                      key={cardId}
-                      className={`group-create-card${selected ? ' selected' : ''}`}
-                      onClick={() => toggleCard(cardId)}
-                    >
-                      <Avatar name={c.name} size={32} />
-                      <span>{c.name}</span>
-                      <span className="group-create-card-check">{selected ? '✓' : ''}</span>
-                    </div>
-                  )
-                })}
               </div>
             </div>
+
+            {selectedTextId && (
+              <div style={{ padding: '0 20px 12px' }}>
+                <label className="modal-label">选择角色（至少选 2 个）</label>
+                <div className="group-create-card-list">
+                  {(cardsByText[selectedTextId] || []).length === 0 && (
+                    <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 8 }}>
+                      该书暂无角色卡
+                    </div>
+                  )}
+                  {(cardsByText[selectedTextId] || []).map((c) => {
+                    const cardId = c.id || c.card_id
+                    const selected = selectedCardIds.includes(cardId)
+                    return (
+                      <div
+                        key={cardId}
+                        className={`group-create-card${selected ? ' selected' : ''}`}
+                        onClick={() => toggleCard(cardId)}
+                      >
+                        <Avatar name={c.name} size={32} />
+                        <span>{c.name}</span>
+                        <span className="group-create-card-check">{selected ? '✓' : ''}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="modal-actions">
               <button type="button" className="btn-secondary glass" onClick={() => setShowCreate(false)}>

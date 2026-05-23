@@ -403,6 +403,9 @@ async def bind_email(
     email = req.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(400, "邮箱地址无效")
+    current_email = user.get("email", "")
+    if email == current_email:
+        raise HTTPException(400, "新邮箱不能与当前邮箱相同")
     valid = await storage.verify_code(email, req.code, "bind_email")
     if not valid:
         raise HTTPException(400, "验证码无效或已过期")

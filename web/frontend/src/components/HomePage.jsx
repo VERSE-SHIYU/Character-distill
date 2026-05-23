@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
+import RoleSetupModal from './RoleSetupModal'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -54,6 +55,7 @@ export default function HomePage() {
   const [cardsLoading, setCardsLoading] = useState(true)
   const [recentSessions, setRecentSessions] = useState([])
   const [resumingId, setResumingId] = useState(null)
+  const [pendingCard, setPendingCard] = useState(null)
 
   useEffect(() => {
     if (texts.length === 0) loadTexts()
@@ -93,9 +95,10 @@ export default function HomePage() {
     return () => { cancelled = true }
   }, [])
 
-  const handleCardClick = async (card) => {
+  const handleCardClick = (card) => {
     const cardData = parseCardJson(card)
-    await startChat({ ...card, ...cardData, text_id: card.text_id, session_id: null })
+    const chatCard = { ...card, ...cardData, text_id: card.text_id, session_id: null }
+    setPendingCard(chatCard)
   }
 
   const handleResume = async (sessionId) => {
@@ -194,6 +197,20 @@ export default function HomePage() {
             ))}
           </div>
         </div>
+      )}
+
+      {pendingCard && (
+        <RoleSetupModal
+          isOpen={!!pendingCard}
+          characterName={pendingCard.name || pendingCard.character_name}
+          relationships={pendingCard.relationships || []}
+          onConfirm={async (role) => {
+            const card = pendingCard
+            setPendingCard(null)
+            await startChat(card)
+          }}
+          onSkip={() => setPendingCard(null)}
+        />
       )}
     </div>
   )

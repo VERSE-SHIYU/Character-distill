@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -124,7 +125,7 @@ async def upload_custom_voice(
 
     ext = Path(file.filename).suffix.lower()
     if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
-        raise HTTPException(400, "仅支持音频（wav/mp3/flac）和视频（mp4/mov/avi/mkv/webm）格式")
+        raise HTTPException(400, "仅支持音频（wav/mp3/flac/ogg/m4a）和视频（mp4/mov/avi/mkv/webm）格式")
 
     voice_id = uuid.uuid4().hex[:12]
     dest_path = VOICE_LIBRARY_DIR / f"{voice_id}{ext}"
@@ -195,7 +196,8 @@ async def preview_audio(
             ext = entry.get("ext", ".wav")
             path = VOICE_LIBRARY_DIR / f"{voice_id}{ext}"
             if path.exists():
-                return FileResponse(str(path), media_type="audio/mpeg" if ext == ".mp3" else "audio/wav")
+                    mime = "audio/mpeg" if ext == ".mp3" else "audio/mp4" if ext == ".m4a" else "audio/wav"
+                    return FileResponse(str(path), media_type=mime)
         raise HTTPException(404, "音色不存在")
 
     voice_name = VOICES[voice_id]
@@ -221,6 +223,9 @@ async def voice_synthesize(
     text = body.get("text", "")
     if not text:
         raise HTTPException(400, "text is required")
+
+    # Strip parenthetical descriptions for cleaner TTS output
+    text = re.sub(r'[（(][^）)]*[）)]', '', text).strip()
 
     voice_key = body.get("voice", "xiaoxiao")
     card_id = body.get("card_id", "")

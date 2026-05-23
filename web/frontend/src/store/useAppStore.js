@@ -700,7 +700,7 @@ const useAppStore = create((set, get) => ({
 
     return streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled },
+      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled },
       (token) => {
         fullReply += token
         set((s) => {
