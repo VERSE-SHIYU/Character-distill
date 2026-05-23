@@ -241,6 +241,26 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Affinity reason migration failed: {exc}")
 
+                    # Run 021_user_avatar migration (ALTER TABLE may fail if column exists)
+                    avatar_path = migrations_dir / "021_user_avatar.sql"
+                    if avatar_path.exists():
+                        try:
+                            await conn.executescript(avatar_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User avatar migration failed: {exc}")
+
+                    # Run 022_message_retracted migration (ALTER TABLE may fail if column exists)
+                    retracted_path = migrations_dir / "022_message_retracted.sql"
+                    if retracted_path.exists():
+                        try:
+                            await conn.executescript(retracted_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Message retracted migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
