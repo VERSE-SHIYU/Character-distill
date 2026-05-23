@@ -139,7 +139,7 @@ export default function HomePage() {
   const textCount = texts.length
 
   return (
-    <div className="home-page panel" style={{ alignItems: 'stretch', justifyContent: 'flex-start', textAlign: 'left', overflowY: 'auto', padding: '24px 28px' }}>
+    <div className="home-page panel">
       {/* API Key alert */}
       {!apiConfigured && authUser && (
         <div className="api-config-alert" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => setView('settings')}>
@@ -148,26 +148,26 @@ export default function HomePage() {
       )}
 
       {/* Stats bar */}
-      <div className="home-stats" style={{ flexDirection: 'row', justifyContent: 'space-around', padding: '18px 20px', marginBottom: 24 }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--primary)', lineHeight: 1.2 }}>{cardCount}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>个角色</div>
+      <div className="home-stats-bar">
+        <div className="home-stats-item">
+          <div className="home-stats-num">{cardCount}</div>
+          <div className="home-stats-label">个角色</div>
         </div>
-        <div style={{ width: 1, height: 36, background: 'var(--glass-border)', alignSelf: 'center' }} />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--primary)', lineHeight: 1.2 }}>{sessionCount > 0 ? sessionCount : '-'}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>次对话</div>
+        <div className="home-stats-divider" />
+        <div className="home-stats-item">
+          <div className="home-stats-num">{sessionCount > 0 ? sessionCount : '-'}</div>
+          <div className="home-stats-label">次对话</div>
         </div>
-        <div style={{ width: 1, height: 36, background: 'var(--glass-border)', alignSelf: 'center' }} />
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--primary)', lineHeight: 1.2 }}>{textCount}</div>
-          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>份文本</div>
+        <div className="home-stats-divider" />
+        <div className="home-stats-item">
+          <div className="home-stats-num">{textCount}</div>
+          <div className="home-stats-label">份文本</div>
         </div>
       </div>
 
       {/* Character card grid */}
       <div style={{ flex: 1, minHeight: 0 }}>
-        <h2 className="panel-title" style={{ fontSize: 16, marginBottom: 12 }}>角色卡片</h2>
+        <h2 className="home-section-title">角色卡片</h2>
         {cardsLoading ? (
           <div className="admin-loading">加载中…</div>
         ) : allCards.length === 0 ? (
@@ -216,8 +216,8 @@ export default function HomePage() {
       {/* Recent sessions */}
       {recentSessions.length > 0 && (
         <div style={{ marginTop: 24, flexShrink: 0 }}>
-          <h2 className="panel-title" style={{ fontSize: 16, marginBottom: 12 }}>最近对话</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <h2 className="home-section-title">最近对话</h2>
+          <div className="home-recent-list">
             {recentSessions.map((s) => (
               <button
                 key={s.id}
