@@ -106,6 +106,33 @@ async def delete_user(
         raise HTTPException(500, f"Delete user failed: {exc}") from exc
 
 
+class SetEmailRequest(BaseModel):
+    email: str
+
+
+@router.patch("/users/{user_id}/email")
+async def set_user_email(
+    user_id: str,
+    req: SetEmailRequest,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Set a user's email (admin, no verification needed). Empty string clears it."""
+    await storage.update_user_email(user_id, req.email)
+    return {"ok": True}
+
+
+@router.delete("/users/{user_id}/email")
+async def clear_user_email(
+    user_id: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Clear a user's email and email_verified flag."""
+    await storage.update_user_email(user_id, "")
+    return {"ok": True}
+
+
 # ---- Invite codes ----
 
 class GenerateInviteRequest(BaseModel):
