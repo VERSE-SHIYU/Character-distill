@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from deps import get_storage
@@ -56,3 +58,37 @@ async def save_card_avatar(
     except Exception as exc:
         raise HTTPException(500, f"Save failed: {exc}") from exc
     return {"ok": True}
+
+
+@router.get("/{card_id}/export")
+async def export_card(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> Response:
+    """Export a character card's full JSON as a downloadable file."""
+    record = await storage.get_card(card_id)
+    if not record:
+        raise HTTPException(404, "Card not found")
+    if record.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权导出此角色卡")
+
+    # Parse card_json to extract the character name
+    card_json = record.get("card_json", "{}")
+    try:
+        import json
+        parsed = json.loads(card_json) if isinstance(card_json, str) else card_json
+    except Exception:
+        parsed = {}
+    char_name = parsed.get("name", record.get("name", card_id))
+
+    safe_name = quote(f"{char_name}.json")
+    return Response(
+        content=card_json if isinstance(card_json, str) else json.dumps(card_json, ensure_ascii=False, indent=2),
+        media_type="application/json; charset=utf-8",
+        headers={
+            "Content-Disposition": (
+                f"attachment; filename*=UTF-8''{safe_name}"
+            ),
+        },
+    )

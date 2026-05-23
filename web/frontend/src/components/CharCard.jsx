@@ -598,12 +598,11 @@ function CardDetail({ card, textId }) {
           className="btn-secondary card-export-btn"
           onClick={async () => {
             try {
-              const res = await fetchWithTimeout(`/api/distill/cards/${card.id}/export?format=tavern`)
+              const res = await fetchWithTimeout(`/api/cards/${card.id}/export`)
               const blob = await res.blob()
               const url = URL.createObjectURL(blob)
               const a = document.createElement('a')
               a.href = url
-              a.download = `${card.name}.json`
               document.body.appendChild(a)
               a.click()
               a.remove()
