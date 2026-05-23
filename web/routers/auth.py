@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel
 
+from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
@@ -39,6 +40,24 @@ class AuthRequest(BaseModel):
     username: str
     password: str
     invite_code: str = ""
+    email: str = ""
+    code: str = ""
+
+
+class SendCodeRequest(BaseModel):
+    email: str
+    purpose: str = "register"  # register | reset_password | bind_email
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+
+class BindEmailRequest(BaseModel):
+    email: str
+    code: str
 
 
 class RefreshRequest(BaseModel):
@@ -100,6 +119,38 @@ async def get_current_user(
 
 # ---- Routes ----
 
+@router.post("/send-code")
+@limiter.limit("3/minute")
+async def send_code(
+    request: Request,
+    req: SendCodeRequest,
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Send a verification code to an email address."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "邮箱地址无效")
+
+    if req.purpose == "register":
+        existing = await storage.get_user_by_email(email)
+        if existing:
+            raise HTTPException(400, "该邮箱已注册")
+    elif req.purpose == "reset_password":
+        existing = await storage.get_user_by_email(email)
+        if not existing:
+            raise HTTPException(400, "该邮箱未注册")
+
+    code = f"{secrets.randbelow(1000000):06d}"
+    await storage.save_verification_code(email, code, req.purpose)
+
+    purpose_label = {"register": "注册", "reset_password": "重置密码", "bind_email": "绑定邮箱"}.get(req.purpose, "验证")
+    try:
+        send_verification_code(email, code, purpose_label)
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
+    return {"ok": True}
+
+
 @router.post("/register")
 @limiter.limit("3/hour")
 async def register(request: Request, req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
@@ -133,9 +184,19 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
     if existing:
         raise HTTPException(409, "用户名已存在")
 
+    # Email verification (optional during migration period)
+    email = req.email.strip().lower()
+    if email:
+        if req.code:
+            valid = await storage.verify_code(email, req.code, "register")
+            if not valid:
+                raise HTTPException(400, "邮箱验证码无效或已过期")
+        else:
+            raise HTTPException(400, "请填写邮箱验证码")
+
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
-    user = await storage.create_user(user_id, username, password_hash)
+    user = await storage.create_user(user_id, username, password_hash, email)
     await storage.use_invite_code(inv, user["id"])
 
     # First user with seed code becomes admin
@@ -151,6 +212,30 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
         "token_type": "bearer",
         "user": _user_response(user),
     }
+
+
+@router.post("/reset-password")
+@limiter.limit("5/minute")
+async def reset_password(
+    request: Request,
+    req: ResetPasswordRequest,
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Reset password via email verification code."""
+    valid = await storage.verify_code(req.email.strip().lower(), req.code, "reset_password")
+    if not valid:
+        raise HTTPException(400, "验证码无效或已过期")
+    user = await storage.get_user_by_email(req.email.strip().lower())
+    if not user:
+        raise HTTPException(400, "用户不存在")
+    if not req.new_password or len(req.new_password) < 8:
+        raise HTTPException(400, "新密码至少 8 位")
+    if not _is_strong_password(req.new_password):
+        raise HTTPException(400, "新密码需包含字母和数字")
+    new_hash = password_hasher.hash(req.new_password)
+    await storage.update_user_password(user["id"], new_hash)
+    await storage.delete_user_refresh_tokens(user["id"])
+    return {"ok": True}
 
 
 @router.post("/login")
@@ -230,6 +315,8 @@ async def me(
     resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
     resp["model"] = config.get("model", "deepseek-v4-pro")
     resp["avatar_data"] = await storage.get_user_avatar(user["id"])
+    resp["email"] = await storage.get_user_email(user["id"])
+    resp["email_verified"] = bool(user.get("email_verified", False))
     return resp
 
 
@@ -302,6 +389,28 @@ async def change_password(
     await storage.update_user_password(user["id"], new_hash)
     await storage.delete_user_refresh_tokens(user["id"])
     return {"ok": True}
+
+
+@router.put("/email")
+@limiter.limit("3/minute")
+async def bind_email(
+    request: Request,
+    req: BindEmailRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Bind or change email for the current user via verification code."""
+    email = req.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(400, "邮箱地址无效")
+    valid = await storage.verify_code(email, req.code, "bind_email")
+    if not valid:
+        raise HTTPException(400, "验证码无效或已过期")
+    existing = await storage.get_user_by_email(email)
+    if existing and existing["id"] != user["id"]:
+        raise HTTPException(400, "该邮箱已被其他账号绑定")
+    await storage.update_user_email(user["id"], email)
+    return {"ok": True, "email": email}
 
 
 # ---- Helpers ----
