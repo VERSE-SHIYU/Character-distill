@@ -45,6 +45,7 @@ class StartSessionRequest(BaseModel):
     """Create a chat session for an existing card without re-distilling."""
     text_id: str
     card_id: str
+    user_role: str = ""
 
 
 class IdentifyRequest(BaseModel):
@@ -783,9 +784,36 @@ async def start_session(
     except Exception as exc:
         print(f"[start_session] Load history failed (non-fatal): {exc}")
 
+    # ── Generate dynamic opening line ────────────────────────
+    generated_opening = ""
+    if per_user_llm is not None and card.first_message:
+        try:
+            style = card.speaking_style
+            traits = "，".join(card.personality_traits[:3])
+            user_context = f"对方是「{req.user_role}」" if req.user_role else "对方是初次见面的陌生人"
+            prompt = (
+                f"你将以「{card.name}」的身份说第一句话。\n"
+                f"身份：{card.identity}\n"
+                f"性格：{traits}\n"
+                f"语气：{style.tone}\n"
+                f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
+                f"场景：{user_context}\n\n"
+                f"请以{card.name}的口吻说一句自然简短的问候，暗示{card.name}的性格或处境。"
+                f"只输出这句话本身，不要解释，不要加引号，不超过50个字。"
+            )
+            opening = per_user_llm.chat(prompt, [{"role": "user", "content": "请说开场白"}])
+            opening = opening.strip().strip('"').strip("'").strip("「」")
+            if opening and len(opening) <= 100:
+                generated_opening = opening
+                print(f"[start_session] Generated opening: {opening}")
+        except Exception as exc:
+            print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+
     result = card.model_dump()
     result["session_id"] = session_id
     result["card_id"] = req.card_id
+    if generated_opening:
+        result["first_message"] = generated_opening
     return result
 
 

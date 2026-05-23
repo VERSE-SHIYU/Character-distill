@@ -82,6 +82,7 @@ class ChatEngine:
             memory_manager=memory_manager,
             card_id=card_id,
             llm=llm,
+            model=getattr(llm, "model", ""),
         )
 
     def build_system_prompt(self, rag_context: str = "") -> str:
@@ -138,6 +139,10 @@ class ChatEngine:
 
         if hasattr(card, 'decision_style') and card.decision_style:
             prompt += f"\n【你的决策方式】\n{card.decision_style}\n"
+
+        if hasattr(card, 'character_arc') and card.character_arc:
+            arc_block = "\n".join(f"- {item}" for item in card.character_arc)
+            prompt += f"\n【你的成长轨迹】\n{arc_block}\n"
 
         # few-shot 对话示例（角色一致性关键）
         if hasattr(card, 'dialogue_examples') and card.dialogue_examples:

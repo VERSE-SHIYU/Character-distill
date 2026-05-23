@@ -33,6 +33,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
       first_message: data.first_message || '',
       emotional_patterns: splitLines(data.emotional_patterns),
       decision_style: data.decision_style || '',
+      character_arc: splitLines(data.character_arc),
       dialogue_examples: Array.isArray(data.dialogue_examples)
         ? data.dialogue_examples.join('\n\n')
         : (data.dialogue_examples || ''),
@@ -75,6 +76,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
       first_message: form.first_message,
       emotional_patterns: joinLines(form.emotional_patterns),
       decision_style: form.decision_style,
+      character_arc: joinLines(form.character_arc),
       relationships: relationships.map(({ _key, ...r }) => r),
       dialogue_examples: joinLines(form.dialogue_examples.replace(/\n\n+/g, '\n\n')),
     }
@@ -148,6 +150,10 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
 
           <Field label="决策风格" mono>
             <textarea className="modal-textarea" rows={2} value={form.decision_style} onChange={(e) => update('decision_style', e.target.value)} />
+          </Field>
+
+          <Field label="角色弧线（每行一个阶段，描述成长变化）" mono>
+            <textarea className="modal-textarea" rows={3} value={form.character_arc} onChange={(e) => update('character_arc', e.target.value)} placeholder="从冷漠到学会信任&#10;从逃避责任到主动担当" />
           </Field>
 
           <Field label="对话示例（每组间空行分隔）" mono>

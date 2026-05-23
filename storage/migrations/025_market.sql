@@ -1,0 +1,11 @@
+ALTER TABLE cards ADD COLUMN visibility TEXT DEFAULT 'private';
+ALTER TABLE cards ADD COLUMN forked_from TEXT DEFAULT '';
+ALTER TABLE cards ADD COLUMN likes INTEGER DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS card_likes (
+    user_id TEXT NOT NULL,
+    card_id TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, card_id),
+    FOREIGN KEY (card_id) REFERENCES cards(id) ON DELETE CASCADE
+);

@@ -64,6 +64,10 @@ class LLMAdapter:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     def _build_messages(self, system_prompt: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """组装包含系统提示的对话消息列表。"""
         return [{"role": "system", "content": system_prompt}, *messages]

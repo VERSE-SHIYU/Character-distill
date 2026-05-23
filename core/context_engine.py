@@ -21,6 +21,30 @@ def _truncate(text: str, max_tokens: int) -> str:
     return text[:limit] + "\n…[已截断]"
 
 
+# ── 模型 → token 预算映射 ──────────────────────────────────
+# 未知模型用 8000 保底，保留现有比例。
+MODEL_BUDGET_MAP: dict[str, int] = {
+    "deepseek-v4-pro": 32000,
+    "claude-sonnet": 24000,
+}
+
+# 动态区占比（与 TOTAL_BUDGET 相乘）
+_HISTORY_RATIO = 0.40
+_SCENE_RATIO = 0.25
+_MEMORY_RATIO = 0.06
+
+
+def _compute_budgets(model: str) -> dict[str, int]:
+    """根据模型名计算 token 预算。"""
+    total = MODEL_BUDGET_MAP.get(model, 8000)
+    return {
+        "total": total,
+        "history": round(total * _HISTORY_RATIO),
+        "scene": round(total * _SCENE_RATIO),
+        "memory": round(total * _MEMORY_RATIO),
+    }
+
+
 class ContextEngine:
     """统一 token 预算调度器。
 
@@ -29,13 +53,6 @@ class ContextEngine:
     """
 
     TOTAL_BUDGET = 8000
-
-    FIXED_CARD = 1500
-    FIXED_RULES = 400
-
-    MAX_HISTORY = 3000
-    MAX_SCENE = 2000
-    MAX_MEMORY = 500
     MAX_WEB = 500
 
     def __init__(
@@ -45,6 +62,7 @@ class ContextEngine:
         memory_manager=None,
         card_id: str = "",
         llm=None,
+        model: str = "",
     ) -> None:
         self.card = card
         self.rag = rag
@@ -52,6 +70,14 @@ class ContextEngine:
         self.card_id = card_id
         self._llm = llm
         self.web_search_enabled = False
+
+        # Dynamic token budget based on model
+        budgets = _compute_budgets(model)
+        self.TOTAL_BUDGET = budgets["total"]
+        self.MAX_HISTORY = budgets["history"]
+        self.MAX_SCENE = budgets["scene"]
+        self.MAX_MEMORY = budgets["memory"]
+        print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
 
     # ── 公开接口 ──────────────────────────────────────────────
 

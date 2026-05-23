@@ -221,6 +221,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     {textInfo?.filename && (
                       <span className="char-card-source">{'\u{1F4D6}'} {textInfo.filename}</span>
                     )}
+                    {c.forked_from && (
+                      <span className="char-card-source">{'\u{1F4CB}'} 已fork</span>
+                    )}
                     <div className="char-list-identity">{identity}</div>
                   </div>
                 </button>
@@ -333,6 +336,7 @@ function CardDetail({ card, textId }) {
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
+  const [shared, setShared] = useState(card.visibility === 'public')
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -476,6 +480,9 @@ function CardDetail({ card, textId }) {
             {data.identity && (
               <p className="card-identity">{data.identity}</p>
             )}
+            {card.forked_from && (
+              <p className="card-forked-from">{'\u{1F4CB}'} 基于他人角色卡</p>
+            )}
           </div>
         </div>
 
@@ -613,6 +620,26 @@ function CardDetail({ card, textId }) {
           }}
         >
           {'\u{1F4E5}'} 导出角色卡
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          id="card-share-btn"
+          onClick={async () => {
+            const newVis = card.visibility === 'public' ? 'private' : 'public'
+            try {
+              await fetchWithTimeout(`/api/market/${card.id}/visibility`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify({ visibility: newVis }),
+              })
+              setShared(!shared)
+            } catch (err) {
+              console.error('Share toggle failed:', err)
+            }
+          }}
+        >
+          {shared ? '\u{1F30D} 已分享' : '\u{1F512} 分享到市场'}
         </button>
         <button
           type="button"

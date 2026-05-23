@@ -37,3 +37,4 @@ class CharacterCard(BaseModel):
     dialogue_examples: list[str] = []   # 2-3轮原文对话示例，体现角色说话风格
     emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
+    character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话

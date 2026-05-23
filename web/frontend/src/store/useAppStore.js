@@ -619,6 +619,10 @@ const useAppStore = create((set, get) => ({
           card_id: cardId,
         }, undefined, abort.signal)
         sessionId = result.session_id
+        // Use dynamically generated opening line from API response
+        if (result.first_message) {
+          data.first_message = result.first_message
+        }
       }
     } catch (err) {
       if (err.name === 'AbortError') return

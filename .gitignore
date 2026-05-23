@@ -228,3 +228,6 @@ web/frontend/node_modules/
 web/frontend/dist/
 data/
 content/
+
+# Test audio artifacts
+*.mp3
