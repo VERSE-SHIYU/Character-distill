@@ -95,7 +95,7 @@ export default function HomePage() {
 
   const handleCardClick = async (card) => {
     const cardData = parseCardJson(card)
-    await startChat({ ...card, ...cardData, text_id: card.text_id })
+    await startChat({ ...card, ...cardData, text_id: card.text_id, session_id: null })
   }
 
   const handleResume = async (sessionId) => {
