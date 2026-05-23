@@ -32,6 +32,7 @@ export default function VoicePanel() {
   const [customFile, setCustomFile] = useState(null)
   const [customName, setCustomName] = useState('')
   const [customUploading, setCustomUploading] = useState(false)
+  const [customUploadProgress, setCustomUploadProgress] = useState(null)
   const [customError, setCustomError] = useState('')
   const [customSuccess, setCustomSuccess] = useState('')
   const customInputRef = useRef(null)
@@ -40,6 +41,7 @@ export default function VoicePanel() {
   const [refFile, setRefFile] = useState(null)
   const [refPromptText, setRefPromptText] = useState('')
   const [refUploading, setRefUploading] = useState(false)
+  const [refUploadProgress, setRefUploadProgress] = useState(null)
   const [refError, setRefError] = useState('')
   const [refSuccess, setRefSuccess] = useState('')
   const refInputRef = useRef(null)
@@ -89,17 +91,20 @@ export default function VoicePanel() {
       return
     }
     setCustomUploading(true)
+    setCustomUploadProgress(0)
     setCustomError('')
     setCustomSuccess('')
     try {
-      await uploadCustomVoice(customFile, customName.trim())
+      await uploadCustomVoice(customFile, customName.trim(), setCustomUploadProgress)
       setCustomFile(null)
       setCustomName('')
+      setCustomUploadProgress(null)
       setCustomSuccess(`音色「${customName.trim()}」已上传`)
       if (customInputRef.current) customInputRef.current.value = ''
       setTimeout(() => setCustomSuccess(''), 3000)
     } catch (err) {
       setCustomError(err.message || '上传失败')
+      setCustomUploadProgress(null)
     } finally {
       setCustomUploading(false)
     }
@@ -171,17 +176,20 @@ export default function VoicePanel() {
       return
     }
     setRefUploading(true)
+    setRefUploadProgress(0)
     setRefError('')
     setRefSuccess('')
     try {
-      await uploadRefAudio(refFile, cardId, refPromptText.trim())
+      await uploadRefAudio(refFile, cardId, refPromptText.trim(), setRefUploadProgress)
       setRefFile(null)
       setRefPromptText('')
+      setRefUploadProgress(null)
       setRefSuccess(`参考音频已绑定到「${currentCard?.name || cardId}」`)
       if (refInputRef.current) refInputRef.current.value = ''
       setTimeout(() => setRefSuccess(''), 4000)
     } catch (err) {
       setRefError(err.message || '上传失败')
+      setRefUploadProgress(null)
     } finally {
       setRefUploading(false)
     }
@@ -335,6 +343,12 @@ export default function VoicePanel() {
               </button>
             </div>
           )}
+          {customUploadProgress !== null && (
+            <div className="upload-progress">
+              <div className="progress-bar" style={{ width: `${customUploadProgress}%` }} />
+              <span>{customUploadProgress}%</span>
+            </div>
+          )}
           {customError && <p className="voice-msg voice-msg-error">{customError}</p>}
           {customSuccess && <p className="voice-msg voice-msg-success">{customSuccess}</p>}
         </div>
@@ -417,6 +431,12 @@ export default function VoicePanel() {
                 </button>
               </div>
             )}
+            {refUploadProgress !== null && (
+              <div className="upload-progress">
+                <div className="progress-bar" style={{ width: `${refUploadProgress}%` }} />
+                <span>{refUploadProgress}%</span>
+              </div>
+            )}
           </div>
         ) : (
           /* No ref audio yet */
@@ -466,6 +486,12 @@ export default function VoicePanel() {
                 >
                   {refUploading ? '上传中…' : '上传参考音频'}
                 </button>
+              </div>
+            )}
+            {refUploadProgress !== null && (
+              <div className="upload-progress">
+                <div className="progress-bar" style={{ width: `${refUploadProgress}%` }} />
+                <span>{refUploadProgress}%</span>
               </div>
             )}
             {refError && <p className="voice-msg voice-msg-error">{refError}</p>}

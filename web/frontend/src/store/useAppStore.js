@@ -119,21 +119,41 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  uploadRefAudio: async (file, cardId, promptText) => {
-    const form = new FormData()
-    form.append('file', file)
-    form.append('card_id', cardId)
-    form.append('prompt_text', promptText)
-    const res = await fetchWithTimeout('/api/voice/ref-audio/upload', {
-      method: 'POST',
-      body: form,
+  uploadRefAudio: (file, cardId, promptText, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      const form = new FormData()
+      form.append('file', file)
+      form.append('card_id', cardId)
+      form.append('prompt_text', promptText)
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100))
+        }
+      }
+
+      xhr.onload = async () => {
+        if (xhr.status === 200) {
+          await get().loadVoiceRef(cardId)
+          resolve(JSON.parse(xhr.responseText))
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText)
+            reject(new Error(err.detail || '上传失败'))
+          } catch {
+            reject(new Error(`上传失败 (${xhr.status})`))
+          }
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('网络错误'))
+
+      xhr.open('POST', '/api/voice/ref-audio/upload')
+      const token = getToken()
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.send(form)
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: '上传失败' }))
-      throw new Error(err.detail || '上传失败')
-    }
-    await get().loadVoiceRef(cardId)
-    return res.json()
   },
 
   loadVoiceRef: async (cardId) => {
@@ -163,20 +183,40 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  uploadCustomVoice: async (file, name) => {
-    const form = new FormData()
-    form.append('file', file)
-    form.append('name', name)
-    const res = await fetchWithTimeout('/api/voice/upload', {
-      method: 'POST',
-      body: form,
+  uploadCustomVoice: (file, name, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      const form = new FormData()
+      form.append('file', file)
+      form.append('name', name)
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded / e.total) * 100))
+        }
+      }
+
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          get().loadVoices()
+          resolve(JSON.parse(xhr.responseText))
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText)
+            reject(new Error(err.detail || '上传失败'))
+          } catch {
+            reject(new Error(`上传失败 (${xhr.status})`))
+          }
+        }
+      }
+
+      xhr.onerror = () => reject(new Error('网络错误'))
+
+      xhr.open('POST', '/api/voice/upload')
+      const token = getToken()
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.send(form)
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: '上传失败' }))
-      throw new Error(err.detail || '上传失败')
-    }
-    await get().loadVoices()
-    return res.json()
   },
 
   deleteCustomVoice: async (voiceId) => {
