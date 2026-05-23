@@ -33,6 +33,7 @@ export default function VoicePanel() {
   const [customName, setCustomName] = useState('')
   const [customUploading, setCustomUploading] = useState(false)
   const [customError, setCustomError] = useState('')
+  const [customSuccess, setCustomSuccess] = useState('')
   const customInputRef = useRef(null)
 
   // Ref audio state
@@ -89,11 +90,14 @@ export default function VoicePanel() {
     }
     setCustomUploading(true)
     setCustomError('')
+    setCustomSuccess('')
     try {
       await uploadCustomVoice(customFile, customName.trim())
       setCustomFile(null)
       setCustomName('')
+      setCustomSuccess(`音色「${customName.trim()}」已上传`)
       if (customInputRef.current) customInputRef.current.value = ''
+      setTimeout(() => setCustomSuccess(''), 3000)
     } catch (err) {
       setCustomError(err.message || '上传失败')
     } finally {
@@ -109,6 +113,8 @@ export default function VoicePanel() {
       if (selectedVoice === voiceId) {
         handleVoiceChange('xiaoxiao')
       }
+      setCustomSuccess('音色已删除')
+      setTimeout(() => setCustomSuccess(''), 3000)
     } catch { /* store handles */ }
     setDeletingId(null)
   }
@@ -330,6 +336,7 @@ export default function VoicePanel() {
             </div>
           )}
           {customError && <p className="voice-msg voice-msg-error">{customError}</p>}
+          {customSuccess && <p className="voice-msg voice-msg-success">{customSuccess}</p>}
         </div>
       </div>
 
