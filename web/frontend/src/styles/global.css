@@ -5076,6 +5076,60 @@ select.settings-input {
   cursor: not-allowed;
 }
 
+.login-code-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.login-code-field input {
+  flex: 1;
+  min-width: 0;
+}
+
+.login-code-btn {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--pill-border);
+  border-radius: 10px;
+  background: var(--card-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .2s;
+}
+
+.login-code-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.login-code-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.login-back-link {
+  text-align: center;
+  margin-top: 8px;
+}
+
+.login-link-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 4px 8px;
+}
+
+.login-link-btn:hover {
+  color: var(--accent);
+}
+
 /* ==================== Sidebar User ==================== */
 
 .sidebar-user-info {
