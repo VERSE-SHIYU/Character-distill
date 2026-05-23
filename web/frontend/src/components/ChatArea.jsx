@@ -95,6 +95,8 @@ function ChatView() {
   const affinity = useAppStore((s) => s.affinity)
   const affinityOpen = useAppStore((s) => s.affinityOpen)
   const setAffinityOpen = useAppStore((s) => s.setAffinityOpen)
+  const affinityEnabled = useAppStore((s) => s.affinityEnabled)
+  const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
 
   const cardData = typeof currentCard.card_json === 'string'
     ? JSON.parse(currentCard.card_json)
@@ -441,32 +443,43 @@ function ChatView() {
       </div>
 
       {/* Affinity panel */}
-      <div className="affinity-bar">
+      {affinityEnabled ? (
+        <div className="affinity-bar">
+          <button
+            type="button"
+            className="affinity-toggle"
+            onClick={() => setAffinityOpen(!affinityOpen)}
+            title={affinityOpen ? '收起情感面板' : '展开情感面板'}
+          >
+            <span className="affinity-toggle-arrow">{affinityOpen ? '▼' : '▲'}</span>
+            <span className="affinity-toggle-label">情感状态</span>
+            <AffinityInline value={affinity.affinity} icon="❤️" label="好感" />
+            <AffinityInline value={affinity.trust} icon="🤝" label="信任" />
+          </button>
+          {affinityOpen && (
+            <div className="affinity-detail">
+              <AffinityItem value={affinity.affinity} icon="❤️" label="好感" />
+              <AffinityItem value={affinity.trust} icon="🤝" label="信任" />
+              <AffinityItem value={affinity.mood} icon="😊" label="情绪" isMood />
+              <AffinityItem value={affinity.guard} icon="🛡️" label="防御" />
+              {affinity.reason && (
+                <span className="affinity-reason" title={affinity.reason}>
+                  {affinity.reason}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      ) : (
         <button
           type="button"
-          className="affinity-toggle"
-          onClick={() => setAffinityOpen(!affinityOpen)}
-          title={affinityOpen ? '收起情感面板' : '展开情感面板'}
+          className="affinity-float-toggle"
+          onClick={() => setAffinityEnabled(true)}
+          title="显示情感状态"
         >
-          <span className="affinity-toggle-arrow">{affinityOpen ? '▼' : '▲'}</span>
-          <span className="affinity-toggle-label">情感状态</span>
-          <AffinityInline value={affinity.affinity} icon="❤️" label="好感" />
-          <AffinityInline value={affinity.trust} icon="🤝" label="信任" />
+          {'\u{1F9B6}'}
         </button>
-        {affinityOpen && (
-          <div className="affinity-detail">
-            <AffinityItem value={affinity.affinity} icon="❤️" label="好感" />
-            <AffinityItem value={affinity.trust} icon="🤝" label="信任" />
-            <AffinityItem value={affinity.mood} icon="😊" label="情绪" isMood />
-            <AffinityItem value={affinity.guard} icon="🛡️" label="防御" />
-            {affinity.reason && (
-              <span className="affinity-reason" title={affinity.reason}>
-                {affinity.reason}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* User role bar */}
       <div className="user-role-bar">

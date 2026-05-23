@@ -2543,6 +2543,24 @@ body {
   white-space: nowrap;
 }
 
+.affinity-float-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 18px;
+  opacity: 0.35;
+  transition: opacity 0.15s;
+  color: var(--text-secondary);
+}
+.affinity-float-toggle:hover {
+  opacity: 0.85;
+}
+
 /* Font size toggle */
 .chat-font-size-ctl {
   display: flex;

@@ -190,8 +190,16 @@ const useAppStore = create((set, get) => ({
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
   affinity: { affinity: 50, trust: 30, mood: '平静', guard: 70, reason: '' },
-  affinityOpen: true,
-  setAffinityOpen: (val) => set({ affinityOpen: val }),
+  affinityOpen: localStorage.getItem('affinity_open') !== 'false',
+  setAffinityOpen: (val) => {
+    localStorage.setItem('affinity_open', val ? 'true' : 'false')
+    set({ affinityOpen: val })
+  },
+  affinityEnabled: localStorage.getItem('affinity_enabled') !== 'false',
+  setAffinityEnabled: (val) => {
+    localStorage.setItem('affinity_enabled', val ? 'true' : 'false')
+    set({ affinityEnabled: val })
+  },
   fetchAffinity: async () => {
     const { sessionId } = get()
     if (!sessionId) return
