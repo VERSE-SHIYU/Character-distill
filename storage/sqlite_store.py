@@ -1432,7 +1432,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, is_admin, is_disabled, created_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
