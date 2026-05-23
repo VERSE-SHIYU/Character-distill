@@ -117,7 +117,7 @@ app.include_router(card_router)
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/health"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
 
 
