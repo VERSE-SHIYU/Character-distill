@@ -50,6 +50,9 @@ export default function VoicePanel() {
   const [previewingId, setPreviewingId] = useState(null)
   const previewAudioRef = useRef(null)
 
+  // Clone preview state
+  const [clonePreviewing, setClonePreviewing] = useState(false)
+
   // Deleting state
   const [deletingId, setDeletingId] = useState(null)
 
@@ -203,6 +206,30 @@ export default function VoicePanel() {
       setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
       setTimeout(() => setRefSuccess(''), 3000)
     } catch { /* store handles */ }
+  }
+
+  const handleClonePreview = async () => {
+    if (!cardId || clonePreviewing) return
+    setClonePreviewing(true)
+    try {
+      const res = await fetchWithTimeout(`/api/voice/preview-ref/${cardId}`)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: '试听失败' }))
+        throw new Error(err.detail || '试听失败')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      if (previewAudioRef.current) previewAudioRef.current.pause()
+      const audio = new Audio(url)
+      audio.onended = () => { setClonePreviewing(false); URL.revokeObjectURL(url) }
+      audio.onerror = () => { setClonePreviewing(false); URL.revokeObjectURL(url) }
+      audio.play()
+      previewAudioRef.current = audio
+    } catch (err) {
+      setRefError(err.message || 'GPT-SoVITS 试听失败')
+      setTimeout(() => setRefError(''), 4000)
+      setClonePreviewing(false)
+    }
   }
 
   const hasRef = voiceRefInfo && voiceRefInfo.exists
@@ -390,6 +417,14 @@ export default function VoicePanel() {
               </div>
             </div>
             <div className="voice-list-actions">
+              <button
+                type="button"
+                className={`btn-ghost btn-sm${clonePreviewing ? ' voice-preview-active' : ''}`}
+                disabled={clonePreviewing}
+                onClick={handleClonePreview}
+              >
+                {clonePreviewing ? '⏹ 试听中' : '▶ 试听克隆效果'}
+              </button>
               <button
                 type="button"
                 className="btn-secondary btn-sm"
