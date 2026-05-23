@@ -149,7 +149,7 @@ const useAppStore = create((set, get) => ({
 
   deleteVoiceRef: async (cardId) => {
     await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`, { method: 'DELETE' })
-    set({ voiceRefInfo: null })
+    await get().loadVoiceRef(cardId)
   },
 
   voiceList: [],

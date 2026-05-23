@@ -171,9 +171,9 @@ export default function VoicePanel() {
       await uploadRefAudio(refFile, cardId, refPromptText.trim())
       setRefFile(null)
       setRefPromptText('')
-      setRefSuccess('参考音频已上传')
+      setRefSuccess(`参考音频已绑定到「${currentCard?.name || cardId}」`)
       if (refInputRef.current) refInputRef.current.value = ''
-      setTimeout(() => setRefSuccess(''), 3000)
+      setTimeout(() => setRefSuccess(''), 4000)
     } catch (err) {
       setRefError(err.message || '上传失败')
     } finally {
@@ -186,6 +186,8 @@ export default function VoicePanel() {
     if (!window.confirm('确定删除参考音频？')) return
     try {
       await deleteVoiceRef(cardId)
+      setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
+      setTimeout(() => setRefSuccess(''), 3000)
     } catch { /* store handles */ }
   }
 
@@ -354,11 +356,14 @@ export default function VoicePanel() {
             <div className="voice-configured-header">
               <span>{'\u{2705}'}</span>
               <div className="voice-list-info">
-                <span className="voice-list-name">
-                  {currentCard?.name || '当前角色'} 的参考音频
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="voice-list-name">
+                    {currentCard?.name || '当前角色'}
+                  </span>
+                  <span className="voice-guide-badge" style={{ fontSize: 11, padding: '1px 6px' }}>已绑定</span>
+                </div>
                 <span className="voice-list-meta">
-                  {voiceRefInfo.filename || '已配置'}
+                  {voiceRefInfo.filename || '参考音频'}
                   {voiceRefInfo.ref_text && ` · "${voiceRefInfo.ref_text}"`}
                 </span>
               </div>
