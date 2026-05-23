@@ -257,6 +257,20 @@ export const adminAPI = {
   deleteUsedInvites: () => fetchWithTimeout('/api/admin/invites/used', { method: 'DELETE' }).then(r => r.json()),
 
   getAllUsage: () => fetchWithTimeout('/api/admin/usage').then(r => r.json()),
+
+  setUserEmail: (userId, email) => fetchWithTimeout(
+    `/api/admin/users/${userId}/email`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    },
+  ).then(r => r.json()),
+
+  clearUserEmail: (userId) => fetchWithTimeout(
+    `/api/admin/users/${userId}/email`,
+    { method: 'DELETE' },
+  ).then(r => r.json()),
 }
 
 export function getMyUsage() {

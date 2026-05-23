@@ -51,6 +51,11 @@ function UsersTab() {
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [confirmName, setConfirmName] = useState('')
+  const [emailTarget, setEmailTarget] = useState(null)
+  const [newEmail, setNewEmail] = useState('')
+  const [emailError, setEmailError] = useState('')
+  const [emailOk, setEmailOk] = useState('')
+  const [emailSetting, setEmailSetting] = useState(false)
   const authUser = useAppStore((s) => s.authUser)
 
   const load = useCallback(async () => {
@@ -104,6 +109,35 @@ function UsersTab() {
     }
   }
 
+  const handleSetEmail = async () => {
+    setEmailSetting(true)
+    setEmailError('')
+    setEmailOk('')
+    try {
+      await adminAPI.setUserEmail(emailTarget.id, newEmail)
+      setEmailOk('邮箱已设置')
+      setTimeout(() => {
+        setEmailTarget(null)
+        setNewEmail('')
+        setEmailOk('')
+      }, 1500)
+      await load()
+    } catch (err) {
+      setEmailError(err.message || '设置失败')
+    } finally {
+      setEmailSetting(false)
+    }
+  }
+
+  const handleClearEmail = async (user) => {
+    try {
+      await adminAPI.clearUserEmail(user.id)
+      await load()
+    } catch (err) {
+      setActionError(err.message || '清除失败')
+    }
+  }
+
   const handleDelete = async () => {
     setDeleting(true)
     setDeleteError('')
@@ -147,16 +181,18 @@ function UsersTab() {
             <thead>
               <tr>
                 <th style={{ minWidth: 120 }}>用户名</th>
+                <th style={{ minWidth: 150 }}>邮箱</th>
                 <th style={{ minWidth: 70 }}>角色</th>
                 <th style={{ minWidth: 70 }}>状态</th>
                 <th style={{ minWidth: 100 }}>注册时间</th>
-                <th style={{ minWidth: 140 }}>操作</th>
+                <th style={{ minWidth: 200 }}>操作</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>{u.username}</td>
+                  <td>{u.email || <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>未绑定</span>}</td>
                   <td>{u.is_admin ? '管理员' : '用户'}</td>
                   <td>
                     <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
@@ -171,6 +207,21 @@ function UsersTab() {
                     >
                       {u.is_disabled ? '启用' : '禁用'}
                     </button>
+                    <button
+                      className="admin-action-btn"
+                      onClick={() => { setEmailTarget(u); setNewEmail(u.email || ''); setEmailError(''); setEmailOk('') }}
+                    >
+                      设置邮箱
+                    </button>
+                    {u.email && (
+                      <button
+                        className="admin-action-btn delete-user"
+                        onClick={() => handleClearEmail(u)}
+                        title="清除邮箱"
+                      >
+                        清除邮箱
+                      </button>
+                    )}
                     <button
                       className="admin-action-btn reset"
                       onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
@@ -191,6 +242,36 @@ function UsersTab() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Set email modal */}
+      {emailTarget && (
+        <div className="modal-overlay" onClick={() => setEmailTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">设置邮箱 — {emailTarget.username}</h3>
+            <div className="modal-body">
+              <label className="login-field" style={{ margin: 0 }}>
+                <span>邮箱地址</span>
+                <input
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  autoFocus
+                  onKeyDown={(e) => e.key === 'Enter' && handleSetEmail()}
+                />
+              </label>
+              {emailError && <div className="login-error" style={{ marginTop: 8 }}>{emailError}</div>}
+              {emailOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{emailOk}</div>}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setEmailTarget(null)}>取消</button>
+              <button className="btn-primary" onClick={handleSetEmail} disabled={emailSetting}>
+                {emailSetting ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
