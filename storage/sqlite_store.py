@@ -261,6 +261,22 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Message retracted migration failed: {exc}")
 
+                    # Run 023_user_email migration (ALTER TABLE may fail if column exists)
+                    email_path = migrations_dir / "023_user_email.sql"
+                    if email_path.exists():
+                        try:
+                            await conn.executescript(email_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User email migration failed: {exc}")
+
+                    # Run 024_verification_codes migration (CREATE TABLE IF NOT EXISTS)
+                    vc_path = migrations_dir / "024_verification_codes.sql"
+                    if vc_path.exists():
+                        await conn.executescript(vc_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     try:
                         await conn.execute("""
@@ -966,13 +982,13 @@ class SQLiteStore(StorageBase):
             lines.append(f"[{msg['role']}] {msg['content']}")
         return "\n".join(lines)
 
-    async def create_user(self, id: str, username: str, password_hash: str) -> dict:
+    async def create_user(self, id: str, username: str, password_hash: str, email: str = "") -> dict:
         """Create a new user. Raises on duplicate username."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO users (id, username, password_hash) VALUES (?, ?, ?)",
-                    (id, username, password_hash),
+                    "INSERT INTO users (id, username, password_hash, email, email_verified) VALUES (?, ?, ?, ?, ?)",
+                    (id, username, password_hash, email, 1 if email else 0),
                 )
                 await conn.commit()
                 return await self.get_user_by_username(username) or {}
@@ -996,6 +1012,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get user failed: {exc}")
             raise
 
+    async def get_user_by_email(self, email: str) -> dict | None:
+        """Get a user by email."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, password_hash, email, email_verified, is_admin, is_disabled, created_at FROM users WHERE email = ? AND email != ''",
+                    (email,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user by email failed: {exc}")
+            raise
+
     async def get_user_by_id(self, user_id: str) -> dict | None:
         """Get a user by ID."""
         try:
@@ -1008,6 +1038,91 @@ class SQLiteStore(StorageBase):
             return dict(row) if row else None
         except Exception as exc:
             print(f"[SQLiteStore] Get user by id failed: {exc}")
+            raise
+
+    # ---- Email & verification codes ----
+
+    async def get_user_email(self, user_id: str) -> str:
+        """Get a user's verified email, empty string if none."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT email FROM users WHERE id = ?", (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user email failed: {exc}")
+            raise
+
+    async def update_user_email(self, user_id: str, email: str) -> None:
+        """Set a user's email and mark verified."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET email = ?, email_verified = 1 WHERE id = ?",
+                    (email, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user email failed: {exc}")
+            raise
+
+    async def save_verification_code(self, email: str, code: str, purpose: str) -> None:
+        """Save a verification code with 5-minute expiry."""
+        import uuid as _uuid
+        from datetime import datetime, timedelta, timezone
+        cid = _uuid.uuid4().hex[:16]
+        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO verification_codes (id, email, code, purpose, expires_at) VALUES (?, ?, ?, ?, ?)",
+                    (cid, email, code, purpose, expires_at),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save verification code failed: {exc}")
+            raise
+
+    async def verify_code(self, email: str, code: str, purpose: str) -> bool:
+        """Verify a code. Returns True if valid, consumes it. False otherwise."""
+        from datetime import datetime, timezone
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, expires_at FROM verification_codes WHERE email = ? AND code = ? AND purpose = ? AND used = 0 ORDER BY created_at DESC LIMIT 1",
+                    (email, code, purpose),
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return False
+                if row["expires_at"] < datetime.now(timezone.utc).isoformat():
+                    return False
+                # Mark as used
+                await conn.execute(
+                    "UPDATE verification_codes SET used = 1 WHERE id = ?",
+                    (row["id"],),
+                )
+                await conn.commit()
+                return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Verify code failed: {exc}")
+            raise
+
+    async def cleanup_expired_codes(self) -> int:
+        """Delete expired verification codes. Returns count deleted."""
+        from datetime import datetime, timezone
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM verification_codes WHERE expires_at < ?",
+                    (datetime.now(timezone.utc).isoformat(),),
+                )
+                await conn.commit()
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Cleanup expired codes failed: {exc}")
             raise
 
     # ---- Admin ----
