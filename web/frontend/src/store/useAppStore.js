@@ -25,6 +25,7 @@ const useAppStore = create((set, get) => ({
     // Best-effort server-side logout
     fetchWithTimeout('/api/auth/logout', { method: 'POST' }).catch(() => {})
     removeAuth()
+    if (get()._chatAbort) get()._chatAbort.abort()
     set({
       authUser: null,
       isLoggedIn: false,
@@ -532,15 +533,28 @@ const useAppStore = create((set, get) => ({
     })
   },
 
+  // AbortController for in-flight start_session requests
+  _chatAbort: null,
+
   selectCard: async (card) => {
-    // TODO: 如果 card.session_id 存在，应从 /api/history/{session_id}/resume 加载历史消息，
-    // 而非每次新建会话（当前行为：仅在 card 无 session_id 时创建新会话）。
+    const state = get()
+    // Reuse existing session if same card
+    if (state.currentCard?.id === card.id && state.sessionId) {
+      set({ currentView: 'chat' })
+      return
+    }
+
+    // Cancel previous in-flight request
+    if (state._chatAbort) state._chatAbort.abort()
+
+    const abort = new AbortController()
     set({
       currentCard: card,
       messages: card.first_message ? [{ role: 'char', content: card.first_message }] : [],
       currentView: 'chat',
       resumeLoading: true,
       userAvatar: null,
+      _chatAbort: abort,
     })
 
     let sessionId = card.session_id || null
@@ -549,9 +563,10 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
           card_id: card.id || card.card_id,
-        }, 120000)
+        }, 120000, abort.signal)
         sessionId = result.session_id
       } catch (err) {
+        if (err.name === 'AbortError') return
         set({ error: err.message, resumeLoading: false })
         return
       }
@@ -566,13 +581,30 @@ const useAppStore = create((set, get) => ({
       return
     }
 
+    const state = get()
+    // Reuse existing session if same card
+    if (state.currentCard?.id === card.id && state.sessionId) {
+      set({ currentView: 'chat' })
+      return
+    }
+
+    // Cancel previous in-flight request
+    if (state._chatAbort) state._chatAbort.abort()
+
     const data = typeof card.card_json === 'string'
       ? JSON.parse(card.card_json)
       : card.card_json || card
 
-    // Switch to chat view immediately so the user sees the page without waiting
-    // for start_session API to return. Placeholder "…" replaced when session is ready.
-    set({ sending: true, currentView: 'chat', messages: [{ role: 'char', content: '…' }] })
+    // Optimistic UI: switch to chat view immediately
+    const abort = new AbortController()
+    set({
+      currentCard: card,
+      currentView: 'chat',
+      sending: true,
+      messages: [],
+      userAvatar: null,
+      _chatAbort: abort,
+    })
 
     let sessionId = card.session_id || null
     try {
@@ -585,10 +617,11 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
           card_id: cardId,
-        })
+        }, undefined, abort.signal)
         sessionId = result.session_id
       }
     } catch (err) {
+      if (err.name === 'AbortError') return
       console.error('[store] startChat create session failed:', err)
       set({ error: err.message, sending: false })
       return

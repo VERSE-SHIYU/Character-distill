@@ -70,9 +70,14 @@ async function tryRefresh() {
   return _refreshPromise
 }
 
-export async function fetchWithTimeout(url, opts = {}, ms = 600000) {
+export async function fetchWithTimeout(url, opts = {}, ms = 600000, externalSignal = null) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
+
+  // Wire external abort to internal controller
+  if (externalSignal) {
+    externalSignal.addEventListener('abort', () => controller.abort(), { once: true })
+  }
 
   const doFetch = async (headers) => {
     const res = await fetch(url, { ...opts, headers, signal: controller.signal })
@@ -120,12 +125,12 @@ export async function fetchWithTimeout(url, opts = {}, ms = 600000) {
   }
 }
 
-export async function postJSON(url, body, ms) {
+export async function postJSON(url, body, ms, externalSignal = null) {
   const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  }, ms)
+  }, ms, externalSignal)
   return res.json()
 }
 
