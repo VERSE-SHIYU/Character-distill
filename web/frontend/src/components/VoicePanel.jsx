@@ -270,58 +270,58 @@ export default function VoicePanel() {
                   className={`btn-ghost btn-sm voice-preview-btn${previewingId === id ? ' voice-preview-active' : ''}`}
                   onClick={(e) => { e.preventDefault(); handlePreview(id) }}
                 >
-                  {previewingId === id ? '\u23F9 停止' : '\u25B6 试听'}
+                  {previewingId === id ? '⏹ 停止' : '▶ 试听'}
                 </button>
               </label>
             ))}
+          </div>
+        )}
 
-            {/* Custom voices with preview + delete */}
-            {customVoices.length > 0 && (
-              <>
-                <h3 className="voice-options-title">
-                  自定义音色
-                  <span className="voice-list-count">{customVoices.length}</span>
-                </h3>
-                <ul className="voice-list">
-                  {customVoices.map((v) => (
-                    <li key={v.voice_id} className="voice-list-item">
-                      <label className="voice-list-radio">
-                        <input
-                          type="radio"
-                          name="voice"
-                          value={v.voice_id}
-                          checked={selectedVoice === v.voice_id}
-                          onChange={() => handleVoiceChange(v.voice_id)}
-                        />
-                      </label>
-                      <div className="voice-list-info">
-                        <span className="voice-list-name">{v.name}</span>
-                        <span className="voice-list-meta">
-                          {v.duration ? `${v.duration}s` : v.ext || 'wav'}
-                        </span>
-                      </div>
-                      <div className="voice-list-actions">
-                        <button
-                          type="button"
-                          className={`btn-ghost btn-sm${previewingId === v.voice_id ? ' voice-preview-active' : ''}`}
-                          onClick={() => handlePreview(v.voice_id)}
-                        >
-                          {previewingId === v.voice_id ? '\u23F9' : '\u25B6'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-ghost btn-sm text-list-action-danger"
-                          disabled={deletingId === v.voice_id}
-                          onClick={() => handleCustomDelete(v.voice_id)}
-                        >
-                          {deletingId === v.voice_id ? '…' : '\u2715'}
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+        {/* Custom voices with preview + delete — always visible */}
+        {customVoices.length > 0 && (
+          <div className="voice-options">
+            <h3 className="voice-options-title">
+              自定义音色
+              <span className="voice-list-count">{customVoices.length}</span>
+            </h3>
+            <ul className="voice-list">
+              {customVoices.map((v) => (
+                <li key={v.voice_id} className="voice-list-item">
+                  <label className="voice-list-radio">
+                    <input
+                      type="radio"
+                      name="voice"
+                      value={v.voice_id}
+                      checked={selectedVoice === v.voice_id}
+                      onChange={() => handleVoiceChange(v.voice_id)}
+                    />
+                  </label>
+                  <div className="voice-list-info">
+                    <span className="voice-list-name">{v.name}</span>
+                    <span className="voice-list-meta">
+                      {v.duration ? `${v.duration}s` : v.ext || 'wav'}
+                    </span>
+                  </div>
+                  <div className="voice-list-actions">
+                    <button
+                      type="button"
+                      className={`btn-ghost btn-sm${previewingId === v.voice_id ? ' voice-preview-active' : ''}`}
+                      onClick={() => handlePreview(v.voice_id)}
+                    >
+                      {previewingId === v.voice_id ? '⏹' : '▶'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm text-list-action-danger"
+                      disabled={deletingId === v.voice_id}
+                      onClick={() => handleCustomDelete(v.voice_id)}
+                    >
+                      {deletingId === v.voice_id ? '…' : '✕'}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
