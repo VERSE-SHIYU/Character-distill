@@ -23,9 +23,31 @@ export default function ProfilePage() {
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
 
+  // Email binding
+  const [email, setEmail] = useState('')
+  const [emailVerified, setEmailVerified] = useState(false)
+  const [bindEmail, setBindEmail] = useState('')
+  const [bindCode, setBindCode] = useState('')
+  const [bindCountdown, setBindCountdown] = useState(0)
+  const [bindSent, setBindSent] = useState(false)
+  const [bindMsg, setBindMsg] = useState('')
+  const [bindError, setBindError] = useState(false)
+  const [showBindForm, setShowBindForm] = useState(false)
+
   useEffect(() => {
     loadUserAvatar()
   }, [loadUserAvatar])
+
+  // Load email from /api/auth/me
+  useEffect(() => {
+    fetchWithTimeout('/api/auth/me')
+      .then((r) => r.json())
+      .then((data) => {
+        setEmail(data.email || '')
+        setEmailVerified(data.email_verified || false)
+      })
+      .catch(() => {})
+  }, [])
 
   const handleAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
@@ -92,6 +114,56 @@ export default function ProfilePage() {
     }
   }, [oldPw, newPw, confirmPw])
 
+  // ---- Email binding ----
+  const handleSendBindCode = useCallback(async () => {
+    if (!bindEmail || !bindEmail.includes('@')) {
+      setBindMsg('请输入有效的邮箱地址')
+      setBindError(true)
+      return
+    }
+    setBindSent(true)
+    setBindCountdown(60)
+    const timer = setInterval(() => {
+      setBindCountdown((c) => {
+        if (c <= 1) { clearInterval(timer); return 0 }
+        return c - 1
+      })
+    }, 1000)
+    try {
+      await fetchWithTimeout('/api/auth/send-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bindEmail, purpose: 'bind_email' }),
+      })
+      setBindMsg('验证码已发送')
+      setBindError(false)
+    } catch (err) {
+      setBindMsg(err.message || '发送失败')
+      setBindError(true)
+    }
+  }, [bindEmail])
+
+  const handleBindEmail = useCallback(async () => {
+    setBindMsg('')
+    setBindError(false)
+    try {
+      await fetchWithTimeout('/api/auth/email', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: bindEmail, code: bindCode }),
+      })
+      setEmail(bindEmail)
+      setEmailVerified(true)
+      setShowBindForm(false)
+      setBindMsg('邮箱绑定成功')
+      setBindEmail('')
+      setBindCode('')
+    } catch (err) {
+      setBindMsg(err.message || '绑定失败')
+      setBindError(true)
+    }
+  }, [bindEmail, bindCode])
+
   const createdDate = authUser?.created_at
     ? new Date(authUser.created_at).toLocaleDateString('zh-CN')
     : '—'
@@ -137,6 +209,75 @@ export default function ProfilePage() {
             <span className="profile-detail-label">用户 ID</span>
             <span className="profile-detail-value mono">{authUser?.id || '—'}</span>
           </div>
+          <div className="profile-detail-row">
+            <span className="profile-detail-label">邮箱</span>
+            <span className="profile-detail-value">
+              {email ? (
+                <span>
+                  {email}
+                  {emailVerified && <span className="profile-verified-badge">已验证</span>}
+                  <button type="button" className="profile-link-btn" onClick={() => { setShowBindForm(!showBindForm); setBindEmail(''); setBindCode(''); setBindMsg('') }}>
+                    {' '}换绑
+                  </button>
+                </span>
+              ) : (
+                <button type="button" className="profile-link-btn" onClick={() => setShowBindForm(!showBindForm)}>
+                  绑定邮箱
+                </button>
+              )}
+            </span>
+          </div>
+          {showBindForm && (
+            <div className="profile-bind-email-form">
+              <div className="profile-field">
+                <label className="profile-field-label">新邮箱</label>
+                <div className="profile-code-field">
+                  <input
+                    type="email"
+                    className="profile-input"
+                    value={bindEmail}
+                    onChange={(e) => setBindEmail(e.target.value)}
+                    placeholder="输入邮箱地址"
+                    autoComplete="email"
+                  />
+                </div>
+              </div>
+              <div className="profile-field">
+                <label className="profile-field-label">验证码</label>
+                <div className="profile-code-field">
+                  <input
+                    type="text"
+                    className="profile-input"
+                    value={bindCode}
+                    onChange={(e) => setBindCode(e.target.value)}
+                    placeholder="输入验证码"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    className="login-code-btn"
+                    disabled={bindCountdown > 0}
+                    onClick={handleSendBindCode}
+                  >
+                    {bindCountdown > 0 ? `${bindCountdown}s` : bindSent ? '重新发送' : '获取验证码'}
+                  </button>
+                </div>
+              </div>
+              {bindMsg && (
+                <span className={`profile-inline-msg${bindError ? ' error' : ' success'}`}>
+                  {bindMsg}
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn-primary profile-save-btn"
+                disabled={!bindEmail || !bindCode}
+                onClick={handleBindEmail}
+              >
+                确认绑定
+              </button>
+            </div>
+          )}
           <div className="profile-detail-row">
             <span className="profile-detail-label">注册时间</span>
             <span className="profile-detail-value">{createdDate}</span>

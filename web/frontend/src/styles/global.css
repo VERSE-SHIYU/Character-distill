@@ -5755,6 +5755,53 @@ select.settings-input {
   margin-top: 4px;
 }
 
+.profile-link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 4px;
+  text-decoration: underline;
+}
+
+.profile-link-btn:hover {
+  opacity: 0.8;
+}
+
+.profile-verified-badge {
+  display: inline-block;
+  font-size: 11px;
+  color: #fff;
+  background: #22c55e;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.profile-bind-email-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg);
+}
+
+.profile-code-field {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.profile-code-field .profile-input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---- Retracted message ---- */
 
 .msg-retracted {
