@@ -257,6 +257,45 @@ async def voice_synthesize(
     return Response(content=audio, media_type="audio/mpeg")
 
 
+@router.get("/preview-ref/{card_id}")
+async def preview_ref_audio(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage = Depends(get_storage),
+    voice_client: VoiceCloneClient = Depends(get_voice_client),
+) -> Response:
+    """Synthesize a test phrase using GPT-SoVITS with the card's reference audio."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "角色卡不存在")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此角色卡")
+
+    ref_json_str = await storage.get_session_voice_ref(card_id)
+    if not ref_json_str:
+        return JSONResponse({"error": "该角色尚未绑定参考音频"}, status_code=400)
+
+    ref_data = json.loads(ref_json_str)
+    ref_path = ref_data.get("path", "")
+    if not ref_path or not Path(ref_path).exists():
+        raise HTTPException(400, "参考音频文件不存在")
+
+    if not await voice_client.health_check():
+        raise HTTPException(503, "GPT-SoVITS 未连接")
+
+    test_text = "你好，这是我的声音，希望对你有帮助。"
+    try:
+        cache_path = await voice_client.synthesize(
+            text=test_text,
+            ref_audio_path=ref_path,
+            prompt_text=ref_data.get("ref_text", ""),
+        )
+        audio = Path(cache_path).read_bytes()
+        return Response(content=audio, media_type="audio/wav")
+    except Exception as exc:
+        raise HTTPException(500, f"GPT-SoVITS 合成失败: {exc}")
+
+
 # ---- Reference audio for GPT-SoVITS voice cloning ----
 
 @router.get("/ref-audio/{card_id}")
