@@ -138,6 +138,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
+  const [sharedCards, setSharedCards] = useState(new Set())
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -148,6 +149,25 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       savePinnedCards(next)
       return next
     })
+  }
+
+  const handleShareToggle = async (e, cardId, cardName) => {
+    e.stopPropagation()
+    const isPublic = sharedCards.has(cardId)
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/visibility`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ visibility: isPublic ? 'private' : 'public' }),
+      })
+      setSharedCards((prev) => {
+        const next = new Set(prev)
+        isPublic ? next.delete(cardId) : next.add(cardId)
+        return next
+      })
+    } catch (err) {
+      console.error('Share toggle failed:', err)
+    }
   }
 
   // Sort: pinned first, then unpinned (stable order within groups)
@@ -234,6 +254,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   onClick={(e) => togglePin(e, c.id)}
                 >
                   {'\u{1F4CC}'}
+                </button>
+                <button
+                  type="button"
+                  className={`char-share-btn${sharedCards.has(c.id) ? ' shared' : ''}`}
+                  title={sharedCards.has(c.id) ? '已分享到市场' : '分享到市场'}
+                  onClick={(e) => handleShareToggle(e, c.id, name)}
+                >
+                  {sharedCards.has(c.id) ? '\u{1F30D}' : '\u{1F516}'}
                 </button>
               </li>
             )
