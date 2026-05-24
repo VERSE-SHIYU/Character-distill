@@ -10,13 +10,17 @@ export default function AuthorPage() {
   const setView = useAppStore((s) => s.setView)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
+  const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const authorUserId = useAppStore((s) => s.authorUserId)
   const authUser = useAppStore((s) => s.authUser)
   const startChat = useAppStore((s) => s.startChat)
 
   const [author, setAuthor] = useState(null)
   const [cards, setCards] = useState([])
+  const [texts, setTexts] = useState([])
   const [isFollowing, setIsFollowing] = useState(false)
+  const [followersCount, setFollowersCount] = useState(0)
+  const [followingCount, setFollowingCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -54,7 +58,10 @@ export default function AuthorPage() {
         const data = await res.json()
         setAuthor(data.author)
         setCards(data.cards || [])
+        setTexts(data.texts || [])
         setIsFollowing(data.is_following || false)
+        setFollowersCount(data.followers_count || 0)
+        setFollowingCount(data.following_count || 0)
       } catch (err) {
         setError(err.message.includes('不存在') ? '该用户不存在或已注销' : err.message)
       } finally {
@@ -115,8 +122,8 @@ export default function AuthorPage() {
   return (
     <div className="panel author-page">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回市场">
-          {'◀'}
+        <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
+          {'\u{25C0}'}
         </button>
         <h1 className="panel-title">作者主页</h1>
       </header>
@@ -127,11 +134,17 @@ export default function AuthorPage() {
         <Loading text="加载作者信息…" />
       ) : author ? (
         <>
+          {/* ── Section 1: Profile hero ── */}
           <div className="author-hero">
-            <Avatar name={author.username || '?'} size={64} />
+            <Avatar name={author.username || '?'} size={72} />
             <div className="author-hero-text">
               <h2 className="author-name">{author.username}</h2>
-              <p className="author-meta">{cards.length} 个公开角色</p>
+              <div className="author-stats">
+                <span><strong>{followersCount}</strong> 粉丝</span>
+                <span><strong>{followingCount}</strong> 关注</span>
+                <span><strong>{cards.length}</strong> 角色</span>
+                <span><strong>{texts.length}</strong> 书籍</span>
+              </div>
             </div>
             {!isOwnProfile && (
               <>
@@ -154,8 +167,106 @@ export default function AuthorPage() {
             )}
           </div>
 
-          <div className="author-cards-section">
-            <h3 className="author-cards-title">公开角色</h3>
+          {/* ── Section 2: Bookshelf ── */}
+          <div className="author-section">
+            <h3 className="author-section-title">{'\u{1F4D6}'} 书架 ({texts.length})</h3>
+            {texts.length === 0 ? (
+              <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
+                {isOwnProfile ? '还没有公开的书籍，去文本管理中公开吧' : '暂无公开书籍'}
+              </p>
+            ) : (
+              texts.map((t) => (
+                <button key={t.id} className="author-book-card"
+                  onClick={() => { setCurrentTextDetailId(t.id); setView('textDetail') }}>
+                  <span style={{ fontSize: 28 }}>{'\u{1F4D6}'}</span>
+                  <div className="author-book-info">
+                    <div className="author-book-title">{t.title || '未命名'}</div>
+                    {t.description && <div className="author-book-desc">{t.description}</div>}
+                  </div>
+                  <div className="author-book-meta">
+                    {t.char_count?.toLocaleString()} 字
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+
+          {/* ── Section 3: Posts ── */}
+          <div className="author-section">
+            <h3 className="author-section-title">{'\u{1F4AC}'} 动态</h3>
+
+            {isOwnProfile && (
+              <div className="modal-body" style={{ marginBottom: 16, padding: 0 }}>
+                <textarea
+                  className="modal-textarea"
+                  placeholder="写点什么…"
+                  rows={3}
+                  value={postContent}
+                  onChange={(e) => setPostContent(e.target.value)}
+                  style={{ marginBottom: 8 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    className={`btn-sm ${postVisibility === 'public' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
+                  >
+                    {postVisibility === 'public' ? '\u{1F30D} 公开' : '\u{1F512} 私密'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={!postContent.trim() || posting}
+                    onClick={handlePostSubmit}
+                  >
+                    {posting ? '发布中…' : '发布'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {postsLoading ? (
+              <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
+            ) : posts.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {posts.map((post) => (
+                  <div key={post.id} className="market-card" style={{ alignItems: 'flex-start' }}>
+                    <Avatar name={author.username || '?'} size={36} />
+                    <div className="market-card-body">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{author.username}</span>
+                        {post.visibility === 'private' && (
+                          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{'\u{1F512}'} 私密</span>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
+                          {fmtTime(post.created_at)}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {post.content}
+                      </p>
+                    </div>
+                    {isOwnProfile && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        style={{ flexShrink: 0, color: 'var(--text-dim)', fontSize: 12 }}
+                        onClick={() => setDeleteConfirmId(post.id)}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Section 4: Public cards ── */}
+          <div className="author-section">
+            <h3 className="author-section-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
             {cards.length === 0 ? (
               <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
             ) : (
@@ -193,79 +304,6 @@ export default function AuthorPage() {
                     </div>
                   )
                 })}
-              </div>
-            )}
-          </div>
-
-          {/* Posts section */}
-          <div className="author-cards-section" style={{ marginTop: 24 }}>
-            <h3 className="author-cards-title">动态</h3>
-
-            {isOwnProfile && (
-              <div className="modal-body" style={{ marginBottom: 16, padding: 0 }}>
-                <textarea
-                  className="modal-textarea"
-                  placeholder="写点什么…"
-                  rows={3}
-                  value={postContent}
-                  onChange={(e) => setPostContent(e.target.value)}
-                  style={{ marginBottom: 8 }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <button
-                    type="button"
-                    className={`btn-sm ${postVisibility === 'public' ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
-                  >
-                    {postVisibility === 'public' ? '🌍 公开' : '🔒 私密'}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary btn-sm"
-                    disabled={!postContent.trim() || posting}
-                    onClick={handlePostSubmit}
-                  >
-                    {posting ? '发布中…' : '发布'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {postsLoading ? (
-              <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
-            ) : posts.length === 0 ? (
-              <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {posts.map((post) => (
-                  <div key={post.id} className="market-card" style={{ alignItems: 'flex-start' }}>
-                    <Avatar name={author.username || '?'} size={36} />
-                    <div className="market-card-body">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>{author.username}</span>
-                        {post.visibility === 'private' && (
-                          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>🔒 私密</span>
-                        )}
-                        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
-                          {fmtTime(post.created_at)}
-                        </span>
-                      </div>
-                      <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                        {post.content}
-                      </p>
-                    </div>
-                    {isOwnProfile && (
-                      <button
-                        type="button"
-                        className="btn-ghost btn-sm"
-                        style={{ flexShrink: 0, color: 'var(--text-dim)', fontSize: 12 }}
-                        onClick={() => setDeleteConfirmId(post.id)}
-                      >
-                        删除
-                      </button>
-                    )}
-                  </div>
-                ))}
               </div>
             )}
           </div>

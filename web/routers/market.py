@@ -152,16 +152,22 @@ async def get_author(
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Get author profile and their public cards."""
+    """Get author profile and their public data."""
     author = await storage.get_user_by_id(user_id)
     if not author:
         raise HTTPException(404, "用户不存在")
     cards = await storage.get_author_cards(user_id)
     following_ids = await storage.get_following(user["id"])
+    followers_count = await storage.get_followers_count(user_id)
+    following_count = await storage.get_following_count(user_id)
+    texts = await storage.get_author_texts(user_id)
     return {
         "author": author,
         "cards": cards,
+        "texts": texts,
         "is_following": user_id in following_ids,
+        "followers_count": followers_count,
+        "following_count": following_count,
     }
 
 

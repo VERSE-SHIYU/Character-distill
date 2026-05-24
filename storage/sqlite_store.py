@@ -353,6 +353,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Direct messages migration failed: {exc}")
 
+                    # Run 033_text_visibility migration (ALTER TABLE may fail if column exists)
+                    tv_path = migrations_dir / "033_text_visibility.sql"
+                    if tv_path.exists():
+                        try:
+                            await conn.executescript(tv_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Text visibility migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -460,7 +470,7 @@ class SQLiteStore(StorageBase):
                 if user_id:
                     cursor = await conn.execute(
                         """
-                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
+                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, visibility
                         FROM texts WHERE user_id = ?
                         ORDER BY created_at DESC
                         """, (user_id,),
@@ -468,7 +478,7 @@ class SQLiteStore(StorageBase):
                 else:
                     cursor = await conn.execute(
                         """
-                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count
+                        SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, visibility
                         FROM texts
                         ORDER BY created_at DESC
                         """
@@ -2463,4 +2473,67 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Get unread count failed: {exc}")
+            return 0
+
+    # ── Text Visibility & Author Public Data ──
+
+    async def update_text_visibility(self, text_id: str, user_id: str, visibility: str) -> bool:
+        """Set a text's visibility to 'public' or 'private'. Returns True if updated."""
+        if visibility not in ("public", "private"):
+            print(f"[SQLiteStore] Invalid visibility value: {visibility}")
+            return False
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE texts SET visibility = ? WHERE id = ? AND user_id = ?",
+                    (visibility, text_id, user_id),
+                )
+                await conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Update text visibility failed: {exc}")
+            return False
+
+    async def get_author_texts(self, user_id: str) -> list[dict]:
+        """Get public texts for an author profile. Returns metadata only, no content."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, title, description, text_type, char_count, created_at
+                       FROM texts WHERE user_id = ? AND visibility = 'public'
+                       ORDER BY created_at DESC""",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get author texts failed: {exc}")
+            return []
+
+    async def get_followers_count(self, user_id: str) -> int:
+        """Count of users following this user."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM user_follows WHERE following_id = ?",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Get followers count failed: {exc}")
+            return 0
+
+    async def get_following_count(self, user_id: str) -> int:
+        """Count of users this user is following."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM user_follows WHERE follower_id = ?",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Get following count failed: {exc}")
             return 0

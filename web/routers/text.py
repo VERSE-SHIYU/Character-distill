@@ -23,6 +23,10 @@ class CommentCreate(BaseModel):
     content: str
     parent_id: str = ""
 
+
+class VisibilityUpdate(BaseModel):
+    visibility: str
+
 router = APIRouter(prefix="/api/text", tags=["text"])
 
 UPLOAD_DIR = Path("data/uploads")
@@ -268,4 +272,20 @@ async def add_text_comment(
     )
     comment["liked_by_me"] = False
     return {"comment": comment}
+
+
+@router.patch("/{text_id}/visibility")
+async def update_text_visibility(
+    text_id: str,
+    body: VisibilityUpdate,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle a text's visibility between public and private."""
+    if body.visibility not in ("public", "private"):
+        raise HTTPException(400, "visibility 必须是 'public' 或 'private'")
+    ok = await storage.update_text_visibility(text_id, user["id"], body.visibility)
+    if not ok:
+        raise HTTPException(404, "文本不存在或无权操作")
+    return {"ok": True, "visibility": body.visibility}
 

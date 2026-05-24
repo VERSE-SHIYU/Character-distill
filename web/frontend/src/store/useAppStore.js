@@ -54,7 +54,7 @@ const useAppStore = create((set, get) => ({
   messageTargetUsername: null,
   setMessageTargetUsername: (name) => set({ messageTargetUsername: name }),
   setView: (view) => {
-    const updates = { currentView: view }
+    const updates = { currentView: view, error: null }
     if (view === 'home' || view === 'text') updates.currentTextTitle = ''
     set(updates)
   },
