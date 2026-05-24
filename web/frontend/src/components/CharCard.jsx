@@ -137,11 +137,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const distillCharacter = useAppStore((s) => s.distillCharacter)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
+  const standaloneCards = useAppStore((s) => s.standaloneCards)
+  const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
   const [sharedCards, setSharedCards] = useState(new Set())
   const [shareConfirmTarget, setShareConfirmTarget] = useState(null)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -200,6 +203,10 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   useEffect(() => {
     if (!distilling) setDistillingName(null)
   }, [distilling])
+
+  useEffect(() => {
+    loadStandaloneCards()
+  }, [loadStandaloneCards])
 
   const handleIdentify = async () => {
     try {
@@ -281,10 +288,70 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 >
                   {sharedCards.has(c.id) ? '\u{1F30D}' : '\u{1F516}'}
                 </button>
+                <button
+                  type="button"
+                  className="char-delete-btn"
+                  title="删除角色"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDeleteTarget(c)
+                  }}
+                >
+                  {'\u{1F5D1}'}
+                </button>
               </li>
             )
           })}
         </ul>
+      )}
+
+      {/* Standalone cards (forked from market, no text attachment) */}
+      {standaloneCards.length > 0 && (
+        <div className="char-standalone">
+          <h3 className="char-identified-title">
+            {'\u{1F30D}'} 来自市场
+          </h3>
+          <ul className="char-list">
+            {standaloneCards.map((c) => {
+              const cardData = typeof c.card_json === 'string'
+                ? JSON.parse(c.card_json)
+                : c.card_json || c
+              const name = cardData.name || c.name
+              const identity = cardData.identity || ''
+              const isActive = currentCard?.id === c.id
+              return (
+                <li key={c.id} className="char-list-li">
+                  <button
+                    type="button"
+                    className={`char-list-item${isActive ? ' active' : ''}`}
+                    data-card-id={c.id}
+                    onClick={() => onSelectCard({ ...c, ...cardData, text_id: '' })}
+                  >
+                    <Avatar name={name} size={34} src={cardAvatars[c.id]} />
+                    <div className="char-list-info">
+                      <div className="char-list-name">{name}</div>
+                      {c.forked_from && (
+                        <span className="char-card-source">{'\u{1F4CB}'} 来自市场</span>
+                      )}
+                      <div className="char-list-identity">{identity}</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="char-delete-btn"
+                    title="删除角色"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTarget(c)
+                    }}
+                  >
+                    {'\u{1F5D1}'}
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
       )}
 
       {/* Identified but not yet distilled */}
@@ -399,6 +466,39 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 } catch (err) { console.error('Share failed:', err) }
               }}>
                 确认公开
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirm modal */}
+      {deleteTarget && (
+        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">删除角色</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                确定要删除「{deleteTarget.name || '?'}」吗？此操作不可撤销。
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
+              <button className="btn-danger" onClick={async () => {
+                const cid = deleteTarget.id || deleteTarget.card_id
+                setDeleteTarget(null)
+                try {
+                  await fetchWithTimeout(`/api/cards/${cid}`, {
+                    method: 'DELETE',
+                    headers: { ...getAuthHeaders() },
+                  })
+                  await loadCards(textId)
+                  await loadStandaloneCards()
+                } catch (err) {
+                  console.error('Delete card failed:', err)
+                }
+              }}>
+                确认删除
               </button>
             </div>
           </div>

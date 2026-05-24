@@ -10,6 +10,7 @@ const PAGE_SIZE = 20
 export default function MarketPage() {
   const startChat = useAppStore((s) => s.startChat)
   const loadCards = useAppStore((s) => s.loadCards)
+  const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setView = useAppStore((s) => s.setView)
@@ -24,6 +25,7 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [forkingId, setForkingId] = useState(null)
+  const [forkCard, setForkCard] = useState(null)
   const [commentCardId, setCommentCardId] = useState(null)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -120,24 +122,33 @@ export default function MarketPage() {
     }
   }
 
-  const handleUse = async (card) => {
+  const doFork = async (card, textId) => {
     setForkingId(card.id)
     try {
       const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text_id: currentTextId || '' }),
+        body: JSON.stringify({ text_id: textId }),
       })
       const data = await res.json()
-      // Refresh cards so the forked card appears in character management
-      if (currentTextId) {
-        await loadCards(currentTextId)
+      if (textId) {
+        await loadCards(textId)
+      } else {
+        await loadStandaloneCards()
       }
       startChat(data.card)
     } catch (err) {
       console.error('[Market] Fork failed:', err)
     } finally {
       setForkingId(null)
+    }
+  }
+
+  const handleUse = (card) => {
+    if (currentTextId) {
+      setForkCard(card)
+    } else {
+      doFork(card, '')
     }
   }
 
@@ -332,6 +343,39 @@ export default function MarketPage() {
               />
               <button className="btn-primary" onClick={handleSendComment} disabled={!commentText.trim() || commentSending}>
                 {commentSending ? '发送中…' : '发送'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fork type selection modal */}
+      {forkCard && (
+        <div className="modal-overlay" onClick={() => setForkCard(null)}>
+          <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">选择使用方式</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 16, lineHeight: 1.6 }}>
+                决定如何放置这个角色：
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <button className="btn-primary" style={{ textAlign: 'center' }} onClick={() => {
+                  const card = forkCard
+                  setForkCard(null)
+                  doFork(card, currentTextId)
+                }}>
+                  {'\u{1F4D6}'} 挂载到当前文本
+                </button>
+                <button className="btn-secondary" style={{ textAlign: 'center' }} onClick={() => {
+                  const card = forkCard
+                  setForkCard(null)
+                  doFork(card, '')
+                }}>
+                  {'\u{1F30D}'} 新建独立空间
+                </button>
+              </div>
+              <button className="btn-ghost" style={{ marginTop: 12, width: '100%' }} onClick={() => setForkCard(null)}>
+                取消
               </button>
             </div>
           </div>

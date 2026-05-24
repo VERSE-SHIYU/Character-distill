@@ -92,3 +92,21 @@ async def export_card(
             ),
         },
     )
+
+
+@router.delete("/{card_id}")
+async def delete_card_route(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete a character card. Only the owner can delete."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权删除此角色卡")
+    ok = await storage.delete_card(card_id)
+    if not ok:
+        raise HTTPException(500, "删除失败")
+    return {"ok": True}

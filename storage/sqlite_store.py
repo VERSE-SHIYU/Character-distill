@@ -537,6 +537,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List cards failed: {exc}")
             raise
 
+    async def list_standalone_cards(self, user_id: str) -> list[dict]:
+        """List cards with no text_id attachment (standalone/market-forked)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = ? ORDER BY created_at DESC",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List standalone cards failed: {exc}")
+            raise
+
     async def save_card_avatar(self, card_id: str, avatar_data: str) -> None:
         """Save base64 avatar image for a card."""
         try:
@@ -661,7 +675,7 @@ class SQLiteStore(StorageBase):
             return None
 
         try:
-            text_id = new_text_id or original["text_id"]
+            text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
             async with await self._connect() as conn:
                 await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, user_id, avatar_data, forked_from, visibility)
@@ -717,6 +731,16 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Toggle like failed: {exc}")
             raise
+
+    async def delete_card(self, card_id: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete card failed: {exc}")
+            return False
 
     async def update_card_visibility(self, card_id: str, visibility: str) -> bool:
         """Set card visibility to 'public' or 'private'."""

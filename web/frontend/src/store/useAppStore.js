@@ -32,6 +32,7 @@ const useAppStore = create((set, get) => ({
       currentView: 'home',
       texts: [],
       cards: [],
+      standaloneCards: [],
       currentCard: null,
       sessionId: null,
       messages: [],
@@ -65,6 +66,7 @@ const useAppStore = create((set, get) => ({
   currentTextTitle: '',
 
   cards: [],
+  standaloneCards: [],
   currentCard: null,
   sessionId: null,
   resumeGroupId: null,
@@ -436,6 +438,16 @@ const useAppStore = create((set, get) => ({
     } catch (err) {
       console.error('[store] loadCards failed:', err)
       set({ error: err.message })
+    }
+  },
+
+  loadStandaloneCards: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/distill/cards/standalone')
+      const data = await res.json()
+      set({ standaloneCards: data })
+    } catch (err) {
+      console.error('[store] loadStandaloneCards failed:', err)
     }
   },
 

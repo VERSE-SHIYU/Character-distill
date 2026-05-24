@@ -1909,6 +1909,30 @@ body {
   background: rgba(var(--accent-rgb), 0.1);
 }
 
+.char-delete-btn {
+  position: absolute;
+  top: 4px;
+  right: 56px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.char-list-li:hover .char-delete-btn {
+  opacity: 0.4;
+}
+
+.char-delete-btn:hover {
+  opacity: 1 !important;
+  background: rgba(231, 76, 60, 0.15);
+}
+
 .char-card-active {
   animation: cardActivePulse 0.6s ease-out;
 }

@@ -715,6 +715,20 @@ async def list_cards(
         raise HTTPException(500, f"List cards failed: {exc}") from exc
 
 
+@router.get("/cards/standalone")
+async def list_standalone_cards(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List standalone cards (forked from market, no text attachment)."""
+    try:
+        return await storage.list_standalone_cards(user["id"])
+    except Exception as exc:
+        print(f"[distill] List standalone cards failed: {exc}")
+        raise HTTPException(500, f"List standalone cards failed: {exc}") from exc
+
+
 @router.post("/start_session")
 async def start_session(
     req: StartSessionRequest,
