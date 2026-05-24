@@ -61,7 +61,7 @@ async function downloadExport(sessionId, format) {
   URL.revokeObjectURL(url)
 }
 
-export default function HistoryPanel() {
+export default function HistoryPanel({ initialTrash = false }) {
   const texts = useAppStore((s) => s.texts)
   const cards = useAppStore((s) => s.cards)
   const resumeSession = useAppStore((s) => s.resumeSession)
@@ -82,7 +82,7 @@ export default function HistoryPanel() {
   const [collapsedGroups, setCollapsedGroups] = useState({})
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
-  const [trashMode, setTrashMode] = useState(false)
+  const [trashMode, setTrashMode] = useState(initialTrash)
   const [chatTab, setChatTab] = useState('chat') // 'chat' | 'group'
   const [groupItems, setGroupItems] = useState([])
   const [groupDetail, setGroupDetail] = useState(null)

@@ -6,7 +6,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 
-export default function AuthorPage() {
+export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
@@ -49,7 +49,7 @@ export default function AuthorPage() {
   }, [authorUserId])
 
   useEffect(() => {
-    if (!authorUserId || authorUserId.trim() === '') { setView('market'); return }
+    if (!authorUserId || authorUserId.trim() === '') { if (!embedded) setView('market'); return }
     ;(async () => {
       setLoading(true)
       try {
@@ -122,10 +122,12 @@ export default function AuthorPage() {
   return (
     <div className="panel author-page">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
-          {'\u{25C0}'}
-        </button>
-        <h1 className="panel-title">作者主页</h1>
+        {!embedded && (
+          <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
+            {'\u{25C0}'}
+          </button>
+        )}
+        <h1 className="panel-title">{embedded ? '我的主页' : '作者主页'}</h1>
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
@@ -230,34 +232,30 @@ export default function AuthorPage() {
             ) : posts.length === 0 ? (
               <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="author-posts-list">
                 {posts.map((post) => (
-                  <div key={post.id} className="market-card" style={{ alignItems: 'flex-start' }}>
-                    <Avatar name={author.username || '?'} size={36} />
-                    <div className="market-card-body">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                        <span style={{ fontWeight: 600, fontSize: 13 }}>{author.username}</span>
+                  <div key={post.id} className="author-post-card">
+                    <div className="author-post-header">
+                      <Avatar name={author.username || '?'} size={40} />
+                      <div className="author-post-header-text">
+                        <span className="author-post-username">{author.username}</span>
                         {post.visibility === 'private' && (
-                          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{'\u{1F512}'} 私密</span>
+                          <span className="author-post-private">{'\u{1F512}'} 私密</span>
                         )}
-                        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
-                          {fmtTime(post.created_at)}
-                        </span>
                       </div>
-                      <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                        {post.content}
-                      </p>
+                      <span className="author-post-time">{fmtTime(post.created_at)}</span>
                     </div>
-                    {isOwnProfile && (
-                      <button
-                        type="button"
-                        className="btn-ghost btn-sm"
-                        style={{ flexShrink: 0, color: 'var(--text-dim)', fontSize: 12 }}
-                        onClick={() => setDeleteConfirmId(post.id)}
-                      >
-                        删除
-                      </button>
-                    )}
+                    <div className="author-post-body">
+                      {post.content}
+                    </div>
+                    <div className="author-post-footer">
+                      <div className="author-post-stats" />
+                      {isOwnProfile && (
+                        <button type="button" className="author-post-delete" onClick={() => setDeleteConfirmId(post.id)}>
+                          删除
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

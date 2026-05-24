@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { id: 'workbench', icon: '\u{1F4DD}', label: '工作台' },
   { id: 'market',    icon: '\u{1F30D}', label: '市场' },
   { id: 'history',   icon: '\u{1F4CB}', label: '记录' },
+  { id: 'trash',     icon: '\u{1F5D1}', label: '回收站' },
   { id: 'mine',      icon: '\u{1F464}', label: '我的' },
 ]
 
@@ -50,6 +51,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const handleNav = useCallback((id) => {
     switch (id) {
       case 'workbench': setView('text'); break
+      case 'trash': setView('trash'); break
       case 'mine': setView('mine'); break
       default: setView(id)
     }
@@ -110,6 +112,14 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             <span className="sidebar-user-name">{authUser.username}</span>
           </button>
           <div className="sidebar-user-actions">
+            <button
+              type="button"
+              className="sidebar-settings-btn"
+              onClick={() => setView('voice')}
+              title="音色管理"
+            >
+              {'\u{1F399}'}
+            </button>
             <button
               type="button"
               className="sidebar-settings-btn"
