@@ -301,7 +301,7 @@ export default function MessagesPage() {
                 }}>
                   {hasMore && (
                     <div style={{ textAlign: 'center' }}>
-                      <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={handleLoadMore} disabled={msgLoading}>
+                      <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={msgLoading}>
                         {msgLoading ? '加载中…' : '加载更多'}
                       </button>
                     </div>

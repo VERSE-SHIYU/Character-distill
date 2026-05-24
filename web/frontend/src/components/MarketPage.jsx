@@ -317,7 +317,7 @@ export default function MarketPage() {
           <div className="modal-card" style={{ maxWidth: 480, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-title" style={{ flexShrink: 0 }}>
               评论
-              <button type="button" className="btn-ghost" style={{ float: 'right' }} onClick={() => setCommentCardId(null)}>✕</button>
+              <button type="button" className="btn-ghost fr" onClick={() => setCommentCardId(null)}>✕</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px', minHeight: 0 }}>
               {commentsLoading ? (
@@ -380,7 +380,7 @@ export default function MarketPage() {
                   {'\u{1F30D}'} 新建独立空间
                 </button>
               </div>
-              <button className="btn-ghost" style={{ marginTop: 12, width: '100%' }} onClick={() => setForkCard(null)}>
+              <button className="btn-ghost mt-12 w-full" onClick={() => setForkCard(null)}>
                 取消
               </button>
             </div>

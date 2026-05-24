@@ -476,7 +476,7 @@ export default function GroupChatPage() {
             )}
 
             <div className="modal-actions">
-              <button type="button" className="btn-secondary glass" onClick={() => setShowCreate(false)}>
+              <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>
                 取消
               </button>
               <button

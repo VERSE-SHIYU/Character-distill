@@ -55,7 +55,7 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, t
             你将以 <strong>「{trimmed}」</strong> 的身份与 <strong>{characterName}</strong> 对话
           </p>
           <div className="modal-actions">
-            <button type="button" className="btn-secondary glass" onClick={handleBack}>
+            <button type="button" className="btn-secondary" onClick={handleBack}>
               ← 重新选择
             </button>
             <button type="button" className="btn-primary" onClick={handleEnterChat}>

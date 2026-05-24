@@ -171,12 +171,12 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
                 <button type="button" className="btn-secondary edit-rel-del" onClick={() => removeRel(i)}>✕</button>
               </div>
             ))}
-            <button type="button" className="btn-secondary" onClick={addRelationship} style={{ marginTop: 6 }}>+ 添加关系</button>
+            <button type="button" className="btn-secondary mt-6" onClick={addRelationship}>+ 添加关系</button>
           </fieldset>
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="btn-secondary glass" onClick={onClose}>取消</button>
+          <button type="button" className="btn-secondary" onClick={onClose}>取消</button>
           <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
             {saving ? '保存中…' : '保存'}
           </button>
