@@ -12,6 +12,9 @@ export default function GroupChatPage() {
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const resumeGroupId = useAppStore((s) => s.resumeGroupId)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+  const userRole = useAppStore((s) => s.userRole)
+  const authUser = useAppStore((s) => s.authUser)
+  const setView = useAppStore((s) => s.setView)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -74,6 +77,8 @@ export default function GroupChatPage() {
     const cardIds = JSON.parse(group.card_ids || '[]')
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
+    const who = userRole || authUser?.username || '用户'
+    setSystemMessage(`${who} 加入了群聊`)
   }
 
   function backToList() {
@@ -153,25 +158,34 @@ export default function GroupChatPage() {
     }
   }
 
+  const [systemMessage, setSystemMessage] = useState('')
+
   // ── Send message ──
 
   const [messageText, setMessageText] = useState('')
-  const [targetCardId, setTargetCardId] = useState('')
+  const [targetCardIds, setTargetCardIds] = useState([])
 
   async function handleSend(e) {
     e.preventDefault()
-    if (!messageText.trim() || !targetCardId || !currentGroup) return
+    if (!messageText.trim() || targetCardIds.length === 0 || !currentGroup) return
 
     setSending(true)
     setError(null)
+    const speaker = userRole || authUser?.username || '我'
     try {
-      const data = await postJSON(`/api/group/${currentGroup.id}/send`, {
-        target_card_id: targetCardId,
-        message: messageText,
-      })
-      // Reload history
+      // Send to each selected target sequentially
+      const targets = [...targetCardIds]
+      for (const cardId of targets) {
+        await postJSON(`/api/group/${currentGroup.id}/send`, {
+          target_card_id: cardId,
+          message: messageText,
+          speaker,
+        })
+      }
+      // Reload history once after all sends
       await loadHistory(currentGroup.id)
       setMessageText('')
+      setTargetCardIds([])
     } catch (err) {
       setError(err.message)
     } finally {
@@ -221,15 +235,20 @@ export default function GroupChatPage() {
         <h1 className="panel-title">
           {currentGroup ? (
             <>
-              <button type="button" className="btn-ghost" onClick={backToList} style={{ marginRight: 8 }}>
-                ←
+              <button type="button" className="chat-back-btn" onClick={backToList} title="返回群聊列表">
+                {'◀'}
               </button>
               群聊 — {currentGroup.name || '未命名'}
             </>
           ) : '群聊'}
         </h1>
         <p className="panel-desc">
-          {currentGroup ? '导演模式：选择角色并发送消息' : '多角色群聊导演模式'}
+          {currentGroup
+            ? `你正在与 ${currentGroup.card_ids?.map((id) => {
+                const card = allCards.find((c) => (c.id || c.card_id) === id)
+                return card?.name || id.slice(0, 4)
+              }).filter(Boolean).join('、')} 群聊`
+            : '创建群聊开始多角色对话'}
         </p>
       </header>
 
@@ -284,7 +303,12 @@ export default function GroupChatPage() {
         /* ── Group chat view ── */
         <div className="group-chat-view">
           <div className="group-chat-messages">
-            {messages.length === 0 && (
+            {systemMessage && (
+              <div className="group-msg-system">
+                <span>{systemMessage}</span>
+              </div>
+            )}
+            {messages.length === 0 && !systemMessage && (
               <div className="shell-placeholder" style={{ padding: 40 }}>
                 <div className="shell-placeholder-inner">
                   <div className="shell-placeholder-title">群聊已创建</div>
@@ -294,50 +318,75 @@ export default function GroupChatPage() {
                 </div>
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={m.id || i} className={`group-msg group-msg-${m.role}`}>
-                <div className="group-msg-speaker">
-                  {m.speaker === '导演' ? '🎬' : '\u{1F464}'} {m.speaker}
+            {messages.map((m, i) => {
+              const isUser = m.role === 'user'
+              const isAssistant = m.role === 'assistant'
+              const userInitial = (userRole || authUser?.username || '我').charAt(0).toUpperCase()
+              return (
+                <div key={m.id || i} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'}`}>
+                  {isAssistant && (
+                    <div className="chat-msg-avatar">
+                      <Avatar name={m.speaker} size={40} src={cardAvatars[m.card_id]} />
+                    </div>
+                  )}
+                  <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
+                    <span className="chat-bubble-speaker">{m.speaker}</span>
+                    <span className="chat-bubble-text">{m.content}</span>
+                  </div>
+                  {isUser && (
+                    <div className="user-avatar-circle" style={{ minWidth: 36, minHeight: 36, width: 36, height: 36, fontSize: 14 }}>{userInitial}</div>
+                  )}
                 </div>
-                <div className="group-msg-content">{m.content}</div>
-              </div>
-            ))}
+              )
+            })}
             {loading && <Loading text="加载中…" />}
           </div>
 
-          <form className="group-chat-input-area" onSubmit={handleSend}>
+          <form className="chat-input-area" onSubmit={handleSend}>
             <div className="group-chat-targets">
-              <span className="group-chat-target-label">回复目标：</span>
+              <span className="group-chat-target-label">回复：</span>
               {currentGroup.card_ids.map((cardId) => {
                 const cardData = allCards.find((c) => (c.id || c.card_id) === cardId)
                 const name = cardData?.name || cardId.slice(0, 8)
+                const selected = targetCardIds.includes(cardId)
                 return (
                   <button
                     key={cardId}
                     type="button"
-                    className={`group-chat-target-btn${targetCardId === cardId ? ' active' : ''}`}
-                    onClick={() => setTargetCardId(cardId)}
+                    className={`group-chat-target-btn${selected ? ' active' : ''}`}
+                    onClick={() => setTargetCardIds((prev) =>
+                      prev.includes(cardId)
+                        ? prev.filter((id) => id !== cardId)
+                        : [...prev, cardId]
+                    )}
                   >
                     {name}
                   </button>
                 )
               })}
             </div>
-            <div className="group-chat-input-row">
+            <div className="chat-input-row">
               <input
                 className="modal-input"
                 style={{ flex: 1 }}
-                placeholder={targetCardId ? '输入消息…' : '请先选择回复目标'}
+                placeholder={
+                  targetCardIds.length > 0
+                    ? `对 ${targetCardIds.map((id) => {
+                        const c = allCards.find((c) => (c.id || c.card_id) === id)
+                        return c?.name || id.slice(0, 4)
+                      }).join('、')} 说…`
+                    : '请选择回复目标'
+                }
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
-                disabled={!targetCardId || sending}
+                disabled={targetCardIds.length === 0 || sending}
               />
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={!targetCardId || !messageText.trim() || sending}
+                disabled={targetCardIds.length === 0 || !messageText.trim() || sending}
               >
-                {sending ? '发送中…' : '发送'}
+                {targetCardIds.length > 1 && !sending ? `发送 (${targetCardIds.length})` : sending ? '发送中…' : '发送'}
               </button>
             </div>
           </form>

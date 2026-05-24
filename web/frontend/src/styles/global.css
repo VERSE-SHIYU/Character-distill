@@ -6280,24 +6280,40 @@ select.settings-input {
   gap: 12px;
 }
 
+/* System message (e.g. "X joined the chat") */
+.group-msg-system {
+  text-align: center;
+  padding: 8px 16px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Override avatar size in group chat context */
+.group-chat-view .chat-msg-avatar img,
+.group-chat-view .chat-msg-avatar .avatar-circle {
+  width: 40px;
+  height: 40px;
+}
+
+.group-chat-view .chat-bubble {
+  max-width: 75%;
+}
+
+/* Speaker name inside character message bubbles */
+.chat-bubble-speaker {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
 .group-msg {
   max-width: 85%;
   padding: 10px 14px;
   border-radius: 12px;
   font-size: 14px;
   line-height: 1.6;
-}
-
-.group-msg-user {
-  align-self: flex-start;
-  background: var(--msg-user-bg, rgba(0,0,0,0.04));
-  border: 1px solid var(--border);
-}
-
-.group-msg-assistant {
-  align-self: flex-end;
-  background: var(--accent);
-  color: #fff;
 }
 
 .group-msg-speaker {

@@ -30,6 +30,7 @@ class CreateGroupRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     target_card_id: str
     message: str
+    speaker: str = ""
 
 
 def _get_group_sessions() -> dict[str, Any]:
@@ -145,7 +146,7 @@ async def send_message(
     # Persist to DB
     try:
         await storage.save_group_message(
-            group_id, "导演", "user", req.message, "",
+            group_id, req.speaker or "导演", "user", req.message, "",
         )
         await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
