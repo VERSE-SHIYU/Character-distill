@@ -374,6 +374,26 @@ class SQLiteStore(StorageBase):
                         if "no such window function" not in str(exc).lower():
                             print(f"[SQLiteStore] Dedup cards migration: {exc}")
 
+                    # Auto-deduplicate forked cards: same forked_from+user_id+text_id, keep newest
+                    try:
+                        await conn.execute("""
+                            DELETE FROM cards
+                            WHERE forked_from != '' AND deleted_at IS NULL AND id NOT IN (
+                                SELECT id FROM (
+                                    SELECT id, ROW_NUMBER() OVER (
+                                        PARTITION BY forked_from, user_id, text_id
+                                        ORDER BY rowid DESC
+                                    ) AS rn
+                                    FROM cards
+                                    WHERE forked_from != '' AND deleted_at IS NULL
+                                ) WHERE rn = 1
+                            )
+                        """)
+                        await conn.commit()
+                    except Exception as exc:
+                        if "no such window function" not in str(exc).lower():
+                            print(f"[SQLiteStore] Dedup forked cards: {exc}")
+
                 self._initialized = True
             except Exception as exc:
                 print(f"[SQLiteStore] Initialize database failed: {exc}")
@@ -718,6 +738,14 @@ class SQLiteStore(StorageBase):
         try:
             text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
             async with await self._connect() as conn:
+                # Check for existing fork to avoid duplicates
+                cursor = await conn.execute(
+                    "SELECT id FROM cards WHERE forked_from = ? AND user_id = ? AND text_id = ? AND deleted_at IS NULL",
+                    (card_id, new_user_id, text_id),
+                )
+                existing = await cursor.fetchone()
+                if existing:
+                    return await self.get_card(existing[0])
                 await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, user_id, avatar_data, forked_from, visibility)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 'private')""",

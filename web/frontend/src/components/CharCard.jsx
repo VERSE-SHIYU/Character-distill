@@ -152,6 +152,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [trashLoading, setTrashLoading] = useState(false)
   const [purgeConfirmTarget, setPurgeConfirmTarget] = useState(null)
   const [purgeAllConfirm, setPurgeAllConfirm] = useState(false)
+  const [localError, setLocalError] = useState(null)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -243,19 +244,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       loadCards(textId)
       loadStandaloneCards()
     } catch (err) {
-      console.error('[CharCard] Restore card failed:', err)
-    }
-  }
-
-  const handlePurgeCard = async (cardId) => {
-    try {
-      await fetchWithTimeout(`/api/cards/${cardId}/purge`, {
-        method: 'DELETE',
-        headers: { ...getAuthHeaders() },
-      })
-      setDeletedCards((prev) => prev.filter((c) => c.id !== cardId))
-    } catch (err) {
-      console.error('[CharCard] Purge card failed:', err)
+      setLocalError(err.message || '恢复失败')
     }
   }
 
@@ -277,6 +266,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   return (
     <div className="char-sidebar-inner">
+      {localError && <ErrorBox message={localError} onDismiss={() => setLocalError(null)} />}
       <div className="char-sidebar-head">
         <h2 className="char-sidebar-title">
           {trashMode ? '回收站' : '角色列表'}
@@ -597,16 +587,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
               <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
               <button className="btn-danger" onClick={async () => {
                 const cid = deleteTarget.id || deleteTarget.card_id
-                setDeleteTarget(null)
                 try {
                   await fetchWithTimeout(`/api/cards/${cid}`, {
                     method: 'DELETE',
                     headers: { ...getAuthHeaders() },
                   })
+                  setDeleteTarget(null)
                   await loadCards(textId)
                   await loadStandaloneCards()
                 } catch (err) {
-                  console.error('Delete card failed:', err)
+                  setDeleteTarget(null)
+                  setLocalError(err.message || '删除失败')
                 }
               }}>
                 移入回收站
@@ -624,8 +615,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         confirmText="彻底删除"
         onConfirm={async () => {
           const id = purgeConfirmTarget
-          setPurgeConfirmTarget(null)
-          await handlePurgeCard(id)
+          try {
+            await fetchWithTimeout(`/api/cards/${id}/purge`, {
+              method: 'DELETE',
+              headers: { ...getAuthHeaders() },
+            })
+            setPurgeConfirmTarget(null)
+            setDeletedCards((prev) => prev.filter((c) => c.id !== id))
+          } catch (err) {
+            setPurgeConfirmTarget(null)
+            setLocalError(err.message || '删除失败')
+          }
         }}
         onCancel={() => setPurgeConfirmTarget(null)}
         danger
@@ -637,12 +637,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         confirmText="清空"
         onConfirm={async () => {
           setPurgeAllConfirm(false)
-          Promise.all(deletedCards.map((c) =>
-            fetchWithTimeout(`/api/cards/${c.id}/purge`, {
-              method: 'DELETE',
-              headers: { ...getAuthHeaders() },
-            }).catch(() => {}),
-          )).then(() => setDeletedCards([]))
+          try {
+            await Promise.all(deletedCards.map((c) =>
+              fetchWithTimeout(`/api/cards/${c.id}/purge`, {
+                method: 'DELETE',
+                headers: { ...getAuthHeaders() },
+              }),
+            ))
+            setDeletedCards([])
+          } catch (err) {
+            setLocalError(err.message || '清空回收站失败')
+          }
         }}
         onCancel={() => setPurgeAllConfirm(false)}
         danger
