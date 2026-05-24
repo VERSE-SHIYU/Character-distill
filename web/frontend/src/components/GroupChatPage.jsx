@@ -4,9 +4,12 @@ import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import { loadCardAvatar } from '../store/db'
 
 export default function GroupChatPage() {
   const texts = useAppStore((s) => s.texts)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -170,7 +173,21 @@ export default function GroupChatPage() {
     return card?.name || '?'
   }
 
-  // Load card details for the current group
+  // Load card avatars for the create modal and group list
+  useEffect(() => {
+    const ids = new Set()
+    allCards.forEach((c) => { const id = c.id || c.card_id; if (id) ids.add(id) })
+    groups.forEach((g) => {
+      try { JSON.parse(g.card_ids || '[]').forEach((id) => ids.add(id)) } catch {}
+    })
+    ids.forEach((id) => {
+      if (!cardAvatars[id]) {
+        loadCardAvatar(id).then((dataUrl) => {
+          if (dataUrl) setCardAvatar(id, dataUrl)
+        })
+      }
+    })
+  }, [allCards, groups])
   useEffect(() => {
     if (!currentGroup || !currentGroup.card_ids) return
     ;(async () => {
@@ -381,7 +398,7 @@ export default function GroupChatPage() {
                         className={`group-create-card${selected ? ' selected' : ''}`}
                         onClick={() => toggleCard(cardId)}
                       >
-                        <Avatar name={c.name} size={32} />
+                        <Avatar name={c.name} size={32} src={cardAvatars[c.id || c.card_id]} />
                         <span>{c.name}</span>
                         <span className="group-create-card-check">{selected ? '✓' : ''}</span>
                       </div>

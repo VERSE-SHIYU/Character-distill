@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import { loadCardAvatar } from '../store/db'
 
 const PAGE_SIZE = 20
 
@@ -59,6 +60,8 @@ export default function HistoryPanel() {
   const cards = useAppStore((s) => s.cards)
   const resumeSession = useAppStore((s) => s.resumeSession)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
 
   const [keyword, setKeyword] = useState('')
   const [character, setCharacter] = useState('')
@@ -159,6 +162,18 @@ export default function HistoryPanel() {
     abortRef.current = false
     loadPage(1, false)
   }, [loadPage])
+
+  // Load card avatars for session list items
+  useEffect(() => {
+    const ids = new Set(items.map((it) => it.card_id).filter(Boolean))
+    ids.forEach((id) => {
+      if (!cardAvatars[id]) {
+        loadCardAvatar(id).then((dataUrl) => {
+          if (dataUrl) setCardAvatar(id, dataUrl)
+        })
+      }
+    })
+  }, [items])
 
   // Infinite scroll handler (normal mode only)
   useEffect(() => {
@@ -311,6 +326,7 @@ export default function HistoryPanel() {
         loading={detailLoading}
         resumeLoading={resumeLoading}
         trashMode={trashMode}
+        cardAvatars={cardAvatars}
         onBack={() => setDetail(null)}
         onContinue={() => handleContinue(detail.session.id)}
         onDelete={() => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id)}
@@ -477,7 +493,7 @@ export default function HistoryPanel() {
                         className="history-item"
                         onClick={() => selectMode ? toggleSelect(it.id) : openDetail(it.id)}
                       >
-                        <Avatar name={it.character_name || '?'} size={40} />
+                        <Avatar name={it.character_name || '?'} size={40} src={cardAvatars[it.card_id]} />
                         <div className="history-item-body">
                           <div className="history-item-head">
                             <div className="history-item-name-row">
@@ -514,7 +530,7 @@ export default function HistoryPanel() {
   )
 }
 
-function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore, onExport, resumeLoading, trashMode }) {
+function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore, onExport, resumeLoading, trashMode, cardAvatars }) {
   const session = data.session || {}
   const messages = data.messages || []
   const charName = session.character_name || '?'
@@ -572,7 +588,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
       </div>
 
       <header className="history-detail-header">
-        <Avatar name={charName} size={75} />
+        <Avatar name={charName} size={75} src={cardAvatars?.[session.card_id]} />
         <div className="history-detail-meta-wrap">
           <h2 className="history-detail-name">{charName}</h2>
           {session.user_role && (
@@ -610,7 +626,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
               >
                 {!isUser ? (
                   <div className="chat-msg-avatar">
-                    <Avatar name={charName} size={70} />
+                    <Avatar name={charName} size={70} src={cardAvatars?.[session.card_id]} />
                   </div>
                 ) : (
                   <div className="user-avatar-circle">{userInitial}</div>

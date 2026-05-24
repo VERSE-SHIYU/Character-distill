@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import RoleSetupModal from './RoleSetupModal'
+import { loadCardAvatar } from '../store/db'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -56,6 +57,8 @@ export default function HomePage() {
   const [recentSessions, setRecentSessions] = useState([])
   const [resumingId, setResumingId] = useState(null)
   const [pendingCard, setPendingCard] = useState(null)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
 
   useEffect(() => {
     if (texts.length === 0) loadTexts()
@@ -85,6 +88,20 @@ export default function HomePage() {
   }, [texts])
 
   useEffect(() => { loadAllCards() }, [loadAllCards])
+
+  // Load card avatars for the grid and recent sessions
+  useEffect(() => {
+    const ids = new Set()
+    allCards.forEach((c) => { if (c.id || c.card_id) ids.add(c.id || c.card_id) })
+    recentSessions.forEach((s) => { if (s.card_id) ids.add(s.card_id) })
+    ids.forEach((id) => {
+      if (!cardAvatars[id]) {
+        loadCardAvatar(id).then((dataUrl) => {
+          if (dataUrl) setCardAvatar(id, dataUrl)
+        })
+      }
+    })
+  }, [allCards, recentSessions])
 
   useEffect(() => {
     let cancelled = false
@@ -161,7 +178,7 @@ export default function HomePage() {
                   className="home-char-card"
                   onClick={() => handleCardClick(card)}
                 >
-                  <Avatar name={name} size={48} />
+                  <Avatar name={name} size={48} src={cardAvatars[card.id || card.card_id]} />
                   <div className="home-char-card-text">
                     <span className="home-char-name">{name}</span>
                     {identity && <span className="home-char-identity">{truncate(identity, 20)}</span>}
@@ -186,7 +203,7 @@ export default function HomePage() {
                 onClick={() => handleResume(s.id)}
                 disabled={resumingId === s.id}
               >
-                <Avatar name={s.character_name || '?'} size={36} />
+                <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
                 <div className="home-recent-body">
                   <span className="home-recent-name">{s.character_name}</span>
                   <span className="home-recent-preview">{previewText(s.last_message)}</span>
