@@ -192,3 +192,20 @@ async def list_groups(
     """列出用户的群聊会话。"""
     groups = await storage.list_group_sessions(user["id"])
     return {"groups": groups}
+
+
+@router.delete("/{group_id}")
+async def delete_group(
+    group_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """删除群聊会话及所有消息。"""
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+    await storage.delete_group_session(group_id)
+    _group_sessions.pop(group_id, None)
+    return {"ok": True}

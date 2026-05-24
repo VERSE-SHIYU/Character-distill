@@ -88,6 +88,7 @@ export default function HistoryPanel() {
   const [groupDetail, setGroupDetail] = useState(null)
   const [groupDetailLoading, setGroupDetailLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [deleteGroupId, setDeleteGroupId] = useState(null)
   const [purgeConfirmId, setPurgeConfirmId] = useState(null)
   const [clearAllConfirm, setClearAllConfirm] = useState(false)
   const [purgeTrashConfirm, setPurgeTrashConfirm] = useState(false)
@@ -231,6 +232,16 @@ export default function HistoryPanel() {
       setItems((prev) => prev.filter((it) => it.id !== sessionId))
     } catch (err) {
       console.error('[HistoryPanel] delete failed:', err)
+      setError(err.message || '删除失败')
+    }
+  }
+
+  const handleDeleteGroup = async (groupId) => {
+    try {
+      await fetchWithTimeout(`/api/group/${groupId}`, { method: 'DELETE' })
+      setGroupItems((prev) => prev.filter((g) => g.id !== groupId))
+    } catch (err) {
+      console.error('[HistoryPanel] group delete failed:', err)
       setError(err.message || '删除失败')
     }
   }
@@ -638,21 +649,34 @@ export default function HistoryPanel() {
               {groupItems.map((g) => {
                 const cardIds = parseCardIds(g.card_ids)
                 return (
-                  <button
-                    key={g.id}
-                    type="button"
-                    className="history-item"
-                    onClick={() => openGroupDetail(g)}
-                    style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
-                  >
-                    <div className="history-item-body">
-                      <div className="history-item-head">
-                        <span className="history-item-name">{g.name || '未命名群聊'}</span>
-                        <span className="history-item-time">{formatTime(g.created_at)}</span>
-                      </div>
-                      <p className="history-item-preview">{cardIds.length} 个角色</p>
+                  <div key={g.id} className="history-swipe-wrapper">
+                    <div className="history-swipe-actions">
+                      <button
+                        type="button"
+                        className="history-swipe-delete"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeleteGroupId(g.id)
+                        }}
+                      >
+                        删除
+                      </button>
                     </div>
-                  </button>
+                    <button
+                      type="button"
+                      className="history-item"
+                      onClick={() => openGroupDetail(g)}
+                      style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
+                    >
+                      <div className="history-item-body">
+                        <div className="history-item-head">
+                          <span className="history-item-name">{g.name || '未命名群聊'}</span>
+                          <span className="history-item-time">{formatTime(g.created_at)}</span>
+                        </div>
+                        <p className="history-item-preview">{cardIds.length} 个角色</p>
+                      </div>
+                    </button>
+                  </div>
                 )
               })}
             </div>
@@ -671,6 +695,19 @@ export default function HistoryPanel() {
           await handleDelete(id)
         }}
         onCancel={() => setDeleteConfirmId(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={!!deleteGroupId}
+        title="删除群聊"
+        message="确定删除该群聊及其所有消息？此操作不可恢复。"
+        confirmText="删除"
+        onConfirm={async () => {
+          const id = deleteGroupId
+          setDeleteGroupId(null)
+          await handleDeleteGroup(id)
+        }}
+        onCancel={() => setDeleteGroupId(null)}
         danger
       />
       <ConfirmModal
