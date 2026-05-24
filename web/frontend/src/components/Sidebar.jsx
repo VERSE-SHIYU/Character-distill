@@ -49,10 +49,10 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     switch (id) {
       case 'workbench': setView('text'); break
       case 'discover': setView('market'); break
-      case 'mine': setView(unreadCount > 0 ? 'messages' : 'profile'); break
+      case 'mine': setView('profile'); break
       default: setView(id)
     }
-  }, [setView, unreadCount])
+  }, [setView])
 
   const navItems = authUser?.is_admin
     ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理' }]
