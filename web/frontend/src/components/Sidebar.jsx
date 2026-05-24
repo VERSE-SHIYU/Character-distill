@@ -42,7 +42,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
       case 'workbench': return ['text', 'character', 'chat'].includes(currentView)
       case 'market': return ['market', 'author', 'textDetail'].includes(currentView)
       case 'history': return currentView === 'history'
-      case 'mine': return ['profile', 'settings', 'voice', 'messages', 'admin'].includes(currentView)
+      case 'mine': return ['mine', 'messages', 'admin'].includes(currentView)
       default: return currentView === id
     }
   }
@@ -50,7 +50,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const handleNav = useCallback((id) => {
     switch (id) {
       case 'workbench': setView('text'); break
-      case 'mine': setView('profile'); break
+      case 'mine': setView('mine'); break
       default: setView(id)
     }
   }, [setView])
@@ -104,14 +104,24 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             type="button"
             className="sidebar-user-link"
             onClick={() => setView('profile')}
-            title="我的主页"
+            title="个人设置"
           >
-            <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={32} />
+            <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={38} />
             <span className="sidebar-user-name">{authUser.username}</span>
           </button>
-          <button className="sidebar-logout-btn" onClick={logout} title="退出登录">
-            退出
-          </button>
+          <div className="sidebar-user-actions">
+            <button
+              type="button"
+              className="sidebar-settings-btn"
+              onClick={() => setView('settings')}
+              title="设置"
+            >
+              ⚙️
+            </button>
+            <button className="sidebar-logout-btn" onClick={logout} title="退出登录">
+              退出
+            </button>
+          </div>
         </div>
       )}
     </aside>

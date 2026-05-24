@@ -11,7 +11,6 @@ export default function ProfilePage() {
   const loadUserAvatar = useAppStore((s) => s.loadUserAvatar)
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
   const setView = useAppStore((s) => s.setView)
-  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
 
   const [cropFile, setCropFile] = useState(null)
   const avatarInputRef = useRef(null)
@@ -36,19 +35,6 @@ export default function ProfilePage() {
   const [bindError, setBindError] = useState(false)
   const [showBindForm, setShowBindForm] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
-  const [showFollowing, setShowFollowing] = useState(false)
-
-  // Following
-  const [following, setFollowing] = useState([])
-  const [followingLoading, setFollowingLoading] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
-
-  useEffect(() => {
-    fetchWithTimeout('/api/messages/unread-count')
-      .then((r) => r.json())
-      .then((d) => setUnreadCount(d.count ?? 0))
-      .catch(() => {})
-  }, [])
 
   useEffect(() => {
     loadUserAvatar()
@@ -65,24 +51,12 @@ export default function ProfilePage() {
       .catch(() => {})
   }, [])
 
-  // Load following list
-  useEffect(() => {
-    setFollowingLoading(true)
-    fetchWithTimeout('/api/market/my/following')
-      .then((r) => r.json())
-      .then((data) => setFollowing(data.users || []))
-      .catch(() => {})
-      .finally(() => setFollowingLoading(false))
-  }, [])
-
   const togglePanel = (panel) => {
     const nextPassword = panel === 'password' ? !showPasswordForm : false
     const nextBind = panel === 'bind' ? !showBindForm : false
-    const nextFollowing = panel === 'following' ? !showFollowing : false
     setShowPasswordForm(nextPassword)
     setShowBindForm(nextBind)
-    setShowFollowing(nextFollowing)
-    if (nextPassword || nextBind || nextFollowing) {
+    if (nextPassword || nextBind) {
       setTimeout(() => {
         const el = document.querySelector('.profile-card:last-of-type')
         el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -250,20 +224,11 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* 3×2 功能网格 */}
-      <div className="profile-grid">
-        <button className="profile-grid-item" onClick={() => setView('messages')}>
-          <span className="profile-grid-icon">{'\u{1F4E8}'}</span>
-          <span className="profile-grid-label">私信</span>
-          {unreadCount > 0 && <span className="profile-grid-badge">{unreadCount}</span>}
-        </button>
+      {/* 3项网格：音色/密码/邮箱 */}
+      <div className="profile-grid profile-grid-3">
         <button className="profile-grid-item" onClick={() => setView('voice')}>
           <span className="profile-grid-icon">{'\u{1F399}'}</span>
           <span className="profile-grid-label">音色管理</span>
-        </button>
-        <button className="profile-grid-item" onClick={() => setView('settings')}>
-          <span className="profile-grid-icon">⚙️</span>
-          <span className="profile-grid-label">设置</span>
         </button>
         <button className="profile-grid-item" onClick={() => togglePanel('password')}>
           <span className="profile-grid-icon">{'\u{1F512}'}</span>
@@ -271,14 +236,8 @@ export default function ProfilePage() {
         </button>
         <button className="profile-grid-item" onClick={() => togglePanel('bind')}>
           <span className="profile-grid-icon">{'\u{1F4E7}'}</span>
-          <span className="profile-grid-label">
-            {email ? '换绑邮箱' : '绑定邮箱'}
-          </span>
+          <span className="profile-grid-label">{email ? '换绑邮箱' : '绑定邮箱'}</span>
           {emailVerified && <span className="profile-grid-badge-ok">✓</span>}
-        </button>
-        <button className="profile-grid-item" onClick={() => togglePanel('following')}>
-          <span className="profile-grid-icon">{'\u{2B50}'}</span>
-          <span className="profile-grid-label">我的关注</span>
         </button>
       </div>
 
@@ -391,33 +350,6 @@ export default function ProfilePage() {
               确认绑定
             </button>
           </div>
-        </div>
-      )}
-
-      {/* 展开区域：我的关注 */}
-      {showFollowing && (
-        <div className="profile-card">
-          <h2 className="profile-section-title">我的关注</h2>
-          {followingLoading ? (
-            <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
-          ) : following.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>还没有关注任何人</p>
-          ) : (
-            <div className="market-grid" style={{ marginTop: 8 }}>
-              {following.map((u) => (
-                <button
-                  key={u.id}
-                  type="button"
-                  className="market-card"
-                  onClick={() => { setAuthorUserId(u.id); setView('author') }}
-                >
-                  <div className="market-card-body">
-                    <div className="market-card-name">{u.username}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

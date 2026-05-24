@@ -5518,6 +5518,26 @@ select.settings-input {
   background: rgba(var(--accent-rgb), 0.1);
 }
 
+.sidebar-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-settings-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.18s;
+}
+
+.sidebar-settings-btn:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
 .sidebar-logout-btn:hover {
   background: rgba(231, 76, 60, 0.08);
   border-color: rgba(231, 76, 60, 0.3);
@@ -6030,6 +6050,10 @@ select.settings-input {
   right: 8px;
   font-size: 12px;
   color: #5a9c5e;
+}
+
+.profile-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 @media (max-width: 768px) {

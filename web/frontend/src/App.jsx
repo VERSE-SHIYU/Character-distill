@@ -18,6 +18,7 @@ import AuthorPage from './components/AuthorPage'
 import GroupChatPage from './components/GroupChatPage'
 import TextDetailPage from './components/TextDetailPage'
 import MessagesPage from './components/MessagesPage'
+import MinePage from './components/MinePage'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -36,6 +37,7 @@ const PANELS = {
   groupChat: GroupChatPage,
   textDetail: TextDetailPage,
   messages: MessagesPage,
+  mine: MinePage,
 }
 
 function MainContent() {
