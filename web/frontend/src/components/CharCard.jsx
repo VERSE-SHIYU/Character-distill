@@ -490,20 +490,16 @@ function CardDetail({ card, textId }) {
 
     // Build a copy instead of mutating card (which came from Zustand store)
     const chatCard = { ...card }
-
-    if (role) {
-      const updatedData = { ...data, first_message: '…' }
-      chatCard.card_json = typeof card.card_json === 'string'
-        ? JSON.stringify(updatedData)
-        : { ...card.card_json, first_message: '…' }
-      chatCard.first_message = '…'
-    }
+    const updatedData = { ...data, first_message: '…' }
+    chatCard.card_json = typeof card.card_json === 'string'
+      ? JSON.stringify(updatedData)
+      : { ...card.card_json, first_message: '…' }
+    chatCard.first_message = '…'
 
     startChat(chatCard).then(() => {
-      if (!role || !originalFirstMessage) return
       postJSON('/api/distill/generate-opening', {
         card_json: data,
-        user_role: role,
+        user_role: role || '',
       }, 30000)
         .then((res) => {
           const opening = res.opening || originalFirstMessage
