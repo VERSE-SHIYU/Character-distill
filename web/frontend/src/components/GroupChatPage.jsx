@@ -6,6 +6,11 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { loadCardAvatar } from '../store/db'
 
+function parseCardIds(raw) {
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw || '[]') } catch { return [] }
+}
+
 export default function GroupChatPage() {
   const texts = useAppStore((s) => s.texts)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
@@ -74,7 +79,7 @@ export default function GroupChatPage() {
   }
 
   function enterGroup(group) {
-    const cardIds = JSON.parse(group.card_ids || '[]')
+    const cardIds = parseCardIds(group.card_ids)
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
     const who = userRole || authUser?.username || '用户'
