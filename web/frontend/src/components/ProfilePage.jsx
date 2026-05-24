@@ -406,6 +406,10 @@ export default function ProfilePage() {
             {'\u{1F4E8}'} 私信 {unreadCount > 0 && <span className="sidebar-item-badge" style={{ marginLeft: 8 }}>{unreadCount}</span>}
           </button>
           <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => setView('history')}>
+            {'\u{1F4CB}'} 历史记录
+          </button>
+          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
             onClick={() => setView('voice')}>
             {'\u{1F399}'} 音色管理
           </button>

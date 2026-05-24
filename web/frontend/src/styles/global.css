@@ -644,7 +644,7 @@ body {
   width: 32px;
   height: 32px;
   border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: rgba(255, 255, 255, 0.5);
   color: var(--charcoal-dim);
   font-size: 14px;
@@ -749,6 +749,13 @@ body {
 .sidebar-item-disabled {
   opacity: 0.35;
   cursor: pointer;
+}
+
+.sidebar-chat-resume {
+  margin-top: 2px;
+  border: 1px dashed var(--glass-border);
+  border-radius: 12px;
+  opacity: 0.8;
 }
 
 .sidebar-item-disabled:hover {
@@ -943,7 +950,7 @@ body {
   padding: 0 24px;
   background: linear-gradient(135deg, var(--primary), var(--primary-hover));
   border: none;
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -980,7 +987,7 @@ body {
   backdrop-filter: blur(12px) saturate(160%);
   -webkit-backdrop-filter: blur(12px) saturate(160%);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -2520,7 +2527,7 @@ body {
   width: 34px;
   height: 34px;
   border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: rgba(255, 255, 255, 0.5);
   font-size: 15px;
   cursor: pointer;
@@ -3380,7 +3387,7 @@ body {
   height: 34px;
   padding: 0 14px;
   border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: rgba(255, 255, 255, 0.5);
   font: inherit;
   font-size: 12px;
@@ -3439,7 +3446,7 @@ body {
   padding: 0 14px;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   cursor: pointer;
   font: inherit;
 }
@@ -3467,7 +3474,7 @@ body {
   padding: 0 22px;
   font-size: 13px;
   font-weight: 600;
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   border: 1px solid rgba(220, 60, 60, 0.3);
   background: rgba(231, 76, 60, 0.9);
   color: #fff;
@@ -3482,7 +3489,7 @@ body {
   padding: 0 14px;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   border: 1px solid rgba(220, 60, 60, 0.3);
   background: rgba(220, 60, 60, 0.08);
   color: #a03030;
@@ -3679,7 +3686,7 @@ select.settings-input {
   height: 32px;
   padding: 0 8px;
   border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: rgba(255, 255, 255, 0.35);
   backdrop-filter: blur(10px) saturate(180%);
   -webkit-backdrop-filter: blur(10px) saturate(180%);
@@ -5428,7 +5435,7 @@ select.settings-input {
   flex-shrink: 0;
   padding: 8px 14px;
   border: 1px solid var(--pill-border);
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: var(--card-bg);
   color: var(--text-primary);
   font-size: 13px;
@@ -5768,7 +5775,7 @@ select.settings-input {
 .invite-generate-btn {
   padding: 9px 22px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--btn-radius);
   background: var(--accent);
   color: #fff;
   font-size: 14px;

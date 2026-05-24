@@ -17,6 +17,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const startChat = useAppStore((s) => s.startChat)
   const authUser = useAppStore((s) => s.authUser)
   const logout = useAppStore((s) => s.logout)
+  const currentCard = useAppStore((s) => s.currentCard)
+  const sessionId = useAppStore((s) => s.sessionId)
   const [unreadCount, setUnreadCount] = useState(0)
 
   const isVisible = open || pinned
@@ -47,10 +49,10 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     switch (id) {
       case 'workbench': setView('text'); break
       case 'discover': setView('market'); break
-      case 'mine': setView('profile'); break
+      case 'mine': setView(unreadCount > 0 ? 'messages' : 'profile'); break
       default: setView(id)
     }
-  }, [setView])
+  }, [setView, unreadCount])
 
   const navItems = authUser?.is_admin
     ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理' }]
@@ -84,6 +86,12 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               )}
             </button>
           ))}
+          {isActive('workbench') && currentView !== 'chat' && currentCard && sessionId && (
+            <button type="button" className="sidebar-item sidebar-chat-resume" onClick={() => setView('chat')}>
+              <span className="sidebar-item-icon">{'\u{1F4AC}'}</span>
+              <span className="sidebar-item-label">继续对话</span>
+            </button>
+          )}
         </nav>
       )}
 

@@ -365,14 +365,14 @@ export default function MarketPage() {
                 决定如何放置这个角色：
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <button className="btn-primary" style={{ textAlign: 'center' }} onClick={() => {
+                <button className="btn-primary" onClick={() => {
                   const card = forkCard
                   setForkCard(null)
                   doFork(card, currentTextId)
                 }}>
                   {'\u{1F4D6}'} 挂载到当前文本
                 </button>
-                <button className="btn-secondary" style={{ textAlign: 'center' }} onClick={() => {
+                <button className="btn-secondary" onClick={() => {
                   const card = forkCard
                   setForkCard(null)
                   doFork(card, '')
