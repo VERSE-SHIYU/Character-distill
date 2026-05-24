@@ -603,6 +603,7 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
           card_id: card.id || card.card_id,
+          user_role: get().userRole,
         }, 120000, abort.signal)
         sessionId = result.session_id
       } catch (err) {
@@ -657,6 +658,7 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
           card_id: cardId,
+          user_role: get().userRole,
         }, undefined, abort.signal)
         sessionId = result.session_id
         // Use dynamically generated opening line from API response
@@ -886,7 +888,7 @@ const useAppStore = create((set, get) => ({
       }))
       set({
         sessionId: session.id || sessionId,
-        userRole: session.user_role || get().userRole,
+        userRole: session.user_role || '',
         messages,
         currentCard: {
           id: session.card_id,
