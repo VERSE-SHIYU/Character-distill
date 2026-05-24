@@ -283,7 +283,7 @@ export default function GroupChatPage() {
           {!loading && groups.length > 0 && (
             <div className="group-list">
               {groups.map((g) => {
-                const cardIds = JSON.parse(g.card_ids || '[]')
+                const cardIds = parseCardIds(g.card_ids)
                 const names = cardIds
                   .map((id) => allCards.find((c) => (c.id || c.card_id) === id)?.name)
                   .filter(Boolean)
