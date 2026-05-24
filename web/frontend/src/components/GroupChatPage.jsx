@@ -356,7 +356,7 @@ export default function GroupChatPage() {
                         }}
                         onClick={() => { setSelectedTextId(t.id); setSelectedCardIds([]) }}
                       >
-                        {t.name || t.id.slice(0, 8)}
+                        {t.title || t.filename || t.id.slice(0, 8)}
                       </button>
                     ))
                 )}
