@@ -386,8 +386,7 @@ export default function ProfilePage() {
                 key={u.id}
                 type="button"
                 className="market-card"
-                style={{ cursor: 'pointer', textAlign: 'left' }}
-                onClick={() => { setAuthorUserId(u.id); setView('author') }}
+                               onClick={() => { setAuthorUserId(u.id); setView('author') }}
               >
                 <div className="market-card-body">
                   <div className="market-card-name">{u.username}</div>
@@ -401,20 +400,16 @@ export default function ProfilePage() {
       <div className="profile-card">
         <h2 className="profile-section-title">更多</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => setView('messages')}>
+          <button className="market-card"            onClick={() => setView('messages')}>
             {'\u{1F4E8}'} 私信 {unreadCount > 0 && <span className="sidebar-item-badge" style={{ marginLeft: 8 }}>{unreadCount}</span>}
           </button>
-          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => setView('history')}>
+          <button className="market-card"            onClick={() => setView('history')}>
             {'\u{1F4CB}'} 历史记录
           </button>
-          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => setView('voice')}>
+          <button className="market-card"            onClick={() => setView('voice')}>
             {'\u{1F399}'} 音色管理
           </button>
-          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
-            onClick={() => setView('settings')}>
+          <button className="market-card"            onClick={() => setView('settings')}>
             ⚙️ 设置
           </button>
         </div>
