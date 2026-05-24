@@ -9,6 +9,7 @@ import ConfirmModal from './common/ConfirmModal'
 export default function AuthorPage() {
   const setView = useAppStore((s) => s.setView)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
+  const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const authorUserId = useAppStore((s) => s.authorUserId)
   const authUser = useAppStore((s) => s.authUser)
   const startChat = useAppStore((s) => s.startChat)
@@ -137,7 +138,7 @@ export default function AuthorPage() {
                   type="button"
                   className="btn-ghost"
                   style={{ marginLeft: 'auto' }}
-                  onClick={() => { setMessageTargetUserId(authorUserId); setView('messages') }}
+                  onClick={() => { setMessageTargetUserId(authorUserId); setMessageTargetUsername(author.username); setView('messages') }}
                 >
                   发私信
                 </button>

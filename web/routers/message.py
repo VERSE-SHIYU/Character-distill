@@ -52,6 +52,9 @@ async def send_message(
         raise HTTPException(400, "消息不能为空")
     if body.receiver_id == user["id"]:
         raise HTTPException(400, "不能给自己发消息")
+    receiver = await storage.get_user_by_id(body.receiver_id)
+    if not receiver:
+        raise HTTPException(404, "用户不存在")
     msg = await storage.send_message(user["id"], body.receiver_id, body.content.strip())
     return {"message": msg}
 

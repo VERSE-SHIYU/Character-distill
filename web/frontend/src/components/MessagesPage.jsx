@@ -11,6 +11,8 @@ export default function MessagesPage() {
   const authUser = useAppStore((s) => s.authUser)
   const messageTargetUserId = useAppStore((s) => s.messageTargetUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
+  const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
+  const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
 
   const [conversations, setConversations] = useState([])
   const [convLoading, setConvLoading] = useState(true)
@@ -96,10 +98,12 @@ export default function MessagesPage() {
   useEffect(() => {
     if (messageTargetUserId) {
       setActiveOtherId(messageTargetUserId)
+      if (messageTargetUsername) setActiveUsername(messageTargetUsername)
       loadMessages(messageTargetUserId)
       markRead(messageTargetUserId)
       setMobileView('chat')
       setMessageTargetUserId(null)
+      setMessageTargetUsername(null)
     }
   }, [messageTargetUserId])
 
