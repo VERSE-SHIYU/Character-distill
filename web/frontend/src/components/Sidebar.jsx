@@ -7,7 +7,8 @@ import { fetchWithTimeout } from '../api/client'
 const NAV_ITEMS = [
   { id: 'home',      icon: '\u{1F3E0}', label: '首页' },
   { id: 'workbench', icon: '\u{1F4DD}', label: '工作台' },
-  { id: 'discover',  icon: '\u{1F30D}', label: '发现' },
+  { id: 'market',    icon: '\u{1F30D}', label: '市场' },
+  { id: 'history',   icon: '\u{1F4CB}', label: '记录' },
   { id: 'mine',      icon: '\u{1F464}', label: '我的' },
 ]
 
@@ -39,7 +40,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   function isActive(id) {
     switch (id) {
       case 'workbench': return ['text', 'character', 'chat'].includes(currentView)
-      case 'discover': return ['market', 'history', 'author', 'textDetail'].includes(currentView)
+      case 'market': return ['market', 'author', 'textDetail'].includes(currentView)
+      case 'history': return currentView === 'history'
       case 'mine': return ['profile', 'settings', 'voice', 'messages', 'admin'].includes(currentView)
       default: return currentView === id
     }
@@ -48,8 +50,6 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const handleNav = useCallback((id) => {
     switch (id) {
       case 'workbench': setView('text'); break
-      case 'discover': setView('market'); break
-      case 'mine': setView('profile'); break
       default: setView(id)
     }
   }, [setView])
@@ -81,7 +81,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             >
               <span className="sidebar-item-icon">{icon}</span>
               <span className="sidebar-item-label">{label}</span>
-              {id === 'mine' && unreadCount > 0 && (
+              {id === 'history' && unreadCount > 0 && (
                 <span className="sidebar-item-badge">{unreadCount}</span>
               )}
             </button>

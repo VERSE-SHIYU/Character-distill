@@ -35,6 +35,8 @@ export default function ProfilePage() {
   const [bindMsg, setBindMsg] = useState('')
   const [bindError, setBindError] = useState(false)
   const [showBindForm, setShowBindForm] = useState(false)
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [showFollowing, setShowFollowing] = useState(false)
 
   // Following
   const [following, setFollowing] = useState([])
@@ -199,9 +201,8 @@ export default function ProfilePage() {
 
   return (
     <div className="profile-page">
+      {/* 顶部：个人资料卡 */}
       <div className="profile-card">
-        <h2 className="profile-section-title">个人资料</h2>
-
         <div className="profile-avatar-section">
           <button
             type="button"
@@ -224,7 +225,7 @@ export default function ProfilePage() {
           />
           <div className="profile-avatar-info">
             <span className="profile-username">{authUser?.username || '—'}</span>
-            <span className="profile-avatar-hint">点击头像更换，支持裁剪和压缩</span>
+            <span className="profile-avatar-hint">ID: {authUser?.id || '—'} · 注册于 {createdDate}</span>
             {avatarMsg && (
               <span className={`profile-inline-msg${avatarSaving ? '' : ' success'}`}>
                 {avatarMsg}
@@ -232,188 +233,178 @@ export default function ProfilePage() {
             )}
           </div>
         </div>
+      </div>
 
-        <div className="profile-details">
-          <div className="profile-detail-row">
-            <span className="profile-detail-label">用户 ID</span>
-            <span className="profile-detail-value mono">{authUser?.id || '—'}</span>
-          </div>
-          <div className="profile-detail-row">
-            <span className="profile-detail-label">邮箱</span>
-            <span className="profile-detail-value">
-              {email ? (
-                <span>
-                  {email}
-                  {emailVerified && <span className="profile-verified-badge">已验证</span>}
-                  <button type="button" className="profile-link-btn" onClick={() => { setShowBindForm(!showBindForm); setBindEmail(''); setBindCode(''); setBindMsg('') }}>
-                    {' '}换绑
-                  </button>
-                </span>
-              ) : (
-                <button type="button" className="profile-link-btn" onClick={() => setShowBindForm(!showBindForm)}>
-                  绑定邮箱
+      {/* 3×2 功能网格 */}
+      <div className="profile-grid">
+        <button className="profile-grid-item" onClick={() => setView('messages')}>
+          <span className="profile-grid-icon">{'\u{1F4E8}'}</span>
+          <span className="profile-grid-label">私信</span>
+          {unreadCount > 0 && <span className="profile-grid-badge">{unreadCount}</span>}
+        </button>
+        <button className="profile-grid-item" onClick={() => setView('voice')}>
+          <span className="profile-grid-icon">{'\u{1F399}'}</span>
+          <span className="profile-grid-label">音色管理</span>
+        </button>
+        <button className="profile-grid-item" onClick={() => setView('settings')}>
+          <span className="profile-grid-icon">⚙️</span>
+          <span className="profile-grid-label">设置</span>
+        </button>
+        <button className="profile-grid-item" onClick={() => setShowPasswordForm(!showPasswordForm)}>
+          <span className="profile-grid-icon">{'\u{1F512}'}</span>
+          <span className="profile-grid-label">修改密码</span>
+        </button>
+        <button className="profile-grid-item" onClick={() => setShowBindForm(!showBindForm)}>
+          <span className="profile-grid-icon">{'\u{1F4E7}'}</span>
+          <span className="profile-grid-label">
+            {email ? '换绑邮箱' : '绑定邮箱'}
+          </span>
+          {emailVerified && <span className="profile-grid-badge-ok">✓</span>}
+        </button>
+        <button className="profile-grid-item" onClick={() => setShowFollowing(!showFollowing)}>
+          <span className="profile-grid-icon">{'\u{2B50}'}</span>
+          <span className="profile-grid-label">我的关注</span>
+        </button>
+      </div>
+
+      {/* 展开区域：修改密码 */}
+      {showPasswordForm && (
+        <div className="profile-card">
+          <h2 className="profile-section-title">修改密码</h2>
+          <form className="profile-password-form" onSubmit={handlePasswordChange}>
+            <div className="profile-field">
+              <label className="profile-field-label">当前密码</label>
+              <input
+                type="password"
+                className="profile-input"
+                value={oldPw}
+                onChange={(e) => setOldPw(e.target.value)}
+                required
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="profile-field">
+              <label className="profile-field-label">新密码</label>
+              <input
+                type="password"
+                className="profile-input"
+                value={newPw}
+                onChange={(e) => setNewPw(e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="profile-field">
+              <label className="profile-field-label">确认新密码</label>
+              <input
+                type="password"
+                className="profile-input"
+                value={confirmPw}
+                onChange={(e) => setConfirmPw(e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+              />
+            </div>
+            {pwMsg && (
+              <span className={`profile-inline-msg${pwError ? ' error' : ' success'}`}>
+                {pwMsg}
+              </span>
+            )}
+            <button
+              type="submit"
+              className="btn-primary profile-save-btn"
+              disabled={pwSubmitting || !oldPw || !newPw || !confirmPw}
+            >
+              {pwSubmitting ? '提交中…' : '修改密码'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* 展开区域：邮箱绑定 */}
+      {showBindForm && (
+        <div className="profile-card">
+          <h2 className="profile-section-title">{email ? '换绑邮箱' : '绑定邮箱'}</h2>
+          <div className="profile-bind-email-form">
+            <div className="profile-field">
+              <label className="profile-field-label">新邮箱</label>
+              <div className="profile-code-field">
+                <input
+                  type="email"
+                  className="profile-input"
+                  value={bindEmail}
+                  onChange={(e) => setBindEmail(e.target.value)}
+                  placeholder="输入邮箱地址"
+                  autoComplete="email"
+                />
+              </div>
+            </div>
+            <div className="profile-field">
+              <label className="profile-field-label">验证码</label>
+              <div className="profile-code-field">
+                <input
+                  type="text"
+                  className="profile-input"
+                  value={bindCode}
+                  onChange={(e) => setBindCode(e.target.value)}
+                  placeholder="输入验证码"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="login-code-btn"
+                  disabled={bindCountdown > 0}
+                  onClick={handleSendBindCode}
+                >
+                  {bindCountdown > 0 ? `${bindCountdown}s` : bindSent ? '重新发送' : '获取验证码'}
                 </button>
-              )}
-            </span>
+              </div>
+            </div>
+            {bindMsg && (
+              <span className={`profile-inline-msg${bindError ? ' error' : ' success'}`}>
+                {bindMsg}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn-primary profile-save-btn"
+              disabled={!bindEmail || !bindCode}
+              onClick={handleBindEmail}
+            >
+              确认绑定
+            </button>
           </div>
-          {showBindForm && (
-            <div className="profile-bind-email-form">
-              <div className="profile-field">
-                <label className="profile-field-label">新邮箱</label>
-                <div className="profile-code-field">
-                  <input
-                    type="email"
-                    className="profile-input"
-                    value={bindEmail}
-                    onChange={(e) => setBindEmail(e.target.value)}
-                    placeholder="输入邮箱地址"
-                    autoComplete="email"
-                  />
-                </div>
-              </div>
-              <div className="profile-field">
-                <label className="profile-field-label">验证码</label>
-                <div className="profile-code-field">
-                  <input
-                    type="text"
-                    className="profile-input"
-                    value={bindCode}
-                    onChange={(e) => setBindCode(e.target.value)}
-                    placeholder="输入验证码"
-                    autoComplete="off"
-                  />
-                  <button
-                    type="button"
-                    className="login-code-btn"
-                    disabled={bindCountdown > 0}
-                    onClick={handleSendBindCode}
-                  >
-                    {bindCountdown > 0 ? `${bindCountdown}s` : bindSent ? '重新发送' : '获取验证码'}
-                  </button>
-                </div>
-              </div>
-              {bindMsg && (
-                <span className={`profile-inline-msg${bindError ? ' error' : ' success'}`}>
-                  {bindMsg}
-                </span>
-              )}
-              <button
-                type="button"
-                className="btn-primary profile-save-btn"
-                disabled={!bindEmail || !bindCode}
-                onClick={handleBindEmail}
-              >
-                确认绑定
-              </button>
+        </div>
+      )}
+
+      {/* 展开区域：我的关注 */}
+      {showFollowing && (
+        <div className="profile-card">
+          <h2 className="profile-section-title">我的关注</h2>
+          {followingLoading ? (
+            <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
+          ) : following.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>还没有关注任何人</p>
+          ) : (
+            <div className="market-grid" style={{ marginTop: 8 }}>
+              {following.map((u) => (
+                <button
+                  key={u.id}
+                  type="button"
+                  className="market-card"
+                  onClick={() => { setAuthorUserId(u.id); setView('author') }}
+                >
+                  <div className="market-card-body">
+                    <div className="market-card-name">{u.username}</div>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
-          <div className="profile-detail-row">
-            <span className="profile-detail-label">注册时间</span>
-            <span className="profile-detail-value">{createdDate}</span>
-          </div>
-          <div className="profile-detail-row">
-            <span className="profile-detail-label">角色</span>
-            <span className="profile-detail-value">
-              {authUser?.is_admin ? '管理员' : '普通用户'}
-            </span>
-          </div>
         </div>
-      </div>
-
-      <div className="profile-card">
-        <h2 className="profile-section-title">修改密码</h2>
-        <form className="profile-password-form" onSubmit={handlePasswordChange}>
-          <div className="profile-field">
-            <label className="profile-field-label">当前密码</label>
-            <input
-              type="password"
-              className="profile-input"
-              value={oldPw}
-              onChange={(e) => setOldPw(e.target.value)}
-              required
-              autoComplete="current-password"
-            />
-          </div>
-          <div className="profile-field">
-            <label className="profile-field-label">新密码</label>
-            <input
-              type="password"
-              className="profile-input"
-              value={newPw}
-              onChange={(e) => setNewPw(e.target.value)}
-              required
-              minLength={8}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="profile-field">
-            <label className="profile-field-label">确认新密码</label>
-            <input
-              type="password"
-              className="profile-input"
-              value={confirmPw}
-              onChange={(e) => setConfirmPw(e.target.value)}
-              required
-              minLength={8}
-              autoComplete="new-password"
-            />
-          </div>
-          {pwMsg && (
-            <span className={`profile-inline-msg${pwError ? ' error' : ' success'}`}>
-              {pwMsg}
-            </span>
-          )}
-          <button
-            type="submit"
-            className="btn-primary profile-save-btn"
-            disabled={pwSubmitting || !oldPw || !newPw || !confirmPw}
-          >
-            {pwSubmitting ? '提交中…' : '修改密码'}
-          </button>
-        </form>
-      </div>
-
-      <div className="profile-card">
-        <h2 className="profile-section-title">我的关注</h2>
-        {followingLoading ? (
-          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
-        ) : following.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>还没有关注任何人</p>
-        ) : (
-          <div className="market-grid" style={{ marginTop: 8 }}>
-            {following.map((u) => (
-              <button
-                key={u.id}
-                type="button"
-                className="market-card"
-                               onClick={() => { setAuthorUserId(u.id); setView('author') }}
-              >
-                <div className="market-card-body">
-                  <div className="market-card-name">{u.username}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div className="profile-card">
-        <h2 className="profile-section-title">更多</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <button className="market-card"            onClick={() => setView('messages')}>
-            {'\u{1F4E8}'} 私信 {unreadCount > 0 && <span className="sidebar-item-badge" style={{ marginLeft: 8 }}>{unreadCount}</span>}
-          </button>
-          <button className="market-card"            onClick={() => setView('history')}>
-            {'\u{1F4CB}'} 历史记录
-          </button>
-          <button className="market-card"            onClick={() => setView('voice')}>
-            {'\u{1F399}'} 音色管理
-          </button>
-          <button className="market-card"            onClick={() => setView('settings')}>
-            ⚙️ 设置
-          </button>
-        </div>
-      </div>
+      )}
 
       <ImageCropModal
         file={cropFile}

@@ -159,11 +159,6 @@ export default function MarketPage() {
         <p className="panel-desc">浏览其他用户分享的角色卡</p>
       </header>
 
-      <div className="history-tab-bar" style={{ borderBottom: '1px solid var(--glass-border)', paddingBottom: 8 }}>
-        <button className="history-tab active">角色市场</button>
-        <button className="history-tab" onClick={() => setView('history')}>历史记录</button>
-      </div>
-
       {/* Search + sort toolbar */}
       <div className="market-toolbar">
         <form className="market-search-form" onSubmit={handleSearch}>

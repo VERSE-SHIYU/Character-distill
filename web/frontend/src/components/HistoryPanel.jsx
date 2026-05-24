@@ -422,14 +422,6 @@ export default function HistoryPanel() {
         <p className="panel-desc">{trashMode ? '回收站 — 已删除的会话' : '搜索、筛选并管理过往对话'}</p>
       </header>
 
-      {/* Discover-level tab bar */}
-      {!trashMode && (
-        <div className="history-tab-bar" style={{ marginBottom: 0, borderBottom: '1px solid var(--glass-border)', paddingBottom: 8 }}>
-          <button className="history-tab" onClick={() => setView('market')}>角色市场</button>
-          <button className="history-tab active">历史记录</button>
-        </div>
-      )}
-
       {/* Tab bar */}
       {!trashMode && (
         <div className="history-tab-bar">
