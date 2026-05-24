@@ -14,6 +14,7 @@ import LoginPage from './components/LoginPage'
 import AdminPanel from './components/AdminPanel'
 import ProfilePage from './components/ProfilePage'
 import MarketPage from './components/MarketPage'
+import AuthorPage from './components/AuthorPage'
 import GroupChatPage from './components/GroupChatPage'
 import DistillTaskBar from './components/DistillTaskBar'
 
@@ -29,6 +30,7 @@ const PANELS = {
   admin: AdminPanel,
   profile: ProfilePage,
   market: MarketPage,
+  author: AuthorPage,
   groupChat: GroupChatPage,
 }
 

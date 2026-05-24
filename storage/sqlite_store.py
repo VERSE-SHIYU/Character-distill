@@ -307,6 +307,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Voice to cards migration failed: {exc}")
 
+                    # Run 028_comments_follows migration (CREATE TABLE IF NOT EXISTS)
+                    cf_path = migrations_dir / "028_comments_follows.sql"
+                    if cf_path.exists():
+                        try:
+                            await conn.executescript(cf_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Comments/follows migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1898,3 +1907,115 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get session affinity failed: {exc}")
             return None
+
+    # ── Comments ──
+
+    async def get_comments(self, card_id: str) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, user_id, username, content, created_at FROM card_comments WHERE card_id = ? ORDER BY created_at DESC",
+                    (card_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get comments failed: {exc}")
+            return []
+
+    async def add_comment(self, card_id: str, user_id: str, username: str, content: str) -> dict:
+        import uuid
+        cid = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO card_comments (id, card_id, user_id, username, content) VALUES (?, ?, ?, ?, ?)",
+                    (cid, card_id, user_id, username, content),
+                )
+                await conn.commit()
+            return {"id": cid, "card_id": card_id, "user_id": user_id, "username": username, "content": content}
+        except Exception as exc:
+            print(f"[SQLiteStore] Add comment failed: {exc}")
+            raise
+
+    # ── Follows ──
+
+    async def get_followers(self, user_id: str) -> list[str]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT follower_id FROM user_follows WHERE following_id = ?", (user_id,)
+                )
+                rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get followers failed: {exc}")
+            return []
+
+    async def get_following(self, user_id: str) -> list[str]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT following_id FROM user_follows WHERE follower_id = ?", (user_id,)
+                )
+                rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get following failed: {exc}")
+            return []
+
+    async def toggle_follow(self, follower_id: str, following_id: str) -> dict:
+        try:
+            async with await self._connect() as conn:
+                # Check if already following
+                cursor = await conn.execute(
+                    "SELECT 1 FROM user_follows WHERE follower_id = ? AND following_id = ?",
+                    (follower_id, following_id),
+                )
+                exists = await cursor.fetchone()
+                if exists:
+                    await conn.execute(
+                        "DELETE FROM user_follows WHERE follower_id = ? AND following_id = ?",
+                        (follower_id, following_id),
+                    )
+                    await conn.commit()
+                    return {"following": False}
+                else:
+                    await conn.execute(
+                        "INSERT INTO user_follows (follower_id, following_id) VALUES (?, ?)",
+                        (follower_id, following_id),
+                    )
+                    await conn.commit()
+                    return {"following": True}
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle follow failed: {exc}")
+            return {"following": False}
+
+    # ── Author ──
+
+    async def get_user_by_id(self, user_id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username FROM users WHERE id = ?", (user_id,)
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user by id failed: {exc}")
+            return None
+
+    async def get_author_cards(self, user_id: str) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, name, card_json, forked_from, likes, created_at
+                       FROM cards WHERE user_id = ? AND visibility = 'public'
+                       ORDER BY created_at DESC""",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get author cards failed: {exc}")
+            return []

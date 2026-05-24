@@ -44,6 +44,8 @@ const useAppStore = create((set, get) => ({
   // ---- Navigation ----
 
   currentView: 'home',
+  authorUserId: null,
+  setAuthorUserId: (userId) => set({ authorUserId: userId }),
   setView: (view) => {
     const updates = { currentView: view }
     if (view === 'home' || view === 'text') updates.currentTextTitle = ''

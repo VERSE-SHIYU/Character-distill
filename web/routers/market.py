@@ -22,6 +22,10 @@ class VisibilityUpdate(BaseModel):
     visibility: str
 
 
+class CommentRequest(BaseModel):
+    content: str
+
+
 @router.get("/list")
 async def list_cards(
     request: Request,
@@ -110,3 +114,62 @@ async def set_visibility(
     if not ok:
         raise HTTPException(400, "visibility 必须是 'public' 或 'private'")
     return {"ok": True, "visibility": body.visibility}
+
+
+@router.get("/{card_id}/comments")
+async def list_comments(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get all comments for a card."""
+    comments = await storage.get_comments(card_id)
+    return {"comments": comments}
+
+
+@router.post("/{card_id}/comments")
+async def add_comment(
+    card_id: str,
+    body: CommentRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Add a comment to a card."""
+    if not body.content.strip():
+        raise HTTPException(400, "评论内容不能为空")
+    comment = await storage.add_comment(card_id, user["id"], user["username"], body.content.strip())
+    return comment
+
+
+@router.get("/author/{user_id}")
+async def get_author(
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get author profile and their public cards."""
+    author = await storage.get_user_by_id(user_id)
+    if not author:
+        raise HTTPException(404, "用户不存在")
+    cards = await storage.get_author_cards(user_id)
+    following_ids = await storage.get_following(user["id"])
+    return {
+        "author": author,
+        "cards": cards,
+        "is_following": user_id in following_ids,
+    }
+
+
+@router.post("/author/{user_id}/follow")
+async def toggle_follow_author(
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle follow/unfollow an author."""
+    if user_id == user["id"]:
+        raise HTTPException(400, "不能关注自己")
+    author = await storage.get_user_by_id(user_id)
+    if not author:
+        raise HTTPException(404, "用户不存在")
+    return await storage.toggle_follow(user["id"], user_id)

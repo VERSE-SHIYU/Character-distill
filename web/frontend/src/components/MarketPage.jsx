@@ -11,6 +11,9 @@ export default function MarketPage() {
   const startChat = useAppStore((s) => s.startChat)
   const loadCards = useAppStore((s) => s.loadCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
+  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
+  const setView = useAppStore((s) => s.setView)
+  const authUser = useAppStore((s) => s.authUser)
 
   const [cards, setCards] = useState([])
   const [total, setTotal] = useState(0)
@@ -21,6 +24,11 @@ export default function MarketPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [forkingId, setForkingId] = useState(null)
+  const [commentCardId, setCommentCardId] = useState(null)
+  const [comments, setComments] = useState([])
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentText, setCommentText] = useState('')
+  const [commentSending, setCommentSending] = useState(false)
 
   const fetchCards = useCallback(async (p, s, q) => {
     setLoading(true)
@@ -72,6 +80,43 @@ export default function MarketPage() {
       )
     } catch (err) {
       console.error('[Market] Like failed:', err)
+    }
+  }
+
+  const loadComments = async (cardId) => {
+    setCommentsLoading(true)
+    try {
+      const res = await fetchWithTimeout(`/api/market/${cardId}/comments`)
+      const data = await res.json()
+      setComments(data.comments || [])
+    } catch (err) {
+      console.error('[Market] Load comments failed:', err)
+    } finally {
+      setCommentsLoading(false)
+    }
+  }
+
+  const openComments = (cardId) => {
+    setCommentCardId(cardId)
+    setCommentText('')
+    loadComments(cardId)
+  }
+
+  const handleSendComment = async () => {
+    if (!commentText.trim() || !commentCardId) return
+    setCommentSending(true)
+    try {
+      await fetchWithTimeout(`/api/market/${commentCardId}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ content: commentText.trim() }),
+      })
+      setCommentText('')
+      await loadComments(commentCardId)
+    } catch (err) {
+      console.error('[Market] Send comment failed:', err)
+    } finally {
+      setCommentSending(false)
     }
   }
 
@@ -174,7 +219,20 @@ export default function MarketPage() {
                     <div className="market-card-name">{charName}</div>
                     {identity && <div className="market-card-identity">{identity}</div>}
                     <div className="market-card-meta">
-                      <span className="market-card-author">{'\u{1F464}'} {c.author_name || '匿名'}</span>
+                      <button
+                        type="button"
+                        className="market-card-author-link"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (c.user_id) {
+                            setAuthorUserId(c.user_id)
+                            setView('author')
+                          }
+                        }}
+                        title="查看作者主页"
+                      >
+                        {'\u{1F464}'} {c.author_name || '匿名'}
+                      </button>
                       <span className="market-card-likes">
                         <button
                           type="button"
@@ -188,14 +246,24 @@ export default function MarketPage() {
                       </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    className="btn-primary market-use-btn"
-                    onClick={() => handleUse(c)}
-                    disabled={forkingId === c.id}
-                  >
-                    {forkingId === c.id ? '添加中…' : '使用'}
-                  </button>
+                  <div className="market-card-actions">
+                    <button
+                      type="button"
+                      className="btn-ghost market-comment-btn"
+                      onClick={() => openComments(c.id)}
+                      title="评论"
+                    >
+                      {'\u{1F4AC}'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary market-use-btn"
+                      onClick={() => handleUse(c)}
+                      disabled={forkingId === c.id}
+                    >
+                      {forkingId === c.id ? '添加中…' : '使用'}
+                    </button>
+                  </div>
                 </div>
               )
             })}
@@ -224,6 +292,50 @@ export default function MarketPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Comment drawer */}
+      {commentCardId && (
+        <div className="modal-overlay" onClick={() => setCommentCardId(null)}>
+          <div className="modal-card" style={{ maxWidth: 480, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title" style={{ flexShrink: 0 }}>
+              评论
+              <button type="button" className="btn-ghost" style={{ float: 'right' }} onClick={() => setCommentCardId(null)}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px', minHeight: 0 }}>
+              {commentsLoading ? (
+                <Loading text="加载评论…" />
+              ) : comments.length === 0 ? (
+                <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 13 }}>暂无评论</p>
+              ) : (
+                comments.map((c) => (
+                  <div key={c.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--glass-border)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <Avatar name={c.username} size={24} />
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{c.username}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at?.slice(0, 10)}</span>
+                    </div>
+                    <p style={{ fontSize: 13, margin: 0, lineHeight: 1.5 }}>{c.content}</p>
+                  </div>
+                ))
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--glass-border)' }}>
+              <input
+                className="modal-input"
+                style={{ flex: 1 }}
+                placeholder="写下你的评论…"
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
+                disabled={commentSending}
+              />
+              <button className="btn-primary" onClick={handleSendComment} disabled={!commentText.trim() || commentSending}>
+                {commentSending ? '发送中…' : '发送'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
