@@ -247,7 +247,7 @@ class ChatEngine:
                 self.history.pop()
             raise
 
-        self._try_record_usage("chat")
+        self._try_record_usage("chat", self.llm.last_usage)
 
         self.history.append({"role": "assistant", "content": response})
 
@@ -298,7 +298,7 @@ class ChatEngine:
                 self.history.pop()
             raise
 
-        self._try_record_usage("chat")
+        self._try_record_usage("chat", self.llm.last_usage)
 
         full_reply = "".join(collected)
         if not full_reply.strip():
@@ -316,10 +316,11 @@ class ChatEngine:
 
         self._evaluate_affinity(user_message, full_reply)
 
-    def _try_record_usage(self, action: str = "chat") -> None:
+    def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         if not self._storage or not self._user_id:
             return
-        usage = self.llm.last_usage
+        if usage is None:
+            usage = self.llm.last_usage
         if not usage:
             return
         storage = self._storage

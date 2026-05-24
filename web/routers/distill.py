@@ -768,14 +768,12 @@ async def start_session(
         raise HTTPException(500, "Card data is corrupted") from exc
 
     existing_cards = await storage.list_cards(req.text_id, user_id)
-    all_characters: list[dict[str, Any]] = [
-        {"name": c["name"], "aliases": []} for c in existing_cards
-    ]
+    all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
 
     try:
         rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
         session_id = await asyncio.to_thread(
-            text_manager._create_session, content, card, all_characters, rag, req.card_id
+            text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id
         )
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
@@ -796,6 +794,8 @@ async def start_session(
             engine = sessions[session_id].get("engine")
             if engine and old_messages:
                 for m in old_messages:
+                    if m["role"] not in ("user", "char"):
+                        continue
                     role = "assistant" if m["role"] == "char" else m["role"]
                     eng_role = "user" if role == "user" else "assistant"
                     engine.history.append({"role": eng_role, "content": m["content"]})

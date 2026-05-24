@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import csv
-import hashlib
 import io
 import json
-import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -378,6 +376,7 @@ class TextManager:
                 raise
 
         # Generate a variation of the first message to avoid repetition
+        generated_opening = ""
         if card.first_message and self._llm:
             try:
                 variation_prompt = (
@@ -393,20 +392,18 @@ class TextManager:
                 )
                 opening = opening.strip()
                 if opening and len(opening) <= 200:
-                    card.first_message = opening
+                    generated_opening = opening
                 else:
                     print(f"[TextManager] Opening variation invalid, using original")
             except Exception as exc:
                 print(f"[TextManager] Opening variation failed, using original: {exc}")
 
         try:
-            all_characters = [
-                {"name": c["name"], "aliases": []} for c in existing_cards
-            ]
+            all_characters = await self._build_all_characters(text_id, existing_cards)
             session_id = await asyncio.to_thread(
                 self._create_session, content, card, all_characters,
                 self._get_or_build_rag(text_id, content, all_characters),
-                card_id,
+                card_id, user_id,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -420,6 +417,8 @@ class TextManager:
         result = card.model_dump()
         result["session_id"] = session_id
         result["card_id"] = card_id
+        if generated_opening:
+            result["first_message"] = generated_opening
         return result
 
     async def save_distilled_card(
@@ -435,12 +434,12 @@ class TextManager:
         content = text_rec["content"]
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
-        all_chars = [{"name": c["name"], "aliases": []} for c in existing_cards]
+        all_chars = await self._build_all_characters(text_id, existing_cards)
 
         session_id = await asyncio.to_thread(
             self._create_session, content, card, all_chars,
             self._get_or_build_rag(text_id, content, all_chars),
-            actual_card_id,
+            actual_card_id, user_id,
         )
 
         # 升级 RAG：将 chunk 检索替换为场景检索（异步、非阻塞）
@@ -495,6 +494,20 @@ class TextManager:
         self._text_rag_cache[text_id] = rag
         return rag
 
+    async def _build_all_characters(self, text_id: str, existing_cards: list[dict]) -> list[dict[str, Any]]:
+        """Build all_characters list with aliases merged from cached identify results."""
+        all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
+        try:
+            cached = await self._storage.get_characters(text_id)
+            if cached:
+                name_to_aliases = {c["name"]: c.get("aliases", []) for c in cached}
+                for char in all_characters:
+                    if char["name"] in name_to_aliases:
+                        char["aliases"] = name_to_aliases[char["name"]]
+        except Exception:
+            pass
+        return all_characters
+
     def _create_session(
         self,
         text: str,
@@ -502,6 +515,7 @@ class TextManager:
         all_characters: list[dict[str, Any]] | None = None,
         rag: RAGEngine | None = None,
         card_id: str = "",
+        user_id: str = "",
     ) -> str:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
         if rag is None:
@@ -514,8 +528,6 @@ class TextManager:
             memory_manager=get_memory_manager(),
             card_id=card_id,
         )
-        session_id = hashlib.md5(
-            f"{card.name}_{time.time()}".encode()
-        ).hexdigest()[:12]
-        self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": []}
+        session_id = uuid.uuid4().hex[:12]
+        self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}
         return session_id

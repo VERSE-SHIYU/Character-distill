@@ -47,6 +47,9 @@ async def _ensure_session(
     session = sessions.get(session_id)
     if session is not None:
         session.setdefault("lock", asyncio.Lock())
+        # SECURITY: verify session ownership even on memory hit
+        if session.get("user_id") and session["user_id"] != user_id:
+            raise HTTPException(403, "无权访问此会话")
         return session
 
     # Server restarted — rebuild from DB
@@ -75,11 +78,11 @@ async def _ensure_session(
         raise HTTPException(500, "Card data is corrupted") from exc
 
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
-    all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
+    all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards)
 
     rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters)
     new_id = await asyncio.to_thread(
-        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id
+        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id
     )
 
     # Steal engine into the original session_id
