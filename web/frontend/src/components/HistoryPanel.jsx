@@ -6,6 +6,11 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { loadCardAvatar } from '../store/db'
 
+function parseCardIds(raw) {
+  if (Array.isArray(raw)) return raw
+  try { return JSON.parse(raw || '[]') } catch { return [] }
+}
+
 const PAGE_SIZE = 20
 
 function useDebouncedValue(value, delayMs) {
@@ -351,7 +356,7 @@ export default function HistoryPanel() {
     try {
       const res = await fetchWithTimeout(`/api/group/${group.id}/history`)
       const data = await res.json()
-      const cardIds = JSON.parse(group.card_ids || '[]')
+      const cardIds = parseCardIds(group.card_ids)
       setGroupDetail({ ...group, card_ids: cardIds, messages: data.messages || [] })
     } catch (err) {
       setError(err.message)
@@ -622,7 +627,7 @@ export default function HistoryPanel() {
           ) : (
             <div className="history-grouped" ref={listRef}>
               {groupItems.map((g) => {
-                const cardIds = JSON.parse(g.card_ids || '[]')
+                const cardIds = parseCardIds(g.card_ids)
                 return (
                   <button
                     key={g.id}
