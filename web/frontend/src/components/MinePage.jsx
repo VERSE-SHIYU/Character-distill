@@ -35,6 +35,11 @@ export default function MinePage() {
     }
   }, [tab])
 
+  const handleTabChange = (newTab) => {
+    if (newTab === 'home') setAuthorUserId(authUser?.id)
+    setTab(newTab)
+  }
+
   return (
     <div className="mine-page">
       <div className="mine-content">
@@ -49,7 +54,7 @@ export default function MinePage() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {following.map((u) => (
-                  <button key={u.id} type="button" className="market-card" onClick={() => { setAuthorUserId(u.id); setTab('home') }}>
+                  <button key={u.id} type="button" className="market-card" onClick={() => { setAuthorUserId(u.id); setView('author') }}>
                     <Avatar name={u.username} size={40} />
                     <div className="market-card-body">
                       <div className="market-card-name">{u.username}</div>
@@ -63,7 +68,7 @@ export default function MinePage() {
       </div>
 
       <div className="mine-bottom-bar">
-        <button type="button" className={`mine-bottom-item${tab === 'home' ? ' active' : ''}`} onClick={() => setTab('home')}>
+        <button type="button" className={`mine-bottom-item${tab === 'home' ? ' active' : ''}`} onClick={() => handleTabChange('home')}>
           <span className="mine-bottom-icon">{'\u{1F3E0}'}</span>
           <span className="mine-bottom-label">主页</span>
         </button>
@@ -72,7 +77,7 @@ export default function MinePage() {
           <span className="mine-bottom-label">私信</span>
           {unreadCount > 0 && <span className="mine-bottom-badge">{unreadCount}</span>}
         </button>
-        <button type="button" className={`mine-bottom-item${tab === 'following' ? ' active' : ''}`} onClick={() => setTab('following')}>
+        <button type="button" className={`mine-bottom-item${tab === 'following' ? ' active' : ''}`} onClick={() => handleTabChange('following')}>
           <span className="mine-bottom-icon">{'\u{2B50}'}</span>
           <span className="mine-bottom-label">关注</span>
         </button>
