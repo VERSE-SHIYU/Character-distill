@@ -39,6 +39,14 @@ export default function ProfilePage() {
   // Following
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  useEffect(() => {
+    fetchWithTimeout('/api/messages/unread-count')
+      .then((r) => r.json())
+      .then((d) => setUnreadCount(d.count ?? 0))
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     loadUserAvatar()
@@ -388,6 +396,24 @@ export default function ProfilePage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="profile-card">
+        <h2 className="profile-section-title">更多</h2>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => setView('messages')}>
+            {'\u{1F4E8}'} 私信 {unreadCount > 0 && <span className="sidebar-item-badge" style={{ marginLeft: 8 }}>{unreadCount}</span>}
+          </button>
+          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => setView('voice')}>
+            {'\u{1F399}'} 音色管理
+          </button>
+          <button className="market-card" style={{ cursor: 'pointer', textAlign: 'left' }}
+            onClick={() => setView('settings')}>
+            ⚙️ 设置
+          </button>
+        </div>
       </div>
 
       <ImageCropModal

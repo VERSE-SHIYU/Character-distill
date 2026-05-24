@@ -191,6 +191,11 @@ export default function TextPanel() {
         </p>
       </header>
 
+      <div className="history-tab-bar">
+        <button className="history-tab active">文本管理</button>
+        <button className="history-tab" onClick={() => setView('character')}>角色管理</button>
+      </div>
+
       {displayError && (
         <ErrorBox message={displayError} onDismiss={() => setLocalError(null)} />
       )}

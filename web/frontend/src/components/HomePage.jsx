@@ -179,7 +179,7 @@ export default function HomePage() {
                   className="home-char-card"
                   onClick={() => handleCardClick(card)}
                 >
-                  <Avatar name={name} size={48} src={cardAvatars[card.id || card.card_id]} />
+                  <Avatar name={name} size={56} src={cardAvatars[card.id || card.card_id]} />
                   <div className="home-char-card-text">
                     <span className="home-char-name">{name}</span>
                     {identity && <span className="home-char-identity">{truncate(identity, 20)}</span>}
@@ -187,14 +187,19 @@ export default function HomePage() {
                 </button>
               )
             })}
-          </div>
-          {allCards.length > 4 && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <button type="button" className="btn-ghost" style={{ fontSize: 13 }} onClick={() => setView('character')}>
-                查看全部 ▸
+            {allCards.length > 4 && (
+              <button
+                type="button"
+                className="home-char-card home-char-card-more"
+                onClick={() => setView('text')}
+              >
+                <span style={{ fontSize: 24 }}>{'\u{203A}'}</span>
+                <span style={{ fontSize: 14, color: 'var(--text-dim)' }}>
+                  查看全部 ({allCards.length})
+                </span>
               </button>
-            </div>
-          )}
+            )}
+          </div>
           </>
         )}
       </div>

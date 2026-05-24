@@ -65,6 +65,9 @@ export default function CharCard() {
       </nav>
 
       <header className="panel-header">
+        <button type="button" className="chat-back-btn" onClick={() => setView('text')} title="返回文本管理">
+          {'\u{25C0}'}
+        </button>
         <h1 className="panel-title">
           角色管理
         </h1>
