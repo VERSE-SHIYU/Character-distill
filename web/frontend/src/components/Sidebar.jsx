@@ -50,6 +50,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const handleNav = useCallback((id) => {
     switch (id) {
       case 'workbench': setView('text'); break
+      case 'mine': setView('profile'); break
       default: setView(id)
     }
   }, [setView])
