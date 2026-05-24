@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import useAppStore from '../store/useAppStore'
 import { postJSON, getAuthHeaders, fetchWithTimeout } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
@@ -549,8 +550,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         )}
       </div>
 
-      {/* Share confirm modal for sidebar */}
-      {shareConfirmTarget && (
+      {/* Share confirm modal for sidebar — portal to body */}
+      {shareConfirmTarget && createPortal(
         <div className="modal-overlay" onClick={() => setShareConfirmTarget(null)}>
           <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
@@ -583,11 +584,12 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
 
-      {/* Delete confirm modal */}
-      {deleteTarget && (
+      {/* Delete confirm modal — portal to body */}
+      {deleteTarget && createPortal(
         <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
           <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">删除角色</h3>
@@ -616,7 +618,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
       </>
       )}
@@ -967,8 +970,8 @@ function CardDetail({ card, textId }) {
         onCancel={handleCropCancel}
       />
 
-      {/* Share confirm modal */}
-      {showShareConfirm && (
+      {/* Share confirm modal — portal to body */}
+      {showShareConfirm && createPortal(
         <div className="modal-overlay" onClick={() => setShowShareConfirm(false)}>
           <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
@@ -1004,7 +1007,8 @@ function CardDetail({ card, textId }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
