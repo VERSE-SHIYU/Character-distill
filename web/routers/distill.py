@@ -763,7 +763,7 @@ async def start_session(
         raise HTTPException(500, f"Create session failed: {exc}") from exc
 
     try:
-        await storage.save_session(session_id, req.card_id, "", "", user_id)
+        await storage.save_session(session_id, req.card_id, req.user_role, "", user_id)
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
