@@ -228,8 +228,11 @@ async def delete_post(
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Delete your own post."""
-    ok = await storage.delete_post(post_id, user["id"])
+    """Delete a post — owner or admin."""
+    if user.get("is_admin"):
+        ok = await storage.admin_delete_post(post_id)
+    else:
+        ok = await storage.delete_post(post_id, user["id"])
     if not ok:
         raise HTTPException(404, "动态不存在或无权删除")
     return {"ok": True}

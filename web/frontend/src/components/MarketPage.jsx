@@ -71,6 +71,16 @@ export default function MarketPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
+  const handleDeletePost = async (postId) => {
+    if (!confirm('确定删除该角色？')) return
+    try {
+      await fetchWithTimeout(`/api/market/posts/${postId}`, { method: 'DELETE' })
+      setCards((prev) => prev.filter((c) => c.id !== postId))
+    } catch (err) {
+      console.error('[Market] Delete failed:', err)
+    }
+  }
+
   const handleLike = async (cardId) => {
     try {
       const res = await fetchWithTimeout(`/api/market/${cardId}/like`, { method: 'POST' })
@@ -259,6 +269,19 @@ export default function MarketPage() {
                     </div>
                   </div>
                   <div className="market-card-actions">
+                    {(authUser?.is_admin || c.user_id === authUser?.id) && (
+                      <button
+                        type="button"
+                        className="btn-ghost market-delete-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleDeletePost(c.id)
+                        }}
+                        title="删除"
+                      >
+                        🗑
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn-ghost market-comment-btn"

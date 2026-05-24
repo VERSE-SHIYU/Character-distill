@@ -100,7 +100,15 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
       {isVisible && authUser && (
         <div className="sidebar-user-info">
-          <span className="sidebar-user-name">{authUser.username}</span>
+          <button
+            type="button"
+            className="sidebar-user-link"
+            onClick={() => setView('profile')}
+            title="我的主页"
+          >
+            <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={32} />
+            <span className="sidebar-user-name">{authUser.username}</span>
+          </button>
           <button className="sidebar-logout-btn" onClick={logout} title="退出登录">
             退出
           </button>

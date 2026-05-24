@@ -18,6 +18,7 @@ export default function VoicePanel() {
   const voiceList = useAppStore((s) => s.voiceList)
   const loadVoices = useAppStore((s) => s.loadVoices)
   const currentCard = useAppStore((s) => s.currentCard)
+  const setView = useAppStore((s) => s.setView)
   const voiceRefInfo = useAppStore((s) => s.voiceRefInfo)
   const loadVoiceRef = useAppStore((s) => s.loadVoiceRef)
   const uploadRefAudio = useAppStore((s) => s.uploadRefAudio)

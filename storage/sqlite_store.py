@@ -2225,6 +2225,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete post failed: {exc}")
             return False
 
+    async def admin_delete_post(self, post_id: str) -> bool:
+        """Admin: delete any post by id. Returns True if deleted."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM user_posts WHERE id = ?",
+                    (post_id,),
+                )
+                await conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Admin delete post failed: {exc}")
+            return False
+
     # ── Text Comments ──
 
     async def get_text_comments(self, text_id: str, page: int = 1, page_size: int = 20) -> dict:

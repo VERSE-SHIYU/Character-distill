@@ -75,6 +75,21 @@ export default function ProfilePage() {
       .finally(() => setFollowingLoading(false))
   }, [])
 
+  const togglePanel = (panel) => {
+    const nextPassword = panel === 'password' ? !showPasswordForm : false
+    const nextBind = panel === 'bind' ? !showBindForm : false
+    const nextFollowing = panel === 'following' ? !showFollowing : false
+    setShowPasswordForm(nextPassword)
+    setShowBindForm(nextBind)
+    setShowFollowing(nextFollowing)
+    if (nextPassword || nextBind || nextFollowing) {
+      setTimeout(() => {
+        const el = document.querySelector('.profile-card:last-of-type')
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 80)
+    }
+  }
+
   const handleAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -250,18 +265,18 @@ export default function ProfilePage() {
           <span className="profile-grid-icon">⚙️</span>
           <span className="profile-grid-label">设置</span>
         </button>
-        <button className="profile-grid-item" onClick={() => setShowPasswordForm(!showPasswordForm)}>
+        <button className="profile-grid-item" onClick={() => togglePanel('password')}>
           <span className="profile-grid-icon">{'\u{1F512}'}</span>
           <span className="profile-grid-label">修改密码</span>
         </button>
-        <button className="profile-grid-item" onClick={() => setShowBindForm(!showBindForm)}>
+        <button className="profile-grid-item" onClick={() => togglePanel('bind')}>
           <span className="profile-grid-icon">{'\u{1F4E7}'}</span>
           <span className="profile-grid-label">
             {email ? '换绑邮箱' : '绑定邮箱'}
           </span>
           {emailVerified && <span className="profile-grid-badge-ok">✓</span>}
         </button>
-        <button className="profile-grid-item" onClick={() => setShowFollowing(!showFollowing)}>
+        <button className="profile-grid-item" onClick={() => togglePanel('following')}>
           <span className="profile-grid-icon">{'\u{2B50}'}</span>
           <span className="profile-grid-label">我的关注</span>
         </button>
