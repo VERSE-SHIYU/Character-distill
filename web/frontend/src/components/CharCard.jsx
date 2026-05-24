@@ -145,6 +145,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [sharedCards, setSharedCards] = useState(new Set())
   const [shareConfirmTarget, setShareConfirmTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [trashMode, setTrashMode] = useState(false)
+  const [deletedCards, setDeletedCards] = useState([])
+  const [trashLoading, setTrashLoading] = useState(false)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -208,6 +211,51 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     loadStandaloneCards()
   }, [loadStandaloneCards])
 
+  const loadTrash = async () => {
+    setTrashLoading(true)
+    try {
+      const res = await fetchWithTimeout('/api/cards/trash', { headers: { ...getAuthHeaders() } })
+      const data = await res.json()
+      setDeletedCards(Array.isArray(data) ? data : [])
+    } catch (err) {
+      console.error('[CharCard] Load trash failed:', err)
+    } finally {
+      setTrashLoading(false)
+    }
+  }
+
+  const switchTrashMode = (on) => {
+    setTrashMode(on)
+    if (on) loadTrash()
+  }
+
+  const handleRestoreCard = async (cardId) => {
+    try {
+      await fetchWithTimeout(`/api/cards/${cardId}/restore`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+      })
+      setDeletedCards((prev) => prev.filter((c) => c.id !== cardId))
+      loadCards(textId)
+      loadStandaloneCards()
+    } catch (err) {
+      console.error('[CharCard] Restore card failed:', err)
+    }
+  }
+
+  const handlePurgeCard = async (cardId) => {
+    if (!window.confirm('确定彻底删除？此操作不可恢复。')) return
+    try {
+      await fetchWithTimeout(`/api/cards/${cardId}/purge`, {
+        method: 'DELETE',
+        headers: { ...getAuthHeaders() },
+      })
+      setDeletedCards((prev) => prev.filter((c) => c.id !== cardId))
+    } catch (err) {
+      console.error('[CharCard] Purge card failed:', err)
+    }
+  }
+
   const handleIdentify = async () => {
     try {
       await identifyCharacters(textId)
@@ -228,10 +276,76 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     <div className="char-sidebar-inner">
       <div className="char-sidebar-head">
         <h2 className="char-sidebar-title">
-          角色列表
+          {trashMode ? '回收站' : '角色列表'}
         </h2>
-        <span className="char-sidebar-count">{cards.length}</span>
+        <span className="char-sidebar-count">{trashMode ? deletedCards.length : cards.length}</span>
+        <button
+          type="button"
+          className="btn-ghost btn-sm"
+          style={{ marginLeft: 'auto', fontSize: 12 }}
+          onClick={() => switchTrashMode(!trashMode)}
+        >
+          {trashMode ? '← 返回' : '🗑'}
+        </button>
       </div>
+
+      {/* Trash view */}
+      {trashMode ? (
+        trashLoading ? (
+          <Loading text="加载回收站…" />
+        ) : deletedCards.length === 0 ? (
+          <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 13 }}>回收站为空</p>
+        ) : (
+          <ul className="char-list">
+            {deletedCards.map((c) => {
+              const cardData = typeof c.card_json === 'string'
+                ? JSON.parse(c.card_json)
+                : c.card_json || c
+              const name = cardData.name || c.name || '?'
+              return (
+                <li key={c.id} className="char-list-li" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
+                  <Avatar name={name} size={30} />
+                  <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    style={{ height: 30, fontSize: 12, padding: '0 10px' }}
+                    onClick={() => handleRestoreCard(c.id)}
+                  >
+                    恢复
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-danger-sm"
+                    onClick={() => handlePurgeCard(c.id)}
+                  >
+                    彻底删除
+                  </button>
+                </li>
+              )
+            })}
+            <li style={{ padding: '8px 10px' }}>
+              <button
+                type="button"
+                className="btn-danger-sm"
+                style={{ width: '100%' }}
+                onClick={() => {
+                  if (!window.confirm('确定清空回收站？所有角色将被彻底删除，不可恢复。')) return
+                  Promise.all(deletedCards.map((c) =>
+                    fetchWithTimeout(`/api/cards/${c.id}/purge`, {
+                      method: 'DELETE',
+                      headers: { ...getAuthHeaders() },
+                    }).catch(() => {}),
+                  )).then(() => setDeletedCards([]))
+                }}
+              >
+                清空回收站
+              </button>
+            </li>
+          </ul>
+        )
+      ) : (
+      <>
 
       {/* Distilled cards list */}
       {hasCards && (
@@ -498,11 +612,13 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   console.error('Delete card failed:', err)
                 }
               }}>
-                确认删除
+                移入回收站
               </button>
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   )

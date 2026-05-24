@@ -28,3 +28,14 @@
   4. core/group_session.py: _convert_history() 末尾加 token 截断（MAX_HISTORY_TOKENS=2000），从头部丢弃最旧消息
 - **为什么**：群聊 LLM 调用阻塞事件循环；长对话 token 无上限会撑爆 context
 - **影响范围**：adapters/llm_adapter.py, core/group_session.py, web/routers/group.py
+
+### 19:40 角色卡回收站（软删除）
+- **做了什么**：
+  1. storage/migrations/029_soft_delete_cards.sql: cards 表加 deleted_at 列
+  2. sqlite_store.py: delete_card 改为 UPDATE SET deleted_at; 新增 restore_card、purge_card、list_deleted_cards 方法
+  3. list_cards / list_standalone_cards 查询加 AND deleted_at IS NULL 过滤
+  4. web/routers/card.py: 新增 GET /trash、POST /{id}/restore、DELETE /{id}/purge 路由
+  5. CharCard.jsx CharSidebar: 新增回收站模式（🗑 按钮切换），显示已删角色，支持恢复和彻底删除，底部有清空回收站
+  6. 删除确认弹窗文字改为"移入回收站"
+- **为什么**：硬删除不可恢复，缺少回收站机制
+- **影响范围**：029_soft_delete_cards.sql, sqlite_store.py, card.py, CharCard.jsx

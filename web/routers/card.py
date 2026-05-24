@@ -94,13 +94,58 @@ async def export_card(
     )
 
 
+@router.get("/trash")
+async def list_trash(
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List soft-deleted cards for the current user."""
+    return await storage.list_deleted_cards(user["id"])
+
+
+@router.post("/{card_id}/restore")
+async def restore_card_route(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Restore a soft-deleted card."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此角色卡")
+    ok = await storage.restore_card(card_id)
+    if not ok:
+        raise HTTPException(500, "恢复失败")
+    return {"ok": True}
+
+
+@router.delete("/{card_id}/purge")
+async def purge_card_route(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Permanently delete a card (irreversible)."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此角色卡")
+    ok = await storage.purge_card(card_id)
+    if not ok:
+        raise HTTPException(500, "彻底删除失败")
+    return {"ok": True}
+
+
 @router.delete("/{card_id}")
 async def delete_card_route(
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Delete a character card. Only the owner can delete."""
+    """Soft-delete a character card. Only the owner can delete."""
     card = await storage.get_card(card_id)
     if not card:
         raise HTTPException(404, "Card not found")

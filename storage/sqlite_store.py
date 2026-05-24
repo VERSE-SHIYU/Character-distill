@@ -316,6 +316,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Comments/follows migration failed: {exc}")
 
+                    # Run 029_soft_delete migration (ALTER TABLE cards ADD COLUMN deleted_at)
+                    sd_path = migrations_dir / "029_soft_delete_cards.sql"
+                    if sd_path.exists():
+                        try:
+                            await conn.executescript(sd_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Soft delete migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -523,12 +533,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND user_id = ? ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id, user_id),
                     )
                 else:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id,),
                     )
                 rows = await cursor.fetchall()
@@ -542,7 +552,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = ? ORDER BY created_at DESC",
+                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
@@ -733,14 +743,57 @@ class SQLiteStore(StorageBase):
             raise
 
     async def delete_card(self, card_id: str) -> bool:
+        """Soft delete: set deleted_at timestamp."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+                    (card_id,),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete card failed: {exc}")
+            return False
+
+    async def restore_card(self, card_id: str) -> bool:
+        """Restore a soft-deleted card."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET deleted_at = NULL WHERE id = ?",
+                    (card_id,),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Restore card failed: {exc}")
+            return False
+
+    async def purge_card(self, card_id: str) -> bool:
+        """Permanently delete a card (hard delete)."""
         try:
             async with await self._connect() as conn:
                 await conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
                 await conn.commit()
             return True
         except Exception as exc:
-            print(f"[SQLiteStore] Delete card failed: {exc}")
+            print(f"[SQLiteStore] Purge card failed: {exc}")
             return False
+
+    async def list_deleted_cards(self, user_id: str) -> list[dict]:
+        """List soft-deleted cards for a user (recycle bin)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, deleted_at FROM cards WHERE deleted_at IS NOT NULL AND user_id = ? ORDER BY deleted_at DESC",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List deleted cards failed: {exc}")
+            raise
 
     async def update_card_visibility(self, card_id: str, visibility: str) -> bool:
         """Set card visibility to 'public' or 'private'."""
