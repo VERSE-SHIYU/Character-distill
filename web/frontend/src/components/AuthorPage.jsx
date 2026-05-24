@@ -45,17 +45,18 @@ export default function AuthorPage() {
   }, [authorUserId])
 
   useEffect(() => {
-    if (!authorUserId) { setView('market'); return }
+    if (!authorUserId || authorUserId.trim() === '') { setView('market'); return }
     ;(async () => {
       setLoading(true)
       try {
         const res = await fetchWithTimeout(`/api/market/author/${authorUserId}`)
+        if (!res.ok) throw new Error(res.status === 404 ? '用户不存在' : '加载失败')
         const data = await res.json()
         setAuthor(data.author)
         setCards(data.cards || [])
         setIsFollowing(data.is_following || false)
       } catch (err) {
-        setError(err.message)
+        setError(err.message.includes('不存在') ? '该用户不存在或已注销' : err.message)
       } finally {
         setLoading(false)
       }

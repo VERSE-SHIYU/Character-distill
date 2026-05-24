@@ -4,18 +4,31 @@ import Avatar from './common/Avatar'
 import ThemeSwitcher from './ThemeSwitcher'
 import { fetchWithTimeout } from '../api/client'
 
-const NAV_ITEMS = [
-  { id: 'home', icon: '\u{1F3E0}', label: '主页' },
-  { id: 'text', icon: '\u{1F4C1}', label: '文本管理' },
-  { id: 'character', icon: '\u{1F464}', label: '角色管理' },
-  { id: 'market', icon: '\u{1F30D}', label: '角色市场' },
-  { id: 'groupChat', icon: '\u{1F465}', label: '群聊' },
-  { id: 'messages', icon: '\u{1F4E8}', label: '私信' },
-  { id: 'chat', icon: '\u{1F4AC}', label: '聊天' },
-  { id: 'history', icon: '\u{1F4DA}', label: '历史' },
-  { id: 'voice', icon: '\u{1F399}', label: '音色管理' },
-  { id: 'profile', icon: '\u{1F464}', label: '个人资料' },
-  { id: 'settings', icon: '⚙️', label: '设置' },
+const NAV_GROUPS = [
+  {
+    label: '工作流',
+    items: [
+      { id: 'home', icon: '\u{1F3E0}', label: '主页' },
+      { id: 'text', icon: '\u{1F4C1}', label: '文本管理' },
+      { id: 'character', icon: '\u{1F3AD}', label: '角色管理' },
+      { id: 'chat', icon: '\u{1F4AC}', label: '聊天' },
+    ],
+  },
+  {
+    label: '社区',
+    items: [
+      { id: 'market', icon: '\u{1F30D}', label: '角色市场' },
+      { id: 'messages', icon: '\u{1F4E8}', label: '私信' },
+    ],
+  },
+  {
+    label: '管理',
+    items: [
+      { id: 'history', icon: '\u{1F4DA}', label: '历史' },
+      { id: 'profile', icon: '\u{1F464}', label: '个人资料' },
+      { id: 'settings', icon: '⚙️', label: '设置' },
+    ],
+  },
 ]
 
 export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
@@ -66,8 +79,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
   function isDisabled(id) {
     if (id === 'text') return false
-    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile' || id === 'market' || id === 'groupChat' || id === 'messages') return false
-    return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'voice' && id !== 'profile'
+    if (id === 'home' || id === 'settings' || id === 'history' || id === 'profile' || id === 'market' || id === 'messages') return false
+    return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'profile'
   }
 
   const handleNav = useCallback((id) => {
@@ -82,9 +95,13 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     setView(id)
   }, [setView, currentCard])
 
-  const navItems = authUser?.is_admin
-    ? [...NAV_ITEMS, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }]
-    : NAV_ITEMS
+  const navGroups = authUser?.is_admin
+    ? NAV_GROUPS.map((g) =>
+        g.label === '管理'
+          ? { ...g, items: [...g.items, { id: 'admin', icon: '\u{1F6E1}', label: '管理后台' }] }
+          : g,
+      )
+    : NAV_GROUPS
 
   let sidebarClass = 'sidebar'
   if (open && !pinned) sidebarClass += ' open'
@@ -126,22 +143,27 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
       {isVisible && (
         <nav className="sidebar-nav">
-          {navItems.map(({ id, icon, label }) => {
-            const disabled = isDisabled(id)
-            const count = badge(id)
-            return (
-              <button
-                key={id}
-                type="button"
-                className={`sidebar-item${currentView === id ? ' active' : ''}${disabled ? ' sidebar-item-disabled' : ''}`}
-                onClick={() => handleNav(id)}
-              >
-                <span className="sidebar-item-icon">{icon}</span>
-                <span className="sidebar-item-label">{label}</span>
-                {count !== null && <span className="sidebar-item-badge">{count}</span>}
-              </button>
-            )
-          })}
+          {navGroups.map((group, gi) => (
+            <div key={group.label}>
+              {gi > 0 && <div style={{ height: 1, background: 'var(--glass-border)', margin: '8px 12px' }} />}
+              {group.items.map(({ id, icon, label }) => {
+                const disabled = isDisabled(id)
+                const count = badge(id)
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`sidebar-item${currentView === id ? ' active' : ''}${disabled ? ' sidebar-item-disabled' : ''}`}
+                    onClick={() => handleNav(id)}
+                  >
+                    <span className="sidebar-item-icon">{icon}</span>
+                    <span className="sidebar-item-label">{label}</span>
+                    {count !== null && <span className="sidebar-item-badge">{count}</span>}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
         </nav>
       )}
 

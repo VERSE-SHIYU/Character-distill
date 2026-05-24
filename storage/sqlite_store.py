@@ -2143,18 +2143,6 @@ class SQLiteStore(StorageBase):
 
     # ── Author ──
 
-    async def get_user_by_id(self, user_id: str) -> dict | None:
-        try:
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "SELECT id, username FROM users WHERE id = ?", (user_id,)
-                )
-                row = await cursor.fetchone()
-            return dict(row) if row else None
-        except Exception as exc:
-            print(f"[SQLiteStore] Get user by id failed: {exc}")
-            return None
-
     async def get_author_cards(self, user_id: str) -> list[dict]:
         try:
             async with await self._connect() as conn:

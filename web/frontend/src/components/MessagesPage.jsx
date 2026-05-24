@@ -205,158 +205,166 @@ export default function MessagesPage() {
         )}
       </header>
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        {/* Conversation list — hidden on mobile when in chat view */}
-        <div style={{
-          width: 300,
-          minWidth: 0,
-          borderRight: '1px solid var(--border)',
-          overflowY: 'auto',
-          display: !isMobile || mobileView === 'list' ? 'flex' : 'none',
-          flexDirection: 'column',
-        }}
-          className="hide-scrollbar"
-        >
-          {convLoading ? (
-            <Loading text="加载中…" />
-          ) : conversations.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40, fontSize: 13 }}>暂无私信</p>
-          ) : (
-            conversations.map((conv) => (
-              <button
-                key={conv.other_id}
-                type="button"
-                className="market-card"
-                style={{
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  borderRadius: 0,
-                  borderLeft: 'none',
-                  borderRight: 'none',
-                  borderTop: 'none',
-                  background: activeOtherId === conv.other_id ? 'var(--bg-hover)' : 'transparent',
-                }}
-                onClick={() => handleSelectConversation(conv.other_id, conv.username)}
-              >
-                <Avatar name={conv.username || '?'} size={40} />
-                <div className="market-card-body" style={{ minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <span style={{ fontWeight: 600, fontSize: 13 }}>{conv.username}</span>
-                    {conv.unread > 0 && (
-                      <span className="sidebar-item-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
-                        {conv.unread}
-                      </span>
-                    )}
-                  </div>
-                  <p style={{
-                    fontSize: 12,
-                    color: 'var(--text-dim)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}>
-                    {conv.last_message || ''}
-                  </p>
-                </div>
-              </button>
-            ))
-          )}
+      {!convLoading && conversations.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+          <span style={{ fontSize: 48 }}>{'\u{1F4E8}'}</span>
+          <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>暂无私信</p>
+          <p style={{ fontSize: 13, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 280, lineHeight: 1.6 }}>
+            去角色市场关注感兴趣的作者，发送你的第一条私信吧
+          </p>
         </div>
+      ) : (
+        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          {/* Conversation list — hidden on mobile when in chat view */}
+          <div style={{
+            width: 300,
+            minWidth: 0,
+            borderRight: '1px solid var(--border)',
+            overflowY: 'auto',
+            display: !isMobile || mobileView === 'list' ? 'flex' : 'none',
+            flexDirection: 'column',
+          }}
+            className="hide-scrollbar"
+          >
+            {convLoading ? (
+              <Loading text="加载中…" />
+            ) : (
+              conversations.map((conv) => (
+                <button
+                  key={conv.other_id}
+                  type="button"
+                  className="market-card"
+                  style={{
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    borderRadius: 0,
+                    borderLeft: 'none',
+                    borderRight: 'none',
+                    borderTop: 'none',
+                    background: activeOtherId === conv.other_id ? 'var(--bg-hover)' : 'transparent',
+                  }}
+                  onClick={() => handleSelectConversation(conv.other_id, conv.username)}
+                >
+                  <Avatar name={conv.username || '?'} size={40} />
+                  <div className="market-card-body" style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>{conv.username}</span>
+                      {conv.unread > 0 && (
+                        <span className="sidebar-item-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
+                          {conv.unread}
+                        </span>
+                      )}
+                    </div>
+                    <p style={{
+                      fontSize: 12,
+                      color: 'var(--text-dim)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}>
+                      {conv.last_message || ''}
+                    </p>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
 
-        {/* Chat area */}
-        <div style={{
-          flex: 1,
-          display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}>
-          {!activeOtherId ? (
-            <div style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--text-dim)',
-              fontSize: 13,
-            }}>
-              选择一个会话
-            </div>
-          ) : (
-            <>
-              {/* Messages */}
+          {/* Chat area */}
+          <div style={{
+            flex: 1,
+            display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}>
+            {!activeOtherId ? (
               <div style={{
                 flex: 1,
-                overflowY: 'auto',
-                padding: 16,
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'var(--text-dim)',
+                fontSize: 13,
               }}>
-                {hasMore && (
-                  <div style={{ textAlign: 'center' }}>
-                    <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={handleLoadMore} disabled={msgLoading}>
-                      {msgLoading ? '加载中…' : '加载更多'}
-                    </button>
-                  </div>
-                )}
-                {messages.map((msg) => {
-                  const isMe = msg.sender_id === authUser?.id
-                  return (
-                    <div key={msg.id} style={{
-                      display: 'flex',
-                      justifyContent: isMe ? 'flex-end' : 'flex-start',
-                    }}>
-                      <div style={{
-                        maxWidth: '70%',
-                        padding: '8px 14px',
-                        borderRadius: 16,
-                        fontSize: 13,
-                        lineHeight: 1.5,
-                        wordBreak: 'break-word',
-                        background: isMe ? '#2b6cb0' : 'var(--bg-card)',
-                        color: isMe ? '#fff' : 'var(--text)',
-                        borderBottomRightRadius: isMe ? 4 : 16,
-                        borderBottomLeftRadius: isMe ? 16 : 4,
-                      }}>
-                        {msg.content}
-                      </div>
+                选择一个会话
+              </div>
+            ) : (
+              <>
+                {/* Messages */}
+                <div style={{
+                  flex: 1,
+                  overflowY: 'auto',
+                  padding: 16,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}>
+                  {hasMore && (
+                    <div style={{ textAlign: 'center' }}>
+                      <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={handleLoadMore} disabled={msgLoading}>
+                        {msgLoading ? '加载中…' : '加载更多'}
+                      </button>
                     </div>
-                  )
-                })}
-                <div ref={messagesEndRef} />
-              </div>
+                  )}
+                  {messages.map((msg) => {
+                    const isMe = msg.sender_id === authUser?.id
+                    return (
+                      <div key={msg.id} style={{
+                        display: 'flex',
+                        justifyContent: isMe ? 'flex-end' : 'flex-start',
+                      }}>
+                        <div style={{
+                          maxWidth: '70%',
+                          padding: '8px 14px',
+                          borderRadius: 16,
+                          fontSize: 13,
+                          lineHeight: 1.5,
+                          wordBreak: 'break-word',
+                          background: isMe ? '#2b6cb0' : 'var(--bg-card)',
+                          color: isMe ? '#fff' : 'var(--text)',
+                          borderBottomRightRadius: isMe ? 4 : 16,
+                          borderBottomLeftRadius: isMe ? 16 : 4,
+                        }}>
+                          {msg.content}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
 
-              {/* Input */}
-              <div style={{
-                padding: 12,
-                borderTop: '1px solid var(--border)',
-                display: 'flex',
-                gap: 8,
-                alignItems: 'flex-end',
-              }}>
-                <textarea
-                  className="modal-textarea"
-                  style={{ flex: 1, minHeight: 40, maxHeight: 120, resize: 'none', fontSize: 13 }}
-                  rows={1}
-                  placeholder="输入消息…"
-                  value={inputText}
-                  onChange={(e) => setInputText(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                />
-                <button
-                  type="button"
-                  className="btn-primary btn-sm"
-                  style={{ flexShrink: 0, height: 38 }}
-                  disabled={!inputText.trim() || sending}
-                  onClick={handleSend}
-                >
-                  {sending ? '…' : '发送'}
-                </button>
-              </div>
-            </>
-          )}
+                {/* Input */}
+                <div style={{
+                  padding: 12,
+                  borderTop: '1px solid var(--border)',
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'flex-end',
+                }}>
+                  <textarea
+                    className="modal-textarea"
+                    style={{ flex: 1, minHeight: 40, maxHeight: 120, resize: 'none', fontSize: 13 }}
+                    rows={1}
+                    placeholder="输入消息…"
+                    value={inputText}
+                    onChange={(e) => setInputText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    style={{ flexShrink: 0, height: 38 }}
+                    disabled={!inputText.trim() || sending}
+                    onClick={handleSend}
+                  >
+                    {sending ? '…' : '发送'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
