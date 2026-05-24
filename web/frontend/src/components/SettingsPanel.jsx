@@ -176,6 +176,7 @@ export default function SettingsPanel() {
   return (
     <div className="settings-panel panel">
       <header className="panel-header">
+        <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回">{'\u{25C0}'}</button>
         <h1 className="panel-title">设置</h1>
         <p className="panel-desc">API 配置与界面主题</p>
       </header>

@@ -197,7 +197,7 @@ export default function MessagesPage() {
           </>
         ) : (
           <>
-            <button type="button" className="chat-back-btn" onClick={() => setView('home')} title="返回主页">
+            <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回">
               {'◀'}
             </button>
             <h1 className="panel-title">私信</h1>

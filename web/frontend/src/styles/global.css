@@ -1347,12 +1347,6 @@ body {
   padding: 14px 4px 6px;
 }
 
-.home-char-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 10px;
-}
-
 .home-char-item {
   display: flex;
   align-items: center;

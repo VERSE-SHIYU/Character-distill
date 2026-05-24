@@ -411,7 +411,7 @@ export default function HistoryPanel() {
 
       {/* Discover-level tab bar */}
       {!trashMode && (
-        <div className="history-tab-bar" style={{ marginBottom: 0 }}>
+        <div className="history-tab-bar" style={{ marginBottom: 0, borderBottom: '1px solid var(--glass-border)', paddingBottom: 8 }}>
           <button className="history-tab" onClick={() => setView('market')}>角色市场</button>
           <button className="history-tab active">历史记录</button>
         </div>
