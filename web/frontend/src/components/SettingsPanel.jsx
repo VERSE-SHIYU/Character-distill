@@ -44,6 +44,7 @@ export default function SettingsPanel() {
   const deleteVoiceRef = useAppStore((s) => s.deleteVoiceRef)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
+  const setView = useAppStore((s) => s.setView)
 
   // ---- Ref audio upload state ----
   const [audioFile, setAudioFile] = useState(null)
