@@ -3027,6 +3027,35 @@ body {
   padding-bottom: 16px;
 }
 
+.history-tab-bar {
+  display: flex;
+  gap: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--glass-border);
+  margin-bottom: 8px;
+}
+
+.history-tab {
+  padding: 8px 20px;
+  font-size: 13px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.history-tab:hover {
+  color: var(--text);
+}
+
+.history-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
 .btn-sm {
   padding: 5px 12px;
   font-size: 12.5px;

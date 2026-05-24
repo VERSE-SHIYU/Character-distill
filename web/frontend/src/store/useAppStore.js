@@ -56,6 +56,8 @@ const useAppStore = create((set, get) => ({
     set({ currentView: backMap[currentView] || 'home' })
   },
 
+  setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
+
   texts: [],
   currentTextId: null,
   currentTextTitle: '',
@@ -63,6 +65,7 @@ const useAppStore = create((set, get) => ({
   cards: [],
   currentCard: null,
   sessionId: null,
+  resumeGroupId: null,
   identifiedChars: [],
   distilling: false,
   distillTokenCount: 0,

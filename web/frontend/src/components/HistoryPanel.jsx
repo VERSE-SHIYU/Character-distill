@@ -77,6 +77,10 @@ export default function HistoryPanel() {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [trashMode, setTrashMode] = useState(false)
+  const [chatTab, setChatTab] = useState('chat') // 'chat' | 'group'
+  const [groupItems, setGroupItems] = useState([])
+  const [groupDetail, setGroupDetail] = useState(null)
+  const [groupDetailLoading, setGroupDetailLoading] = useState(false)
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -319,6 +323,51 @@ export default function HistoryPanel() {
     }
   }
 
+  const switchTab = (tab) => {
+    setChatTab(tab)
+    setDetail(null)
+    setGroupDetail(null)
+    setError(null)
+    setTrashMode(false)
+    if (tab === 'group') loadGroups()
+  }
+
+  async function loadGroups() {
+    setLoading(true)
+    try {
+      const res = await fetchWithTimeout('/api/group/list')
+      const data = await res.json()
+      setGroupItems(data.groups || [])
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function openGroupDetail(group) {
+    setGroupDetailLoading(true)
+    setError(null)
+    try {
+      const res = await fetchWithTimeout(`/api/group/${group.id}/history`)
+      const data = await res.json()
+      const cardIds = JSON.parse(group.card_ids || '[]')
+      setGroupDetail({ ...group, card_ids: cardIds, messages: data.messages || [] })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setGroupDetailLoading(false)
+    }
+  }
+
+  const setView = useAppStore((s) => s.setView)
+  const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+
+  const handleResumeGroup = (groupId) => {
+    setResumeGroupId(groupId)
+    setView('groupChat')
+  }
+
   if (detail) {
     return (
       <HistoryDetail
@@ -336,6 +385,17 @@ export default function HistoryPanel() {
     )
   }
 
+  if (groupDetail) {
+    return (
+      <GroupHistoryDetail
+        detail={groupDetail}
+        loading={groupDetailLoading}
+        onBack={() => setGroupDetail(null)}
+        onResume={() => handleResumeGroup(groupDetail.id)}
+      />
+    )
+  }
+
   return (
     <div className="history-panel panel">
       <header className="panel-header">
@@ -343,8 +403,29 @@ export default function HistoryPanel() {
         <p className="panel-desc">{trashMode ? '回收站 — 已删除的会话' : '搜索、筛选并管理过往对话'}</p>
       </header>
 
+      {/* Tab bar */}
+      {!trashMode && (
+        <div className="history-tab-bar">
+          <button
+            type="button"
+            className={`history-tab${chatTab === 'chat' ? ' active' : ''}`}
+            onClick={() => switchTab('chat')}
+          >
+            单聊
+          </button>
+          <button
+            type="button"
+            className={`history-tab${chatTab === 'group' ? ' active' : ''}`}
+            onClick={() => switchTab('group')}
+          >
+            群聊
+          </button>
+        </div>
+      )}
+
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
+      {chatTab === 'chat' && (
       <div className="history-toolbar">
         {/* Trash toggle */}
         <button
@@ -422,7 +503,10 @@ export default function HistoryPanel() {
           </button>
         )}
       </div>
+      )}
 
+      {chatTab === 'chat' && (
+        <>
       {loading ? (
         <Loading text="加载会话…" />
       ) : items.length === 0 ? (
@@ -523,6 +607,87 @@ export default function HistoryPanel() {
           )}
           {!hasMore && items.length > 0 && !trashMode && (
             <p className="history-end">已加载全部会话</p>
+          )}
+        </div>
+      )}
+        </>
+      )}
+
+      {chatTab === 'group' && (
+        <>
+          {loading ? (
+            <Loading text="加载群聊…" />
+          ) : groupItems.length === 0 ? (
+            <p className="history-empty">暂无群聊记录</p>
+          ) : (
+            <div className="history-grouped" ref={listRef}>
+              {groupItems.map((g) => {
+                const cardIds = JSON.parse(g.card_ids || '[]')
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className="history-item"
+                    onClick={() => openGroupDetail(g)}
+                    style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
+                  >
+                    <div className="history-item-body">
+                      <div className="history-item-head">
+                        <span className="history-item-name">{g.name || '未命名群聊'}</span>
+                        <span className="history-item-time">{formatTime(g.created_at)}</span>
+                      </div>
+                      <p className="history-item-preview">{cardIds.length} 个角色</p>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function GroupHistoryDetail({ detail, loading, onBack, onResume }) {
+  const messages = detail.messages || []
+  const groupName = detail.name || '群聊'
+
+  return (
+    <div className="history-panel panel history-detail-view">
+      <div className="history-detail-top">
+        <button type="button" className="history-back-btn" onClick={onBack}>
+          ← 返回列表
+        </button>
+        <div className="history-detail-actions">
+          <button type="button" className="btn-primary history-action-sm" onClick={onResume}>
+            继续群聊
+          </button>
+        </div>
+      </div>
+
+      <header className="history-detail-header">
+        <Avatar name={groupName} size={75} />
+        <div className="history-detail-meta-wrap">
+          <h2 className="history-detail-name">{groupName}</h2>
+          <p className="history-detail-meta">{detail.card_ids?.length || 0} 个角色</p>
+        </div>
+      </header>
+
+      <p className="history-readonly-hint">只读预览</p>
+
+      {loading ? (
+        <Loading text="加载中…" />
+      ) : (
+        <div className="history-readonly-messages">
+          {messages.map((msg, i) => (
+            <div key={msg.id ?? i} className="group-msg group-msg-assistant history-readonly-msg">
+              <div className="group-msg-speaker">{msg.speaker}</div>
+              <div className="group-msg-content">{msg.content}</div>
+            </div>
+          ))}
+          {messages.length === 0 && (
+            <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无消息</p>
           )}
         </div>
       )}

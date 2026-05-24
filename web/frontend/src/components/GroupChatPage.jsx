@@ -10,6 +10,8 @@ export default function GroupChatPage() {
   const texts = useAppStore((s) => s.texts)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
+  const resumeGroupId = useAppStore((s) => s.resumeGroupId)
+  const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -42,6 +44,17 @@ export default function GroupChatPage() {
   useEffect(() => {
     loadGroups()
   }, [loadGroups])
+
+  // Auto-enter group when resuming from HistoryPanel
+  useEffect(() => {
+    if (resumeGroupId && groups.length > 0) {
+      const g = groups.find((grp) => grp.id === resumeGroupId)
+      if (g) {
+        enterGroup(g)
+        setResumeGroupId(null)
+      }
+    }
+  }, [resumeGroupId, groups])
 
   async function loadHistory(groupId) {
     setLoading(true)
