@@ -19,3 +19,12 @@
   8. CharCard.jsx CharSidebar: 新增"来自市场"分组，渲染 standaloneCards，支持删除
   9. global.css: 新增 .char-delete-btn 样式（hover 显示，红色高亮）
 - **影响范围**：web/routers/card.py, CharCard.jsx, sqlite_store.py, distill.py, useAppStore.js, MarketPage.jsx, global.css
+
+### 18:50 群聊异步化 + Token 截断
+- **做了什么**：
+  1. adapters/llm_adapter.py: 新增 async achat() 方法（异步非流式）
+  2. core/group_session.py: send() 改为 async def，使用 await engine.llm.achat() 避免阻塞事件循环
+  3. web/routers/group.py: 移除 asyncio.to_thread() 包装，直接 await group.send()
+  4. core/group_session.py: _convert_history() 末尾加 token 截断（MAX_HISTORY_TOKENS=2000），从头部丢弃最旧消息
+- **为什么**：群聊 LLM 调用阻塞事件循环；长对话 token 无上限会撑爆 context
+- **影响范围**：adapters/llm_adapter.py, core/group_session.py, web/routers/group.py

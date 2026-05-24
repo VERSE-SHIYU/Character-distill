@@ -72,6 +72,11 @@ class LLMAdapter:
         """组装包含系统提示的对话消息列表。"""
         return [{"role": "system", "content": system_prompt}, *messages]
 
+    async def achat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
+        """异步非流式对话，返回完整文本回复。最多重试3次。"""
+        result, _ = await self.async_chat(system_prompt, messages)
+        return result
+
     def chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
         """非流式对话，返回完整文本回复。最多重试3次。"""
         payload = self._build_messages(system_prompt, messages)

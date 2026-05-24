@@ -139,7 +139,7 @@ async def send_message(
 
     async with group.lock:
         try:
-            resp = await asyncio.to_thread(group.send, req.target_card_id, req.message)
+            resp = await group.send(req.target_card_id, req.message)
         except Exception as exc:
             raise HTTPException(500, f"群聊消息发送失败: {exc}") from exc
 

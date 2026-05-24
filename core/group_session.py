@@ -6,6 +6,9 @@ import asyncio
 from typing import Any
 
 from core.chat_engine import ChatEngine
+from core.context_engine import _count_tokens
+
+MAX_HISTORY_TOKENS = 2000
 
 
 class GroupSession:
@@ -40,9 +43,17 @@ class GroupSession:
                 messages.append({"role": "user", "content": f"[{name}说:] {content}"})
             else:
                 messages.append({"role": "user", "content": content})
+
+        # Token truncation: drop oldest messages until under MAX_HISTORY_TOKENS
+        while messages:
+            total = sum(_count_tokens(m["content"]) for m in messages)
+            if total <= MAX_HISTORY_TOKENS:
+                break
+            messages.pop(0)
+
         return messages
 
-    def send(self, target_card_id: str, message: str) -> str:
+    async def send(self, target_card_id: str, message: str) -> str:
         """向群聊中指定角色发消息，返回该角色的回复。"""
         engine = self.engines.get(target_card_id)
         if not engine:
@@ -63,7 +74,7 @@ class GroupSession:
         )
 
         # 直接调用 LLM，不走 engine.chat() 以免污染单聊历史
-        response = engine.llm.chat(
+        response = await engine.llm.achat(
             system_prompt,
             [{"role": "user", "content": message}],
         )
