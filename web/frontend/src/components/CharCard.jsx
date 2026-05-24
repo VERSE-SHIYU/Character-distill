@@ -135,6 +135,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const distillStatus = useAppStore((s) => s.distillStatus)
   const identifyCharacters = useAppStore((s) => s.identifyCharacters)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
+  const cardAvatars = useAppStore((s) => s.cardAvatars)
+  const setCardAvatar = useAppStore((s) => s.setCardAvatar)
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
@@ -186,6 +188,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     }
   }, [currentCard?.id])
 
+  // Load card avatars for the sidebar list
+  useEffect(() => {
+    cards.forEach((c) => {
+      if (c.id && !cardAvatars[c.id]) {
+        loadCardAvatar(c.id).then((dataUrl) => {
+          if (dataUrl) setCardAvatar(c.id, dataUrl)
+        })
+      }
+    })
+  }, [cards])
+
   useEffect(() => {
     if (!distilling) setDistillingName(null)
   }, [distilling])
@@ -235,7 +248,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   data-card-id={c.id}
                   onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
                 >
-                  <Avatar name={name} size={34} />
+                  <Avatar name={name} size={34} src={cardAvatars[c.id]} />
                   <div className="char-list-info">
                     <div className="char-list-name">{name}</div>
                     {textInfo?.filename && (
