@@ -151,15 +151,17 @@ async def _do_chat(
 
     if user_role:
         session["engine"].user_role = user_role
-        # Persist user_role to DB (critical for per-session role isolation)
-        try:
-            db_s = await storage.get_session(session_id)
-            if db_s:
-                await storage.save_session(
-                    session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
-                )
-        except Exception as exc:
-            print(f"[chat] Save user_role failed (non-fatal): {exc}")
+        # Only persist to DB when the value actually changes
+        if session.get("_persisted_user_role") != user_role:
+            session["_persisted_user_role"] = user_role
+            try:
+                db_s = await storage.get_session(session_id)
+                if db_s:
+                    await storage.save_session(
+                        session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
+                    )
+            except Exception as exc:
+                print(f"[chat] Save user_role failed (non-fatal): {exc}")
 
     try:
         engine = session.get("engine")
@@ -239,15 +241,17 @@ async def _do_chat_stream(
 
     if user_role:
         session["engine"].user_role = user_role
-        # Persist user_role to DB (critical for per-session role isolation)
-        try:
-            db_s = await storage.get_session(session_id)
-            if db_s:
-                await storage.save_session(
-                    session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
-                )
-        except Exception as exc:
-            print(f"[chat] Save user_role failed (non-fatal): {exc}")
+        # Only persist to DB when the value actually changes
+        if session.get("_persisted_user_role") != user_role:
+            session["_persisted_user_role"] = user_role
+            try:
+                db_s = await storage.get_session(session_id)
+                if db_s:
+                    await storage.save_session(
+                        session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
+                    )
+            except Exception as exc:
+                print(f"[chat] Save user_role failed (non-fatal): {exc}")
 
     engine = session.get("engine")
     if engine:
