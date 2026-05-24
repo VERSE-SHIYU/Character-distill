@@ -210,7 +210,7 @@ export default function GroupChatPage() {
     const ids = new Set()
     allCards.forEach((c) => { const id = c.id || c.card_id; if (id) ids.add(id) })
     groups.forEach((g) => {
-      try { JSON.parse(g.card_ids || '[]').forEach((id) => ids.add(id)) } catch {}
+      parseCardIds(g.card_ids).forEach((id) => ids.add(id))
     })
     ids.forEach((id) => {
       if (!cardAvatars[id]) {
