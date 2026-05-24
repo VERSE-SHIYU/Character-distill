@@ -74,6 +74,9 @@ function UsersTab() {
   useEffect(() => { load() }, [load])
 
   const toggleDisable = async (user) => {
+    if (!user.is_disabled) {
+      if (!window.confirm('确定禁用该用户？')) return
+    }
     try {
       if (user.is_disabled) {
         await adminAPI.enableUser(user.id)
@@ -130,6 +133,7 @@ function UsersTab() {
   }
 
   const handleClearEmail = async (user) => {
+    if (!window.confirm('确定清除该用户的邮箱？')) return
     try {
       await adminAPI.clearUserEmail(user.id)
       await load()
@@ -398,6 +402,7 @@ function InvitesTab() {
   }
 
   const handleBatchDelete = async () => {
+    if (!window.confirm('确定批量删除所有已使用的邀请码？')) return
     setBatchDeleting(true)
     try {
       await adminAPI.deleteUsedInvites()
