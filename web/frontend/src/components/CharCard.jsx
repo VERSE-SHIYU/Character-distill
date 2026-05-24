@@ -141,6 +141,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
   const [sharedCards, setSharedCards] = useState(new Set())
+  const [shareConfirmTarget, setShareConfirmTarget] = useState(null)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -153,22 +154,19 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     })
   }
 
-  const handleShareToggle = async (e, cardId, cardName) => {
+  const handleShareToggle = async (e, cardId) => {
     e.stopPropagation()
     const isPublic = sharedCards.has(cardId)
-    try {
-      await fetchWithTimeout(`/api/market/${cardId}/visibility`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ visibility: isPublic ? 'private' : 'public' }),
-      })
-      setSharedCards((prev) => {
-        const next = new Set(prev)
-        isPublic ? next.delete(cardId) : next.add(cardId)
-        return next
-      })
-    } catch (err) {
-      console.error('Share toggle failed:', err)
+    if (isPublic) {
+      // Unshare directly
+      try {
+        await fetchWithTimeout(`/api/market/${cardId}/visibility`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ visibility: 'private' }),
+        })
+        setSharedCards((prev) => { const n = new Set(prev); n.delete(cardId); return n })
+      } catch (err) { console.error('Unshare failed:', err) }
     }
   }
 
@@ -272,7 +270,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   type="button"
                   className={`char-share-btn${sharedCards.has(c.id) ? ' shared' : ''}`}
                   title={sharedCards.has(c.id) ? '已分享到市场' : '分享到市场'}
-                  onClick={(e) => handleShareToggle(e, c.id, name)}
+                  onClick={(e) => {
+                    if (sharedCards.has(c.id)) {
+                      handleShareToggle(e, c.id)
+                    } else {
+                      e.stopPropagation()
+                      setShareConfirmTarget(c)
+                    }
+                  }}
                 >
                   {sharedCards.has(c.id) ? '\u{1F30D}' : '\u{1F516}'}
                 </button>
@@ -362,6 +367,43 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           </button>
         )}
       </div>
+
+      {/* Share confirm modal for sidebar */}
+      {shareConfirmTarget && (
+        <div className="modal-overlay" onClick={() => setShareConfirmTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">分享到市场</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
+                以下内容将对所有用户可见：
+              </p>
+              <div style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 8 }}>
+                <div>{'\u{1F464}'} 角色名：{shareConfirmTarget.name || '?'}</div>
+                <div>{'\u{1F3AF}'} 身份：{shareConfirmTarget.identity || '-'}</div>
+                {shareConfirmTarget.personality_traits?.length > 0 && <div>{'\u{1F9E0}'} 性格特征</div>}
+                {shareConfirmTarget.speaking_style?.tone && <div>{'\u{1F3A4}'} 语言风格</div>}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setShareConfirmTarget(null)}>取消</button>
+              <button className="btn-primary" onClick={async () => {
+                const cid = shareConfirmTarget.id || shareConfirmTarget.card_id
+                setShareConfirmTarget(null)
+                try {
+                  await fetchWithTimeout(`/api/market/${cid}/visibility`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ visibility: 'public' }),
+                  })
+                  setSharedCards((prev) => { const n = new Set(prev); n.add(cid); return n })
+                } catch (err) { console.error('Share failed:', err) }
+              }}>
+                确认公开
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -374,6 +416,7 @@ function CardDetail({ card, textId }) {
   const setUserRole = useAppStore((s) => s.setUserRole)
   const setView = useAppStore((s) => s.setView)
   const updateCard = useAppStore((s) => s.updateCard)
+  const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
@@ -666,17 +709,16 @@ function CardDetail({ card, textId }) {
           type="button"
           className="btn-secondary"
           id="card-share-btn"
-          onClick={async () => {
-            const newVis = card.visibility === 'public' ? 'private' : 'public'
-            try {
-              await fetchWithTimeout(`/api/market/${card.id}/visibility`, {
+          onClick={() => {
+            if (shared) {
+              // Unshare directly — no confirm needed to withdraw
+              fetchWithTimeout(`/api/market/${card.id}/visibility`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ visibility: newVis }),
-              })
-              setShared(!shared)
-            } catch (err) {
-              console.error('Share toggle failed:', err)
+                body: JSON.stringify({ visibility: 'private' }),
+              }).then(() => setShared(false)).catch((err) => console.error('Unshare failed:', err))
+            } else {
+              setShowShareConfirm(true)
             }
           }}
         >
@@ -712,6 +754,46 @@ function CardDetail({ card, textId }) {
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
       />
+
+      {/* Share confirm modal */}
+      {showShareConfirm && (
+        <div className="modal-overlay" onClick={() => setShowShareConfirm(false)}>
+          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">分享到市场</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
+                以下内容将对所有用户可见：
+              </p>
+              <div style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 8 }}>
+                <div>{'\u{1F464}'} 角色名：{name}</div>
+                {data.identity && <div>{'\u{1F3AF}'} 身份：{data.identity}</div>}
+                {data.personality_traits?.length > 0 && <div>{'\u{1F9E0}'} 性格特征</div>}
+                {style.tone && <div>{'\u{1F3A4}'} 语言风格</div>}
+                {data.values?.length > 0 && <div>{'\u{2B50}'} 核心价值观</div>}
+                {data.background && <div>{'\u{1F4D6}'} 背景设定</div>}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setShowShareConfirm(false)}>取消</button>
+              <button className="btn-primary" onClick={async () => {
+                setShowShareConfirm(false)
+                try {
+                  await fetchWithTimeout(`/api/market/${card.id}/visibility`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ visibility: 'public' }),
+                  })
+                  setShared(true)
+                } catch (err) {
+                  console.error('Share failed:', err)
+                }
+              }}>
+                确认公开
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
