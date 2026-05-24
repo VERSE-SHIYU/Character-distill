@@ -240,6 +240,7 @@ export default function HistoryPanel() {
     try {
       await fetchWithTimeout(`/api/group/${groupId}`, { method: 'DELETE' })
       setGroupItems((prev) => prev.filter((g) => g.id !== groupId))
+      setGroupDetail(null)
     } catch (err) {
       console.error('[HistoryPanel] group delete failed:', err)
       setError(err.message || '删除失败')
@@ -409,6 +410,7 @@ export default function HistoryPanel() {
         loading={groupDetailLoading}
         onBack={() => setGroupDetail(null)}
         onResume={() => handleResumeGroup(groupDetail.id)}
+        onDelete={() => setDeleteGroupId(groupDetail.id)}
       />
     )
   }
@@ -763,7 +765,7 @@ export default function HistoryPanel() {
   )
 }
 
-function GroupHistoryDetail({ detail, loading, onBack, onResume }) {
+function GroupHistoryDetail({ detail, loading, onBack, onResume, onDelete }) {
   const messages = detail.messages || []
   const groupName = detail.name || '群聊'
 
@@ -776,6 +778,14 @@ function GroupHistoryDetail({ detail, loading, onBack, onResume }) {
         <div className="history-detail-actions">
           <button type="button" className="btn-primary history-action-sm" onClick={onResume}>
             继续群聊
+          </button>
+          <button
+            type="button"
+            className="history-action-sm history-action-danger"
+            onClick={onDelete}
+            style={{ marginLeft: 8 }}
+          >
+            删除群聊
           </button>
         </div>
       </div>

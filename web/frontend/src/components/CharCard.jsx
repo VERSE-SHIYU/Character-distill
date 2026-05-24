@@ -281,7 +281,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           style={{ marginLeft: 'auto', fontSize: 12 }}
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? '← 返回' : '🗑'}
+          {trashMode ? '← 返回列表' : '🗑 回收站'}
         </button>
       </div>
 
