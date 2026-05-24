@@ -781,6 +781,14 @@ async def start_session(
                     eng_role = "user" if role == "user" else "assistant"
                     engine.history.append({"role": eng_role, "content": m["content"]})
                 print(f"[start_session] Loaded {len(old_messages)} history messages from session {recent['id']}")
+                # Restore affinity from the recent session
+                try:
+                    affinity_data = await storage.get_session_affinity(recent["id"])
+                    if affinity_data:
+                        engine.load_affinity(affinity_data)
+                        print(f"[start_session] Restored affinity from session {recent['id']}")
+                except Exception as aff_exc:
+                    print(f"[start_session] Restore affinity failed (non-fatal): {aff_exc}")
     except Exception as exc:
         print(f"[start_session] Load history failed (non-fatal): {exc}")
 

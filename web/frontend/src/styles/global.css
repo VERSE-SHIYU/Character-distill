@@ -5527,6 +5527,8 @@ select.settings-input {
 .admin-table td {
   color: var(--text-primary);
   border-bottom: 1px solid var(--input-border);
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 /* Zebra striping */
@@ -5560,6 +5562,8 @@ select.settings-input {
 .admin-actions-cell {
   display: flex;
   gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
 }
 
 .admin-action-btn {

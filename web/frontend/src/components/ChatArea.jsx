@@ -470,16 +470,7 @@ function ChatView() {
             </div>
           )}
         </div>
-      ) : (
-        <button
-          type="button"
-          className="affinity-float-toggle"
-          onClick={() => setAffinityEnabled(true)}
-          title="显示情感状态"
-        >
-          {'\u{1F9B6}'}
-        </button>
-      )}
+      ) : null}
 
       {/* User role bar */}
       <div className="user-role-bar">

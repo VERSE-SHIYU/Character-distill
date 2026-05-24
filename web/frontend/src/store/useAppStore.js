@@ -702,6 +702,7 @@ const useAppStore = create((set, get) => ({
         message,
         user_role: get().userRole,
         web_search: get().webSearchEnabled,
+        affinity_enabled: get().affinityEnabled,
       })
       set((s) => {
         const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false })
@@ -742,7 +743,7 @@ const useAppStore = create((set, get) => ({
 
     return streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled },
+      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled },
       (token) => {
         fullReply += token
         set((s) => {

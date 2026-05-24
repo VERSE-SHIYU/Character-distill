@@ -372,6 +372,8 @@ class ChatEngine:
         """异步评估四维好感度变化。"""
         if not self.llm:
             return
+        if not getattr(self, 'affinity_enabled', True):
+            return
 
         user_role = (self.user_role or "对方").strip()
 

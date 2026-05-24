@@ -42,6 +42,8 @@ export default function SettingsPanel() {
   const uploadRefAudio = useAppStore((s) => s.uploadRefAudio)
   const loadVoiceRef = useAppStore((s) => s.loadVoiceRef)
   const deleteVoiceRef = useAppStore((s) => s.deleteVoiceRef)
+  const affinityEnabled = useAppStore((s) => s.affinityEnabled)
+  const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
 
   // ---- Ref audio upload state ----
   const [audioFile, setAudioFile] = useState(null)
@@ -280,6 +282,26 @@ export default function SettingsPanel() {
               value={summaryThreshold}
               onChange={(e) => setSummaryThreshold(Number(e.target.value))}
             />
+          </label>
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-section-title">情感系统</h2>
+        <p className="settings-hint">
+          关闭后将不消耗 token 进行情感计算，但情感状态不会实时更新。
+        </p>
+        <div className="settings-fields">
+          <label className="settings-field" style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <span className="settings-label">开启情感系统</span>
+            <label className="voice-toggle">
+              <input
+                type="checkbox"
+                checked={affinityEnabled}
+                onChange={(e) => setAffinityEnabled(e.target.checked)}
+              />
+              <span className="voice-toggle-slider" />
+            </label>
           </label>
         </div>
       </section>

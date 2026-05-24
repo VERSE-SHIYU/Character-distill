@@ -116,6 +116,7 @@ class ChatRequest(BaseModel):
     hidden: bool = False  # inject into LLM context without saving user msg (for revoke notice)
     web_search: bool = False  # enable reality-enhanced web search
     voice_mode: bool = False  # strip parentheses/action descriptions for voice output
+    affinity_enabled: bool = True  # enable/disable backend affinity evaluation
 
 
 class RevokeRequest(BaseModel):
@@ -141,6 +142,7 @@ async def _do_chat(
     user_id: str = "",
     web_search: bool = False,
     voice_mode: bool = False,
+    affinity_enabled: bool = True,
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
@@ -170,6 +172,7 @@ async def _do_chat(
             engine._user_id = user_id
             engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
+            engine.affinity_enabled = affinity_enabled
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
         async with session["lock"]:
             resp = await asyncio.to_thread(engine.chat, msg, voice_mode=voice_mode)
@@ -231,6 +234,7 @@ async def _do_chat_stream(
     user_id: str = "",
     web_search: bool = False,
     voice_mode: bool = False,
+    affinity_enabled: bool = True,
 ):
     """Core streaming chat logic with SSE output."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
@@ -259,6 +263,7 @@ async def _do_chat_stream(
         engine._user_id = user_id
         engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
+        engine.affinity_enabled = affinity_enabled
 
     def _next_piece(stream_obj):
         """Read next stream piece with StopIteration sentinel."""
@@ -383,8 +388,8 @@ async def send_message(
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled)
 
 
 @router.post("/revoke")
@@ -481,7 +486,7 @@ async def legacy_chat(
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
     user_id = user["id"]
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, affinity_enabled=req.affinity_enabled)
 
 
 @legacy_router.post("/api/reset")
