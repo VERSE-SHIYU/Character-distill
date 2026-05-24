@@ -6566,6 +6566,192 @@ select.settings-input {
   background: var(--bg-card);
 }
 
+/* ===== Market Card Detail ===== */
+.market-detail-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.market-detail-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.market-detail-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 32px 20px;
+  margin-bottom: 24px;
+}
+
+.market-detail-name {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 16px 0 4px;
+}
+
+.market-detail-identity {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.market-detail-background {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  max-width: 500px;
+  margin: 0 auto 16px;
+}
+
+.market-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.market-detail-tag {
+  padding: 4px 10px;
+  background: rgba(var(--accent-rgb), 0.1);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.market-detail-author-link {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.market-detail-author-link:hover {
+  text-decoration: underline;
+}
+
+.market-detail-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.market-detail-like-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.18s;
+}
+
+.market-detail-like-btn:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.market-detail-actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* Comments */
+.market-detail-comments {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+}
+
+.market-detail-section-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.market-detail-comment-input {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.market-detail-comment-field {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.market-detail-comment-field:focus {
+  border-color: var(--accent);
+}
+
+.market-detail-empty {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 32px;
+}
+
+.market-detail-comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.market-detail-comment-item {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-card);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+}
+
+.market-detail-comment-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.market-detail-comment-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.market-detail-comment-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.market-detail-comment-time {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.market-detail-comment-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+}
+
 /* ===== Messages Page ===== */
 .messages-page {
   display: flex;

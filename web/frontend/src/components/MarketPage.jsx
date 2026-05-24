@@ -234,7 +234,7 @@ export default function MarketPage() {
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (
-                <div key={c.id} className="market-card-v2">
+                <div key={c.id} className="market-card-v2" onClick={() => { useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
                   <Avatar name={charName} size={72} />
                   <div className="market-card-v2-name">{charName}</div>
                   {identity && <div className="market-card-v2-identity">{identity}</div>}
@@ -258,7 +258,7 @@ export default function MarketPage() {
                       <button
                         type="button"
                         className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
-                        onClick={() => handleLike(c.id)}
+                        onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
                         disabled={forkingId === c.id}
                       >
                         {c.liked_by_me ? '❤️' : '\u{1F90D}'}
@@ -283,7 +283,7 @@ export default function MarketPage() {
                     <button
                       type="button"
                       className="btn-ghost market-comment-btn"
-                      onClick={() => openComments(c.id)}
+                      onClick={(e) => { e.stopPropagation(); openComments(c.id) }}
                       title="评论"
                     >
                       {'\u{1F4AC}'}
@@ -291,7 +291,7 @@ export default function MarketPage() {
                     <button
                       type="button"
                       className="btn-primary market-use-btn"
-                      onClick={() => handleUse(c)}
+                      onClick={(e) => { e.stopPropagation(); handleUse(c) }}
                       disabled={forkingId === c.id}
                     >
                       {forkingId === c.id ? '添加中…' : '使用'}

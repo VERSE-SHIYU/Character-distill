@@ -49,6 +49,8 @@ const useAppStore = create((set, get) => ({
   setAuthorUserId: (userId) => set({ authorUserId: userId }),
   currentTextDetailId: null,
   setCurrentTextDetailId: (id) => set({ currentTextDetailId: id }),
+  currentMarketCardId: null,
+  setCurrentMarketCardId: (id) => set({ currentMarketCardId: id }),
   messageTargetUserId: null,
   setMessageTargetUserId: (id) => set({ messageTargetUserId: id }),
   messageTargetUsername: null,

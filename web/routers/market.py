@@ -71,6 +71,19 @@ async def search_cards(
     return {"cards": cards, "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/card/{card_id}")
+async def get_card_detail(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get a single public card detail with author info."""
+    card = await storage.get_market_card_detail(card_id, user["id"])
+    if not card:
+        raise HTTPException(404, "角色不存在或未公开")
+    return card
+
+
 @router.post("/{card_id}/fork")
 async def fork_card(
     card_id: str,
