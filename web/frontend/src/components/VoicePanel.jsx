@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import ConfirmModal from './common/ConfirmModal'
 
 const PRESET_VOICES = [
   { id: 'xiaoxiao', label: '晓晓（女，活泼）' },
@@ -55,6 +56,8 @@ export default function VoicePanel() {
 
   // Deleting state
   const [deletingId, setDeletingId] = useState(null)
+  const [deleteVoiceConfirm, setDeleteVoiceConfirm] = useState(null)
+  const [deleteRefConfirm, setDeleteRefConfirm] = useState(false)
 
   useEffect(() => { loadVoices() }, [loadVoices])
   useEffect(() => { checkVoiceStatus() }, [checkVoiceStatus])
@@ -114,7 +117,7 @@ export default function VoicePanel() {
   }
 
   const handleCustomDelete = async (voiceId) => {
-    if (!window.confirm('确定删除该音色？')) return
+    setDeleteVoiceConfirm(voiceId)
     setDeletingId(voiceId)
     try {
       await deleteCustomVoice(voiceId)
@@ -200,7 +203,7 @@ export default function VoicePanel() {
 
   const handleRefDelete = async () => {
     if (!cardId) return
-    if (!window.confirm('确定删除参考音频？')) return
+    setDeleteRefConfirm(true)
     try {
       await deleteVoiceRef(cardId)
       setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
@@ -561,6 +564,45 @@ export default function VoicePanel() {
           </button>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={!!deleteVoiceConfirm}
+        title="删除音色"
+        message="确定删除该音色？"
+        confirmText="确定"
+        onConfirm={async () => {
+          const voiceId = deleteVoiceConfirm
+          setDeleteVoiceConfirm(null)
+          setDeletingId(voiceId)
+          try {
+            await deleteCustomVoice(voiceId)
+            if (selectedVoice === voiceId) {
+              handleVoiceChange('xiaoxiao')
+            }
+            setCustomSuccess('音色已删除')
+            setTimeout(() => setCustomSuccess(''), 3000)
+          } catch { /* store handles */ }
+          setDeletingId(null)
+        }}
+        onCancel={() => setDeleteVoiceConfirm(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={deleteRefConfirm}
+        title="删除参考音频"
+        message="确定删除参考音频？"
+        confirmText="确定"
+        onConfirm={async () => {
+          setDeleteRefConfirm(false)
+          try {
+            await deleteVoiceRef(cardId)
+            setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
+            setTimeout(() => setRefSuccess(''), 3000)
+          } catch { /* store handles */ }
+        }}
+        onCancel={() => setDeleteRefConfirm(false)}
+        danger
+      />
     </div>
   )
 }

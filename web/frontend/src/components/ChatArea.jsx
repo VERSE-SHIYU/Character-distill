@@ -6,6 +6,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import RoleSetupModal from './RoleSetupModal'
 import ImageCropModal from './common/ImageCropModal'
+import ConfirmModal from './common/ConfirmModal'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -116,6 +117,9 @@ function ChatView() {
     try { localStorage.setItem('charsim-font-level', String(fontLevel)) }
     catch { /* noop */ }
   }, [fontLevel])
+
+  const [resetConfirm, setResetConfirm] = useState(false)
+  const [retractConfirm, setRetractConfirm] = useState(false)
 
   useEffect(() => {
     if (!userRole) setShowRoleModal(true)
@@ -323,25 +327,12 @@ function ChatView() {
   )
 
   const handleReset = useCallback(() => {
-    if (!window.confirm('确定重置对话？历史消息将被清空。')) return
-    if (cancelStreamRef.current) {
-      cancelStreamRef.current()
-      cancelStreamRef.current = null
-    }
-    resetChat()
-  }, [resetChat])
+    setResetConfirm(true)
+  }, [])
 
-  const handleRevoke = useCallback(
-    () => {
-      if (!window.confirm('撤回最近一条消息？')) return
-      if (cancelStreamRef.current) {
-        cancelStreamRef.current()
-        cancelStreamRef.current = null
-      }
-      revokeMessage()
-    },
-    [revokeMessage],
-  )
+  const handleRevoke = useCallback(() => {
+    setRetractConfirm(true)
+  }, [])
 
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
@@ -604,6 +595,39 @@ function ChatView() {
         file={userCropFile}
         onConfirm={handleUserCropConfirm}
         onCancel={handleUserCropCancel}
+      />
+
+      <ConfirmModal
+        isOpen={resetConfirm}
+        title="重置对话"
+        message="确定重置对话？历史消息将被清空。"
+        confirmText="确定"
+        onConfirm={() => {
+          setResetConfirm(false)
+          if (cancelStreamRef.current) {
+            cancelStreamRef.current()
+            cancelStreamRef.current = null
+          }
+          resetChat()
+        }}
+        onCancel={() => setResetConfirm(false)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={retractConfirm}
+        title="撤回消息"
+        message="撤回最近一条消息？"
+        confirmText="确定"
+        onConfirm={() => {
+          setRetractConfirm(false)
+          if (cancelStreamRef.current) {
+            cancelStreamRef.current()
+            cancelStreamRef.current = null
+          }
+          revokeMessage()
+        }}
+        onCancel={() => setRetractConfirm(false)}
+        danger
       />
     </div>
   )

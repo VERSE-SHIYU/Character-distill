@@ -25,6 +25,7 @@ const NAV_GROUPS = [
     label: '管理',
     items: [
       { id: 'history', icon: '\u{1F4DA}', label: '历史' },
+      { id: 'voice', icon: '\u{1F399}', label: '音色管理' },
       { id: 'profile', icon: '\u{1F464}', label: '个人资料' },
       { id: 'settings', icon: '⚙️', label: '设置' },
     ],

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { adminAPI } from '../api/client'
 import useAppStore from '../store/useAppStore'
+import ConfirmModal from './common/ConfirmModal'
 
 const TABS = [
   { id: 'users', label: '用户管理' },
@@ -56,6 +57,8 @@ function UsersTab() {
   const [emailError, setEmailError] = useState('')
   const [emailOk, setEmailOk] = useState('')
   const [emailSetting, setEmailSetting] = useState(false)
+  const [disableConfirm, setDisableConfirm] = useState(null)
+  const [clearEmailConfirm, setClearEmailConfirm] = useState(null)
   const authUser = useAppStore((s) => s.authUser)
 
   const load = useCallback(async () => {
@@ -75,7 +78,8 @@ function UsersTab() {
 
   const toggleDisable = async (user) => {
     if (!user.is_disabled) {
-      if (!window.confirm('确定禁用该用户？')) return
+      setDisableConfirm(user)
+      return
     }
     try {
       if (user.is_disabled) {
@@ -133,7 +137,8 @@ function UsersTab() {
   }
 
   const handleClearEmail = async (user) => {
-    if (!window.confirm('确定清除该用户的邮箱？')) return
+    setClearEmailConfirm(user)
+    return
     try {
       await adminAPI.clearUserEmail(user.id)
       await load()
@@ -340,6 +345,43 @@ function UsersTab() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!disableConfirm}
+        title="禁用用户"
+        message={`确定禁用用户「${disableConfirm?.username}」？`}
+        confirmText="确定"
+        onConfirm={async () => {
+          const user = disableConfirm
+          setDisableConfirm(null)
+          try {
+            await adminAPI.disableUser(user.id)
+            await load()
+          } catch (err) {
+            setActionError(err.message)
+          }
+        }}
+        onCancel={() => setDisableConfirm(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={!!clearEmailConfirm}
+        title="清除邮箱"
+        message={`确定清除用户「${clearEmailConfirm?.username}」的邮箱？`}
+        confirmText="确定"
+        onConfirm={async () => {
+          const user = clearEmailConfirm
+          setClearEmailConfirm(null)
+          try {
+            await adminAPI.clearUserEmail(user.id)
+            await load()
+          } catch (err) {
+            setActionError(err.message)
+          }
+        }}
+        onCancel={() => setClearEmailConfirm(null)}
+        danger
+      />
     </div>
   )
 }
@@ -354,6 +396,7 @@ function InvitesTab() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [batchDeleteCodesConfirm, setBatchDeleteCodesConfirm] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -402,7 +445,7 @@ function InvitesTab() {
   }
 
   const handleBatchDelete = async () => {
-    if (!window.confirm('确定批量删除所有已使用的邀请码？')) return
+    setBatchDeleteCodesConfirm(true)
     setBatchDeleting(true)
     try {
       await adminAPI.deleteUsedInvites()
@@ -520,6 +563,27 @@ function InvitesTab() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={batchDeleteCodesConfirm}
+        title="批量删除"
+        message="确定批量删除所有已使用的邀请码？"
+        confirmText="确定"
+        onConfirm={async () => {
+          setBatchDeleteCodesConfirm(false)
+          setBatchDeleting(true)
+          try {
+            await adminAPI.deleteUsedInvites()
+            await load()
+          } catch (err) {
+            setError(err.message)
+          } finally {
+            setBatchDeleting(false)
+          }
+        }}
+        onCancel={() => setBatchDeleteCodesConfirm(false)}
+        danger
+      />
     </div>
   )
 }
