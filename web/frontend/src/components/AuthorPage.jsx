@@ -4,9 +4,11 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import ConfirmModal from './common/ConfirmModal'
 
 export default function AuthorPage() {
   const setView = useAppStore((s) => s.setView)
+  const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const authorUserId = useAppStore((s) => s.authorUserId)
   const authUser = useAppStore((s) => s.authUser)
   const startChat = useAppStore((s) => s.startChat)
@@ -16,6 +18,30 @@ export default function AuthorPage() {
   const [isFollowing, setIsFollowing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  // Posts
+  const [posts, setPosts] = useState([])
+  const [postsLoading, setPostsLoading] = useState(false)
+  const [postContent, setPostContent] = useState('')
+  const [postVisibility, setPostVisibility] = useState('public')
+  const [posting, setPosting] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+
+  const isOwnProfile = authUser?.id === authorUserId
+
+  const loadPosts = useCallback(async () => {
+    if (!authorUserId) return
+    setPostsLoading(true)
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/posts`)
+      const data = await res.json()
+      setPosts(data.posts || [])
+    } catch {
+      // ignore
+    } finally {
+      setPostsLoading(false)
+    }
+  }, [authorUserId])
 
   useEffect(() => {
     if (!authorUserId) { setView('market'); return }
@@ -35,6 +61,10 @@ export default function AuthorPage() {
     })()
   }, [authorUserId])
 
+  useEffect(() => {
+    loadPosts()
+  }, [loadPosts])
+
   const handleFollow = async () => {
     try {
       const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/follow`, {
@@ -45,6 +75,38 @@ export default function AuthorPage() {
       setIsFollowing(data.following)
     } catch (err) {
       console.error('Follow failed:', err)
+    }
+  }
+
+  const handlePostSubmit = async () => {
+    if (!postContent.trim() || posting) return
+    setPosting(true)
+    try {
+      await fetchWithTimeout('/api/market/author/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ content: postContent.trim(), visibility: postVisibility }),
+      })
+      setPostContent('')
+      await loadPosts()
+    } catch (err) {
+      console.error('Post failed:', err)
+    } finally {
+      setPosting(false)
+    }
+  }
+
+  const handleDeletePost = async () => {
+    const id = deleteConfirmId
+    setDeleteConfirmId(null)
+    try {
+      await fetchWithTimeout(`/api/market/posts/${id}`, {
+        method: 'DELETE',
+        headers: { ...getAuthHeaders() },
+      })
+      setPosts((prev) => prev.filter((p) => p.id !== id))
+    } catch (err) {
+      console.error('Delete post failed:', err)
     }
   }
 
@@ -69,15 +131,24 @@ export default function AuthorPage() {
               <h2 className="author-name">{author.username}</h2>
               <p className="author-meta">{cards.length} 个公开角色</p>
             </div>
-            {authUser?.id !== authorUserId && (
-              <button
-                type="button"
-                className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
-                style={{ marginLeft: 'auto' }}
-                onClick={handleFollow}
-              >
-                {isFollowing ? '已关注' : '关注'}
-              </button>
+            {!isOwnProfile && (
+              <>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => { setMessageTargetUserId(authorUserId); setView('messages') }}
+                >
+                  发私信
+                </button>
+                <button
+                  type="button"
+                  className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
+                  onClick={handleFollow}
+                >
+                  {isFollowing ? '已关注' : '关注'}
+                </button>
+              </>
             )}
           </div>
 
@@ -123,10 +194,112 @@ export default function AuthorPage() {
               </div>
             )}
           </div>
+
+          {/* Posts section */}
+          <div className="author-cards-section" style={{ marginTop: 24 }}>
+            <h3 className="author-cards-title">动态</h3>
+
+            {isOwnProfile && (
+              <div className="modal-body" style={{ marginBottom: 16, padding: 0 }}>
+                <textarea
+                  className="modal-textarea"
+                  placeholder="写点什么…"
+                  rows={3}
+                  value={postContent}
+                  onChange={(e) => setPostContent(e.target.value)}
+                  style={{ marginBottom: 8 }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    type="button"
+                    className={`btn-sm ${postVisibility === 'public' ? 'btn-primary' : 'btn-ghost'}`}
+                    onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
+                  >
+                    {postVisibility === 'public' ? '🌍 公开' : '🔒 私密'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={!postContent.trim() || posting}
+                    onClick={handlePostSubmit}
+                  >
+                    {posting ? '发布中…' : '发布'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {postsLoading ? (
+              <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
+            ) : posts.length === 0 ? (
+              <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {posts.map((post) => (
+                  <div key={post.id} className="market-card" style={{ alignItems: 'flex-start' }}>
+                    <Avatar name={author.username || '?'} size={36} />
+                    <div className="market-card-body">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontWeight: 600, fontSize: 13 }}>{author.username}</span>
+                        {post.visibility === 'private' && (
+                          <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>🔒 私密</span>
+                        )}
+                        <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>
+                          {fmtTime(post.created_at)}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                        {post.content}
+                      </p>
+                    </div>
+                    {isOwnProfile && (
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm"
+                        style={{ flexShrink: 0, color: 'var(--text-dim)', fontSize: 12 }}
+                        onClick={() => setDeleteConfirmId(post.id)}
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </>
       ) : (
         <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>用户不存在</p>
       )}
+
+      <ConfirmModal
+        isOpen={!!deleteConfirmId}
+        title="删除动态"
+        message="确定删除该动态？"
+        confirmText="删除"
+        onConfirm={handleDeletePost}
+        onCancel={() => setDeleteConfirmId(null)}
+        danger
+      />
     </div>
   )
+}
+
+function fmtTime(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const diffMs = now - d
+    const diffMin = Math.floor(diffMs / 60000)
+    if (diffMin < 1) return '刚刚'
+    if (diffMin < 60) return `${diffMin}分钟前`
+    const diffHour = Math.floor(diffMin / 60)
+    if (diffHour < 24) return `${diffHour}小时前`
+    const diffDay = Math.floor(diffHour / 24)
+    if (diffDay < 7) return `${diffDay}天前`
+    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  } catch {
+    return ''
+  }
 }

@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { id: 'character', icon: '\u{1F464}', label: '角色管理' },
   { id: 'market', icon: '\u{1F30D}', label: '角色市场' },
   { id: 'groupChat', icon: '\u{1F465}', label: '群聊' },
+  { id: 'messages', icon: '\u{1F4E8}', label: '私信' },
   { id: 'chat', icon: '\u{1F4AC}', label: '聊天' },
   { id: 'history', icon: '\u{1F4DA}', label: '历史' },
   { id: 'voice', icon: '\u{1F399}', label: '音色管理' },
@@ -28,6 +29,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const authUser = useAppStore((s) => s.authUser)
   const logout = useAppStore((s) => s.logout)
   const [sessionCount, setSessionCount] = useState(0)
+  const [unreadCount, setUnreadCount] = useState(0)
 
   const hasTexts = texts.length > 0
   const isVisible = open || pinned
@@ -39,18 +41,32 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
       .catch(() => {})
   }, [])
 
+  // Poll unread message count
+  useEffect(() => {
+    const poll = () => {
+      fetchWithTimeout('/api/messages/unread-count')
+        .then((r) => r.json())
+        .then((d) => setUnreadCount(d.count ?? 0))
+        .catch(() => {})
+    }
+    poll()
+    const timer = setInterval(poll, 30000)
+    return () => clearInterval(timer)
+  }, [])
+
   function badge(id) {
     switch (id) {
       case 'text': return texts.length > 0 ? String(texts.length) : null
       case 'character': return cards.length > 0 ? String(cards.length) : null
       case 'history': return sessionCount > 0 ? String(sessionCount) : null
+      case 'messages': return unreadCount > 0 ? String(unreadCount) : null
       default: return null
     }
   }
 
   function isDisabled(id) {
     if (id === 'text') return false
-    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile' || id === 'market' || id === 'groupChat') return false
+    if (id === 'home' || id === 'settings' || id === 'history' || id === 'voice' || id === 'profile' || id === 'market' || id === 'groupChat' || id === 'messages') return false
     return !hasTexts && id !== 'home' && id !== 'settings' && id !== 'history' && id !== 'voice' && id !== 'profile'
   }
 

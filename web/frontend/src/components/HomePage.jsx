@@ -105,7 +105,7 @@ export default function HomePage() {
 
   useEffect(() => {
     let cancelled = false
-    fetchWithTimeout('/api/history/list?page=1&page_size=3')
+    fetchWithTimeout('/api/history/list?page=1&page_size=4')
       .then((r) => r.json())
       .then((data) => { if (!cancelled) setRecentSessions(data.items || []) })
       .catch(() => {})
@@ -167,7 +167,7 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="home-char-grid">
-            {allCards.map((card) => {
+            {allCards.slice(0, 4).map((card) => {
               const data = parseCardJson(card)
               const name = data.name || card.name || '?'
               const identity = data.identity || ''
@@ -187,6 +187,13 @@ export default function HomePage() {
               )
             })}
           </div>
+          {allCards.length > 4 && (
+            <div style={{ textAlign: 'center', marginTop: 12 }}>
+              <button type="button" className="btn-ghost" style={{ fontSize: 13 }} onClick={() => setView('character')}>
+                查看全部 ▸
+              </button>
+            </div>
+          )}
         )}
       </div>
 

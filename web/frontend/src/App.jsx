@@ -16,6 +16,8 @@ import ProfilePage from './components/ProfilePage'
 import MarketPage from './components/MarketPage'
 import AuthorPage from './components/AuthorPage'
 import GroupChatPage from './components/GroupChatPage'
+import TextDetailPage from './components/TextDetailPage'
+import MessagesPage from './components/MessagesPage'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -32,6 +34,8 @@ const PANELS = {
   market: MarketPage,
   author: AuthorPage,
   groupChat: GroupChatPage,
+  textDetail: TextDetailPage,
+  messages: MessagesPage,
 }
 
 function MainContent() {

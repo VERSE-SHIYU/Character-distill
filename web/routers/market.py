@@ -26,6 +26,11 @@ class CommentRequest(BaseModel):
     content: str
 
 
+class PostRequest(BaseModel):
+    content: str
+    visibility: str = "public"
+
+
 @router.get("/list")
 async def list_cards(
     request: Request,
@@ -173,3 +178,52 @@ async def toggle_follow_author(
     if not author:
         raise HTTPException(404, "用户不存在")
     return await storage.toggle_follow(user["id"], user_id)
+
+
+@router.get("/my/following")
+async def my_following(
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get authors the current user is following."""
+    users = await storage.get_following_details(user["id"])
+    return {"users": users}
+
+
+@router.get("/author/{user_id}/posts")
+async def get_author_posts(
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get posts for an author. Own profile sees all, others see only public."""
+    posts = await storage.get_user_posts(user_id, user["id"])
+    return {"posts": posts}
+
+
+@router.post("/author/posts")
+async def create_post(
+    body: PostRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Create a new post."""
+    if not body.content.strip():
+        raise HTTPException(400, "内容不能为空")
+    if body.visibility not in ("public", "private"):
+        raise HTTPException(400, "visibility 必须是 'public' 或 'private'")
+    post = await storage.add_post(user["id"], body.content.strip(), body.visibility)
+    return {"post": post}
+
+
+@router.delete("/posts/{post_id}")
+async def delete_post(
+    post_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete your own post."""
+    ok = await storage.delete_post(post_id, user["id"])
+    if not ok:
+        raise HTTPException(404, "动态不存在或无权删除")
+    return {"ok": True}

@@ -16,6 +16,12 @@ from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 from routers.auth import get_current_user
+from pydantic import BaseModel
+
+
+class CommentCreate(BaseModel):
+    content: str
+    parent_id: str = ""
 
 router = APIRouter(prefix="/api/text", tags=["text"])
 
@@ -173,5 +179,91 @@ async def delete_text(
         raise HTTPException(500, f"Delete text failed: {exc}") from exc
     if not ok:
         raise HTTPException(404, "Text not found")
+    return {"ok": True}
+
+
+@router.get("/{text_id}/detail")
+async def get_text_detail(
+    text_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get text metadata and comment count (no full content body)."""
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "Text not found")
+    # Count comments
+    comments = await storage.get_text_comments(text_id, 1, 1)
+    text.pop("content", None)
+    text["comment_count"] = comments["total"]
+    return {"text": text}
+
+
+@router.get("/{text_id}/comments")
+async def get_text_comments(
+    text_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get paginated comments for a text."""
+    result = await storage.get_text_comments(text_id, page, page_size)
+    # Mark liked comments
+    all_ids = []
+    for c in result["comments"]:
+        all_ids.append(c["id"])
+        all_ids.extend(r["id"] for r in c.get("replies", []))
+    if all_ids:
+        liked = await storage.get_liked_comment_ids(all_ids, user["id"])
+        for c in result["comments"]:
+            c["liked_by_me"] = c["id"] in liked
+            for r in c.get("replies", []):
+                r["liked_by_me"] = r["id"] in liked
+    else:
+        for c in result["comments"]:
+            c["liked_by_me"] = False
+            for r in c.get("replies", []):
+                r["liked_by_me"] = False
+    return result
+
+
+@router.post("/{text_id}/comments")
+async def add_text_comment(
+    text_id: str,
+    body: CommentCreate,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Add a comment to a text."""
+    if not body.content.strip():
+        raise HTTPException(400, "评论内容不能为空")
+    comment = await storage.add_text_comment(
+        text_id, user["id"], user["username"], body.content.strip(), body.parent_id,
+    )
+    comment["liked_by_me"] = False
+    return {"comment": comment}
+
+
+@router.post("/comments/{comment_id}/like")
+async def toggle_comment_like(
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle like on a comment."""
+    return await storage.toggle_text_comment_like(comment_id, user["id"])
+
+
+@router.delete("/comments/{comment_id}")
+async def delete_text_comment(
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete your own comment."""
+    ok = await storage.delete_text_comment(comment_id, user["id"])
+    if not ok:
+        raise HTTPException(404, "评论不存在或无权删除")
     return {"ok": True}
 

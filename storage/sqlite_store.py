@@ -326,6 +326,33 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Soft delete migration failed: {exc}")
 
+                    # Run 030_user_posts migration (CREATE TABLE IF NOT EXISTS)
+                    up_path = migrations_dir / "030_user_posts.sql"
+                    if up_path.exists():
+                        try:
+                            await conn.executescript(up_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] User posts migration failed: {exc}")
+
+                    # Run 031_text_comments migration (CREATE TABLE IF NOT EXISTS)
+                    tc_path = migrations_dir / "031_text_comments.sql"
+                    if tc_path.exists():
+                        try:
+                            await conn.executescript(tc_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Text comments migration failed: {exc}")
+
+                    # Run 032_direct_messages migration (CREATE TABLE IF NOT EXISTS)
+                    dm_path = migrations_dir / "032_direct_messages.sql"
+                    if dm_path.exists():
+                        try:
+                            await conn.executescript(dm_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Direct messages migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -601,9 +628,11 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
                               c.forked_from, c.likes, c.created_at,
-                              COALESCE(u.username, '') AS author_name
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(t.title, '') AS text_title
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
+                        LEFT JOIN texts t ON t.id = c.text_id
                         WHERE c.visibility = 'public'
                         ORDER BY {order}
                         LIMIT ? OFFSET ?""",
@@ -637,9 +666,11 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
                               c.forked_from, c.likes, c.created_at,
-                              COALESCE(u.username, '') AS author_name
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(t.title, '') AS text_title
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
+                        LEFT JOIN texts t ON t.id = c.text_id
                         WHERE c.visibility = 'public' AND c.name LIKE ?
                         ORDER BY c.likes DESC, c.created_at DESC
                         LIMIT ? OFFSET ?""",
@@ -2041,6 +2072,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get following failed: {exc}")
             return []
 
+    async def get_following_details(self, user_id: str) -> list[dict]:
+        """Get followed users with id and username."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT u.id, u.username FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get following details failed: {exc}")
+            return []
+
     async def toggle_follow(self, follower_id: str, following_id: str) -> dict:
         try:
             async with await self._connect() as conn:
@@ -2096,3 +2141,297 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get author cards failed: {exc}")
             return []
+
+    # ── User Posts ──
+
+    async def add_post(self, user_id: str, content: str, visibility: str) -> dict:
+        """Add a new post. Returns the created post dict."""
+        import uuid
+        post_id = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO user_posts (id, user_id, content, visibility) VALUES (?, ?, ?, ?)",
+                    (post_id, user_id, content, visibility),
+                )
+                await conn.commit()
+                cursor = await conn.execute(
+                    "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE id = ?",
+                    (post_id,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility}
+        except Exception as exc:
+            print(f"[SQLiteStore] Add post failed: {exc}")
+            raise
+
+    async def get_user_posts(self, user_id: str, viewer_id: str) -> list[dict]:
+        """Get posts for a user. viewer_id==user_id sees all, others see only public."""
+        try:
+            async with await self._connect() as conn:
+                if viewer_id == user_id:
+                    cursor = await conn.execute(
+                        "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE user_id = ? ORDER BY created_at DESC",
+                        (user_id,),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE user_id = ? AND visibility = 'public' ORDER BY created_at DESC",
+                        (user_id,),
+                    )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user posts failed: {exc}")
+            return []
+
+    async def delete_post(self, post_id: str, user_id: str) -> bool:
+        """Delete a post by id, only if owned by user_id. Returns True if deleted."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM user_posts WHERE id = ? AND user_id = ?",
+                    (post_id, user_id),
+                )
+                await conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete post failed: {exc}")
+            return False
+
+    # ── Text Comments ──
+
+    async def get_text_comments(self, text_id: str, page: int = 1, page_size: int = 20) -> dict:
+        """Get paginated top-level comments with nested replies."""
+        try:
+            offset = (page - 1) * page_size
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM text_comments WHERE text_id = ? AND parent_id = ''",
+                    (text_id,),
+                )
+                row = await cursor.fetchone()
+                total = row[0] if row else 0
+
+                cursor = await conn.execute(
+                    """SELECT id, text_id, user_id, username, content, parent_id, likes, created_at
+                       FROM text_comments
+                       WHERE text_id = ? AND parent_id = ''
+                       ORDER BY created_at DESC
+                       LIMIT ? OFFSET ?""",
+                    (text_id, page_size, offset),
+                )
+                comments = [dict(r) for r in await cursor.fetchall()]
+
+                comment_ids = [c["id"] for c in comments]
+                if comment_ids:
+                    placeholders = ",".join("?" for _ in comment_ids)
+                    cursor = await conn.execute(
+                        f"""SELECT id, text_id, user_id, username, content, parent_id, likes, created_at
+                            FROM text_comments
+                            WHERE parent_id IN ({placeholders})
+                            ORDER BY created_at ASC""",
+                        comment_ids,
+                    )
+                    replies = [dict(r) for r in await cursor.fetchall()]
+                    replies_by_parent: dict[str, list[dict]] = {}
+                    for r in replies:
+                        replies_by_parent.setdefault(r["parent_id"], []).append(r)
+                    for c in comments:
+                        c["replies"] = replies_by_parent.get(c["id"], [])
+                else:
+                    for c in comments:
+                        c["replies"] = []
+
+            return {"comments": comments, "total": total}
+        except Exception as exc:
+            print(f"[SQLiteStore] Get text comments failed: {exc}")
+            raise
+
+    async def add_text_comment(self, text_id: str, user_id: str, username: str, content: str, parent_id: str = "") -> dict:
+        """Add a comment. Returns the created comment dict."""
+        import uuid
+        comment_id = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO text_comments (id, text_id, user_id, username, content, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (comment_id, text_id, user_id, username, content, parent_id),
+                )
+                await conn.commit()
+                cursor = await conn.execute(
+                    "SELECT id, text_id, user_id, username, content, parent_id, likes, created_at FROM text_comments WHERE id = ?",
+                    (comment_id,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else {"id": comment_id, "text_id": text_id, "user_id": user_id, "username": username, "content": content, "parent_id": parent_id, "likes": 0}
+        except Exception as exc:
+            print(f"[SQLiteStore] Add text comment failed: {exc}")
+            raise
+
+    async def toggle_text_comment_like(self, comment_id: str, user_id: str) -> dict:
+        """Toggle like on a comment. Returns {'liked': bool, 'likes': int}."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM text_comment_likes WHERE comment_id = ? AND user_id = ?",
+                    (comment_id, user_id),
+                )
+                exists = await cursor.fetchone()
+                if exists:
+                    await conn.execute(
+                        "DELETE FROM text_comment_likes WHERE comment_id = ? AND user_id = ?",
+                        (comment_id, user_id),
+                    )
+                    await conn.execute(
+                        "UPDATE text_comments SET likes = likes - 1 WHERE id = ?",
+                        (comment_id,),
+                    )
+                    liked = False
+                else:
+                    await conn.execute(
+                        "INSERT INTO text_comment_likes (comment_id, user_id) VALUES (?, ?)",
+                        (comment_id, user_id),
+                    )
+                    await conn.execute(
+                        "UPDATE text_comments SET likes = likes + 1 WHERE id = ?",
+                        (comment_id,),
+                    )
+                    liked = True
+                await conn.commit()
+                cursor = await conn.execute(
+                    "SELECT likes FROM text_comments WHERE id = ?",
+                    (comment_id,),
+                )
+                row = await cursor.fetchone()
+            return {"liked": liked, "likes": row[0] if row else 0}
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle text comment like failed: {exc}")
+            raise
+
+    async def delete_text_comment(self, comment_id: str, user_id: str) -> bool:
+        """Delete a comment (and its replies) by id, only if owned by user_id."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM text_comments WHERE id = ? AND user_id = ?",
+                    (comment_id, user_id),
+                )
+                await conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete text comment failed: {exc}")
+            return False
+
+    async def get_liked_comment_ids(self, comment_ids: list[str], user_id: str) -> set[str]:
+        """Return set of comment_ids that the user has liked."""
+        if not comment_ids:
+            return set()
+        try:
+            placeholders = ",".join("?" for _ in comment_ids)
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    f"SELECT comment_id FROM text_comment_likes WHERE comment_id IN ({placeholders}) AND user_id = ?",
+                    (*comment_ids, user_id),
+                )
+                rows = await cursor.fetchall()
+            return {r[0] for r in rows}
+        except Exception as exc:
+            print(f"[SQLiteStore] Get liked comment ids failed: {exc}")
+            return set()
+
+    # ── Direct Messages ──
+
+    async def send_message(self, sender_id: str, receiver_id: str, content: str) -> dict:
+        """Send a direct message. Returns the created message dict."""
+        import uuid
+        msg_id = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO direct_messages (id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)",
+                    (msg_id, sender_id, receiver_id, content),
+                )
+                await conn.commit()
+                cursor = await conn.execute(
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = ?",
+                    (msg_id,),
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
+        except Exception as exc:
+            print(f"[SQLiteStore] Send message failed: {exc}")
+            raise
+
+    async def get_conversations(self, user_id: str) -> list[dict]:
+        """Get conversation list grouped by the other participant."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT
+                         CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS other_id,
+                         u.username,
+                         dm.content AS last_message,
+                         dm.created_at AS last_time,
+                         SUM(CASE WHEN receiver_id = ? AND is_read = 0 THEN 1 ELSE 0 END) AS unread
+                       FROM direct_messages dm
+                       JOIN users u ON u.id = CASE WHEN dm.sender_id = ? THEN dm.receiver_id ELSE dm.sender_id END
+                       WHERE dm.sender_id = ? OR dm.receiver_id = ?
+                       GROUP BY other_id
+                       ORDER BY last_time DESC""",
+                    (user_id, user_id, user_id, user_id, user_id),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get conversations failed: {exc}")
+            return []
+
+    async def get_conversation_messages(self, user_id: str, other_id: str, page: int = 1, page_size: int = 30) -> list[dict]:
+        """Get paginated messages between two users."""
+        try:
+            offset = (page - 1) * page_size
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, sender_id, receiver_id, content, is_read, created_at
+                       FROM direct_messages
+                       WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
+                       ORDER BY created_at DESC
+                       LIMIT ? OFFSET ?""",
+                    (user_id, other_id, other_id, user_id, page_size, offset),
+                )
+                rows = await cursor.fetchall()
+            messages = [dict(r) for r in rows]
+            messages.reverse()  # chronological order
+            return messages
+        except Exception as exc:
+            print(f"[SQLiteStore] Get conversation messages failed: {exc}")
+            return []
+
+    async def mark_read(self, user_id: str, other_id: str) -> int:
+        """Mark all messages from other_id to user_id as read. Returns count updated."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE direct_messages SET is_read = 1 WHERE sender_id = ? AND receiver_id = ? AND is_read = 0",
+                    (other_id, user_id),
+                )
+                await conn.commit()
+            return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark read failed: {exc}")
+            return 0
+
+    async def get_unread_count(self, user_id: str) -> int:
+        """Get total unread message count."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM direct_messages WHERE receiver_id = ? AND is_read = 0",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Get unread count failed: {exc}")
+            return 0

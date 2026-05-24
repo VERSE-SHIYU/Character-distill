@@ -229,6 +229,7 @@ export default function MarketPage() {
                   <div className="market-card-body">
                     <div className="market-card-name">{charName}</div>
                     {identity && <div className="market-card-identity">{identity}</div>}
+                    {c.text_title && <div className="market-card-source">{'\u{1F4D6}'} {c.text_title}</div>}
                     <div className="market-card-meta">
                       <button
                         type="button"

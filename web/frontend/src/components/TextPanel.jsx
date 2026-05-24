@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import ErrorBox from './common/ErrorBox'
 import Loading from './common/Loading'
+import ConfirmModal from './common/ConfirmModal'
 import { fetchWithTimeout } from '../api/client'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
@@ -72,6 +73,8 @@ export default function TextPanel() {
   const deleteText = useAppStore((s) => s.deleteText)
   const selectText = useAppStore((s) => s.selectText)
   const currentTextId = useAppStore((s) => s.currentTextId)
+  const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
+  const setView = useAppStore((s) => s.setView)
 
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
@@ -79,6 +82,7 @@ export default function TextPanel() {
   const isUploading = uploading || uploadProgress !== null
   const [localError, setLocalError] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
   const [cardCounts, setCardCounts] = useState({})
 
@@ -159,7 +163,12 @@ export default function TextPanel() {
 
   const onDelete = async (e, id) => {
     e.stopPropagation()
-    if (!window.confirm('确定删除该文本？关联角色卡与会话将一并删除。')) return
+    setDeleteConfirmId(id)
+  }
+
+  const handleConfirmDelete = async () => {
+    const id = deleteConfirmId
+    setDeleteConfirmId(null)
     setDeletingId(id)
     setLocalError(null)
     try {
@@ -306,6 +315,18 @@ export default function TextPanel() {
                   >
                     管理角色
                   </button>
+                  <button
+                    type="button"
+                    className="btn-ghost text-list-action-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setCurrentTextDetailId(t.id)
+                      setView('textDetail')
+                    }}
+                    title="查看详情"
+                  >
+                    详情
+                  </button>
                   {t.text_type === 'chat' && (
                     <button
                       type="button"
@@ -428,6 +449,16 @@ export default function TextPanel() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!deleteConfirmId}
+        title="删除文本"
+        message="确定删除该文本？关联角色卡与会话将一并删除。"
+        confirmText="删除"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteConfirmId(null)}
+        danger
+      />
     </div>
   )
 }

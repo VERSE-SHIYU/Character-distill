@@ -9,6 +9,7 @@ import ErrorBox from './common/ErrorBox'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
+import ConfirmModal from './common/ConfirmModal'
 
 // ---- CharCard (top-level) ----
 
@@ -149,6 +150,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [trashMode, setTrashMode] = useState(false)
   const [deletedCards, setDeletedCards] = useState([])
   const [trashLoading, setTrashLoading] = useState(false)
+  const [purgeConfirmTarget, setPurgeConfirmTarget] = useState(null)
+  const [purgeAllConfirm, setPurgeAllConfirm] = useState(false)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -245,7 +248,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   }
 
   const handlePurgeCard = async (cardId) => {
-    if (!window.confirm('确定彻底删除？此操作不可恢复。')) return
     try {
       await fetchWithTimeout(`/api/cards/${cardId}/purge`, {
         method: 'DELETE',
@@ -318,7 +320,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   <button
                     type="button"
                     className="btn-danger-sm"
-                    onClick={() => handlePurgeCard(c.id)}
+                    onClick={() => setPurgeConfirmTarget(c.id)}
                   >
                     彻底删除
                   </button>
@@ -330,15 +332,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 type="button"
                 className="btn-danger-sm"
                 style={{ width: '100%' }}
-                onClick={() => {
-                  if (!window.confirm('确定清空回收站？所有角色将被彻底删除，不可恢复。')) return
-                  Promise.all(deletedCards.map((c) =>
-                    fetchWithTimeout(`/api/cards/${c.id}/purge`, {
-                      method: 'DELETE',
-                      headers: { ...getAuthHeaders() },
-                    }).catch(() => {}),
-                  )).then(() => setDeletedCards([]))
-                }}
+                onClick={() => setPurgeAllConfirm(true)}
               >
                 清空回收站
               </button>
@@ -564,6 +558,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 <div>{'\u{1F3AF}'} 身份：{shareConfirmTarget.identity || '-'}</div>
                 {shareConfirmTarget.personality_traits?.length > 0 && <div>{'\u{1F9E0}'} 性格特征</div>}
                 {shareConfirmTarget.speaking_style?.tone && <div>{'\u{1F3A4}'} 语言风格</div>}
+                <div>{'\u{1F4D6}'} 来源：{texts.find((t) => t.id === shareConfirmTarget.text_id)?.title || '独立角色'}</div>
               </div>
             </div>
             <div className="modal-actions">
@@ -621,6 +616,37 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         </div>,
         document.body,
       )}
+
+      <ConfirmModal
+        isOpen={!!purgeConfirmTarget}
+        title="彻底删除"
+        message="确定彻底删除？此操作不可恢复。"
+        confirmText="彻底删除"
+        onConfirm={async () => {
+          const id = purgeConfirmTarget
+          setPurgeConfirmTarget(null)
+          await handlePurgeCard(id)
+        }}
+        onCancel={() => setPurgeConfirmTarget(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={purgeAllConfirm}
+        title="清空回收站"
+        message="确定清空回收站？所有角色将被彻底删除，不可恢复。"
+        confirmText="清空"
+        onConfirm={async () => {
+          setPurgeAllConfirm(false)
+          Promise.all(deletedCards.map((c) =>
+            fetchWithTimeout(`/api/cards/${c.id}/purge`, {
+              method: 'DELETE',
+              headers: { ...getAuthHeaders() },
+            }).catch(() => {}),
+          )).then(() => setDeletedCards([]))
+        }}
+        onCancel={() => setPurgeAllConfirm(false)}
+        danger
+      />
       </>
       )}
     </div>

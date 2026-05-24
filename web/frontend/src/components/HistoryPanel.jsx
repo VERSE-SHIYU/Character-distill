@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import ConfirmModal from './common/ConfirmModal'
 import { loadCardAvatar } from '../store/db'
 
 function parseCardIds(raw) {
@@ -86,6 +87,11 @@ export default function HistoryPanel() {
   const [groupItems, setGroupItems] = useState([])
   const [groupDetail, setGroupDetail] = useState(null)
   const [groupDetailLoading, setGroupDetailLoading] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [purgeConfirmId, setPurgeConfirmId] = useState(null)
+  const [clearAllConfirm, setClearAllConfirm] = useState(false)
+  const [purgeTrashConfirm, setPurgeTrashConfirm] = useState(false)
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -219,7 +225,6 @@ export default function HistoryPanel() {
   }
 
   const handleDelete = async (sessionId) => {
-    if (!window.confirm('确定删除该会话？将移入回收站。')) return
     try {
       await fetchWithTimeout(`/api/history/${sessionId}`, { method: 'DELETE' })
       if (detail?.session?.id === sessionId) setDetail(null)
@@ -241,7 +246,6 @@ export default function HistoryPanel() {
   }
 
   const handlePurge = async (sessionId) => {
-    if (!window.confirm('确定彻底删除该会话？此操作不可恢复。')) return
     try {
       await fetchWithTimeout(`/api/history/${sessionId}?permanent=true`, { method: 'DELETE' })
       setItems((prev) => prev.filter((it) => it.id !== sessionId))
@@ -259,7 +263,6 @@ export default function HistoryPanel() {
   }
 
   const handleClearAll = async () => {
-    if (!window.confirm('确定将所有历史记录移入回收站？')) return
     try {
       await fetchWithTimeout('/api/history/clear-all', { method: 'POST' })
       setItems([])
@@ -271,7 +274,6 @@ export default function HistoryPanel() {
   }
 
   const handlePurgeTrash = async () => {
-    if (!window.confirm('确定清空回收站？所有记录将被彻底删除，不可恢复。')) return
     try {
       await fetchWithTimeout('/api/history/trash/purge', { method: 'DELETE' })
       setItems([])
@@ -291,7 +293,6 @@ export default function HistoryPanel() {
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return
-    if (!window.confirm(`确定将选中的 ${selectedIds.size} 条会话移入回收站？`)) return
     for (const id of selectedIds) {
       try {
         await fetchWithTimeout(`/api/history/${id}`, { method: 'DELETE' })
@@ -383,7 +384,7 @@ export default function HistoryPanel() {
         cardAvatars={cardAvatars}
         onBack={() => setDetail(null)}
         onContinue={() => handleContinue(detail.session.id)}
-        onDelete={() => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id)}
+        onDelete={() => trashMode ? setPurgeConfirmId(detail.session.id) : setDeleteConfirmId(detail.session.id)}
         onRestore={() => handleRestore(detail.session.id)}
         onExport={(fmt) => downloadExport(detail.session.id, fmt)}
       />
@@ -481,7 +482,7 @@ export default function HistoryPanel() {
               <button
                 type="button"
                 className="btn-danger-sm"
-                onClick={handleBatchDelete}
+                onClick={() => setBatchDeleteConfirm(true)}
               >
                 移入回收站 ({selectedIds.size})
               </button>
@@ -490,7 +491,7 @@ export default function HistoryPanel() {
               <button
                 type="button"
                 className="btn-danger-sm"
-                onClick={handleClearAll}
+                onClick={() => setClearAllConfirm(true)}
               >
                 移入回收站
               </button>
@@ -502,7 +503,7 @@ export default function HistoryPanel() {
           <button
             type="button"
             className="btn-danger-sm"
-            onClick={handlePurgeTrash}
+            onClick={() => setPurgeTrashConfirm(true)}
           >
             清空回收站
           </button>
@@ -558,7 +559,7 @@ export default function HistoryPanel() {
                               className="history-swipe-delete"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                if (window.confirm('确定彻底删除？不可恢复。')) handlePurge(it.id)
+                                setPurgeConfirmId(it.id)
                               }}
                             >
                               彻底删除
@@ -570,7 +571,7 @@ export default function HistoryPanel() {
                             className="history-swipe-delete"
                             onClick={(e) => {
                               e.stopPropagation()
-                              if (window.confirm('确定移入回收站？')) handleDelete(it.id)
+                              setDeleteConfirmId(it.id)
                             }}
                           >
                             移入回收站
@@ -650,6 +651,69 @@ export default function HistoryPanel() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        isOpen={!!deleteConfirmId}
+        title="删除会话"
+        message="确定删除该会话？将移入回收站。"
+        confirmText="删除"
+        onConfirm={async () => {
+          const id = deleteConfirmId
+          setDeleteConfirmId(null)
+          await handleDelete(id)
+        }}
+        onCancel={() => setDeleteConfirmId(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={!!purgeConfirmId}
+        title="彻底删除"
+        message="确定彻底删除该会话？此操作不可恢复。"
+        confirmText="彻底删除"
+        onConfirm={async () => {
+          const id = purgeConfirmId
+          setPurgeConfirmId(null)
+          await handlePurge(id)
+        }}
+        onCancel={() => setPurgeConfirmId(null)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={clearAllConfirm}
+        title="移入回收站"
+        message="确定将所有历史记录移入回收站？"
+        confirmText="确认"
+        onConfirm={async () => {
+          setClearAllConfirm(false)
+          await handleClearAll()
+        }}
+        onCancel={() => setClearAllConfirm(false)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={purgeTrashConfirm}
+        title="清空回收站"
+        message="确定清空回收站？所有记录将被彻底删除，不可恢复。"
+        confirmText="清空"
+        onConfirm={async () => {
+          setPurgeTrashConfirm(false)
+          await handlePurgeTrash()
+        }}
+        onCancel={() => setPurgeTrashConfirm(false)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={batchDeleteConfirm}
+        title="批量删除"
+        message={`确定将选中的 ${selectedIds.size} 条会话移入回收站？`}
+        confirmText="删除"
+        onConfirm={async () => {
+          setBatchDeleteConfirm(false)
+          await handleBatchDelete()
+        }}
+        onCancel={() => setBatchDeleteConfirm(false)}
+        danger
+      />
     </div>
   )
 }

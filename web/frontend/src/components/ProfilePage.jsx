@@ -10,6 +10,8 @@ export default function ProfilePage() {
   const setUserAvatar = useAppStore((s) => s.setUserAvatar)
   const loadUserAvatar = useAppStore((s) => s.loadUserAvatar)
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
+  const setView = useAppStore((s) => s.setView)
+  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
 
   const [cropFile, setCropFile] = useState(null)
   const avatarInputRef = useRef(null)
@@ -34,6 +36,10 @@ export default function ProfilePage() {
   const [bindError, setBindError] = useState(false)
   const [showBindForm, setShowBindForm] = useState(false)
 
+  // Following
+  const [following, setFollowing] = useState([])
+  const [followingLoading, setFollowingLoading] = useState(false)
+
   useEffect(() => {
     loadUserAvatar()
   }, [loadUserAvatar])
@@ -47,6 +53,16 @@ export default function ProfilePage() {
         setEmailVerified(data.email_verified || false)
       })
       .catch(() => {})
+  }, [])
+
+  // Load following list
+  useEffect(() => {
+    setFollowingLoading(true)
+    fetchWithTimeout('/api/market/my/following')
+      .then((r) => r.json())
+      .then((data) => setFollowing(data.users || []))
+      .catch(() => {})
+      .finally(() => setFollowingLoading(false))
   }, [])
 
   const handleAvatarChange = useCallback((e) => {
@@ -347,6 +363,31 @@ export default function ProfilePage() {
             {pwSubmitting ? '提交中…' : '修改密码'}
           </button>
         </form>
+      </div>
+
+      <div className="profile-card">
+        <h2 className="profile-section-title">我的关注</h2>
+        {followingLoading ? (
+          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
+        ) : following.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>还没有关注任何人</p>
+        ) : (
+          <div className="market-grid" style={{ marginTop: 8 }}>
+            {following.map((u) => (
+              <button
+                key={u.id}
+                type="button"
+                className="market-card"
+                style={{ cursor: 'pointer', textAlign: 'left' }}
+                onClick={() => { setAuthorUserId(u.id); setView('author') }}
+              >
+                <div className="market-card-body">
+                  <div className="market-card-name">{u.username}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <ImageCropModal
