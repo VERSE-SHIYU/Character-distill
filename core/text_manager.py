@@ -450,6 +450,7 @@ class TextManager:
                 content,
                 rag_engine,
                 card.name,
+                collection_name=f"scenes_{actual_card_id}",
             )
             print(f"[TextManager] SceneIndexer indexed {n} scenes for '{card.name}'")
         except Exception as exc:

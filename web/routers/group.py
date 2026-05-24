@@ -132,6 +132,13 @@ async def send_message(
         # Try to rebuild from DB (future: lazy reload)
         raise HTTPException(404, "群聊会话已过期，请重新创建")
 
+    # Verify ownership via DB
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此群聊")
+
     if not req.message.strip():
         raise HTTPException(400, "消息不能为空")
     if req.target_card_id not in group.engines:

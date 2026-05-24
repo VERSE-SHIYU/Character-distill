@@ -217,8 +217,8 @@ def _run_distill_task(
             result = await tm.save_distilled_card(text_id, card, user_id)
             # Build scene index for emotion-weighted retrieval
             try:
-                rag = getattr(tm, 'rag', None)
-                if rag and rag.collection:
+                rag = tm._get_or_build_rag(text_id, content, [])
+                if rag.collection:
                     card_id = result.get("card_id", "")
                     scene_count = SceneIndexer().index_scenes(
                         content, rag, card.name,
@@ -334,8 +334,8 @@ async def distill_by_text_id(
         )
         # Build scene index on first distill (non-cached)
         try:
-            rag = getattr(text_manager, 'rag', None)
-            if rag and rag.collection:
+            rag = text_manager._get_or_build_rag(req.text_id, content, [])
+            if rag.collection:
                 card_id = result.get("card_id", "")
                 SceneIndexer().index_scenes(
                     content, rag, char_name,
@@ -437,7 +437,7 @@ async def cancel_distill_task(
             raise HTTPException(404, "Task not found")
         if task.get("user_id") != user["id"]:
             raise HTTPException(403, "无权操作此任务")
-        _tasks[task_id] = {"status": "error", "message": "已取消"}
+        task.update({"status": "error", "message": "已取消"})
     return {"ok": True}
 
 
@@ -557,8 +557,8 @@ async def distill_stream(
 
         # Build scene index
         try:
-            rag = getattr(text_manager, 'rag', None)
-            if rag and rag.collection:
+            rag = text_manager._get_or_build_rag(req.text_id, content, [])
+            if rag.collection:
                 card_id = result.get("card_id", "")
                 scene_count = SceneIndexer().index_scenes(
                     content, rag, char_name,
