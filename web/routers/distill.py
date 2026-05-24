@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 import uuid as _uuid
 from typing import Any
 
@@ -415,8 +416,12 @@ async def distill_task_status(
     if task.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此任务")
     if task.get("status") in ("done", "error"):
+        now = time.time()
         with _task_lock:
-            _tasks.pop(task_id, None)
+            if "completed_at" not in task:
+                task["completed_at"] = now
+            elif now - task["completed_at"] > 300:
+                _tasks.pop(task_id, None)
     return task
 
 

@@ -22,7 +22,7 @@ def _truncate(text: str, max_tokens: int) -> str:
 
 
 # ── 模型 → token 预算映射 ──────────────────────────────────
-# 未知模型用 8000 保底，保留现有比例。
+# 未知模型用 32000 保底，保留现有比例。
 MODEL_BUDGET_MAP: dict[str, int] = {
     "deepseek-v4-pro": 32000,
     "claude-sonnet": 24000,
@@ -36,7 +36,10 @@ _MEMORY_RATIO = 0.06
 
 def _compute_budgets(model: str) -> dict[str, int]:
     """根据模型名计算 token 预算。"""
-    total = MODEL_BUDGET_MAP.get(model, 8000)
+    total = MODEL_BUDGET_MAP.get(model)
+    if total is None:
+        total = 32000
+        print(f"[ContextEngine] WARNING: unknown model {model!r}, falling back to {total}")
     return {
         "total": total,
         "history": round(total * _HISTORY_RATIO),
@@ -218,6 +221,9 @@ class ContextEngine:
                     break
 
         anchor_ids = {id(m) for m in anchors}
+
+        # Anchors were collected in reverse (newest first); restore chronological order.
+        anchors.reverse()
 
         # 2. 先填充锚点
         lines: list[str] = []

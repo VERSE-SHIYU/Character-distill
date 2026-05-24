@@ -24,6 +24,19 @@ legacy_router = APIRouter(tags=["legacy-chat"])
 MAX_MESSAGE_LENGTH = 5000
 
 
+def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, str]]:
+    """Filter DB messages and map roles to engine.history format.
+
+    Only user and char messages are kept (whitelist approach); summary,
+    system, and other synthetic roles are excluded.
+    """
+    return [
+        {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
+        for m in db_messages
+        if m["role"] in ("user", "char")
+    ]
+
+
 async def _ensure_session(
     session_id: str,
     storage: SQLiteStore,
@@ -76,13 +89,9 @@ async def _ensure_session(
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
-    # Reload history (skip summary — it's not a valid LLM role)
+    # Reload history from DB
     db_messages = await storage.get_messages(session_id)
-    engine.history = [
-        {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
-        for m in db_messages
-        if m["role"] in ("user", "char")
-    ]
+    engine.history = _rebuild_history_from_db(db_messages)
     # Restore last_summary from DB
     for m in reversed(db_messages):
         if m["role"] == "summary":
@@ -275,11 +284,12 @@ async def _do_chat_stream(
     async def _event_generator():
         tokens: list[str] = []
         rag_context = ""
-        msg_ids: list[int] = []
+        user_msg_id: int | None = None
+        char_msg_id: int | None = None
         try:
             if not hidden:
                 user_rec = await storage.save_message(session_id, "user", msg, "")
-                msg_ids.append(user_rec["id"])
+                user_msg_id = user_rec["id"]
         except Exception as exc:
             print(f"[chat] Save user message failed (non-fatal): {exc}")
 
@@ -309,10 +319,11 @@ async def _do_chat_stream(
 
             try:
                 char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500])
-                msg_ids.append(char_rec["id"])
+                char_msg_id = char_rec["id"]
             except Exception as exc:
                 print(f"[chat] Save assistant message failed (non-fatal): {exc}")
 
+            msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
             if msg_ids:
                 session.setdefault("message_ids", []).extend(msg_ids)
 
@@ -336,8 +347,8 @@ async def _do_chat_stream(
 
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
-                "user_msg_id": msg_ids[0] if len(msg_ids) >= 1 else None,
-                "char_msg_id": msg_ids[1] if len(msg_ids) >= 2 else None,
+                "user_msg_id": user_msg_id,
+                "char_msg_id": char_msg_id,
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
@@ -345,12 +356,16 @@ async def _do_chat_stream(
         except Exception as exc:
             print(f"[chat] Chat stream failed: {exc}")
             # Roll back DB: delete the user message already saved before stream started
-            if msg_ids:
+            if user_msg_id is not None:
                 try:
-                    # msg_ids[0] is the user message id saved at the top of _event_generator
-                    await storage.delete_messages_after(session_id, msg_ids[0])
+                    await storage.delete_messages_after(session_id, user_msg_id)
                 except Exception as rollback_exc:
                     print(f"[chat] Rollback user message failed (non-fatal): {rollback_exc}")
+            # Sync engine.history: pop phantom user message if chat_stream's own
+            # except block didn't clean up (e.g. exception after generator exit)
+            engine = session.get("engine")
+            if engine and engine.history and engine.history[-1].get("role") == "user":
+                engine.history.pop()
             err_payload = {"error": str(exc)}
             yield f"data: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
 
@@ -421,13 +436,7 @@ async def revoke_messages(
         messages = await storage.get_messages(req.session_id)
         engine = session.get("engine")
         if engine:
-            engine.history = [
-                {
-                    "role": "assistant" if m["role"] == "char" else m["role"],
-                    "content": m["content"],
-                }
-                for m in messages if m.get("role") != "summary"
-            ]
+            engine.history = _rebuild_history_from_db(messages)
         session["message_ids"] = [m["id"] for m in messages]
     except Exception as exc:
         print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")

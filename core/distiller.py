@@ -493,8 +493,9 @@ class Distiller:
                     result = ""
             async with lock:
                 done_count[0] += 1
+                current = done_count[0]
             if on_batch_done:
-                on_batch_done(done_count[0], i, result)
+                on_batch_done(current, i, result)
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, b)) for i, b in enumerate(batches)]
@@ -774,7 +775,8 @@ class Distiller:
                         result = ""
                 async with lock:
                     done_count[0] += 1
-                q.put(("chunk", done_count[0], i, result))
+                    current = done_count[0]
+                q.put(("chunk", current, i, result))
                 return (i, result)
 
             tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
