@@ -52,15 +52,14 @@ export default function ProfilePage() {
   }, [])
 
   const togglePanel = (panel) => {
-    const nextPassword = panel === 'password' ? !showPasswordForm : false
-    const nextBind = panel === 'bind' ? !showBindForm : false
-    setShowPasswordForm(nextPassword)
-    setShowBindForm(nextBind)
-    if (nextPassword || nextBind) {
+    const isOpening = (panel === 'password' && !showPasswordForm) ||
+                      (panel === 'bind' && !showBindForm)
+    setShowPasswordForm(panel === 'password' ? !showPasswordForm : false)
+    setShowBindForm(panel === 'bind' ? !showBindForm : false)
+    if (isOpening) {
       setTimeout(() => {
-        const el = document.querySelector('.profile-card:last-of-type')
-        el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 80)
+        document.querySelector('.profile-card:last-of-type')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      }, 50)
     }
   }
 

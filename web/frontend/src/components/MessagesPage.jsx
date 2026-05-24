@@ -181,7 +181,7 @@ export default function MessagesPage() {
 
   // Render
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="panel messages-page">
       <header className="panel-header">
         {mobileView === 'chat' ? (
           <>
@@ -197,7 +197,7 @@ export default function MessagesPage() {
           </>
         ) : (
           <>
-            <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回">
+            <button type="button" className="chat-back-btn" onClick={() => setView('mine')} title="返回">
               {'◀'}
             </button>
             <h1 className="panel-title">私信</h1>
@@ -206,25 +206,18 @@ export default function MessagesPage() {
       </header>
 
       {!convLoading && conversations.length === 0 ? (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-          <span style={{ fontSize: 48 }}>{'\u{1F4E8}'}</span>
-          <p style={{ fontSize: 15, fontWeight: 600, color: 'var(--text)' }}>暂无私信</p>
-          <p style={{ fontSize: 13, color: 'var(--text-dim)', textAlign: 'center', maxWidth: 280, lineHeight: 1.6 }}>
+        <div className="messages-empty-state">
+          <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
+          <p className="messages-empty-title">暂无私信</p>
+          <p className="messages-empty-desc">
             去角色市场关注感兴趣的作者，发送你的第一条私信吧
           </p>
         </div>
       ) : (
-        <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div className="messages-layout">
           {/* Conversation list — hidden on mobile when in chat view */}
-          <div style={{
-            width: 300,
-            minWidth: 0,
-            borderRight: '1px solid var(--border)',
-            overflowY: 'auto',
-            display: !isMobile || mobileView === 'list' ? 'flex' : 'none',
-            flexDirection: 'column',
-          }}
-            className="hide-scrollbar"
+          <div className="messages-sidebar hide-scrollbar"
+            style={{ display: !isMobile || mobileView === 'list' ? 'flex' : 'none' }}
           >
             {convLoading ? (
               <Loading text="加载中…" />
@@ -233,35 +226,20 @@ export default function MessagesPage() {
                 <button
                   key={conv.other_id}
                   type="button"
-                  className="market-card"
-                  style={{
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    borderRadius: 0,
-                    borderLeft: 'none',
-                    borderRight: 'none',
-                    borderTop: 'none',
-                    background: activeOtherId === conv.other_id ? 'var(--bg-hover)' : 'transparent',
-                  }}
+                  className={`messages-conv-item${activeOtherId === conv.other_id ? ' active' : ''}`}
                   onClick={() => handleSelectConversation(conv.other_id, conv.username)}
                 >
                   <Avatar name={conv.username || '?'} size={40} />
-                  <div className="market-card-body" style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                      <span style={{ fontWeight: 600, fontSize: 13 }}>{conv.username}</span>
+                  <div className="messages-conv-body">
+                    <div className="messages-conv-head">
+                      <span className="messages-conv-name">{conv.username}</span>
                       {conv.unread > 0 && (
                         <span className="sidebar-item-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
                           {conv.unread}
                         </span>
                       )}
                     </div>
-                    <p style={{
-                      fontSize: 12,
-                      color: 'var(--text-dim)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}>
+                    <p className="messages-conv-preview">
                       {conv.last_message || ''}
                     </p>
                   </div>
@@ -271,36 +249,19 @@ export default function MessagesPage() {
           </div>
 
           {/* Chat area */}
-          <div style={{
-            flex: 1,
-            display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}>
+          <div className="messages-chat-area"
+            style={{ display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none' }}
+          >
             {!activeOtherId ? (
-              <div style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--text-dim)',
-                fontSize: 13,
-              }}>
+              <div className="messages-empty-chat">
                 选择一个会话
               </div>
             ) : (
               <>
                 {/* Messages */}
-                <div style={{
-                  flex: 1,
-                  overflowY: 'auto',
-                  padding: 16,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                }}>
+                <div className="messages-list">
                   {hasMore && (
-                    <div style={{ textAlign: 'center' }}>
+                    <div className="messages-load-more">
                       <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={msgLoading}>
                         {msgLoading ? '加载中…' : '加载更多'}
                       </button>
@@ -309,22 +270,8 @@ export default function MessagesPage() {
                   {messages.map((msg) => {
                     const isMe = msg.sender_id === authUser?.id
                     return (
-                      <div key={msg.id} style={{
-                        display: 'flex',
-                        justifyContent: isMe ? 'flex-end' : 'flex-start',
-                      }}>
-                        <div style={{
-                          maxWidth: '70%',
-                          padding: '8px 14px',
-                          borderRadius: 16,
-                          fontSize: 13,
-                          lineHeight: 1.5,
-                          wordBreak: 'break-word',
-                          background: isMe ? '#2b6cb0' : 'var(--bg-card)',
-                          color: isMe ? '#fff' : 'var(--text)',
-                          borderBottomRightRadius: isMe ? 4 : 16,
-                          borderBottomLeftRadius: isMe ? 16 : 4,
-                        }}>
+                      <div key={msg.id} className={`messages-row${isMe ? ' mine' : ' other'}`}>
+                        <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                           {msg.content}
                         </div>
                       </div>
@@ -334,16 +281,9 @@ export default function MessagesPage() {
                 </div>
 
                 {/* Input */}
-                <div style={{
-                  padding: 12,
-                  borderTop: '1px solid var(--border)',
-                  display: 'flex',
-                  gap: 8,
-                  alignItems: 'flex-end',
-                }}>
+                <div className="messages-input-bar">
                   <textarea
-                    className="modal-textarea"
-                    style={{ flex: 1, minHeight: 40, maxHeight: 120, resize: 'none', fontSize: 13 }}
+                    className="modal-textarea messages-input"
                     rows={1}
                     placeholder="输入消息…"
                     value={inputText}
@@ -352,8 +292,7 @@ export default function MessagesPage() {
                   />
                   <button
                     type="button"
-                    className="btn-primary btn-sm"
-                    style={{ flexShrink: 0, height: 38 }}
+                    className="btn-primary btn-sm messages-send-btn"
                     disabled={!inputText.trim() || sending}
                     onClick={handleSend}
                   >

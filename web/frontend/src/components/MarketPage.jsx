@@ -226,7 +226,7 @@ export default function MarketPage() {
       {/* Card grid */}
       {!loading && cards.length > 0 && (
         <>
-          <div className="market-grid">
+          <div className="market-grid-v2">
             {cards.map((c) => {
               const cardData = typeof c.card_json === 'string'
                 ? JSON.parse(c.card_json)
@@ -234,41 +234,39 @@ export default function MarketPage() {
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (
-                <div key={c.id} className="market-card">
-                  <Avatar name={charName} size={56} />
-                  <div className="market-card-body">
-                    <div className="market-card-name">{charName}</div>
-                    {identity && <div className="market-card-identity">{identity}</div>}
-                    {c.text_title && <div className="market-card-source">{'\u{1F4D6}'} {c.text_title}</div>}
-                    <div className="market-card-meta">
+                <div key={c.id} className="market-card-v2">
+                  <Avatar name={charName} size={72} />
+                  <div className="market-card-v2-name">{charName}</div>
+                  {identity && <div className="market-card-v2-identity">{identity}</div>}
+                  {c.text_title && <div className="market-card-v2-source">{'\u{1F4D6}'} {c.text_title}</div>}
+                  <div className="market-card-v2-meta">
+                    <button
+                      type="button"
+                      className="market-card-author-link"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (c.user_id) {
+                          setAuthorUserId(c.user_id)
+                          setView('author')
+                        }
+                      }}
+                      title="查看作者主页"
+                    >
+                      {'\u{1F464}'} {c.author_name || '匿名'}
+                    </button>
+                    <span className="market-card-likes">
                       <button
                         type="button"
-                        className="market-card-author-link"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (c.user_id) {
-                            setAuthorUserId(c.user_id)
-                            setView('author')
-                          }
-                        }}
-                        title="查看作者主页"
+                        className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
+                        onClick={() => handleLike(c.id)}
+                        disabled={forkingId === c.id}
                       >
-                        {'\u{1F464}'} {c.author_name || '匿名'}
+                        {c.liked_by_me ? '❤️' : '\u{1F90D}'}
                       </button>
-                      <span className="market-card-likes">
-                        <button
-                          type="button"
-                          className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
-                          onClick={() => handleLike(c.id)}
-                          disabled={forkingId === c.id}
-                        >
-                          {c.liked_by_me ? '❤️' : '\u{1F90D}'}
-                        </button>
-                        {c.likes || 0}
-                      </span>
-                    </div>
+                      {c.likes || 0}
+                    </span>
                   </div>
-                  <div className="market-card-actions">
+                  <div className="market-card-v2-actions">
                     {(authUser?.is_admin || c.user_id === authUser?.id) && (
                       <button
                         type="button"
