@@ -25,6 +25,7 @@ export default function MessagesPage() {
   const PAGE_SIZE = 30
   const messagesEndRef = useRef(null)
   const [mobileView, setMobileView] = useState('list') // 'list' | 'chat'
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -82,6 +83,13 @@ export default function MessagesPage() {
   // Initial load
   useEffect(() => {
     loadConversations()
+  }, [])
+
+  // Track mobile vs desktop
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
   }, [])
 
   // Handle messageTargetUserId from other pages
@@ -200,7 +208,7 @@ export default function MessagesPage() {
           minWidth: 0,
           borderRight: '1px solid var(--border)',
           overflowY: 'auto',
-          display: mobileView === 'list' ? 'flex' : 'none',
+          display: !isMobile || mobileView === 'list' ? 'flex' : 'none',
           flexDirection: 'column',
         }}
           className="hide-scrollbar"
@@ -254,7 +262,7 @@ export default function MessagesPage() {
         {/* Chat area */}
         <div style={{
           flex: 1,
-          display: mobileView === 'chat' || !activeOtherId ? 'flex' : 'none',
+          display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none',
           flexDirection: 'column',
           overflow: 'hidden',
         }}>

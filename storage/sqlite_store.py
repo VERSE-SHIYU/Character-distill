@@ -2369,17 +2369,30 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT
-                         CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS other_id,
+                         sub.other_id,
                          u.username,
-                         dm.content AS last_message,
-                         dm.created_at AS last_time,
-                         SUM(CASE WHEN receiver_id = ? AND is_read = 0 THEN 1 ELSE 0 END) AS unread
-                       FROM direct_messages dm
-                       JOIN users u ON u.id = CASE WHEN dm.sender_id = ? THEN dm.receiver_id ELSE dm.sender_id END
-                       WHERE dm.sender_id = ? OR dm.receiver_id = ?
-                       GROUP BY other_id
+                         (SELECT dm2.content FROM direct_messages dm2
+                          WHERE (dm2.sender_id = ? AND dm2.receiver_id = sub.other_id)
+                             OR (dm2.sender_id = sub.other_id AND dm2.receiver_id = ?)
+                          ORDER BY dm2.created_at DESC LIMIT 1
+                         ) AS last_message,
+                         (SELECT dm2.created_at FROM direct_messages dm2
+                          WHERE (dm2.sender_id = ? AND dm2.receiver_id = sub.other_id)
+                             OR (dm2.sender_id = sub.other_id AND dm2.receiver_id = ?)
+                          ORDER BY dm2.created_at DESC LIMIT 1
+                         ) AS last_time,
+                         (SELECT COUNT(*) FROM direct_messages dm2
+                          WHERE dm2.sender_id = sub.other_id AND dm2.receiver_id = ? AND dm2.is_read = 0
+                         ) AS unread
+                       FROM (
+                         SELECT DISTINCT
+                           CASE WHEN sender_id = ? THEN receiver_id ELSE sender_id END AS other_id
+                         FROM direct_messages
+                         WHERE sender_id = ? OR receiver_id = ?
+                       ) sub
+                       JOIN users u ON u.id = sub.other_id
                        ORDER BY last_time DESC""",
-                    (user_id, user_id, user_id, user_id, user_id),
+                    (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]

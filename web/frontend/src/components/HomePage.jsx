@@ -166,6 +166,7 @@ export default function HomePage() {
             </button>
           </div>
         ) : (
+          <>
           <div className="home-char-grid">
             {allCards.slice(0, 4).map((card) => {
               const data = parseCardJson(card)
@@ -194,6 +195,7 @@ export default function HomePage() {
               </button>
             </div>
           )}
+          </>
         )}
       </div>
 

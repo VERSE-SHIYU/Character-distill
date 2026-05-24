@@ -182,6 +182,29 @@ async def delete_text(
     return {"ok": True}
 
 
+@router.post("/comments/{comment_id}/like")
+async def toggle_comment_like(
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle like on a comment."""
+    return await storage.toggle_text_comment_like(comment_id, user["id"])
+
+
+@router.delete("/comments/{comment_id}")
+async def delete_text_comment(
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete your own comment."""
+    ok = await storage.delete_text_comment(comment_id, user["id"])
+    if not ok:
+        raise HTTPException(404, "评论不存在或无权删除")
+    return {"ok": True}
+
+
 @router.get("/{text_id}/detail")
 async def get_text_detail(
     text_id: str,
@@ -192,6 +215,8 @@ async def get_text_detail(
     text = await storage.get_text(text_id)
     if not text:
         raise HTTPException(404, "Text not found")
+    if text.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权查看此文本")
     # Count comments
     comments = await storage.get_text_comments(text_id, 1, 1)
     text.pop("content", None)
@@ -243,27 +268,4 @@ async def add_text_comment(
     )
     comment["liked_by_me"] = False
     return {"comment": comment}
-
-
-@router.post("/comments/{comment_id}/like")
-async def toggle_comment_like(
-    comment_id: str,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Toggle like on a comment."""
-    return await storage.toggle_text_comment_like(comment_id, user["id"])
-
-
-@router.delete("/comments/{comment_id}")
-async def delete_text_comment(
-    comment_id: str,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Delete your own comment."""
-    ok = await storage.delete_text_comment(comment_id, user["id"])
-    if not ok:
-        raise HTTPException(404, "评论不存在或无权删除")
-    return {"ok": True}
 
