@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import ConfirmModal from './common/ConfirmModal'
 
 export default function MarketCardDetail() {
   const setView = useAppStore((s) => s.setView)
@@ -25,6 +26,7 @@ export default function MarketCardDetail() {
   const [likes, setLikes] = useState(0)
   const [forking, setForking] = useState(false)
   const [showForkChoice, setShowForkChoice] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -107,12 +109,16 @@ export default function MarketCardDetail() {
   }
 
   const handleDelete = async () => {
-    if (!confirm('确定删除该角色？')) return
-    await fetchWithTimeout(`/api/cards/${cardId}`, {
-      method: 'DELETE',
-      headers: { ...getAuthHeaders() },
-    })
-    setView('market')
+    setDeleteConfirmId(null)
+    try {
+      await fetchWithTimeout(`/api/cards/${cardId}`, {
+        method: 'DELETE',
+        headers: { ...getAuthHeaders() },
+      })
+      setView('market')
+    } catch (err) {
+      console.error('[MarketCardDetail] Delete failed:', err)
+    }
   }
 
   if (loading) return <div className="panel"><Loading text="加载角色详情…" /></div>
@@ -132,7 +138,7 @@ export default function MarketCardDetail() {
         </button>
         <h1 className="panel-title">角色详情</h1>
         {(authUser?.is_admin || card.user_id === authUser?.id) && (
-          <button type="button" className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={handleDelete} title="删除">
+          <button type="button" className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setDeleteConfirmId(card.id)} title="删除">
             🗑
           </button>
         )}
@@ -256,6 +262,16 @@ export default function MarketCardDetail() {
           {commentSending ? '…' : '发送'}
         </button>
       </div>
+
+      <ConfirmModal
+        isOpen={!!deleteConfirmId}
+        title="删除角色"
+        message="确定删除该角色？此操作将移入回收站。"
+        confirmText="删除"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteConfirmId(null)}
+        danger
+      />
 
       {/* Fork choice modal */}
       {showForkChoice && (

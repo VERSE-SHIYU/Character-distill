@@ -109,7 +109,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               onClick={() => setView('profile')}
               title="个人设置"
             >
-              <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={38} />
+              <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={50} />
               <span className="sidebar-user-name">{authUser.username}</span>
             </button>
           </div>
