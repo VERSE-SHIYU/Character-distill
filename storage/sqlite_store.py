@@ -402,6 +402,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Comment reports migration failed: {exc}")
 
+                    # Run 039_user_profile_visibility migration (ALTER TABLE)
+                    pv_path = migrations_dir / "039_user_profile_visibility.sql"
+                    if pv_path.exists():
+                        try:
+                            await conn.executescript(pv_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Profile visibility migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1575,7 +1585,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -1583,6 +1593,20 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get user by id failed: {exc}")
             raise
+
+    async def set_profile_stats_visible(self, user_id: str, visible: bool) -> bool:
+        """Set whether the user's profile stats are visible to others."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET profile_stats_visible = ? WHERE id = ?",
+                    (1 if visible else 0, user_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Set profile stats visible failed: {exc}")
+            return False
 
     # ---- Email & verification codes ----
 

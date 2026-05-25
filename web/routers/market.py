@@ -129,6 +129,7 @@ async def get_author(
     followers_count = await storage.get_followers_count(user_id)
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id)
+    stats_visible = author.get("profile_stats_visible", 1) or user_id == user["id"]
     return {
         "author": {k: v for k, v in author.items() if k != "password_hash"},
         "cards": cards,
@@ -136,7 +137,22 @@ async def get_author(
         "is_following": user_id in following_ids,
         "followers_count": followers_count,
         "following_count": following_count,
+        "stats_visible": bool(stats_visible),
     }
+
+
+@router.patch("/author/visibility")
+async def toggle_stats_visibility(
+    body: dict,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle whether the current user's profile stats are visible to others."""
+    visible = body.get("visible", True)
+    ok = await storage.set_profile_stats_visible(user["id"], visible)
+    if not ok:
+        raise HTTPException(500, "设置失败")
+    return {"ok": True, "stats_visible": visible}
 
 
 @router.get("/author/{user_id}/posts")

@@ -30,6 +30,7 @@ export default function AuthorPage({ embedded = false }) {
   const [showFollowing, setShowFollowing] = useState(false)
   const [followersList, setFollowersList] = useState([])
   const [followingList, setFollowingList] = useState([])
+  const [statsVisible, setStatsVisible] = useState(true)
 
   // Posts
   const [posts, setPosts] = useState([])
@@ -122,6 +123,7 @@ export default function AuthorPage({ embedded = false }) {
         setIsFollowing(data.is_following || false)
         setFollowersCount(data.followers_count || 0)
         setFollowingCount(data.following_count || 0)
+        setStatsVisible(data.stats_visible !== false)
       } catch (err) {
         setError(err.message.includes('不存在') ? '该用户不存在或已注销' : err.message)
       } finally {
@@ -242,6 +244,18 @@ export default function AuthorPage({ embedded = false }) {
     el?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const toggleStatsVisibility = async () => {
+    const next = !statsVisible
+    try {
+      await fetchWithTimeout('/api/market/author/visibility', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ visible: next }),
+      })
+      setStatsVisible(next)
+    } catch { /* ignore */ }
+  }
+
   /* ── Premium SVG: Morandi book + dove (灰紫 & 淡绿) ── */
   const EmptyIllustration = () => (
     <svg className="author-empty-illustration" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -305,6 +319,11 @@ export default function AuthorPage({ embedded = false }) {
                       <button type="button" className="stat-btn" onClick={scrollToChars}><strong>{cards.length}</strong> 角色</button>
                       <span className="stat-dot">·</span>
                       <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
+                      {isOwnProfile && (
+                        <button type="button" className="stat-visibility-toggle" onClick={toggleStatsVisibility} title={statsVisible ? '对其他人隐藏统计数据' : '对其他人显示统计数据'}>
+                          {statsVisible ? '👁️' : '🚫'}
+                        </button>
+                      )}
                     </div>
                     {showFollowers && (
                       <div className="stat-follow-popup">
@@ -519,10 +538,14 @@ export default function AuthorPage({ embedded = false }) {
                 <div className="author-hero-text">
                   <h2 className="author-name">{author.username}</h2>
                   <div className="author-stats">
-                    <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
-                    <button type="button" className="stat-btn" onClick={toggleFollowing}><strong>{followingCount}</strong> 关注</button>
-                    <button type="button" className="stat-btn" onClick={scrollToChars}><strong>{cards.length}</strong> 角色</button>
-                    <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
+                    {statsVisible ? (<>
+                      <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
+                      <button type="button" className="stat-btn" onClick={toggleFollowing}><strong>{followingCount}</strong> 关注</button>
+                      <button type="button" className="stat-btn" onClick={scrollToChars}><strong>{cards.length}</strong> 角色</button>
+                      <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
+                    </>) : (
+                      <span className="author-stats-hidden">统计数据已隐藏</span>
+                    )}
                   </div>
                   {showFollowers && (
                     <div className="stat-follow-popup">
