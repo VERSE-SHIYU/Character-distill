@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
 import { fetchWithTimeout } from '../api/client'
@@ -22,13 +22,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
   const [unreadCount, setUnreadCount] = useState(0)
-  const [theme, setTheme] = useState(() => {
-    try {
-      const saved = localStorage.getItem('theme')
-      if (saved === 'dark' || saved === 'light') return saved
-    } catch {}
-    return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
-  })
+  const [showTheme, setShowTheme] = useState(false)
 
   const isVisible = open || pinned
 
@@ -126,19 +120,17 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             >
               {'\u{1F399}'}
             </button>
-            <button
-              type="button"
-              className="sidebar-theme-btn"
-              onClick={() => {
-                const html = document.documentElement
-                const isDark = html.classList.toggle('dark')
-                try { localStorage.setItem('theme', isDark ? 'dark' : 'light') } catch {}
-                setTheme(isDark ? 'dark' : 'light')
-              }}
-              title="切换主题"
-            >
-              {theme === 'dark' ? '☀️' : '🌙'}
-            </button>
+            <div className="sidebar-theme-wrap">
+              <button
+                type="button"
+                className="sidebar-theme-btn"
+                onClick={() => setShowTheme(v => !v)}
+                title="切换主题"
+              >
+                🎨
+              </button>
+              {showTheme && <ThemePopup onClose={() => setShowTheme(false)} />}
+            </div>
             <button
               type="button"
               className="sidebar-settings-btn"
@@ -154,6 +146,48 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
         </div>
       )}
     </aside>
+  )
+}
+
+const THEMES = [
+  { key: 'milktea',  emoji: '\u{1F375}', label: '抹茶' },
+  { key: 'ocean',    emoji: '\u{1F30A}', label: '海盐' },
+  { key: 'sakura',   emoji: '\u{1F338}', label: '樱花' },
+  { key: 'midnight', emoji: '\u{1F311}', label: '午夜' },
+]
+
+function ThemePopup({ onClose }) {
+  const [current, setCurrent] = useState(() => {
+    try { return localStorage.getItem('charsim-theme') || 'milktea' } catch { return 'milktea' }
+  })
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (!ref.current?.closest('.sidebar-theme-wrap')?.contains(e.target)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const apply = (key) => {
+    document.documentElement.className = `theme-${key}`
+    try { localStorage.setItem('charsim-theme', key) } catch {}
+    setCurrent(key)
+  }
+
+  return (
+    <div className="theme-popup" ref={ref}>
+      {THEMES.map(t => (
+        <button key={t.key} type="button"
+          className={`theme-popup-item${current === t.key ? ' active' : ''}`}
+          onClick={() => apply(t.key)}>
+          <span className="theme-popup-emoji">{t.emoji}</span>
+          <span className="theme-popup-label">{t.label}</span>
+          {current === t.key && <span className="theme-popup-check">✓</span>}
+        </button>
+      ))}
+    </div>
   )
 }
 
