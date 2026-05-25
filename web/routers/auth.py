@@ -317,6 +317,9 @@ async def me(
     resp["avatar_data"] = await storage.get_user_avatar(user["id"])
     resp["email"] = await storage.get_user_email(user["id"])
     resp["email_verified"] = bool(user.get("email_verified", False))
+    resp["profile_stats_visible"] = bool(user.get("profile_stats_visible", True))
+    resp["cards_visible"] = bool(user.get("cards_visible", True))
+    resp["books_visible"] = bool(user.get("books_visible", True))
     return resp
 
 

@@ -6522,6 +6522,60 @@ select.settings-input {
   min-width: 0;
 }
 
+/* ---- Profile: privacy toggles ---- */
+
+.profile-privacy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--text);
+}
+.profile-privacy-row:last-child {
+  border-bottom: none;
+}
+
+.profile-toggle {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.profile-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.profile-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 22px;
+  transition: background 0.25s;
+}
+.profile-toggle-slider::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.25s;
+}
+.profile-toggle input:checked + .profile-toggle-slider {
+  background: var(--primary, #7B61FF);
+}
+.profile-toggle input:checked + .profile-toggle-slider::before {
+  transform: translateX(18px);
+}
+
 /* ---- Retracted message ---- */
 
 .msg-retracted {
@@ -8855,7 +8909,7 @@ select.settings-input {
 
 /* ===== Step 1: Fix transparent image black borders ===== */
 .market-card-v2-cover-img {
-  background: var(--glass-bg);
+  display: block;
 }
 
 /* ===== Version actions ===== */

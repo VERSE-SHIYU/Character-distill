@@ -35,6 +35,7 @@ export default function ProfilePage() {
   const [bindError, setBindError] = useState(false)
   const [showBindForm, setShowBindForm] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [privacy, setPrivacy] = useState({ stats_visible: true, cards_visible: true, books_visible: true })
 
   useEffect(() => {
     loadUserAvatar()
@@ -47,6 +48,11 @@ export default function ProfilePage() {
       .then((data) => {
         setEmail(data.email || '')
         setEmailVerified(data.email_verified || false)
+        setPrivacy({
+          stats_visible: data.profile_stats_visible !== false,
+          cards_visible: data.cards_visible !== false,
+          books_visible: data.books_visible !== false,
+        })
       })
       .catch(() => {})
   }, [])
@@ -182,6 +188,20 @@ export default function ProfilePage() {
       setBindError(true)
     }
   }, [bindEmail, bindCode])
+
+  const togglePrivacy = useCallback(async (key) => {
+    const next = !privacy[key]
+    setPrivacy((p) => ({ ...p, [key]: next }))
+    try {
+      await fetchWithTimeout('/api/market/author/visibility', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [key]: next }),
+      })
+    } catch {
+      setPrivacy((p) => ({ ...p, [key]: !next }))
+    }
+  }, [privacy])
 
   const createdDate = authUser?.created_at
     ? new Date((authUser.created_at.includes('T') && !authUser.created_at.endsWith('Z') && !authUser.created_at.includes('+') ? authUser.created_at + 'Z' : authUser.created_at)).toLocaleDateString('zh-CN')
@@ -351,6 +371,24 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
+
+      {/* 隐私设置 */}
+      <div className="profile-card">
+        <h2 className="profile-section-title">隐私设置</h2>
+        {[
+          { key: 'stats_visible', label: '粉丝/关注数公开' },
+          { key: 'cards_visible', label: '角色列表公开' },
+          { key: 'books_visible', label: '书籍列表公开' },
+        ].map(({ key, label }) => (
+          <div key={key} className="profile-privacy-row">
+            <span>{label}</span>
+            <label className="profile-toggle">
+              <input type="checkbox" checked={privacy[key]} onChange={() => togglePrivacy(key)} />
+              <span className="profile-toggle-slider"></span>
+            </label>
+          </div>
+        ))}
+      </div>
 
       <ImageCropModal
         file={cropFile}

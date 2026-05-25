@@ -129,7 +129,10 @@ async def get_author(
     followers_count = await storage.get_followers_count(user_id)
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id)
-    stats_visible = author.get("profile_stats_visible", 1) or user_id == user["id"]
+    is_self = user_id == user["id"]
+    stats_visible = author.get("profile_stats_visible", 1) or is_self
+    cards_visible = author.get("cards_visible", 1) or is_self
+    books_visible = author.get("books_visible", 1) or is_self
     return {
         "author": {k: v for k, v in author.items() if k != "password_hash"},
         "cards": cards,
@@ -138,21 +141,47 @@ async def get_author(
         "followers_count": followers_count,
         "following_count": following_count,
         "stats_visible": bool(stats_visible),
+        "cards_visible": bool(cards_visible),
+        "books_visible": bool(books_visible),
     }
 
 
+@router.get("/author/{user_id}/followers")
+async def get_author_followers(
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get followers with details for an author."""
+    followers = await storage.get_followers_details(user_id)
+    return {"followers": followers}
+
+
 @router.patch("/author/visibility")
-async def toggle_stats_visibility(
+async def update_privacy(
     body: dict,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Toggle whether the current user's profile stats are visible to others."""
-    visible = body.get("visible", True)
-    ok = await storage.set_profile_stats_visible(user["id"], visible)
+    """Update privacy settings (stats_visible, cards_visible, books_visible)."""
+    kwargs = {}
+    if "stats_visible" in body:
+        kwargs["profile_stats_visible"] = body["stats_visible"]
+    if "cards_visible" in body:
+        kwargs["cards_visible"] = body["cards_visible"]
+    if "books_visible" in body:
+        kwargs["books_visible"] = body["books_visible"]
+    if not kwargs:
+        return {"ok": True}
+    ok = await storage.set_user_privacy(user["id"], **kwargs)
     if not ok:
         raise HTTPException(500, "设置失败")
-    return {"ok": True, "stats_visible": visible}
+    return {
+        "ok": True,
+        "stats_visible": kwargs.get("profile_stats_visible", None),
+        "cards_visible": kwargs.get("cards_visible", None),
+        "books_visible": kwargs.get("books_visible", None),
+    }
 
 
 @router.get("/author/{user_id}/posts")

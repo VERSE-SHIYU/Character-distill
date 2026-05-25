@@ -250,7 +250,7 @@ export default function AuthorPage({ embedded = false }) {
       await fetchWithTimeout('/api/market/author/visibility', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ visible: next }),
+        body: JSON.stringify({ stats_visible: next }),
       })
       setStatsVisible(next)
     } catch { /* ignore */ }

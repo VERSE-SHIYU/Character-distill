@@ -914,7 +914,7 @@ const useAppStore = create((set, get) => ({
       }))
       set({
         sessionId: session.id || sessionId,
-        userRole: session.user_role || '',
+        userRole: session.user_role ?? '',
         messages,
         currentCard: {
           id: session.card_id,

@@ -1585,7 +1585,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible, cards_visible, books_visible FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -1594,18 +1594,25 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get user by id failed: {exc}")
             raise
 
-    async def set_profile_stats_visible(self, user_id: str, visible: bool) -> bool:
-        """Set whether the user's profile stats are visible to others."""
+    async def set_user_privacy(self, user_id: str, **kwargs) -> bool:
+        """Set privacy fields (stats_visible, cards_visible, books_visible)."""
+        allowed = {'profile_stats_visible', 'cards_visible', 'books_visible'}
+        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        if not updates:
+            return True
         try:
             async with await self._connect() as conn:
+                set_clause = ', '.join(f'{k} = ?' for k in updates)
+                values = [1 if v else 0 for v in updates.values()]
+                values.append(user_id)
                 await conn.execute(
-                    "UPDATE users SET profile_stats_visible = ? WHERE id = ?",
-                    (1 if visible else 0, user_id),
+                    f"UPDATE users SET {set_clause} WHERE id = ?",
+                    values,
                 )
                 await conn.commit()
             return True
         except Exception as exc:
-            print(f"[SQLiteStore] Set profile stats visible failed: {exc}")
+            print(f"[SQLiteStore] Set user privacy failed: {exc}")
             return False
 
     # ---- Email & verification codes ----
@@ -2392,6 +2399,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get followers failed: {exc}")
             return []
 
+    async def get_followers_details(self, user_id: str) -> list[dict]:
+        """Get followers with id, username, avatar_data."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = ?",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get followers details failed: {exc}")
+            return []
+
     async def get_following(self, user_id: str) -> list[str]:
         try:
             async with await self._connect() as conn:
@@ -2409,7 +2430,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT u.id, u.username FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?",
+                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?",
                     (user_id,),
                 )
                 rows = await cursor.fetchall()

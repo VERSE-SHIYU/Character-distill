@@ -122,7 +122,7 @@ function ChatView() {
   const [retractConfirm, setRetractConfirm] = useState(false)
 
   useEffect(() => {
-    if (!userRole) setShowRoleModal(true)
+    if (!userRole && !sessionId) setShowRoleModal(true)
   }, [])
 
   const currentText = texts.find((t) => t.id === currentTextId)
