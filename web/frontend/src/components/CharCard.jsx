@@ -201,9 +201,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   }, [currentCard?.id])
 
   // Load card avatars for the sidebar list
+  const avatarRequestedRef = useRef(new Set())
   useEffect(() => {
     cards.forEach((c) => {
-      if (c.id && !cardAvatars[c.id]) {
+      if (c.id && !cardAvatars[c.id] && !avatarRequestedRef.current.has(c.id)) {
+        avatarRequestedRef.current.add(c.id)
         loadCardAvatar(c.id).then((dataUrl) => {
           if (dataUrl) setCardAvatar(c.id, dataUrl)
         })
