@@ -13,6 +13,7 @@ export default function AuthorPage({ embedded = false }) {
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const authorUserId = useAppStore((s) => s.authorUserId)
   const authUser = useAppStore((s) => s.authUser)
+  const userAvatar = useAppStore((s) => s.userAvatar)
   const startChat = useAppStore((s) => s.startChat)
 
   const [author, setAuthor] = useState(null)
@@ -138,7 +139,7 @@ export default function AuthorPage({ embedded = false }) {
         <>
           {/* ── Section 1: Profile hero ── */}
           <div className="author-hero">
-            <Avatar name={author.username || '?'} size={72} />
+            <Avatar name={author.username || '?'} src={isOwnProfile ? userAvatar : author.avatar_data} size={72} />
             <div className="author-hero-text">
               <h2 className="author-name">{author.username}</h2>
               <div className="author-stats">

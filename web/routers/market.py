@@ -175,7 +175,7 @@ async def get_author(
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id)
     return {
-        "author": author,
+        "author": {k: v for k, v in author.items() if k != "password_hash"},
         "cards": cards,
         "texts": texts,
         "is_following": user_id in following_ids,

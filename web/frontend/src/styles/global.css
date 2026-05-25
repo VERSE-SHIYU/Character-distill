@@ -6848,6 +6848,8 @@ select.settings-input {
 
 .messages-row {
   display: flex;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .messages-row.mine {

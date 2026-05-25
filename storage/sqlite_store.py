@@ -1523,7 +1523,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()

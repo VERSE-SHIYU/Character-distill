@@ -13,6 +13,7 @@ export default function MessagesPage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
+  const userAvatar = useAppStore((s) => s.userAvatar)
 
   const [conversations, setConversations] = useState([])
   const [convLoading, setConvLoading] = useState(true)
@@ -271,9 +272,11 @@ export default function MessagesPage() {
                     const isMe = msg.sender_id === authUser?.id
                     return (
                       <div key={msg.id} className={`messages-row${isMe ? ' mine' : ' other'}`}>
+                        {!isMe && <Avatar name={activeUsername || '?'} size={28} />}
                         <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                           {msg.content}
                         </div>
+                        {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={28} />}
                       </div>
                     )
                   })}
