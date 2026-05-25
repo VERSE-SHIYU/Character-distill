@@ -114,14 +114,6 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             </button>
           </div>
           <div className="sidebar-action-row">
-            <button
-              type="button"
-              className="sidebar-action-btn"
-              onClick={() => setView('voice')}
-              title="音色管理"
-            >
-              {'\u{1F399}'} 音色
-            </button>
             <div className="sidebar-theme-wrap">
               <button
                 type="button"
@@ -133,6 +125,14 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               </button>
               {showTheme && <ThemePopup onClose={() => setShowTheme(false)} />}
             </div>
+            <button
+              type="button"
+              className="sidebar-action-btn"
+              onClick={() => setView('voice')}
+              title="音色管理"
+            >
+              {'\u{1F399}'} 音色
+            </button>
             <button
               type="button"
               className="sidebar-action-btn"
