@@ -7372,3 +7372,103 @@ select.settings-input {
   background: rgba(231, 76, 60, 0.08);
   color: #e74c3c;
 }
+
+/* ===== Author Page Character Cards ===== */
+.author-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.author-char-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 20px 16px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+
+.author-char-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+.author-char-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 10px 0 2px;
+}
+
+.author-char-identity {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.author-char-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  align-self: stretch;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.author-char-likes {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ===== Expandable Text ===== */
+.expandable-text-wrap {
+  width: 100%;
+  margin: 4px 0 8px;
+}
+
+.expandable-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-align: left;
+}
+
+.expandable-text.expanded {
+  display: block;
+  overflow: visible;
+}
+
+.expandable-text-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--accent);
+  padding: 2px 0;
+  margin-top: 2px;
+}
+
+.expandable-text-toggle:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .author-cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .author-char-card {
+    padding: 14px 10px 10px;
+  }
+}
+

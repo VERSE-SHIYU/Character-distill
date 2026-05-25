@@ -268,34 +268,33 @@ export default function AuthorPage({ embedded = false }) {
             {cards.length === 0 ? (
               <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
             ) : (
-              <div className="market-grid">
+              <div className="author-cards-grid">
                 {cards.map((card) => {
                   const cardData = typeof card.card_json === 'string'
                     ? JSON.parse(card.card_json)
                     : card.card_json || {}
                   const name = cardData.name || card.name || '?'
                   const identity = cardData.identity || ''
+                  const background = cardData.background || ''
                   return (
-                    <div key={card.id} className="market-card">
-                      <div className="market-card-body">
-                        <h3 className="market-card-name">{name}</h3>
-                        {identity && <p className="market-card-identity">{identity}</p>}
-                      </div>
-                      <div className="market-card-footer">
-                        <span className="market-card-likes">{'\u{2764}'} {card.likes || 0}</span>
-                        <button
-                          type="button"
-                          className="btn-primary btn-sm"
-                          onClick={async () => {
-                            const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
-                              method: 'POST',
-                              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                              body: JSON.stringify({ text_id: '' }),
-                            })
-                            const data = await res.json()
-                            if (data.card) startChat(data.card)
-                          }}
-                        >
+                    <div key={card.id} className="author-char-card">
+                      <Avatar name={name} size={56} />
+                      <h4 className="author-char-name">{name}</h4>
+                      {identity && <p className="author-char-identity">{identity}</p>}
+                      {background && (
+                        <ExpandableText text={background} maxLines={3} />
+                      )}
+                      <div className="author-char-footer">
+                        <span className="author-char-likes">{'\u{2764}'} {card.likes || 0}</span>
+                        <button type="button" className="btn-primary btn-sm" onClick={async () => {
+                          const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                            body: JSON.stringify({ text_id: '' }),
+                          })
+                          const data = await res.json()
+                          if (data.card) startChat(data.card)
+                        }}>
                           使用
                         </button>
                       </div>
@@ -340,4 +339,20 @@ function fmtTime(iso) {
   } catch {
     return ''
   }
+}
+
+function ExpandableText({ text, maxLines = 3 }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="expandable-text-wrap">
+      <p className={`expandable-text${expanded ? ' expanded' : ''}`} style={{ WebkitLineClamp: expanded ? 'unset' : maxLines }}>
+        {text}
+      </p>
+      {text.length > 80 && (
+        <button type="button" className="expandable-text-toggle" onClick={() => setExpanded(!expanded)}>
+          {expanded ? '收起' : '展开'}
+        </button>
+      )}
+    </div>
+  )
 }
