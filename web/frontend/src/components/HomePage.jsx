@@ -126,27 +126,34 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Stats bar */}
+      {/* Dashboard stats */}
       <div className="home-stats-bar">
         <div className="home-stats-item">
           <span className="home-stats-num">{cardCount}</span>
-          <span className="home-stats-label"> 个角色</span>
+          <span className="home-stats-label">角色</span>
         </div>
         <div className="home-stats-divider" />
         <div className="home-stats-item">
           <span className="home-stats-num">{recentSessions.length > 0 ? recentSessions.length : '-'}</span>
-          <span className="home-stats-label"> 次对话</span>
+          <span className="home-stats-label">对话</span>
         </div>
         <div className="home-stats-divider" />
         <div className="home-stats-item">
           <span className="home-stats-num">{textCount}</span>
-          <span className="home-stats-label"> 份文本</span>
+          <span className="home-stats-label">文本</span>
         </div>
       </div>
 
       {/* Character card grid */}
       <div className="home-card-section">
-        <h2 className="home-section-title">角色卡片</h2>
+        <div className="home-section-header">
+          <h2 className="home-section-title">角色卡片</h2>
+          {allCards.length > 4 && (
+            <button type="button" className="home-view-all-btn" onClick={() => setView('text')}>
+              查看全部 ({allCards.length})
+            </button>
+          )}
+        </div>
         {cardsLoading ? (
           <div className="admin-loading">加载中…</div>
         ) : allCards.length === 0 ? (
@@ -157,7 +164,6 @@ export default function HomePage() {
             </button>
           </div>
         ) : (
-          <>
           <div className="home-char-grid">
             {allCards.slice(0, 4).map((card) => {
               const data = parseCardJson(card)
@@ -175,23 +181,11 @@ export default function HomePage() {
                     <span className="home-char-name">{name}</span>
                     {identity && <span className="home-char-identity">{truncate(identity, 20)}</span>}
                   </div>
+                  <span className="home-char-arrow">{'\u{203A}'}</span>
                 </button>
               )
             })}
-            {allCards.length > 4 && (
-              <button
-                type="button"
-                className="home-char-card home-char-card-more"
-                onClick={() => setView('text')}
-              >
-                <span style={{ fontSize: 24 }}>{'\u{203A}'}</span>
-                <span style={{ fontSize: 14, color: 'var(--text-dim)' }}>
-                  查看全部 ({allCards.length})
-                </span>
-              </button>
-            )}
           </div>
-          </>
         )}
       </div>
 
@@ -199,24 +193,28 @@ export default function HomePage() {
       {recentSessions.length > 0 && (
         <div className="home-recent-section">
           <h2 className="home-section-title">最近对话</h2>
-          <div className="home-recent-list">
-            {recentSessions.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className="home-recent-item"
-                onClick={() => handleResume(s.id)}
-                disabled={resumingId === s.id}
-              >
-                <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
-                <div className="home-recent-body">
-                  <span className="home-recent-name">{s.character_name}</span>
-                  <span className="home-recent-preview">{previewText(s.last_message)}</span>
-                </div>
-                <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
-                {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
-              </button>
-            ))}
+          <div className="home-recent-container">
+            <div className="home-recent-list">
+              {recentSessions.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="home-recent-item"
+                  onClick={() => handleResume(s.id)}
+                  disabled={resumingId === s.id}
+                >
+                  <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
+                  <div className="home-recent-body">
+                    <div className="home-recent-head">
+                      <span className="home-recent-name">{s.character_name}</span>
+                      <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                    </div>
+                    <span className="home-recent-preview">{previewText(s.last_message)}</span>
+                  </div>
+                  {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

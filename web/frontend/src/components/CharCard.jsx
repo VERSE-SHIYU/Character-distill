@@ -1016,18 +1016,10 @@ function CardDetail({ card, textId }) {
           className="btn-secondary"
           id="card-share-btn"
           onClick={() => {
-            if (shared) {
-              // Re-open publish form to update
-              setPublishDescription(card.market_description || '')
-              setPublishTags(card.market_tags || '')
-              setPublishMessage('')
-              setShowShareConfirm(true)
-            } else {
-              setPublishDescription(card.market_description || '')
-              setPublishTags(card.market_tags || '')
-              setPublishMessage('')
-              setShowShareConfirm(true)
-            }
+            setPublishDescription(card.market_description || '')
+            setPublishTags(card.market_tags || '')
+            setPublishMessage('')
+            setShowShareConfirm(true)
           }}
         >
           {shared ? '\u{1F30D} 已分享' : '\u{1F512} 分享到市场'}

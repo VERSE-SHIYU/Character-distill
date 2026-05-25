@@ -263,9 +263,7 @@ export default function MarketCardDetail() {
           </button>
         </div>
 
-        {activeTab === 'detail' && (
-        {/* Comments list */}
-        <div className="market-detail-comments">
+        {activeTab === 'detail' && <div className="market-detail-comments">
           <h3 className="market-detail-section-title">{'\u{1F4AC}'} 评论 ({comments.length})</h3>
           {commentsLoading ? (
             <Loading text="加载评论…" />
@@ -300,7 +298,7 @@ export default function MarketCardDetail() {
             </div>
           )}
         </div>
-      )}
+      }
 
       {activeTab === 'versions' && (
         <div className="market-detail-versions">
