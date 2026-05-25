@@ -339,6 +339,17 @@ _voice_cache_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(_voice_cache_dir)), name="voice_audio")
 
 
+@app.get("/{path:path}")
+def serve_spa(path: str):
+    """SPA fallback: serve index.html for all non-API routes."""
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404)
+    index_path = _STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(index_path)
+
+
 if __name__ == "__main__":
     import uvicorn
     print("Server starting: http://localhost:7860")
