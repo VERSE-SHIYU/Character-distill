@@ -74,9 +74,27 @@ export default function TrashPage() {
           {cardsLoading ? (
             <Loading text="加载已删除角色卡…" />
           ) : cards.length === 0 ? (
-            <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40, fontSize: 13 }}>
-              回收站暂无角色卡
-            </p>
+            <div className="shell-placeholder" style={{ padding: 40 }}>
+              <div className="shell-placeholder-inner">
+                <div className="shell-placeholder-icon">
+                  <svg viewBox="0 0 120 100" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" width="80" height="67" style={{ color: 'var(--text-dim)', opacity: 0.4 }}>
+                    <path d="M30 30 L25 85 C25 90 30 95 35 95 L85 95 C90 95 95 90 95 85 L90 30" />
+                    <path d="M20 30 L100 30" strokeWidth="1.5" />
+                    <path d="M45 30 L45 18 C45 14 49 10 53 10 L67 10 C71 10 75 14 75 18 L75 30" />
+                    <path d="M50 45 L50 78" />
+                    <path d="M70 45 L70 78" />
+                    <path d="M60 45 L60 78" opacity="0.6" />
+                    <path d="M5 30 L115 30" strokeWidth="0.8" opacity="0.3" />
+                    <circle cx="95" cy="15" r="3" opacity="0.3" />
+                    <circle cx="105" cy="25" r="2" opacity="0.2" />
+                    <circle cx="15" cy="85" r="2" opacity="0.25" />
+                    <circle cx="110" cy="80" r="1.5" opacity="0.2" />
+                  </svg>
+                </div>
+                <div className="shell-placeholder-title">回收站空空如也</div>
+                <div className="shell-placeholder-sub">删除的角色卡会出现在这里</div>
+              </div>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 0' }}>
               {cards.map((card) => {

@@ -148,44 +148,43 @@
   --accent-rgb: 111, 173, 116;
 }
 
-/* Blue Ocean (蓝绿潮汐版) */
+/* Blue Ocean → Seascape Glass (海景玻璃) — real-photo background + frosted glass */
 .theme-ocean {
-  --primary: #c5e0e8;
-  --primary-hover: #b0d3de;
-  --secondary: #d8ebf0;
-  --highlight: #fdf6ec;
-  --bg-page: #f7f9fb;
-  --accent: #5f9eb5;
-  --accent-hover: #82b5c7;
-  --mint: #c2e3d8;
-  --seafoam: #d0e8e0;
-  --teal-mist: #b8d8d4;
-  --text-primary: #37474f;
-  --text-secondary: rgba(55,71,79,0.5);
-  --glass-bg: rgba(255,255,255,0.65);
-  --glass-border: rgba(255,255,255,0.85);
-  --sidebar-bg: rgba(247,249,251,0.82);
-  --user-bubble: rgba(197,224,232,0.28);
-  --assistant-bubble: rgba(194,227,216,0.25);
-  --blob-green: rgba(194,227,216,0.12);
-  --blob-blue: rgba(197,224,232,0.15);
-  --blob-yellow: rgba(253,246,236,0.12);
-  --blob-purple: rgba(184,216,212,0.10);
-  --input-border: rgba(0,0,0,0.05);
-  --pill-bg: rgba(163,199,214,0.15);
-  --pill-border: rgba(163,199,214,0.28);
-  --pill-text: #5f9eb5;
+  --glass-bg: rgba(189, 232, 236, 0.18);
+  --glass-border: rgba(255, 255, 255, 0.40);
+  --sidebar-bg: rgba(189, 232, 236, 0.18);
+  --text-primary: #1D6F7F;
+  --text-secondary: rgba(29, 111, 127, 0.5);
+  --accent: #1D6F7F;
+  --accent-hover: #0D4C56;
+  --primary: #1D6F7F;
+  --primary-hover: #0D4C56;
+  --highlight: #6ACDC6;
+  --secondary: rgba(106, 205, 198, 0.15);
+  --user-bubble: rgba(29, 111, 127, 0.15);
+  --assistant-bubble: rgba(106, 205, 198, 0.2);
+  --mint: #6ACDC6;
+  --seafoam: #8FD8D0;
+  --teal-mist: #A8E0D8;
+  --blob-green: transparent;
+  --blob-blue: transparent;
+  --blob-yellow: transparent;
+  --blob-purple: transparent;
+  --input-border: rgba(255, 255, 255, 0.3);
+  --pill-bg: rgba(106, 205, 198, 0.12);
+  --pill-border: rgba(106, 205, 198, 0.25);
+  --pill-text: #1D6F7F;
 
   /* Backward compat overrides */
   --cream-green: var(--primary);
   --cream-green-soft: var(--secondary);
   --warm-yellow: var(--highlight);
   --cream-white: var(--bg-page);
-  --soft-lavender: #d8e0eb;
+  --soft-lavender: #b8d8d4;
   --charcoal: var(--text-primary);
   --charcoal-dim: rgba(55,71,79,0.55);
   --charcoal-light: rgba(55,71,79,0.35);
-  --accent-soft: rgba(95,158,181,0.12);
+  --accent-soft: rgba(29,111,127,0.12);
   --purple: var(--soft-lavender);
 
   --text: var(--text-primary);
@@ -194,19 +193,19 @@
   --green: var(--primary);
   --yellow: var(--highlight);
 
-  --bg: var(--bg-page);
+  --bg: transparent;
   --card-bg: var(--glass-bg);
   --card-border: var(--glass-border);
   --card-radius: 20px;
-  --card-shadow: 0 8px 32px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.8);
+  --card-shadow: 0 8px 32px rgba(29,111,127,0.07), inset 0 0 0 1px rgba(255,255,255,0.5);
   --card-blur: blur(28px) saturate(200%);
 
-  --input-bg: var(--glass-bg);
+  --input-bg: rgba(255,255,255,0.3);
   --input-radius: 14px;
 
-  --scrollbar-thumb: rgba(95, 158, 181, 0.2);
-  --scrollbar-thumb-hover: rgba(95, 158, 181, 0.4);
-  --accent-rgb: 95, 158, 181;
+  --scrollbar-thumb: rgba(29, 111, 127, 0.25);
+  --scrollbar-thumb-hover: rgba(29, 111, 127, 0.45);
+  --accent-rgb: 29, 111, 127;
   --btn-radius: 10px;
 }
 
@@ -588,6 +587,196 @@ body {
 .theme-aurora .bg-blob:nth-child(4) { width: 350px; height: 350px; background: #f0d8e0; top: 50%; left: 65%; animation-delay: -10s; }
 .theme-aurora .bg-blob:nth-child(5) { display: none; }
 
+/* ── Ocean theme: full-screen seascape background ── */
+.ocean-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.8s ease;
+}
+.theme-ocean .ocean-bg {
+  opacity: 1;
+  background: url('/seascape-bg.jpg') center / cover no-repeat;
+  filter: blur(4px) brightness(0.85);
+  transform: scale(1.03);
+}
+.theme-ocean .ocean-bg::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(11,43,54,0.10) 0%, transparent 30%, transparent 70%, rgba(11,43,54,0.08) 100%);
+}
+
+/* ── Champagne gold particles ── */
+.ocean-particle {
+  position: fixed;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0;
+  background: radial-gradient(circle at 30% 30%, #fff8e0, #d4a853);
+  box-shadow: 0 0 6px rgba(212, 168, 83, 0.4);
+  animation: particle-float 8s ease-in-out infinite;
+}
+.theme-ocean .ocean-particle { opacity: 0.7; }
+.ocean-particle.p1 { width: 3px; height: 3px; bottom: 12%; right: 8%; animation-delay: 0s; }
+.ocean-particle.p2 { width: 5px; height: 5px; bottom: 20%; right: 15%; animation-delay: -1.6s; }
+.ocean-particle.p3 { width: 3px; height: 3px; bottom: 8%;  right: 22%; animation-delay: -3.2s; box-shadow: 0 0 8px rgba(212,168,83,0.3); }
+.ocean-particle.p4 { width: 4px; height: 4px; bottom: 15%; right: 4%;  animation-delay: -4.8s; }
+.ocean-particle.p5 { width: 2px; height: 2px; bottom: 25%; right: 12%; animation-delay: -6.4s; box-shadow: 0 0 4px rgba(212,168,83,0.5); }
+.ocean-particle.p6 { width: 4px; height: 4px; bottom: 10%; right: 28%; animation-delay: -2.4s; }
+
+@keyframes particle-float {
+  0%, 100% { transform: translateY(0) scale(1); opacity: 0.7; }
+  25%      { transform: translateY(-18px) scale(1.2); opacity: 1; }
+  50%      { transform: translateY(-8px) scale(0.9); opacity: 0.6; }
+  75%      { transform: translateY(-24px) scale(1.1); opacity: 0.9; }
+}
+/* Ocean blobs = hidden, letting the seascape show through */
+.theme-ocean .bg-blob { display: none; }
+.theme-ocean .bg-gradient-pastel { opacity: 0; }
+
+/* Ocean sidebar: frosted glass with dark teal text */
+.theme-ocean .sidebar {
+  background: rgba(189, 232, 236, 0.18);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  border-right: 1px solid rgba(255,255,255,0.25);
+  box-shadow: inset -1px 0 0 rgba(255,255,255,0.35);
+}
+.theme-ocean .sidebar-item {
+  color: #1D6F7F;
+}
+.theme-ocean .sidebar-item:hover {
+  background: rgba(106, 205, 198, 0.2);
+  color: #0D4C56;
+}
+.theme-ocean .sidebar-item.active {
+  background: linear-gradient(135deg, rgba(106,205,198,0.30) 0%, rgba(143,216,208,0.25) 50%, rgba(168,224,216,0.15) 100%);
+  color: #0D4C56;
+  box-shadow: inset 0 0 0 1px rgba(106, 205, 198, 0.35);
+}
+.theme-ocean .sidebar-header,
+.theme-ocean .sidebar-user-section {
+  color: #1D6F7F;
+}
+.theme-ocean .sidebar-user-name {
+  color: #1D6F7F;
+}
+.theme-ocean .sidebar-logo-text {
+  color: #1D6F7F;
+}
+.theme-ocean .sidebar-sub {
+  color: rgba(29,111,127,0.5);
+}
+.theme-ocean .sidebar-action-btn {
+  color: #1D6F7F;
+  border-color: rgba(255,255,255,0.15);
+}
+.theme-ocean .sidebar-action-btn:hover {
+  background: rgba(106, 205, 198, 0.2);
+  color: #0D4C56;
+}
+.theme-ocean .sidebar-collapse-btn {
+  background: rgba(255,255,255,0.3);
+  border-color: rgba(255,255,255,0.35);
+  color: #1D6F7F;
+}
+.theme-ocean .sidebar-collapse-btn:hover {
+  background: rgba(255,255,255,0.5);
+  color: #0D4C56;
+}
+.theme-ocean .theme-popup {
+  background: rgba(255,255,255,0.35);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.4);
+  box-shadow: 0 8px 24px rgba(29,111,127,0.08), inset 0 0 0 1px rgba(255,255,255,0.5);
+}
+.theme-ocean .theme-popup-item { color: #1D6F7F; }
+.theme-ocean .theme-popup-item:hover { background: rgba(106,205,198,0.2); color: #0D4C56; }
+.theme-ocean .theme-popup-item.active { background: linear-gradient(135deg, rgba(106,205,198,0.30), rgba(168,224,216,0.15)); color: #0D4C56; }
+.theme-ocean .theme-popup-check { color: #1D6F7F; }
+/* ── Ocean glass panel & cards ── */
+.theme-ocean .panel {
+  background: rgba(255, 255, 255, 0.30);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border-radius: 20px;
+  margin: 12px 16px 12px 12px;
+  box-shadow: 0 8px 32px rgba(29,111,127,0.06), inset 0 0 0 1px rgba(255,255,255,0.55);
+}
+.theme-ocean .panel-title { color: var(--text-primary); }
+.theme-ocean .panel-desc { color: var(--text-secondary); }
+.theme-ocean .glass-card,
+.theme-ocean .modal-card {
+  background: rgba(255,255,255,0.35);
+  backdrop-filter: blur(20px) saturate(200%);
+  -webkit-backdrop-filter: blur(20px) saturate(200%);
+  border: 1px solid rgba(255,255,255,0.30);
+  box-shadow: 0 4px 20px rgba(29,111,127,0.05), inset 0 0 0 1px rgba(255,255,255,0.50);
+}
+/* Ocean theme empty state */
+.theme-ocean .shell-placeholder-icon {
+  font-size: 56px;
+  opacity: 0.5;
+}
+.theme-ocean .shell-placeholder-icon svg {
+  display: block;
+  margin: 0 auto;
+  stroke: #1D6F7F;
+  opacity: 0.4;
+}
+.theme-ocean .shell-placeholder-title {
+  color: rgba(29,111,127,0.5);
+  font-weight: 500;
+}
+.theme-ocean .shell-placeholder-sub {
+  color: rgba(29,111,127,0.35);
+}
+/* Ocean login: preserve readability behind the glass */
+.theme-ocean .login-page {
+  background: transparent;
+}
+.theme-ocean .login-card {
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  box-shadow: 0 8px 40px rgba(29,111,127,0.12), inset 0 0 0 1px rgba(255,255,255,0.55);
+}
+.theme-ocean .login-subtitle {
+  color: rgba(29,111,127,0.6);
+}
+.theme-ocean .login-field label {
+  color: var(--text-primary);
+}
+.theme-ocean .login-field input {
+  background: rgba(255,255,255,0.60);
+  border-color: rgba(29,111,127,0.15);
+  color: var(--text-primary);
+}
+.theme-ocean .login-field input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(29,111,127,0.10);
+}
+.theme-ocean .login-submit {
+  background: var(--primary);
+  box-shadow: 0 4px 16px rgba(29,111,127,0.30);
+}
+.theme-ocean .login-submit:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent-hover) 100%);
+  box-shadow: 0 6px 24px rgba(29,111,127,0.40);
+}
+.theme-ocean .login-link-btn {
+  color: rgba(29,111,127,0.7);
+}
+
 @keyframes driftBlob {
   0%   { transform: translate(0, 0) scale(1); }
   50%  { transform: translate(20px, -25px) scale(1.08); }
@@ -857,9 +1046,11 @@ body {
 }
 
 .sidebar-item-icon {
-  font-size: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 24px;
-  text-align: center;
+  height: 20px;
   flex-shrink: 0;
 }
 

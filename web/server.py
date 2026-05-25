@@ -48,7 +48,7 @@ from routers.card import router as card_router
 from routers.market import router as market_router
 from routers.group import router as group_router
 from routers.message import router as message_router
-from routers.auth import router as auth_router
+from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
