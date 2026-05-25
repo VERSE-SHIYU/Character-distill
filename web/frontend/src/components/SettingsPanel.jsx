@@ -3,6 +3,7 @@ import { fetchWithTimeout, getMyUsage, updateApiConfig } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import { AlertTriangle } from './common/Icon'
 
 const APP_VERSION = '1.0.0'
 const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
@@ -72,7 +73,7 @@ export default function SettingsPanel() {
         <h2 className="settings-section-title">API 配置</h2>
         {!hasApiKey && (
           <div className="api-config-alert">
-            {'⚠️'} 请先配置 API 密钥才能使用蒸馏和对话功能
+            <AlertTriangle size={16} style={{ verticalAlign: 'middle', marginRight: 6 }} /> 请先配置 API 密钥才能使用蒸馏和对话功能
           </div>
         )}
         <p className="settings-hint">

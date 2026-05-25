@@ -6,6 +6,8 @@ import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import { Book, User } from './common/Icon'
+import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
@@ -22,7 +24,7 @@ export default function CharCard() {
     return (
       <div className="shell-placeholder">
         <div className="shell-placeholder-inner">
-          <div className="shell-placeholder-icon">{'\u{1F464}'}</div>
+          <div className="shell-placeholder-icon"><User size={28} /></div>
           <div className="shell-placeholder-title">
             请先选择一份文本
           </div>
@@ -111,7 +113,7 @@ function CharPanelBody({ textId }) {
           <CardDetail card={currentCard} textId={textId} />
         ) : (
           <div className="char-detail-empty">
-            <div className="char-detail-empty-icon">{'\u{1F464}'}</div>
+            <div className="char-detail-empty-icon"><User size={28} /></div>
             <p>选择或蒸馏一个角色查看详情</p>
           </div>
         )}
@@ -312,7 +314,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           style={{ marginLeft: 'auto', fontSize: 12 }}
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '🗑 回收站'}
+          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : <><Trash2 size={14} /> 回收站</>}
         </button>
       </div>
 
@@ -390,7 +392,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   <div className="char-list-info">
                     <div className="char-list-name">{name}</div>
                     {textInfo?.filename && (
-                      <span className="char-card-source">{'\u{1F4D6}'} {textInfo.filename}</span>
+                      <span className="char-card-source"><Book size={12} /> {textInfo.filename}</span>
                     )}
                     {c.forked_from && (
                       <span className="char-card-source">{'\u{1F4CB}'} 已fork</span>
@@ -1003,7 +1005,7 @@ function CardDetail({ card, textId }) {
           className="btn-secondary"
           onClick={() => setShowEditModal(true)}
         >
-          {'✏️'} 编辑
+          <Edit size={16} /> 编辑
         </button>
         <button
           type="button"
@@ -1044,7 +1046,7 @@ function CardDetail({ card, textId }) {
           className="btn-primary card-chat-btn"
           onClick={() => setShowRoleModal(true)}
         >
-          {'\u{1F4AC}'} 开始对话
+          <MessageSquare size={14} /> 开始对话
         </button>
       </div>
 

@@ -6,6 +6,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { loadCardAvatar } from '../store/db'
+import { Book, Clipboard } from './common/Icon'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -540,7 +541,7 @@ export default function HistoryPanel({ initialTrash = false }) {
               <div key={textId} className="history-group">
                 <h3 className="history-group-title" onClick={() => toggleGroup(textId)}>
                   <span className={`history-group-arrow${collapsedGroups[textId] ? ' collapsed' : ''}`}>{collapsedGroups[textId] ? '▶' : '▼'}</span>
-                  {'📖'} {textName}
+                  <Book size={14} /> {textName}
                 </h3>
                 {!collapsedGroups[textId] && (
                 <ul className="history-list">
@@ -895,7 +896,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
               return (
                 <div key={msg.id ?? i} className="chat-summary history-readonly-summary">
                   <div className="chat-summary-toggle" style={{ cursor: 'default' }}>
-                    <span>{'📋'} 对话摘要</span>
+                    <span><Clipboard size={14} /> 对话摘要</span>
                   </div>
                   <div className="chat-summary-body">{msg.content}</div>
                 </div>

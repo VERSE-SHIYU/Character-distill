@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import ConfirmModal from './common/ConfirmModal'
+import { Folder, Music, Mic } from './common/Icon'
 
 const PRESET_VOICES = [
   { id: 'xiaoxiao', label: '晓晓（女，活泼）' },
@@ -352,7 +353,7 @@ export default function VoicePanel() {
               onClick={() => customInputRef.current?.click()}
               disabled={customUploading}
             >
-              {customFile ? `\u{1F3B5} ${customFile.name}` : '\u{1F4C2} 选择音频文件'}
+              {customFile ? <><Music size={16} /> {customFile.name}</> : <><Folder size={16} /> 选择音频文件</>}
             </button>
           </div>
           {customFile && (
@@ -482,7 +483,7 @@ export default function VoicePanel() {
           /* No ref audio yet */
           <div className="voice-guide-card">
             <div className="voice-guide-header">
-              <span>{'\u{1F3A4}'}</span>
+              <span><Mic size={20} /></span>
               <span className="voice-guide-badge">
                 为「{currentCard?.name || '角色'}」上传参考音频
               </span>
@@ -505,7 +506,7 @@ export default function VoicePanel() {
                 onClick={() => refInputRef.current?.click()}
                 disabled={refUploading}
               >
-                {refFile ? `\u{1F3B5} ${refFile.name}` : '\u{1F4C2} 选择参考音频'}
+                {refFile ? <><Music size={16} /> {refFile.name}</> : <><Folder size={16} /> 选择参考音频</>}
               </button>
             </div>
             {refFile && (

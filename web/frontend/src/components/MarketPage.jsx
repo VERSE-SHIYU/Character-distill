@@ -4,6 +4,7 @@ import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import { Heart, MessageSquare, Book } from './common/Icon'
 
 const PAGE_SIZE = 20
 
@@ -271,16 +272,19 @@ export default function MarketPage() {
                     <div className="market-card-v2-name">{charName}</div>
                     {identity && <div className="market-card-v2-identity">{identity}</div>}
                     <div className="market-card-v2-bottom">
-                      <span className="market-card-v2-author">{c.author_name || '匿名'}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Avatar name={c.author_name || '匿名'} src={c.author_avatar} size={34} />
+                        <span className="market-card-v2-author">{c.author_name || '匿名'}</span>
+                      </div>
                       <span className="market-card-v2-stats">
                         <button
                           type="button"
                           className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
                           onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
                         >
-                          {c.liked_by_me ? '❤️' : '🤍'} {c.likes || 0}
+                          {c.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {c.likes || 0}
                         </button>
-                        <span>💬 {c.comment_count || 0}</span>
+                        <span><MessageSquare size={14} /> {c.comment_count || 0}</span>
                       </span>
                     </div>
                   </div>
@@ -354,7 +358,7 @@ export default function MarketPage() {
                   setForkCard(null)
                   doFork(card, currentTextId)
                 }}>
-                  {'\u{1F4D6}'} 挂载到当前文本
+                  <Book size={14} /> 挂载到当前文本
                 </button>
                 <button className="btn-secondary" onClick={() => {
                   const card = forkCard

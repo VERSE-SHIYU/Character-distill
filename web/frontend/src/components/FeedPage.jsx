@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
+import { Zap } from './common/Icon'
 
 const PAGE_SIZE = 20
 
@@ -87,7 +88,7 @@ export default function FeedPage() {
       {!loading && !error && posts.length === 0 && (
         <div className="shell-placeholder">
           <div className="shell-placeholder-inner">
-            <div className="shell-placeholder-icon">{'\u{1F4AA}'}</div>
+            <div className="shell-placeholder-icon"><Zap size={32} /></div>
             <div className="shell-placeholder-title">还没有动态</div>
             <div className="shell-placeholder-sub">
               去关注一些创作者，他们的动态会显示在这里

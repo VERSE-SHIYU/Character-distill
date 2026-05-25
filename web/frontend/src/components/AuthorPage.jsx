@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
+import { Eye, EyeOff, MessageSquare, Theater, Sparkles, Book } from './common/Icon'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -321,7 +322,7 @@ export default function AuthorPage({ embedded = false }) {
                       <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
                       {isOwnProfile && (
                         <button type="button" className="stat-visibility-toggle" onClick={toggleStatsVisibility} title={statsVisible ? '对其他人隐藏统计数据' : '对其他人显示统计数据'}>
-                          {statsVisible ? '👁️' : '🚫'}
+                          {statsVisible ? <Eye size={16} /> : <EyeOff size={16} />}
                         </button>
                       )}
                     </div>
@@ -483,8 +484,8 @@ export default function AuthorPage({ embedded = false }) {
               <div className="author-chars-column">
                 <div className="author-chars-widget">
                   <div className="author-chars-widget-title-row">
-                    <h3 className="author-chars-widget-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
-                    {cards.length > 0 && <span className="author-chars-widget-tag">{'\u{2728}'} 已公开</span>}
+                    <h3 className="author-chars-widget-title"><Theater size={16} /> 公开角色 ({cards.length})</h3>
+                    {cards.length > 0 && <span className="author-chars-widget-tag"><Sparkles size={14} /> 已公开</span>}
                   </div>
                   {cards.length === 0 ? (
                     <p className="author-chars-widget-empty">暂无公开角色</p>
@@ -613,7 +614,7 @@ export default function AuthorPage({ embedded = false }) {
 
               {/* ── Section 2: Bookshelf ── */}
               <div className="author-section">
-                <h3 className="author-section-title">{'\u{1F4D6}'} 书架 ({texts.length})</h3>
+                <h3 className="author-section-title"><Book size={16} /> 书架 ({texts.length})</h3>
                 {texts.length === 0 ? (
                   <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
                     暂无公开书籍
@@ -622,7 +623,7 @@ export default function AuthorPage({ embedded = false }) {
                   texts.map((t) => (
                     <button key={t.id} className="author-book-card"
                       onClick={() => { setCurrentTextDetailId(t.id); setView('textDetail') }}>
-                      <span style={{ fontSize: 28 }}>{'\u{1F4D6}'}</span>
+                      <span style={{ fontSize: 28, lineHeight: 1 }}><Book size={28} /></span>
                       <div className="author-book-info">
                         <div className="author-book-title">{t.title || '未命名'}</div>
                         {t.description && <div className="author-book-desc">{t.description}</div>}
@@ -637,7 +638,7 @@ export default function AuthorPage({ embedded = false }) {
 
               {/* ── Section 3: Posts ── */}
               <div className="author-section">
-                <h3 className="author-section-title">{'\u{1F4AC}'} 动态</h3>
+                <h3 className="author-section-title"><MessageSquare size={14} /> 动态</h3>
 
                 {postsLoading ? (
                   <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
@@ -661,7 +662,7 @@ export default function AuthorPage({ embedded = false }) {
 
               {/* ── Section 4: Public cards ── */}
               <div className="author-section">
-                <h3 className="author-section-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
+                <h3 className="author-section-title"><Theater size={16} /> 公开角色 ({cards.length})</h3>
                 {cards.length === 0 ? (
                   <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
                 ) : (

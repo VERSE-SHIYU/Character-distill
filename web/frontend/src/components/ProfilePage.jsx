@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import ImageCropModal from './common/ImageCropModal'
+import { Heart, Star, Theater, Book, Mic, Lock, Mail } from './common/Icon'
 
 export default function ProfilePage() {
   const authUser = useAppStore((s) => s.authUser)
@@ -231,10 +232,10 @@ export default function ProfilePage() {
     : '—'
 
   const statData = [
-    { key: 'stats_visible', icon: '❤️', label: '粉丝', count: stats.followers_count },
-    { key: 'stats_visible', icon: '⭐', label: '关注', count: stats.following_count },
-    { key: 'cards_visible', icon: '\u{1F3AD}', label: '角色', count: stats.cards_count },
-    { key: 'books_visible', icon: '\u{1F4D6}', label: '书籍', count: stats.texts_count },
+    { key: 'stats_visible', icon: <Heart size={14} />, label: '粉丝', count: stats.followers_count },
+    { key: 'stats_visible', icon: <Star size={14} />, label: '关注', count: stats.following_count },
+    { key: 'cards_visible', icon: <Theater size={14} />, label: '角色', count: stats.cards_count },
+    { key: 'books_visible', icon: <Book size={14} />, label: '书籍', count: stats.texts_count },
   ]
 
   return (
@@ -293,15 +294,15 @@ export default function ProfilePage() {
       {/* 3项网格：音色/密码/邮箱 */}
       <div className="profile-grid profile-grid-3">
         <button className="profile-grid-item" onClick={() => setView('voice')}>
-          <span className="profile-grid-icon">{'\u{1F399}'}</span>
+          <span className="profile-grid-icon"><Mic size={16} /></span>
           <span className="profile-grid-label">音色管理</span>
         </button>
         <button className="profile-grid-item" onClick={() => togglePanel('password')}>
-          <span className="profile-grid-icon">{'\u{1F512}'}</span>
+          <span className="profile-grid-icon"><Lock size={16} /></span>
           <span className="profile-grid-label">修改密码</span>
         </button>
         <button className="profile-grid-item" onClick={() => togglePanel('bind')}>
-          <span className="profile-grid-icon">{'\u{1F4E7}'}</span>
+          <span className="profile-grid-icon"><Mail size={16} /></span>
           <span className="profile-grid-label">{email ? '换绑邮箱' : '绑定邮箱'}</span>
           {emailVerified && <span className="profile-grid-badge-ok">✓</span>}
         </button>

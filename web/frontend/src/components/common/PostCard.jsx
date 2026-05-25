@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
+import { Heart, MessageSquare } from './Icon'
 
 /* ── Expandable text ── */
 function ExpandableText({ text, maxLines = 6 }) {
@@ -203,14 +204,14 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
           className={'post-card-action-btn' + (post.liked_by_me ? ' liked' : '') + (animating ? ' animating' : '')}
           onClick={handleLikeClick}
         >
-          {post.liked_by_me ? '❤️' : '\u{1F90D}'} {post.likes || 0}
+          {post.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {post.likes || 0}
         </button>
         <button
           type="button"
           className="post-card-action-btn"
           onClick={toggleComments}
         >
-          {'\u{1F4AC}'} {post.comment_count || 0}
+          <MessageSquare size={14} /> {post.comment_count || 0}
         </button>
         {showDelete && (
           <button type="button" className="post-card-delete" onClick={() => onDelete?.(post.id)}>

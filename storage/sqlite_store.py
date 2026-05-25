@@ -772,6 +772,7 @@ class SQLiteStore(StorageBase):
                               c.forked_from, c.likes, c.created_at,
                               c.market_description, c.market_tags,
                               COALESCE(u.username, '') AS author_name,
+                              COALESCE(u.avatar_data, '') AS author_avatar,
                               COALESCE(t.title, '') AS text_title,
                               (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
                         FROM cards c
@@ -812,6 +813,7 @@ class SQLiteStore(StorageBase):
                               c.forked_from, c.likes, c.created_at,
                               c.market_description, c.market_tags,
                               COALESCE(u.username, '') AS author_name,
+                              COALESCE(u.avatar_data, '') AS author_avatar,
                               COALESCE(t.title, '') AS text_title
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id

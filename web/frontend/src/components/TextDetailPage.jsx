@@ -5,6 +5,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
+import { Heart } from './common/Icon'
 
 export default function TextDetailPage() {
   const setView = useAppStore((s) => s.setView)
@@ -341,7 +342,7 @@ function CommentItem({
               style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? '#e53e3e' : 'var(--text-dim)' }}
               onClick={() => onLike(comment.id)}
             >
-              {comment.liked_by_me ? '❤️' : '\u{1F90D}'} {comment.likes || 0}
+              {comment.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {comment.likes || 0}
             </button>
             <button
               type="button"
@@ -414,7 +415,7 @@ function CommentItem({
                       style={{ padding: '1px 4px', fontSize: 11, color: reply.liked_by_me ? '#e53e3e' : 'var(--text-dim)' }}
                       onClick={() => onLike(reply.id)}
                     >
-                      {reply.liked_by_me ? '❤️' : '\u{1F90D}'} {reply.likes || 0}
+                      {reply.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {reply.likes || 0}
                     </button>
                     {authUser?.id === reply.user_id && (
                       <button

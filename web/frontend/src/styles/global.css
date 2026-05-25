@@ -150,11 +150,11 @@
 
 /* Blue Ocean → Seascape Glass (海景玻璃) — real-photo background + frosted glass */
 .theme-ocean {
-  --glass-bg: rgba(189, 232, 236, 0.18);
-  --glass-border: rgba(255, 255, 255, 0.40);
-  --sidebar-bg: rgba(189, 232, 236, 0.18);
-  --text-primary: #1D6F7F;
-  --text-secondary: rgba(29, 111, 127, 0.5);
+  --glass-bg: rgba(230, 245, 247, 0.35);
+  --glass-border: rgba(255, 255, 255, 0.45);
+  --sidebar-bg: rgba(230, 245, 247, 0.30);
+  --text-primary: #052F3A;
+  --text-secondary: #1D6F7F;
   --accent: #1D6F7F;
   --accent-hover: #0D4C56;
   --primary: #1D6F7F;
@@ -182,8 +182,8 @@
   --cream-white: var(--bg-page);
   --soft-lavender: #b8d8d4;
   --charcoal: var(--text-primary);
-  --charcoal-dim: rgba(55,71,79,0.55);
-  --charcoal-light: rgba(55,71,79,0.35);
+  --charcoal-dim: rgba(5,47,58,0.55);
+  --charcoal-light: rgba(5,47,58,0.35);
   --accent-soft: rgba(29,111,127,0.12);
   --purple: var(--soft-lavender);
 
@@ -644,14 +644,14 @@ body {
 
 /* Ocean sidebar: frosted glass with dark teal text */
 .theme-ocean .sidebar {
-  background: rgba(189, 232, 236, 0.18);
+  background: rgba(230, 245, 247, 0.30);
   backdrop-filter: blur(32px) saturate(200%);
   -webkit-backdrop-filter: blur(32px) saturate(200%);
   border-right: 1px solid rgba(255,255,255,0.25);
   box-shadow: inset -1px 0 0 rgba(255,255,255,0.35);
 }
 .theme-ocean .sidebar-item {
-  color: #1D6F7F;
+  color: #052F3A;
 }
 .theme-ocean .sidebar-item:hover {
   background: rgba(106, 205, 198, 0.2);
@@ -664,19 +664,19 @@ body {
 }
 .theme-ocean .sidebar-header,
 .theme-ocean .sidebar-user-section {
-  color: #1D6F7F;
+  color: #052F3A;
 }
 .theme-ocean .sidebar-user-name {
-  color: #1D6F7F;
+  color: #052F3A;
 }
 .theme-ocean .sidebar-logo-text {
-  color: #1D6F7F;
+  color: #052F3A;
 }
 .theme-ocean .sidebar-sub {
-  color: rgba(29,111,127,0.5);
+  color: #1D6F7F;
 }
 .theme-ocean .sidebar-action-btn {
-  color: #1D6F7F;
+  color: #052F3A;
   border-color: rgba(255,255,255,0.15);
 }
 .theme-ocean .sidebar-action-btn:hover {
@@ -686,11 +686,11 @@ body {
 .theme-ocean .sidebar-collapse-btn {
   background: rgba(255,255,255,0.3);
   border-color: rgba(255,255,255,0.35);
-  color: #1D6F7F;
+  color: #052F3A;
 }
 .theme-ocean .sidebar-collapse-btn:hover {
   background: rgba(255,255,255,0.5);
-  color: #0D4C56;
+  color: #052F3A;
 }
 .theme-ocean .theme-popup {
   background: rgba(255,255,255,0.35);
@@ -699,13 +699,13 @@ body {
   border: 1px solid rgba(255,255,255,0.4);
   box-shadow: 0 8px 24px rgba(29,111,127,0.08), inset 0 0 0 1px rgba(255,255,255,0.5);
 }
-.theme-ocean .theme-popup-item { color: #1D6F7F; }
+.theme-ocean .theme-popup-item { color: #052F3A; }
 .theme-ocean .theme-popup-item:hover { background: rgba(106,205,198,0.2); color: #0D4C56; }
 .theme-ocean .theme-popup-item.active { background: linear-gradient(135deg, rgba(106,205,198,0.30), rgba(168,224,216,0.15)); color: #0D4C56; }
-.theme-ocean .theme-popup-check { color: #1D6F7F; }
+.theme-ocean .theme-popup-check { color: #052F3A; }
 /* ── Ocean glass panel & cards ── */
 .theme-ocean .panel {
-  background: rgba(255, 255, 255, 0.30);
+  background: rgba(255, 255, 255, 0.40);
   backdrop-filter: blur(24px) saturate(200%);
   -webkit-backdrop-filter: blur(24px) saturate(200%);
   border-radius: 20px;
@@ -751,19 +751,19 @@ body {
   box-shadow: 0 8px 40px rgba(29,111,127,0.12), inset 0 0 0 1px rgba(255,255,255,0.55);
 }
 .theme-ocean .login-subtitle {
-  color: rgba(29,111,127,0.6);
+  color: var(--text-secondary);
 }
 .theme-ocean .login-field label {
   color: var(--text-primary);
 }
 .theme-ocean .login-field input {
-  background: rgba(255,255,255,0.60);
-  border-color: rgba(29,111,127,0.15);
-  color: var(--text-primary);
+  background: rgba(255,255,255,0.75);
+  border-color: rgba(29,111,127,0.25);
+  color: #052F3A;
 }
 .theme-ocean .login-field input:focus {
   border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(29,111,127,0.10);
+  box-shadow: 0 0 0 3px rgba(29,111,127,0.12);
 }
 .theme-ocean .login-submit {
   background: var(--primary);
@@ -774,7 +774,14 @@ body {
   box-shadow: 0 6px 24px rgba(29,111,127,0.40);
 }
 .theme-ocean .login-link-btn {
-  color: rgba(29,111,127,0.7);
+  color: var(--text-secondary);
+}
+.theme-ocean .login-tab {
+  color: var(--text-secondary);
+}
+.theme-ocean .login-tab.active {
+  background: var(--primary);
+  color: #fff;
 }
 
 @keyframes driftBlob {
@@ -1040,7 +1047,7 @@ body {
 
 .sidebar-item.active {
   background: rgba(var(--accent-rgb), 0.18);
-  color: #5a9c5e;
+  color: var(--accent);
   font-weight: 600;
   box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.3);
 }
@@ -1080,7 +1087,7 @@ body {
   padding: 0 6px;
   font-size: 11px;
   font-weight: 600;
-  color: #5a9c5e;
+  color: var(--accent);
   background: rgba(var(--accent-rgb), 0.18);
   border-radius: 999px;
   flex-shrink: 0;
@@ -1679,7 +1686,7 @@ body {
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 600;
-  color: #5a9c5e;
+  color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
   border-radius: 999px;
 }
@@ -2578,7 +2585,7 @@ body {
 .pill-value {
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.25);
-  color: #5a9c5e;
+  color: var(--accent);
 }
 
 .pill-tension {
@@ -2839,7 +2846,6 @@ body {
   border: 1px solid var(--input-border);
   border-radius: var(--btn-radius);
   background: rgba(255, 255, 255, 0.5);
-  font-size: 15px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -2856,9 +2862,6 @@ body {
 }
 
 /* Web search toggle */
-.web-search-toggle {
-  font-size: 16px;
-}
 .web-search-toggle.active {
   background: rgba(59, 130, 246, 0.15);
   border-color: var(--accent);
@@ -2979,12 +2982,10 @@ body {
   gap: 2px;
 }
 .chat-font-btn {
-  width: 28px;
-  height: 28px;
-  font-size: 13px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--btn-radius);
+  font-weight: 600;
 }
 .chat-font-btn:disabled {
   opacity: 0.35;
@@ -4758,11 +4759,19 @@ select.settings-input {
 }
 
 .voice-toggle-mini {
-  border: none;
-  background: transparent;
-  font-size: 16px;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--btn-radius);
+  background: rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  padding: 2px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s;
+}
+.voice-toggle-mini:hover {
+  background: rgba(255, 255, 255, 0.85);
 }
 
 /* ===== Modals ===== */
@@ -5277,7 +5286,7 @@ select.settings-input {
 
 /* Character card grid — 2 columns, soft shadow */
 .home-card-section {
-  flex: 1;
+  flex: none;
   min-height: 0;
 }
 
@@ -5313,7 +5322,6 @@ select.settings-input {
   position: relative;
 }
 .home-char-card:hover {
-  transform: translateY(-4px);
   box-shadow: var(--shadow), 0 0 0 1px rgba(123,97,255,0.08);
 }
 
@@ -5773,7 +5781,7 @@ select.settings-input {
 
 .login-tab.active {
   background: var(--primary);
-  color: var(--accent);
+  color: #fff;
   font-weight: 600;
   border-radius: 10px;
 }
@@ -7202,6 +7210,9 @@ select.settings-input {
 }
 
 .market-detail-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 16px;
@@ -7927,6 +7938,9 @@ select.settings-input {
   margin-top: 24px;
 }
 .author-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 12px;
@@ -7988,12 +8002,15 @@ select.settings-input {
 .mine-top-tabs {
   display: flex;
   gap: 4px;
-  padding: 12px 16px 0;
+  padding: 24px 20px 0;
   background: transparent;
   flex-shrink: 0;
 }
 
 .mine-top-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   border: none;
   border-radius: 10px;
@@ -8018,6 +8035,7 @@ select.settings-input {
 .mine-content {
   flex: 1;
   overflow-y: auto;
+  padding: 0 4px;
 }
 
 /* ===== Post Card ===== */
@@ -8508,6 +8526,9 @@ select.settings-input {
 }
 
 .author-chars-widget-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
@@ -8515,6 +8536,9 @@ select.settings-input {
 }
 
 .author-chars-widget-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   font-weight: 500;
   color: var(--accent);
@@ -9066,6 +9090,9 @@ select.settings-input {
 }
 
 .market-detail-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 500;

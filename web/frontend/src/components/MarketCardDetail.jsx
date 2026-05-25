@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
+import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
@@ -427,12 +428,12 @@ export default function MarketCardDetail() {
         <h1 className="panel-title">角色详情</h1>
         {card.user_id === authUser?.id && (
           <button type="button" className="btn-ghost" onClick={() => setShowEditModal(true)} title="编辑" style={{ marginLeft: 'auto' }}>
-            ✏️
+            <Edit size={16} />
           </button>
         )}
         {(authUser?.is_admin || card.user_id === authUser?.id) && (
           <button type="button" className="btn-ghost" onClick={() => setDeleteConfirmId(card.id)} title="删除">
-            🗑
+            <Trash2 size={16} />
           </button>
         )}
       </header>
@@ -487,7 +488,7 @@ export default function MarketCardDetail() {
 
         {/* Author bar: avatar + name + message */}
         <div className="market-detail-author-bar">
-          <Avatar name={card.author_name || '匿名'} size={36} />
+          <Avatar name={card.author_name || '匿名'} src={card.author_avatar} size={48} />
           <button
             type="button"
             className="market-detail-author-name"
@@ -514,7 +515,7 @@ export default function MarketCardDetail() {
         </div>
 
         {/* Background / description */}
-        {card.text_title && <span className="market-detail-tag">{'\u{1F4D6}'} {card.text_title}</span>}
+        {card.text_title && <span className="market-detail-tag"><Book size={14} /> {card.text_title}</span>}
         {background && <p className="market-detail-background">{background}</p>}
 
         {/* ── Full character card sections ── */}
@@ -602,9 +603,9 @@ export default function MarketCardDetail() {
             className={`market-detail-like-btn${liked ? ' liked' : ''}`}
             onClick={handleLike}
           >
-            {liked ? '❤️' : '\u{1F90D}'} {likes}
+            {liked ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {likes}
           </button>
-          <span className="market-detail-comment-count">{'\u{1F4AC}'} {comments.length}</span>
+          <span className="market-detail-comment-count"><MessageSquare size={14} /> {comments.length}</span>
           <div className="market-detail-actions" style={{ marginLeft: 'auto' }}>
             <button type="button" className="btn-primary" onClick={handleFork} disabled={forking}>
               {forking ? '添加中…' : '使用角色'}
@@ -619,26 +620,26 @@ export default function MarketCardDetail() {
             className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`}
             onClick={() => setActiveTab('detail')}
           >
-            {'\u{1F4AC}'} 评论 ({comments.length})
+            <MessageSquare size={14} /> 评论 ({comments.length})
           </button>
           <button
             type="button"
             className={`market-detail-tab${activeTab === 'versions' ? ' active' : ''}`}
             onClick={() => setActiveTab('versions')}
           >
-            {'\u{1F4CB}'} 版本历史
+            <Clipboard size={14} /> 版本历史
           </button>
           <button
             type="button"
             className={`market-detail-tab${activeTab === 'forks' ? ' active' : ''}`}
             onClick={() => setActiveTab('forks')}
           >
-            {'\u{1F331}'} 衍生角色
+            <Sprout size={14} /> 衍生角色
           </button>
         </div>
 
         {activeTab === 'detail' && <div className="market-detail-comments">
-          <h3 className="market-detail-section-title">{'\u{1F4AC}'} 评论 ({comments.length})</h3>
+          <h3 className="market-detail-section-title"><MessageSquare size={14} /> 评论 ({comments.length})</h3>
           {commentsLoading ? (
             <Loading text="加载评论…" />
           ) : comments.length === 0 ? (
@@ -725,7 +726,7 @@ export default function MarketCardDetail() {
 
       {activeTab === 'versions' && (
         <div className="market-detail-versions">
-          <h3 className="market-detail-section-title">{'\u{1F4CB}'} 版本历史</h3>
+          <h3 className="market-detail-section-title"><Clipboard size={14} /> 版本历史</h3>
           {versionsLoading ? (
             <Loading text="加载版本历史…" />
           ) : versions.length === 0 ? (
@@ -749,7 +750,7 @@ export default function MarketCardDetail() {
                             onClick={() => setViewVersion(v)}
                             title="查看此版本详情"
                           >
-                            👁️
+                            <Eye size={16} />
                           </button>
                           <button
                             type="button"
@@ -758,7 +759,7 @@ export default function MarketCardDetail() {
                             disabled={restoring}
                             title="恢复到此版本"
                           >
-                            ↩️
+                            <CornerUpLeft size={14} />
                           </button>
                           <button
                             type="button"
@@ -766,7 +767,7 @@ export default function MarketCardDetail() {
                             onClick={() => startEditVersion(v)}
                             title="编辑"
                           >
-                            ✏️
+                            <Edit size={14} />
                           </button>
                         </>
                       )}
@@ -777,7 +778,7 @@ export default function MarketCardDetail() {
                           onClick={() => setDeleteVersionId(v.id)}
                           title="删除"
                         >
-                          🗑
+                          <Trash2 size={14} />
                         </button>
                       )}
                     </div>
@@ -791,7 +792,7 @@ export default function MarketCardDetail() {
 
       {activeTab === 'forks' && (
         <div className="market-detail-forks">
-          <h3 className="market-detail-section-title">{'\u{1F331}'} 衍生角色 ({forks.length})</h3>
+          <h3 className="market-detail-section-title"><Sprout size={14} /> 衍生角色 ({forks.length})</h3>
           {forksLoading ? (
             <Loading text="加载衍生角色…" />
           ) : forks.length === 0 ? (
@@ -859,7 +860,7 @@ export default function MarketCardDetail() {
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <button className="btn-primary" onClick={() => doFork(currentTextId)}>
-                  {'\u{1F4D6}'} 挂载到当前文本
+                  <Book size={14} /> 挂载到当前文本
                 </button>
                 <button className="btn-secondary" onClick={() => doFork('')}>
                   {'\u{1F30D}'} 新建独立空间

@@ -4,6 +4,7 @@ import ErrorBox from './common/ErrorBox'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
 import { fetchWithTimeout } from '../api/client'
+import { MessageSquare, Book, File } from './common/Icon'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
@@ -42,10 +43,11 @@ function timeEstimate(n, textType) {
   const isChat = textType === 'chat'
   const limit = isChat ? 2000000 : 1000000
   const limitText = isChat ? '200 万' : '100 万'
-  if (n <= 100000) return { icon: '⚡', text: '预计蒸馏 1-2 分钟' }
-  if (n <= 500000) return { icon: '📖', text: '预计蒸馏 3-5 分钟' }
-  if (n <= limit) return { icon: '📚', text: `大文本，预计蒸馏 5-8 分钟` }
-  return { icon: '❌', text: `超出 ${limitText} 字上限，请分卷上传` }
+  const iconSize = 14
+  if (n <= 100000) return { icon: null, text: '⚡ 预计蒸馏 1-2 分钟' }
+  if (n <= 500000) return { icon: <Book size={iconSize} />, text: '预计蒸馏 3-5 分钟' }
+  if (n <= limit) return { icon: <Book size={iconSize} />, text: `大文本，预计蒸馏 5-8 分钟` }
+  return { icon: null, text: `❌ 超出 ${limitText} 字上限，请分卷上传` }
 }
 
 function formatTime(iso) {
@@ -215,7 +217,7 @@ export default function TextPanel() {
           accept={ALLOWED_EXT.join(',')}
           onChange={(e) => { handleFiles(e.target.files); e.target.value = '' }}
         />
-        <div className="text-upload-icon">{'\u{1F4C4}'}</div>
+        <div className="text-upload-icon"><File size={24} /></div>
         <p className="text-upload-hint">拖拽文件到此处，或</p>
         <button
           type="button"
@@ -424,7 +426,7 @@ export default function TextPanel() {
                   className={`text-type-option${textType === 'story' ? ' active' : ''}`}
                   onClick={() => setTextType('story')}
                 >
-                  <span className="text-type-icon">{'\u{1F4D6}'}</span>
+                  <span className="text-type-icon"><Book size={14} /></span>
                   <span className="text-type-label">小说/故事/剧本</span>
                 </button>
                 <button
@@ -432,7 +434,7 @@ export default function TextPanel() {
                   className={`text-type-option${textType === 'chat' ? ' active' : ''}`}
                   onClick={() => setTextType('chat')}
                 >
-                  <span className="text-type-icon">{'\u{1F4AC}'}</span>
+                  <span className="text-type-icon"><MessageSquare size={14} /></span>
                   <span className="text-type-label">聊天记录</span>
                 </button>
               </div>

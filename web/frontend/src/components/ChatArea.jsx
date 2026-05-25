@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, Heart, Smile, Shield, Handshake, MessageSquare, Mic, Book, File } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -42,7 +43,7 @@ export default function ChatArea() {
     return (
       <div className="shell-placeholder">
         <div className="shell-placeholder-inner">
-          <div className="shell-placeholder-icon">{'\u{1F4AC}'}</div>
+          <div className="shell-placeholder-icon"><MessageSquare size={20} /></div>
           <div className="shell-placeholder-title">
             请先选择一个角色开始对话
           </div>
@@ -55,14 +56,14 @@ export default function ChatArea() {
               className="home-action-btn"
               onClick={() => setView('character')}
             >
-              {'\u{1F464}'} 选择已有角色
+              <User size={16} /> 选择已有角色
             </button>
             <button
               type="button"
               className="home-action-btn"
               onClick={() => setView('text')}
             >
-              {'\u{1F4C4}'} 上传新文本
+              <File size={16} /> 上传新文本
             </button>
           </div>
         </div>
@@ -353,7 +354,7 @@ function ChatView() {
               onClick={() => setVoiceEnabled(!voiceEnabled)}
               title={voiceEnabled ? '关闭语音' : '开启语音'}
             >
-              {voiceEnabled ? '\u{1F50A}' : '\u{1F507}'}
+              {voiceEnabled ? <Speaker size={16} /> : <SpeakerOff size={16} />}
             </button>
           </div>
           <div className="chat-web-search-ctl">
@@ -363,7 +364,7 @@ function ChatView() {
               onClick={() => setWebSearchEnabled(!webSearchEnabled)}
               title={webSearchEnabled ? '关闭现实增强' : '开启现实增强'}
             >
-              {'\u{1F310}'}
+              <Globe size={16} />
             </button>
             <span className={`web-search-label${webSearchEnabled ? ' active' : ''}`}>
               {webSearchEnabled ? '现实增强：开' : '现实增强：关'}
@@ -377,7 +378,7 @@ function ChatView() {
               disabled={fontLevel === 0}
               title="缩小字体"
             >
-              A-
+              <FontDecrease size={16} />
             </button>
             <button
               type="button"
@@ -386,7 +387,7 @@ function ChatView() {
               disabled={fontLevel === 2}
               title="放大字体"
             >
-              A+
+              <FontIncrease size={16} />
             </button>
           </div>
           <button
@@ -395,7 +396,7 @@ function ChatView() {
             onClick={handleReset}
             title="重置对话"
           >
-            {'\u{1F504}'}
+            <RefreshCw size={16} />
           </button>
           <button
             type="button"
@@ -403,7 +404,7 @@ function ChatView() {
             onClick={() => setView('character')}
             title="返回角色列表"
           >
-            {'\u{1F464}'}
+            <User size={16} />
           </button>
         </div>
       </div>
@@ -419,14 +420,14 @@ function ChatView() {
           >
             <span className="affinity-toggle-arrow">▼</span>
             <span className="affinity-toggle-label">情感状态</span>
-            <AffinityInline value={affinity.affinity} icon="❤️" label="好感" />
-            <AffinityInline value={affinity.trust} icon="🤝" label="信任" />
+            <AffinityInline value={affinity.affinity} icon={<Heart size={14} />} label="好感" />
+            <AffinityInline value={affinity.trust} icon={<Handshake size={14} />} label="信任" />
           </button>
           <div className="affinity-detail">
-            <AffinityItem value={affinity.affinity} icon="❤️" label="好感" />
-            <AffinityItem value={affinity.trust} icon="🤝" label="信任" />
-            <AffinityItem value={affinity.mood} icon="😊" label="情绪" isMood />
-            <AffinityItem value={affinity.guard} icon="🛡️" label="防御" />
+            <AffinityItem value={affinity.affinity} icon={<Heart size={14} />} label="好感" />
+            <AffinityItem value={affinity.trust} icon={<Handshake size={14} />} label="信任" />
+            <AffinityItem value={affinity.mood} icon={<Smile size={14} />} label="情绪" isMood />
+            <AffinityItem value={affinity.guard} icon={<Shield size={14} />} label="防御" />
             {affinity.reason && (
               <span className="affinity-reason" title={affinity.reason}>
                 {affinity.reason}
@@ -441,7 +442,7 @@ function ChatView() {
           onClick={() => setAffinityOpen(true)}
           title="显示情感面板"
         >
-          {'\u{1F9B6}'}
+          <Heart size={18} />
         </button>
       ) : null}
 
@@ -482,7 +483,7 @@ function ChatView() {
       {textLabel && (
         <div className="chat-context-banner">
           <span className="chat-context-source">
-            {'\u{1F4D6}'} 来自：
+            <Book size={14} /> 来自：
             <button
               type="button"
               className="chat-context-link"
@@ -841,7 +842,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
           onTouchEnd={stopRecording}
           title="按住录音"
         >
-          {'\u{1F3A4}'}
+          <Mic size={16} />
         </button>
       ) : (
         <button

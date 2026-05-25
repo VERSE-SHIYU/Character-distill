@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import AuthorPage from './AuthorPage'
 import Avatar from './common/Avatar'
+import { Home, Star } from './common/Icon'
 
 export default function MinePage() {
   const setView = useAppStore((s) => s.setView)
@@ -36,10 +37,10 @@ export default function MinePage() {
     <div className="mine-page">
       <div className="mine-top-tabs">
         <button type="button" className={`mine-top-tab${tab === 'home' ? ' active' : ''}`} onClick={() => handleTabChange('home')}>
-          {'\u{1F3E0}'} 主页
+          <Home size={16} /> 主页
         </button>
         <button type="button" className={`mine-top-tab${tab === 'following' ? ' active' : ''}`} onClick={() => handleTabChange('following')}>
-          {'\u{2B50}'} 关注
+          <Star size={16} /> 关注
         </button>
       </div>
       <div className="mine-content">
