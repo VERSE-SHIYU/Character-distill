@@ -4177,8 +4177,7 @@ select.settings-input {
 .theme-popup {
   position: absolute;
   bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
+  right: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -4195,8 +4194,8 @@ select.settings-input {
 }
 
 @keyframes theme-popup-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.95); }
-  to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(6px) scale(0.95); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .theme-popup-item {
