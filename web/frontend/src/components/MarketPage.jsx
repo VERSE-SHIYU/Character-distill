@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
@@ -31,8 +31,10 @@ export default function MarketPage() {
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [commentSending, setCommentSending] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
+  const sentinelRef = useRef(null)
 
-  const fetchCards = useCallback(async (p, s, q) => {
+  const fetchCards = useCallback(async (p, s, q, append = false) => {
     setLoading(true)
     setError(null)
     try {
@@ -42,7 +44,12 @@ export default function MarketPage() {
         : `/api/market/list?${params}`
       const res = await fetchWithTimeout(url)
       const data = await res.json()
-      setCards(data.cards || [])
+      if (append) {
+        setCards(prev => [...prev, ...(data.cards || [])])
+      } else {
+        setCards(data.cards || [])
+      }
+      setHasMore((data.cards || []).length >= PAGE_SIZE)
       setTotal(data.total || 0)
       setPage(data.page || 1)
     } catch (err) {
@@ -56,10 +63,29 @@ export default function MarketPage() {
     fetchCards(1, sort, '')
   }, [sort, fetchCards])
 
+  // Infinite scroll: monitor sentinel
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMore || loading) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setPage(p => p + 1)
+      }
+    }, { threshold: 0.1 })
+    observer.observe(sentinelRef.current)
+    return () => observer.disconnect()
+  }, [hasMore, loading])
+
+  // Fetch next page when page > 1
+  useEffect(() => {
+    if (page > 1) fetchCards(page, sort, query, true)
+  }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSearch = (e) => {
     e.preventDefault()
+    const q = searchInput.trim()
+    setQuery(q)
     setPage(1)
-    fetchCards(1, sort, searchInput.trim())
+    fetchCards(1, sort, q)
   }
 
   const handleClearSearch = () => {
@@ -235,95 +261,37 @@ export default function MarketPage() {
               const identity = cardData.identity || ''
               return (
                 <div key={c.id} className="market-card-v2" onClick={() => { useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
-                  <Avatar name={charName} size={72} />
-                  <div className="market-card-v2-name">{charName}</div>
-                  {identity && <div className="market-card-v2-identity">{identity}</div>}
-                  {c.text_title && <div className="market-card-v2-source">{'\u{1F4D6}'} {c.text_title}</div>}
-                  <div className="market-card-v2-meta">
-                    <button
-                      type="button"
-                      className="market-card-author-link"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (c.user_id) {
-                          setAuthorUserId(c.user_id)
-                          setView('author')
-                        }
-                      }}
-                      title="查看作者主页"
-                    >
-                      {'\u{1F464}'} {c.author_name || '匿名'}
-                    </button>
-                    <span className="market-card-likes">
-                      <button
-                        type="button"
-                        className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
-                        disabled={forkingId === c.id}
-                      >
-                        {c.liked_by_me ? '❤️' : '\u{1F90D}'}
-                      </button>
-                      {c.likes || 0}
-                    </span>
+                  <div className="market-card-v2-cover">
+                    {c.avatar_data
+                      ? <img src={c.avatar_data} alt={charName} className="market-card-v2-cover-img" />
+                      : <Avatar name={charName} size={64} />
+                    }
                   </div>
-                  <div className="market-card-v2-actions">
-                    {(authUser?.is_admin || c.user_id === authUser?.id) && (
-                      <button
-                        type="button"
-                        className="btn-ghost market-delete-btn"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDeletePost(c.id)
-                        }}
-                        title="删除"
-                      >
-                        🗑
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="btn-ghost market-comment-btn"
-                      onClick={(e) => { e.stopPropagation(); openComments(c.id) }}
-                      title="评论"
-                    >
-                      {'\u{1F4AC}'}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-primary market-use-btn"
-                      onClick={(e) => { e.stopPropagation(); handleUse(c) }}
-                      disabled={forkingId === c.id}
-                    >
-                      {forkingId === c.id ? '添加中…' : '使用'}
-                    </button>
+                  <div className="market-card-v2-info">
+                    <div className="market-card-v2-name">{charName}</div>
+                    {identity && <div className="market-card-v2-identity">{identity}</div>}
+                    <div className="market-card-v2-bottom">
+                      <span className="market-card-v2-author">{c.author_name || '匿名'}</span>
+                      <span className="market-card-v2-stats">
+                        <button
+                          type="button"
+                          className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
+                        >
+                          {c.liked_by_me ? '❤️' : '🤍'} {c.likes || 0}
+                        </button>
+                        <span>💬 {c.comment_count || 0}</span>
+                      </span>
+                    </div>
                   </div>
                 </div>
               )
             })}
           </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="market-pagination">
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={page <= 1}
-                onClick={() => fetchCards(page - 1, sort, query)}
-              >
-                上一页
-              </button>
-              <span className="market-page-info">{page} / {totalPages}</span>
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={page >= totalPages}
-                onClick={() => fetchCards(page + 1, sort, query)}
-              >
-                下一页
-              </button>
-            </div>
-          )}
+          {/* Infinite scroll sentinel */}
+          {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
+          {loading && cards.length > 0 && <div className="market-loading-more">加载更多…</div>}
         </>
       )}
 

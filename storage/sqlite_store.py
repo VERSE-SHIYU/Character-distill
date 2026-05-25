@@ -590,8 +590,11 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT c.id, c.name, c.card_json, c.user_id, c.likes, c.created_at,
+                              c.avatar_data,
                               COALESCE(u.username, '') AS author_name,
-                              COALESCE(t.title, '') AS text_title
+                              COALESCE(t.title, '') AS text_title,
+                              (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                              COALESCE(u.avatar_data, '') AS author_avatar
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
@@ -686,7 +689,8 @@ class SQLiteStore(StorageBase):
                     f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
                               c.forked_from, c.likes, c.created_at,
                               COALESCE(u.username, '') AS author_name,
-                              COALESCE(t.title, '') AS text_title
+                              COALESCE(t.title, '') AS text_title,
+                              (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
