@@ -8748,3 +8748,77 @@ select.settings-input {
   color: var(--text-secondary);
 }
 
+/* ===== Step 1: Fix transparent image black borders ===== */
+.market-card-v2-cover-img {
+  background: var(--glass-bg);
+}
+
+/* ===== Version actions ===== */
+.version-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+.version-action-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 6px;
+  transition: background 0.15s;
+  opacity: 0.5;
+}
+.version-action-btn:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+  opacity: 1;
+}
+.version-action-btn-danger:hover {
+  background: rgba(255, 50, 50, 0.1);
+}
+
+/* ===== Step 2: Clickable stat buttons ===== */
+.author-profile-stats .stat-btn,
+.author-stats .stat-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.author-profile-stats .stat-btn:hover,
+.author-stats .stat-btn:hover {
+  opacity: 0.7;
+  text-decoration: underline;
+}
+
+.stat-follow-popup {
+  margin-top: 8px;
+  padding: 12px 16px;
+  background: var(--glass-bg);
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--card-shadow);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.stat-follow-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.stat-follow-empty {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 12px 0;
+}
+

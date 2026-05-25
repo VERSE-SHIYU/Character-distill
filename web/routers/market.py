@@ -262,6 +262,48 @@ async def get_card_versions(
     return {"versions": versions}
 
 
+@router.delete("/{card_id}/versions/{version_id}")
+async def delete_card_version(
+    card_id: str,
+    version_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete a specific version — card author or admin only."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if not user.get("is_admin") and card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+    ok = await storage.delete_card_version(card_id, version_id)
+    if not ok:
+        raise HTTPException(404, "版本不存在")
+    return {"ok": True}
+
+
+@router.put("/{card_id}/versions/{version_id}")
+async def update_card_version(
+    card_id: str,
+    version_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Update version publish_message — card author only."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+    message = (body.get("publish_message") or "").strip()
+    if not message:
+        raise HTTPException(400, "发布说明不能为空")
+    ok = await storage.update_card_version(card_id, version_id, message)
+    if not ok:
+        raise HTTPException(404, "版本不存在")
+    return {"ok": True}
+
+
 @router.get("/{card_id}/forks")
 async def get_card_forks(
     card_id: str,

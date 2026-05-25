@@ -70,6 +70,9 @@ export default function MarketCardDetail() {
   const [reportSending, setReportSending] = useState(false)
   const [reportError, setReportError] = useState('')
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+  const [deleteVersionId, setDeleteVersionId] = useState(null)
+  const [editVersionId, setEditVersionId] = useState(null)
+  const [editVersionMessage, setEditVersionMessage] = useState('')
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -233,6 +236,44 @@ export default function MarketCardDetail() {
     } finally {
       setReportSending(false)
     }
+  }
+
+  const handleDeleteVersion = async () => {
+    if (!deleteVersionId) return
+    const id = deleteVersionId
+    setDeleteVersionId(null)
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/versions/${id}`, {
+        method: 'DELETE',
+        headers: { ...getAuthHeaders() },
+      })
+      await loadVersions()
+    } catch (err) {
+      console.error('Delete version failed:', err)
+    }
+  }
+
+  const handleEditVersion = async () => {
+    if (!editVersionId || !editVersionMessage.trim()) return
+    const id = editVersionId
+    const msg = editVersionMessage.trim()
+    setEditVersionId(null)
+    setEditVersionMessage('')
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/versions/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ publish_message: msg }),
+      })
+      await loadVersions()
+    } catch (err) {
+      console.error('Edit version failed:', err)
+    }
+  }
+
+  const startEditVersion = (v) => {
+    setEditVersionId(v.id)
+    setEditVersionMessage(v.publish_message || '')
   }
 
   const toggleSelectComment = (commentId) => {
@@ -456,6 +497,28 @@ export default function MarketCardDetail() {
                     <p className="version-message">{v.publish_message || '无说明'}</p>
                     <span className="version-time">{fmtTime(v.created_at)}</span>
                   </div>
+                  {(card.user_id === authUser?.id || authUser?.is_admin) && (
+                    <div className="version-actions">
+                      {card.user_id === authUser?.id && (
+                        <button
+                          type="button"
+                          className="version-action-btn"
+                          onClick={() => startEditVersion(v)}
+                          title="编辑"
+                        >
+                          ✏️
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="version-action-btn version-action-btn-danger"
+                        onClick={() => setDeleteVersionId(v.id)}
+                        title="删除"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -568,6 +631,40 @@ export default function MarketCardDetail() {
         onCancel={() => setBatchDeleteConfirm(false)}
         danger
       />
+
+      {/* Delete version confirm */}
+      <ConfirmModal
+        isOpen={!!deleteVersionId}
+        title="删除版本"
+        message="确定删除此版本记录？删除后无法恢复。"
+        confirmText="删除"
+        onConfirm={handleDeleteVersion}
+        onCancel={() => setDeleteVersionId(null)}
+        danger
+      />
+
+      {/* Edit version modal */}
+      {editVersionId && (
+        <div className="modal-overlay" onClick={() => { setEditVersionId(null); setEditVersionMessage('') }}>
+          <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">编辑版本说明</h3>
+            <div className="modal-body">
+              <textarea
+                className="report-reason-input"
+                placeholder="修改发布说明…"
+                value={editVersionMessage}
+                onChange={(e) => setEditVersionMessage(e.target.value)}
+                rows={3}
+                style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical' }}
+              />
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setEditVersionId(null); setEditVersionMessage('') }}>取消</button>
+              <button className="btn-primary" onClick={handleEditVersion} disabled={!editVersionMessage.trim()}>保存</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Report modal */}
       {reportCommentId && (

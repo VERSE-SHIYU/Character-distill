@@ -3082,6 +3082,46 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get card versions failed: {exc}")
             return []
 
+    async def delete_card_version(self, card_id: str, version_id: str) -> bool:
+        """Delete a specific version of a card."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM card_versions WHERE id = ? AND card_id = ?",
+                    (version_id, card_id),
+                )
+                if not await cursor.fetchone():
+                    return False
+                await conn.execute(
+                    "DELETE FROM card_versions WHERE id = ? AND card_id = ?",
+                    (version_id, card_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete card version failed: {exc}")
+            return False
+
+    async def update_card_version(self, card_id: str, version_id: str, publish_message: str) -> bool:
+        """Update the publish_message of a specific version."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM card_versions WHERE id = ? AND card_id = ?",
+                    (version_id, card_id),
+                )
+                if not await cursor.fetchone():
+                    return False
+                await conn.execute(
+                    "UPDATE card_versions SET publish_message = ? WHERE id = ? AND card_id = ?",
+                    (publish_message, version_id, card_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Update card version failed: {exc}")
+            return False
+
     async def get_card_forks(self, card_id: str) -> list[dict]:
         """List public cards forked from this card_id."""
         try:

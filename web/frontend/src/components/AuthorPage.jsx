@@ -26,6 +26,10 @@ export default function AuthorPage({ embedded = false }) {
   const [followingCount, setFollowingCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [showFollowers, setShowFollowers] = useState(false)
+  const [showFollowing, setShowFollowing] = useState(false)
+  const [followersList, setFollowersList] = useState([])
+  const [followingList, setFollowingList] = useState([])
 
   // Posts
   const [posts, setPosts] = useState([])
@@ -209,6 +213,35 @@ export default function AuthorPage({ embedded = false }) {
     return cd.background || ''
   }
 
+  const toggleFollowers = useCallback(async () => {
+    if (showFollowers) { setShowFollowers(false); return }
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/followers`, {
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      setFollowersList(data.followers || data.users || [])
+      setShowFollowers(true)
+    } catch { /* ignore */ }
+  }, [authorUserId, showFollowers])
+
+  const toggleFollowing = useCallback(async () => {
+    if (showFollowing) { setShowFollowing(false); return }
+    try {
+      const res = await fetchWithTimeout('/api/market/my/following', {
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      setFollowingList(data.following || data.users || [])
+      setShowFollowing(true)
+    } catch { /* ignore */ }
+  }, [showFollowing])
+
+  const scrollToChars = () => {
+    const el = document.querySelector('.author-chars-widget') || document.querySelector('.author-cards-grid')?.closest('.author-section')
+    el?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   /* ── Premium SVG: Morandi book + dove (灰紫 & 淡绿) ── */
   const EmptyIllustration = () => (
     <svg className="author-empty-illustration" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -265,14 +298,42 @@ export default function AuthorPage({ embedded = false }) {
                   <div className="author-profile-info">
                     <h2 className="author-profile-name">{author.username}</h2>
                     <div className="author-profile-stats">
-                      <span><strong>{followersCount}</strong> 粉丝</span>
+                      <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
                       <span className="stat-dot">·</span>
-                      <span><strong>{followingCount}</strong> 关注</span>
+                      <button type="button" className="stat-btn" onClick={toggleFollowing}><strong>{followingCount}</strong> 关注</button>
                       <span className="stat-dot">·</span>
-                      <span><strong>{cards.length}</strong> 角色</span>
+                      <button type="button" className="stat-btn" onClick={scrollToChars}><strong>{cards.length}</strong> 角色</button>
                       <span className="stat-dot">·</span>
-                      <span><strong>{texts.length}</strong> 书籍</span>
+                      <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
                     </div>
+                    {showFollowers && (
+                      <div className="stat-follow-popup">
+                        {followersList.length === 0 ? (
+                          <div className="stat-follow-empty">暂无粉丝</div>
+                        ) : (
+                          followersList.map((f) => (
+                            <div key={f.id || f.user_id} className="stat-follow-item">
+                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                              <span>{f.username}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                    {showFollowing && (
+                      <div className="stat-follow-popup">
+                        {followingList.length === 0 ? (
+                          <div className="stat-follow-empty">暂无关注</div>
+                        ) : (
+                          followingList.map((f) => (
+                            <div key={f.id || f.user_id} className="stat-follow-item">
+                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                              <span>{f.username}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -444,11 +505,39 @@ export default function AuthorPage({ embedded = false }) {
                 <div className="author-hero-text">
                   <h2 className="author-name">{author.username}</h2>
                   <div className="author-stats">
-                    <span><strong>{followersCount}</strong> 粉丝</span>
-                    <span><strong>{followingCount}</strong> 关注</span>
-                    <span><strong>{cards.length}</strong> 角色</span>
-                    <span><strong>{texts.length}</strong> 书籍</span>
+                    <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
+                    <button type="button" className="stat-btn" onClick={toggleFollowing}><strong>{followingCount}</strong> 关注</button>
+                    <button type="button" className="stat-btn" onClick={scrollToChars}><strong>{cards.length}</strong> 角色</button>
+                    <button type="button" className="stat-btn" onClick={() => setView('text')}><strong>{texts.length}</strong> 书籍</button>
                   </div>
+                  {showFollowers && (
+                    <div className="stat-follow-popup">
+                      {followersList.length === 0 ? (
+                        <div className="stat-follow-empty">暂无粉丝</div>
+                      ) : (
+                        followersList.map((f) => (
+                          <div key={f.id || f.user_id} className="stat-follow-item">
+                            <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                            <span>{f.username}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                  {showFollowing && (
+                    <div className="stat-follow-popup">
+                      {followingList.length === 0 ? (
+                        <div className="stat-follow-empty">暂无关注</div>
+                      ) : (
+                        followingList.map((f) => (
+                          <div key={f.id || f.user_id} className="stat-follow-item">
+                            <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                            <span>{f.username}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
                 </div>
                 {!isOwnProfile && (
                   <>

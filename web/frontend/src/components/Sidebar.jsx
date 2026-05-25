@@ -42,7 +42,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   function isActive(id) {
     switch (id) {
       case 'feed': return currentView === 'feed'
-      case 'workbench': return ['text', 'character', 'chat'].includes(currentView)
+      case 'workbench': return ['text', 'character', 'chat', 'groupChat'].includes(currentView)
       case 'market': return ['market', 'author', 'textDetail'].includes(currentView)
       case 'history': return currentView === 'history'
       case 'mine': return ['mine', 'messages', 'admin'].includes(currentView)
@@ -91,11 +91,19 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               )}
             </button>
           ))}
-          {isActive('workbench') && currentView !== 'chat' && currentCard && sessionId && (
-            <button type="button" className="sidebar-item sidebar-chat-resume" onClick={() => setView('chat')}>
-              <span className="sidebar-item-icon">{'\u{1F4AC}'}</span>
-              <span className="sidebar-item-label">继续对话</span>
-            </button>
+          {isActive('workbench') && (
+            <>
+              <button type="button" className={`sidebar-item${currentView === 'groupChat' ? ' active' : ''}`} onClick={() => setView('groupChat')}>
+                <span className="sidebar-item-icon">{'\u{1F465}'}</span>
+                <span className="sidebar-item-label">群聊</span>
+              </button>
+              {currentView !== 'chat' && currentCard && sessionId && (
+                <button type="button" className="sidebar-item sidebar-chat-resume" onClick={() => setView('chat')}>
+                  <span className="sidebar-item-icon">{'\u{1F4AC}'}</span>
+                  <span className="sidebar-item-label">继续对话</span>
+                </button>
+              )}
+            </>
           )}
         </nav>
       )}
