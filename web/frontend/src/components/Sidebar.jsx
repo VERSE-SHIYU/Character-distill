@@ -101,46 +101,53 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
       )}
 
       {isVisible && authUser && (
-        <div className="sidebar-user-info">
-          <button
-            type="button"
-            className="sidebar-user-link"
-            onClick={() => setView('profile')}
-            title="个人设置"
-          >
-            <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={38} />
-            <span className="sidebar-user-name">{authUser.username}</span>
-          </button>
-          <div className="sidebar-user-actions">
+        <div className="sidebar-user-section">
+          <div className="sidebar-user-row">
             <button
               type="button"
-              className="sidebar-settings-btn"
+              className="sidebar-user-link"
+              onClick={() => setView('profile')}
+              title="个人设置"
+            >
+              <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={38} />
+              <span className="sidebar-user-name">{authUser.username}</span>
+            </button>
+          </div>
+          <div className="sidebar-action-row">
+            <button
+              type="button"
+              className="sidebar-action-btn"
               onClick={() => setView('voice')}
               title="音色管理"
             >
-              {'\u{1F399}'}
+              {'\u{1F399}'} 音色
             </button>
             <div className="sidebar-theme-wrap">
               <button
                 type="button"
-                className="sidebar-theme-btn"
+                className="sidebar-action-btn"
                 onClick={() => setShowTheme(v => !v)}
                 title="切换主题"
               >
-                🎨
+                🎨 换肤
               </button>
               {showTheme && <ThemePopup onClose={() => setShowTheme(false)} />}
             </div>
             <button
               type="button"
-              className="sidebar-settings-btn"
+              className="sidebar-action-btn"
               onClick={() => setView('settings')}
               title="设置"
             >
-              ⚙️
+              ⚙️ 设置
             </button>
-            <button className="sidebar-logout-btn" onClick={logout} title="退出登录">
-              退出
+            <button
+              type="button"
+              className="sidebar-action-btn sidebar-logout-btn"
+              onClick={logout}
+              title="退出登录"
+            >
+              🚪 退出
             </button>
           </div>
         </div>
