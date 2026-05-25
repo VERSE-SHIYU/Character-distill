@@ -5126,9 +5126,9 @@ select.settings-input {
   box-shadow: var(--shadow), 0 0 0 1px rgba(123,97,255,0.08);
 }
 
-/* Squircle avatar in char grid */
+/* Circular avatar in char grid */
 .home-char-card > div:first-child {
-  border-radius: 16px !important;
+  border-radius: 50% !important;
   border-color: var(--glass-border) !important;
 }
 
@@ -6234,6 +6234,48 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   gap: 24px;
+}
+
+/* ===== Profile stats bar ===== */
+.profile-stats-bar {
+  display: flex;
+  gap: 8px;
+}
+.profile-stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card, transparent);
+  cursor: pointer;
+  transition: opacity 0.2s, background 0.2s, border-color 0.2s;
+  text-align: center;
+  color: var(--text);
+}
+.profile-stat-item:hover {
+  background: rgba(var(--accent-rgb), 0.06);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+.profile-stat-item.dim {
+  opacity: 0.4;
+}
+.profile-stat-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+.profile-stat-count {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.profile-stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1;
 }
 
 .profile-grid {
@@ -7399,6 +7441,43 @@ select.settings-input {
   cursor: not-allowed;
 }
 
+/* ===== PrivateMessageChat ===== */
+.private-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.private-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.private-chat-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.private-chat-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.private-chat-input-bar {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
 /* ── Empty state ── */
 .messages-empty-state {
   flex: 1;
@@ -7500,6 +7579,14 @@ select.settings-input {
 .group-chat-view .chat-msg-avatar .avatar-circle {
   width: 40px;
   height: 40px;
+}
+
+/* User messages: avatar on the right, bubble on the left */
+.group-chat-view .chat-msg-user {
+  flex-direction: row;
+}
+.group-chat-view .chat-bubble-user {
+  margin-left: 0;
 }
 
 .group-chat-view .chat-bubble {
@@ -8935,6 +9022,29 @@ select.settings-input {
 }
 .version-action-btn-danger:hover {
   background: rgba(255, 50, 50, 0.1);
+}
+
+/* ===== Version preview banner ===== */
+.version-preview-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  margin: 0 16px 12px;
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.version-preview-banner strong {
+  color: var(--accent);
+}
+.version-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* ===== Step 2: Clickable stat buttons ===== */

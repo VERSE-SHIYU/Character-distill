@@ -35,13 +35,16 @@ export default function ProfilePage() {
   const [bindError, setBindError] = useState(false)
   const [showBindForm, setShowBindForm] = useState(false)
   const [showPasswordForm, setShowPasswordForm] = useState(false)
+
+  // Privacy + stats
   const [privacy, setPrivacy] = useState({ stats_visible: true, cards_visible: true, books_visible: true })
+  const [stats, setStats] = useState({ followers_count: 0, following_count: 0, cards_count: 0, texts_count: 0 })
 
   useEffect(() => {
     loadUserAvatar()
   }, [loadUserAvatar])
 
-  // Load email from /api/auth/me
+  // Load email + privacy from /api/auth/me
   useEffect(() => {
     fetchWithTimeout('/api/auth/me')
       .then((r) => r.json())
@@ -56,6 +59,27 @@ export default function ProfilePage() {
       })
       .catch(() => {})
   }, [])
+
+  // Load stats from author endpoint
+  useEffect(() => {
+    if (!authUser?.id) return
+    fetchWithTimeout(`/api/market/author/${authUser.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setStats({
+          followers_count: data.followers_count || 0,
+          following_count: data.following_count || 0,
+          cards_count: (data.cards || []).length,
+          texts_count: (data.texts || []).length,
+        })
+        setPrivacy({
+          stats_visible: data.stats_visible !== false,
+          cards_visible: data.cards_visible !== false,
+          books_visible: data.books_visible !== false,
+        })
+      })
+      .catch(() => {})
+  }, [authUser?.id])
 
   const togglePanel = (panel) => {
     const isOpening = (panel === 'password' && !showPasswordForm) ||
@@ -134,7 +158,6 @@ export default function ProfilePage() {
     }
   }, [oldPw, newPw, confirmPw])
 
-  // ---- Email binding ----
   const handleSendBindCode = useCallback(async () => {
     if (!bindEmail || !bindEmail.includes('@')) {
       setBindMsg('请输入有效的邮箱地址')
@@ -207,9 +230,16 @@ export default function ProfilePage() {
     ? new Date((authUser.created_at.includes('T') && !authUser.created_at.endsWith('Z') && !authUser.created_at.includes('+') ? authUser.created_at + 'Z' : authUser.created_at)).toLocaleDateString('zh-CN')
     : '—'
 
+  const statData = [
+    { key: 'stats_visible', icon: '❤️', label: '粉丝', count: stats.followers_count },
+    { key: 'stats_visible', icon: '⭐', label: '关注', count: stats.following_count },
+    { key: 'cards_visible', icon: '\u{1F3AD}', label: '角色', count: stats.cards_count },
+    { key: 'books_visible', icon: '\u{1F4D6}', label: '书籍', count: stats.texts_count },
+  ]
+
   return (
     <div className="profile-page">
-      {/* 顶部：个人资料卡 */}
+      {/* 个人资料卡 */}
       <div className="profile-card">
         <div className="profile-avatar-section">
           <button
@@ -241,6 +271,23 @@ export default function ProfilePage() {
             )}
           </div>
         </div>
+      </div>
+
+      {/* 统计栏：粉丝 · 关注 · 角色 · 书籍 */}
+      <div className="profile-stats-bar">
+        {statData.map(({ key, icon, label, count }) => (
+          <button
+            key={label}
+            type="button"
+            className={`profile-stat-item${privacy[key] ? '' : ' dim'}`}
+            onClick={() => togglePrivacy(key)}
+            title={privacy[key] ? '点击隐藏' : '点击公开'}
+          >
+            <span className="profile-stat-icon">{icon}</span>
+            <span className="profile-stat-count">{count}</span>
+            <span className="profile-stat-label">{label}</span>
+          </button>
+        ))}
       </div>
 
       {/* 3项网格：音色/密码/邮箱 */}

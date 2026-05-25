@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import PrivateMessageChat from './PrivateMessageChat'
 
 const POLL_INTERVAL = 30000
 
@@ -21,7 +22,6 @@ function formatTime(dateStr) {
 
 export default function MessagesPage() {
   const setView = useAppStore((s) => s.setView)
-  const authUser = useAppStore((s) => s.authUser)
   const messageTargetUserId = useAppStore((s) => s.messageTargetUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
@@ -31,16 +31,9 @@ export default function MessagesPage() {
   const [convLoading, setConvLoading] = useState(true)
   const [activeOtherId, setActiveOtherId] = useState(null)
   const [activeUsername, setActiveUsername] = useState('')
-  const [messages, setMessages] = useState([])
-  const [msgLoading, setMsgLoading] = useState(false)
-  const [inputText, setInputText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [page, setPage] = useState(1)
-  const [hasMore, setHasMore] = useState(true)
-  const PAGE_SIZE = 30
-  const messagesEndRef = useRef(null)
   const [mobileView, setMobileView] = useState('list')
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  const pollTimerRef = useRef(null)
 
   // Load conversations
   const loadConversations = useCallback(async () => {
@@ -59,41 +52,6 @@ export default function MessagesPage() {
     }
   }, [activeOtherId])
 
-  // Load messages for a conversation
-  const loadMessages = useCallback(async (otherId, pageNum = 1, append = false) => {
-    if (!otherId) return
-    setMsgLoading(true)
-    try {
-      const res = await fetchWithTimeout(`/api/messages/with/${otherId}?page=${pageNum}&page_size=${PAGE_SIZE}`)
-      const data = await res.json()
-      const msgs = data.messages || []
-      if (append) {
-        setMessages((prev) => [...msgs, ...prev])
-      } else {
-        setMessages(msgs)
-      }
-      setHasMore(msgs.length === PAGE_SIZE)
-      setPage(pageNum)
-    } catch {
-      // ignore
-    } finally {
-      setMsgLoading(false)
-    }
-  }, [])
-
-  // Mark messages as read
-  const markRead = useCallback(async (otherId) => {
-    if (!otherId) return
-    try {
-      await fetchWithTimeout(`/api/messages/read/${otherId}`, {
-        method: 'POST',
-        headers: { ...getAuthHeaders() },
-      })
-    } catch {
-      // ignore
-    }
-  }, [])
-
   // Initial load
   useEffect(() => {
     loadConversations()
@@ -111,114 +69,61 @@ export default function MessagesPage() {
     if (messageTargetUserId) {
       setActiveOtherId(messageTargetUserId)
       if (messageTargetUsername) setActiveUsername(messageTargetUsername)
-      loadMessages(messageTargetUserId)
-      markRead(messageTargetUserId)
       setMobileView('chat')
       setMessageTargetUserId(null)
       setMessageTargetUsername(null)
     }
-  }, [messageTargetUserId])
+  }, [messageTargetUserId, messageTargetUsername, setMessageTargetUserId, setMessageTargetUsername])
 
-  // When activeOtherId changes, load its messages and mark read
+  // When activeOtherId changes, update username from conversations
   useEffect(() => {
     if (activeOtherId) {
-      loadMessages(activeOtherId)
-      markRead(activeOtherId)
       const conv = conversations.find((c) => c.other_id === activeOtherId)
       if (conv) setActiveUsername(conv.username)
       loadConversations()
     }
   }, [activeOtherId])
 
-  // Polling for active conversation
+  // Poll for conversation list updates
   useEffect(() => {
     if (!activeOtherId) return
-    const timer = setInterval(() => {
-      loadMessages(activeOtherId, 1)
+    pollTimerRef.current = setInterval(() => {
       loadConversations()
-      markRead(activeOtherId)
     }, POLL_INTERVAL)
-    return () => clearInterval(timer)
-  }, [activeOtherId, loadMessages, loadConversations, markRead])
-
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
-
-  const handleSend = async () => {
-    if (!inputText.trim() || sending || !activeOtherId) return
-    setSending(true)
-    try {
-      const res = await fetchWithTimeout('/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ receiver_id: activeOtherId, content: inputText.trim() }),
-      })
-      const data = await res.json()
-      if (data.message) {
-        setMessages((prev) => [...prev, data.message])
-        setInputText('')
-        loadConversations()
-      }
-    } catch (err) {
-      console.error('Send message failed:', err)
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
+    return () => clearInterval(pollTimerRef.current)
+  }, [activeOtherId, loadConversations])
 
   const handleSelectConversation = (otherId, username) => {
     setActiveOtherId(otherId)
     setActiveUsername(username)
     setMobileView('chat')
-    loadMessages(otherId)
-    markRead(otherId)
   }
 
-  const handleLoadMore = () => {
-    if (!msgLoading && hasMore && activeOtherId) {
-      loadMessages(activeOtherId, page + 1, true)
+  const handleBackFromChat = () => {
+    if (isMobile) {
+      setMobileView('list')
+    } else {
+      setActiveOtherId(null)
+      setActiveUsername('')
     }
   }
 
   // ── Render ──
   return (
     <div className="panel messages-page">
-      <header className="panel-header">
-        {isMobile && mobileView === 'chat' ? (
-          <>
-            <button
-              type="button"
-              className="chat-back-btn"
-              onClick={() => { setMobileView('list') }}
-              title="返回列表"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-              返回
-            </button>
-            <h1 className="panel-title" style={{ fontSize: 15 }}>{activeUsername || '私信'}</h1>
-          </>
-        ) : (
-          <>
-            <button type="button" className="chat-back-btn" onClick={() => setView('mine')} title="返回">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-              返回
-            </button>
-            <h1 className="panel-title">私信</h1>
-          </>
-        )}
-      </header>
+      {/* Always show header when on list view (mobile) or desktop */}
+      {(!isMobile || mobileView === 'list') && (
+        <header className="panel-header">
+          <button type="button" className="chat-back-btn" onClick={() => setView('mine')} title="返回">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+            返回
+          </button>
+          <h1 className="panel-title">私信</h1>
+        </header>
+      )}
 
       {!convLoading && conversations.length === 0 && !activeOtherId ? (
-        /* ── Empty state: no conversations and no target user ── */
+        /* ── Empty state ── */
         <div className="messages-layout">
           <div className="messages-sidebar messages-sidebar-empty">
             <div className="messages-empty-state">
@@ -273,60 +178,16 @@ export default function MessagesPage() {
           {/* ── Chat area ── */}
           <div
             className="messages-chat-area"
-            style={{ display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none' }}
+            style={{ display: !isMobile || mobileView === 'chat' ? 'flex' : 'none' }}
           >
             {!activeOtherId ? (
               <div className="messages-empty-chat">选择一个会话</div>
             ) : (
-              <>
-                {!isMobile && (
-                  <div className="messages-chat-header">{activeUsername}</div>
-                )}
-
-                <div className="messages-list">
-                  {hasMore && (
-                    <div className="messages-load-more">
-                      <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={msgLoading}>
-                        {msgLoading ? '加载中…' : '加载更多'}
-                      </button>
-                    </div>
-                  )}
-                  {messages.map((msg) => {
-                    const isMe = msg.sender_id === authUser?.id
-                    return (
-                      <div key={msg.id} className={`messages-row${isMe ? ' mine' : ' other'}`}>
-                        {!isMe && (
-                          <Avatar name={activeUsername || '?'} size={28} />
-                        )}
-                        <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
-                          <span className="messages-msg-text">{msg.content}</span>
-                          <span className="messages-msg-time">{formatTime(msg.created_at)}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  <div ref={messagesEndRef} />
-                </div>
-
-                <div className="messages-input-bar">
-                  <textarea
-                    className="messages-input"
-                    rows={1}
-                    placeholder="输入消息…"
-                    value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <button
-                    type="button"
-                    className="messages-send-btn"
-                    disabled={!inputText.trim() || sending}
-                    onClick={handleSend}
-                  >
-                    {sending ? '…' : '发送'}
-                  </button>
-                </div>
-              </>
+              <PrivateMessageChat
+                otherUserId={activeOtherId}
+                otherUsername={activeUsername}
+                onBack={handleBackFromChat}
+              />
             )}
           </div>
         </div>

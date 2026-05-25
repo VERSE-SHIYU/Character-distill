@@ -130,9 +130,13 @@ async def get_author(
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id)
     is_self = user_id == user["id"]
-    stats_visible = author.get("profile_stats_visible", 1) or is_self
-    cards_visible = author.get("cards_visible", 1) or is_self
-    books_visible = author.get("books_visible", 1) or is_self
+    stats_visible = bool(author.get("profile_stats_visible", 1) or is_self)
+    cards_visible = bool(author.get("cards_visible", 1) or is_self)
+    books_visible = bool(author.get("books_visible", 1) or is_self)
+    if not cards_visible:
+        cards = []
+    if not books_visible:
+        texts = []
     return {
         "author": {k: v for k, v in author.items() if k != "password_hash"},
         "cards": cards,
@@ -314,12 +318,9 @@ async def delete_card_version(
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Delete a specific version — card author or admin only."""
-    card = await storage.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
-    if not user.get("is_admin") and card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
+    """Delete a specific version — admin only. Versions are permanent records."""
+    if not user.get("is_admin"):
+        raise HTTPException(403, "仅管理员可删除版本历史")
     ok = await storage.delete_card_version(card_id, version_id)
     if not ok:
         raise HTTPException(404, "版本不存在")

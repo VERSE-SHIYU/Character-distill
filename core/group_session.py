@@ -88,3 +88,35 @@ class GroupSession:
         })
 
         return response
+
+    async def broadcast(self, message: str, target_card_ids: list[str]) -> list[dict]:
+        """导演发一条消息，所有 target 角色并行回复。导演消息只记录一次。"""
+        # 记录一条导演消息
+        self.group_history.append({
+            "speaker": "导演",
+            "role": "user",
+            "content": message,
+            "speaker_card_id": "",
+        })
+
+        async def _reply(card_id: str) -> dict:
+            engine = self.engines.get(card_id)
+            if not engine:
+                return {"card_id": card_id, "reply": "", "speaker": "?"}
+            converted = self._convert_history(card_id)
+            system_prompt = engine._ctx_engine.build(
+                converted, message, engine.user_role,
+            )
+            response = await engine.llm.achat(
+                system_prompt,
+                [{"role": "user", "content": message}],
+            )
+            self.group_history.append({
+                "speaker": engine.card.name,
+                "role": "assistant",
+                "content": response,
+                "speaker_card_id": card_id,
+            })
+            return {"card_id": card_id, "reply": response, "speaker": engine.card.name}
+
+        return await asyncio.gather(*[_reply(cid) for cid in target_card_ids])

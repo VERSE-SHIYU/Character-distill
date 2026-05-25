@@ -6,6 +6,7 @@ import ErrorBox from './common/ErrorBox'
 
 const APP_VERSION = '1.0.0'
 const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
+const MASKED_KEY = '••••••••'
 export default function SettingsPanel() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -43,7 +44,7 @@ export default function SettingsPanel() {
           setApiForm({
             base_url: meData.base_url || 'https://api.deepseek.com',
             model: meData.model || 'deepseek-v4-pro',
-            api_key: '',
+            api_key: meData.has_api_key ? MASKED_KEY : '',
           })
           useAppStore.setState({ apiConfigured: meData.has_api_key })
         }
@@ -108,7 +109,7 @@ export default function SettingsPanel() {
                 <input
                   type={showApiKey ? 'text' : 'password'}
                   className="settings-input"
-                  placeholder="不修改请留空"
+                  placeholder={hasApiKey ? '已配置，留空不修改' : '不修改请留空'}
                   value={apiForm.api_key}
                   onChange={(e) => setApiForm((f) => ({ ...f, api_key: e.target.value }))}
                 />
@@ -129,13 +130,14 @@ export default function SettingsPanel() {
                 setSaving(true)
                 setError(null)
                 try {
+                  const sentKey = apiForm.api_key === MASKED_KEY ? '' : apiForm.api_key
                   await updateApiConfig({
                     base_url: apiForm.base_url,
                     model: apiForm.model,
-                    api_key: apiForm.api_key,
+                    api_key: sentKey,
                   })
-                  setApiForm((f) => ({ ...f, api_key: '' }))
-                  const hasKey = apiForm.api_key || hasApiKey
+                  const hasKey = Boolean(sentKey || hasApiKey)
+                  setApiForm((f) => ({ ...f, api_key: hasKey ? MASKED_KEY : '' }))
                   setHasApiKey(hasKey)
                   useAppStore.setState({ apiConfigured: hasKey })
                 } catch (err) {

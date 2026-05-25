@@ -4,6 +4,7 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 
 function fmtTime(iso) {
@@ -73,11 +74,14 @@ export default function MarketCardDetail() {
   const [deleteVersionId, setDeleteVersionId] = useState(null)
   const [editVersionId, setEditVersionId] = useState(null)
   const [editVersionMessage, setEditVersionMessage] = useState('')
-  const [previewVersion, setPreviewVersion] = useState(null)
+  const [viewVersion, setViewVersion] = useState(null)
   const [restoring, setRestoring] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editing, setEditing] = useState(false)
   const editFormRef = useRef(null)
+  const [cropFile, setCropFile] = useState(null)
+  const [avatarSaving, setAvatarSaving] = useState(false)
+  const avatarInputRef = useRef(null)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -248,13 +252,17 @@ export default function MarketCardDetail() {
     const id = deleteVersionId
     setDeleteVersionId(null)
     try {
-      await fetchWithTimeout(`/api/market/${cardId}/versions/${id}`, {
+      const res = await fetchWithTimeout(`/api/market/${cardId}/versions/${id}`, {
         method: 'DELETE',
         headers: { ...getAuthHeaders() },
       })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || '删除失败')
+      }
       await loadVersions()
     } catch (err) {
-      console.error('Delete version failed:', err)
+      setError(err.message || '删除失败')
     }
   }
 
@@ -301,6 +309,7 @@ export default function MarketCardDetail() {
       const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
       const cardData = await cardRes.json()
       setCard(cardData)
+      setViewVersion(null)
       loadVersions()
     } catch (err) {
       console.error('Restore version failed:', err)
@@ -353,6 +362,37 @@ export default function MarketCardDetail() {
     }
   }
 
+  const handleAvatarChange = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setCropFile(file)
+    e.target.value = ''
+  }
+
+  const handleCropConfirm = async (base64) => {
+    setCropFile(null)
+    setAvatarSaving(true)
+    try {
+      const res = await fetchWithTimeout(`/api/cards/${cardId}/avatar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ data: base64 }),
+      })
+      if (!res.ok) throw new Error('保存失败')
+      const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
+      const cardData = await cardRes.json()
+      setCard(cardData)
+      setLiked(cardData.liked_by_me || false)
+      setLikes(cardData.likes || 0)
+    } catch (err) {
+      setError(err.message || '头像保存失败')
+    } finally {
+      setAvatarSaving(false)
+    }
+  }
+
+  const handleCropCancel = () => setCropFile(null)
+
   const toggleSelectComment = (commentId) => {
     setSelectedCommentIds((prev) => {
       const next = new Set(prev)
@@ -365,7 +405,12 @@ export default function MarketCardDetail() {
   if (loading) return <div className="panel"><Loading text="加载角色详情…" /></div>
   if (!card) return null
 
-  const cardData = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+  const cardData = (() => {
+    const raw = viewVersion
+      ? (typeof viewVersion.card_json_snapshot === 'string' ? JSON.parse(viewVersion.card_json_snapshot) : viewVersion.card_json_snapshot || {})
+      : card.card_json
+    return typeof raw === 'string' ? JSON.parse(raw) : raw || {}
+  })()
   const charName = cardData.name || card.name || '?'
   const identity = cardData.identity || ''
   const background = cardData.background || ''
@@ -394,13 +439,48 @@ export default function MarketCardDetail() {
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
+      {viewVersion && (
+        <div className="version-preview-banner">
+          <span>正在查看 <strong>v{viewVersion.version_num}</strong> 版本快照</span>
+          <div className="version-preview-actions">
+            <button
+              type="button"
+              className="btn-sm btn-primary"
+              onClick={() => handleRestoreVersion(viewVersion)}
+              disabled={restoring}
+            >
+              恢复到此版本
+            </button>
+            <button
+              type="button"
+              className="btn-sm btn-ghost"
+              onClick={() => setViewVersion(null)}
+            >
+              返回当前版本
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="market-detail-scroll">
         {/* Hero: cover image + name */}
         <div className="market-detail-hero">
-          {card.avatar_data
-            ? <Avatar name={charName} src={card.avatar_data} size={96} />
-            : <Avatar name={charName} size={96} />
-          }
+          {card.user_id === authUser?.id ? (
+            <>
+              <button type="button" className="card-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
+                {card.avatar_data
+                  ? <Avatar name={charName} src={card.avatar_data} size={120} />
+                  : <Avatar name={charName} size={120} />
+                }
+                <div className="card-avatar-overlay">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
+              </button>
+              <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
+            </>
+          ) : (
+            card.avatar_data
+              ? <Avatar name={charName} src={card.avatar_data} size={120} />
+              : <Avatar name={charName} size={120} />
+          )}
           <h2 className="market-detail-name">{charName}</h2>
           {identity && <p className="market-detail-identity">{identity}</p>}
         </div>
@@ -666,8 +746,8 @@ export default function MarketCardDetail() {
                           <button
                             type="button"
                             className="version-action-btn"
-                            onClick={() => setPreviewVersion(v)}
-                            title="查看"
+                            onClick={() => setViewVersion(v)}
+                            title="查看此版本详情"
                           >
                             👁️
                           </button>
@@ -690,14 +770,16 @@ export default function MarketCardDetail() {
                           </button>
                         </>
                       )}
-                      <button
-                        type="button"
-                        className="version-action-btn version-action-btn-danger"
-                        onClick={() => setDeleteVersionId(v.id)}
-                        title="删除"
-                      >
-                        🗑
-                      </button>
+                      {authUser?.is_admin && (
+                        <button
+                          type="button"
+                          className="version-action-btn version-action-btn-danger"
+                          onClick={() => setDeleteVersionId(v.id)}
+                          title="删除"
+                        >
+                          🗑
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -879,101 +961,6 @@ export default function MarketCardDetail() {
         </div>
       )}
 
-      {/* Version preview modal */}
-      {previewVersion && (() => {
-        const snapData = typeof previewVersion.card_json_snapshot === 'string'
-          ? JSON.parse(previewVersion.card_json_snapshot)
-          : previewVersion.card_json_snapshot || {}
-        const snapStyle = snapData.speaking_style || {}
-        const snapRels = snapData.relationships || []
-        return (
-          <div className="modal-overlay" onClick={() => setPreviewVersion(null)}>
-            <div className="modal-card" style={{ maxWidth: 600, maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
-              <h3 className="modal-title">v{previewVersion.version_num} 版本快照</h3>
-              <div className="modal-body" style={{ overflow: 'auto', flex: 1, padding: '0 20px 20px' }}>
-                {snapData.personality_traits?.length > 0 && (
-                  <div className="card-section">
-                    <h3>性格特征</h3>
-                    <div className="pill-list">
-                      {snapData.personality_traits.map((t, i) => (
-                        <span key={i} className="pill">{t}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {snapStyle.tone && (
-                  <div className="card-section">
-                    <h3>语言风格</h3>
-                    <div className="card-style-grid">
-                      <StyleChip label="语气" value={snapStyle.tone} />
-                      <StyleChip label="句式" value={snapStyle.sentence_pattern} />
-                      <StyleChip label="用词" value={snapStyle.vocabulary_level} />
-                    </div>
-                    {snapStyle.catchphrases?.length > 0 && (
-                      <div className="card-catchphrases">
-                        {snapStyle.catchphrases.map((c, i) => (
-                          <p key={i} className="catchphrase">"  {c}  "</p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {snapData.values?.length > 0 && (
-                  <div className="card-section">
-                    <h3>核心价值观</h3>
-                    <div className="pill-list">
-                      {snapData.values.map((v, i) => (
-                        <span key={i} className="pill pill-value">{v}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {snapData.key_memories?.length > 0 && (
-                  <div className="card-section">
-                    <h3>关键记忆</h3>
-                    <ul className="card-memory-list">
-                      {snapData.key_memories.map((m, i) => (
-                        <li key={i} className="card-memory-item">{m}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {snapRels.length > 0 && (
-                  <div className="card-section">
-                    <h3>人物关系</h3>
-                    <div className="card-rel-list">
-                      {snapRels.map((r, i) => (
-                        <div key={i} className="card-rel-row">
-                          <span className="card-rel-target">{r.target}</span>
-                          <span className="card-rel-type pill">{r.relation}</span>
-                          <span className="card-rel-attitude">{r.attitude}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {snapData.inner_tensions?.length > 0 && (
-                  <div className="card-section">
-                    <h3>内在矛盾</h3>
-                    <div className="pill-list">
-                      {snapData.inner_tensions.map((t, i) => (
-                        <span key={i} className="pill pill-tension">{t}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {!snapData.personality_traits?.length && !snapStyle.tone && !snapData.values?.length &&
-                 !snapData.key_memories?.length && !snapRels.length && !snapData.inner_tensions?.length && (
-                  <p style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 40 }}>此版本无角色卡数据</p>
-                )}
-              </div>
-              <div className="modal-actions" style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
-                <button className="btn-ghost" onClick={() => setPreviewVersion(null)}>关闭</button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
 
       {/* ── Edit card modal ── */}
       {showEditModal && (() => {
@@ -1030,6 +1017,12 @@ export default function MarketCardDetail() {
           </div>
         )
       })()}
+
+      <ImageCropModal
+        file={cropFile}
+        onConfirm={handleCropConfirm}
+        onCancel={handleCropCancel}
+      />
     </div>
   )
 }

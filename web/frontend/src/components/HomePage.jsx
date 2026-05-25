@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
-import RoleSetupModal from './RoleSetupModal'
 import { loadCardAvatar } from '../store/db'
 
 function fmtTime(iso) {
@@ -55,9 +54,9 @@ function parseCardJson(card) {
 export default function HomePage() {
   const texts = useAppStore((s) => s.texts)
   const loadTexts = useAppStore((s) => s.loadTexts)
-  const startChat = useAppStore((s) => s.startChat)
   const resumeSession = useAppStore((s) => s.resumeSession)
   const setView = useAppStore((s) => s.setView)
+  const viewCard = useAppStore((s) => s.viewCard)
   const apiConfigured = useAppStore((s) => s.apiConfigured)
   const authUser = useAppStore((s) => s.authUser)
 
@@ -65,7 +64,6 @@ export default function HomePage() {
   const [cardsLoading, setCardsLoading] = useState(true)
   const [recentSessions, setRecentSessions] = useState([])
   const [resumingId, setResumingId] = useState(null)
-  const [pendingCard, setPendingCard] = useState(null)
   const cardAvatars = useAppStore((s) => s.cardAvatars)
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
 
@@ -123,8 +121,8 @@ export default function HomePage() {
 
   const handleCardClick = (card) => {
     const cardData = parseCardJson(card)
-    const chatCard = { ...card, ...cardData, text_id: card.text_id, session_id: null }
-    setPendingCard(chatCard)
+    const enriched = { ...card, ...cardData, text_id: card.text_id }
+    viewCard(enriched)
   }
 
   const handleResume = async (sessionId) => {
@@ -235,20 +233,6 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      )}
-
-      {pendingCard && (
-        <RoleSetupModal
-          isOpen={!!pendingCard}
-          characterName={pendingCard.name || pendingCard.character_name}
-          relationships={pendingCard.relationships || []}
-          onConfirm={async (role) => {
-            const card = pendingCard
-            setPendingCard(null)
-            await startChat(card)
-          }}
-          onSkip={() => setPendingCard(null)}
-        />
       )}
     </div>
   )

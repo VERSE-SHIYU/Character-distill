@@ -170,9 +170,9 @@ def health() -> dict[str, str]:
 
 @app.get("/api/settings/config")
 def read_settings_config(
-    _admin: dict = Depends(require_admin),
+    _user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Read LLM + voice config for settings UI (admin only)."""
+    """Read LLM + voice config for settings UI (authenticated users)."""
     try:
         llm = get_config().get("llm", {})
         voice = get_config().get("voice", {})

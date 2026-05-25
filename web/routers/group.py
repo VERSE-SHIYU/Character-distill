@@ -32,6 +32,11 @@ class SendMessageRequest(BaseModel):
     message: str
     speaker: str = ""
 
+class BroadcastRequest(BaseModel):
+    target_card_ids: list[str]
+    message: str
+    speaker: str = ""
+
 
 def _get_group_sessions() -> dict[str, Any]:
     return _group_sessions
@@ -163,6 +168,54 @@ async def send_message(
         print(f"[group] Save messages failed (non-fatal): {exc}")
 
     return {"reply": resp, "speaker": group.engines[req.target_card_id].card.name}
+
+
+@router.post("/{group_id}/broadcast")
+async def broadcast_message(
+    group_id: str,
+    req: BroadcastRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """导演发一条消息，多个角色并行回复（仅记录一条导演消息）。"""
+    user_id = user["id"]
+    group = _group_sessions.get(group_id)
+    if group is None:
+        raise HTTPException(404, "群聊会话已过期，请重新创建")
+
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此群聊")
+
+    if not req.message.strip():
+        raise HTTPException(400, "消息不能为空")
+    invalid = [cid for cid in req.target_card_ids if cid not in group.engines]
+    if invalid:
+        raise HTTPException(400, f"目标角色不在群聊中: {invalid}")
+
+    async with group.lock:
+        try:
+            results = await group.broadcast(req.message, req.target_card_ids)
+        except Exception as exc:
+            raise HTTPException(500, f"群聊广播失败: {exc}") from exc
+
+    # 持久化：一条导演消息 + 所有角色回复
+    try:
+        await storage.save_group_message(
+            group_id, req.speaker or "导演", "user", req.message, "",
+        )
+        for r in results:
+            if r["reply"]:
+                await storage.save_group_message(
+                    group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+                )
+    except Exception as exc:
+        print(f"[group] Save broadcast messages failed (non-fatal): {exc}")
+
+    return {"replies": results}
 
 
 @router.get("/{group_id}/history")

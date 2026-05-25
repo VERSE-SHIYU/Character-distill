@@ -19,6 +19,7 @@ export default function GroupChatPage() {
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
   const userRole = useAppStore((s) => s.userRole)
   const authUser = useAppStore((s) => s.authUser)
+  const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
@@ -178,16 +179,13 @@ export default function GroupChatPage() {
     setError(null)
     const speaker = userRole || authUser?.username || '我'
     try {
-      // Send to each selected target sequentially
-      const targets = [...targetCardIds]
-      for (const cardId of targets) {
-        await postJSON(`/api/group/${currentGroup.id}/send`, {
-          target_card_id: cardId,
-          message: messageText,
-          speaker,
-        })
-      }
-      // Reload history once after all sends
+      // Broadcast: one director message, all targets reply in parallel
+      const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
+        target_card_ids: [...targetCardIds],
+        message: messageText,
+        speaker,
+      })
+      // Reload history once after all replies
       await loadHistory(currentGroup.id)
       setMessageText('')
       setTargetCardIds([])
@@ -327,7 +325,6 @@ export default function GroupChatPage() {
             {messages.map((m, i) => {
               const isUser = m.role === 'user'
               const isAssistant = m.role === 'assistant'
-              const userInitial = (userRole || authUser?.username || '我').charAt(0).toUpperCase()
               return (
                 <div key={m.id || i} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'}`}>
                   {isAssistant && (
@@ -340,7 +337,9 @@ export default function GroupChatPage() {
                     <span className="chat-bubble-text">{m.content}</span>
                   </div>
                   {isUser && (
-                    <div className="user-avatar-circle" style={{ minWidth: 36, minHeight: 36, width: 36, height: 36, fontSize: 14 }}>{userInitial}</div>
+                    <div className="chat-msg-avatar">
+                      <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
+                    </div>
                   )}
                 </div>
               )

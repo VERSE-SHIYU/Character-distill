@@ -198,6 +198,18 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     return aPinned - bPinned
   })
 
+  // Deduplicate by character name — no duplicate names in the list
+  const uniqueCards = (() => {
+    const seen = new Set()
+    return sortedCards.filter((c) => {
+      const d = typeof c.card_json === 'string' ? JSON.parse(c.card_json) : c.card_json || c
+      const name = d.name || c.name
+      if (!name || seen.has(name)) return false
+      seen.add(name)
+      return true
+    })
+  })()
+
   useEffect(() => {
     // Initialize sharedCards from published_id (fork exists = card is published)
     const publicIds = cards.filter((c) => c.published_id).map((c) => c.id)
@@ -283,7 +295,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
   const texts = useAppStore((s) => s.texts)
 
-  const hasCards = cards.length > 0
+  const hasCards = uniqueCards.length > 0
   const hasIdentified = identifiedChars.length > 0
 
   return (
@@ -357,7 +369,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {/* Distilled cards list */}
       {hasCards && (
         <ul className="char-list">
-          {sortedCards.map((c) => {
+          {uniqueCards.map((c) => {
             const cardData = typeof c.card_json === 'string'
               ? JSON.parse(c.card_json)
               : c.card_json || c
