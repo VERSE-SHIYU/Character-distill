@@ -2268,11 +2268,10 @@ class SQLiteStore(StorageBase):
                                  (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
                                  c.name AS card_name,
                                  c.card_json AS card_json,
-                                 c.avatar_data AS card_avatar_data,
-                                 c.updated_at AS card_updated_at
+                                 c.avatar_data AS card_avatar_data
                           FROM user_posts p
-                          JOIN users u ON u.id = p.user_id
-                          LEFT JOIN cards c ON c.id = p.card_id
+                          LEFT JOIN users u ON u.id = p.user_id
+                          LEFT JOIN cards c ON c.id = p.card_id AND p.card_id != ''
                           WHERE p.user_id = ?"""
                 if viewer_id == user_id:
                     cursor = await conn.execute(base + " ORDER BY p.created_at DESC", (user_id,))
@@ -2314,8 +2313,8 @@ class SQLiteStore(StorageBase):
                               c.card_json AS card_json,
                               c.avatar_data AS card_avatar_data
                         FROM user_posts p
-                        JOIN users u ON u.id = p.user_id
-                        LEFT JOIN cards c ON c.id = p.card_id
+                        LEFT JOIN users u ON u.id = p.user_id
+                        LEFT JOIN cards c ON c.id = p.card_id AND p.card_id != ''
                         WHERE p.user_id IN (SELECT following_id FROM user_follows WHERE follower_id = ?)
                           AND p.visibility = 'public'
                         ORDER BY p.created_at DESC
