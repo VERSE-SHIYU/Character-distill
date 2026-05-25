@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
@@ -31,6 +32,19 @@ class PostRequest(BaseModel):
     visibility: str = "public"
     images: str = ""
     card_id: str = ""
+
+
+class PublishRequest(BaseModel):
+    market_description: str = ""
+    market_tags: str = ""
+    publish_message: str = ""
+
+
+class UpdatePublishRequest(BaseModel):
+    card_json: str = ""
+    market_description: str = ""
+    market_tags: str = ""
+    publish_message: str = ""
 
 
 # ── Concrete routes first (no wildcard card_id) ──
@@ -180,6 +194,103 @@ async def get_card_detail(
     if not card:
         raise HTTPException(404, "角色不存在或未公开")
     return card
+
+
+# ── Publish / Update / Versions / Forks / Delete ──
+
+
+@router.post("/{card_id}/publish")
+async def publish_card(
+    card_id: str,
+    body: PublishRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Publish a card to the market (first-time publish)."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此角色卡")
+    card_json_str = card.get("card_json", "{}")
+    if isinstance(card_json_str, dict):
+        card_json_str = json.dumps(card_json_str, ensure_ascii=False)
+    ok = await storage.publish_card(
+        card_id, user["id"],
+        body.market_description, body.market_tags, body.publish_message,
+        card_json_str,
+    )
+    if not ok:
+        raise HTTPException(500, "发布失败")
+    return {"ok": True}
+
+
+@router.put("/{card_id}/publish")
+async def update_published_card(
+    card_id: str,
+    body: UpdatePublishRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Update an already-published card (with field-level diff)."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此角色卡")
+    old_json = card.get("card_json", "{}")
+    if isinstance(old_json, dict):
+        old_json = json.dumps(old_json, ensure_ascii=False)
+    ver = await storage.update_published_card(
+        card_id, user["id"],
+        body.card_json, body.market_description, body.market_tags,
+        body.publish_message, old_json,
+    )
+    if not ver:
+        raise HTTPException(500, "更新失败")
+    return {"version": ver}
+
+
+@router.get("/{card_id}/versions")
+async def get_card_versions(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """List all published versions for a card."""
+    versions = await storage.get_card_versions(card_id)
+    return {"versions": versions}
+
+
+@router.get("/{card_id}/forks")
+async def get_card_forks(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """List public forks of a card."""
+    forks = await storage.get_card_forks(card_id)
+    return {"forks": forks}
+
+
+@router.delete("/{card_id}")
+async def delete_market_card(
+    card_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete a card from market: soft-delete + set visibility private."""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    if not user.get("is_admin") and card.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权删除此角色卡")
+    ok = await storage.delete_card(card_id)
+    if not ok:
+        raise HTTPException(500, "删除失败")
+    # Also hide from market immediately
+    await storage.update_card_visibility(card_id, "private")
+    return {"ok": True}
 
 
 # ── Post routes ──

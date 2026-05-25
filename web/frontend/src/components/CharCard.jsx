@@ -157,6 +157,10 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [purgeConfirmTarget, setPurgeConfirmTarget] = useState(null)
   const [purgeAllConfirm, setPurgeAllConfirm] = useState(false)
   const [localError, setLocalError] = useState(null)
+  const [publishDescription, setPublishDescription] = useState('')
+  const [publishTags, setPublishTags] = useState('')
+  const [publishMessage, setPublishMessage] = useState('')
+  const [publishSending, setPublishSending] = useState(false)
 
   const togglePin = (e, cardId) => {
     e.stopPropagation()
@@ -191,6 +195,16 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     const bPinned = pinnedCards.includes(b.id) ? 0 : 1
     return aPinned - bPinned
   })
+
+  useEffect(() => {
+    // Initialize sharedCards from existing card visibility
+    const publicIds = cards.filter((c) => c.visibility === 'public').map((c) => c.id)
+    setSharedCards((prev) => {
+      const next = new Set(prev)
+      publicIds.forEach((id) => next.add(id))
+      return next
+    })
+  }, [cards])
 
   useEffect(() => {
     if (currentCard?.id) {
@@ -543,35 +557,70 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {/* Share confirm modal for sidebar — portal to body */}
       {shareConfirmTarget && createPortal(
         <div className="modal-overlay" onClick={() => setShareConfirmTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
-                以下内容将对所有用户可见：
-              </p>
-              <div style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 8 }}>
-                <div>{'\u{1F464}'} 角色名：{shareConfirmTarget.name || '?'}</div>
-                <div>{'\u{1F3AF}'} 身份：{shareConfirmTarget.identity || '-'}</div>
-                {shareConfirmTarget.personality_traits?.length > 0 && <div>{'\u{1F9E0}'} 性格特征</div>}
-                {shareConfirmTarget.speaking_style?.tone && <div>{'\u{1F3A4}'} 语言风格</div>}
-                <div>{'\u{1F4D6}'} 来源：{texts.find((t) => t.id === shareConfirmTarget.text_id)?.title || '独立角色'}</div>
+            <div className="modal-body publish-form-body">
+              <div className="publish-field">
+                <label className="publish-label">角色描述</label>
+                <textarea
+                  className="publish-textarea"
+                  value={publishDescription}
+                  onChange={(e) => setPublishDescription(e.target.value)}
+                  placeholder="简单描述这个角色…"
+                  rows={3}
+                />
+              </div>
+              <div className="publish-field">
+                <label className="publish-label">标签（逗号分隔）</label>
+                <input
+                  className="publish-input"
+                  value={publishTags}
+                  onChange={(e) => setPublishTags(e.target.value)}
+                  placeholder="古风, 玄幻, 治愈"
+                />
+              </div>
+              <div className="publish-field">
+                <label className="publish-label">发布说明</label>
+                <textarea
+                  className="publish-textarea"
+                  value={publishMessage}
+                  onChange={(e) => setPublishMessage(e.target.value)}
+                  placeholder="这次更新了什么？"
+                  rows={2}
+                />
               </div>
             </div>
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setShareConfirmTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={async () => {
-                const cid = shareConfirmTarget.id || shareConfirmTarget.card_id
-                setShareConfirmTarget(null)
-                try {
-                  await fetchWithTimeout(`/api/market/${cid}/visibility`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                    body: JSON.stringify({ visibility: 'public' }),
-                  })
-                  setSharedCards((prev) => { const n = new Set(prev); n.add(cid); return n })
-                } catch (err) { console.error('Share failed:', err) }
-              }}>
-                确认公开
+              <button
+                className="btn-primary"
+                disabled={publishSending || !publishMessage.trim()}
+                onClick={async () => {
+                  const cid = shareConfirmTarget.id || shareConfirmTarget.card_id
+                  setPublishSending(true)
+                  try {
+                    await fetchWithTimeout(`/api/market/${cid}/publish`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                      body: JSON.stringify({
+                        market_description: publishDescription.trim(),
+                        market_tags: publishTags.trim(),
+                        publish_message: publishMessage.trim(),
+                      }),
+                    })
+                    setSharedCards((prev) => { const n = new Set(prev); n.add(cid); return n })
+                    setShareConfirmTarget(null)
+                    setPublishDescription('')
+                    setPublishTags('')
+                    setPublishMessage('')
+                  } catch (err) {
+                    console.error('Publish failed:', err)
+                  } finally {
+                    setPublishSending(false)
+                  }
+                }}
+              >
+                {publishSending ? '发布中…' : '确认发布'}
               </button>
             </div>
           </div>
@@ -677,6 +726,10 @@ function CardDetail({ card, textId }) {
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
   const [shared, setShared] = useState(card.visibility === 'public')
+  const [publishDescription, setPublishDescription] = useState(card.market_description || '')
+  const [publishTags, setPublishTags] = useState(card.market_tags || '')
+  const [publishMessage, setPublishMessage] = useState('')
+  const [publishSending, setPublishSending] = useState(false)
 
   const data = typeof card.card_json === 'string'
     ? JSON.parse(card.card_json)
@@ -964,13 +1017,15 @@ function CardDetail({ card, textId }) {
           id="card-share-btn"
           onClick={() => {
             if (shared) {
-              // Unshare directly — no confirm needed to withdraw
-              fetchWithTimeout(`/api/market/${card.id}/visibility`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ visibility: 'private' }),
-              }).then(() => setShared(false)).catch((err) => console.error('Unshare failed:', err))
+              // Re-open publish form to update
+              setPublishDescription(card.market_description || '')
+              setPublishTags(card.market_tags || '')
+              setPublishMessage('')
+              setShowShareConfirm(true)
             } else {
+              setPublishDescription(card.market_description || '')
+              setPublishTags(card.market_tags || '')
+              setPublishMessage('')
               setShowShareConfirm(true)
             }
           }}
@@ -1011,37 +1066,71 @@ function CardDetail({ card, textId }) {
       {/* Share confirm modal — portal to body */}
       {showShareConfirm && createPortal(
         <div className="modal-overlay" onClick={() => setShowShareConfirm(false)}>
-          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-card" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
-                以下内容将对所有用户可见：
-              </p>
-              <div style={{ fontSize: 13, lineHeight: 1.8, paddingLeft: 8 }}>
-                <div>{'\u{1F464}'} 角色名：{name}</div>
-                {data.identity && <div>{'\u{1F3AF}'} 身份：{data.identity}</div>}
-                {data.personality_traits?.length > 0 && <div>{'\u{1F9E0}'} 性格特征</div>}
-                {style.tone && <div>{'\u{1F3A4}'} 语言风格</div>}
-                {data.values?.length > 0 && <div>{'\u{2B50}'} 核心价值观</div>}
-                {data.background && <div>{'\u{1F4D6}'} 背景设定</div>}
+            <div className="modal-body publish-form-body">
+              <div className="publish-field">
+                <label className="publish-label">角色描述</label>
+                <textarea
+                  className="publish-textarea"
+                  value={publishDescription}
+                  onChange={(e) => setPublishDescription(e.target.value)}
+                  placeholder="简单描述这个角色…"
+                  rows={3}
+                />
+              </div>
+              <div className="publish-field">
+                <label className="publish-label">标签（逗号分隔）</label>
+                <input
+                  className="publish-input"
+                  value={publishTags}
+                  onChange={(e) => setPublishTags(e.target.value)}
+                  placeholder="古风, 玄幻, 治愈"
+                />
+              </div>
+              <div className="publish-field">
+                <label className="publish-label">发布说明</label>
+                <textarea
+                  className="publish-textarea"
+                  value={publishMessage}
+                  onChange={(e) => setPublishMessage(e.target.value)}
+                  placeholder="这次更新了什么？"
+                  rows={2}
+                />
               </div>
             </div>
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => setShowShareConfirm(false)}>取消</button>
-              <button className="btn-primary" onClick={async () => {
-                setShowShareConfirm(false)
-                try {
-                  await fetchWithTimeout(`/api/market/${card.id}/visibility`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                    body: JSON.stringify({ visibility: 'public' }),
-                  })
-                  setShared(true)
-                } catch (err) {
-                  console.error('Share failed:', err)
-                }
-              }}>
-                确认公开
+              <button
+                className="btn-primary"
+                disabled={publishSending || !publishMessage.trim()}
+                onClick={async () => {
+                  const method = shared ? 'PUT' : 'POST'
+                  setPublishSending(true)
+                  try {
+                    await fetchWithTimeout(`/api/market/${card.id}/publish`, {
+                      method,
+                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                      body: JSON.stringify({
+                        card_json: typeof card.card_json === 'string' ? card.card_json : JSON.stringify(card.card_json),
+                        market_description: publishDescription.trim(),
+                        market_tags: publishTags.trim(),
+                        publish_message: publishMessage.trim(),
+                      }),
+                    })
+                    setShared(true)
+                    setShowShareConfirm(false)
+                    setPublishDescription('')
+                    setPublishTags('')
+                    setPublishMessage('')
+                  } catch (err) {
+                    console.error('Publish failed:', err)
+                  } finally {
+                    setPublishSending(false)
+                  }
+                }}
+              >
+                {publishSending ? '发布中…' : (shared ? '更新发布' : '确认发布')}
               </button>
             </div>
           </div>

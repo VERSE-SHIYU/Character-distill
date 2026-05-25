@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -382,6 +383,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Card updated_at migration failed: {exc}")
 
+                    # Run 036_market_publish migration (ALTER TABLE cards + CREATE TABLE card_versions)
+                    mp_path = migrations_dir / "036_market_publish.sql"
+                    if mp_path.exists():
+                        try:
+                            await conn.executescript(mp_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Market publish migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -434,6 +445,8 @@ class SQLiteStore(StorageBase):
         conn = await aiosqlite.connect(self.db_path)  # type: ignore[union-attr]
         conn.row_factory = aiosqlite.Row  # type: ignore[union-attr]
         await conn.execute("PRAGMA foreign_keys = ON;")
+        await conn.execute("PRAGMA journal_mode = WAL;")
+        await conn.execute("PRAGMA busy_timeout = 5000;")
         return _ConnectionContext(conn)
 
     @staticmethod
@@ -610,6 +623,7 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT c.id, c.name, c.card_json, c.user_id, c.likes, c.created_at,
                               c.avatar_data,
+                              c.market_description, c.market_tags, c.publish_message,
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(t.title, '') AS text_title,
                               (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
@@ -707,6 +721,7 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
                               c.forked_from, c.likes, c.created_at,
+                              c.market_description, c.market_tags,
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(t.title, '') AS text_title,
                               (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
@@ -746,6 +761,7 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
                               c.forked_from, c.likes, c.created_at,
+                              c.market_description, c.market_tags,
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(t.title, '') AS text_title
                         FROM cards c
@@ -2207,7 +2223,8 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, name, card_json, forked_from, likes, created_at, avatar_data
+                    """SELECT id, name, card_json, forked_from, likes, created_at, avatar_data,
+                              market_description, market_tags
                        FROM cards WHERE user_id = ? AND visibility = 'public' AND deleted_at IS NULL
                        ORDER BY created_at DESC""",
                     (user_id,),
@@ -2722,3 +2739,107 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get following count failed: {exc}")
             return 0
+
+    # ──── Market publish / version / fork API ────
+
+    async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> bool:
+        """Set market_description, market_tags, publish_message, visibility='public', and write v1 card_versions entry."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE cards SET market_description = ?, market_tags = ?, publish_message = ?,
+                       visibility = 'public', updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ? AND deleted_at IS NULL""",
+                    (description, tags, message, card_id),
+                )
+                await conn.execute(
+                    """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
+                       VALUES (?, ?, ?, 1, ?, '{}', ?)""",
+                    (uuid.uuid4().hex[:12], card_id, user_id, message, card_json_snapshot),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Publish card failed: {exc}")
+            return False
+
+    async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
+        """Update card fields, generate field-level diff, write next card_versions entry. Returns the new version record or None."""
+        try:
+            diff = {}
+            try:
+                old = json.loads(old_json) if old_json else {}
+                new_parsed = json.loads(card_json) if card_json else {}
+                for k in set(list(old.keys()) + list(new_parsed.keys())):
+                    if old.get(k) != new_parsed.get(k):
+                        diff[k] = {"old": old.get(k, ""), "new": new_parsed.get(k, "")}
+            except Exception:
+                diff = {"_full": "parse error"}
+
+            diff_json = json.dumps(diff, ensure_ascii=False)
+
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE cards SET card_json = ?, market_description = ?, market_tags = ?, publish_message = ?,
+                       updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL""",
+                    (card_json, description, tags, message, card_id),
+                )
+                # Get next version number
+                cursor = await conn.execute(
+                    "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = ?",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+                next_ver = row[0] if row else 1
+                version_id = uuid.uuid4().hex[:12]
+                await conn.execute(
+                    """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (version_id, card_id, user_id, next_ver, message, diff_json, card_json),
+                )
+                await conn.commit()
+                return {
+                    "id": version_id,
+                    "version_num": next_ver,
+                    "publish_message": message,
+                    "diff_json": diff_json,
+                    "card_json_snapshot": card_json,
+                    "created_at": None,  # caller will add timestamp if needed
+                }
+        except Exception as exc:
+            print(f"[SQLiteStore] Update published card failed: {exc}")
+            return None
+
+    async def get_card_versions(self, card_id: str) -> list[dict]:
+        """List all versions for a card in descending order."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, card_id, user_id, version_num, publish_message, diff_json, created_at
+                       FROM card_versions WHERE card_id = ? ORDER BY version_num DESC""",
+                    (card_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card versions failed: {exc}")
+            return []
+
+    async def get_card_forks(self, card_id: str) -> list[dict]:
+        """List public cards forked from this card_id."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data, c.likes, c.created_at,
+                              COALESCE(u.username, '') AS author_name
+                       FROM cards c
+                       LEFT JOIN users u ON u.id = c.user_id
+                       WHERE c.forked_from = ? AND c.visibility = 'public' AND c.deleted_at IS NULL
+                       ORDER BY c.likes DESC, c.created_at DESC""",
+                    (card_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card forks failed: {exc}")
+            return []

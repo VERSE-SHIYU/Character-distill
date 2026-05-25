@@ -29,6 +29,11 @@ export default function MarketCardDetail() {
   const [showForkChoice, setShowForkChoice] = useState(false)
   const [error, setError] = useState(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [activeTab, setActiveTab] = useState('detail')
+  const [versions, setVersions] = useState([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [forks, setForks] = useState([])
+  const [forksLoading, setForksLoading] = useState(false)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -59,6 +64,31 @@ export default function MarketCardDetail() {
   }, [cardId])
 
   useEffect(() => { loadComments() }, [loadComments])
+
+  const loadVersions = useCallback(async () => {
+    if (!cardId) return
+    setVersionsLoading(true)
+    try {
+      const res = await fetchWithTimeout(`/api/market/${cardId}/versions`)
+      const data = await res.json()
+      setVersions(data.versions || [])
+    } catch {} finally { setVersionsLoading(false) }
+  }, [cardId])
+
+  const loadForks = useCallback(async () => {
+    if (!cardId) return
+    setForksLoading(true)
+    try {
+      const res = await fetchWithTimeout(`/api/market/${cardId}/forks`)
+      const data = await res.json()
+      setForks(data.forks || [])
+    } catch {} finally { setForksLoading(false) }
+  }, [cardId])
+
+  useEffect(() => {
+    if (activeTab === 'versions') loadVersions()
+    if (activeTab === 'forks') loadForks()
+  }, [activeTab, loadVersions, loadForks])
 
   const handleLike = async () => {
     try {
@@ -113,7 +143,7 @@ export default function MarketCardDetail() {
   const handleDelete = async () => {
     setDeleteConfirmId(null)
     try {
-      await fetchWithTimeout(`/api/cards/${cardId}`, {
+      await fetchWithTimeout(`/api/market/${cardId}`, {
         method: 'DELETE',
         headers: { ...getAuthHeaders() },
       })
@@ -208,6 +238,32 @@ export default function MarketCardDetail() {
           </div>
         </div>
 
+        {/* Tabs: Detail | Version History | Forks */}
+        <div className="market-detail-tabs">
+          <button
+            type="button"
+            className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`}
+            onClick={() => setActiveTab('detail')}
+          >
+            {'\u{1F4AC}'} 评论 ({comments.length})
+          </button>
+          <button
+            type="button"
+            className={`market-detail-tab${activeTab === 'versions' ? ' active' : ''}`}
+            onClick={() => setActiveTab('versions')}
+          >
+            {'\u{1F4CB}'} 版本历史
+          </button>
+          <button
+            type="button"
+            className={`market-detail-tab${activeTab === 'forks' ? ' active' : ''}`}
+            onClick={() => setActiveTab('forks')}
+          >
+            {'\u{1F331}'} 衍生角色
+          </button>
+        </div>
+
+        {activeTab === 'detail' && (
         {/* Comments list */}
         <div className="market-detail-comments">
           <h3 className="market-detail-section-title">{'\u{1F4AC}'} 评论 ({comments.length})</h3>
@@ -244,6 +300,57 @@ export default function MarketCardDetail() {
             </div>
           )}
         </div>
+      )}
+
+      {activeTab === 'versions' && (
+        <div className="market-detail-versions">
+          <h3 className="market-detail-section-title">{'\u{1F4CB}'} 版本历史</h3>
+          {versionsLoading ? (
+            <Loading text="加载版本历史…" />
+          ) : versions.length === 0 ? (
+            <p className="market-detail-empty">暂无版本记录</p>
+          ) : (
+            <div className="version-list">
+              {versions.map((v) => (
+                <div key={v.id} className="version-item">
+                  <div className="version-num">v{v.version_num}</div>
+                  <div className="version-info">
+                    <p className="version-message">{v.publish_message || '无说明'}</p>
+                    <span className="version-time">{v.created_at ? new Date(v.created_at.includes('T') && !v.created_at.endsWith('Z') && !v.created_at.includes('+') ? v.created_at + 'Z' : v.created_at).toLocaleString('zh-CN') : ''}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'forks' && (
+        <div className="market-detail-forks">
+          <h3 className="market-detail-section-title">{'\u{1F331}'} 衍生角色 ({forks.length})</h3>
+          {forksLoading ? (
+            <Loading text="加载衍生角色…" />
+          ) : forks.length === 0 ? (
+            <p className="market-detail-empty">暂无衍生角色</p>
+          ) : (
+            <div className="fork-list">
+              {forks.map((f) => {
+                const forkData = typeof f.card_json === 'string' ? JSON.parse(f.card_json) : f.card_json || {}
+                return (
+                  <div key={f.id} className="fork-item">
+                    <Avatar name={forkData.name || f.name || '?'} size={40} />
+                    <div className="fork-info">
+                      <span className="fork-name">{forkData.name || f.name || '?'}</span>
+                      <span className="fork-author">by {f.author_name || '匿名'}</span>
+                    </div>
+                    <span className="fork-likes">{'\u{2764}\u{FE0F}'} {f.likes || 0}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
       </div>
 
       {/* Fixed bottom: comment input */}
