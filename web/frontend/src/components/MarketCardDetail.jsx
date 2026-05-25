@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -73,6 +73,11 @@ export default function MarketCardDetail() {
   const [deleteVersionId, setDeleteVersionId] = useState(null)
   const [editVersionId, setEditVersionId] = useState(null)
   const [editVersionMessage, setEditVersionMessage] = useState('')
+  const [previewVersion, setPreviewVersion] = useState(null)
+  const [restoring, setRestoring] = useState(false)
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const editFormRef = useRef(null)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -276,6 +281,78 @@ export default function MarketCardDetail() {
     setEditVersionMessage(v.publish_message || '')
   }
 
+  const handleRestoreVersion = async (v) => {
+    setRestoring(true)
+    try {
+      const snapshot = typeof v.card_json_snapshot === 'string' ? v.card_json_snapshot : JSON.stringify(v.card_json_snapshot || '{}')
+      const res = await fetchWithTimeout(`/api/market/${cardId}/publish`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          card_json: snapshot,
+          publish_message: `恢复到 v${v.version_num}`,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail || '恢复失败')
+      }
+      // Reload card data and versions
+      const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
+      const cardData = await cardRes.json()
+      setCard(cardData)
+      loadVersions()
+    } catch (err) {
+      console.error('Restore version failed:', err)
+      setError(err.message || '恢复失败')
+    } finally {
+      setRestoring(false)
+    }
+  }
+
+  const handleEditSave = async (formData) => {
+    setEditing(true)
+    try {
+      const currentCardJson = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+      const updatedJson = {
+        ...currentCardJson,
+        name: formData.name.trim(),
+        identity: formData.identity.trim(),
+        background: formData.background.trim(),
+        personality_traits: formData.personality_traits.split('\n').map(s => s.trim()).filter(Boolean),
+        values: formData.values.split('\n').map(s => s.trim()).filter(Boolean),
+        key_memories: formData.key_memories.split('\n').map(s => s.trim()).filter(Boolean),
+        inner_tensions: formData.inner_tensions.split('\n').map(s => s.trim()).filter(Boolean),
+      }
+      const res = await fetchWithTimeout(`/api/market/${cardId}/publish`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          card_json: JSON.stringify(updatedJson),
+          market_description: card.market_description || '',
+          market_tags: card.market_tags || '',
+          publish_message: '编辑更新',
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail || '保存失败')
+      }
+      setShowEditModal(false)
+      // Reload card data
+      const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
+      const cardData = await cardRes.json()
+      setCard(cardData)
+      setLiked(cardData.liked_by_me || false)
+      setLikes(cardData.likes || 0)
+    } catch (err) {
+      console.error('Edit save failed:', err)
+      setError(err.message || '保存失败')
+    } finally {
+      setEditing(false)
+    }
+  }
+
   const toggleSelectComment = (commentId) => {
     setSelectedCommentIds((prev) => {
       const next = new Set(prev)
@@ -292,6 +369,8 @@ export default function MarketCardDetail() {
   const charName = cardData.name || card.name || '?'
   const identity = cardData.identity || ''
   const background = cardData.background || ''
+  const cardStyle = cardData.speaking_style || {}
+  const rels = cardData.relationships || []
 
   return (
     <div className="panel market-detail-page">
@@ -301,8 +380,13 @@ export default function MarketCardDetail() {
           返回
         </button>
         <h1 className="panel-title">角色详情</h1>
+        {card.user_id === authUser?.id && (
+          <button type="button" className="btn-ghost" onClick={() => setShowEditModal(true)} title="编辑" style={{ marginLeft: 'auto' }}>
+            ✏️
+          </button>
+        )}
         {(authUser?.is_admin || card.user_id === authUser?.id) && (
-          <button type="button" className="btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setDeleteConfirmId(card.id)} title="删除">
+          <button type="button" className="btn-ghost" onClick={() => setDeleteConfirmId(card.id)} title="删除">
             🗑
           </button>
         )}
@@ -352,6 +436,84 @@ export default function MarketCardDetail() {
         {/* Background / description */}
         {card.text_title && <span className="market-detail-tag">{'\u{1F4D6}'} {card.text_title}</span>}
         {background && <p className="market-detail-background">{background}</p>}
+
+        {/* ── Full character card sections ── */}
+        {cardData.personality_traits?.length > 0 && (
+          <div className="card-section">
+            <h3>性格特征</h3>
+            <div className="pill-list">
+              {cardData.personality_traits.map((t, i) => (
+                <span key={i} className="pill">{t}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {cardStyle.tone && (
+          <div className="card-section">
+            <h3>语言风格</h3>
+            <div className="card-style-grid">
+              <StyleChip label="语气" value={cardStyle.tone} />
+              <StyleChip label="句式" value={cardStyle.sentence_pattern} />
+              <StyleChip label="用词" value={cardStyle.vocabulary_level} />
+            </div>
+            {cardStyle.catchphrases?.length > 0 && (
+              <div className="card-catchphrases">
+                {cardStyle.catchphrases.map((c, i) => (
+                  <p key={i} className="catchphrase">"  {c}  "</p>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {cardData.values?.length > 0 && (
+          <div className="card-section">
+            <h3>核心价值观</h3>
+            <div className="pill-list">
+              {cardData.values.map((v, i) => (
+                <span key={i} className="pill pill-value">{v}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {cardData.key_memories?.length > 0 && (
+          <div className="card-section">
+            <h3>关键记忆</h3>
+            <ul className="card-memory-list">
+              {cardData.key_memories.map((m, i) => (
+                <li key={i} className="card-memory-item">{m}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {rels.length > 0 && (
+          <div className="card-section">
+            <h3>人物关系</h3>
+            <div className="card-rel-list">
+              {rels.map((r, i) => (
+                <div key={i} className="card-rel-row">
+                  <span className="card-rel-target">{r.target}</span>
+                  <span className="card-rel-type pill">{r.relation}</span>
+                  <span className="card-rel-attitude">{r.attitude}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {cardData.inner_tensions?.length > 0 && (
+          <div className="card-section">
+            <h3>内在矛盾</h3>
+            <div className="pill-list">
+              {cardData.inner_tensions.map((t, i) => (
+                <span key={i} className="pill pill-tension">{t}</span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Stats + use button */}
         <div className="market-detail-stats">
@@ -500,14 +662,33 @@ export default function MarketCardDetail() {
                   {(card.user_id === authUser?.id || authUser?.is_admin) && (
                     <div className="version-actions">
                       {card.user_id === authUser?.id && (
-                        <button
-                          type="button"
-                          className="version-action-btn"
-                          onClick={() => startEditVersion(v)}
-                          title="编辑"
-                        >
-                          ✏️
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="version-action-btn"
+                            onClick={() => setPreviewVersion(v)}
+                            title="查看"
+                          >
+                            👁️
+                          </button>
+                          <button
+                            type="button"
+                            className="version-action-btn"
+                            onClick={() => handleRestoreVersion(v)}
+                            disabled={restoring}
+                            title="恢复到此版本"
+                          >
+                            ↩️
+                          </button>
+                          <button
+                            type="button"
+                            className="version-action-btn"
+                            onClick={() => startEditVersion(v)}
+                            title="编辑"
+                          >
+                            ✏️
+                          </button>
+                        </>
                       )}
                       <button
                         type="button"
@@ -697,6 +878,168 @@ export default function MarketCardDetail() {
           </div>
         </div>
       )}
+
+      {/* Version preview modal */}
+      {previewVersion && (() => {
+        const snapData = typeof previewVersion.card_json_snapshot === 'string'
+          ? JSON.parse(previewVersion.card_json_snapshot)
+          : previewVersion.card_json_snapshot || {}
+        const snapStyle = snapData.speaking_style || {}
+        const snapRels = snapData.relationships || []
+        return (
+          <div className="modal-overlay" onClick={() => setPreviewVersion(null)}>
+            <div className="modal-card" style={{ maxWidth: 600, maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+              <h3 className="modal-title">v{previewVersion.version_num} 版本快照</h3>
+              <div className="modal-body" style={{ overflow: 'auto', flex: 1, padding: '0 20px 20px' }}>
+                {snapData.personality_traits?.length > 0 && (
+                  <div className="card-section">
+                    <h3>性格特征</h3>
+                    <div className="pill-list">
+                      {snapData.personality_traits.map((t, i) => (
+                        <span key={i} className="pill">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {snapStyle.tone && (
+                  <div className="card-section">
+                    <h3>语言风格</h3>
+                    <div className="card-style-grid">
+                      <StyleChip label="语气" value={snapStyle.tone} />
+                      <StyleChip label="句式" value={snapStyle.sentence_pattern} />
+                      <StyleChip label="用词" value={snapStyle.vocabulary_level} />
+                    </div>
+                    {snapStyle.catchphrases?.length > 0 && (
+                      <div className="card-catchphrases">
+                        {snapStyle.catchphrases.map((c, i) => (
+                          <p key={i} className="catchphrase">"  {c}  "</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {snapData.values?.length > 0 && (
+                  <div className="card-section">
+                    <h3>核心价值观</h3>
+                    <div className="pill-list">
+                      {snapData.values.map((v, i) => (
+                        <span key={i} className="pill pill-value">{v}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {snapData.key_memories?.length > 0 && (
+                  <div className="card-section">
+                    <h3>关键记忆</h3>
+                    <ul className="card-memory-list">
+                      {snapData.key_memories.map((m, i) => (
+                        <li key={i} className="card-memory-item">{m}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {snapRels.length > 0 && (
+                  <div className="card-section">
+                    <h3>人物关系</h3>
+                    <div className="card-rel-list">
+                      {snapRels.map((r, i) => (
+                        <div key={i} className="card-rel-row">
+                          <span className="card-rel-target">{r.target}</span>
+                          <span className="card-rel-type pill">{r.relation}</span>
+                          <span className="card-rel-attitude">{r.attitude}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {snapData.inner_tensions?.length > 0 && (
+                  <div className="card-section">
+                    <h3>内在矛盾</h3>
+                    <div className="pill-list">
+                      {snapData.inner_tensions.map((t, i) => (
+                        <span key={i} className="pill pill-tension">{t}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {!snapData.personality_traits?.length && !snapStyle.tone && !snapData.values?.length &&
+                 !snapData.key_memories?.length && !snapRels.length && !snapData.inner_tensions?.length && (
+                  <p style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 40 }}>此版本无角色卡数据</p>
+                )}
+              </div>
+              <div className="modal-actions" style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
+                <button className="btn-ghost" onClick={() => setPreviewVersion(null)}>关闭</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ── Edit card modal ── */}
+      {showEditModal && (() => {
+        const current = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+        const readForm = () => {
+          const el = editFormRef.current
+          if (!el) return {}
+          const fields = el.querySelectorAll('[data-field]')
+          const data = {}
+          fields.forEach((f) => { data[f.getAttribute('data-field')] = f.value })
+          return data
+        }
+        return (
+          <div className="modal-overlay" onClick={() => { if (!editing) setShowEditModal(false) }}>
+            <div className="modal-card" style={{ maxWidth: 520, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+              <h3 className="modal-title">编辑角色卡</h3>
+              <div className="modal-body" style={{ overflow: 'auto', flex: 1, padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: 12 }} ref={editFormRef}>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>名称</label>
+                  <input className="market-detail-comment-field" data-field="name" defaultValue={current.name || ''} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>身份</label>
+                  <input className="market-detail-comment-field" data-field="identity" defaultValue={current.identity || ''} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>背景</label>
+                  <textarea className="market-detail-comment-field" data-field="background" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={current.background || ''} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>性格特征（每行一个）</label>
+                  <textarea className="market-detail-comment-field" data-field="personality_traits" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.personality_traits || []).join('\n')} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>核心价值观（每行一个）</label>
+                  <textarea className="market-detail-comment-field" data-field="values" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.values || []).join('\n')} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>关键记忆（每行一个）</label>
+                  <textarea className="market-detail-comment-field" data-field="key_memories" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.key_memories || []).join('\n')} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>内在矛盾（每行一个）</label>
+                  <textarea className="market-detail-comment-field" data-field="inner_tensions" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.inner_tensions || []).join('\n')} />
+                </div>
+              </div>
+              <div className="modal-actions" style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
+                <button className="btn-ghost" onClick={() => setShowEditModal(false)} disabled={editing}>取消</button>
+                <button className="btn-primary" onClick={() => handleEditSave(readForm())} disabled={editing}>
+                  {editing ? '保存中…' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+function StyleChip({ label, value }) {
+  if (!value) return null
+  return (
+    <div className="card-style-chip">
+      <span className="card-style-chip-label">{label}</span>
+      <span className="card-style-chip-value">{value}</span>
     </div>
   )
 }

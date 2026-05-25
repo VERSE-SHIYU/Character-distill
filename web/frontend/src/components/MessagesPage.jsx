@@ -6,6 +6,19 @@ import Loading from './common/Loading'
 
 const POLL_INTERVAL = 30000
 
+function formatTime(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  if (isNaN(d.getTime())) return ''
+  const now = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  if (d.toDateString() === now.toDateString()) return hhmm
+  const mmdd = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  if (d.getFullYear() === now.getFullYear()) return `${mmdd} ${hhmm}`
+  return `${d.getFullYear()}-${mmdd} ${hhmm}`
+}
+
 export default function MessagesPage() {
   const setView = useAppStore((s) => s.setView)
   const authUser = useAppStore((s) => s.authUser)
@@ -13,7 +26,6 @@ export default function MessagesPage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
-  const userAvatar = useAppStore((s) => s.userAvatar)
 
   const [conversations, setConversations] = useState([])
   const [convLoading, setConvLoading] = useState(true)
@@ -27,7 +39,7 @@ export default function MessagesPage() {
   const [hasMore, setHasMore] = useState(true)
   const PAGE_SIZE = 30
   const messagesEndRef = useRef(null)
-  const [mobileView, setMobileView] = useState('list') // 'list' | 'chat'
+  const [mobileView, setMobileView] = useState('list')
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
 
   // Load conversations
@@ -36,7 +48,6 @@ export default function MessagesPage() {
       const res = await fetchWithTimeout('/api/messages/conversations')
       const data = await res.json()
       setConversations(data.conversations || [])
-      // Update active username from conversations data
       if (activeOtherId) {
         const conv = (data.conversations || []).find((c) => c.other_id === activeOtherId)
         if (conv) setActiveUsername(conv.username)
@@ -113,10 +124,8 @@ export default function MessagesPage() {
     if (activeOtherId) {
       loadMessages(activeOtherId)
       markRead(activeOtherId)
-      // Update username
       const conv = conversations.find((c) => c.other_id === activeOtherId)
       if (conv) setActiveUsername(conv.username)
-      // Re-fetch conversations to update unread counts
       loadConversations()
     }
   }, [activeOtherId])
@@ -150,7 +159,7 @@ export default function MessagesPage() {
       if (data.message) {
         setMessages((prev) => [...prev, data.message])
         setInputText('')
-        loadConversations() // Refresh conversation list to show last message update
+        loadConversations()
       }
     } catch (err) {
       console.error('Send message failed:', err)
@@ -180,16 +189,16 @@ export default function MessagesPage() {
     }
   }
 
-  // Render
+  // ── Render ──
   return (
     <div className="panel messages-page">
       <header className="panel-header">
-        {mobileView === 'chat' ? (
+        {isMobile && mobileView === 'chat' ? (
           <>
             <button
               type="button"
               className="chat-back-btn"
-              onClick={() => { setActiveOtherId(null); setMobileView('list'); setMessages([]) }}
+              onClick={() => { setMobileView('list') }}
               title="返回列表"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
@@ -209,6 +218,7 @@ export default function MessagesPage() {
       </header>
 
       {!convLoading && conversations.length === 0 && !activeOtherId ? (
+        /* ── Empty state: no conversations and no target user ── */
         <div className="messages-layout">
           <div className="messages-sidebar messages-sidebar-empty">
             <div className="messages-empty-state">
@@ -220,15 +230,14 @@ export default function MessagesPage() {
             </div>
           </div>
           <div className="messages-chat-area">
-            <div className="messages-empty-chat">
-              选择一个会话
-            </div>
+            <div className="messages-empty-chat">选择一个会话</div>
           </div>
         </div>
       ) : (
         <div className="messages-layout">
-          {/* Conversation list — hidden on mobile when in chat view */}
-          <div className="messages-sidebar hide-scrollbar"
+          {/* ── Sidebar: conversation list ── */}
+          <div
+            className="messages-sidebar hide-scrollbar"
             style={{ display: !isMobile || mobileView === 'list' ? 'flex' : 'none' }}
           >
             {convLoading ? (
@@ -245,32 +254,35 @@ export default function MessagesPage() {
                   <div className="messages-conv-body">
                     <div className="messages-conv-head">
                       <span className="messages-conv-name">{conv.username}</span>
+                      <span className="messages-conv-time">{formatTime(conv.last_time)}</span>
+                    </div>
+                    <div className="messages-conv-bottom">
+                      <p className="messages-conv-preview">{conv.last_message || ''}</p>
                       {conv.unread > 0 && (
-                        <span className="sidebar-item-badge" style={{ fontSize: 10, padding: '1px 5px' }}>
-                          {conv.unread}
+                        <span className="messages-conv-badge">
+                          {conv.unread > 99 ? '99+' : conv.unread}
                         </span>
                       )}
                     </div>
-                    <p className="messages-conv-preview">
-                      {conv.last_message || ''}
-                    </p>
                   </div>
                 </button>
               ))
             )}
           </div>
 
-          {/* Chat area */}
-          <div className="messages-chat-area"
+          {/* ── Chat area ── */}
+          <div
+            className="messages-chat-area"
             style={{ display: !isMobile || mobileView === 'chat' || !activeOtherId ? 'flex' : 'none' }}
           >
             {!activeOtherId ? (
-              <div className="messages-empty-chat">
-                选择一个会话
-              </div>
+              <div className="messages-empty-chat">选择一个会话</div>
             ) : (
               <>
-                {/* Messages */}
+                {!isMobile && (
+                  <div className="messages-chat-header">{activeUsername}</div>
+                )}
+
                 <div className="messages-list">
                   {hasMore && (
                     <div className="messages-load-more">
@@ -283,21 +295,22 @@ export default function MessagesPage() {
                     const isMe = msg.sender_id === authUser?.id
                     return (
                       <div key={msg.id} className={`messages-row${isMe ? ' mine' : ' other'}`}>
-                        {!isMe && <Avatar name={activeUsername || '?'} size={28} />}
+                        {!isMe && (
+                          <Avatar name={activeUsername || '?'} size={28} />
+                        )}
                         <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
-                          {msg.content}
+                          <span className="messages-msg-text">{msg.content}</span>
+                          <span className="messages-msg-time">{formatTime(msg.created_at)}</span>
                         </div>
-                        {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={28} />}
                       </div>
                     )
                   })}
                   <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input */}
                 <div className="messages-input-bar">
                   <textarea
-                    className="modal-textarea messages-input"
+                    className="messages-input"
                     rows={1}
                     placeholder="输入消息…"
                     value={inputText}
@@ -306,7 +319,7 @@ export default function MessagesPage() {
                   />
                   <button
                     type="button"
-                    className="btn-primary btn-sm messages-send-btn"
+                    className="messages-send-btn"
                     disabled={!inputText.trim() || sending}
                     onClick={handleSend}
                   >

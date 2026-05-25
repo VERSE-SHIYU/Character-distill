@@ -3096,7 +3096,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, card_id, user_id, version_num, publish_message, diff_json, created_at
+                    """SELECT id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot, created_at
                        FROM card_versions WHERE card_id = ? ORDER BY version_num DESC""",
                     (card_id,),
                 )

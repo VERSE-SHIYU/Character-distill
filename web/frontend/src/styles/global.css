@@ -7085,13 +7085,25 @@ select.settings-input {
   height: 100%;
 }
 
+.messages-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── Sidebar ── */
 .messages-sidebar {
-  width: 300px;
-  min-width: 0;
+  width: 30%;
+  min-width: 240px;
+  max-width: 340px;
   border-right: 1px solid var(--border);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+
+.messages-sidebar-empty {
+  width: 30%;
 }
 
 .messages-conv-item {
@@ -7125,6 +7137,7 @@ select.settings-input {
 .messages-conv-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   margin-bottom: 2px;
 }
@@ -7135,19 +7148,59 @@ select.settings-input {
   color: var(--text);
 }
 
+.messages-conv-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.messages-conv-bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .messages-conv-preview {
   font-size: 12px;
   color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
 }
 
+.messages-conv-badge {
+  background: var(--primary);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  text-align: center;
+  border-radius: 9px;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+/* ── Chat area ── */
 .messages-chat-area {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.messages-chat-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+  color: var(--text);
 }
 
 .messages-empty-chat {
@@ -7165,13 +7218,14 @@ select.settings-input {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .messages-load-more {
   text-align: center;
 }
 
+/* ── Message rows ── */
 .messages-row {
   display: flex;
   align-items: flex-end;
@@ -7186,31 +7240,62 @@ select.settings-input {
   justify-content: flex-start;
 }
 
+/* ── Bubbles ── */
 .messages-bubble {
   max-width: 70%;
   padding: 8px 14px;
-  border-radius: 16px;
   font-size: 13px;
   line-height: 1.5;
   word-break: break-word;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .messages-bubble.mine {
-  background: #2b6cb0;
+  background: var(--primary);
   color: #fff;
-  border-bottom-right-radius: 4px;
+  border-radius: 12px 0 12px 12px;
 }
 
 .messages-bubble.other {
-  background: var(--bg-card);
+  background: #f0f0f0;
   color: var(--text);
-  border-bottom-left-radius: 4px;
+  border-radius: 0 12px 12px 12px;
+}
+
+.messages-msg-text {
+  white-space: pre-wrap;
+}
+
+.messages-msg-time {
+  font-size: 10px;
+  margin-top: 2px;
+  text-align: right;
+}
+
+.messages-bubble.mine .messages-msg-time {
+  color: rgba(255,255,255,0.6);
+}
+
+.messages-bubble.other .messages-msg-time {
+  color: rgba(0,0,0,0.4);
 }
 
 .dark .messages-bubble.mine {
-  background: #1a4f8b;
+  background: var(--primary);
 }
 
+.dark .messages-bubble.other {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.dark .messages-bubble.other .messages-msg-time {
+  color: var(--text-dim);
+}
+
+/* ── Input ── */
 .messages-input-bar {
   padding: 12px;
   border-top: 1px solid var(--border);
@@ -7219,6 +7304,45 @@ select.settings-input {
   align-items: flex-end;
 }
 
+.messages-input {
+  flex: 1;
+  min-height: 40px;
+  max-height: 120px;
+  resize: none;
+  font-size: 13px;
+  border: none;
+  outline: none;
+  background: var(--bg-input, #f5f5f5);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.messages-send-btn {
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 18px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.messages-send-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.messages-send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Empty state ── */
 .messages-empty-state {
   flex: 1;
   display: flex;
@@ -7244,25 +7368,6 @@ select.settings-input {
   text-align: center;
   max-width: 280px;
   line-height: 1.6;
-}
-
-.messages-layout {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-}
-
-.messages-input {
-  flex: 1;
-  min-height: 40px;
-  max-height: 120px;
-  resize: none;
-  font-size: 13px;
-}
-
-.messages-send-btn {
-  flex-shrink: 0;
-  height: 38px;
 }
 
 /* ===== Fork attribution ===== */
