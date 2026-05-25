@@ -8,7 +8,6 @@ export default function MinePage() {
   const setView = useAppStore((s) => s.setView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const authUser = useAppStore((s) => s.authUser)
-  const [unreadCount, setUnreadCount] = useState(0)
   const [tab, setTab] = useState('home')
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
@@ -16,13 +15,6 @@ export default function MinePage() {
   useEffect(() => {
     if (authUser?.id) setAuthorUserId(authUser.id)
   }, [authUser?.id, setAuthorUserId])
-
-  useEffect(() => {
-    fetchWithTimeout('/api/messages/unread-count')
-      .then((r) => r.json())
-      .then((d) => setUnreadCount(d.count ?? 0))
-      .catch(() => {})
-  }, [])
 
   useEffect(() => {
     if (tab === 'following') {
@@ -42,6 +34,14 @@ export default function MinePage() {
 
   return (
     <div className="mine-page">
+      <div className="mine-top-tabs">
+        <button type="button" className={`mine-top-tab${tab === 'home' ? ' active' : ''}`} onClick={() => handleTabChange('home')}>
+          {'\u{1F3E0}'} 主页
+        </button>
+        <button type="button" className={`mine-top-tab${tab === 'following' ? ' active' : ''}`} onClick={() => handleTabChange('following')}>
+          {'\u{2B50}'} 关注
+        </button>
+      </div>
       <div className="mine-content">
         {tab === 'home' && <AuthorPage embedded />}
         {tab === 'following' && (
@@ -67,21 +67,6 @@ export default function MinePage() {
         )}
       </div>
 
-      <div className="mine-bottom-bar">
-        <button type="button" className={`mine-bottom-item${tab === 'home' ? ' active' : ''}`} onClick={() => handleTabChange('home')}>
-          <span className="mine-bottom-icon">{'\u{1F3E0}'}</span>
-          <span className="mine-bottom-label">主页</span>
-        </button>
-        <button type="button" className="mine-bottom-item" onClick={() => setView('messages')}>
-          <span className="mine-bottom-icon">{'\u{1F4E8}'}</span>
-          <span className="mine-bottom-label">私信</span>
-          {unreadCount > 0 && <span className="mine-bottom-badge">{unreadCount}</span>}
-        </button>
-        <button type="button" className={`mine-bottom-item${tab === 'following' ? ' active' : ''}`} onClick={() => handleTabChange('following')}>
-          <span className="mine-bottom-icon">{'\u{2B50}'}</span>
-          <span className="mine-bottom-label">关注</span>
-        </button>
-      </div>
     </div>
   )
 }

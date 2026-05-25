@@ -63,17 +63,8 @@ function ImageGrid({ images, onImageClick }) {
 function fmtTime(iso) {
   if (!iso) return ''
   try {
-    const d = new Date(iso)
-    const now = new Date()
-    const diffMs = now - d
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return '刚刚'
-    if (diffMin < 60) return `${diffMin}分钟前`
-    const diffHour = Math.floor(diffMin / 60)
-    if (diffHour < 24) return `${diffHour}小时前`
-    const diffDay = Math.floor(diffHour / 24)
-    if (diffDay < 7) return `${diffDay}天前`
-    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
+    return new Date(s).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }
@@ -82,6 +73,7 @@ function fmtTime(iso) {
 /* ── PostCard ── */
 export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDelete = false, showAuthor = true }) {
   const setView = useAppStore((s) => s.setView)
+  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const [showComments, setShowComments] = useState(false)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -161,6 +153,10 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
         }
         const cardName = post.card_name || '关联角色'
         const cardIdentity = cardData?.identity || ''
+        const parseDate = (iso) => iso ? new Date(iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso) : null
+        const cardUpdated = parseDate(post.card_updated_at)
+        const postCreated = parseDate(post.created_at)
+        const showModified = cardUpdated && postCreated && (cardUpdated - postCreated > 60000)
         return (
           <button type="button" className="post-card-ref" onClick={() => {
             useAppStore.getState().setCurrentMarketCardId(post.card_id)
@@ -169,6 +165,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
             <Avatar name={cardName} src={post.card_avatar_data || null} size={24} />
             <span className="post-card-ref-name">{cardName}</span>
             {cardIdentity && <span className="post-card-ref-identity">{cardIdentity}</span>}
+            {showModified && <span className="post-card-ref-modified">已修改 {cardUpdated.toLocaleString('zh-CN')}</span>}
           </button>
         )
       })()}
@@ -206,9 +203,24 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
           ) : (
             comments.map((c) => (
               <div key={c.id} className="post-card-comment">
-                <Avatar name={c.username} size={24} />
+                <button
+                  type="button"
+                  className="post-card-comment-avatar-btn"
+                  onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                >
+                  <Avatar name={c.username} size={24} />
+                </button>
                 <div className="post-card-comment-body">
-                  <span className="post-card-comment-user">{c.username}</span>
+                  <div className="post-card-comment-head">
+                    <button
+                      type="button"
+                      className="post-card-comment-user"
+                      onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                    >
+                      {c.username}
+                    </button>
+                    <span className="post-card-comment-time">{c.created_at ? fmtTime(c.created_at) : ''}</span>
+                  </div>
                   <p className="post-card-comment-text">{c.content}</p>
                 </div>
               </div>

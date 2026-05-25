@@ -314,7 +314,7 @@ export default function MarketPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <Avatar name={c.username} size={24} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{c.username}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at?.slice(0, 10)}</span>
+                      <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at ? new Date(c.created_at.includes('T') && !c.created_at.endsWith('Z') && !c.created_at.includes('+') ? c.created_at + 'Z' : c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
                     </div>
                     <p style={{ fontSize: 13, margin: 0, lineHeight: 1.5 }}>{c.content}</p>
                   </div>

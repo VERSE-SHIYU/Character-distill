@@ -241,7 +241,8 @@ export default function GroupChatPage() {
           {currentGroup ? (
             <>
               <button type="button" className="chat-back-btn" onClick={backToList} title="返回群聊列表">
-                {'◀'}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+                返回
               </button>
               群聊 — {currentGroup.name || '未命名'}
             </>
@@ -296,7 +297,7 @@ export default function GroupChatPage() {
                     <div className="group-list-name">{g.name || '未命名群聊'}</div>
                     <div className="group-list-chars">{names.join('、')}</div>
                     <div className="group-list-meta">
-                      {new Date(g.created_at).toLocaleString('zh-CN')}
+                      {new Date(g.created_at.includes('T') && !g.created_at.endsWith('Z') && !g.created_at.includes('+') ? g.created_at + 'Z' : g.created_at).toLocaleString('zh-CN')}
                     </div>
                   </div>
                 )

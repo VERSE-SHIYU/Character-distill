@@ -26,7 +26,8 @@ function useDebouncedValue(value, delayMs) {
 function formatTime(iso) {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleString('zh-CN', {
+    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
+    return new Date(s).toLocaleString('zh-CN', {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -452,7 +453,7 @@ export default function HistoryPanel({ initialTrash = false }) {
           className={`btn-secondary btn-sm${trashMode ? ' active' : ''}`}
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? '← 返回列表' : '回收站'}
+          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '回收站'}
         </button>
 
         {!trashMode && (
@@ -765,7 +766,8 @@ function GroupHistoryDetail({ detail, loading, onBack, onResume, onDelete }) {
     <div className="history-panel panel history-detail-view">
       <div className="history-detail-top">
         <button type="button" className="history-back-btn" onClick={onBack}>
-          ← 返回列表
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回列表
         </button>
         <div className="history-detail-actions">
           <button type="button" className="btn-primary history-action-sm" onClick={onResume}>
@@ -820,7 +822,8 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
     <div className="history-panel panel history-detail-view">
       <div className="history-detail-top">
         <button type="button" className="history-back-btn" onClick={onBack}>
-          ← 返回列表
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回列表
         </button>
         <div className="history-detail-actions">
           {!trashMode && (

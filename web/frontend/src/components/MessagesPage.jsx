@@ -192,14 +192,16 @@ export default function MessagesPage() {
               onClick={() => { setActiveOtherId(null); setMobileView('list'); setMessages([]) }}
               title="返回列表"
             >
-              {'◀'}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+              返回
             </button>
             <h1 className="panel-title" style={{ fontSize: 15 }}>{activeUsername || '私信'}</h1>
           </>
         ) : (
           <>
             <button type="button" className="chat-back-btn" onClick={() => setView('mine')} title="返回">
-              {'◀'}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+              返回
             </button>
             <h1 className="panel-title">私信</h1>
           </>

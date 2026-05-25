@@ -241,7 +241,7 @@ export default function VoicePanel() {
   return (
     <div className="voice-panel panel">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回">{'\u{25C0}'}</button>
+        <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>
         <h1 className="panel-title">语音设置</h1>
         <p className="panel-desc">TTS 音色管理、音色克隆与语音服务状态</p>
       </header>

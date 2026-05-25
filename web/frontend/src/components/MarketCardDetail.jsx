@@ -124,7 +124,8 @@ export default function MarketCardDetail() {
     <div className="panel market-detail-page">
       <header className="panel-header">
         <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
-          {'\u{25C0}'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回
         </button>
         <h1 className="panel-title">角色详情</h1>
         {(authUser?.is_admin || card.user_id === authUser?.id) && (
@@ -138,7 +139,7 @@ export default function MarketCardDetail() {
         {/* Hero: cover image + name */}
         <div className="market-detail-hero">
           {card.avatar_data
-            ? <img src={card.avatar_data} alt={charName} className="market-detail-cover-img" />
+            ? <Avatar name={charName} src={card.avatar_data} size={96} />
             : <Avatar name={charName} size={96} />
           }
           <h2 className="market-detail-name">{charName}</h2>
@@ -205,11 +206,23 @@ export default function MarketCardDetail() {
             <div className="market-detail-comment-list">
               {comments.map((c) => (
                 <div key={c.id} className="market-detail-comment-item">
-                  <Avatar name={c.username} size={32} />
+                  <button
+                    type="button"
+                    className="market-detail-comment-avatar-btn"
+                    onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                  >
+                    <Avatar name={c.username} size={32} />
+                  </button>
                   <div className="market-detail-comment-body">
                     <div className="market-detail-comment-head">
-                      <span className="market-detail-comment-name">{c.username}</span>
-                      <span className="market-detail-comment-time">{c.created_at?.slice(0, 10)}</span>
+                      <button
+                        type="button"
+                        className="market-detail-comment-name"
+                        onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                      >
+                        {c.username}
+                      </button>
+                      <span className="market-detail-comment-time">{c.created_at ? new Date(c.created_at.includes('T') && !c.created_at.endsWith('Z') && !c.created_at.includes('+') ? c.created_at + 'Z' : c.created_at).toLocaleString('zh-CN') : ''}</span>
                     </div>
                     <p className="market-detail-comment-text">{c.content}</p>
                   </div>

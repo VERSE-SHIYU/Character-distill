@@ -197,8 +197,9 @@ export default function AuthorPage({ embedded = false }) {
       <header className="panel-header">
         {!embedded && (
           <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
-            {'\u{25C0}'}
-          </button>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回
+        </button>
         )}
         <h1 className="panel-title">{embedded ? '我的主页' : '作者主页'}</h1>
       </header>
@@ -307,40 +308,45 @@ export default function AuthorPage({ embedded = false }) {
                   )
                 })()}
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <div className="author-post-toolbar">
+                  <div className="author-post-toolbar-left">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={handleFileChange}
+                    />
+                    <button
+                      type="button"
+                      className="author-post-toolbar-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={postImages.length >= 9}
+                      title="添加图片"
+                    >
+                      {'\u{1F5BC}'}
+                    </button>
+                    <button
+                      type="button"
+                      className="author-post-toolbar-btn"
+                      onClick={() => setShowCardPicker(true)}
+                      title="关联角色"
+                    >
+                      {'\u{1F916}'}
+                    </button>
+                    <button
+                      type="button"
+                      className="author-post-toolbar-btn author-post-visibility-btn"
+                      onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
+                      title={postVisibility === 'public' ? '公开' : '私密'}
+                    >
+                      {postVisibility === 'public' ? '\u{1F30D}' : '\u{1F512}'}
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    className={`btn-sm ${postVisibility === 'public' ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
-                  >
-                    {postVisibility === 'public' ? '\u{1F30D} 公开' : '\u{1F512} 私密'}
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={handleFileChange}
-                  />
-                  <button
-                    type="button"
-                    className="btn-sm btn-ghost"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={postImages.length >= 9}
-                  >
-                    {'\u{1F5BC}'} 图片{postImages.length > 0 ? ` (${postImages.length}/9)` : ''}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-sm btn-ghost"
-                    onClick={() => setShowCardPicker(true)}
-                  >
-                    {'\u{1F916}'} 关联角色
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary btn-sm"
+                    className="btn-primary author-post-publish-btn"
                     disabled={!postContent.trim() || posting}
                     onClick={handlePostSubmit}
                   >
@@ -386,7 +392,7 @@ export default function AuthorPage({ embedded = false }) {
                   const background = cardData.background || ''
                   return (
                     <div key={card.id} className="author-char-card">
-                      <Avatar name={name} size={56} />
+                      <Avatar name={name} src={card.avatar_data || null} size={56} />
                       <h4 className="author-char-name">{name}</h4>
                       {identity && <p className="author-char-identity">{identity}</p>}
                       {background && (

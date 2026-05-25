@@ -184,7 +184,7 @@ export default function ProfilePage() {
   }, [bindEmail, bindCode])
 
   const createdDate = authUser?.created_at
-    ? new Date(authUser.created_at).toLocaleDateString('zh-CN')
+    ? new Date((authUser.created_at.includes('T') && !authUser.created_at.endsWith('Z') && !authUser.created_at.includes('+') ? authUser.created_at + 'Z' : authUser.created_at)).toLocaleDateString('zh-CN')
     : '—'
 
   return (

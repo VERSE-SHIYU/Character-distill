@@ -51,7 +51,8 @@ function timeEstimate(n, textType) {
 function formatTime(iso) {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleString('zh-CN', {
+    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
+    return new Date(s).toLocaleString('zh-CN', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -283,17 +284,19 @@ export default function TextPanel() {
                       {formatTime(t.created_at)}
                     </span>
                   </div>
-                  <button
-                    type="button"
+                  <span
                     className="text-list-expand-toggle"
                     onClick={(e) => {
                       e.stopPropagation()
                       setExpandedId(expandedId === t.id ? null : t.id)
                     }}
                     title={expandedId === t.id ? '收起预览' : '展开预览'}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setExpandedId(expandedId === t.id ? null : t.id) } }}
                   >
                     {expandedId === t.id ? '▲' : '▼'}
-                  </button>
+                  </span>
                 </button>
 
                 {t.description && (

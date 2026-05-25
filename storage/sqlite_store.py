@@ -372,6 +372,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Post enhancements migration failed: {exc}")
 
+                    # Run 035_card_updated_at migration (ALTER TABLE ADD COLUMN)
+                    card_ua_path = migrations_dir / "035_card_updated_at.sql"
+                    if card_ua_path.exists():
+                        try:
+                            await conn.executescript(card_ua_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Card updated_at migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -570,7 +580,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE cards SET card_json = ? WHERE id = ?",
+                    "UPDATE cards SET card_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (json.dumps(card_json, ensure_ascii=False), card_id),
                 )
                 await conn.commit()
@@ -2197,7 +2207,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, name, card_json, forked_from, likes, created_at
+                    """SELECT id, name, card_json, forked_from, likes, created_at, avatar_data
                        FROM cards WHERE user_id = ? AND visibility = 'public'
                        ORDER BY created_at DESC""",
                     (user_id,),
@@ -2241,7 +2251,8 @@ class SQLiteStore(StorageBase):
                                  (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
                                  c.name AS card_name,
                                  c.card_json AS card_json,
-                                 c.avatar_data AS card_avatar_data
+                                 c.avatar_data AS card_avatar_data,
+                                 c.updated_at AS card_updated_at
                           FROM user_posts p
                           JOIN users u ON u.id = p.user_id
                           LEFT JOIN cards c ON c.id = p.card_id
@@ -2371,7 +2382,9 @@ class SQLiteStore(StorageBase):
     async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str) -> dict:
         """Add a comment to a post."""
         import uuid
+        from datetime import datetime, timezone
         cid = uuid.uuid4().hex[:12]
+        now = datetime.now(timezone.utc).isoformat()
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -2379,7 +2392,7 @@ class SQLiteStore(StorageBase):
                     (cid, post_id, user_id, username, content),
                 )
                 await conn.commit()
-            return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content}
+            return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now}
         except Exception as exc:
             print(f"[SQLiteStore] Add post comment failed: {exc}")
             raise

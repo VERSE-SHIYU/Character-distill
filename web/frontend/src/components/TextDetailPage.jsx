@@ -193,7 +193,8 @@ export default function TextDetailPage() {
     <div className="panel">
       <header className="panel-header">
         <button type="button" className="chat-back-btn" onClick={() => setView('text')} title="返回文本列表">
-          {'◀'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回
         </button>
         <h1 className="panel-title">书籍详情</h1>
       </header>
@@ -449,17 +450,8 @@ function CommentItem({
 function fmtTime(iso) {
   if (!iso) return ''
   try {
-    const d = new Date(iso)
-    const now = new Date()
-    const diffMs = now - d
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return '刚刚'
-    if (diffMin < 60) return `${diffMin}分钟前`
-    const diffHour = Math.floor(diffMin / 60)
-    if (diffHour < 24) return `${diffHour}小时前`
-    const diffDay = Math.floor(diffHour / 24)
-    if (diffDay < 7) return `${diffDay}天前`
-    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
+    return new Date(s).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
   } catch {
     return ''
   }

@@ -66,7 +66,8 @@ export default function CharCard() {
 
       <header className="panel-header">
         <button type="button" className="chat-back-btn" onClick={() => setView('text')} title="返回文本管理">
-          {'\u{25C0}'}
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回
         </button>
         <h1 className="panel-title">
           角色管理
@@ -283,7 +284,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           style={{ marginLeft: 'auto', fontSize: 12 }}
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? '← 返回列表' : '🗑 回收站'}
+          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '🗑 回收站'}
         </button>
       </div>
 
@@ -923,10 +924,11 @@ function CardDetail({ card, textId }) {
       <div className="card-footer">
         <button
           type="button"
-          className="btn-secondary"
+          className="chat-back-btn"
           onClick={() => setView('text')}
         >
-          ← 返回文本列表
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回文本列表
         </button>
         <button
           type="button"
