@@ -160,7 +160,7 @@ export default function AuthorPage({ embedded = false }) {
       setLinkedCardId('')
       await loadPosts()
     } catch (err) {
-      console.error('Post failed:', err)
+      setError(err.message || '发布失败，请重试')
     } finally {
       setPosting(false)
     }

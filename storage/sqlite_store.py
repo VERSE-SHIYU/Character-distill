@@ -607,7 +607,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at FROM cards WHERE id = ?",
+                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, market_description, market_tags, publish_message FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -653,12 +653,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id, user_id),
                     )
                 else:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id,),
                     )
                 rows = await cursor.fetchall()
@@ -672,7 +672,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                    "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
