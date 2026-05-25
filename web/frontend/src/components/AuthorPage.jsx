@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
+import PostCard from './common/PostCard'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
+  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
@@ -32,6 +34,57 @@ export default function AuthorPage({ embedded = false }) {
   const [postVisibility, setPostVisibility] = useState('public')
   const [posting, setPosting] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+
+  // Image upload
+  const [postImages, setPostImages] = useState([])
+  const [linkedCardId, setLinkedCardId] = useState('')
+  const [showCardPicker, setShowCardPicker] = useState(false)
+  const fileInputRef = useRef(null)
+
+  async function compressImage(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          let w = img.width, h = img.height
+          const maxDim = 1200
+          if (w > maxDim || h > maxDim) {
+            const ratio = Math.min(maxDim / w, maxDim / h)
+            w = Math.round(w * ratio)
+            h = Math.round(h * ratio)
+          }
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(img, 0, 0, w, h)
+          const tryQuality = (q) => {
+            const data = canvas.toDataURL('image/jpeg', q)
+            if (data.length < 204800 || q <= 0.1) resolve(data)
+            else tryQuality(q - 0.1)
+          }
+          tryQuality(0.8)
+        }
+        img.src = reader.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const handleFileChange = async (e) => {
+    const files = Array.from(e.target.files || [])
+    const remaining = 9 - postImages.length
+    if (remaining <= 0) return
+    const toProcess = files.slice(0, remaining)
+    const compressed = await Promise.all(toProcess.map(compressImage))
+    setPostImages(prev => [...prev, ...compressed])
+    e.target.value = ''
+  }
+
+  const removeImage = (idx) => {
+    setPostImages(prev => prev.filter((_, i) => i !== idx))
+  }
 
   const isOwnProfile = authUser?.id === authorUserId
 
@@ -95,9 +148,16 @@ export default function AuthorPage({ embedded = false }) {
       await fetchWithTimeout('/api/market/author/posts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ content: postContent.trim(), visibility: postVisibility }),
+        body: JSON.stringify({
+          content: postContent.trim(),
+          visibility: postVisibility,
+          images: JSON.stringify(postImages),
+          card_id: linkedCardId,
+        }),
       })
       setPostContent('')
+      setPostImages([])
+      setLinkedCardId('')
       await loadPosts()
     } catch (err) {
       console.error('Post failed:', err)
@@ -118,6 +178,18 @@ export default function AuthorPage({ embedded = false }) {
     } catch (err) {
       console.error('Delete post failed:', err)
     }
+  }
+
+  const handleLike = async (postId) => {
+    try {
+      const res = await fetchWithTimeout(`/api/market/post/${postId}/like`, { method: 'POST' })
+      const data = await res.json()
+      setPosts(prev =>
+        prev.map(p =>
+          p.id === postId ? { ...p, liked_by_me: data.liked, likes: data.likes } : p,
+        ),
+      )
+    } catch {}
   }
 
   return (
@@ -208,13 +280,63 @@ export default function AuthorPage({ embedded = false }) {
                   onChange={(e) => setPostContent(e.target.value)}
                   style={{ marginBottom: 8 }}
                 />
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+
+                {/* Image preview */}
+                {postImages.length > 0 && (
+                  <div className="author-post-img-preview">
+                    {postImages.map((src, i) => (
+                      <div key={i} className="author-post-img-thumb">
+                        <img src={src} alt="" />
+                        <button type="button" className="author-post-img-del" onClick={() => removeImage(i)}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Linked card tag */}
+                {linkedCardId && (() => {
+                  const linked = cards.find(c => c.id === linkedCardId)
+                  const linkedName = linked
+                    ? (JSON.parse(linked.card_json || '{}').name || linked.name)
+                    : ''
+                  return (
+                    <div className="author-post-linked-card">
+                      {'\u{1F916}'} {linkedName}
+                      <button type="button" className="author-post-img-del" onClick={() => setLinkedCardId('')}>✕</button>
+                    </div>
+                  )
+                })()}
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     className={`btn-sm ${postVisibility === 'public' ? 'btn-primary' : 'btn-ghost'}`}
                     onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
                   >
                     {postVisibility === 'public' ? '\u{1F30D} 公开' : '\u{1F512} 私密'}
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={handleFileChange}
+                  />
+                  <button
+                    type="button"
+                    className="btn-sm btn-ghost"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={postImages.length >= 9}
+                  >
+                    {'\u{1F5BC}'} 图片{postImages.length > 0 ? ` (${postImages.length}/9)` : ''}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm btn-ghost"
+                    onClick={() => setShowCardPicker(true)}
+                  >
+                    {'\u{1F916}'} 关联角色
                   </button>
                   <button
                     type="button"
@@ -234,30 +356,15 @@ export default function AuthorPage({ embedded = false }) {
               <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
             ) : (
               <div className="author-posts-list">
-                {posts.map((post) => (
-                  <div key={post.id} className="author-post-card">
-                    <div className="author-post-header">
-                      <Avatar name={author.username || '?'} size={40} />
-                      <div className="author-post-header-text">
-                        <span className="author-post-username">{author.username}</span>
-                        {post.visibility === 'private' && (
-                          <span className="author-post-private">{'\u{1F512}'} 私密</span>
-                        )}
-                      </div>
-                      <span className="author-post-time">{fmtTime(post.created_at)}</span>
-                    </div>
-                    <div className="author-post-body">
-                      {post.content}
-                    </div>
-                    <div className="author-post-footer">
-                      <div className="author-post-stats" />
-                      {isOwnProfile && (
-                        <button type="button" className="author-post-delete" onClick={() => setDeleteConfirmId(post.id)}>
-                          删除
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                {posts.map((p) => (
+                  <PostCard
+                    key={p.id}
+                    post={p}
+                    onLike={handleLike}
+                    onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+                    onDelete={(id) => setDeleteConfirmId(id)}
+                    showDelete={isOwnProfile}
+                  />
                 ))}
               </div>
             )}
@@ -310,6 +417,43 @@ export default function AuthorPage({ embedded = false }) {
         <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>用户不存在</p>
       )}
 
+      {/* Card picker modal */}
+      {showCardPicker && (
+        <div className="modal-overlay" onClick={() => setShowCardPicker(false)}>
+          <div className="modal-card" style={{ maxWidth: 360, maxHeight: '60vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title" style={{ flexShrink: 0 }}>
+              选择关联角色
+              <button type="button" className="btn-ghost fr" onClick={() => setShowCardPicker(false)}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px' }}>
+              {cards.length === 0 ? (
+                <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 13 }}>暂无公开角色</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {cards.map((c) => {
+                    const cd = typeof c.card_json === 'string' ? JSON.parse(c.card_json) : c.card_json || {}
+                    const name = cd.name || c.name || '?'
+                    const sel = linkedCardId === c.id
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={`author-card-picker-item${sel ? ' selected' : ''}`}
+                        onClick={() => { setLinkedCardId(c.id); setShowCardPicker(false) }}
+                      >
+                        <Avatar name={name} size={28} />
+                        <span>{name}</span>
+                        {sel && <span style={{ marginLeft: 'auto', color: 'var(--accent)' }}>✓</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         isOpen={!!deleteConfirmId}
         title="删除动态"
@@ -321,25 +465,6 @@ export default function AuthorPage({ embedded = false }) {
       />
     </div>
   )
-}
-
-function fmtTime(iso) {
-  if (!iso) return ''
-  try {
-    const d = new Date(iso)
-    const now = new Date()
-    const diffMs = now - d
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return '刚刚'
-    if (diffMin < 60) return `${diffMin}分钟前`
-    const diffHour = Math.floor(diffMin / 60)
-    if (diffHour < 24) return `${diffHour}小时前`
-    const diffDay = Math.floor(diffHour / 24)
-    if (diffDay < 7) return `${diffDay}天前`
-    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
-  } catch {
-    return ''
-  }
 }
 
 function ExpandableText({ text, maxLines = 3 }) {
