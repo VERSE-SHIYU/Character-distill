@@ -36,7 +36,11 @@ export default function MarketCardDetail() {
         setLiked(data.liked_by_me || false)
         setLikes(data.likes || 0)
       })
-      .catch(() => setView('market'))
+      .catch((err) => {
+        console.error('[MarketCardDetail] load failed:', err)
+        useAppStore.getState().setCurrentMarketCardId(null)
+        setView('market')
+      })
       .finally(() => setLoading(false))
   }, [cardId, setView])
 
