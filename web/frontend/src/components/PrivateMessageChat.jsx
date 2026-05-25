@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -142,18 +142,25 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
             </button>
           </div>
         )}
-        {messages.map((msg) => {
+        {messages.map((msg, i) => {
+          const prev = messages[i - 1]
+          const showTime = !prev ||
+            (new Date(msg.created_at) - new Date(prev.created_at)) > 5 * 60 * 1000
           const isMe = msg.sender_id === authUser?.id
           return (
-            <div key={msg.id} className={`messages-row${isMe ? ' mine' : ' other'}`}>
-              {!isMe && (
-                <Avatar name={otherUsername || '?'} size={28} />
+            <React.Fragment key={msg.id}>
+              {showTime && (
+                <div className="messages-time-divider">{formatTime(msg.created_at)}</div>
               )}
-              <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
-                <span className="messages-msg-text">{msg.content}</span>
-                <span className="messages-msg-time">{formatTime(msg.created_at)}</span>
+              <div className={`messages-row${isMe ? ' mine' : ' other'}`}>
+                {!isMe && (
+                  <Avatar name={otherUsername || '?'} size={36} />
+                )}
+                <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
+                  <span className="messages-msg-text">{msg.content}</span>
+                </div>
               </div>
-            </div>
+            </React.Fragment>
           )
         })}
         <div ref={messagesEndRef} />
@@ -163,20 +170,23 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       <div className="private-chat-input-bar">
         <textarea
           className="messages-input"
-          rows={1}
+          rows={3}
           placeholder="输入消息…"
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button
-          type="button"
-          className="messages-send-btn"
-          disabled={!inputText.trim() || sending}
-          onClick={handleSend}
-        >
-          {sending ? '…' : '发送'}
-        </button>
+        <div className="messages-input-toolbar">
+          <div className="messages-input-toolbar-left" />
+          <button
+            type="button"
+            className="messages-send-btn"
+            disabled={!inputText.trim() || sending}
+            onClick={handleSend}
+          >
+            {sending ? '…' : '发送'}
+          </button>
+        </div>
       </div>
     </div>
   )

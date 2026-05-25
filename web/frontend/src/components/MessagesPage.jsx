@@ -111,16 +111,6 @@ export default function MessagesPage() {
   // ── Render ──
   return (
     <div className="panel messages-page">
-      {/* Always show header when on list view (mobile) or desktop */}
-      {(!isMobile || mobileView === 'list') && (
-        <header className="panel-header">
-          <button type="button" className="chat-back-btn" onClick={() => setView('mine')} title="返回">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-            返回
-          </button>
-          <h1 className="panel-title">私信</h1>
-        </header>
-      )}
 
       {!convLoading && conversations.length === 0 && !activeOtherId ? (
         /* ── Empty state ── */
@@ -145,6 +135,9 @@ export default function MessagesPage() {
             className="messages-sidebar hide-scrollbar"
             style={{ display: !isMobile || mobileView === 'list' ? 'flex' : 'none' }}
           >
+            <div className="messages-sidebar-header">
+              <h2 className="messages-sidebar-title">私信</h2>
+            </div>
             {convLoading ? (
               <Loading text="加载中…" />
             ) : (
@@ -155,7 +148,7 @@ export default function MessagesPage() {
                   className={`messages-conv-item${activeOtherId === conv.other_id ? ' active' : ''}`}
                   onClick={() => handleSelectConversation(conv.other_id, conv.username)}
                 >
-                  <Avatar name={conv.username || '?'} size={40} />
+                  <Avatar name={conv.username || '?'} size={44} />
                   <div className="messages-conv-body">
                     <div className="messages-conv-head">
                       <span className="messages-conv-name">{conv.username}</span>
