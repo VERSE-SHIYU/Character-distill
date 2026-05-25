@@ -715,13 +715,29 @@ class SQLiteStore(StorageBase):
             raise
 
     async def save_card_avatar(self, card_id: str, avatar_data: str) -> None:
-        """Save base64 avatar image for a card."""
+        """Save base64 avatar image for a card, and sync to published copy."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     "UPDATE cards SET avatar_data = ? WHERE id = ?",
                     (avatar_data, card_id),
                 )
+                # Also update published fork's avatar if this card has one
+                await conn.execute(
+                    "UPDATE cards SET avatar_data = ? WHERE forked_from = ? AND visibility = 'public' AND deleted_at IS NULL",
+                    (avatar_data, card_id),
+                )
+                # If this card IS a published fork, sync back to draft too
+                cursor = await conn.execute(
+                    "SELECT forked_from FROM cards WHERE id = ? AND forked_from IS NOT NULL AND forked_from != ''",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+                if row:
+                    await conn.execute(
+                        "UPDATE cards SET avatar_data = ? WHERE id = ?",
+                        (avatar_data, row[0]),
+                    )
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save card avatar failed: {exc}")
