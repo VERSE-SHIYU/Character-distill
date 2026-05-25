@@ -412,6 +412,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Profile visibility migration failed: {exc}")
 
+                    # Run 040_user_privacy_fields migration (ALTER TABLE)
+                    privacy_path = migrations_dir / "040_user_privacy_fields.sql"
+                    if privacy_path.exists():
+                        try:
+                            await conn.executescript(privacy_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Privacy fields migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
