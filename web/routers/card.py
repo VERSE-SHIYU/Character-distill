@@ -145,11 +145,11 @@ async def delete_card_route(
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """Soft-delete a character card. Only the owner can delete."""
+    """Soft-delete a character card. Owner or admin can delete."""
     card = await storage.get_card(card_id)
     if not card:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
+    if not user.get("is_admin") and card.get("user_id") != user["id"]:
         raise HTTPException(403, "无权删除此角色卡")
     ok = await storage.delete_card(card_id)
     if not ok:

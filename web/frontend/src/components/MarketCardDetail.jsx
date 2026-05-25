@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { fetchWithTimeout } from '../api/client'
+import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 
@@ -108,7 +108,10 @@ export default function MarketCardDetail() {
 
   const handleDelete = async () => {
     if (!confirm('确定删除该角色？')) return
-    await fetchWithTimeout(`/api/market/posts/${cardId}`, { method: 'DELETE' })
+    await fetchWithTimeout(`/api/cards/${cardId}`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() },
+    })
     setView('market')
   }
 

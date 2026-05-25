@@ -617,7 +617,7 @@ class SQLiteStore(StorageBase):
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.id = ? AND c.visibility = 'public'""",
+                        WHERE c.id = ? AND c.visibility = 'public' AND c.deleted_at IS NULL""",
                     (card_id,),
                 )
                 row = await cursor.fetchone()
@@ -713,7 +713,7 @@ class SQLiteStore(StorageBase):
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public'
+                        WHERE c.visibility = 'public' AND c.deleted_at IS NULL
                         ORDER BY {order}
                         LIMIT ? OFFSET ?""",
                     (page_size, offset),
@@ -729,7 +729,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public'"
+                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL"
                 )
                 row = await cursor.fetchone()
             return row[0] if row else 0
@@ -751,7 +751,7 @@ class SQLiteStore(StorageBase):
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public' AND c.name LIKE ?
+                        WHERE c.visibility = 'public' AND c.name LIKE ? AND c.deleted_at IS NULL
                         ORDER BY c.likes DESC, c.created_at DESC
                         LIMIT ? OFFSET ?""",
                     (pattern, page_size, offset),
@@ -768,7 +768,7 @@ class SQLiteStore(StorageBase):
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND name LIKE ?",
+                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND name LIKE ? AND deleted_at IS NULL",
                     (pattern,),
                 )
                 row = await cursor.fetchone()
@@ -786,7 +786,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT visibility FROM cards WHERE id = ?", (card_id,)
+                    "SELECT visibility FROM cards WHERE id = ? AND deleted_at IS NULL", (card_id,)
                 )
                 row = await cursor.fetchone()
                 if not row or row[0] != "public":
@@ -2208,7 +2208,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT id, name, card_json, forked_from, likes, created_at, avatar_data
-                       FROM cards WHERE user_id = ? AND visibility = 'public'
+                       FROM cards WHERE user_id = ? AND visibility = 'public' AND deleted_at IS NULL
                        ORDER BY created_at DESC""",
                     (user_id,),
                 )
