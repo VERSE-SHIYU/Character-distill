@@ -594,7 +594,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from FROM cards WHERE id = ?",
+                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()

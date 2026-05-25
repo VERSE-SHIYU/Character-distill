@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 
 export default function MarketCardDetail() {
@@ -26,6 +27,7 @@ export default function MarketCardDetail() {
   const [likes, setLikes] = useState(0)
   const [forking, setForking] = useState(false)
   const [showForkChoice, setShowForkChoice] = useState(false)
+  const [error, setError] = useState(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
 
   useEffect(() => {
@@ -117,7 +119,7 @@ export default function MarketCardDetail() {
       })
       setView('market')
     } catch (err) {
-      console.error('[MarketCardDetail] Delete failed:', err)
+      setError(err.message || '删除失败')
     }
   }
 
@@ -143,6 +145,8 @@ export default function MarketCardDetail() {
           </button>
         )}
       </header>
+
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       <div className="market-detail-scroll">
         {/* Hero: cover image + name */}

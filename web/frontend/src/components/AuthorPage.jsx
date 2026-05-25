@@ -192,6 +192,45 @@ export default function AuthorPage({ embedded = false }) {
     } catch {}
   }
 
+  const getCharName = (card) => {
+    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    return cd.name || card.name || '?'
+  }
+
+  const getCharIdentity = (card) => {
+    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    return cd.identity || ''
+  }
+
+  const getCharBackground = (card) => {
+    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    return cd.background || ''
+  }
+
+  /* ── Premium SVG: Morandi book + dove (灰紫 & 淡绿) ── */
+  const EmptyIllustration = () => (
+    <svg className="author-empty-illustration" viewBox="0 0 160 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Book */}
+      <path d="M44 40 L80 32 L116 40 L116 92 L80 84 L44 92 Z" fill="#C8E6C9" fillOpacity="0.35" stroke="#C8E6C9" strokeWidth="1" strokeOpacity="0.5" />
+      <path d="M80 32 L80 84" stroke="#C8E6C9" strokeWidth="1.2" strokeOpacity="0.4" />
+      <path d="M56 48 L80 42 L104 48" stroke="#C8E6C9" strokeWidth="0.8" strokeOpacity="0.3" strokeLinecap="round" />
+      <path d="M56 56 L80 50 L104 56" stroke="#C8E6C9" strokeWidth="0.8" strokeOpacity="0.3" strokeLinecap="round" />
+      <path d="M56 64 L80 58 L104 64" stroke="#C8E6C9" strokeWidth="0.8" strokeOpacity="0.3" strokeLinecap="round" />
+      <path d="M56 72 L80 66 L104 72" stroke="#C8E6C9" strokeWidth="0.8" strokeOpacity="0.3" strokeLinecap="round" />
+      {/* Dove */}
+      <g transform="translate(86, 20) scale(0.85)">
+        <path d="M28 52 C28 52 18 38 22 28 C26 18 36 14 42 18 C48 22 50 34 42 42C38 46 34 48 28 52Z" fill="#D1C4E9" fillOpacity="0.25" stroke="#D1C4E9" strokeWidth="1" strokeOpacity="0.4" />
+        <path d="M22 28 L14 22 L20 26" stroke="#D1C4E9" strokeWidth="0.8" strokeOpacity="0.3" fill="none" strokeLinecap="round" />
+        <path d="M42 18 L52 8 L46 16" stroke="#D1C4E9" strokeWidth="0.8" strokeOpacity="0.3" fill="none" strokeLinecap="round" />
+        <circle cx="38" cy="21" r="1.5" fill="#D1C4E9" fillOpacity="0.3" />
+      </g>
+      {/* Decorative circles */}
+      <circle cx="28" cy="82" r="4" fill="#D1C4E9" fillOpacity="0.12" />
+      <circle cx="138" cy="38" r="5" fill="#C8E6C9" fillOpacity="0.15" />
+      <circle cx="126" cy="96" r="3" fill="#D1C4E9" fillOpacity="0.1" />
+    </svg>
+  )
+
   return (
     <div className="panel author-page">
       <header className="panel-header">
@@ -201,7 +240,7 @@ export default function AuthorPage({ embedded = false }) {
           返回
         </button>
         )}
-        <h1 className="panel-title">{embedded ? '我的主页' : '作者主页'}</h1>
+        <h1 className="panel-title">{embedded || isOwnProfile ? '我的主页' : '作者主页'}</h1>
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
@@ -210,220 +249,321 @@ export default function AuthorPage({ embedded = false }) {
         <Loading text="加载作者信息…" />
       ) : author ? (
         <>
-          {/* ── Section 1: Profile hero ── */}
-          <div className="author-hero">
-            <Avatar name={author.username || '?'} src={isOwnProfile ? userAvatar : author.avatar_data} size={72} />
-            <div className="author-hero-text">
-              <h2 className="author-name">{author.username}</h2>
-              <div className="author-stats">
-                <span><strong>{followersCount}</strong> 粉丝</span>
-                <span><strong>{followingCount}</strong> 关注</span>
-                <span><strong>{cards.length}</strong> 角色</span>
-                <span><strong>{texts.length}</strong> 书籍</span>
+          {isOwnProfile ? (
+            /* ════════════════════════════════════════════
+               PREMIUM LAYOUT — own profile
+               ════════════════════════════════════════════ */
+            <div className="author-split-layout">
+              {/* ──── LEFT: FEED COLUMN ──── */}
+              <div className="author-feed-column">
+
+                {/* Profile Header Card */}
+                <div className="author-profile-card">
+                  <Avatar name={author.username || '?'} src={userAvatar} size={72} />
+                  <div className="author-profile-info">
+                    <h2 className="author-profile-name">{author.username}</h2>
+                    <div className="author-profile-stats">
+                      <span><strong>{followersCount}</strong> 粉丝</span>
+                      <span className="stat-dot">·</span>
+                      <span><strong>{followingCount}</strong> 关注</span>
+                      <span className="stat-dot">·</span>
+                      <span><strong>{cards.length}</strong> 角色</span>
+                      <span className="stat-dot">·</span>
+                      <span><strong>{texts.length}</strong> 书籍</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Composer */}
+                <div className="author-status-card">
+                  <textarea
+                    className="author-status-input"
+                    placeholder="写点什么…"
+                    rows={3}
+                    value={postContent}
+                    onChange={(e) => setPostContent(e.target.value)}
+                  />
+
+                  {/* Image preview */}
+                  {postImages.length > 0 && (
+                    <div className="author-post-img-preview">
+                      {postImages.map((src, i) => (
+                        <div key={i} className="author-post-img-thumb">
+                          <img src={src} alt="" />
+                          <button type="button" className="author-post-img-del" onClick={() => removeImage(i)}>✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Linked card tag */}
+                  {linkedCardId && (() => {
+                    const linked = cards.find(c => c.id === linkedCardId)
+                    const linkedName = linked ? getCharName(linked) : ''
+                    return (
+                      <div className="author-post-linked-card">
+                        {'\u{1F916}'} {linkedName}
+                        <button type="button" className="author-post-img-del" onClick={() => setLinkedCardId('')}>✕</button>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Toolbar */}
+                  <div className="author-status-toolbar">
+                    <div className="author-status-toolbar-left">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={handleFileChange}
+                      />
+                      <button
+                        type="button"
+                        className="author-status-toolbar-btn"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={postImages.length >= 9}
+                        title="添加图片"
+                      >
+                        {'\u{1F5BC}'}
+                      </button>
+                      <button
+                        type="button"
+                        className="author-status-toolbar-btn"
+                        onClick={() => setShowCardPicker(true)}
+                        title="关联角色"
+                      >
+                        {'\u{1F916}'}
+                      </button>
+                      <button
+                        type="button"
+                        className="author-status-toolbar-btn author-status-visibility-btn"
+                        onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
+                        title={postVisibility === 'public' ? '公开' : '私密'}
+                      >
+                        {postVisibility === 'public' ? '\u{1F30D}' : '\u{1F512}'}
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      className="author-status-publish-btn"
+                      disabled={!postContent.trim() || posting}
+                      onClick={handlePostSubmit}
+                    >
+                      {posting ? '发布中…' : '发布'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Posts Feed */}
+                <div className="author-feed-section">
+                  {postsLoading ? (
+                    <Loading text="加载动态…" />
+                  ) : posts.length === 0 ? (
+                    <div className="author-empty-state">
+                      <EmptyIllustration />
+                      <p className="author-empty-text">开始你的第一条动态吧</p>
+                      <p className="author-empty-sub">分享你的想法、角色或创作</p>
+                    </div>
+                  ) : (
+                    <div className="author-posts-list">
+                      {posts.map((p) => (
+                        <PostCard
+                          key={p.id}
+                          post={p}
+                          onLike={handleLike}
+                          onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+                          onDelete={(id) => setDeleteConfirmId(id)}
+                          showDelete={isOwnProfile}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ──── RIGHT: CHARACTERS WIDGET ──── */}
+              <div className="author-chars-column">
+                <div className="author-chars-widget">
+                  <div className="author-chars-widget-title-row">
+                    <h3 className="author-chars-widget-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
+                    {cards.length > 0 && <span className="author-chars-widget-tag">{'\u{2728}'} 已公开</span>}
+                  </div>
+                  {cards.length === 0 ? (
+                    <p className="author-chars-widget-empty">暂无公开角色</p>
+                  ) : (
+                    <div className="author-chars-widget-list">
+                      {cards.slice(0, 15).map((card) => {
+                        const name = getCharName(card)
+                        const identity = getCharIdentity(card)
+                        return (
+                          <div key={card.id} className="author-widget-char-card">
+                            <Avatar name={name} src={card.avatar_data || null} size={44} />
+                            <div className="author-widget-char-info">
+                              <div className="author-widget-char-name">{name}</div>
+                              {identity && <div className="author-widget-char-identity">{identity}</div>}
+                            </div>
+                            <button
+                              type="button"
+                              className="author-widget-char-btn"
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                                  body: JSON.stringify({ text_id: '' }),
+                                })
+                                const data = await res.json()
+                                if (data.card) startChat(data.card)
+                              }}
+                            >
+                              使用
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {cards.length > 15 && (
+                    <p className="author-chars-widget-more">还有 {cards.length - 15} 个角色…</p>
+                  )}
+                </div>
               </div>
             </div>
-            {!isOwnProfile && (
-              <>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  style={{ marginLeft: 'auto' }}
-                  onClick={() => { setMessageTargetUserId(authorUserId); setMessageTargetUsername(author.username); setView('messages') }}
-                >
-                  发私信
-                </button>
-                <button
-                  type="button"
-                  className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
-                  onClick={handleFollow}
-                >
-                  {isFollowing ? '已关注' : '关注'}
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* ── Section 2: Bookshelf ── */}
-          <div className="author-section">
-            <h3 className="author-section-title">{'\u{1F4D6}'} 书架 ({texts.length})</h3>
-            {texts.length === 0 ? (
-              <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
-                {isOwnProfile ? '还没有公开的书籍，去文本管理中公开吧' : '暂无公开书籍'}
-              </p>
-            ) : (
-              texts.map((t) => (
-                <button key={t.id} className="author-book-card"
-                  onClick={() => { setCurrentTextDetailId(t.id); setView('textDetail') }}>
-                  <span style={{ fontSize: 28 }}>{'\u{1F4D6}'}</span>
-                  <div className="author-book-info">
-                    <div className="author-book-title">{t.title || '未命名'}</div>
-                    {t.description && <div className="author-book-desc">{t.description}</div>}
+          ) : (
+            /* ════════════════════════════════════════════
+               EXISTING LAYOUT — other author profile
+               ════════════════════════════════════════════ */
+            <>
+              {/* ── Section 1: Profile hero ── */}
+              <div className="author-hero">
+                <Avatar name={author.username || '?'} src={author.avatar_data} size={72} />
+                <div className="author-hero-text">
+                  <h2 className="author-name">{author.username}</h2>
+                  <div className="author-stats">
+                    <span><strong>{followersCount}</strong> 粉丝</span>
+                    <span><strong>{followingCount}</strong> 关注</span>
+                    <span><strong>{cards.length}</strong> 角色</span>
+                    <span><strong>{texts.length}</strong> 书籍</span>
                   </div>
-                  <div className="author-book-meta">
-                    {t.char_count?.toLocaleString()} 字
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
+                </div>
+                {!isOwnProfile && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ marginLeft: 'auto' }}
+                      onClick={() => { setMessageTargetUserId(authorUserId); setMessageTargetUsername(author.username); setView('messages') }}
+                    >
+                      发私信
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
+                      onClick={handleFollow}
+                    >
+                      {isFollowing ? '已关注' : '关注'}
+                    </button>
+                  </>
+                )}
+              </div>
 
-          {/* ── Section 3: Posts ── */}
-          <div className="author-section">
-            <h3 className="author-section-title">{'\u{1F4AC}'} 动态</h3>
-
-            {isOwnProfile && (
-              <div className="modal-body" style={{ marginBottom: 16, padding: 0 }}>
-                <textarea
-                  className="modal-textarea"
-                  placeholder="写点什么…"
-                  rows={3}
-                  value={postContent}
-                  onChange={(e) => setPostContent(e.target.value)}
-                  style={{ marginBottom: 8 }}
-                />
-
-                {/* Image preview */}
-                {postImages.length > 0 && (
-                  <div className="author-post-img-preview">
-                    {postImages.map((src, i) => (
-                      <div key={i} className="author-post-img-thumb">
-                        <img src={src} alt="" />
-                        <button type="button" className="author-post-img-del" onClick={() => removeImage(i)}>✕</button>
+              {/* ── Section 2: Bookshelf ── */}
+              <div className="author-section">
+                <h3 className="author-section-title">{'\u{1F4D6}'} 书架 ({texts.length})</h3>
+                {texts.length === 0 ? (
+                  <p style={{ color: 'var(--text-dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
+                    暂无公开书籍
+                  </p>
+                ) : (
+                  texts.map((t) => (
+                    <button key={t.id} className="author-book-card"
+                      onClick={() => { setCurrentTextDetailId(t.id); setView('textDetail') }}>
+                      <span style={{ fontSize: 28 }}>{'\u{1F4D6}'}</span>
+                      <div className="author-book-info">
+                        <div className="author-book-title">{t.title || '未命名'}</div>
+                        {t.description && <div className="author-book-desc">{t.description}</div>}
                       </div>
+                      <div className="author-book-meta">
+                        {t.char_count?.toLocaleString()} 字
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {/* ── Section 3: Posts ── */}
+              <div className="author-section">
+                <h3 className="author-section-title">{'\u{1F4AC}'} 动态</h3>
+
+                {postsLoading ? (
+                  <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
+                ) : posts.length === 0 ? (
+                  <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
+                ) : (
+                  <div className="author-posts-list">
+                    {posts.map((p) => (
+                      <PostCard
+                        key={p.id}
+                        post={p}
+                        onLike={handleLike}
+                        onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+                        onDelete={(id) => setDeleteConfirmId(id)}
+                        showDelete={false}
+                      />
                     ))}
                   </div>
                 )}
+              </div>
 
-                {/* Linked card tag */}
-                {linkedCardId && (() => {
-                  const linked = cards.find(c => c.id === linkedCardId)
-                  const linkedName = linked
-                    ? (JSON.parse(linked.card_json || '{}').name || linked.name)
-                    : ''
-                  return (
-                    <div className="author-post-linked-card">
-                      {'\u{1F916}'} {linkedName}
-                      <button type="button" className="author-post-img-del" onClick={() => setLinkedCardId('')}>✕</button>
-                    </div>
-                  )
-                })()}
-
-                <div className="author-post-toolbar">
-                  <div className="author-post-toolbar-left">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      style={{ display: 'none' }}
-                      onChange={handleFileChange}
-                    />
-                    <button
-                      type="button"
-                      className="author-post-toolbar-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={postImages.length >= 9}
-                      title="添加图片"
-                    >
-                      {'\u{1F5BC}'}
-                    </button>
-                    <button
-                      type="button"
-                      className="author-post-toolbar-btn"
-                      onClick={() => setShowCardPicker(true)}
-                      title="关联角色"
-                    >
-                      {'\u{1F916}'}
-                    </button>
-                    <button
-                      type="button"
-                      className="author-post-toolbar-btn author-post-visibility-btn"
-                      onClick={() => setPostVisibility(postVisibility === 'public' ? 'private' : 'public')}
-                      title={postVisibility === 'public' ? '公开' : '私密'}
-                    >
-                      {postVisibility === 'public' ? '\u{1F30D}' : '\u{1F512}'}
-                    </button>
+              {/* ── Section 4: Public cards ── */}
+              <div className="author-section">
+                <h3 className="author-section-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
+                {cards.length === 0 ? (
+                  <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
+                ) : (
+                  <div className="author-cards-grid">
+                    {cards.map((card) => {
+                      const name = getCharName(card)
+                      const identity = getCharIdentity(card)
+                      const background = getCharBackground(card)
+                      return (
+                        <div key={card.id} className="author-char-card">
+                          <Avatar name={name} src={card.avatar_data || null} size={56} />
+                          <h4 className="author-char-name">{name}</h4>
+                          {identity && <p className="author-char-identity">{identity}</p>}
+                          {background && (
+                            <ExpandableText text={background} maxLines={3} />
+                          )}
+                          <div className="author-char-footer">
+                            <span className="author-char-likes">{'\u{2764}'} {card.likes || 0}</span>
+                            <button type="button" className="btn-primary btn-sm" onClick={async () => {
+                              const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                                body: JSON.stringify({ text_id: '' }),
+                              })
+                              const data = await res.json()
+                              if (data.card) startChat(data.card)
+                            }}>
+                              使用
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                  <button
-                    type="button"
-                    className="btn-primary author-post-publish-btn"
-                    disabled={!postContent.trim() || posting}
-                    onClick={handlePostSubmit}
-                  >
-                    {posting ? '发布中…' : '发布'}
-                  </button>
-                </div>
+                )}
               </div>
-            )}
-
-            {postsLoading ? (
-              <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</p>
-            ) : posts.length === 0 ? (
-              <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20 }}>暂无动态</p>
-            ) : (
-              <div className="author-posts-list">
-                {posts.map((p) => (
-                  <PostCard
-                    key={p.id}
-                    post={p}
-                    onLike={handleLike}
-                    onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
-                    onDelete={(id) => setDeleteConfirmId(id)}
-                    showDelete={isOwnProfile}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* ── Section 4: Public cards ── */}
-          <div className="author-section">
-            <h3 className="author-section-title">{'\u{1F3AD}'} 公开角色 ({cards.length})</h3>
-            {cards.length === 0 ? (
-              <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>暂无公开角色</p>
-            ) : (
-              <div className="author-cards-grid">
-                {cards.map((card) => {
-                  const cardData = typeof card.card_json === 'string'
-                    ? JSON.parse(card.card_json)
-                    : card.card_json || {}
-                  const name = cardData.name || card.name || '?'
-                  const identity = cardData.identity || ''
-                  const background = cardData.background || ''
-                  return (
-                    <div key={card.id} className="author-char-card">
-                      <Avatar name={name} src={card.avatar_data || null} size={56} />
-                      <h4 className="author-char-name">{name}</h4>
-                      {identity && <p className="author-char-identity">{identity}</p>}
-                      {background && (
-                        <ExpandableText text={background} maxLines={3} />
-                      )}
-                      <div className="author-char-footer">
-                        <span className="author-char-likes">{'\u{2764}'} {card.likes || 0}</span>
-                        <button type="button" className="btn-primary btn-sm" onClick={async () => {
-                          const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                            body: JSON.stringify({ text_id: '' }),
-                          })
-                          const data = await res.json()
-                          if (data.card) startChat(data.card)
-                        }}>
-                          使用
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+            </>
+          )}
         </>
       ) : (
         <p style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 40 }}>用户不存在</p>
       )}
 
-      {/* Card picker modal */}
+      {/* Card picker modal (shared) */}
       {showCardPicker && (
         <div className="modal-overlay" onClick={() => setShowCardPicker(false)}>
           <div className="modal-card" style={{ maxWidth: 360, maxHeight: '60vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
@@ -437,8 +577,7 @@ export default function AuthorPage({ embedded = false }) {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {cards.map((c) => {
-                    const cd = typeof c.card_json === 'string' ? JSON.parse(c.card_json) : c.card_json || {}
-                    const name = cd.name || c.name || '?'
+                    const name = getCharName(c)
                     const sel = linkedCardId === c.id
                     return (
                       <button

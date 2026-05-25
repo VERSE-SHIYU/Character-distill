@@ -146,12 +146,21 @@ async def delete_card_route(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Soft-delete a character card. Owner or admin can delete."""
+    import sys
+    print(f"[DIAG] DELETE /api/cards/{card_id} by user {user.get('id')} (admin={user.get('is_admin')})", flush=True)
     card = await storage.get_card(card_id)
     if not card:
+        print(f"[DIAG] Card {card_id} not found", flush=True)
         raise HTTPException(404, "Card not found")
+    print(f"[DIAG] Card found: user_id={card.get('user_id')}, deleted_at={card.get('deleted_at')}", flush=True)
     if not user.get("is_admin") and card.get("user_id") != user["id"]:
+        print(f"[DIAG] Permission denied: card.user_id={card.get('user_id')} != user.id={user['id']}", flush=True)
         raise HTTPException(403, "无权删除此角色卡")
     ok = await storage.delete_card(card_id)
     if not ok:
+        print(f"[DIAG] delete_card returned False", flush=True)
         raise HTTPException(500, "删除失败")
+    # Verify
+    verify = await storage.get_card(card_id)
+    print(f"[DIAG] After delete, card deleted_at={verify.get('deleted_at') if verify else 'N/A'}", flush=True)
     return {"ok": True}
