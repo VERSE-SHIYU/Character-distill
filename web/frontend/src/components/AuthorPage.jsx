@@ -92,7 +92,9 @@ export default function AuthorPage({ embedded = false }) {
     if (!authorUserId) return
     setPostsLoading(true)
     try {
-      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/posts`)
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/posts`, {
+        headers: { ...getAuthHeaders() },
+      })
       const data = await res.json()
       setPosts(data.posts || [])
     } catch {
