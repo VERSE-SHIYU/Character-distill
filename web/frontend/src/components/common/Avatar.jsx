@@ -18,7 +18,7 @@ export default function Avatar({ name = '?', src = null, size = 40 }) {
         width: size,
         height: size,
         borderRadius: '50%',
-        background: src ? 'transparent' : bg,
+        background: src ? 'var(--glass-bg)' : bg,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

@@ -313,8 +313,15 @@ export default function AuthorPage({ embedded = false }) {
                         ) : (
                           followersList.map((f) => (
                             <div key={f.id || f.user_id} className="stat-follow-item">
-                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
-                              <span>{f.username}</span>
+                              <button type="button" className="stat-follow-user-btn" onClick={() => { setAuthorUserId(f.id || f.user_id); if (!embedded) setView('author') }}>
+                                <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                                <span>{f.username}</span>
+                              </button>
+                              {authUser?.id !== (f.id || f.user_id) && (
+                                <button type="button" className="btn-sm btn-outline stat-follow-msg-btn" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                  私信
+                                </button>
+                              )}
                             </div>
                           ))
                         )}
@@ -327,8 +334,15 @@ export default function AuthorPage({ embedded = false }) {
                         ) : (
                           followingList.map((f) => (
                             <div key={f.id || f.user_id} className="stat-follow-item">
-                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
-                              <span>{f.username}</span>
+                              <button type="button" className="stat-follow-user-btn" onClick={() => { setAuthorUserId(f.id || f.user_id); if (!embedded) setView('author') }}>
+                                <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
+                                <span>{f.username}</span>
+                              </button>
+                              {authUser?.id !== (f.id || f.user_id) && (
+                                <button type="button" className="btn-sm btn-outline stat-follow-msg-btn" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                  私信
+                                </button>
+                              )}
                             </div>
                           ))
                         )}

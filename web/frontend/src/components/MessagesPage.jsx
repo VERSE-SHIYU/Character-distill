@@ -208,13 +208,22 @@ export default function MessagesPage() {
         )}
       </header>
 
-      {!convLoading && conversations.length === 0 ? (
-        <div className="messages-empty-state">
-          <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
-          <p className="messages-empty-title">暂无私信</p>
-          <p className="messages-empty-desc">
-            去角色市场关注感兴趣的作者，发送你的第一条私信吧
-          </p>
+      {!convLoading && conversations.length === 0 && !activeOtherId ? (
+        <div className="messages-layout">
+          <div className="messages-sidebar messages-sidebar-empty">
+            <div className="messages-empty-state">
+              <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
+              <p className="messages-empty-title">暂无私信</p>
+              <p className="messages-empty-desc">
+                去角色市场关注感兴趣的作者，发送你的第一条私信吧
+              </p>
+            </div>
+          </div>
+          <div className="messages-chat-area">
+            <div className="messages-empty-chat">
+              选择一个会话
+            </div>
+          </div>
         </div>
       ) : (
         <div className="messages-layout">
