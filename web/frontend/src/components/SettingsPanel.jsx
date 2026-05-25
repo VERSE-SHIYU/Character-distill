@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import { fetchWithTimeout, postJSON, getMyUsage, updateApiConfig } from '../api/client'
+import { useEffect, useState } from 'react'
+import { fetchWithTimeout, getMyUsage, updateApiConfig } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
-import ThemeSwitcher from './ThemeSwitcher'
-import ImageCropModal from './common/ImageCropModal'
 
 const APP_VERSION = '1.0.0'
 const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
@@ -64,7 +62,7 @@ export default function SettingsPanel() {
       <header className="panel-header">
         <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回">{'\u{25C0}'}</button>
         <h1 className="panel-title">设置</h1>
-        <p className="panel-desc">API 配置与界面主题</p>
+        <p className="panel-desc">API 配置与系统设置</p>
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
@@ -198,19 +196,7 @@ export default function SettingsPanel() {
         <UsageCard />
       </section>
 
-      <section className="settings-section">
-        <h2 className="settings-section-title">头像</h2>
-        <UserAvatarSection />
-      </section>
-
-      <section className="settings-section">
-        <h2 className="settings-section-title">主题</h2>
-        <div className="settings-theme-row">
-          <ThemeSwitcher />
-        </div>
-      </section>
-
-      <section className="settings-section settings-about">
+<section className="settings-section settings-about">
         <h2 className="settings-section-title">关于</h2>
         <p className="settings-about-line">
           <span className="settings-label">版本</span>
@@ -308,65 +294,3 @@ function UsageCard() {
   )
 }
 
-function UserAvatarSection() {
-  const userAvatar = useAppStore((s) => s.userAvatar)
-  const setUserAvatar = useAppStore((s) => s.setUserAvatar)
-  const fileInputRef = useRef(null)
-  const [cropFile, setCropFile] = useState(null)
-
-  useEffect(() => {
-    const saved = localStorage.getItem('user_avatar')
-    if (saved && !userAvatar) setUserAvatar(saved)
-  }, [])
-
-  const handleFileChange = (e) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setCropFile(f)
-    e.target.value = ''
-  }
-
-  const handleCropConfirm = (base64) => {
-    setCropFile(null)
-    setUserAvatar(base64)
-    localStorage.setItem('user_avatar', base64)
-  }
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-      <button
-        type="button"
-        className="card-avatar-btn"
-        style={{ width: 80, height: 80, borderRadius: '50%', border: '2px dashed var(--border)', flexShrink: 0 }}
-        onClick={() => fileInputRef.current?.click()}
-      >
-        {userAvatar ? (
-          <img
-            src={userAvatar}
-            alt="用户头像"
-            style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-          />
-        ) : (
-          <span style={{ fontSize: 28, color: 'var(--text-muted)' }}>{'📷'}</span>
-        )}
-      </button>
-      <div>
-        <p className="settings-hint" style={{ margin: 0 }}>
-          点击头像上传图片，支持裁剪为 200×200 圆形头像
-        </p>
-      </div>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".jpg,.jpeg,.png,.webp"
-        style={{ display: 'none' }}
-        onChange={handleFileChange}
-      />
-      <ImageCropModal
-        file={cropFile}
-        onConfirm={handleCropConfirm}
-        onCancel={() => setCropFile(null)}
-      />
-    </div>
-  )
-}

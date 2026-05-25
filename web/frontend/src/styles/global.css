@@ -5592,6 +5592,20 @@ select.settings-input {
   background: rgba(var(--accent-rgb), 0.12);
 }
 
+.sidebar-theme-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  transition: background 0.18s;
+}
+
+.sidebar-theme-btn:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
 .sidebar-logout-btn:hover {
   background: rgba(231, 76, 60, 0.08);
   border-color: rgba(231, 76, 60, 0.3);

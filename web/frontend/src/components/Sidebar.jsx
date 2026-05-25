@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
-import ThemeSwitcher from './ThemeSwitcher'
 import { fetchWithTimeout } from '../api/client'
 
 const NAV_ITEMS = [
@@ -22,6 +21,13 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem('theme')
+      if (saved === 'dark' || saved === 'light') return saved
+    } catch {}
+    return document.documentElement.classList.contains('dark') ? 'dark' : 'light'
+  })
 
   const isVisible = open || pinned
 
@@ -98,8 +104,6 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
         </nav>
       )}
 
-      {isVisible && <ThemeSwitcher />}
-
       {isVisible && authUser && (
         <div className="sidebar-user-info">
           <button
@@ -119,6 +123,19 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               title="音色管理"
             >
               {'\u{1F399}'}
+            </button>
+            <button
+              type="button"
+              className="sidebar-theme-btn"
+              onClick={() => {
+                const html = document.documentElement
+                const isDark = html.classList.toggle('dark')
+                try { localStorage.setItem('theme', isDark ? 'dark' : 'light') } catch {}
+                setTheme(isDark ? 'dark' : 'light')
+              }}
+              title="切换主题"
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
             </button>
             <button
               type="button"
