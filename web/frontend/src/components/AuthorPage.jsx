@@ -307,9 +307,9 @@ export default function AuthorPage({ embedded = false }) {
               {/* ──── LEFT: FEED COLUMN ──── */}
               <div className="author-feed-column">
 
-                {/* Profile Header Card */}
-                <div className="author-profile-card">
-                  <Avatar name={author.username || '?'} src={userAvatar} size={72} />
+                {/* Profile Header Card — vertical layout */}
+                <div className="author-profile-card author-profile-card--vertical">
+                  <Avatar name={author.username || '?'} src={userAvatar} size={88} />
                   <div className="author-profile-info">
                     <h2 className="author-profile-name">{author.username}</h2>
                     <div className="author-profile-stats">
@@ -326,6 +326,11 @@ export default function AuthorPage({ embedded = false }) {
                         </button>
                       )}
                     </div>
+                    {isOwnProfile && (
+                      <button className="author-edit-profile-btn" onClick={() => setView('settings')}>
+                        编辑资料
+                      </button>
+                    )}
                     {showFollowers && (
                       <div className="stat-follow-popup">
                         {followersList.length === 0 ? (

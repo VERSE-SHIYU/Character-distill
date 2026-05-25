@@ -682,7 +682,7 @@ export default function MarketCardDetail() {
                     className="market-detail-comment-avatar-btn"
                     onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
                   >
-                    <Avatar name={c.username} size={32} />
+                    <Avatar name={c.username} src={c.avatar_data} size={32} />
                   </button>
                   <div className="market-detail-comment-body">
                     <div className="market-detail-comment-head">

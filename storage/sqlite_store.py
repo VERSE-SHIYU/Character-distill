@@ -2198,7 +2198,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, user_id, username, content, created_at FROM card_comments WHERE card_id = ? ORDER BY created_at DESC",
+                    "SELECT c.id, c.user_id, c.username, c.content, c.created_at, COALESCE(u.avatar_data, '') AS avatar_data FROM card_comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.card_id = ? ORDER BY c.created_at DESC",
                     (card_id,),
                 )
                 rows = await cursor.fetchall()
