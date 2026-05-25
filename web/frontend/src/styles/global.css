@@ -1062,6 +1062,8 @@ body {
 
 .sidebar-logo span {
   font-size: 22px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .sidebar-sub {
