@@ -234,6 +234,8 @@ async def feed(
 ) -> dict:
     """Get feed posts from followed users."""
     posts = await storage.get_feed_posts(user["id"], page, page_size)
+    for p in posts:
+        p["liked_by_me"] = bool(p.get("liked_by_me"))
     return {"posts": posts}
 
 

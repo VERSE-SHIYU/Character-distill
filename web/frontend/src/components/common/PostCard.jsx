@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
+import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
 
 /* ── Expandable text ── */
@@ -58,8 +59,29 @@ function ImageGrid({ images, onImageClick }) {
   )
 }
 
+/* ── Time formatting ── */
+function fmtTime(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    const now = new Date()
+    const diffMs = now - d
+    const diffMin = Math.floor(diffMs / 60000)
+    if (diffMin < 1) return '刚刚'
+    if (diffMin < 60) return `${diffMin}分钟前`
+    const diffHour = Math.floor(diffMin / 60)
+    if (diffHour < 24) return `${diffHour}小时前`
+    const diffDay = Math.floor(diffHour / 24)
+    if (diffDay < 7) return `${diffDay}天前`
+    return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  } catch {
+    return ''
+  }
+}
+
 /* ── PostCard ── */
 export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDelete = false, showAuthor = true }) {
+  const setView = useAppStore((s) => s.setView)
   const [showComments, setShowComments] = useState(false)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
@@ -117,11 +139,11 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       {showAuthor && (
         <div className="post-card-author">
           <button type="button" className="post-card-author-link" onClick={() => onAuthorClick?.(post.user_id)}>
-            <Avatar name={post.author_name || '?'} size={36} />
+            <Avatar name={post.author_name || '?'} src={post.author_avatar || null} size={36} />
             <span className="post-card-author-name">{post.author_name || '匿名'}</span>
           </button>
           {post.visibility === 'private' && <span className="post-card-private">{'\u{1F512}'} 私密</span>}
-          <span className="post-card-time">{post.created_at?.slice(0, 16).replace('T', ' ')}</span>
+          <span className="post-card-time">{fmtTime(post.created_at)}</span>
         </div>
       )}
 
@@ -132,9 +154,24 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       <ImageGrid images={post.images} onImageClick={setPreviewImg} />
 
       {/* Card reference */}
-      {post.card_id && (
-        <div className="post-card-ref">{'\u{1F916}'} 关联角色</div>
-      )}
+      {post.card_id && (() => {
+        let cardData = null
+        if (post.card_json) {
+          try { cardData = typeof post.card_json === 'string' ? JSON.parse(post.card_json) : post.card_json } catch {}
+        }
+        const cardName = post.card_name || '关联角色'
+        const cardIdentity = cardData?.identity || ''
+        return (
+          <button type="button" className="post-card-ref" onClick={() => {
+            useAppStore.getState().setCurrentMarketCardId(post.card_id)
+            setView('marketCardDetail')
+          }}>
+            <Avatar name={cardName} src={post.card_avatar_data || null} size={24} />
+            <span className="post-card-ref-name">{cardName}</span>
+            {cardIdentity && <span className="post-card-ref-identity">{cardIdentity}</span>}
+          </button>
+        )
+      })()}
 
       {/* Action bar */}
       <div className="post-card-actions">

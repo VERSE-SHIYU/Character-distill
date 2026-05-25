@@ -2235,16 +2235,21 @@ class SQLiteStore(StorageBase):
         """Get posts for a user. viewer_id==user_id sees all, others see only public."""
         try:
             async with await self._connect() as conn:
+                base = """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id, p.likes, p.created_at,
+                                 COALESCE(u.username, '') AS author_name,
+                                 COALESCE(u.avatar_data, '') AS author_avatar,
+                                 (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
+                                 c.name AS card_name,
+                                 c.card_json AS card_json,
+                                 c.avatar_data AS card_avatar_data
+                          FROM user_posts p
+                          JOIN users u ON u.id = p.user_id
+                          LEFT JOIN cards c ON c.id = p.card_id
+                          WHERE p.user_id = ?"""
                 if viewer_id == user_id:
-                    cursor = await conn.execute(
-                        "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE user_id = ? ORDER BY created_at DESC",
-                        (user_id,),
-                    )
+                    cursor = await conn.execute(base + " ORDER BY p.created_at DESC", (user_id,))
                 else:
-                    cursor = await conn.execute(
-                        "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE user_id = ? AND visibility = 'public' ORDER BY created_at DESC",
-                        (user_id,),
-                    )
+                    cursor = await conn.execute(base + " AND p.visibility = 'public' ORDER BY p.created_at DESC", (user_id,))
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
         except Exception as exc:
@@ -2276,9 +2281,13 @@ class SQLiteStore(StorageBase):
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(u.avatar_data, '') AS author_avatar,
                               (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = ?) AS liked_by_me,
-                              (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count
+                              (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
+                              c.name AS card_name,
+                              c.card_json AS card_json,
+                              c.avatar_data AS card_avatar_data
                         FROM user_posts p
                         JOIN users u ON u.id = p.user_id
+                        LEFT JOIN cards c ON c.id = p.card_id
                         WHERE p.user_id IN (SELECT following_id FROM user_follows WHERE follower_id = ?)
                           AND p.visibility = 'public'
                         ORDER BY p.created_at DESC

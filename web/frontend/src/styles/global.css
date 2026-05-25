@@ -7650,13 +7650,34 @@ select.settings-input {
 .post-card-ref {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--text);
   background: rgba(var(--accent-rgb), 0.08);
-  padding: 4px 10px;
+  padding: 6px 12px;
   border-radius: 999px;
   margin-bottom: 10px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+
+.post-card-ref:hover {
+  background: rgba(var(--accent-rgb), 0.15);
+}
+
+.post-card-ref-name {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.post-card-ref-identity {
+  color: var(--text-dim);
+  font-size: 11px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Action bar ── */
