@@ -1,7 +1,80 @@
-/* ===== Color Themes: Milktea / Ocean / Sakura / Midnight ===== */
+/* ===== Color Themes: Aurora / Milktea / Ocean / Sakura / Midnight ===== */
 
-/* Default: Cream Milktea (暖杏版) */
+/* Default: Aurora Purple (极光紫微光版) */
 :root,
+.theme-aurora {
+  --primary: #7B61FF;
+  --primary-hover: #6A4FEF;
+  --secondary: #EEEAFF;
+  --highlight: linear-gradient(135deg, #7B61FF 0%, #FA8BFF 50%, #2BD2FF 100%);
+  --bg-page: #FAFAFE;
+  --accent: #7B61FF;
+  --accent-hover: #FA8BFF;
+  --glass-bg: #FFFFFF;
+  --glass-border: rgba(123,97,255,0.08);
+  --sidebar-bg: #FFFFFF;
+  --user-bubble: rgba(123,97,255,0.10);
+  --assistant-bubble: rgba(250,139,255,0.08);
+  --blob-green: rgba(123,97,255,0.03);
+  --blob-blue: rgba(43,210,255,0.05);
+  --blob-yellow: rgba(250,139,255,0.04);
+  --blob-purple: rgba(123,97,255,0.06);
+  --text-primary: #1A1A24;
+  --text-secondary: rgba(26,26,36,0.55);
+  --input-border: rgba(123,97,255,0.10);
+  --pill-bg: rgba(123,97,255,0.08);
+  --pill-border: rgba(123,97,255,0.18);
+  --pill-text: #7B61FF;
+  --shadow: 0 12px 32px rgba(123,97,255,0.06);
+  --card-shadow: 0 12px 32px rgba(123,97,255,0.06), inset 0 1px 0 rgba(255,255,255,0.9);
+
+  /* Backward compat aliases */
+  --cream-green: var(--secondary);
+  --cream-green-soft: var(--secondary);
+  --ice-blue: #2BD2FF;
+  --warm-yellow: #FFF0E0;
+  --soft-lavender: #EEEAFF;
+  --cream-white: var(--bg-page);
+  --charcoal: var(--text-primary);
+  --charcoal-dim: rgba(26,26,36,0.55);
+  --charcoal-light: rgba(26,26,36,0.35);
+  --accent-soft: rgba(123,97,255,0.10);
+  --purple: #7B61FF;
+
+  --text: var(--text-primary);
+  --text-sec: var(--text-secondary);
+  --text-dim: var(--charcoal-light);
+  --green: var(--secondary);
+  --yellow: var(--warm-yellow);
+
+  --bg: var(--bg-page);
+  --card-bg: var(--glass-bg);
+  --card-border: var(--glass-border);
+  --card-radius: 24px;
+  --btn-radius: 12px;
+  --card-blur: blur(28px) saturate(200%);
+
+  --input-bg: var(--glass-bg);
+  --input-radius: 8px;
+
+  --sidebar-w: 280px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  --chat-font-size: 0.94rem;
+
+  --ease-out: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-sidebar: cubic-bezier(0.22, 0.68, 0, 1.02);
+
+  --scrollbar-thumb: rgba(123, 97, 255, 0.2);
+  --scrollbar-thumb-hover: rgba(123, 97, 255, 0.4);
+  --accent-rgb: 123, 97, 255;
+}
+
+/* Milktea (暖杏版) */
 .theme-milktea {
   --primary: #d4ead8;
   --primary-hover: #c2dfc7;
@@ -948,25 +1021,25 @@ body {
 .btn-primary {
   height: 44px;
   padding: 0 24px;
-  background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+  background: var(--primary);
   border: none;
   border-radius: var(--btn-radius);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
-  color: var(--charcoal);
+  color: #fff;
   cursor: pointer;
   transition: box-shadow 0.2s, transform 0.15s var(--ease-spring), opacity 0.2s;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.2);
+  box-shadow: 0 2px 8px rgba(var(--accent-rgb), 0.25);
 }
 
 .btn-primary:hover:not(:disabled) {
-  box-shadow: 0 4px 20px rgba(var(--accent-rgb), 0.4);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent-hover) 100%);
+  box-shadow: 0 4px 24px rgba(var(--accent-rgb), 0.35);
   transform: translateY(-1px);
-  filter: brightness(1.05);
 }
 
 .btn-primary:active:not(:disabled) {
@@ -4901,9 +4974,9 @@ select.settings-input {
   align-items: center;
   padding: 20px 16px;
   margin-bottom: 28px;
-  background: var(--bg-card, #fff);
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.03);
+  background: var(--glass-bg);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
 }
 
 .home-stats-item {
@@ -4930,7 +5003,7 @@ select.settings-input {
 .home-stats-divider {
   width: 1px;
   height: 24px;
-  background: rgba(0,0,0,0.06);
+  background: var(--glass-border);
   flex-shrink: 0;
 }
 
@@ -4954,7 +5027,7 @@ select.settings-input {
   font-weight: 500;
   color: var(--accent);
   background: transparent;
-  border: 1px solid rgba(111,173,116,0.3);
+  border: 1px solid var(--glass-border);
   border-radius: 999px;
   cursor: pointer;
   transition: all 0.2s;
@@ -4962,7 +5035,7 @@ select.settings-input {
 }
 
 .home-view-all-btn:hover {
-  background: rgba(111,173,116,0.08);
+  background: var(--accent-soft);
   border-color: var(--accent);
 }
 
@@ -4990,10 +5063,10 @@ select.settings-input {
   align-items: center;
   gap: 14px;
   padding: 18px 20px;
-  border-radius: 16px;
-  background: #fff;
-  border: none;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  border-radius: var(--card-radius);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--card-shadow);
   cursor: pointer;
   transition: all 0.25s ease;
   text-align: left;
@@ -5005,7 +5078,13 @@ select.settings-input {
 }
 .home-char-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.06), 0 0 0 1px rgba(111,173,116,0.1);
+  box-shadow: var(--shadow), 0 0 0 1px rgba(123,97,255,0.08);
+}
+
+/* Squircle avatar in char grid */
+.home-char-card > div:first-child {
+  border-radius: 16px !important;
+  border-color: var(--glass-border) !important;
 }
 
 .home-char-arrow {
@@ -5059,15 +5138,16 @@ select.settings-input {
 }
 
 .home-recent-container {
-  background: #f5f6f7;
-  border-radius: 16px;
-  padding: 12px;
+  background: var(--glass-bg);
+  border-radius: var(--card-radius);
+  padding: 16px;
+  box-shadow: var(--card-shadow);
 }
 
 .home-recent-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .home-recent-item {
@@ -5081,13 +5161,13 @@ select.settings-input {
   font: inherit;
   color: inherit;
   width: 100%;
-  background: #fff;
+  background: transparent;
   border-radius: 12px;
   transition: all 0.2s;
 }
 
 .home-recent-item:hover {
-  box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+  background: var(--accent-soft);
   transform: translateY(-1px);
 }
 
@@ -6666,10 +6746,10 @@ select.settings-input {
 .market-detail-cover-img {
   width: 120px;
   height: 120px;
-  border-radius: 16px;
+  border-radius: 24px;
   object-fit: cover;
-  border: 3px solid var(--bg-card);
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  border: 3px solid var(--glass-bg);
+  box-shadow: var(--shadow);
 }
 
 .market-detail-name {
@@ -7656,10 +7736,10 @@ select.settings-input {
   align-items: center;
   gap: 24px;
   padding: 28px 32px;
-  background: var(--bg-card, #fff);
-  border-radius: 16px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.02);
-  border: none;
+  background: var(--glass-bg);
+  border-radius: var(--card-radius);
+  box-shadow: var(--card-shadow);
+  border: 1px solid var(--glass-border);
 }
 
 .author-profile-info {
@@ -7700,17 +7780,18 @@ select.settings-input {
 
 .author-status-card {
   background: transparent;
-  border-radius: 16px;
+  border-radius: var(--card-radius);
   padding: 0;
   box-shadow: none;
-  border: none;
+  border: 1px solid transparent;
   transition: all 0.25s;
 }
 
 .author-status-card:focus-within {
-  background: var(--bg-card, #fff);
+  background: var(--glass-bg);
   padding: 20px;
-  box-shadow: 0 0 0 3px rgba(111, 173, 116, 0.12), 0 4px 20px rgba(0,0,0,0.03);
+  box-shadow: var(--card-shadow);
+  border-color: var(--glass-border);
 }
 
 .author-status-input {
@@ -7800,8 +7881,8 @@ select.settings-input {
   font-size: 14px;
   font-weight: 600;
   padding: 8px 24px;
-  border-radius: 10px;
-  background: var(--accent);
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--accent-hover) 100%);
   color: #fff;
   border: none;
   cursor: pointer;
@@ -7810,8 +7891,8 @@ select.settings-input {
 }
 
 .author-status-publish-btn:hover {
-  background: var(--accent-hover);
-  opacity: 0.95;
+  opacity: 0.92;
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.3);
 }
 
 .author-status-publish-btn:disabled {
@@ -7862,11 +7943,11 @@ select.settings-input {
 /* ── Right Column: Characters Widget ── */
 
 .author-chars-widget {
-  background: var(--bg-card, #fff);
-  border-radius: 16px;
+  background: var(--glass-bg);
+  border-radius: var(--card-radius);
   padding: 24px 20px 20px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.02);
-  border: none;
+  box-shadow: var(--card-shadow);
+  border: 1px solid var(--glass-border);
   position: relative;
 }
 
@@ -7876,7 +7957,7 @@ select.settings-input {
   justify-content: space-between;
   margin-bottom: 16px;
   padding-bottom: 10px;
-  border-bottom: 1px solid rgba(0,0,0,0.04);
+  border-bottom: 1px solid var(--glass-border);
 }
 
 .author-chars-widget-title {
@@ -8010,10 +8091,10 @@ select.settings-input {
 
 /* ===== PostCard (shared by FeedPage + AuthorPage) ===== */
 .post-card {
-  background: var(--bg-card);
-  border: none;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.03);
-  border-radius: 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--card-shadow);
+  border-radius: var(--card-radius);
   padding: 20px;
   transition: all 0.2s;
 }

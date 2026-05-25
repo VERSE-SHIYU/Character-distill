@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 
 const themes = [
+  { key: 'aurora',   label: '\u{1F4AB} 极光紫' },
   { key: 'milktea',  label: '\u{1F375} 抹茶' },
   { key: 'ocean',    label: '\u{1F30A} 海盐' },
   { key: 'sakura',   label: '\u{1F338} 樱花' },
@@ -9,8 +10,8 @@ const themes = [
 
 export default function ThemeSwitcher() {
   const [current, setCurrent] = useState(() => {
-    try { return localStorage.getItem('charsim-theme') || 'milktea' }
-    catch { return 'milktea' }
+    try { return localStorage.getItem('charsim-theme') || 'aurora' }
+    catch { return 'aurora' }
   })
 
   useEffect(() => {
