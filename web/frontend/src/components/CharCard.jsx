@@ -177,9 +177,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     e.stopPropagation()
     const isPublic = sharedCards.has(cardId)
     if (isPublic) {
-      // Unshare directly
+      // Unshare: target the published fork, not the draft
+      const card = cards.find(c => c.id === cardId)
+      const targetId = card?.published_id || cardId
       try {
-        await fetchWithTimeout(`/api/market/${cardId}/visibility`, {
+        await fetchWithTimeout(`/api/market/${targetId}/visibility`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
           body: JSON.stringify({ visibility: 'private' }),
@@ -197,8 +199,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   })
 
   useEffect(() => {
-    // Initialize sharedCards from existing card visibility
-    const publicIds = cards.filter((c) => c.visibility === 'public').map((c) => c.id)
+    // Initialize sharedCards from published_id (fork exists = card is published)
+    const publicIds = cards.filter((c) => c.published_id).map((c) => c.id)
     setSharedCards((prev) => {
       const next = new Set(prev)
       publicIds.forEach((id) => next.add(id))
@@ -725,7 +727,8 @@ function CardDetail({ card, textId }) {
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
-  const [shared, setShared] = useState(card.visibility === 'public')
+  const [shared, setShared] = useState(!!card.published_id)
+  const [publishedCardId, setPublishedCardId] = useState(card.published_id || null)
   const [publishDescription, setPublishDescription] = useState(card.market_description || '')
   const [publishTags, setPublishTags] = useState(card.market_tags || '')
   const [publishMessage, setPublishMessage] = useState('')
@@ -1098,9 +1101,10 @@ function CardDetail({ card, textId }) {
                 disabled={publishSending || !publishMessage.trim()}
                 onClick={async () => {
                   const method = shared ? 'PUT' : 'POST'
+                  const targetId = shared ? (publishedCardId || card.id) : card.id
                   setPublishSending(true)
                   try {
-                    await fetchWithTimeout(`/api/market/${card.id}/publish`, {
+                    const res = await fetchWithTimeout(`/api/market/${targetId}/publish`, {
                       method,
                       headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                       body: JSON.stringify({
@@ -1110,6 +1114,8 @@ function CardDetail({ card, textId }) {
                         publish_message: publishMessage.trim(),
                       }),
                     })
+                    const data = await res.json()
+                    if (data.card_id) setPublishedCardId(data.card_id)
                     setShared(true)
                     setShowShareConfirm(false)
                     setPublishDescription('')

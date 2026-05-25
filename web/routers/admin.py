@@ -202,3 +202,41 @@ async def admin_usage(
 ) -> list[dict[str, Any]]:
     """Return usage summary for all users (admin only)."""
     return await storage.get_all_usage_summary()
+
+
+# ---- Comment Reports ----
+
+
+@router.get("/reports")
+async def list_reports(
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List pending comment reports grouped by comment."""
+    return await storage.get_comment_reports_grouped()
+
+
+@router.post("/reports/{comment_id}/resolve")
+async def resolve_reports(
+    comment_id: str,
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Resolve all pending reports for a comment (dismiss, keep comment)."""
+    ok = await storage.resolve_all_reports(comment_id, admin_user["id"])
+    if not ok:
+        raise HTTPException(500, "操作失败")
+    return {"ok": True}
+
+
+@router.post("/reports/{comment_id}/delete-comment")
+async def delete_reported_comment(
+    comment_id: str,
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Delete a reported comment and resolve all its pending reports."""
+    ok = await storage.delete_comment_and_resolve_reports(comment_id, admin_user["id"])
+    if not ok:
+        raise HTTPException(500, "操作失败")
+    return {"ok": True}

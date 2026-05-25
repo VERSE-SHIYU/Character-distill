@@ -7,6 +7,7 @@ const TABS = [
   { id: 'users', label: '用户管理' },
   { id: 'invites', label: '邀请码' },
   { id: 'usage', label: '用户用量' },
+  { id: 'reports', label: '举报管理' },
 ]
 
 export default function AdminPanel() {
@@ -31,7 +32,7 @@ export default function AdminPanel() {
           ))}
         </div>
         <div className="admin-content">
-          {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : <UsageTab />}
+          {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : <ReportsTab />}
         </div>
       </div>
     </div>
@@ -650,6 +651,128 @@ function UsageTab() {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+function ReportsTab() {
+  const [reports, setReports] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await adminAPI.listReports()
+      setReports(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleResolve = async (commentId) => {
+    try {
+      await adminAPI.resolveReport(commentId)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleDeleteComment = async () => {
+    const commentId = confirmDeleteId
+    setConfirmDeleteId(null)
+    setDeleting(true)
+    try {
+      await adminAPI.deleteReportedComment(commentId)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const fmtDate = (iso) => {
+    if (!iso) return '-'
+    return iso.slice(0, 16).replace('T', ' ')
+  }
+
+  return (
+    <div className="admin-card">
+      <div className="admin-card-title">举报管理</div>
+      {error && (
+        <div className="admin-error-banner">
+          <span>{error}</span>
+          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : reports.length === 0 ? (
+        <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无待处理的举报</p>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 200 }}>评论内容</th>
+                <th style={{ minWidth: 80 }}>评论作者</th>
+                <th style={{ minWidth: 80 }}>举报次数</th>
+                <th style={{ minWidth: 150 }}>举报原因</th>
+                <th style={{ minWidth: 120 }}>首次举报</th>
+                <th style={{ minWidth: 140 }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map((r) => (
+                <tr key={r.comment_id}>
+                  <td style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.comment_content}
+                  </td>
+                  <td>{r.comment_author_name}</td>
+                  <td><span className="admin-status" style={r.report_count > 1 ? { color: '#ef4444' } : {}}>{r.report_count}</span></td>
+                  <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.reasons}>
+                    {r.reasons}
+                  </td>
+                  <td>{fmtDate(r.first_reported_at)}</td>
+                  <td className="admin-actions-cell">
+                    <button
+                      className="admin-action-btn"
+                      onClick={() => handleResolve(r.comment_id)}
+                    >
+                      驳回
+                    </button>
+                    <button
+                      className="admin-action-btn delete-user"
+                      onClick={() => setConfirmDeleteId(r.comment_id)}
+                    >
+                      删除评论
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={!!confirmDeleteId}
+        title="删除被举报评论"
+        message="确定删除此评论？删除后无法恢复，相关举报将自动关闭。"
+        confirmText="删除"
+        onConfirm={handleDeleteComment}
+        onCancel={() => setConfirmDeleteId(null)}
+        danger
+      />
     </div>
   )
 }

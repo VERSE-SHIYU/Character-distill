@@ -393,6 +393,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Market publish migration failed: {exc}")
 
+                    # Run 038_card_comment_reports migration (CREATE TABLE)
+                    rp_path = migrations_dir / "038_card_comment_reports.sql"
+                    if rp_path.exists():
+                        try:
+                            await conn.executescript(rp_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Comment reports migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -605,9 +614,11 @@ class SQLiteStore(StorageBase):
     async def get_card(self, id: str) -> dict | None:
         """Get one card record by id."""
         try:
+            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = cards.id"
+                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, market_description, market_tags, publish_message FROM cards WHERE id = ?",
+                    f"SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, market_description, market_tags, publish_message, ({pub_sub}) AS published_id FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -650,15 +661,17 @@ class SQLiteStore(StorageBase):
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
         try:
+            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = cards.id"
+                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND user_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id, user_id),
                     )
                 else:
                     cursor = await conn.execute(
-                        "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
+                        f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = ? AND deleted_at IS NULL ORDER BY created_at DESC",
                         (text_id,),
                     )
                 rows = await cursor.fetchall()
@@ -2150,6 +2163,197 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Add comment failed: {exc}")
             raise
 
+    async def get_card_author_id(self, card_id: str) -> str | None:
+        """Return the user_id of the card's owner."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT user_id FROM cards WHERE id = ? AND deleted_at IS NULL",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card author failed: {exc}")
+            return None
+
+    async def get_comment(self, comment_id: str) -> dict | None:
+        """Get a single comment by ID."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM card_comments WHERE id = ?", (comment_id,)
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get comment failed: {exc}")
+            return None
+
+    async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, is_admin: bool = False) -> bool:
+        """Delete a card comment. Caller must verify permission."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM card_comments WHERE id = ?",
+                    (comment_id,),
+                )
+                await conn.commit()
+            return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete comment failed: {exc}")
+            return False
+
+    async def batch_delete_comments(self, comment_ids: list[str]) -> bool:
+        """Batch delete card comments by IDs."""
+        if not comment_ids:
+            return True
+        try:
+            placeholders = ",".join("?" * len(comment_ids))
+            async with await self._connect() as conn:
+                await conn.execute(
+                    f"DELETE FROM card_comments WHERE id IN ({placeholders})",
+                    comment_ids,
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Batch delete comments failed: {exc}")
+            return False
+
+    # ── Comment Reports ──
+
+    async def add_comment_report(self, comment_id: str, card_id: str, reporter_id: str, reason: str) -> bool:
+        """Insert a report record. Duplicate reports from same user are ignored."""
+        try:
+            report_id = uuid.uuid4().hex[:12]
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT OR IGNORE INTO card_comment_reports
+                       (id, comment_id, card_id, reporter_id, reason)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (report_id, comment_id, card_id, reporter_id, reason),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Add comment report failed: {exc}")
+            return False
+
+    async def get_comment_reports(self, status: str = 'pending') -> list[dict]:
+        """List reports for admin view, grouped by comment with report count."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.id, r.comment_id, r.card_id, r.reporter_id, r.reason,
+                              r.status, r.created_at, r.resolved_at, r.resolver_id,
+                              c.content AS comment_content, c.user_id AS comment_author_id,
+                              c.username AS comment_author_name,
+                              (SELECT COUNT(*) FROM card_comment_reports r2
+                               WHERE r2.comment_id = r.comment_id AND r2.status = 'pending') AS report_count
+                       FROM card_comment_reports r
+                       JOIN card_comments c ON c.id = r.comment_id
+                       WHERE r.status = ?
+                       ORDER BY report_count DESC, r.created_at ASC""",
+                    (status,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get comment reports failed: {exc}")
+            return []
+
+    async def resolve_report(self, report_id: str, resolver_id: str) -> bool:
+        """Dismiss a report (mark resolved, don't delete comment)."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE card_comment_reports
+                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       WHERE id = ? AND status = 'pending'""",
+                    (resolver_id, report_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Resolve report failed: {exc}")
+            return False
+
+    async def delete_comment_and_resolve_report(self, comment_id: str, report_id: str, resolver_id: str) -> bool:
+        """Delete the reported comment and resolve the report."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM card_comments WHERE id = ?", (comment_id,))
+                await conn.execute(
+                    """UPDATE card_comment_reports
+                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       WHERE id = ? AND status = 'pending'""",
+                    (resolver_id, report_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete comment and resolve report failed: {exc}")
+            return False
+
+    async def get_comment_reports_grouped(self, status: str = 'pending') -> list[dict]:
+        """List pending reports grouped by comment for admin view."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.comment_id, r.card_id,
+                              c.content AS comment_content,
+                              c.user_id AS comment_author_id,
+                              c.username AS comment_author_name,
+                              COUNT(*) AS report_count,
+                              GROUP_CONCAT(r.reason, ' | ') AS reasons,
+                              MIN(r.created_at) AS first_reported_at
+                       FROM card_comment_reports r
+                       JOIN card_comments c ON c.id = r.comment_id
+                       WHERE r.status = ?
+                       GROUP BY r.comment_id
+                       ORDER BY report_count DESC, first_reported_at ASC""",
+                    (status,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get comment reports grouped failed: {exc}")
+            return []
+
+    async def resolve_all_reports(self, comment_id: str, resolver_id: str) -> bool:
+        """Resolve all pending reports for a specific comment."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE card_comment_reports
+                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       WHERE comment_id = ? AND status = 'pending'""",
+                    (resolver_id, comment_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Resolve all reports failed: {exc}")
+            return False
+
+    async def delete_comment_and_resolve_reports(self, comment_id: str, resolver_id: str) -> bool:
+        """Delete a comment and resolve all its pending reports."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM card_comments WHERE id = ?", (comment_id,))
+                await conn.execute(
+                    """UPDATE card_comment_reports
+                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       WHERE comment_id = ? AND status = 'pending'""",
+                    (resolver_id, comment_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete comment and resolve reports failed: {exc}")
+            return False
+
     # ── Follows ──
 
     async def get_followers(self, user_id: str) -> list[str]:
@@ -2741,26 +2945,80 @@ class SQLiteStore(StorageBase):
 
     # ──── Market publish / version / fork API ────
 
-    async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> bool:
-        """Set market_description, market_tags, publish_message, visibility='public', and write v1 card_versions entry."""
+    async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
+        """Publish a card to market by creating an independent fork.
+
+        Creates a new card record (fork) with visibility='public', writes v1
+        card_versions entry.  Returns the new card_id, or None on failure.
+
+        If a published fork already exists (forked_from = card_id,
+        visibility = 'public'), updates that fork in place instead — idempotent.
+        """
         try:
             async with await self._connect() as conn:
+                # Check if a published fork already exists
+                cursor = await conn.execute(
+                    "SELECT id FROM cards WHERE forked_from = ? AND visibility = 'public' AND deleted_at IS NULL",
+                    (card_id,),
+                )
+                existing = await cursor.fetchone()
+                if existing:
+                    # Re-publish: update existing fork
+                    fork_id = existing["id"]
+                    await conn.execute(
+                        """UPDATE cards SET market_description = ?, market_tags = ?, publish_message = ?,
+                           visibility = 'public'
+                           WHERE id = ? AND deleted_at IS NULL""",
+                        (description, tags, message, fork_id),
+                    )
+                    # Write next version
+                    cursor = await conn.execute(
+                        "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = ?",
+                        (fork_id,),
+                    )
+                    row = await cursor.fetchone()
+                    next_ver = row[0] if row else 1
+                    await conn.execute(
+                        """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
+                           VALUES (?, ?, ?, ?, ?, '{}', ?)""",
+                        (uuid.uuid4().hex[:12], fork_id, user_id, next_ver, message, card_json_snapshot),
+                    )
+                    await conn.commit()
+                    return fork_id
+
+                # First-time publish: create a fork (independent copy)
+                # Read original card data
+                cursor = await conn.execute(
+                    """SELECT text_id, name, card_json, avatar_data, voice_ref_json
+                       FROM cards WHERE id = ? AND deleted_at IS NULL""",
+                    (card_id,),
+                )
+                src = await cursor.fetchone()
+                if not src:
+                    return None
+
+                fork_id = uuid.uuid4().hex[:12]
                 await conn.execute(
-                    """UPDATE cards SET market_description = ?, market_tags = ?, publish_message = ?,
-                       visibility = 'public', updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ? AND deleted_at IS NULL""",
-                    (description, tags, message, card_id),
+                    """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data, user_id,
+                                          visibility, forked_from, likes, voice_ref_json,
+                                          market_description, market_tags, publish_message)
+                       VALUES (?, ?, ?, ?, datetime('now'), ?, ?, 'public', ?, 0, ?, ?, ?, ?)""",
+                    (fork_id,
+                     src["text_id"], src["name"], src["card_json"],
+                     src["avatar_data"], user_id, card_id,
+                     src["voice_ref_json"],
+                     description, tags, message),
                 )
                 await conn.execute(
                     """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
                        VALUES (?, ?, ?, 1, ?, '{}', ?)""",
-                    (uuid.uuid4().hex[:12], card_id, user_id, message, card_json_snapshot),
+                    (uuid.uuid4().hex[:12], fork_id, user_id, message, card_json_snapshot),
                 )
                 await conn.commit()
-            return True
+            return fork_id
         except Exception as exc:
             print(f"[SQLiteStore] Publish card failed: {exc}")
-            return False
+            return None
 
     async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
         """Update card fields, generate field-level diff, write next card_versions entry. Returns the new version record or None."""
@@ -2779,8 +3037,8 @@ class SQLiteStore(StorageBase):
 
             async with await self._connect() as conn:
                 await conn.execute(
-                    """UPDATE cards SET card_json = ?, market_description = ?, market_tags = ?, publish_message = ?,
-                       updated_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL""",
+                    """UPDATE cards SET card_json = ?, market_description = ?, market_tags = ?, publish_message = ?
+                       WHERE id = ? AND deleted_at IS NULL""",
                     (card_json, description, tags, message, card_id),
                 )
                 # Get next version number

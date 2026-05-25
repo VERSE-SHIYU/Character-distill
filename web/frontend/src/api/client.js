@@ -271,6 +271,18 @@ export const adminAPI = {
     `/api/admin/users/${userId}/email`,
     { method: 'DELETE' },
   ).then(r => r.json()),
+
+  listReports: () => fetchWithTimeout('/api/admin/reports').then(r => r.json()),
+
+  resolveReport: (commentId) => fetchWithTimeout(
+    `/api/admin/reports/${commentId}/resolve`,
+    { method: 'POST' },
+  ).then(r => r.json()),
+
+  deleteReportedComment: (commentId) => fetchWithTimeout(
+    `/api/admin/reports/${commentId}/delete-comment`,
+    { method: 'POST' },
+  ).then(r => r.json()),
 }
 
 export function getMyUsage() {

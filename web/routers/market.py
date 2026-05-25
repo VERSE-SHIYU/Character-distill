@@ -222,7 +222,7 @@ async def publish_card(
     )
     if not ok:
         raise HTTPException(500, "发布失败")
-    return {"ok": True}
+    return {"ok": True, "card_id": ok}
 
 
 @router.put("/{card_id}/publish")
@@ -373,6 +373,70 @@ async def add_comment(
         raise HTTPException(400, "评论内容不能为空")
     comment = await storage.add_comment(card_id, user["id"], user["username"], body.content.strip())
     return comment
+
+
+# ── Comment delete & report (must be before wildcard {card_id} routes) ──
+
+
+@router.post("/{card_id}/comments/batch-delete")
+async def batch_delete_comments(
+    card_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Batch delete comments — card author or admin only."""
+    card_author_id = await storage.get_card_author_id(card_id)
+    if card_author_id != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "无权操作")
+    comment_ids = body.get("comment_ids", [])
+    if not comment_ids:
+        return {"ok": True}
+    ok = await storage.batch_delete_comments(comment_ids)
+    if not ok:
+        raise HTTPException(500, "删除失败")
+    return {"ok": True}
+
+
+@router.delete("/{card_id}/comments/{comment_id}")
+async def delete_comment(
+    card_id: str,
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete a comment — card author/comment author/admin can delete, others get 403."""
+    card_author_id = await storage.get_card_author_id(card_id)
+    # Get comment to check ownership
+    comment = await storage.get_comment(comment_id)
+    if not comment:
+        raise HTTPException(404, "评论不存在")
+    is_comment_author = comment["user_id"] == user["id"]
+    is_card_author = card_author_id == user["id"]
+    if not is_comment_author and not is_card_author and not user.get("is_admin"):
+        raise HTTPException(403, "无权删除此评论")
+    ok = await storage.delete_comment(comment_id)
+    if not ok:
+        raise HTTPException(500, "删除失败")
+    return {"ok": True}
+
+
+@router.post("/{card_id}/comments/{comment_id}/report")
+async def report_comment(
+    card_id: str,
+    comment_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Report a comment."""
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "请填写举报原因")
+    ok = await storage.add_comment_report(comment_id, card_id, user["id"], reason)
+    if not ok:
+        raise HTTPException(500, "举报提交失败")
+    return {"ok": True}
 
 
 @router.post("/{card_id}/fork")

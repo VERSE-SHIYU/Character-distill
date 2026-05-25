@@ -157,6 +157,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 }
 
 const THEMES = [
+  { key: 'aurora',   emoji: '\u{1F4AB}', label: '极光紫' },
   { key: 'milktea',  emoji: '\u{1F375}', label: '抹茶' },
   { key: 'ocean',    emoji: '\u{1F30A}', label: '海盐' },
   { key: 'sakura',   emoji: '\u{1F338}', label: '樱花' },
@@ -165,7 +166,7 @@ const THEMES = [
 
 function ThemePopup({ onClose }) {
   const [current, setCurrent] = useState(() => {
-    try { return localStorage.getItem('charsim-theme') || 'milktea' } catch { return 'milktea' }
+    try { return localStorage.getItem('charsim-theme') || 'aurora' } catch { return 'aurora' }
   })
   const ref = useRef(null)
 

@@ -62,6 +62,14 @@ export default function MarketCardDetail() {
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [forks, setForks] = useState([])
   const [forksLoading, setForksLoading] = useState(false)
+  const [deleteCommentId, setDeleteCommentId] = useState(null)
+  const [batchMode, setBatchMode] = useState(false)
+  const [selectedCommentIds, setSelectedCommentIds] = useState(new Set())
+  const [reportCommentId, setReportCommentId] = useState(null)
+  const [reportReason, setReportReason] = useState('')
+  const [reportSending, setReportSending] = useState(false)
+  const [reportError, setReportError] = useState('')
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -181,6 +189,61 @@ export default function MarketCardDetail() {
     }
   }
 
+  const handleDeleteComment = async () => {
+    const commentId = deleteCommentId
+    setDeleteCommentId(null)
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/comments/${commentId}`, { method: 'DELETE' })
+      await loadComments()
+    } catch (err) {
+      console.error('Delete comment failed:', err)
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    setBatchDeleteConfirm(false)
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/comments/batch-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment_ids: Array.from(selectedCommentIds) }),
+      })
+      setSelectedCommentIds(new Set())
+      setBatchMode(false)
+      await loadComments()
+    } catch (err) {
+      console.error('Batch delete failed:', err)
+    }
+  }
+
+  const handleReportSubmit = async () => {
+    if (!reportReason.trim() || reportSending) return
+    setReportSending(true)
+    setReportError('')
+    try {
+      await fetchWithTimeout(`/api/market/${cardId}/comments/${reportCommentId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reportReason.trim() }),
+      })
+      setReportCommentId(null)
+      setReportReason('')
+    } catch (err) {
+      setReportError(err.message || '提交失败')
+    } finally {
+      setReportSending(false)
+    }
+  }
+
+  const toggleSelectComment = (commentId) => {
+    setSelectedCommentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(commentId)) next.delete(commentId)
+      else next.add(commentId)
+      return next
+    })
+  }
+
   if (loading) return <div className="panel"><Loading text="加载角色详情…" /></div>
   if (!card) return null
 
@@ -298,9 +361,38 @@ export default function MarketCardDetail() {
           ) : comments.length === 0 ? (
             <p className="market-detail-empty">暂无评论，来写第一条吧</p>
           ) : (
+            <>
+            {card.user_id === authUser?.id && (
+              <div className="market-detail-batch-bar">
+                <button
+                  type="button"
+                  className="btn-sm btn-outline"
+                  onClick={() => { setBatchMode(!batchMode); if (batchMode) setSelectedCommentIds(new Set()) }}
+                >
+                  {batchMode ? '退出批量' : '批量删除'}
+                </button>
+                {batchMode && selectedCommentIds.size > 0 && (
+                  <button
+                    type="button"
+                    className="btn-sm btn-danger"
+                    onClick={() => setBatchDeleteConfirm(true)}
+                  >
+                    删除 {selectedCommentIds.size} 条
+                  </button>
+                )}
+              </div>
+            )}
             <div className="market-detail-comment-list">
               {comments.map((c) => (
                 <div key={c.id} className="market-detail-comment-item">
+                  {batchMode && card.user_id === authUser?.id && (
+                    <input
+                      type="checkbox"
+                      className="comment-checkbox"
+                      checked={selectedCommentIds.has(c.id)}
+                      onChange={() => toggleSelectComment(c.id)}
+                    />
+                  )}
                   <button
                     type="button"
                     className="market-detail-comment-avatar-btn"
@@ -320,11 +412,31 @@ export default function MarketCardDetail() {
                       <span className="market-detail-comment-time">{fmtTime(c.created_at)}</span>
                     </div>
                     <p className="market-detail-comment-text">{c.content}</p>
+                    <div className="market-detail-comment-actions">
+                      {(card.user_id === authUser?.id || c.user_id === authUser?.id || authUser?.is_admin) && (
+                        <button
+                          type="button"
+                          className="comment-action-btn danger"
+                          onClick={() => setDeleteCommentId(c.id)}
+                        >
+                          删除
+                        </button>
+                      )}
+                      {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !authUser?.is_admin && (
+                        <button
+                          type="button"
+                          className="comment-action-btn"
+                          onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}
+                        >
+                          举报
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
-          )}
+          </>)}
         </div>
       }
 
@@ -429,6 +541,60 @@ export default function MarketCardDetail() {
               </div>
               <button className="btn-ghost mt-12 w-full" onClick={() => setShowForkChoice(false)}>
                 取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete comment confirm */}
+      <ConfirmModal
+        isOpen={!!deleteCommentId}
+        title="删除评论"
+        message="确定删除此评论？删除后无法恢复。"
+        confirmText="删除"
+        onConfirm={handleDeleteComment}
+        onCancel={() => setDeleteCommentId(null)}
+        danger
+      />
+
+      {/* Batch delete confirm */}
+      <ConfirmModal
+        isOpen={batchDeleteConfirm}
+        title="批量删除评论"
+        message={`确定删除选中的 ${selectedCommentIds.size} 条评论？删除后无法恢复。`}
+        confirmText="删除"
+        onConfirm={handleBatchDelete}
+        onCancel={() => setBatchDeleteConfirm(false)}
+        danger
+      />
+
+      {/* Report modal */}
+      {reportCommentId && (
+        <div className="modal-overlay" onClick={() => setReportCommentId(null)}>
+          <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">举报评论</h3>
+            <div className="modal-body">
+              <textarea
+                className="report-reason-input"
+                placeholder="请描述举报原因（必填）…"
+                value={reportReason}
+                onChange={(e) => setReportReason(e.target.value)}
+                rows={3}
+                style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical' }}
+              />
+              {reportError && (
+                <div className="login-error" style={{ marginTop: 8, fontSize: 13 }}>{reportError}</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => setReportCommentId(null)}>取消</button>
+              <button
+                className="btn-primary"
+                onClick={handleReportSubmit}
+                disabled={!reportReason.trim() || reportSending}
+              >
+                {reportSending ? '提交中…' : '提交举报'}
               </button>
             </div>
           </div>
