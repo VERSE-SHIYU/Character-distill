@@ -260,7 +260,7 @@ export default function MarketPage() {
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (
-                <div key={c.id} className="market-card-v2" onClick={() => { useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
+                <div key={c.id} className="market-card-v2" onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
                   <div className="market-card-v2-cover">
                     {c.avatar_data
                       ? <img src={c.avatar_data} alt={charName} className="market-card-v2-cover-img" />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 
@@ -67,7 +67,7 @@ export default function MarketCardDetail() {
     try {
       await fetchWithTimeout(`/api/market/${cardId}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: commentText.trim() }),
       })
       setCommentText('')
@@ -147,7 +147,7 @@ export default function MarketCardDetail() {
           <button
             type="button"
             className="market-detail-author-name"
-            onClick={() => { setAuthorUserId(card.user_id); setView('author') }}
+            onClick={(e) => { e.stopPropagation(); setAuthorUserId(card.user_id); setView('author') }}
           >
             {card.author_name || '匿名'}
           </button>
@@ -156,7 +156,8 @@ export default function MarketCardDetail() {
               <button
                 type="button"
                 className="btn-sm btn-outline"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation()
                   setMessageTargetUserId(card.user_id)
                   setMessageTargetUsername(card.author_name || '匿名')
                   setView('messages')

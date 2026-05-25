@@ -16,6 +16,7 @@ export default function FeedPage() {
   const [hasMore, setHasMore] = useState(true)
   const [error, setError] = useState(null)
   const sentinelRef = useRef(null)
+  const loadingRef = useRef(false)
 
   const fetchPosts = useCallback(async (p, append = false) => {
     setLoading(true)
@@ -44,13 +45,17 @@ export default function FeedPage() {
 
   // Infinite scroll
   useEffect(() => {
-    if (!sentinelRef.current || !hasMore || loading) return
+    if (!sentinelRef.current || !hasMore) return
     const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) setPage(p => p + 1)
+      if (entry.isIntersecting && !loadingRef.current) setPage(p => p + 1)
     }, { threshold: 0.1 })
     observer.observe(sentinelRef.current)
     return () => observer.disconnect()
-  }, [hasMore, loading])
+  }, [hasMore])
+
+  useEffect(() => {
+    loadingRef.current = loading
+  }, [loading])
 
   useEffect(() => {
     if (page > 1) fetchPosts(page, true)
