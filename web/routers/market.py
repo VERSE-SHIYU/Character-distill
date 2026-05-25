@@ -29,6 +29,8 @@ class CommentRequest(BaseModel):
 class PostRequest(BaseModel):
     content: str
     visibility: str = "public"
+    images: str = ""
+    card_id: str = ""
 
 
 @router.get("/list")
@@ -217,6 +219,21 @@ async def get_author_posts(
 ) -> dict:
     """Get posts for an author. Own profile sees all, others see only public."""
     posts = await storage.get_user_posts(user_id, user["id"])
+    liked_ids = await storage.get_liked_post_ids(user["id"])
+    for p in posts:
+        p["liked_by_me"] = p["id"] in liked_ids
+    return {"posts": posts}
+
+
+@router.get("/feed")
+async def feed(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=50),
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get feed posts from followed users."""
+    posts = await storage.get_feed_posts(user["id"], page, page_size)
     return {"posts": posts}
 
 
@@ -231,8 +248,43 @@ async def create_post(
         raise HTTPException(400, "内容不能为空")
     if body.visibility not in ("public", "private"):
         raise HTTPException(400, "visibility 必须是 'public' 或 'private'")
-    post = await storage.add_post(user["id"], body.content.strip(), body.visibility)
+    post = await storage.add_post(user["id"], body.content.strip(), body.visibility, body.images, body.card_id)
     return {"post": post}
+
+
+@router.post("/post/{post_id}/like")
+async def like_post(
+    post_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle like on a post."""
+    return await storage.toggle_post_like(post_id, user["id"])
+
+
+@router.get("/post/{post_id}/comments")
+async def list_post_comments(
+    post_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get all comments for a post."""
+    comments = await storage.get_post_comments(post_id)
+    return {"comments": comments}
+
+
+@router.post("/post/{post_id}/comments")
+async def add_post_comment(
+    post_id: str,
+    body: CommentRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Add a comment to a post."""
+    if not body.content.strip():
+        raise HTTPException(400, "评论内容不能为空")
+    comment = await storage.add_post_comment(post_id, user["id"], user["username"], body.content.strip())
+    return comment
 
 
 @router.delete("/posts/{post_id}")

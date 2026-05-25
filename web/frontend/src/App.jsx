@@ -21,6 +21,7 @@ import MessagesPage from './components/MessagesPage'
 import MinePage from './components/MinePage'
 import TrashPage from './components/TrashPage'
 import MarketCardDetail from './components/MarketCardDetail'
+import FeedPage from './components/FeedPage'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -36,6 +37,7 @@ const PANELS = {
   profile: ProfilePage,
   market: MarketPage,
   marketCardDetail: MarketCardDetail,
+  feed: FeedPage,
   author: AuthorPage,
   groupChat: GroupChatPage,
   textDetail: TextDetailPage,

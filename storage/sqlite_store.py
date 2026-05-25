@@ -363,6 +363,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Text visibility migration failed: {exc}")
 
+                    # Run 034_post_enhancements migration (ALTER TABLE + CREATE TABLE)
+                    pe_path = migrations_dir / "034_post_enhancements.sql"
+                    if pe_path.exists():
+                        try:
+                            await conn.executescript(pe_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Post enhancements migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2201,23 +2210,23 @@ class SQLiteStore(StorageBase):
 
     # ── User Posts ──
 
-    async def add_post(self, user_id: str, content: str, visibility: str) -> dict:
+    async def add_post(self, user_id: str, content: str, visibility: str, images: str = "", card_id: str = "") -> dict:
         """Add a new post. Returns the created post dict."""
         import uuid
         post_id = uuid.uuid4().hex[:12]
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO user_posts (id, user_id, content, visibility) VALUES (?, ?, ?, ?)",
-                    (post_id, user_id, content, visibility),
+                    "INSERT INTO user_posts (id, user_id, content, visibility, images, card_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    (post_id, user_id, content, visibility, images, card_id),
                 )
                 await conn.commit()
                 cursor = await conn.execute(
-                    "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE id = ?",
+                    "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE id = ?",
                     (post_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility}
+            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0}
         except Exception as exc:
             print(f"[SQLiteStore] Add post failed: {exc}")
             raise
@@ -2228,12 +2237,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if viewer_id == user_id:
                     cursor = await conn.execute(
-                        "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE user_id = ? ORDER BY created_at DESC",
+                        "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE user_id = ? ORDER BY created_at DESC",
                         (user_id,),
                     )
                 else:
                     cursor = await conn.execute(
-                        "SELECT id, user_id, content, visibility, created_at FROM user_posts WHERE user_id = ? AND visibility = 'public' ORDER BY created_at DESC",
+                        "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE user_id = ? AND visibility = 'public' ORDER BY created_at DESC",
                         (user_id,),
                     )
                 rows = await cursor.fetchall()
@@ -2256,6 +2265,32 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete post failed: {exc}")
             return False
 
+    async def get_feed_posts(self, user_id: str, page: int = 1, page_size: int = 20) -> list[dict]:
+        """Get public posts from followed users, newest first."""
+        try:
+            async with await self._connect() as conn:
+                offset = (page - 1) * page_size
+                cursor = await conn.execute(
+                    """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id,
+                              p.likes, p.created_at,
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(u.avatar_data, '') AS author_avatar,
+                              (SELECT 1 FROM post_likes pl WHERE pl.post_id = p.id AND pl.user_id = ?) AS liked_by_me,
+                              (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count
+                        FROM user_posts p
+                        JOIN users u ON u.id = p.user_id
+                        WHERE p.user_id IN (SELECT following_id FROM user_follows WHERE follower_id = ?)
+                          AND p.visibility = 'public'
+                        ORDER BY p.created_at DESC
+                        LIMIT ? OFFSET ?""",
+                    (user_id, user_id, page_size, offset),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get feed posts failed: {exc}")
+            return []
+
     async def admin_delete_post(self, post_id: str) -> bool:
         """Admin: delete any post by id. Returns True if deleted."""
         try:
@@ -2269,6 +2304,89 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Admin delete post failed: {exc}")
             return False
+
+    async def toggle_post_like(self, post_id: str, user_id: str) -> dict:
+        """Toggle like on a post. Returns {'liked': bool, 'likes': int}."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM post_likes WHERE user_id = ? AND post_id = ?",
+                    (user_id, post_id),
+                )
+                liked = await cursor.fetchone() is not None
+
+                if liked:
+                    await conn.execute(
+                        "DELETE FROM post_likes WHERE user_id = ? AND post_id = ?",
+                        (user_id, post_id),
+                    )
+                    await conn.execute(
+                        "UPDATE user_posts SET likes = max(0, likes - 1) WHERE id = ?",
+                        (post_id,),
+                    )
+                else:
+                    await conn.execute(
+                        "INSERT INTO post_likes (user_id, post_id) VALUES (?, ?)",
+                        (user_id, post_id),
+                    )
+                    await conn.execute(
+                        "UPDATE user_posts SET likes = likes + 1 WHERE id = ?",
+                        (post_id,),
+                    )
+                await conn.commit()
+
+                cursor = await conn.execute(
+                    "SELECT likes FROM user_posts WHERE id = ?", (post_id,)
+                )
+                row = await cursor.fetchone()
+                new_count = row[0] if row else 0
+            return {"liked": not liked, "likes": new_count}
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle post like failed: {exc}")
+            raise
+
+    async def get_post_comments(self, post_id: str) -> list[dict]:
+        """Get all comments for a post."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, user_id, username, content, created_at FROM post_comments WHERE post_id = ? ORDER BY created_at DESC",
+                    (post_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get post comments failed: {exc}")
+            return []
+
+    async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str) -> dict:
+        """Add a comment to a post."""
+        import uuid
+        cid = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO post_comments (id, post_id, user_id, username, content) VALUES (?, ?, ?, ?, ?)",
+                    (cid, post_id, user_id, username, content),
+                )
+                await conn.commit()
+            return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content}
+        except Exception as exc:
+            print(f"[SQLiteStore] Add post comment failed: {exc}")
+            raise
+
+    async def get_liked_post_ids(self, user_id: str) -> list[str]:
+        """Return all post IDs the user has liked."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT post_id FROM post_likes WHERE user_id = ?", (user_id,)
+                )
+                rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get liked post ids failed: {exc}")
+            return []
 
     # ── Text Comments ──
 

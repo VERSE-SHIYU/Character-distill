@@ -5,6 +5,7 @@ import { fetchWithTimeout } from '../api/client'
 
 const NAV_ITEMS = [
   { id: 'home',      icon: '\u{1F3E0}', label: '首页' },
+  { id: 'feed',      icon: '\u{1F4AA}', label: '动态' },
   { id: 'workbench', icon: '\u{1F4DD}', label: '工作台' },
   { id: 'market',    icon: '\u{1F30D}', label: '市场' },
   { id: 'history',   icon: '\u{1F4CB}', label: '记录' },
@@ -46,6 +47,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
   function isActive(id) {
     switch (id) {
+      case 'feed': return currentView === 'feed'
       case 'workbench': return ['text', 'character', 'chat'].includes(currentView)
       case 'market': return ['market', 'author', 'textDetail'].includes(currentView)
       case 'history': return currentView === 'history'
