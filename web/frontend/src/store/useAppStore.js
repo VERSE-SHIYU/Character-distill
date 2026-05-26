@@ -523,10 +523,14 @@ const useAppStore = create((set, get) => ({
     set((s) => ({ distillTasks: [...s.distillTasks, task], distilling: true }))
     get()._persistTasks()
 
+    let retryCount = 0
+    const MAX_RETRIES = 3
+
     const poll = () => {
       fetchWithTimeout(`/api/distill/task/${taskId}`)
         .then((r) => r.json())
         .then((payload) => {
+          retryCount = 0
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
               t.id === taskId
@@ -581,8 +585,21 @@ const useAppStore = create((set, get) => ({
             return
           }
           if (status === 403) {
-            // 权限问题 — 可能 token 过期，不标记失败，等重试
-            console.warn('[distill] 403 on poll, will retry after re-auth')
+            retryCount++
+            if (retryCount >= MAX_RETRIES) {
+              console.warn('[distill] 403 retry exhausted, marking task as failed')
+              set((s) => ({
+                distillTasks: s.distillTasks.map((t) =>
+                  t.id === taskId
+                    ? { ...t, status: 'error', message: '权限验证失败，请重新发起蒸馏' }
+                    : t,
+                ),
+                distilling: false,
+              }))
+              get()._persistTasks()
+              return
+            }
+            console.warn(`[distill] 403 on poll (${retryCount}/${MAX_RETRIES}), will retry after re-auth`)
             setTimeout(poll, 5000)
             return
           }
