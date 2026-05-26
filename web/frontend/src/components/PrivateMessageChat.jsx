@@ -213,6 +213,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
       {/* Input */}
       <div className="private-chat-input-bar">
+        <div className="messages-input-toolbar messages-input-toolbar-top">
+          <button type="button" className="messages-toolbar-btn" title="表情"
+            onClick={() => {/* 预留表情选择器 */}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
+              <line x1="9" y1="9" x2="9.01" y2="9"/>
+              <line x1="15" y1="9" x2="15.01" y2="9"/>
+            </svg>
+          </button>
+        </div>
         <textarea
           className="messages-input"
           rows={3}
@@ -221,7 +233,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <div className="messages-input-toolbar">
+        <div className="messages-input-toolbar messages-input-toolbar-bottom">
           <div className="messages-input-toolbar-left" />
           <button
             type="button"
