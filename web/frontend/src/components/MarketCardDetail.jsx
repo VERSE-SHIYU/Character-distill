@@ -83,6 +83,9 @@ export default function MarketCardDetail() {
   const [cropFile, setCropFile] = useState(null)
   const [avatarSaving, setAvatarSaving] = useState(false)
   const avatarInputRef = useRef(null)
+  const [bgExpanded, setBgExpanded] = useState(false)
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 960)
+  const [collapsedSections, setCollapsedSections] = useState(new Set())
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -138,6 +141,20 @@ export default function MarketCardDetail() {
     if (activeTab === 'versions') loadVersions()
     if (activeTab === 'forks') loadForks()
   }, [activeTab, loadVersions, loadForks])
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 960)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const toggleSection = (key) => {
+    setCollapsedSections(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
 
   const handleLike = async () => {
     try {
@@ -464,358 +481,286 @@ export default function MarketCardDetail() {
       )}
 
       <div className="market-detail-scroll">
-        {/* Hero: cover image + name */}
-        <div className="market-detail-hero">
-          {card.user_id === authUser?.id ? (
-            <>
-              <button type="button" className="card-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
-                {card.avatar_data
-                  ? <Avatar name={charName} src={card.avatar_data} size={120} />
-                  : <Avatar name={charName} size={120} />
-                }
-                <div className="card-avatar-overlay">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
-              </button>
-              <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
-            </>
-          ) : (
-            card.avatar_data
-              ? <Avatar name={charName} src={card.avatar_data} size={120} />
-              : <Avatar name={charName} size={120} />
-          )}
-          <h2 className="market-detail-name">{charName}</h2>
-          {identity && <p className="market-detail-identity">{identity}</p>}
-        </div>
+        <div className="market-detail-split">
+          {/* ── Left sidebar: identity card sticky ── */}
+          <aside className="market-detail-sidebar">
+            {/* Hero */}
+            <div className="market-detail-hero">
+              {card.user_id === authUser?.id ? (
+                <>
+                  <button type="button" className="card-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
+                    {card.avatar_data
+                      ? <Avatar name={charName} src={card.avatar_data} size={96} />
+                      : <Avatar name={charName} size={96} />
+                    }
+                    <div className="card-avatar-overlay">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
+                  </button>
+                  <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
+                </>
+              ) : (
+                card.avatar_data
+                  ? <Avatar name={charName} src={card.avatar_data} size={96} />
+                  : <Avatar name={charName} size={96} />
+              )}
+              <h2 className="market-detail-name">{charName}</h2>
+              {identity && <p className="market-detail-identity">{identity}</p>}
+            </div>
 
-        {/* Author bar: avatar + name + message */}
-        <div className="market-detail-author-bar">
-          <Avatar name={card.author_name || '匿名'} src={card.author_avatar} size={48} />
-          <button
-            type="button"
-            className="market-detail-author-name"
-            onClick={(e) => { e.stopPropagation(); setAuthorUserId(card.user_id); setView('author') }}
-          >
-            {card.author_name || '匿名'}
-          </button>
-          {card.user_id && card.user_id !== authUser?.id && (
-            <div className="market-detail-author-actions">
+            {/* Author bar */}
+            <div className="market-detail-author-bar">
+              <Avatar name={card.author_name || '匿名'} src={card.author_avatar} size={36} />
               <button
                 type="button"
-                className="btn-sm btn-outline"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setMessageTargetUserId(card.user_id)
-                  setMessageTargetUsername(card.author_name || '匿名')
-                  setView('messages')
-                }}
+                className="market-detail-author-name"
+                onClick={(e) => { e.stopPropagation(); setAuthorUserId(card.user_id); setView('author') }}
               >
-                私信
+                {card.author_name || '匿名'}
               </button>
-            </div>
-          )}
-        </div>
-
-        {/* Background / description */}
-        {card.text_title && <span className="market-detail-tag"><Book size={14} /> {card.text_title}</span>}
-        {background && <p className="market-detail-background">{background}</p>}
-
-        {/* ── Full character card sections ── */}
-        {cardData.personality_traits?.length > 0 && (
-          <div className="card-section">
-            <h3>性格特征</h3>
-            <div className="pill-list">
-              {cardData.personality_traits.map((t, i) => (
-                <span key={i} className="pill">{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {cardStyle.tone && (
-          <div className="card-section">
-            <h3>语言风格</h3>
-            <div className="card-style-grid">
-              <StyleChip label="语气" value={cardStyle.tone} />
-              <StyleChip label="句式" value={cardStyle.sentence_pattern} />
-              <StyleChip label="用词" value={cardStyle.vocabulary_level} />
-            </div>
-            {cardStyle.catchphrases?.length > 0 && (
-              <div className="card-catchphrases">
-                {cardStyle.catchphrases.map((c, i) => (
-                  <p key={i} className="catchphrase">"  {c}  "</p>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {cardData.values?.length > 0 && (
-          <div className="card-section">
-            <h3>核心价值观</h3>
-            <div className="pill-list">
-              {cardData.values.map((v, i) => (
-                <span key={i} className="pill pill-value">{v}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {cardData.key_memories?.length > 0 && (
-          <div className="card-section">
-            <h3>关键记忆</h3>
-            <ul className="card-memory-list">
-              {cardData.key_memories.map((m, i) => (
-                <li key={i} className="card-memory-item">{m}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {rels.length > 0 && (
-          <div className="card-section">
-            <h3>人物关系</h3>
-            <div className="card-rel-list">
-              {rels.map((r, i) => (
-                <div key={i} className="card-rel-row">
-                  <span className="card-rel-target">{r.target}</span>
-                  <span className="card-rel-type pill">{r.relation}</span>
-                  <span className="card-rel-attitude">{r.attitude}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {cardData.inner_tensions?.length > 0 && (
-          <div className="card-section">
-            <h3>内在矛盾</h3>
-            <div className="pill-list">
-              {cardData.inner_tensions.map((t, i) => (
-                <span key={i} className="pill pill-tension">{t}</span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Stats + use button */}
-        <div className="market-detail-stats">
-          <button
-            type="button"
-            className={`market-detail-like-btn${liked ? ' liked' : ''}`}
-            onClick={handleLike}
-          >
-            {liked ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {likes}
-          </button>
-          <span className="market-detail-comment-count"><MessageSquare size={14} /> {comments.length}</span>
-          <div className="market-detail-actions" style={{ marginLeft: 'auto' }}>
-            <button type="button" className="btn-primary" onClick={handleFork} disabled={forking}>
-              {forking ? '添加中…' : '使用角色'}
-            </button>
-          </div>
-        </div>
-
-        {/* Tabs: Detail | Version History | Forks */}
-        <div className="market-detail-tabs">
-          <button
-            type="button"
-            className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`}
-            onClick={() => setActiveTab('detail')}
-          >
-            <MessageSquare size={14} /> 评论 ({comments.length})
-          </button>
-          <button
-            type="button"
-            className={`market-detail-tab${activeTab === 'versions' ? ' active' : ''}`}
-            onClick={() => setActiveTab('versions')}
-          >
-            <Clipboard size={14} /> 版本历史
-          </button>
-          <button
-            type="button"
-            className={`market-detail-tab${activeTab === 'forks' ? ' active' : ''}`}
-            onClick={() => setActiveTab('forks')}
-          >
-            <Sprout size={14} /> 衍生角色
-          </button>
-        </div>
-
-        {activeTab === 'detail' && <div className="market-detail-comments">
-          <h3 className="market-detail-section-title"><MessageSquare size={14} /> 评论 ({comments.length})</h3>
-          {commentsLoading ? (
-            <Loading text="加载评论…" />
-          ) : comments.length === 0 ? (
-            <p className="market-detail-empty">暂无评论，来写第一条吧</p>
-          ) : (
-            <>
-            {card.user_id === authUser?.id && (
-              <div className="market-detail-batch-bar">
-                <button
-                  type="button"
-                  className="btn-sm btn-outline"
-                  onClick={() => { setBatchMode(!batchMode); if (batchMode) setSelectedCommentIds(new Set()) }}
-                >
-                  {batchMode ? '退出批量' : '批量删除'}
-                </button>
-                {batchMode && selectedCommentIds.size > 0 && (
+              {card.user_id && card.user_id !== authUser?.id && (
+                <div className="market-detail-author-actions">
                   <button
                     type="button"
-                    className="btn-sm btn-danger"
-                    onClick={() => setBatchDeleteConfirm(true)}
+                    className="btn-sm btn-outline"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMessageTargetUserId(card.user_id)
+                      setMessageTargetUsername(card.author_name || '匿名')
+                      setView('messages')
+                    }}
                   >
-                    删除 {selectedCommentIds.size} 条
+                    私信
                   </button>
+                </div>
+              )}
+            </div>
+
+            {/* Source tag */}
+            {card.text_title && <span className="market-detail-tag"><Book size={14} /> {card.text_title}</span>}
+
+            {/* Background — clamped at 3 lines, click to expand */}
+            {background && (
+              <p
+                className={`market-detail-background${bgExpanded ? '' : ' clamped'}`}
+                onClick={() => setBgExpanded(!bgExpanded)}
+              >
+                {background}
+              </p>
+            )}
+
+            {/* Stats + use button */}
+            <div className="market-detail-stats">
+              <button
+                type="button"
+                className={`market-detail-like-btn${liked ? ' liked' : ''}`}
+                onClick={handleLike}
+              >
+                {liked ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {likes}
+              </button>
+              <span className="market-detail-comment-count"><MessageSquare size={14} /> {comments.length}</span>
+            </div>
+            <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
+              {forking ? '添加中…' : '使用角色'}
+            </button>
+          </aside>
+
+          {/* ── Right main: property sections grid + tabs ── */}
+          <main className="market-detail-main">
+            <div className="market-detail-grid">
+              {cardData.personality_traits?.length > 0 && (
+                <div className={`card-section${isMobile && collapsedSections.has('personality') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('personality')}>
+                  <h3>性格特征</h3>
+                  <div className="pill-list">
+                    {cardData.personality_traits.map((t, i) => (
+                      <span key={i} className="pill">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {cardData.values?.length > 0 && (
+                <div className={`card-section${isMobile && collapsedSections.has('values') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('values')}>
+                  <h3>核心价值观</h3>
+                  <div className="pill-list">
+                    {cardData.values.map((v, i) => (
+                      <span key={i} className="pill pill-value">{v}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {cardStyle.tone && (
+                <div className={`card-section card-section--wide${isMobile && collapsedSections.has('style') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('style')}>
+                  <h3>语言风格</h3>
+                  <div className="card-style-grid">
+                    <StyleChip label="语气" value={cardStyle.tone} />
+                    <StyleChip label="句式" value={cardStyle.sentence_pattern} />
+                    <StyleChip label="用词" value={cardStyle.vocabulary_level} />
+                  </div>
+                  {cardStyle.catchphrases?.length > 0 && (
+                    <div className="card-catchphrases">
+                      {cardStyle.catchphrases.map((c, i) => (
+                        <p key={i} className="catchphrase">"  {c}  "</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {cardData.key_memories?.length > 0 && (
+                <div className={`card-section${isMobile && collapsedSections.has('memories') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('memories')}>
+                  <h3>关键记忆</h3>
+                  <ul className="card-memory-list">
+                    {cardData.key_memories.map((m, i) => (
+                      <li key={i} className="card-memory-item">{m}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {rels.length > 0 && (
+                <div className={`card-section${isMobile && collapsedSections.has('relations') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('relations')}>
+                  <h3>人物关系</h3>
+                  <div className="card-rel-list">
+                    {rels.map((r, i) => (
+                      <div key={i} className="card-rel-row">
+                        <span className="card-rel-target">{r.target}</span>
+                        <span className="card-rel-type pill">{r.relation}</span>
+                        <span className="card-rel-attitude">{r.attitude}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {cardData.inner_tensions?.length > 0 && (
+                <div className={`card-section card-section--wide${isMobile && collapsedSections.has('tensions') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('tensions')}>
+                  <h3>内在矛盾</h3>
+                  <div className="pill-list">
+                    {cardData.inner_tensions.map((t, i) => (
+                      <span key={i} className="pill pill-tension">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="market-detail-tabs">
+              <button type="button" className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`} onClick={() => setActiveTab('detail')}>
+                <MessageSquare size={14} /> 评论 ({comments.length})
+              </button>
+              <button type="button" className={`market-detail-tab${activeTab === 'versions' ? ' active' : ''}`} onClick={() => setActiveTab('versions')}>
+                <Clipboard size={14} /> 版本历史
+              </button>
+              <button type="button" className={`market-detail-tab${activeTab === 'forks' ? ' active' : ''}`} onClick={() => setActiveTab('forks')}>
+                <Sprout size={14} /> 衍生角色
+              </button>
+            </div>
+
+            {activeTab === 'detail' && <div className="market-detail-comments">
+              <h3 className="market-detail-section-title"><MessageSquare size={14} /> 评论 ({comments.length})</h3>
+              {commentsLoading ? <Loading text="加载评论…" /> : comments.length === 0 ? (
+                <p className="market-detail-empty">暂无评论，来写第一条吧</p>
+              ) : (
+                <>{card.user_id === authUser?.id && (
+                  <div className="market-detail-batch-bar">
+                    <button type="button" className="btn-sm btn-outline" onClick={() => { setBatchMode(!batchMode); if (batchMode) setSelectedCommentIds(new Set()) }}>
+                      {batchMode ? '退出批量' : '批量删除'}
+                    </button>
+                    {batchMode && selectedCommentIds.size > 0 && (
+                      <button type="button" className="btn-sm btn-danger" onClick={() => setBatchDeleteConfirm(true)}>删除 {selectedCommentIds.size} 条</button>
+                    )}
+                  </div>
+                )}
+                <div className="market-detail-comment-list">
+                  {comments.map((c) => (
+                    <div key={c.id} className="market-detail-comment-item">
+                      {batchMode && card.user_id === authUser?.id && (
+                        <input type="checkbox" className="comment-checkbox" checked={selectedCommentIds.has(c.id)} onChange={() => toggleSelectComment(c.id)} />
+                      )}
+                      <button type="button" className="market-detail-comment-avatar-btn" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>
+                        <Avatar name={c.username} src={c.avatar_data} size={32} />
+                      </button>
+                      <div className="market-detail-comment-body">
+                        <div className="market-detail-comment-head">
+                          <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>{c.username}</button>
+                          <span className="market-detail-comment-time">{fmtTime(c.created_at)}</span>
+                        </div>
+                        <p className="market-detail-comment-text">{c.content}</p>
+                        <div className="market-detail-comment-actions">
+                          {(card.user_id === authUser?.id || c.user_id === authUser?.id || authUser?.is_admin) && (
+                            <button type="button" className="comment-action-btn danger" onClick={() => setDeleteCommentId(c.id)}>删除</button>
+                          )}
+                          {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !authUser?.is_admin && (
+                            <button type="button" className="comment-action-btn" onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}>举报</button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div></>)}
+            </div>}
+
+            {activeTab === 'versions' && (
+              <div className="market-detail-versions">
+                <h3 className="market-detail-section-title"><Clipboard size={14} /> 版本历史</h3>
+                {versionsLoading ? <Loading text="加载版本历史…" /> : versions.length === 0 ? (
+                  <p className="market-detail-empty">暂无版本记录</p>
+                ) : (
+                  <div className="version-list">
+                    {versions.map((v) => (
+                      <div key={v.id} className="version-item">
+                        <div className="version-num">v{v.version_num}</div>
+                        <div className="version-info">
+                          <p className="version-message">{v.publish_message || '无说明'}</p>
+                          <span className="version-time">{fmtTime(v.created_at)}</span>
+                        </div>
+                        {(card.user_id === authUser?.id || authUser?.is_admin) && (
+                          <div className="version-actions">
+                            {card.user_id === authUser?.id && (
+                              <>
+                                <button type="button" className="version-action-btn" onClick={() => setViewVersion(v)} title="查看此版本详情"><Eye size={16} /></button>
+                                <button type="button" className="version-action-btn" onClick={() => handleRestoreVersion(v)} disabled={restoring} title="恢复到此版本"><CornerUpLeft size={14} /></button>
+                                <button type="button" className="version-action-btn" onClick={() => startEditVersion(v)} title="编辑"><Edit size={14} /></button>
+                              </>
+                            )}
+                            {authUser?.is_admin && (
+                              <button type="button" className="version-action-btn version-action-btn-danger" onClick={() => setDeleteVersionId(v.id)} title="删除"><Trash2 size={14} /></button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
-            <div className="market-detail-comment-list">
-              {comments.map((c) => (
-                <div key={c.id} className="market-detail-comment-item">
-                  {batchMode && card.user_id === authUser?.id && (
-                    <input
-                      type="checkbox"
-                      className="comment-checkbox"
-                      checked={selectedCommentIds.has(c.id)}
-                      onChange={() => toggleSelectComment(c.id)}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="market-detail-comment-avatar-btn"
-                    onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
-                  >
-                    <Avatar name={c.username} src={c.avatar_data} size={32} />
-                  </button>
-                  <div className="market-detail-comment-body">
-                    <div className="market-detail-comment-head">
-                      <button
-                        type="button"
-                        className="market-detail-comment-name"
-                        onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
-                      >
-                        {c.username}
-                      </button>
-                      <span className="market-detail-comment-time">{fmtTime(c.created_at)}</span>
-                    </div>
-                    <p className="market-detail-comment-text">{c.content}</p>
-                    <div className="market-detail-comment-actions">
-                      {(card.user_id === authUser?.id || c.user_id === authUser?.id || authUser?.is_admin) && (
-                        <button
-                          type="button"
-                          className="comment-action-btn danger"
-                          onClick={() => setDeleteCommentId(c.id)}
-                        >
-                          删除
-                        </button>
-                      )}
-                      {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !authUser?.is_admin && (
-                        <button
-                          type="button"
-                          className="comment-action-btn"
-                          onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}
-                        >
-                          举报
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>)}
-        </div>
-      }
 
-      {activeTab === 'versions' && (
-        <div className="market-detail-versions">
-          <h3 className="market-detail-section-title"><Clipboard size={14} /> 版本历史</h3>
-          {versionsLoading ? (
-            <Loading text="加载版本历史…" />
-          ) : versions.length === 0 ? (
-            <p className="market-detail-empty">暂无版本记录</p>
-          ) : (
-            <div className="version-list">
-              {versions.map((v) => (
-                <div key={v.id} className="version-item">
-                  <div className="version-num">v{v.version_num}</div>
-                  <div className="version-info">
-                    <p className="version-message">{v.publish_message || '无说明'}</p>
-                    <span className="version-time">{fmtTime(v.created_at)}</span>
+            {activeTab === 'forks' && (
+              <div className="market-detail-forks">
+                <h3 className="market-detail-section-title"><Sprout size={14} /> 衍生角色 ({forks.length})</h3>
+                {forksLoading ? <Loading text="加载衍生角色…" /> : forks.length === 0 ? (
+                  <p className="market-detail-empty">暂无衍生角色</p>
+                ) : (
+                  <div className="fork-list">
+                    {forks.map((f) => {
+                      const forkData = typeof f.card_json === 'string' ? JSON.parse(f.card_json) : f.card_json || {}
+                      return (
+                        <div key={f.id} className="fork-item">
+                          <Avatar name={forkData.name || f.name || '?'} size={40} />
+                          <div className="fork-info">
+                            <span className="fork-name">{forkData.name || f.name || '?'}</span>
+                            <span className="fork-author">by {f.author_name || '匿名'}</span>
+                          </div>
+                          <span className="fork-likes">{'\u{2764}\u{FE0F}'} {f.likes || 0}</span>
+                        </div>
+                      )
+                    })}
                   </div>
-                  {(card.user_id === authUser?.id || authUser?.is_admin) && (
-                    <div className="version-actions">
-                      {card.user_id === authUser?.id && (
-                        <>
-                          <button
-                            type="button"
-                            className="version-action-btn"
-                            onClick={() => setViewVersion(v)}
-                            title="查看此版本详情"
-                          >
-                            <Eye size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className="version-action-btn"
-                            onClick={() => handleRestoreVersion(v)}
-                            disabled={restoring}
-                            title="恢复到此版本"
-                          >
-                            <CornerUpLeft size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            className="version-action-btn"
-                            onClick={() => startEditVersion(v)}
-                            title="编辑"
-                          >
-                            <Edit size={14} />
-                          </button>
-                        </>
-                      )}
-                      {authUser?.is_admin && (
-                        <button
-                          type="button"
-                          className="version-action-btn version-action-btn-danger"
-                          onClick={() => setDeleteVersionId(v.id)}
-                          title="删除"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </main>
         </div>
-      )}
-
-      {activeTab === 'forks' && (
-        <div className="market-detail-forks">
-          <h3 className="market-detail-section-title"><Sprout size={14} /> 衍生角色 ({forks.length})</h3>
-          {forksLoading ? (
-            <Loading text="加载衍生角色…" />
-          ) : forks.length === 0 ? (
-            <p className="market-detail-empty">暂无衍生角色</p>
-          ) : (
-            <div className="fork-list">
-              {forks.map((f) => {
-                const forkData = typeof f.card_json === 'string' ? JSON.parse(f.card_json) : f.card_json || {}
-                return (
-                  <div key={f.id} className="fork-item">
-                    <Avatar name={forkData.name || f.name || '?'} size={40} />
-                    <div className="fork-info">
-                      <span className="fork-name">{forkData.name || f.name || '?'}</span>
-                      <span className="fork-author">by {f.author_name || '匿名'}</span>
-                    </div>
-                    <span className="fork-likes">{'\u{2764}\u{FE0F}'} {f.likes || 0}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
       </div>
 
       {/* Fixed bottom: comment input */}
