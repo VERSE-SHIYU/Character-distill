@@ -1,0 +1,12 @@
+### 23:5X 群聊 UI 重构 — 双栏布局，统一气泡样式
+- **做了什么**：
+  - GroupChatPage.jsx 全面重构：从单栏切换改为双栏 `.messages-layout` 布局（左栏群聊列表 + 右栏聊天区）
+  - 统一气泡样式：复用 `messages-bubble` / `messages-row` 体系，角色气泡左上角显示 `.messages-bubble-speaker`
+  - 新增成员侧栏面板（`.group-members-panel`，移动端隐藏）
+  - 角色选择器从简单按钮改为 chip 样式（含头像 + 名称 + "全部"按钮）
+  - 移动端响应式：列表/聊天区互斥显示，隐藏成员面板
+  - 删除旧群聊专用 CSS（~120行），替换为新布局 CSS（~70行）
+- **为什么**：群聊页面和私信用了两套完全不同的布局和气泡样式，维护成本高，视觉不一致
+- **影响范围**：
+  - `GroupChatPage.jsx` — render 层全部替换，新增 isMobile/showMembers state
+  - `global.css` — 删除 17 个旧 class，新增 14 个新 class

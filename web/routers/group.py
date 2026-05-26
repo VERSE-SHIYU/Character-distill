@@ -36,6 +36,7 @@ class BroadcastRequest(BaseModel):
     target_card_ids: list[str]
     message: str
     speaker: str = ""
+    auto_mode: bool = False
 
 
 def _get_group_sessions() -> dict[str, Any]:
@@ -190,7 +191,7 @@ async def broadcast_message(
     if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此群聊")
 
-    if not req.message.strip():
+    if not req.message.strip() and not req.auto_mode:
         raise HTTPException(400, "消息不能为空")
     invalid = [cid for cid in req.target_card_ids if cid not in group.engines]
     if invalid:
@@ -198,15 +199,16 @@ async def broadcast_message(
 
     async with group.lock:
         try:
-            results = await group.broadcast(req.message, req.target_card_ids)
+            results = await group.broadcast(req.message, req.target_card_ids, auto_mode=req.auto_mode)
         except Exception as exc:
             raise HTTPException(500, f"群聊广播失败: {exc}") from exc
 
-    # 持久化：一条导演消息 + 所有角色回复
+    # 持久化
     try:
-        await storage.save_group_message(
-            group_id, req.speaker or "导演", "user", req.message, "",
-        )
+        if not req.auto_mode:
+            await storage.save_group_message(
+                group_id, req.speaker or "导演", "user", req.message, "",
+            )
         for r in results:
             if r["reply"]:
                 await storage.save_group_message(

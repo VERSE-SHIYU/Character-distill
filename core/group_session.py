@@ -89,27 +89,37 @@ class GroupSession:
 
         return response
 
-    async def broadcast(self, message: str, target_card_ids: list[str]) -> list[dict]:
-        """导演发一条消息，所有 target 角色并行回复。导演消息只记录一次。"""
-        # 记录一条导演消息
-        self.group_history.append({
-            "speaker": "导演",
-            "role": "user",
-            "content": message,
-            "speaker_card_id": "",
-        })
+    async def broadcast(
+        self, message: str, target_card_ids: list[str], auto_mode: bool = False,
+    ) -> list[dict]:
+        """导演发一条消息，所有 target 角色并行回复。导演消息只记录一次。
+
+        auto_mode=True 时，导演消息不记入历史，改用指令 prompt 驱动角色自主发言。
+        """
+        if not auto_mode:
+            self.group_history.append({
+                "speaker": "导演",
+                "role": "user",
+                "content": message,
+                "speaker_card_id": "",
+            })
 
         async def _reply(card_id: str) -> dict:
             engine = self.engines.get(card_id)
             if not engine:
                 return {"card_id": card_id, "reply": "", "speaker": "?"}
+            user_msg = (
+                f"（导演指令：请{engine.card.name}根据当前对话情境，"
+                f"自主说一句话或做出反应，推进剧情。）"
+                if auto_mode else message
+            )
             converted = self._convert_history(card_id)
             system_prompt = engine._ctx_engine.build(
-                converted, message, engine.user_role,
+                converted, user_msg, engine.user_role,
             )
             response = await engine.llm.achat(
                 system_prompt,
-                [{"role": "user", "content": message}],
+                [{"role": "user", "content": user_msg}],
             )
             self.group_history.append({
                 "speaker": engine.card.name,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
@@ -28,6 +28,11 @@ export default function GroupChatPage() {
   const [messages, setMessages] = useState([])
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  const [showMembers, setShowMembers] = useState(false)
+  const [autoMode, setAutoMode] = useState(false)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const autoStopRef = useRef(false)
 
   // Create form state
   const [groupName, setGroupName] = useState('')
@@ -48,6 +53,43 @@ export default function GroupChatPage() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  const runAutoConversation = useCallback(async () => {
+    if (!currentGroup || autoRunning) return
+    setAutoRunning(true)
+    autoStopRef.current = false
+
+    const cardIds = [...currentGroup.card_ids]
+    let turnIndex = 0
+
+    while (!autoStopRef.current) {
+      const targetId = cardIds[turnIndex % cardIds.length]
+      turnIndex++
+
+      try {
+        await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
+          target_card_ids: [targetId],
+          message: '__AUTO_CONTINUE__',
+          speaker: '__DIRECTOR__',
+          auto_mode: true,
+        })
+        await loadHistory(currentGroup.id)
+      } catch (err) {
+        console.error('Auto conversation error:', err)
+        break
+      }
+
+      await new Promise(r => setTimeout(r, 1500))
+    }
+
+    setAutoRunning(false)
+    setAutoMode(false)
+  }, [currentGroup, autoRunning])
+
+  const stopAutoConversation = useCallback(() => {
+    autoStopRef.current = true
+    setAutoMode(false)
   }, [])
 
   useEffect(() => {
@@ -90,6 +132,7 @@ export default function GroupChatPage() {
   function backToList() {
     setCurrentGroup(null)
     setMessages([])
+    setShowMembers(false)
     loadGroups()
   }
 
@@ -171,9 +214,10 @@ export default function GroupChatPage() {
   const [messageText, setMessageText] = useState('')
   const [targetCardIds, setTargetCardIds] = useState([])
 
-  async function handleSend(e) {
-    e.preventDefault()
+  async function handleSend() {
     if (!messageText.trim() || targetCardIds.length === 0 || !currentGroup) return
+
+    if (autoRunning) stopAutoConversation()
 
     setSending(true)
     setError(null)
@@ -230,197 +274,261 @@ export default function GroupChatPage() {
     })()
   }, [currentGroup?.id, allCards])
 
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth <= 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
   // ── Render ──
 
   return (
     <div className="panel group-chat-page">
-      <header className="panel-header">
-        <h1 className="panel-title">
-          {currentGroup ? (
-            <>
-              <button type="button" className="chat-back-btn" onClick={backToList} title="返回群聊列表">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-                返回
-              </button>
-              群聊 — {currentGroup.name || '未命名'}
-            </>
-          ) : '群聊'}
-        </h1>
-        <p className="panel-desc">
-          {currentGroup
-            ? `你正在与 ${currentGroup.card_ids?.map((id) => {
-                const card = allCards.find((c) => (c.id || c.card_id) === id)
-                return card?.name || id.slice(0, 4)
-              }).filter(Boolean).join('、')} 群聊`
-            : '创建群聊开始多角色对话'}
-        </p>
-      </header>
-
-      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
-
-      {!currentGroup ? (
-        /* ── Group list ── */
-        <>
-          <div style={{ padding: '12px 16px' }}>
-            <button type="button" className="btn-primary" onClick={openCreate}>
-              + 创建群聊
+      <div className="messages-layout">
+        {/* ── 左栏：群聊列表 ── */}
+        <div
+          className="messages-sidebar hide-scrollbar"
+          style={{ display: !isMobile || !currentGroup ? 'flex' : 'none' }}
+        >
+          <div className="messages-sidebar-header">
+            <h2 className="messages-sidebar-title">群聊</h2>
+            <button type="button" className="btn-sm btn-primary" onClick={openCreate}>
+              + 新建
             </button>
           </div>
 
-          {loading && <Loading text="加载群聊列表…" />}
+          {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
+
+          {loading && !currentGroup && <Loading text="加载中…" />}
 
           {!loading && groups.length === 0 && (
-            <div className="shell-placeholder">
-              <div className="shell-placeholder-inner">
-                <div className="shell-placeholder-icon">{'\u{1F465}'}</div>
-                <div className="shell-placeholder-title">还没有群聊</div>
-                <div className="shell-placeholder-sub">创建群聊开始多角色对话</div>
-              </div>
+            <div className="messages-empty-state">
+              <span className="messages-empty-icon">{'\u{1F465}'}</span>
+              <p className="messages-empty-title">还没有群聊</p>
+              <p className="messages-empty-desc">创建群聊开始多角色导演模式</p>
             </div>
           )}
 
-          {!loading && groups.length > 0 && (
-            <div className="group-list">
-              {groups.map((g) => {
-                const cardIds = parseCardIds(g.card_ids)
-                const names = cardIds
-                  .map((id) => allCards.find((c) => (c.id || c.card_id) === id)?.name)
-                  .filter(Boolean)
-                return (
-                  <div
-                    key={g.id}
-                    className="group-list-item"
-                    onClick={() => enterGroup(g)}
-                  >
-                    <div className="group-list-name">{g.name || '未命名群聊'}</div>
-                    <div className="group-list-chars">{names.join('、')}</div>
-                    <div className="group-list-meta">
-                      {new Date(g.created_at.includes('T') && !g.created_at.endsWith('Z') && !g.created_at.includes('+') ? g.created_at + 'Z' : g.created_at).toLocaleString('zh-CN')}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </>
-      ) : (
-        /* ── Group chat view ── */
-        <div className="group-chat-view">
-          <div className="group-chat-messages">
-            {systemMessage && (
-              <div className="group-msg-system">
-                <span>{systemMessage}</span>
-              </div>
-            )}
-            {messages.length === 0 && !systemMessage && (
-              <div className="shell-placeholder" style={{ padding: 40 }}>
-                <div className="shell-placeholder-inner">
-                  <div className="shell-placeholder-title">群聊已创建</div>
-                  <div className="shell-placeholder-sub">
-                    选择角色并发送第一条消息
-                  </div>
+          {groups.map((g) => {
+            const cardIds = parseCardIds(g.card_ids)
+            const names = cardIds
+              .map((id) => allCards.find((c) => (c.id || c.card_id) === id)?.name)
+              .filter(Boolean)
+            const isActive = currentGroup?.id === g.id
+            return (
+              <button
+                key={g.id}
+                type="button"
+                className={`messages-conv-item${isActive ? ' active' : ''}`}
+                onClick={() => enterGroup(g)}
+              >
+                <div className="group-avatar-stack">
+                  {cardIds.slice(0, 3).map((id) => (
+                    <Avatar key={id} name={allCards.find(c => (c.id || c.card_id) === id)?.name || '?'}
+                      src={cardAvatars[id]} size={28} />
+                  ))}
                 </div>
-              </div>
-            )}
-            {messages.map((m, i) => {
-              const isUser = m.role === 'user'
-              const isAssistant = m.role === 'assistant'
-              return (
-                <div key={m.id || i} className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'}`}>
-                  {isAssistant && (
-                    <div className="chat-msg-avatar">
-                      <Avatar name={m.speaker} size={40} src={cardAvatars[m.card_id]} />
-                    </div>
-                  )}
-                  <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
-                    <span className="chat-bubble-speaker">{m.speaker}</span>
-                    <span className="chat-bubble-text">{m.content}</span>
+                <div className="messages-conv-body">
+                  <div className="messages-conv-head">
+                    <span className="messages-conv-name">{g.name || '未命名群聊'}</span>
+                    <span className="messages-conv-time">
+                      {new Date(g.created_at.includes('T') && !g.created_at.endsWith('Z') && !g.created_at.includes('+') ? g.created_at + 'Z' : g.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric' })}
+                    </span>
                   </div>
-                  {isUser && (
-                    <div className="chat-msg-avatar">
-                      <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
-                    </div>
-                  )}
+                  <p className="messages-conv-preview">{names.join('、')}</p>
                 </div>
-              )
-            })}
-            {loading && <Loading text="加载中…" />}
-          </div>
+              </button>
+            )
+          })}
+        </div>
 
-          <form className="chat-input-area" onSubmit={handleSend}>
-            <div className="group-chat-targets">
-              <span className="group-chat-target-label">回复：</span>
-              {currentGroup.card_ids.map((cardId) => {
-                const cardData = allCards.find((c) => (c.id || c.card_id) === cardId)
-                const name = cardData?.name || cardId.slice(0, 8)
-                const selected = targetCardIds.includes(cardId)
-                return (
+        {/* ── 右栏：聊天区 ── */}
+        <div
+          className="messages-chat-area"
+          style={{ display: !isMobile || currentGroup ? 'flex' : 'none' }}
+        >
+          {!currentGroup ? (
+            <div className="messages-empty-chat">选择一个群聊或创建新群聊</div>
+          ) : (
+            <div className="private-chat">
+              {/* Header */}
+              <div className="private-chat-header">
+                {isMobile && (
+                  <button type="button" className="chat-back-btn" onClick={backToList}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+                  </button>
+                )}
+                <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
+                <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
+                <button
+                  type="button"
+                  className="chat-topbar-btn"
+                  style={{ marginLeft: 'auto' }}
+                  onClick={() => setShowMembers(!showMembers)}
+                  title="成员列表"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                  </svg>
+                </button>
+              </div>
+
+              {/* Messages */}
+              <div className="private-chat-body" style={{ display: 'flex' }}>
+                <div className="group-chat-messages-area" style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {systemMessage && (
+                    <div className="messages-time-divider">{systemMessage}</div>
+                  )}
+                  {messages.length === 0 && !systemMessage && (
+                    <div className="messages-empty-state" style={{ padding: 40, border: 'none' }}>
+                      <p className="messages-empty-title">群聊已创建</p>
+                      <p className="messages-empty-desc">选择角色并发送第一条消息</p>
+                    </div>
+                  )}
+                  {messages.map((m, i) => {
+                    const isUser = m.role === 'user'
+                    return (
+                      <div key={m.id || i} className={`messages-row${isUser ? ' mine' : ' other'}`}>
+                        {!isUser && (
+                          <Avatar name={m.speaker || '?'} size={36} src={cardAvatars[m.card_id]} />
+                        )}
+                        <div className={`messages-bubble${isUser ? ' mine' : ' other'}`}>
+                          {!isUser && <span className="messages-bubble-speaker">{m.speaker}</span>}
+                          <span className="messages-msg-text">{m.content}</span>
+                        </div>
+                        {isUser && (
+                          <Avatar name={authUser?.username || '我'} size={36} src={userAvatar} />
+                        )}
+                      </div>
+                    )
+                  })}
+                  {sending && <Loading text="加载中…" />}
+                </div>
+
+                {/* 成员侧栏 */}
+                {showMembers && (
+                  <div className="group-members-panel">
+                    <div className="group-members-title">成员</div>
+                    {currentGroup.card_ids?.map((cardId) => {
+                      const card = allCards.find(c => (c.id || c.card_id) === cardId)
+                      return (
+                        <div key={cardId} className="group-member-item">
+                          <Avatar name={card?.name || '?'} size={32} src={cardAvatars[cardId]} />
+                          <span className="group-member-name">{card?.name || '?'}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Input */}
+              <div className="private-chat-input-bar">
+                <div className="group-target-selector">
                   <button
-                    key={cardId}
                     type="button"
-                    className={`group-chat-target-btn${selected ? ' active' : ''}`}
-                    onClick={() => setTargetCardIds((prev) =>
-                      prev.includes(cardId)
-                        ? prev.filter((id) => id !== cardId)
-                        : [...prev, cardId]
+                    className={`group-target-chip${targetCardIds.length === currentGroup.card_ids?.length ? ' active' : ''}`}
+                    onClick={() => setTargetCardIds(
+                      targetCardIds.length === currentGroup.card_ids?.length
+                        ? []
+                        : [...currentGroup.card_ids]
                     )}
                   >
-                    {name}
+                    全部
                   </button>
-                )
-              })}
+                  {currentGroup.card_ids?.map((cardId) => {
+                    const card = allCards.find(c => (c.id || c.card_id) === cardId)
+                    const selected = targetCardIds.includes(cardId)
+                    return (
+                      <button
+                        key={cardId}
+                        type="button"
+                        className={`group-target-chip${selected ? ' active' : ''}`}
+                        onClick={() => setTargetCardIds(prev =>
+                          prev.includes(cardId)
+                            ? prev.filter(id => id !== cardId)
+                            : [...prev, cardId]
+                        )}
+                      >
+                        <Avatar name={card?.name || '?'} size={20} src={cardAvatars[cardId]} />
+                        {card?.name || '?'}
+                      </button>
+                    )
+                  })}
+                </div>
+                <textarea
+                  className="messages-input"
+                  rows={2}
+                  placeholder={
+                    targetCardIds.length > 0
+                      ? `对 ${targetCardIds.map(id => allCards.find(c => (c.id || c.card_id) === id)?.name || '?').join('、')} 说…`
+                      : '请先选择回复目标'
+                  }
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+                  }}
+                  disabled={targetCardIds.length === 0 || sending || autoRunning}
+                />
+                <div className="messages-input-toolbar">
+                  <div className="messages-input-toolbar-left">
+                    <button
+                      type="button"
+                      className={`group-auto-btn${autoMode ? ' active' : ''}`}
+                      onClick={() => {
+                        if (autoMode) {
+                          stopAutoConversation()
+                        } else {
+                          setAutoMode(true)
+                          runAutoConversation()
+                        }
+                      }}
+                      title={autoMode ? '停止自动对话' : '自动对话模式'}
+                    >
+                      {autoMode ? '⏸ 暂停' : '▶ 自动对话'}
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="messages-send-btn"
+                    disabled={targetCardIds.length === 0 || !messageText.trim() || sending}
+                    onClick={handleSend}
+                  >
+                    {sending ? '…' : targetCardIds.length > 1 ? `发送 (${targetCardIds.length})` : '发送'}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="chat-input-row">
-              <input
-                className="modal-input"
-                style={{ flex: 1 }}
-                placeholder={
-                  targetCardIds.length > 0
-                    ? `对 ${targetCardIds.map((id) => {
-                        const c = allCards.find((c) => (c.id || c.card_id) === id)
-                        return c?.name || id.slice(0, 4)
-                      }).join('、')} 说…`
-                    : '请选择回复目标'
-                }
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                disabled={targetCardIds.length === 0 || sending}
-              />
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={targetCardIds.length === 0 || !messageText.trim() || sending}
-              >
-                {targetCardIds.length > 1 && !sending ? `发送 (${targetCardIds.length})` : sending ? '发送中…' : '发送'}
-              </button>
-            </div>
-          </form>
+          )}
         </div>
-      )}
+      </div>
 
       {/* ── Create modal ── */}
       {showCreate && (
         <div className="modal-overlay" onClick={() => setShowCreate(false)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+          <div className="modal-card group-create-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-title">创建群聊</div>
 
-            <div style={{ padding: '0 20px 12px' }}>
+            <div className="group-create-section">
               <label className="modal-label">群聊名称（可选）</label>
               <input
                 className="modal-input"
                 placeholder="输入群聊名称…"
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
+                maxLength={30}
               />
             </div>
 
-            <div style={{ padding: '0 20px 12px' }}>
+            <div className="group-create-section">
               <label className="modal-label">选择文本</label>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className="group-create-text-tabs">
                 {texts.filter((t) => cardsByText[t.id]?.length).length === 0 ? (
-                  <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 8 }}>
-                    请先在文本管理中蒸馏角色卡
-                  </div>
+                  <p className="group-create-empty">请先在文本管理中蒸馏角色卡</p>
                 ) : (
                   texts
                     .filter((t) => cardsByText[t.id]?.length)
@@ -428,16 +536,7 @@ export default function GroupChatPage() {
                       <button
                         key={t.id}
                         type="button"
-                        className={`text-tab${selectedTextId === t.id ? ' active' : ''}`}
-                        style={{
-                          padding: '6px 14px',
-                          borderRadius: 8,
-                          border: '1px solid var(--glass-border)',
-                          background: selectedTextId === t.id ? 'var(--primary)' : 'var(--glass-bg)',
-                          color: selectedTextId === t.id ? '#fff' : 'var(--text)',
-                          cursor: 'pointer',
-                          fontSize: 13,
-                        }}
+                        className={`group-target-chip${selectedTextId === t.id ? ' active' : ''}`}
                         onClick={() => { setSelectedTextId(t.id); setSelectedCardIds([]) }}
                       >
                         {t.title || t.filename || t.id.slice(0, 8)}
@@ -448,13 +547,11 @@ export default function GroupChatPage() {
             </div>
 
             {selectedTextId && (
-              <div style={{ padding: '0 20px 12px' }}>
-                <label className="modal-label">选择角色（至少选 2 个）</label>
+              <div className="group-create-section">
+                <label className="modal-label">选择角色（至少 2 个）</label>
                 <div className="group-create-card-list">
                   {(cardsByText[selectedTextId] || []).length === 0 && (
-                    <div style={{ color: 'var(--text-dim)', fontSize: 13, padding: 8 }}>
-                      该书暂无角色卡
-                    </div>
+                    <p className="group-create-empty">该书暂无角色卡</p>
                   )}
                   {(cardsByText[selectedTextId] || []).map((c) => {
                     const cardId = c.id || c.card_id
@@ -465,8 +562,8 @@ export default function GroupChatPage() {
                         className={`group-create-card${selected ? ' selected' : ''}`}
                         onClick={() => toggleCard(cardId)}
                       >
-                        <Avatar name={c.name} size={32} src={cardAvatars[c.id || c.card_id]} />
-                        <span>{c.name}</span>
+                        <Avatar name={c.name} size={36} src={cardAvatars[cardId]} />
+                        <span className="group-create-card-name">{c.name}</span>
                         <span className="group-create-card-check">{selected ? '✓' : ''}</span>
                       </div>
                     )
@@ -476,16 +573,10 @@ export default function GroupChatPage() {
             )}
 
             <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={handleCreate}
-                disabled={selectedCardIds.length < 2 || sending}
-              >
-                {sending ? '创建中…' : '创建'}
+              <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>取消</button>
+              <button type="button" className="btn-primary" onClick={handleCreate}
+                disabled={selectedCardIds.length < 2 || sending}>
+                {sending ? '创建中…' : `创建 (${selectedCardIds.length})`}
               </button>
             </div>
           </div>
