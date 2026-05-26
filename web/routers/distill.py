@@ -118,6 +118,10 @@ def _run_distill_task(
         # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
         aliases: list[str] = []
+
+        with _task_lock:
+            _tasks[task_id] = {"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…", "user_id": user_id}
+
         try:
             chars = distiller.identify_characters(content)
         except Exception:
@@ -138,7 +142,7 @@ def _run_distill_task(
                 break
 
         with _task_lock:
-            _tasks[task_id] = {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 0, "character": name}
+            _tasks[task_id] = {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "角色已识别，开始蒸馏…", "user_id": user_id}
 
         # Step 2: run incremental distill (synchronous, collect full output)
         full = ""
@@ -249,7 +253,21 @@ def _run_distill_task(
     except Exception as exc:
         print(f"[distill] Background task {task_id} failed: {exc}")
         with _task_lock:
-            _tasks[task_id] = {"status": "error", "message": str(exc)}
+            _tasks[task_id] = {"status": "error", "message": str(exc), "user_id": user_id, "text_id": text_id, "character": char_name}
+        # Clean up half-done cards (empty card_json)
+        try:
+            from pathlib import Path as _Path
+            from deps import get_config
+            cfg = get_config()
+            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
+            store = SQLiteStore(db_path)
+            asyncio.run(store._ensure_initialized())
+            asyncio.run(store.execute(
+                "UPDATE cards SET deleted_at = datetime('now') WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
+                (text_id, user_id),
+            ))
+        except Exception as cleanup_err:
+            print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
         _DISTILL_SEMAPHORE.release()
 
@@ -448,6 +466,24 @@ async def cancel_distill_task(
             raise HTTPException(403, "无权操作此任务")
         task.update({"status": "error", "message": "已取消"})
     return {"ok": True}
+
+
+@router.get("/task/{task_id}/params")
+async def distill_task_params(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Get stored task parameters for retry recovery."""
+    with _task_lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            raise HTTPException(404, "Task not found")
+        if task.get("user_id") != user["id"]:
+            raise HTTPException(403, "无权访问此任务")
+    return {
+        "text_id": task.get("text_id", ""),
+        "character": task.get("character", ""),
+    }
 
 
 def _next_piece(stream_obj):

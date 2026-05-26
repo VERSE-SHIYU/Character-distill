@@ -5,6 +5,7 @@ export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
   const setView = useAppStore((s) => s.setView)
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
+  const distillCharacter = useAppStore((s) => s.distillCharacter)
 
   if (tasks.length === 0) return null
 
@@ -13,6 +14,17 @@ export default function DistillTaskBar() {
       {tasks.map((t) => {
         const isDone = t.status === 'done'
         const isError = t.status === 'error'
+        const statusText = isDone
+          ? `${t.character} 蒸馏完成，点击查看`
+          : isError
+            ? `${t.character || ''} 蒸馏失败: ${t.message || '未知错误'}`
+            : t.status === 'queued'
+              ? `${t.character || '…'} 排队等待中…`
+              : t.status === 'identifying'
+                ? `正在识别角色 ${t.character || '…'}`
+                : t.status === 'checking'
+                  ? `正在恢复任务 ${t.character || '…'}`
+                  : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`
         return (
           <div
             key={t.id}
@@ -24,13 +36,7 @@ export default function DistillTaskBar() {
             <span className="distill-task-icon">
               {isDone ? '✅' : isError ? '❌' : '⚙'}
             </span>
-            <span className="distill-task-text">
-              {isDone
-                ? `${t.character} 蒸馏完成，点击查看`
-                : isError
-                  ? `${t.character || ''} 蒸馏失败: ${t.message || '未知错误'}`
-                  : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`}
-            </span>
+            <span className="distill-task-text">{statusText}</span>
             {!isDone && !isError && (
               <span className="distill-task-bar-track">
                 <span className="distill-task-bar-fill" style={{ width: `${t.progress_pct || 0}%` }} />
@@ -50,13 +56,28 @@ export default function DistillTaskBar() {
               </span>
             )}
             {(isDone || isError) && (
-              <span
-                className="distill-task-close"
-                onClick={(e) => { e.stopPropagation(); removeDistillTask(t.id) }}
-                title="关闭"
-              >
-                ✕
-              </span>
+              <>
+                {isError && t.textId && (
+                  <span
+                    className="distill-task-retry"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      removeDistillTask(t.id)
+                      distillCharacter(t.textId, t.character)
+                    }}
+                    title="重新蒸馏"
+                  >
+                    ↻
+                  </span>
+                )}
+                <span
+                  className="distill-task-close"
+                  onClick={(e) => { e.stopPropagation(); removeDistillTask(t.id) }}
+                  title="关闭"
+                >
+                  ✕
+                </span>
+              </>
             )}
           </div>
         )

@@ -620,6 +620,19 @@ html.theme-midnight::before {
 .theme-midnight .distill-task-item {
   color: var(--text-primary);
 }
+.theme-midnight .distill-task-item.error {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.theme-midnight .distill-task-item.error .distill-task-text {
+  color: #fca5a5;
+}
+.theme-midnight .distill-task-item.done {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.4);
+  color: #86efac;
+}
 
 /* API config alert — amber on dark bg */
 .theme-midnight .api-config-alert {
@@ -6684,6 +6697,29 @@ select.settings-input {
 .distill-task-close:hover {
   background: var(--pill-bg);
   color: var(--text);
+}
+
+.distill-task-retry {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 14px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all .15s;
+  margin-right: 2px;
+}
+.distill-task-retry:hover {
+  background: var(--pill-bg);
+  color: var(--accent);
+}
+
+.distill-task-item.error .distill-task-text {
+  color: #991b1b;
 }
 
 /* ---- Profile page ---- */

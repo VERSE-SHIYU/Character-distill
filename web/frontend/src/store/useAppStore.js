@@ -117,18 +117,15 @@ const useAppStore = create((set, get) => ({
       }))
       return saved
     }
-    // Fallback: fetch from server
-    try {
-      const res = await fetchWithTimeout(`/api/cards/${key}/avatar`)
-      const data = await res.json()
-      if (data.data) {
-        set((state) => ({
-          cardAvatars: { ...state.cardAvatars, [key]: data.data }
-        }))
-        localStorage.setItem(`avatar_${key}`, data.data)
-        return data.data
-      }
-    } catch { /* not found or not accessible */ }
+    // Check if card data already has avatar_data
+    const existing = get().cards.find(c => c.id === key || c.card_id === key)
+    if (existing?.avatar_data) {
+      set((state) => ({
+        cardAvatars: { ...state.cardAvatars, [key]: existing.avatar_data }
+      }))
+      localStorage.setItem(`avatar_${key}`, existing.avatar_data)
+      return existing.avatar_data
+    }
     return null
   },
 
@@ -569,7 +566,9 @@ const useAppStore = create((set, get) => ({
           setTimeout(poll, 3000)
         })
         .catch((err) => {
-          if (err.status === 404 || err.status === 401) {
+          const status = err?.status
+          if (status === 404) {
+            // 服务重启，任务丢失
             set((s) => ({
               distillTasks: s.distillTasks.map((t) =>
                 t.id === taskId
@@ -581,6 +580,13 @@ const useAppStore = create((set, get) => ({
             get()._persistTasks()
             return
           }
+          if (status === 403) {
+            // 权限问题 — 可能 token 过期，不标记失败，等重试
+            console.warn('[distill] 403 on poll, will retry after re-auth')
+            setTimeout(poll, 5000)
+            return
+          }
+          // 网络错误等，继续重试
           setTimeout(poll, 3000)
         })
     }
@@ -614,13 +620,63 @@ const useAppStore = create((set, get) => ({
         localStorage.removeItem('distill_tasks')
         return
       }
-      const marked = active.map((t) => ({
-        ...t,
-        status: 'error',
-        message: '服务已重启，请重新蒸馏',
-      }))
-      set({ distillTasks: marked, distilling: false })
-      get()._persistTasks()
+      // 先显示 checking 状态，尝试从后端恢复
+      set({ distillTasks: active.map(t => ({ ...t, status: 'checking' })), distilling: true })
+      active.forEach((t) => {
+        fetchWithTimeout(`/api/distill/task/${t.id}`)
+          .then((r) => r.json())
+          .then((payload) => {
+            set((s) => ({
+              distillTasks: s.distillTasks.map((task) =>
+                task.id === t.id ? { ...task, ...payload } : task,
+              ),
+            }))
+            get()._persistTasks()
+            if (payload.status !== 'done' && payload.status !== 'error') {
+              // 任务还在跑，重新开始轮询
+              get().addDistillTask(t.id, t.textId, t.character)
+            }
+          })
+          .catch((err) => {
+            const status = err?.status
+            if (status === 403) {
+              // 权限问题，检查任务参数看能否恢复
+              fetchWithTimeout(`/api/distill/task/${t.id}/params`)
+                .then((r) => r.json())
+                .then((params) => {
+                  if (params.text_id) {
+                    // 任务还在，重新开始蒸馏（覆盖原任务）
+                    get().distillCharacter(params.text_id, params.character, true)
+                    get().removeDistillTask(t.id)
+                  } else {
+                    throw new Error('params not found')
+                  }
+                })
+                .catch(() => {
+                  set((s) => ({
+                    distillTasks: s.distillTasks.map((task) =>
+                      task.id === t.id
+                        ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
+                        : task,
+                    ),
+                    distilling: false,
+                  }))
+                  get()._persistTasks()
+                })
+            } else {
+              // 404 等 — 后端没有这个任务了
+              set((s) => ({
+                distillTasks: s.distillTasks.map((task) =>
+                  task.id === t.id
+                    ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
+                    : task,
+                ),
+                distilling: false,
+              }))
+              get()._persistTasks()
+            }
+          })
+      })
     } catch { /* ignore */ }
   },
 
