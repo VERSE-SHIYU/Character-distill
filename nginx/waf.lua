@@ -19,7 +19,7 @@ end
 
 -- 1. 拦截非标准请求方法
 local method = ngx.req.get_method()
-local allowed = { GET = true, POST = true, PATCH = true, DELETE = true, OPTIONS = true, HEAD = true }
+local allowed = { GET = true, POST = true, PUT = true, PATCH = true, DELETE = true, OPTIONS = true, HEAD = true }
 if not allowed[method] then
     return deny("METHOD", method)
 end
