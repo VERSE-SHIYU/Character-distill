@@ -8561,51 +8561,536 @@ select.settings-input {
   white-space: nowrap;
 }
 
-/* ===== Mine Page ===== */
-.mine-page {
+/* ══════════════════════════════════════
+   MinePage V2 — Creator Profile
+   ══════════════════════════════════════ */
+.mine-page-v2 {
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   height: 100%;
-  overflow: hidden;
 }
 
-.mine-top-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 24px 20px 0;
-  background: transparent;
+/* ── Banner ── */
+.mine-banner {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
   flex-shrink: 0;
 }
 
-.mine-top-tab {
+.mine-banner-blur {
+  position: absolute;
+  inset: -20px;
+  width: calc(100% + 40px);
+  height: calc(100% + 40px);
+  object-fit: cover;
+  filter: blur(20px) saturate(150%);
+  z-index: 0;
+}
+
+.mine-banner-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  z-index: 1;
+}
+
+.mine-banner-fallback {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--primary), var(--accent, var(--primary-hover)));
+}
+
+.mine-banner-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(to top, rgba(0,0,0,0.4) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.mine-banner-upload {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 13px;
-  font-weight: 500;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(0,0,0,0.3);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.15s;
   font-family: inherit;
 }
-.mine-top-tab:hover {
+
+.mine-banner-upload:hover {
+  background: rgba(0,0,0,0.5);
+}
+
+/* ── Profile Header ── */
+.mine-profile-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 24px;
+  margin-top: -36px;
+  position: relative;
+  z-index: 4;
+}
+
+.mine-profile-header .mine-avatar {
+  border: 3px solid var(--bg-card, var(--bg-page));
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mine-profile-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mine-profile-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mine-edit-btn {
+  padding: 5px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-sec);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
+.mine-edit-btn:hover {
   background: rgba(var(--accent-rgb), 0.08);
+  color: var(--accent);
+  border-color: rgba(var(--accent-rgb), 0.25);
+}
+
+/* ── 统计卡片 ── */
+.mine-stats-row {
+  display: flex;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+
+.mine-stat-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 14px 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+
+.mine-stat-card:hover {
+  background: rgba(var(--accent-rgb), 0.06);
+  transform: translateY(-1px);
+}
+
+.mine-stat-number {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+}
+
+.mine-stat-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+/* ── Tab 栏 ── */
+.mine-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding: 16px 24px 0;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.mine-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 16px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  font-family: inherit;
+  margin-bottom: -1px;
+}
+
+.mine-tab:hover {
   color: var(--text);
 }
-.mine-top-tab.active {
-  background: rgba(var(--accent-rgb), 0.12);
+
+.mine-tab.active {
   color: var(--accent);
+  border-bottom-color: var(--accent);
   font-weight: 600;
 }
 
-.mine-content {
+/* ── Tab 内容 ── */
+.mine-tab-content {
   flex: 1;
+  padding: 16px 24px 24px;
   overflow-y: auto;
-  padding: 0 4px;
+}
+
+.mine-tab-placeholder {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 40px 0;
+}
+
+/* ── 引导卡片 ── */
+.mine-onboard-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 24px;
+  background: var(--glass-bg);
+  border: 1px dashed var(--glass-border);
+  border-radius: 16px;
+  text-align: center;
+}
+
+.mine-onboard-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.mine-onboard-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.mine-onboard-steps {
+  display: flex;
+  gap: 24px;
+}
+
+.mine-onboard-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-sec);
+}
+
+.mine-onboard-step-num {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── 卡片管理菜单 ── */
+.mine-card-menu-wrap {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+}
+
+.mine-card-menu-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.market-card-v2:hover .mine-card-menu-btn {
+  opacity: 1;
+}
+
+.mine-card-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+
+.mine-card-menu {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  z-index: 11;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 4px;
+  min-width: 120px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+}
+
+.mine-card-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.mine-card-menu button:hover {
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+.mine-card-menu-danger { color: #e53935 !important; }
+.mine-card-menu-danger:hover { background: rgba(229,57,53,0.08) !important; }
+
+/* ── 书籍列表 ── */
+.mine-books-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mine-book-item {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.mine-book-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mine-book-header:hover {
+  background: rgba(var(--accent-rgb), 0.04);
+}
+
+.mine-book-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.mine-book-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mine-book-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mine-book-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mine-book-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+
+.mine-book-card-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  background: rgba(var(--accent-rgb), 0.06);
+  border: 1px solid rgba(var(--accent-rgb), 0.15);
+  border-radius: 16px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mine-book-card-chip:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  .mine-banner { height: 140px; }
+  .mine-profile-header { padding: 0 16px; margin-top: -28px; }
+  .mine-stats-row { padding: 16px 16px 0; gap: 8px; }
+  .mine-stat-card { padding: 10px 4px; }
+  .mine-stat-number { font-size: 18px; }
+  .mine-tab-bar { padding: 12px 16px 0; }
+  .mine-tab-content { padding: 12px 16px 20px; }
+  .mine-onboard-steps { flex-direction: column; gap: 12px; }
+}
+
+/* ── 发帖框 ── */
+.mine-composer {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.mine-composer-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 16px;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.5;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.mine-composer-input::placeholder {
+  color: var(--text-dim);
+}
+
+.mine-composer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 10px;
+}
+
+/* ── 动态列表 ── */
+.mine-posts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── 关注列表 ── */
+.mine-following-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mine-following-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  transition: background 0.15s;
+}
+
+.mine-following-card:hover {
+  background: rgba(var(--accent-rgb), 0.04);
+}
+
+.mine-following-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mine-following-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+}
+
+.mine-following-name:hover {
+  color: var(--accent);
+}
+
+.mine-following-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.mine-following-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* ===== Post Card ===== */

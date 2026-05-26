@@ -94,6 +94,15 @@ export default function AuthorPage({ embedded = false }) {
 
   const isOwnProfile = authUser?.id === authorUserId
 
+  // Own profile now handled by MinePage — redirect
+  useEffect(() => {
+    if (isOwnProfile && !embedded) {
+      setView('mine')
+    }
+  }, [isOwnProfile, embedded, setView])
+
+  if (isOwnProfile && !embedded) return null
+
   const loadPosts = useCallback(async () => {
     if (!authorUserId) return
     setPostsLoading(true)

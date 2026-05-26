@@ -374,6 +374,32 @@ async def get_avatar(
     return {"avatar_data": data}
 
 
+@router.put("/banner")
+@limiter.limit("10/minute")
+async def update_banner(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    body = await request.json()
+    banner = body.get("banner_data", "")
+    if len(banner) > 300_000:
+        raise HTTPException(400, "封面图过大，请压缩后上传")
+    await storage.execute(
+        "UPDATE users SET banner_data = ? WHERE id = ?", (banner, user["id"])
+    )
+    return {"ok": True}
+
+
+@router.get("/banner")
+async def get_banner(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    row = await storage.fetch_one("SELECT banner_data FROM users WHERE id = ?", (user["id"],))
+    return {"banner_data": row["banner_data"] if row else ""}
+
+
 @router.put("/password")
 @limiter.limit("5/minute")
 async def change_password(

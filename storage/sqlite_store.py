@@ -422,6 +422,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Privacy fields migration failed: {exc}")
 
+                    # Run 041_banner_data migration (ALTER TABLE ADD COLUMN)
+                    banner_path = migrations_dir / "041_banner_data.sql"
+                    if banner_path.exists():
+                        try:
+                            await conn.executescript(banner_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Banner data migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2458,7 +2468,9 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?",
+                    """SELECT u.id, u.username, u.avatar_data,
+                              (SELECT COUNT(*) FROM cards WHERE user_id = u.id AND visibility = 'public' AND deleted_at IS NULL) AS cards_count
+                       FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?""",
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
@@ -2496,13 +2508,14 @@ class SQLiteStore(StorageBase):
 
     # ── Author ──
 
-    async def get_author_cards(self, user_id: str) -> list[dict]:
+    async def get_author_cards(self, user_id: str, include_private: bool = False) -> list[dict]:
         try:
             async with await self._connect() as conn:
+                visibility_clause = "" if include_private else "AND visibility = 'public'"
                 cursor = await conn.execute(
-                    """SELECT id, name, card_json, forked_from, likes, created_at, avatar_data,
-                              market_description, market_tags
-                       FROM cards WHERE user_id = ? AND visibility = 'public' AND deleted_at IS NULL
+                    f"""SELECT id, name, card_json, forked_from, likes, created_at, avatar_data,
+                              market_description, market_tags, visibility
+                       FROM cards WHERE user_id = ? AND deleted_at IS NULL {visibility_clause}
                        ORDER BY created_at DESC""",
                     (user_id,),
                 )

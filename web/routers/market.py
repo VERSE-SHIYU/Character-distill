@@ -124,12 +124,12 @@ async def get_author(
     author = await storage.get_user_by_id(user_id)
     if not author:
         raise HTTPException(404, "用户不存在")
-    cards = await storage.get_author_cards(user_id)
+    is_self = user_id == user["id"]
+    cards = await storage.get_author_cards(user_id, include_private=is_self)
     following_ids = await storage.get_following(user["id"])
     followers_count = await storage.get_followers_count(user_id)
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id)
-    is_self = user_id == user["id"]
     stats_visible = bool(author.get("profile_stats_visible", 1) or is_self)
     cards_visible = bool(author.get("cards_visible", 1) or is_self)
     books_visible = bool(author.get("books_visible", 1) or is_self)

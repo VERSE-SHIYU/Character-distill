@@ -273,6 +273,26 @@ const useAppStore = create((set, get) => ({
   userAvatar: null,
   setUserAvatar: (url) => set({ userAvatar: url }),
 
+  userBanner: null,
+  setUserBanner: (url) => set({ userBanner: url }),
+
+  fetchUserBanner: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/auth/banner')
+      const data = await res.json()
+      if (data.banner_data) set({ userBanner: data.banner_data })
+    } catch {}
+  },
+
+  uploadUserBanner: async (base64) => {
+    await fetchWithTimeout('/api/auth/banner', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ banner_data: base64 }),
+    })
+    set({ userBanner: base64 })
+  },
+
   loadUserAvatar: async () => {
     try {
       const res = await fetchWithTimeout('/api/auth/avatar')
