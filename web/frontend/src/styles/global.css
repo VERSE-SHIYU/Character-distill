@@ -365,7 +365,7 @@
 }
 
 /* Midnight — 噪点纹理叠加 */
-.theme-midnight::before {
+html.theme-midnight::before {
   content: '';
   position: fixed;
   inset: 0;
@@ -788,7 +788,7 @@ body {
 }
 
 /* ── Aurora: noise texture ── */
-.theme-aurora::before {
+html.theme-aurora::before {
   content: '';
   position: fixed;
   inset: 0;
@@ -814,9 +814,21 @@ body {
 }
 
 /* ── Aurora: tab active underline ── */
+.theme-aurora .mine-tab {
+  position: relative;
+}
 .theme-aurora .mine-tab.active {
-  border-bottom: 2px solid transparent;
-  border-image: linear-gradient(90deg, #7B61FF, #FA8BFF) 1;
+  border-bottom-color: transparent;
+}
+.theme-aurora .mine-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #7B61FF, #FA8BFF);
+  border-radius: 1px;
 }
 
 /* ── Ocean theme: full-screen seascape background ── */
@@ -8409,6 +8421,11 @@ select.settings-input {
 .group-chat-page { padding: 0; overflow: hidden; }
 .group-chat-page .messages-layout { height: 100%; }
 .group-chat-page .messages-sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+
+@media (max-width: 768px) {
+  .group-sidebar-hidden { display: none; }
+  .group-chat-hidden { display: none; }
+}
 
 .group-avatar-stack { display: flex; flex-shrink: 0; }
 .group-avatar-stack > * { margin-left: -8px; border: 2px solid var(--sidebar-bg); border-radius: 50%; }

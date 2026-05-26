@@ -125,7 +125,7 @@ export default function MinePage() {
         .catch(() => {})
         .finally(() => setFollowingLoading(false))
     }
-    if (tab === 'posts' && posts.length === 0) {
+    if (tab === 'posts') {
       setPostsLoading(true)
       fetchWithTimeout(`/api/market/posts/${authUser?.id}`)
         .then(r => r.json())

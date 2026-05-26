@@ -30,6 +30,7 @@ export default function GroupChatPage() {
   const [sending, setSending] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
   const [showMembers, setShowMembers] = useState(false)
+  const MAX_AUTO_TURNS = 20
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
@@ -64,6 +65,7 @@ export default function GroupChatPage() {
     let turnIndex = 0
 
     while (!autoStopRef.current) {
+      if (turnIndex >= MAX_AUTO_TURNS) break
       const targetId = cardIds[turnIndex % cardIds.length]
       turnIndex++
 
@@ -287,8 +289,7 @@ export default function GroupChatPage() {
       <div className="messages-layout">
         {/* ── 左栏：群聊列表 ── */}
         <div
-          className="messages-sidebar hide-scrollbar"
-          style={{ display: !isMobile || !currentGroup ? 'flex' : 'none' }}
+          className={`messages-sidebar hide-scrollbar${isMobile && currentGroup ? ' group-sidebar-hidden' : ''}`}
         >
           <div className="messages-sidebar-header">
             <h2 className="messages-sidebar-title">群聊</h2>
@@ -351,8 +352,7 @@ export default function GroupChatPage() {
 
         {/* ── 右栏：聊天区 ── */}
         <div
-          className="messages-chat-area"
-          style={{ display: !isMobile || currentGroup ? 'flex' : 'none' }}
+          className={`messages-chat-area${isMobile && !currentGroup ? ' group-chat-hidden' : ''}`}
         >
           {!currentGroup ? (
             <div className="messages-empty-chat">选择一个群聊或创建新群聊</div>
