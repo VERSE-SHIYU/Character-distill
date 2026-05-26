@@ -662,18 +662,6 @@ const useAppStore = create((set, get) => ({
             }))
             get()._persistTasks()
           })
-              // 404 等 — 后端没有这个任务了
-              set((s) => ({
-                distillTasks: s.distillTasks.map((task) =>
-                  task.id === t.id
-                    ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
-                    : task,
-                ),
-                distilling: false,
-              }))
-              get()._persistTasks()
-            }
-          })
       })
     } catch { /* ignore */ }
   },
