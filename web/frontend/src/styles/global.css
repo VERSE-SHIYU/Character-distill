@@ -7775,33 +7775,6 @@ select.settings-input {
   cursor: not-allowed;
 }
 
-/* ── Empty state ── */
-.messages-empty-state {
-  padding: 60px 20px;
-  text-align: center;
-}
-
-.messages-empty-icon {
-  font-size: 48px;
-  display: block;
-  margin-bottom: 16px;
-  opacity: 0.5;
-}
-
-.messages-empty-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-  margin: 0 0 8px;
-}
-
-.messages-empty-desc {
-  font-size: 13px;
-  color: var(--text-dim);
-  margin: 0;
-  line-height: 1.5;
-}
-
 /* ===== PrivateMessageChat ===== */
 .private-chat {
   display: flex;
@@ -7832,7 +7805,7 @@ select.settings-input {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 8px;
 }
 
 /* ── Responsive ── */
