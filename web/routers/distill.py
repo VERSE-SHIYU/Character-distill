@@ -86,10 +86,12 @@ def _run_distill_task(
     If *api_config* is provided (api_key, base_url, model), a per-user LLM
     is created so distillation uses the user's own API key, not the global fallback.
     """
-    acquired = _DISTILL_SEMAPHORE.acquire(timeout=5)
+    acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
-        print(f"[distill] 并发蒸馏达上限，任务排队中: {char_name}")
-        _DISTILL_SEMAPHORE.acquire()  # 阻塞等待
+        print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
+        with _task_lock:
+            _tasks[task_id] = {"status": "error", "message": "服务器繁忙，请稍后重试"}
+        return
     try:
         from adapters.llm_adapter import LLMAdapter
         from deps import get_distiller, get_text_manager

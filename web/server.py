@@ -112,24 +112,6 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# ---- Auth middleware (must be before include_router for exception_handler to catch) ----
-app.add_middleware(AuthMiddleware)
-
-# ---- Mount routers ----
-app.include_router(auth_router)      # 不需要认证
-app.include_router(admin_router)
-app.include_router(text_router)
-app.include_router(distill_router)
-app.include_router(chat_router)
-app.include_router(history_router)
-app.include_router(voice_router)
-app.include_router(wechat_router)
-app.include_router(card_router)
-app.include_router(market_router)
-app.include_router(group_router)
-app.include_router(message_router)
-app.include_router(memory_router)
-
 # ---- Auth middleware ----
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -170,6 +152,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user = user
         return await call_next(request)
 
+
+# ---- Auth middleware (last added = outermost, before include_router for exception_handler) ----
+app.add_middleware(AuthMiddleware)
+
+# ---- Mount routers ----
+app.include_router(auth_router)      # 不需要认证
+app.include_router(admin_router)
+app.include_router(text_router)
+app.include_router(distill_router)
+app.include_router(chat_router)
+app.include_router(history_router)
+app.include_router(voice_router)
+app.include_router(wechat_router)
+app.include_router(card_router)
+app.include_router(market_router)
+app.include_router(group_router)
+app.include_router(message_router)
+app.include_router(memory_router)
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
