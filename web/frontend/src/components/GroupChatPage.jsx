@@ -399,7 +399,7 @@ export default function GroupChatPage() {
                     return (
                       <div key={m.id || i} className={`messages-row${isUser ? ' mine' : ' other'}`}>
                         {!isUser && (
-                          <Avatar name={m.speaker || '?'} size={36} src={cardAvatars[m.card_id]} />
+                          <Avatar name={m.speaker || '?'} size={36} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                         )}
                         <div className={`messages-bubble${isUser ? ' mine' : ' other'}`}>
                           {!isUser && <span className="messages-bubble-speaker">{m.speaker}</span>}

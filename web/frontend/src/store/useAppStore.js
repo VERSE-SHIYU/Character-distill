@@ -109,13 +109,27 @@ const useAppStore = create((set, get) => ({
     }))
     localStorage.setItem(`avatar_${key}`, dataUrl)
   },
-  loadCardAvatar: (key) => {
+  loadCardAvatar: async (key) => {
     const saved = localStorage.getItem(`avatar_${key}`)
     if (saved) {
       set((state) => ({
         cardAvatars: { ...state.cardAvatars, [key]: saved }
       }))
+      return saved
     }
+    // Fallback: fetch from server
+    try {
+      const res = await fetchWithTimeout(`/api/card/${key}/avatar`)
+      const data = await res.json()
+      if (data.data) {
+        set((state) => ({
+          cardAvatars: { ...state.cardAvatars, [key]: data.data }
+        }))
+        localStorage.setItem(`avatar_${key}`, data.data)
+        return data.data
+      }
+    } catch { /* not found or not accessible */ }
+    return null
   },
 
   // Voice cloning

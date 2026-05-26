@@ -157,7 +157,9 @@ export default function MinePage() {
           return tryQuality(q - 0.1)
         }
         const compressed = tryQuality(0.8)
-        try { await uploadUserBanner(compressed) } catch {}
+        try { await uploadUserBanner(compressed) } catch (e) {
+          console.error('[MinePage] Banner upload failed:', e)
+        }
       }
       img.src = reader.result
     }

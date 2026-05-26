@@ -607,7 +607,7 @@ export default function MarketCardDetail() {
               )}
 
               {cardData.key_memories?.length > 0 && (
-                <div className={`card-section card-section--wide${isMobile && collapsedSections.has('memories') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('memories')}>
+                <div className={`card-section${isMobile && collapsedSections.has('memories') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('memories')}>
                   <h3>关键记忆</h3>
                   <ul className="card-memory-list">
                     {cardData.key_memories.map((m, i) => (
@@ -618,7 +618,7 @@ export default function MarketCardDetail() {
               )}
 
               {rels.length > 0 && (
-                <div className={`card-section card-section--wide${isMobile && collapsedSections.has('relations') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('relations')}>
+                <div className={`card-section${isMobile && collapsedSections.has('relations') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('relations')}>
                   <h3>人物关系</h3>
                   <div className="card-rel-list">
                     {rels.map((r, i) => (
