@@ -27,6 +27,10 @@ class CreateGroupRequest(BaseModel):
     card_ids: list[str]
 
 
+class RenameGroupRequest(BaseModel):
+    name: str
+
+
 class SendMessageRequest(BaseModel):
     target_card_id: str
     message: str
@@ -247,6 +251,25 @@ async def get_history(
 
     messages = await storage.get_group_messages(group_id)
     return {"messages": messages}
+
+
+@router.patch("/{group_id}/rename")
+async def rename_group(
+    group_id: str,
+    req: RenameGroupRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """重命名群聊。"""
+    if not req.name.strip():
+        raise HTTPException(400, "名称不能为空")
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此群聊")
+    await storage.update_group_session(group_id, req.name.strip())
+    return {"ok": True}
 
 
 @router.delete("/{group_id}")

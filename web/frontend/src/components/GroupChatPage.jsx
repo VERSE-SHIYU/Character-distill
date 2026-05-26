@@ -30,6 +30,8 @@ export default function GroupChatPage() {
   const [sending, setSending] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
   const [showMembers, setShowMembers] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [editNameValue, setEditNameValue] = useState('')
   const MAX_AUTO_TURNS = 20
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
@@ -131,6 +133,28 @@ export default function GroupChatPage() {
     setSystemMessage(`${who} 加入了群聊`)
   }
 
+  async function handleRename() {
+    const name = editNameValue.trim()
+    if (!name || !currentGroup) return
+    try {
+      await fetchWithTimeout(`/api/group/${currentGroup.id}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      setCurrentGroup(prev => ({ ...prev, name }))
+      setGroups(prev => prev.map(g => g.id === currentGroup.id ? { ...g, name } : g))
+      setEditingName(false)
+    } catch (err) {
+      setError(err.message || '重命名失败')
+    }
+  }
+
+  function startEditing() {
+    setEditNameValue(currentGroup?.name || '')
+    setEditingName(true)
+  }
+
   function backToList() {
     setCurrentGroup(null)
     setMessages([])
@@ -201,6 +225,8 @@ export default function GroupChatPage() {
         name: data.name,
         card_ids: selectedCardIds,
       })
+      // Also add to sidebar list so it appears immediately
+      setGroups(prev => [{ id: data.group_id, name: data.name, card_ids: JSON.stringify(selectedCardIds), created_at: new Date().toISOString() }, ...prev])
       setMessages([])
     } catch (err) {
       setError(err.message)
@@ -365,7 +391,23 @@ export default function GroupChatPage() {
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
                   </button>
                 )}
-                <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
+                {editingName ? (
+                  <input
+                    className="private-chat-title-input"
+                    value={editNameValue}
+                    onChange={e => setEditNameValue(e.target.value)}
+                    onBlur={handleRename}
+                    onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setEditingName(false) }}
+                    autoFocus
+                  />
+                ) : (
+                  <div className="private-chat-title-wrap">
+                    <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
+                    <button type="button" className="chat-rename-btn" onClick={startEditing} title="重命名">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                  </div>
+                )}
                 <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
                 <button
                   type="button"

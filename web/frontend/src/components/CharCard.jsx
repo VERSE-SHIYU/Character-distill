@@ -6,7 +6,7 @@ import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
-import { Book, User } from './common/Icon'
+import { Book, User, Pin, Tag, Bookmark, Globe } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
@@ -395,7 +395,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                       <span className="char-card-source"><Book size={12} /> {textInfo.filename}</span>
                     )}
                     {c.forked_from && (
-                      <span className="char-card-source">{'\u{1F4CB}'} 已fork</span>
+                      <span className="char-card-source"><Clipboard size={12} /> 已fork</span>
                     )}
                     <div className="char-list-identity">{identity}</div>
                   </div>
@@ -406,7 +406,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   title={isPinned ? '取消置顶' : '置顶'}
                   onClick={(e) => togglePin(e, c.id)}
                 >
-                  {'\u{1F4CC}'}
+                  <Pin size={14} />
                 </button>
                 <button
                   type="button"
@@ -421,7 +421,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     }
                   }}
                 >
-                  {sharedCards.has(c.id) ? '\u{1F30D}' : '\u{1F516}'}
+                  {sharedCards.has(c.id) ? <Globe size={14} /> : <Bookmark size={14} />}
                 </button>
                 <button
                   type="button"
@@ -432,7 +432,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     setDeleteTarget(c)
                   }}
                 >
-                  {'\u{1F5D1}'}
+                  <Trash2 size={14} />
                 </button>
               </li>
             )
@@ -443,9 +443,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {/* Standalone cards (forked from market, no text attachment) */}
       {standaloneCards.length > 0 && (
         <div className="char-standalone">
-          <h3 className="char-identified-title">
-            {'\u{1F30D}'} 来自市场
-          </h3>
+          <h3 className="char-identified-title"><Globe size={16} /> 来自市场</h3>
           <ul className="char-list">
             {standaloneCards.map((c) => {
               const cardData = typeof c.card_json === 'string'
@@ -466,7 +464,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     <div className="char-list-info">
                       <div className="char-list-name">{name}</div>
                       {c.forked_from && (
-                        <span className="char-card-source">{'\u{1F4CB}'} 来自市场</span>
+                        <span className="char-card-source"><Clipboard size={12} /> 来自市场</span>
                       )}
                       <div className="char-list-identity">{identity}</div>
                     </div>
@@ -480,7 +478,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                       setDeleteTarget(c)
                     }}
                   >
-                    {'\u{1F5D1}'}
+                    <Trash2 size={14} />
                   </button>
                 </li>
               )

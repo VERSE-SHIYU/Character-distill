@@ -255,3 +255,23 @@ export const Music = (props) => (
     <circle cx="18" cy="16" r="3" />
   </Svg>
 )
+
+export const Pin = (props) => (
+  <Svg {...props}>
+    <path d="M12 2a8 8 0 00-8 8c0 5.25 8 13 8 13s8-7.75 8-13a8 8 0 00-8-8z" />
+    <circle cx="12" cy="10" r="3" />
+  </Svg>
+)
+
+export const Tag = (props) => (
+  <Svg {...props}>
+    <path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z" />
+    <line x1="7" y1="7" x2="7.01" y2="7" />
+  </Svg>
+)
+
+export const Bookmark = (props) => (
+  <Svg {...props}>
+    <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" />
+  </Svg>
+)

@@ -1516,6 +1516,18 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get group messages failed: {exc}")
             raise
 
+    async def update_group_session(self, id: str, name: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE group_sessions SET name = ? WHERE id = ?",
+                    (name, id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update group session failed: {exc}")
+            raise
+
     async def delete_group_session(self, id: str) -> None:
         try:
             async with await self._connect() as conn:

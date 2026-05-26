@@ -8183,6 +8183,39 @@ select.settings-input {
   color: var(--text);
 }
 
+.private-chat-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-rename-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.chat-rename-btn:hover { opacity: 1; color: var(--accent); }
+
+.private-chat-title-input {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 8px;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+}
+
 .private-chat-body {
   flex: 1;
   overflow-y: auto;

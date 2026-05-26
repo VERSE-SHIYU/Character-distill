@@ -119,7 +119,7 @@ const useAppStore = create((set, get) => ({
     }
     // Fallback: fetch from server
     try {
-      const res = await fetchWithTimeout(`/api/card/${key}/avatar`)
+      const res = await fetchWithTimeout(`/api/cards/${key}/avatar`)
       const data = await res.json()
       if (data.data) {
         set((state) => ({
