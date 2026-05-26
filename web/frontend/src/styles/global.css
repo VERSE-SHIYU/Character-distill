@@ -7795,6 +7795,38 @@ select.settings-input {
   white-space: pre-wrap;
 }
 
+.messages-status {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1;
+  align-self: center;
+}
+
+.messages-status.sending {
+  opacity: 0.5;
+  animation: pulse-fade 1.2s ease-in-out infinite;
+}
+
+.messages-status.failed {
+  color: #e53935;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font-size: 16px;
+  padding: 2px;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.messages-status.failed:hover {
+  background: rgba(229, 57, 53, 0.1);
+}
+
+@keyframes pulse-fade {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
 /* ── Input — WeChat large area ── */
 .private-chat-input-bar {
   display: flex;

@@ -90,22 +90,52 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
   const handleSend = async () => {
     if (!inputText.trim() || sending || !otherUserId) return
+    const tempId = `temp-${Date.now()}`
+    const optimisticMsg = {
+      id: tempId,
+      sender_id: authUser?.id,
+      content: inputText.trim(),
+      created_at: new Date().toISOString(),
+      _status: 'sending',
+    }
+    setMessages(prev => [...prev, optimisticMsg])
+    setInputText('')
     setSending(true)
     try {
       const res = await fetchWithTimeout('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ receiver_id: otherUserId, content: inputText.trim() }),
+        body: JSON.stringify({ receiver_id: otherUserId, content: optimisticMsg.content }),
       })
       const data = await res.json()
       if (data.message) {
-        setMessages((prev) => [...prev, data.message])
-        setInputText('')
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...data.message, _status: 'sent' } : m))
+      } else {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
       }
-    } catch (err) {
-      console.error('Send message failed:', err)
+    } catch {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleResend = async (failedMsg) => {
+    setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'sending' } : m))
+    try {
+      const res = await fetchWithTimeout('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ receiver_id: otherUserId, content: failedMsg.content }),
+      })
+      const data = await res.json()
+      if (data.message) {
+        setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...data.message, _status: 'sent' } : m))
+      } else {
+        setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'failed' } : m))
+      }
+    } catch {
+      setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'failed' } : m))
     }
   }
 
@@ -160,6 +190,19 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
                 <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                   <span className="messages-msg-text">{msg.content}</span>
                 </div>
+                {isMe && msg._status === 'sending' && (
+                  <span className="messages-status sending" title="发送中">⏳</span>
+                )}
+                {isMe && msg._status === 'failed' && (
+                  <button
+                    type="button"
+                    className="messages-status failed"
+                    onClick={() => handleResend(msg)}
+                    title="发送失败，点击重试"
+                  >
+                    ⚠
+                  </button>
+                )}
                 {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={36} />}
               </div>
             </React.Fragment>
