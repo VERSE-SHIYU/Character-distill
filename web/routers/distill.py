@@ -169,21 +169,43 @@ def _run_distill_task(
             else:
                 full += piece
 
-        # Step 3: parse + validate
+        # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
         stripped = full.strip()
         data = None
+
+        import re
+        # 1. 去掉 markdown 代码块标记
+        fence_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?\s*```', stripped, re.DOTALL)
+        if fence_match:
+            stripped = fence_match.group(1).strip()
+
+        # 2. 尝试直接解析
         try:
             data = json.loads(stripped)
         except json.JSONDecodeError:
-            start = stripped.find("{")
-            end = stripped.rfind("}")
-            if start != -1 and end != -1 and end > start:
+            # 3. 提取最外层的 { ... }（处理前缀/后缀文字）
+            brace_depth = 0
+            json_start = -1
+            json_end = -1
+            for i, ch in enumerate(stripped):
+                if ch == '{':
+                    if brace_depth == 0:
+                        json_start = i
+                    brace_depth += 1
+                elif ch == '}':
+                    brace_depth -= 1
+                    if brace_depth == 0 and json_start != -1:
+                        json_end = i
+                        break  # 找到第一个完整的顶层 {}
+
+            if json_start != -1 and json_end != -1:
                 try:
-                    data = json.loads(stripped[start:end + 1])
+                    data = json.loads(stripped[json_start:json_end + 1])
                 except json.JSONDecodeError:
                     pass
 
         if data is None:
+            print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
             with _task_lock:
                 _tasks[task_id].update({"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
