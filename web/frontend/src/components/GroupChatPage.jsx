@@ -303,7 +303,14 @@ export default function GroupChatPage() {
 
           {!loading && groups.length === 0 && (
             <div className="messages-empty-state">
-              <span className="messages-empty-icon">{'\u{1F465}'}</span>
+              <span className="messages-empty-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="48" height="48">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
+                  <path d="M16 3.13a4 4 0 010 7.75" />
+                </svg>
+              </span>
               <p className="messages-empty-title">还没有群聊</p>
               <p className="messages-empty-desc">创建群聊开始多角色导演模式</p>
             </div>
@@ -363,7 +370,6 @@ export default function GroupChatPage() {
                 <button
                   type="button"
                   className="chat-topbar-btn"
-                  style={{ marginLeft: 'auto' }}
                   onClick={() => setShowMembers(!showMembers)}
                   title="成员列表"
                 >
@@ -377,13 +383,13 @@ export default function GroupChatPage() {
               </div>
 
               {/* Messages */}
-              <div className="private-chat-body" style={{ display: 'flex' }}>
-                <div className="group-chat-messages-area" style={{ flex: 1, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="private-chat-body">
+                <div className="group-chat-messages-area">
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
                   {messages.length === 0 && !systemMessage && (
-                    <div className="messages-empty-state" style={{ padding: 40, border: 'none' }}>
+                    <div className="messages-empty-state messages-empty-state--borderless">
                       <p className="messages-empty-title">群聊已创建</p>
                       <p className="messages-empty-desc">选择角色并发送第一条消息</p>
                     </div>
