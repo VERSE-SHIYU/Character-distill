@@ -551,8 +551,12 @@ const useAppStore = create((set, get) => ({
                   set((s) => {
                     const cardId = card.id   // 后端返回的字段是 id，不是 card_id
                     const exists = s.cards.some((c) => c.id === cardId)
+                    const freshCard = { ...card, text_id: textId }
+                    const updatedCards = exists
+                      ? s.cards.map((c) => c.id === cardId ? freshCard : c)
+                      : [freshCard, ...s.cards]
                     return {
-                      cards: exists ? s.cards : [{ ...card, text_id: textId }, ...s.cards],
+                      cards: updatedCards,
                       distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
                         ? false : true,
                     }

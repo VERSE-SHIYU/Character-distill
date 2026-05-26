@@ -194,6 +194,19 @@ class Distiller:
             )
         )
 
+    @staticmethod
+    def _extract_json(text: str) -> str:
+        """剥掉 markdown 代码块，提取第一个完整 JSON 对象。"""
+        import re
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if m:
+            return m.group(1)
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            return text[start:end + 1]
+        return text
+
     # ── public entry points (unchanged) ────────────────────────────────
 
     def identify_characters(self, text: str) -> list[dict[str, Any]]:
@@ -368,19 +381,18 @@ class Distiller:
         stripped = reply.strip()
         data: Any | None = None
         try:
-            data = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            print(f"蒸馏结果 JSON 解析失败：{exc}，尝试截取首尾大括号之间的片段后重试")
-            start = stripped.find("{")
-            end = stripped.rfind("}")
-            if start == -1 or end == -1 or end <= start:
-                print("警告：无法在模型输出中定位有效的 JSON 大括号区间")
-                raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
-            snippet = stripped[start : end + 1]
+            data = json.loads(self._extract_json(stripped))
+        except json.JSONDecodeError:
+            pass
+
+        if data is None:
             try:
-                data = json.loads(snippet)
-            except json.JSONDecodeError as exc2:
-                print(f"截取大括号后 JSON 仍解析失败：{exc2}")
+                fix_reply = self._llm.chat(
+                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
+                    [{"role": "user", "content": stripped}],
+                )
+                data = json.loads(self._extract_json(fix_reply.strip()))
+            except Exception:
                 raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
 
         try:
@@ -694,18 +706,19 @@ class Distiller:
         stripped = reply.strip()
         data: Any | None = None
         try:
-            data = json.loads(stripped)
+            data = json.loads(self._extract_json(stripped))
         except json.JSONDecodeError:
-            start = stripped.find("{")
-            end = stripped.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                try:
-                    data = json.loads(stripped[start : end + 1])
-                except json.JSONDecodeError:
-                    pass
+            pass
 
         if data is None:
-            raise ValueError("蒸馏失败：LLM 返回格式不正确")
+            try:
+                fix_reply = self._llm.chat(
+                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
+                    [{"role": "user", "content": stripped}],
+                )
+                data = json.loads(self._extract_json(fix_reply.strip()))
+            except Exception:
+                raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
 
         try:
             return CharacterCard.model_validate(data)

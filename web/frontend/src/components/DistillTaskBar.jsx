@@ -6,6 +6,7 @@ export default function DistillTaskBar() {
   const setView = useAppStore((s) => s.setView)
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
+  const loadCards = useAppStore((s) => s.loadCards)
 
   if (tasks.length === 0) return null
 
@@ -29,7 +30,12 @@ export default function DistillTaskBar() {
           <div
             key={t.id}
             className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}`}
-            onClick={() => { if (isDone) setView('character') }}
+            onClick={() => {
+              if (isDone) {
+                if (t.textId) loadCards(t.textId)
+                setView('character')
+              }
+            }}
             role={isDone ? 'button' : undefined}
             tabIndex={isDone ? 0 : undefined}
           >
