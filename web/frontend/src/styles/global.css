@@ -7827,6 +7827,20 @@ select.settings-input {
   50% { opacity: 0.7; }
 }
 
+.messages-offline-banner {
+  text-align: center;
+  font-size: 12px;
+  color: #fff;
+  background: #78909c;
+  padding: 6px 12px;
+  flex-shrink: 0;
+}
+
+.messages-status.queued {
+  opacity: 0.5;
+  font-size: 12px;
+}
+
 /* ── Input — WeChat large area ── */
 .private-chat-input-bar {
   display: flex;

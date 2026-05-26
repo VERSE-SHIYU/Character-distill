@@ -28,6 +28,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
   const [inputText, setInputText] = useState('')
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
+  const [isOnline, setIsOnline] = useState(navigator.onLine)
 
   const messagesEndRef = useRef(null)
 
@@ -88,18 +89,41 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages.length])
 
+  // Network status
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true)
+    const goOffline = () => setIsOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
+
+  // Auto-send queued messages when back online
+  useEffect(() => {
+    if (!isOnline) return
+    const queued = messages.filter(m => m._status === 'queued')
+    queued.forEach(msg => handleResend(msg))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline])
+
   const handleSend = async () => {
-    if (!inputText.trim() || sending || !otherUserId) return
+    if (!inputText.trim() || !otherUserId) return
     const tempId = `temp-${Date.now()}`
     const optimisticMsg = {
       id: tempId,
       sender_id: authUser?.id,
       content: inputText.trim(),
       created_at: new Date().toISOString(),
-      _status: 'sending',
+      _status: isOnline ? 'sending' : 'queued',
     }
     setMessages(prev => [...prev, optimisticMsg])
     setInputText('')
+
+    if (!isOnline) return
+
     setSending(true)
     try {
       const res = await fetchWithTimeout('/api/messages/send', {
@@ -164,6 +188,12 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
         <span className="private-chat-title">{otherUsername || '私信'}</span>
       </div>
 
+      {!isOnline && (
+        <div className="messages-offline-banner">
+          网络已断开，消息将在恢复连接后自动发送
+        </div>
+      )}
+
       {/* Messages */}
       <div className="private-chat-body">
         {hasMore && (
@@ -190,6 +220,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
                 <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                   <span className="messages-msg-text">{msg.content}</span>
                 </div>
+                {isMe && msg._status === 'queued' && (
+                  <span className="messages-status queued" title="等待网络恢复">📶</span>
+                )}
                 {isMe && msg._status === 'sending' && (
                   <span className="messages-status sending" title="发送中">⏳</span>
                 )}
