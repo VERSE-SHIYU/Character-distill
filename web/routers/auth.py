@@ -114,6 +114,8 @@ async def get_current_user(
     user = await storage.get_user_by_id(user_id)
     if user is None:
         raise HTTPException(401, "用户不存在")
+    if user.get("is_disabled"):
+        raise HTTPException(403, "账号已被禁用")
     return user
 
 

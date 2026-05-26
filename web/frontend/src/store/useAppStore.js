@@ -696,12 +696,12 @@ const useAppStore = create((set, get) => ({
     try {
       if (!sessionId) {
         const cardId = card.id || card.card_id
-        if (!cardId || !card.text_id) {
+        if (!cardId) {
           set({ error: '缺少角色信息，无法创建会话', sending: false })
           return
         }
         const result = await postJSON('/api/distill/start_session', {
-          text_id: card.text_id,
+          text_id: card.text_id || '',
           card_id: cardId,
           user_role: get().userRole,
         }, undefined, abort.signal)

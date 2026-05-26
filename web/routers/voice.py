@@ -6,7 +6,7 @@ import json
 import os
 import re
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -123,7 +123,10 @@ async def upload_custom_voice(
     if not name.strip():
         raise HTTPException(400, "请填写音色名称")
 
-    ext = Path(file.filename).suffix.lower()
+    raw_name = file.filename or ""
+    ext = PurePath(raw_name).suffix.lower()
+    if not ext or not ext.replace(".", "").isalpha():
+        raise HTTPException(400, "文件名格式异常")
     if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
         raise HTTPException(400, "仅支持音频（wav/mp3/flac/ogg/m4a）和视频（mp4/mov/avi/mkv/webm）格式")
 

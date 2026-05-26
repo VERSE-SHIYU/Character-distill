@@ -104,6 +104,7 @@ async def _ensure_session(
         engine.user_role = db_session["user_role"]
     # Restore affinity from DB
     engine._session_id = session_id
+    engine._user_id = user_id
     try:
         affinity_data = await storage.get_session_affinity(session_id)
         if affinity_data:
@@ -207,14 +208,20 @@ async def _do_chat(
         # Save summary if newly generated
         engine = session.get("engine")
         if engine and engine.last_summary:
-            try:
-                sum_rec = await storage.save_message(
-                    session_id, "summary",
-                    f"历史摘要：{engine.last_summary}", "",
-                )
-                ids_to_add.append(sum_rec["id"])
-            except Exception as exc:
-                print(f"[chat] Save summary failed (non-fatal): {exc}")
+            existing_summaries = [
+                m for m in await storage.get_messages(session_id)
+                if m["role"] == "summary"
+            ]
+            last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
+            new_summary = f"历史摘要：{engine.last_summary}"
+            if new_summary != last_saved:
+                try:
+                    sum_rec = await storage.save_message(
+                        session_id, "summary", new_summary, "",
+                    )
+                    ids_to_add.append(sum_rec["id"])
+                except Exception as exc:
+                    print(f"[chat] Save summary failed (non-fatal): {exc}")
 
         session.setdefault("message_ids", []).extend(ids_to_add)
     except Exception as exc:
@@ -303,17 +310,17 @@ async def _do_chat_stream(
             print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages")
             async with session["lock"]:
                 stream = engine.chat_stream(msg, voice_mode=voice_mode)
-                # Drive generator to first yield so history.append runs under lock
+                # Drive full stream generation under lock to prevent history interleaving
                 first_piece, done = await asyncio.to_thread(_next_piece, stream)
-            if not done:
-                tokens.append(first_piece)
-                yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False)}\n\n"
-            while True:
-                piece, done = await asyncio.to_thread(_next_piece, stream)
-                if done:
-                    break
-                tokens.append(piece)
-                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+                if not done:
+                    tokens.append(first_piece)
+                    yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False)}\n\n"
+                while True:
+                    piece, done = await asyncio.to_thread(_next_piece, stream)
+                    if done:
+                        break
+                    tokens.append(piece)
+                    yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
 
             full_reply = "".join(tokens)
             if not full_reply.strip():
@@ -332,14 +339,20 @@ async def _do_chat_stream(
 
             engine = session.get("engine")
             if engine and engine.last_summary:
-                try:
-                    sum_rec = await storage.save_message(
-                        session_id, "summary",
-                        f"历史摘要：{engine.last_summary}", "",
-                    )
-                    session.setdefault("message_ids", []).append(sum_rec["id"])
-                except Exception as exc:
-                    print(f"[chat] Save summary failed (non-fatal): {exc}")
+                existing_summaries = [
+                    m for m in await storage.get_messages(session_id)
+                    if m["role"] == "summary"
+                ]
+                last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
+                new_summary = f"历史摘要：{engine.last_summary}"
+                if new_summary != last_saved:
+                    try:
+                        sum_rec = await storage.save_message(
+                            session_id, "summary", new_summary, "",
+                        )
+                        session.setdefault("message_ids", []).append(sum_rec["id"])
+                    except Exception as exc:
+                        print(f"[chat] Save summary failed (non-fatal): {exc}")
 
             retracted = False
             if engine and random.random() < 0.2:

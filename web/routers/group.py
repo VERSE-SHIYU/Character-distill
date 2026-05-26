@@ -123,6 +123,17 @@ async def create_group(
     }
 
 
+@router.get("/list")
+async def list_groups(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """列出用户的群聊会话。"""
+    groups = await storage.list_group_sessions(user["id"])
+    return {"groups": groups}
+
+
 @router.post("/{group_id}/send")
 async def send_message(
     group_id: str,
@@ -236,17 +247,6 @@ async def get_history(
 
     messages = await storage.get_group_messages(group_id)
     return {"messages": messages}
-
-
-@router.get("/list")
-async def list_groups(
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """列出用户的群聊会话。"""
-    groups = await storage.list_group_sessions(user["id"])
-    return {"groups": groups}
 
 
 @router.delete("/{group_id}")

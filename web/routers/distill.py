@@ -44,7 +44,7 @@ class DistillByIdRequest(BaseModel):
 
 class StartSessionRequest(BaseModel):
     """Create a chat session for an existing card without re-distilling."""
-    text_id: str
+    text_id: str = ""
     card_id: str
     user_role: str = ""
 
@@ -662,6 +662,36 @@ async def generate_opening(
     return {"opening": opening}
 
 
+@router.get("/cards/by-text/{text_id}")
+async def list_cards(
+    text_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List all distilled character cards for a text."""
+    user_id = user["id"]
+    try:
+        return await storage.list_cards(text_id, user_id)
+    except Exception as exc:
+        print(f"[distill] List cards failed: {exc}")
+        raise HTTPException(500, f"List cards failed: {exc}") from exc
+
+
+@router.get("/cards/standalone")
+async def list_standalone_cards(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List standalone cards (forked from market, no text attachment)."""
+    try:
+        return await storage.list_standalone_cards(user["id"])
+    except Exception as exc:
+        print(f"[distill] List standalone cards failed: {exc}")
+        raise HTTPException(500, f"List standalone cards failed: {exc}") from exc
+
+
 @router.get("/cards/{card_id}/export")
 async def export_card(
     card_id: str,
@@ -704,36 +734,6 @@ async def export_card(
     raise HTTPException(400, f"Unsupported export format: {format}")
 
 
-@router.get("/cards/by-text/{text_id}")
-async def list_cards(
-    text_id: str,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> list[dict[str, Any]]:
-    """List all distilled character cards for a text."""
-    user_id = user["id"]
-    try:
-        return await storage.list_cards(text_id, user_id)
-    except Exception as exc:
-        print(f"[distill] List cards failed: {exc}")
-        raise HTTPException(500, f"List cards failed: {exc}") from exc
-
-
-@router.get("/cards/standalone")
-async def list_standalone_cards(
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> list[dict[str, Any]]:
-    """List standalone cards (forked from market, no text attachment)."""
-    try:
-        return await storage.list_standalone_cards(user["id"])
-    except Exception as exc:
-        print(f"[distill] List standalone cards failed: {exc}")
-        raise HTTPException(500, f"List standalone cards failed: {exc}") from exc
-
-
 @router.post("/start_session")
 async def start_session(
     req: StartSessionRequest,
@@ -752,10 +752,6 @@ async def start_session(
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
-    text_rec = await storage.get_text(req.text_id)
-    if not text_rec:
-        raise HTTPException(404, "Text not found")
-    content = text_rec["content"]
 
     card_rec = await storage.get_card(req.card_id)
     if not card_rec:
@@ -767,14 +763,30 @@ async def start_session(
         print(f"[distill] Parse card {req.card_id} failed: {exc}")
         raise HTTPException(500, "Card data is corrupted") from exc
 
-    existing_cards = await storage.list_cards(req.text_id, user_id)
-    all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
-
     try:
-        rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
-        session_id = await asyncio.to_thread(
-            text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id
-        )
+        if req.text_id:
+            text_rec = await storage.get_text(req.text_id)
+            if not text_rec:
+                raise HTTPException(404, "Text not found")
+            content = text_rec["content"]
+            existing_cards = await storage.list_cards(req.text_id, user_id)
+            all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
+            rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
+            session_id = await asyncio.to_thread(
+                text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id
+            )
+        else:
+            # 独立卡片模式：不加载原文，不构建 RAG，直接创建 ChatEngine
+            from core.chat_engine import ChatEngine
+            from deps import get_rag_config, get_memory_manager
+            engine = ChatEngine(
+                per_user_llm, None, card,
+                memory_manager=get_memory_manager(),
+                card_id=req.card_id,
+            )
+            session_id = _uuid.uuid4().hex[:12]
+            sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}
+            all_characters = []
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
         raise HTTPException(500, f"Create session failed: {exc}") from exc

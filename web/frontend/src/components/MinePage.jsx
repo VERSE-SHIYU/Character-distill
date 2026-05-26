@@ -127,7 +127,7 @@ export default function MinePage() {
     }
     if (tab === 'posts') {
       setPostsLoading(true)
-      fetchWithTimeout(`/api/market/posts/${authUser?.id}`)
+      fetchWithTimeout(`/api/market/author/${authUser?.id}/posts`)
         .then(r => r.json())
         .then(data => setPosts(data.posts || []))
         .catch(() => {})
@@ -363,13 +363,13 @@ export default function MinePage() {
                   onClick={async () => {
                     setPosting(true)
                     try {
-                      await fetchWithTimeout('/api/market/posts', {
+                      await fetchWithTimeout('/api/market/author/posts', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                         body: JSON.stringify({ content: postContent, visibility: 'public' }),
                       })
                       setPostContent('')
-                      const res = await fetchWithTimeout(`/api/market/posts/${authUser.id}`)
+                      const res = await fetchWithTimeout(`/api/market/author/${authUser.id}/posts`)
                       const data = await res.json()
                       setPosts(data.posts || [])
                     } catch {}
@@ -395,8 +395,8 @@ export default function MinePage() {
                     key={p.id}
                     post={p}
                     onLike={async (id) => {
-                      await fetchWithTimeout(`/api/market/posts/${id}/like`, { method: 'POST', headers: getAuthHeaders() })
-                      const res = await fetchWithTimeout(`/api/market/posts/${authUser.id}`)
+                      await fetchWithTimeout(`/api/market/post/${id}/like`, { method: 'POST', headers: getAuthHeaders() })
+                      const res = await fetchWithTimeout(`/api/market/author/${authUser.id}/posts`)
                       const data = await res.json()
                       setPosts(data.posts || [])
                     }}
