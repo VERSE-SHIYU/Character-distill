@@ -4213,7 +4213,9 @@ select.settings-input {
   color: var(--text-sec);
   transition: background 0.14s, color 0.14s;
   white-space: nowrap;
+  outline: none;
 }
+.theme-popup-item:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
 
 .theme-popup-item:hover { background: rgba(255,255,255,0.45); color: var(--text); }
 .theme-popup-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
