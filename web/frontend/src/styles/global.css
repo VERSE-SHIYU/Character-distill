@@ -411,6 +411,16 @@
 }
 
 /* 浅色主题 — 毛玻璃适配 */
+.theme-ocean .market-card-v2-cover::after,
+.theme-sakura .market-card-v2-cover::after {
+  background: linear-gradient(
+    to top,
+    rgba(255, 255, 255, 0.5) 0%,
+    rgba(255, 255, 255, 0.15) 40%,
+    transparent 70%
+  );
+}
+
 .theme-ocean .market-card-v2-glass-info,
 .theme-sakura .market-card-v2-glass-info {
   background: rgba(255, 255, 255, 0.3);
@@ -7185,7 +7195,7 @@ select.settings-input {
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 4 / 5;
 }
 
 .market-card-v2:hover {
