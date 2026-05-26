@@ -386,16 +386,62 @@
 
 /* Midnight — 卡片 hover 浮升（不缩按钮） */
 .theme-midnight .card,
-.theme-midnight .market-card-v2,
 .theme-midnight .market-card {
   transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .theme-midnight .card:hover,
-.theme-midnight .market-card-v2:hover,
 .theme-midnight .market-card:hover {
   transform: scale(1.01);
   box-shadow: 0 8px 32px rgba(0,0,0,0.3),
               0 0 0 1px rgba(var(--accent-rgb), 0.15);
+}
+
+/* Midnight — market-card-v2 Spotify card */
+.theme-midnight .market-card-v2 {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.theme-midnight .market-card-v2:hover {
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4), 0 0 20px rgba(var(--accent-rgb), 0.1);
+}
+
+.theme-midnight .market-card-v2-glass-info {
+  background: rgba(0, 0, 0, 0.4);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* 浅色主题 — 毛玻璃适配 */
+.theme-ocean .market-card-v2-glass-info,
+.theme-sakura .market-card-v2-glass-info {
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+}
+
+.theme-ocean .market-card-v2-name,
+.theme-sakura .market-card-v2-name {
+  color: var(--text);
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.3);
+}
+
+.theme-ocean .market-card-v2-identity,
+.theme-sakura .market-card-v2-identity {
+  color: var(--text-sec);
+}
+
+.theme-ocean .market-card-v2-author,
+.theme-sakura .market-card-v2-author {
+  color: var(--text-dim);
+}
+
+.theme-ocean .market-card-v2-stats .market-like-btn,
+.theme-sakura .market-card-v2-stats .market-like-btn {
+  color: var(--text-dim);
+}
+
+.theme-ocean .market-card-v2-stats .market-like-btn:hover,
+.theme-sakura .market-card-v2-stats .market-like-btn:hover {
+  color: var(--text);
 }
 
 /* Midnight — button hover 只给 shadow 不给 scale */
@@ -7129,59 +7175,114 @@ select.settings-input {
   gap: 12px;
 }
 
+/* ── Market Card V2 — Spotify-style full-image card ── */
 .market-card-v2 {
+  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
   border-radius: 14px;
-  border: 1px solid var(--border);
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  aspect-ratio: 3 / 4;
 }
 
 .market-card-v2:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+  transform: translateY(-4px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
 }
 
+/* ── Cover container (absolute, fills card) ── */
 .market-card-v2-cover {
-  height: 120px;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Layer 1: 模糊底图 — 永远填满，消灭黑边 */
+.market-card-v2-cover-blur {
+  position: absolute;
+  inset: -20px;
+  width: calc(100% + 40px);
+  height: calc(100% + 40px);
+  object-fit: cover;
+  object-position: center;
+  filter: blur(20px) saturate(150%);
+  transform: scale(1.1);
+  z-index: 0;
+}
+
+/* Layer 3: 清晰主图 */
+.market-card-v2-cover-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  z-index: 1;
+  transition: transform 0.4s ease;
+  background: transparent;
+}
+
+.market-card-v2:hover .market-card-v2-cover-img {
+  transform: scale(1.05);
+}
+
+/* Layer 2: 暗角渐变（通过 ::after 实现） */
+.market-card-v2-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.7) 0%,
+    rgba(0, 0, 0, 0.3) 40%,
+    rgba(0, 0, 0, 0.05) 70%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* Fallback: 无图片时渐变 + Avatar 居中 */
+.market-card-v2-cover-fallback {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, var(--primary), var(--primary-hover));
-  overflow: hidden;
 }
 
-.market-card-v2-cover-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  background: var(--glass-bg);
-}
-
-.market-card-v2-info {
-  padding: 10px 12px 12px;
+/* ── Layer 4: 毛玻璃信息条 — 浮在底部 ── */
+.market-card-v2-glass-info {
+  position: relative;
+  z-index: 3;
+  margin-top: auto;
+  padding: 12px 14px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
 .market-card-v2-name {
-  font-weight: 600;
-  font-size: 14px;
-  color: var(--text);
+  font-weight: 700;
+  font-size: 15px;
+  color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 .market-card-v2-identity {
   font-size: 12px;
-  color: var(--text-dim);
+  color: rgba(255, 255, 255, 0.75);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -7193,9 +7294,14 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.market-card-v2-author-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .market-card-v2-author {
@@ -7203,12 +7309,37 @@ select.settings-input {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 50%;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .market-card-v2-stats {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.market-card-v2-stats .market-like-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.market-card-v2-stats .market-like-btn:hover {
+  color: #fff;
+}
+
+.market-card-v2-stats .market-like-btn.liked {
+  color: #ff6b8a;
 }
 
 .market-loading-more {
@@ -7216,6 +7347,12 @@ select.settings-input {
   padding: 16px;
   font-size: 13px;
   color: var(--text-dim);
+}
+
+@media (max-width: 640px) {
+  .market-card-v2 {
+    aspect-ratio: 4 / 5;
+  }
 }
 
 /* ===== Market Card Detail ===== */
