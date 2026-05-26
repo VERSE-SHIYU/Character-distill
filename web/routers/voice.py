@@ -226,6 +226,8 @@ async def voice_synthesize(
     text = body.get("text", "")
     if not text:
         raise HTTPException(400, "text is required")
+    if len(text) > 200:
+        raise HTTPException(400, "合成文字不能超过200字")
 
     # Strip parenthetical descriptions for cleaner TTS output
     text = re.sub(r'[（(][^）)]*[）)]', '', text).strip()
