@@ -1,0 +1,13 @@
+### 23:5X 记忆系统 API + 前端记忆面板 + "记住"指令识别
+- **做了什么**：
+  - 新增 `/api/memory/list/{card_id}`、`/api/memory/delete/{memory_id}`、`/api/memory/clear/{card_id}` 三个端点（memory.py）
+  - 聊天顶栏增加"记忆"按钮，点击右侧滑出记忆面板
+  - 记忆面板显示角色全部长期记忆，hover 显示删除按钮，底部"清空全部"需确认
+  - 用户发送含"记住/别忘了/你要记得/帮我记"的消息时，显示 toast "已记录到角色记忆"，2s 后消失
+  - 记忆面板 + toast CSS 样式（带 slide-in-right 和 toast-fade 动画）
+- **为什么**：让用户直接查看和管理角色长期记忆，提高记忆系统可见性；"记住"指令让用户感知角色正在积累记忆
+- **影响范围**：
+  - `web/routers/memory.py` — 新建，3 个端点
+  - `web/server.py` — 注册 memory_router
+  - `ChatArea.jsx` — 记忆面板 state/loadMemories/button/panel/toast + "记住"正则匹配
+  - `global.css` — 记忆面板 + toast 样式（~100行）

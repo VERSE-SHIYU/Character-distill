@@ -48,6 +48,7 @@ from routers.card import router as card_router
 from routers.market import router as market_router
 from routers.group import router as group_router
 from routers.message import router as message_router
+from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
@@ -118,6 +119,7 @@ app.include_router(card_router)
 app.include_router(market_router)
 app.include_router(group_router)
 app.include_router(message_router)
+app.include_router(memory_router)
 
 # ---- Auth middleware ----
 from starlette.middleware.base import BaseHTTPMiddleware

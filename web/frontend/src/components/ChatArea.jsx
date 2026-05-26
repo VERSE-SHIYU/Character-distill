@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, Heart, Smile, Shield, Handshake, MessageSquare, Mic, Book, File } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
-import { getAuthHeaders } from '../api/client'
+import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import RoleSetupModal from './RoleSetupModal'
@@ -121,6 +121,10 @@ function ChatView() {
 
   const [resetConfirm, setResetConfirm] = useState(false)
   const [retractConfirm, setRetractConfirm] = useState(false)
+  const [showMemoryPanel, setShowMemoryPanel] = useState(false)
+  const [memories, setMemories] = useState([])
+  const [memoriesLoading, setMemoriesLoading] = useState(false)
+  const [memoryToast, setMemoryToast] = useState(false)
 
   useEffect(() => {
     if (!userRole && !sessionId) setShowRoleModal(true)
@@ -294,10 +298,25 @@ function ChatView() {
     userScrolledUp.current = dist > 80
   }, [])
 
+  const loadMemories = useCallback(async () => {
+    if (!cardId) return
+    setMemoriesLoading(true)
+    try {
+      const res = await fetchWithTimeout(`/api/memory/list/${cardId}`)
+      const data = await res.json()
+      setMemories(data.memories || [])
+    } catch { /* ignore */ }
+    finally { setMemoriesLoading(false) }
+  }, [cardId])
+
   const handleSend = useCallback(
     (text) => {
       if (!text.trim() || sending) return
       cancelStreamRef.current = sendMessageStream(text)
+      if (/记住|别忘了|你要记得|帮我记/.test(text)) {
+        setMemoryToast(true)
+        setTimeout(() => setMemoryToast(false), 2000)
+      }
     },
     [sending, sendMessageStream],
   )
@@ -405,6 +424,18 @@ function ChatView() {
             title="返回角色列表"
           >
             <User size={16} />
+          </button>
+          <button
+            type="button"
+            className="chat-topbar-btn"
+            title="角色记忆"
+            onClick={() => { setShowMemoryPanel(true); loadMemories() }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7.5L12 22l-3-5.5C7 14.5 5 12 5 9a7 7 0 0 1 7-7z"/>
+              <circle cx="12" cy="9" r="2.5"/>
+            </svg>
           </button>
         </div>
       </div>
@@ -605,6 +636,58 @@ function ChatView() {
         onCancel={() => setRetractConfirm(false)}
         danger
       />
+
+      {/* Memory panel */}
+      {showMemoryPanel && (
+        <div className="memory-panel-overlay" onClick={() => setShowMemoryPanel(false)}>
+          <div className="memory-panel" onClick={e => e.stopPropagation()}>
+            <div className="memory-panel-header">
+              <h3>角色记忆</h3>
+              <button type="button" className="btn-ghost" onClick={() => setShowMemoryPanel(false)}>✕</button>
+            </div>
+            <div className="memory-panel-body">
+              {memoriesLoading ? (
+                <p className="memory-empty">加载中…</p>
+              ) : memories.length === 0 ? (
+                <p className="memory-empty">暂无记忆，聊天中的重要信息会自动记录</p>
+              ) : (
+                memories.map((m) => (
+                  <div key={m.id} className="memory-item">
+                    <p className="memory-text">{m.memory}</p>
+                    <button
+                      type="button"
+                      className="memory-delete-btn"
+                      onClick={async () => {
+                        await fetchWithTimeout(`/api/memory/delete/${m.id}`, { method: 'DELETE' })
+                        setMemories(prev => prev.filter(x => x.id !== m.id))
+                      }}
+                      title="删除此记忆"
+                    >✕</button>
+                  </div>
+                ))
+              )}
+            </div>
+            {memories.length > 0 && (
+              <div className="memory-panel-footer">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={async () => {
+                    if (!confirm('确定清空该角色的全部记忆？')) return
+                    await fetchWithTimeout(`/api/memory/clear/${cardId}`, { method: 'DELETE' })
+                    setMemories([])
+                  }}
+                >清空全部记忆</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Memory toast */}
+      {memoryToast && (
+        <div className="memory-toast">已记录到角色记忆</div>
+      )}
     </div>
   )
 }

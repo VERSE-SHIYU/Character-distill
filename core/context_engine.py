@@ -32,6 +32,7 @@ MODEL_BUDGET_MAP: dict[str, int] = {
 _HISTORY_RATIO = 0.40
 _SCENE_RATIO = 0.25
 _MEMORY_RATIO = 0.06
+_CARD_EXT_RATIO = 0.08  # 扩展层上限：总预算的8%
 
 
 def _compute_budgets(model: str) -> dict[str, int]:
@@ -43,6 +44,7 @@ def _compute_budgets(model: str) -> dict[str, int]:
     return {
         "total": total,
         "history": round(total * _HISTORY_RATIO),
+        "card_ext": round(total * _CARD_EXT_RATIO),
         "scene": round(total * _SCENE_RATIO),
         "memory": round(total * _MEMORY_RATIO),
     }
@@ -51,8 +53,9 @@ def _compute_budgets(model: str) -> dict[str, int]:
 class ContextEngine:
     """统一 token 预算调度器。
 
-    固定区（角色卡+规则）不参与裁剪；动态区按优先级竞争剩余预算，
-    超预算时从低优先级开始截断。
+    固定区（核心层+规则）不参与裁剪；动态区按优先级竞争剩余预算，
+    超预算时从低优先级开始截断。扩展层（记忆/关系/情感/示范/决策）
+    作为第二优先级参与动态调度。
     """
 
     TOTAL_BUDGET = 8000
@@ -80,6 +83,7 @@ class ContextEngine:
         self.MAX_HISTORY = budgets["history"]
         self.MAX_SCENE = budgets["scene"]
         self.MAX_MEMORY = budgets["memory"]
+        self.MAX_CARD_EXT = budgets["card_ext"]
         print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
 
     # ── 公开接口 ──────────────────────────────────────────────
@@ -94,16 +98,18 @@ class ContextEngine:
         budget = self.TOTAL_BUDGET
         parts: list[str] = []
 
-        # ① 固定区
-        card_block = self._build_card_section()
+        # ① 固定区（核心层 + 规则）
+        card_core = self._build_card_core()
         rules_block = self._build_rules_section(user_role)
-        budget -= _count_tokens(card_block) + _count_tokens(rules_block)
-        parts.append(card_block)
+        budget -= _count_tokens(card_core) + _count_tokens(rules_block)
+        parts.append(card_core)
         parts.append(rules_block)
 
-        # ② 动态区（低优先级先被压缩）
+        # ② 动态区（优先级：history > card_ext > scene > memory > web）
+        card_ext = self._build_card_ext()
         sources = [
             ("history", self._build_history(history), self.MAX_HISTORY),
+            ("card_ext", card_ext, self.MAX_CARD_EXT),
             ("scene", self._retrieve_scenes(user_message), self.MAX_SCENE),
             ("memory", self._retrieve_memories(user_message), self.MAX_MEMORY),
         ]
@@ -131,75 +137,72 @@ class ContextEngine:
 
     # ── 固定区 ────────────────────────────────────────────────
 
-    def _build_card_section(self) -> str:
+    def _build_card_core(self) -> str:
+        """核心层：身份+行为+语言风格，绝不裁剪。"""
         c = self.card
 
-        # Layer 1: Identity & Core
-        layer1 = (
-            f"## Identity & Core\n"
-            f"你现在是「{c.name}」。从这一刻起，你就是这个人，不是AI，不是助手。\n"
-            f"一句话身份：{c.identity}\n"
-            f"背景：{c.background}"
+        # 身份
+        core = (
+            f"你现在是「{c.name}」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n"
+            f"## 核心身份\n"
+            f"身份：{c.identity}\n"
+            f"背景：{c.background}\n"
         )
 
-        # Layer 2: Behavior & Values
-        traits_str = "、".join(c.personality_traits)
-        values_str = "、".join(c.values)
-        tensions_str = "、".join(c.inner_tensions)
-        emo_str = "；".join(c.emotional_patterns) if c.emotional_patterns else ""
+        # 行为模式
+        traits = "、".join(c.personality_traits)
+        values = "、".join(c.values)
+        tensions = "、".join(c.inner_tensions)
+        core += (
+            f"\n## 行为模式\n"
+            f"性格：{traits}\n"
+            f"价值观：{values}\n"
+            f"内在矛盾：{tensions}\n"
+        )
 
-        layer2_parts = [
-            "## Behavior & Values",
-            f"性格特征：{traits_str}",
-            f"核心价值观：{values_str}",
-            f"内在矛盾：{tensions_str}",
-        ]
-        if emo_str:
-            layer2_parts.append(f"情感模式：{emo_str}")
-        if c.decision_style:
-            layer2_parts.append(f"决策方式：{c.decision_style}")
-        layer2 = "\n".join(layer2_parts)
-
-        # Layer 3: Speaking Style
+        # 语言风格
         catch = "、".join(c.speaking_style.catchphrases)
         taboo = "、".join(c.speaking_style.taboo_words)
-        layer3 = (
-            f"## Speaking Style\n"
-            f"语气：{c.speaking_style.tone}\n"
-            f"句式：{c.speaking_style.sentence_pattern}\n"
-            f"用词水平：{c.speaking_style.vocabulary_level}\n"
+        core += (
+            f"\n## 语言风格\n"
+            f"语气：{c.speaking_style.tone}　"
+            f"句式：{c.speaking_style.sentence_pattern}　"
+            f"用词：{c.speaking_style.vocabulary_level}\n"
             f"口癖：{catch}\n"
-            f"禁忌词：{taboo}"
+            f"禁忌：{taboo}\n"
         )
 
-        # Layer 4: Memory & Experience
-        memories_str = "\n".join(f"- {m}" for m in c.key_memories) if c.key_memories else ""
-        relations_str = "\n".join(
-            f"- {r.target}（{r.relation}）：{r.attitude}" for r in c.relationships
-        ) if c.relationships else ""
+        return core
 
-        layer4_parts = ["## Memory & Experience"]
-        if memories_str:
-            layer4_parts.append(memories_str)
-        if relations_str:
-            layer4_parts.append(f"人际关系：\n{relations_str}")
+    def _build_card_ext(self) -> str:
+        """扩展层：记忆+关系+示范+情感+决策，参与动态预算竞争。
+        内部按优先级排列：记忆 > 关系 > 情感 > 对话示范 > 决策。
+        """
+        c = self.card
+        parts = []
+
+        if c.key_memories:
+            memories = "\n".join(f"- {m}" for m in c.key_memories)
+            parts.append(f"【关键记忆】\n{memories}")
+
+        if c.relationships:
+            relations = "\n".join(
+                f"- {r.target}（{r.relation}）：{r.attitude}" for r in c.relationships
+            )
+            parts.append(f"【人际关系】\n{relations}")
+
+        if c.emotional_patterns:
+            emo = "；".join(c.emotional_patterns)
+            parts.append(f"【情感模式】\n{emo}")
+
         if c.dialogue_examples:
             exs = "\n---\n".join(c.dialogue_examples[:3])
-            layer4_parts.append(f"对话示范：\n{exs}")
-        layer4 = "\n".join(layer4_parts)
+            parts.append(f"【对话风格示范】\n{exs}")
 
-        block = "\n\n".join([layer1, layer2, layer3, layer4])
+        if c.decision_style:
+            parts.append(f"【决策方式】\n{c.decision_style}")
 
-        # 2500 tok hard cap
-        card_tokens = _count_tokens(block)
-        if card_tokens > 2500:
-            print(
-                f"[ContextEngine] WARNING: card block ~{card_tokens} tok "
-                f"exceeds 2500 limit for '{c.name}', truncating"
-            )
-            block = _truncate(block, 2500)
-
-        return block
+        return "\n\n".join(parts) if parts else ""
 
     def _build_rules_section(self, user_role: str = "") -> str:
         c = self.card

@@ -77,6 +77,17 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
     setRelationships((rs) => rs.filter((_, i) => i !== idx))
   }
 
+  const FIELD_LABELS = {
+    personality_traits: '性格特征',
+    catchphrases: '口癖',
+    taboo_words: '禁忌用词',
+    values: '核心价值观',
+    key_memories: '关键记忆',
+    inner_tensions: '内在矛盾',
+    emotional_patterns: '情感模式',
+    character_arc: '角色弧线',
+  }
+
   const handleSave = async () => {
     const checks = [
       { field: 'personality_traits', lines: form.personality_traits.split('\n').filter(Boolean) },
@@ -91,13 +102,13 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
     for (const { field, lines } of checks) {
       const limit = LIMITS[field]
       if (limit.maxLines && lines.length > limit.maxLines) {
-        alert(`「${field}」最多 ${limit.maxLines} 行，当前 ${lines.length} 行`)
+        alert(`「${FIELD_LABELS[field] || field}」最多 ${limit.maxLines} 行，当前 ${lines.length} 行`)
         return
       }
       if (limit.perLine) {
         for (const line of lines) {
           if (line.length > limit.perLine) {
-            alert(`「${field}」每行最多 ${limit.perLine} 个字符`)
+            alert(`「${FIELD_LABELS[field] || field}」每行最多 ${limit.perLine} 个字符`)
             return
           }
         }
