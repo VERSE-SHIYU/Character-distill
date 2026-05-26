@@ -20,6 +20,7 @@ function formatTime(dateStr) {
 
 export default function PrivateMessageChat({ otherUserId, otherUsername, onBack }) {
   const authUser = useAppStore((s) => s.authUser)
+  const userAvatar = useAppStore((s) => s.userAvatar)
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
@@ -159,6 +160,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
                 <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                   <span className="messages-msg-text">{msg.content}</span>
                 </div>
+                {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={36} />}
               </div>
             </React.Fragment>
           )

@@ -7730,7 +7730,7 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-page);
+  background: var(--card-bg, var(--bg-page));
 }
 
 .messages-empty-chat {
@@ -7781,13 +7781,13 @@ select.settings-input {
 .messages-bubble.mine {
   background: rgba(var(--accent-rgb), 0.18);
   color: var(--text);
-  border-radius: 4px;
+  border-radius: 10px;
 }
 
 .messages-bubble.other {
   background: var(--glass-bg);
   color: var(--text);
-  border-radius: 4px;
+  border-radius: 10px;
   border: 1px solid var(--glass-border);
 }
 
