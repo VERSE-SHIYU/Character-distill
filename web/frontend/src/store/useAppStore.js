@@ -543,12 +543,16 @@ const useAppStore = create((set, get) => ({
             fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
               .then((r) => r.json())
               .then((cards) => {
+                // 模糊匹配：名字包含或被包含
                 const card = cards.find((c) => c.name === characterName)
+                  || cards.find((c) => c.name?.includes(characterName) || characterName?.includes(c.name))
+                  || cards[cards.length - 1]  // 兜底：取最新的一张
                 if (card) {
                   set((s) => {
-                    const exists = s.cards.some((c) => c.id === card.id)
+                    const cardId = card.id   // 后端返回的字段是 id，不是 card_id
+                    const exists = s.cards.some((c) => c.id === cardId)
                     return {
-                      cards: exists ? s.cards : [{ ...card, id: card.card_id, text_id: textId }, ...s.cards],
+                      cards: exists ? s.cards : [{ ...card, text_id: textId }, ...s.cards],
                       distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
                         ? false : true,
                     }
