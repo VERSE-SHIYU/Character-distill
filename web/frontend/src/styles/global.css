@@ -10495,6 +10495,9 @@ select.settings-input {
 }
 
 .fork-author {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--text-dim);
 }

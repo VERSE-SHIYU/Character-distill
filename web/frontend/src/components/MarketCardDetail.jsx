@@ -749,7 +749,10 @@ export default function MarketCardDetail() {
                           <Avatar name={forkData.name || f.name || '?'} size={40} />
                           <div className="fork-info">
                             <span className="fork-name">{forkData.name || f.name || '?'}</span>
-                            <span className="fork-author">by {f.author_name || '匿名'}</span>
+                            <span className="fork-author">
+                              <Avatar name={f.author_name || '匿名'} src={f.author_avatar} size={16} />
+                              {f.author_name || '匿名'}
+                            </span>
                           </div>
                           <span className="fork-likes">{'\u{2764}\u{FE0F}'} {f.likes || 0}</span>
                         </div>

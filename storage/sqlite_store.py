@@ -3239,7 +3239,8 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data, c.likes, c.created_at,
-                              COALESCE(u.username, '') AS author_name
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(u.avatar_data, '') AS author_avatar
                        FROM cards c
                        LEFT JOIN users u ON u.id = c.user_id
                        WHERE c.forked_from = ? AND c.visibility = 'public' AND c.deleted_at IS NULL
