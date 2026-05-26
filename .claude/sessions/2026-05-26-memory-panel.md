@@ -11,3 +11,6 @@
   - `web/server.py` — 注册 memory_router
   - `ChatArea.jsx` — 记忆面板 state/loadMemories/button/panel/toast + "记住"正则匹配
   - `global.css` — 记忆面板 + toast 样式（~100行）
+- **已知遗留**：
+  - toast 触发时机在用户发出消息时（后端 Mem0 写入之前），文案已改为"将记录到角色记忆"以准确反映时序
+  - 记忆 API 缺少 card_id 归属校验（get_current_user 只验证登录，未验证 card 是否属于当前用户），单用户阶段无影响，上线前需加 `card.user_id == current_user.id`

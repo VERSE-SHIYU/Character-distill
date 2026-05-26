@@ -686,7 +686,7 @@ function ChatView() {
 
       {/* Memory toast */}
       {memoryToast && (
-        <div className="memory-toast">已记录到角色记忆</div>
+        <div className="memory-toast">将记录到角色记忆</div>
       )}
     </div>
   )
