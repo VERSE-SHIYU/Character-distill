@@ -404,42 +404,40 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                     <div className="char-list-identity">{identity}</div>
                   </div>
                 </button>
-                <div className="char-actions">
-                  <button
-                    type="button"
-                    className={`char-pin-btn${isPinned ? ' pinned' : ''}`}
-                    title={isPinned ? '取消置顶' : '置顶'}
-                    onClick={(e) => togglePin(e, c.id)}
-                  >
-                    <Pin size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className={`char-share-btn${sharedCards.has(c.id) ? ' shared' : ''}`}
-                    title={sharedCards.has(c.id) ? '已分享到市场' : '分享到市场'}
-                    onClick={(e) => {
-                      if (sharedCards.has(c.id)) {
-                        handleShareToggle(e, c.id)
-                      } else {
-                        e.stopPropagation()
-                        setShareConfirmTarget(c)
-                      }
-                    }}
-                  >
-                    {sharedCards.has(c.id) ? <Globe size={14} /> : <Bookmark size={14} />}
-                  </button>
-                  <button
-                    type="button"
-                    className="char-delete-btn"
-                    title="删除角色"
-                    onClick={(e) => {
+                <button
+                  type="button"
+                  className={`char-pin-btn${isPinned ? ' pinned' : ''}`}
+                  title={isPinned ? '取消置顶' : '置顶'}
+                  onClick={(e) => togglePin(e, c.id)}
+                >
+                  <Pin size={14} />
+                </button>
+                <button
+                  type="button"
+                  className={`char-share-btn${sharedCards.has(c.id) ? ' shared' : ''}`}
+                  title={sharedCards.has(c.id) ? '已分享到市场' : '分享到市场'}
+                  onClick={(e) => {
+                    if (sharedCards.has(c.id)) {
+                      handleShareToggle(e, c.id)
+                    } else {
                       e.stopPropagation()
-                      setDeleteTarget(c)
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
+                      setShareConfirmTarget(c)
+                    }
+                  }}
+                >
+                  {sharedCards.has(c.id) ? <Globe size={14} /> : <Bookmark size={14} />}
+                </button>
+                <button
+                  type="button"
+                  className="char-delete-btn"
+                  title="删除角色"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setDeleteTarget(c)
+                  }}
+                >
+                  <Trash2 size={14} />
+                </button>
               </li>
             )
           })}
@@ -475,19 +473,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                       <div className="char-list-identity">{identity}</div>
                     </div>
                   </button>
-                  <div className="char-actions">
-                    <button
-                      type="button"
-                      className="char-delete-btn"
-                      title="删除角色"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(c)
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    className="char-delete-btn"
+                    title="删除角色"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTarget(c)
+                    }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </li>
               )
             })}

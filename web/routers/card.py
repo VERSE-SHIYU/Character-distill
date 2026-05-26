@@ -106,21 +106,6 @@ async def list_trash(
     return await storage.list_deleted_cards(user["id"])
 
 
-@router.get("/{card_id}")
-async def get_card(
-    card_id: str,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Get a character card by ID."""
-    card = await storage.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
-    return card
-
-
 @router.post("/{card_id}/restore")
 async def restore_card_route(
     card_id: str,

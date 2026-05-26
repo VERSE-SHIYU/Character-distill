@@ -432,16 +432,6 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Banner data migration failed: {exc}")
 
-                    # Run 042_comment_ip_location migration
-                    ip_path = migrations_dir / "042_comment_ip_location.sql"
-                    if ip_path.exists():
-                        try:
-                            await conn.executescript(ip_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Comment IP location migration failed: {exc}")
-
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -634,7 +624,7 @@ class SQLiteStore(StorageBase):
                 if existing:
                     existing_id = existing[0]
                     await conn.execute(
-                        "UPDATE cards SET card_json = ?, deleted_at = NULL WHERE id = ?",
+                        "UPDATE cards SET card_json = ? WHERE id = ?",
                         (card_json, existing_id),
                     )
                     await conn.commit()
@@ -671,7 +661,7 @@ class SQLiteStore(StorageBase):
                        " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, avatar_data, market_description, market_tags, publish_message, ({pub_sub}) AS published_id FROM cards WHERE id = ?",
+                    f"SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, market_description, market_tags, publish_message, ({pub_sub}) AS published_id FROM cards WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -2711,12 +2701,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.created_at, pc.ip_location,
-                              COALESCE(u.avatar_data, '') AS avatar_data
-                       FROM post_comments pc
-                       LEFT JOIN users u ON pc.user_id = u.id
-                       WHERE pc.post_id = ?
-                       ORDER BY pc.created_at DESC""",
+                    "SELECT id, user_id, username, content, created_at FROM post_comments WHERE post_id = ? ORDER BY created_at DESC",
                     (post_id,),
                 )
                 rows = await cursor.fetchall()
@@ -2725,29 +2710,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get post comments failed: {exc}")
             return []
 
-    async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str, ip_location: str = "") -> dict:
+    async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str) -> dict:
         """Add a comment to a post."""
         import uuid
         from datetime import datetime, timezone
         cid = uuid.uuid4().hex[:12]
         now = datetime.now(timezone.utc).isoformat()
-        avatar_data = ""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO post_comments (id, post_id, user_id, username, content, ip_location) VALUES (?, ?, ?, ?, ?, ?)",
-                    (cid, post_id, user_id, username, content, ip_location),
+                    "INSERT INTO post_comments (id, post_id, user_id, username, content) VALUES (?, ?, ?, ?, ?)",
+                    (cid, post_id, user_id, username, content),
                 )
-                # Get user avatar for immediate return
-                try:
-                    cursor = await conn.execute("SELECT avatar_data FROM users WHERE id = ?", (user_id,))
-                    row = await cursor.fetchone()
-                    if row and row[0]:
-                        avatar_data = row[0]
-                except Exception:
-                    pass
                 await conn.commit()
-            return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
+            return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now}
         except Exception as exc:
             print(f"[SQLiteStore] Add post comment failed: {exc}")
             raise
@@ -2937,7 +2913,6 @@ class SQLiteStore(StorageBase):
                     """SELECT
                          sub.other_id,
                          u.username,
-                         u.avatar_data,
                          (SELECT dm2.content FROM direct_messages dm2
                           WHERE (dm2.sender_id = ? AND dm2.receiver_id = sub.other_id)
                              OR (dm2.sender_id = sub.other_id AND dm2.receiver_id = ?)

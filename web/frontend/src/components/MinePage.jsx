@@ -4,7 +4,6 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import PostCard from './common/PostCard'
-import BannerCropModal from './common/BannerCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 
 /* ── MineCardMenu ── */
@@ -98,7 +97,6 @@ export default function MinePage() {
   const [followingLoading, setFollowingLoading] = useState(false)
 
   const bannerInputRef = useRef(null)
-  const [bannerCropFile, setBannerCropFile] = useState(null)
 
   const loadData = () => {
     if (!authUser?.id) return
@@ -139,47 +137,40 @@ export default function MinePage() {
 
   const handleRefresh = () => setRefreshKey(k => k + 1)
 
-  const handleBannerSelect = (e) => {
+  const handleBannerUpload = async (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setBannerCropFile(file)
-    e.target.value = ''
-  }
-
-  const handleBannerCropConfirm = async (croppedDataUrl) => {
-    setBannerCropFile(null)
-    // Helper: re-encode at given quality
-    const reEncode = (dataUrl, q) => new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
       const img = new Image()
-      img.onload = () => {
-        const c = document.createElement('canvas')
-        c.width = img.width
-        c.height = img.height
-        c.getContext('2d').drawImage(img, 0, 0)
-        resolve(c.toDataURL('image/jpeg', q))
+      img.onload = async () => {
+        const maxW = 1200
+        const scale = Math.min(1, maxW / img.width)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width * scale
+        canvas.height = img.height * scale
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+        // step down quality until under 300 KB
+        const tryQuality = (q) => {
+          const data = canvas.toDataURL('image/jpeg', q)
+          if (data.length < 300_000 || q <= 0.1) return data
+          return tryQuality(q - 0.1)
+        }
+        const compressed = tryQuality(0.8)
+        try { await uploadUserBanner(compressed) } catch (e) {
+          console.error('[MinePage] Banner upload failed:', e)
+        }
       }
-      img.src = dataUrl
-    })
-    // Step down quality until under 300 KB
-    let q = 0.85
-    let result = croppedDataUrl
-    while (result.length >= 300_000 && q > 0.1) {
-      result = await reEncode(result, q)
-      q -= 0.1
+      img.src = reader.result
     }
-    try { await uploadUserBanner(result) } catch (e) {
-      console.error('[MinePage] Banner upload failed:', e)
-    }
+    reader.readAsDataURL(file)
   }
-
-  const handleBannerCropCancel = () => setBannerCropFile(null)
 
   const tabs = [
     { key: 'characters', label: '角色', icon: <Theater size={15} /> },
     { key: 'books', label: '书籍', icon: <Book size={15} /> },
     { key: 'posts', label: '动态', icon: <MessageSquare size={15} /> },
     { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-    { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   ]
 
   if (loading) return <Loading text="加载中…" />
@@ -200,7 +191,7 @@ export default function MinePage() {
         <button type="button" className="mine-banner-upload" onClick={() => bannerInputRef.current?.click()} title="更换封面">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> 更换封面
         </button>
-        <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />
+        <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerUpload} />
       </div>
 
       {/* ── Profile Header ── */}
@@ -239,7 +230,7 @@ export default function MinePage() {
             key={t.key}
             type="button"
             className={`mine-tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => t.key === 'messages' ? setView('messages') : setTab(t.key)}
+            onClick={() => setTab(t.key)}
           >
             {t.icon} {t.label}
           </button>
@@ -290,7 +281,7 @@ export default function MinePage() {
                         </>
                       ) : (
                         <div className="market-card-v2-cover-fallback">
-                          <span className="market-card-v2-fallback-letter">{name.charAt(0).toUpperCase()}</span>
+                          <Avatar name={name} size={56} />
                         </div>
                       )}
                     </div>
@@ -487,12 +478,6 @@ export default function MinePage() {
           )
         )}
       </div>
-
-      <BannerCropModal
-        file={bannerCropFile}
-        onConfirm={handleBannerCropConfirm}
-        onCancel={handleBannerCropCancel}
-      />
     </div>
   )
 }

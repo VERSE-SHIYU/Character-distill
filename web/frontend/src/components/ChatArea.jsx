@@ -8,11 +8,6 @@ import Loading from './common/Loading'
 import RoleSetupModal from './RoleSetupModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
-import { formatChatTime } from '../utils/time'
-import { useMention } from '../utils/useMention'
-import MentionDropdown from './common/MentionDropdown'
-import ChatHistoryPanel from './common/ChatHistoryPanel'
-import EmojiPicker from './common/EmojiPicker'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -130,25 +125,6 @@ function ChatView() {
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [memoryToast, setMemoryToast] = useState(false)
-
-  const resumeSession = useAppStore((s) => s.resumeSession)
-
-  const historyFetchSessions = useCallback(async (keyword) => {
-    try {
-      const res = await fetchWithTimeout(`/api/history/list?character=${encodeURIComponent(charName)}&keyword=${encodeURIComponent(keyword)}&page=1&page_size=20`)
-      const data = await res.json()
-      return (data.items || []).map((s) => ({
-        id: s.id,
-        title: s.character_name || charName,
-        preview: s.last_message || '',
-        time: s.last_message_at || s.updated_at,
-      }))
-    } catch { return [] }
-  }, [charName])
-
-  const historySelectSession = useCallback((session) => {
-    resumeSession(session.id).catch(() => {})
-  }, [resumeSession])
 
   useEffect(() => {
     if (!userRole && !sessionId) setShowRoleModal(true)
@@ -453,11 +429,6 @@ function ChatView() {
           >
             <User size={16} />
           </button>
-          <ChatHistoryPanel
-            fetchSessions={historyFetchSessions}
-            onSelectSession={historySelectSession}
-            placeholder="搜索历史对话…"
-          />
           <button
             type="button"
             className="chat-topbar-btn"
@@ -579,7 +550,7 @@ function ChatView() {
           return (
             <div key={i}>
               {showTime && (
-                <div className="time-divider">{formatChatTime(msg.timestamp)}</div>
+                <div className="time-divider">{formatTime(msg.timestamp)}</div>
               )}
               <MessageBubble
                 index={i}
@@ -600,7 +571,6 @@ function ChatView() {
                 onPlayAudio={playAudio}
                 userAvatarUrl={userAvatarUrl}
                 onUserAvatarClick={() => userAvatarInputRef.current?.click()}
-                timestamp={msg.timestamp}
               />
             </div>
           )
@@ -616,7 +586,6 @@ function ChatView() {
         isRecording={isRecording}
         recordingDuration={recordingDuration}
         sendVoiceMessage={sendVoiceMessage}
-        mentionableItems={[{ id: currentCard.id, name: charName }]}
       />
 
       <RoleSetupModal
@@ -729,7 +698,17 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp }) {
+function formatTime(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const h = d.getHours()
+  const m = d.getMinutes().toString().padStart(2, '0')
+  const ap = h < 12 ? '上午' : '下午'
+  const h12 = h % 12 || 12
+  return `${ap} ${h12}:${m}`
+}
+
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick }) {
   const [hovered, setHovered] = useState(false)
   const [showRetracted, setShowRetracted] = useState(false)
 
@@ -776,9 +755,6 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
             <span className="voice-waves"><i /><i /><i /></span>
             <span className="voice-duration">{''}</span>
           </div>
-        )}
-        {timestamp && (
-          <div className={`msg-time ${isUser ? 'msg-time-user' : ''}`}>{formatChatTime(timestamp)}</div>
         )}
       </div>
       {isUser && onRevoke && isLastUserMsg && (
@@ -833,42 +809,14 @@ function SummaryBubble({ content }) {
 
 // ---- Input bar ----
 
-function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage, mentionableItems }) {
+function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage }) {
   const [text, setText] = useState('')
   const taRef = useRef(null)
-  const [showEmoji, setShowEmoji] = useState(false)
-
-  const handleMentionSelect = useCallback((item, atPos) => {
-    if (atPos >= 0) {
-      setText((prev) => {
-        const cursorAfter = taRef.current?.selectionStart ?? prev.length
-        return prev.slice(0, atPos) + '@' + item.name + ' ' + prev.slice(cursorAfter)
-      })
-    }
-    setTimeout(() => taRef.current?.focus(), 0)
-  }, [])
-
-  const mentionHook = useMention(mentionableItems || [], {
-    onSelect: handleMentionSelect,
-    maxResults: 6,
-  })
   const mediaRecorderRef = useRef(null)
   const chunksRef = useRef([])
   const timerRef = useRef(null)
 
   const set = useAppStore.setState
-
-  // Emoji picker outside-click
-  useEffect(() => {
-    if (!showEmoji) return
-    const handler = (e) => {
-      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
-        setShowEmoji(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji])
 
   const handleSubmit = () => {
     if (!text.trim() || disabled) return
@@ -994,43 +942,22 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         </button>
       )}
 
-      <button type="button" data-emoji-btn className="record-btn" title="表情"
-        onClick={() => setShowEmoji(!showEmoji)}
-        style={{ fontSize: 18, lineHeight: 1 }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-      </button>
-
-      <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {showEmoji && <EmojiPicker textareaRef={taRef} onEmojiSelect={() => setShowEmoji(false)} />}
-        <textarea
-          ref={taRef}
-          className="chat-textarea"
-          rows={1}
-          placeholder={disabled ? '等待回复中…' : '输入消息…'}
-          value={text}
-          onChange={(e) => {
-            const val = e.target.value
-            setText(val)
-            mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-            // Auto-resize
-            const ta = e.target
-            ta.style.height = 'auto'
-            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
-          }}
-          onKeyDown={(e) => {
-            if (mentionHook.handleMentionKeyDown(e)) return
-            handleKeyDown(e)
-          }}
-          disabled={disabled}
-        />
-        <MentionDropdown
-          show={mentionHook.mentionActive}
-          items={mentionHook.mentionItems}
-          selectedIndex={mentionHook.selectedIndex}
-          onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
-          position={mentionHook.mentionPosition}
-        />
-      </div>
+      <textarea
+        ref={taRef}
+        className="chat-textarea"
+        rows={1}
+        placeholder={disabled ? '等待回复中…' : '输入消息…'}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value)
+          // Auto-resize
+          const ta = e.target
+          ta.style.height = 'auto'
+          ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
+        }}
+        onKeyDown={handleKeyDown}
+        disabled={disabled}
+      />
 
       <button
         type="button"

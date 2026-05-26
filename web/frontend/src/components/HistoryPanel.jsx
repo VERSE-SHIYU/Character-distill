@@ -6,7 +6,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { loadCardAvatar } from '../store/db'
-import { Book, Clipboard, Trash2 } from './common/Icon'
+import { Book, Clipboard } from './common/Icon'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -451,7 +451,7 @@ export default function HistoryPanel({ initialTrash = false }) {
         {/* Trash toggle */}
         <button
           type="button"
-          className={trashMode ? 'history-back-btn' : 'btn-secondary btn-sm'}
+          className={`btn-secondary btn-sm${trashMode ? ' active' : ''}`}
           onClick={() => switchTrashMode(!trashMode)}
         >
           {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '回收站'}
@@ -496,19 +496,19 @@ export default function HistoryPanel({ initialTrash = false }) {
             {selectMode && selectedIds.size > 0 && (
               <button
                 type="button"
-                className="btn-ghost-danger"
+                className="btn-danger-sm"
                 onClick={() => setBatchDeleteConfirm(true)}
               >
-                <Trash2 size={14} /> 移入回收站 ({selectedIds.size})
+                移入回收站 ({selectedIds.size})
               </button>
             )}
             {!selectMode && items.length > 0 && (
               <button
                 type="button"
-                className="btn-ghost-danger"
+                className="btn-danger-sm"
                 onClick={() => setClearAllConfirm(true)}
               >
-                <Trash2 size={14} /> 移入回收站
+                移入回收站
               </button>
             )}
           </>
@@ -517,10 +517,10 @@ export default function HistoryPanel({ initialTrash = false }) {
         {trashMode && items.length > 0 && (
           <button
             type="button"
-            className="btn-ghost-danger"
+            className="btn-danger-sm"
             onClick={() => setPurgeTrashConfirm(true)}
           >
-            <Trash2 size={14} /> 清空回收站
+            清空回收站
           </button>
         )}
       </div>
@@ -780,7 +780,7 @@ function GroupHistoryDetail({ detail, loading, onBack, onResume, onDelete }) {
             onClick={onDelete}
             style={{ marginLeft: 8 }}
           >
-            <Trash2 size={14} /> 删除群聊
+            删除群聊
           </button>
         </div>
       </div>
@@ -851,7 +851,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 className="history-action-sm history-action-danger"
                 onClick={onDelete}
               >
-                <Trash2 size={14} /> 移入回收站
+                移入回收站
               </button>
             </>
           )}
@@ -865,7 +865,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 className="history-action-sm history-action-danger"
                 onClick={onDelete}
               >
-                <Trash2 size={14} /> 彻底删除
+                彻底删除
               </button>
             </>
           )}

@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { adminAPI } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
-import { Trash2 } from './common/Icon'
 
 const TABS = [
   { id: 'users', label: '用户管理' },
@@ -213,20 +212,20 @@ function UsersTab() {
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
                     <button
-                      className="btn-ghost-sm"
+                      className={`admin-action-btn${u.is_disabled ? ' enable' : ' disable'}`}
                       onClick={() => toggleDisable(u)}
                     >
                       {u.is_disabled ? '启用' : '禁用'}
                     </button>
                     <button
-                      className="btn-ghost-sm"
+                      className="admin-action-btn"
                       onClick={() => { setEmailTarget(u); setNewEmail(u.email || ''); setEmailError(''); setEmailOk('') }}
                     >
-                      邮箱
+                      设置邮箱
                     </button>
                     {u.email && (
                       <button
-                        className="btn-ghost-danger btn-sm"
+                        className="admin-action-btn delete-user"
                         onClick={() => handleClearEmail(u)}
                         title="清除邮箱"
                       >
@@ -234,18 +233,18 @@ function UsersTab() {
                       </button>
                     )}
                     <button
-                      className="btn-ghost-sm"
+                      className="admin-action-btn reset"
                       onClick={() => { setResetTarget(u); setNewPassword(''); setResetError(''); setResetOk('') }}
                     >
                       重置密码
                     </button>
                     {u.id !== authUser?.id && (
                       <button
-                        className="btn-ghost-danger btn-sm"
+                        className="admin-action-btn delete-user"
                         onClick={() => { setDeleteTarget(u); setConfirmName(''); setDeleteError('') }}
                         title="删除用户"
                       >
-                        <Trash2 size={14} />
+                        ✕
                       </button>
                     )}
                   </td>
@@ -477,7 +476,7 @@ function InvitesTab() {
           onChange={(e) => setCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
           className="invite-count-input"
         />
-        <button className="btn-primary invite-generate-btn" onClick={generate} disabled={generating}>
+        <button className="invite-generate-btn" onClick={generate} disabled={generating}>
           {generating ? '生成中…' : '生成邀请码'}
         </button>
       </div>
@@ -511,18 +510,18 @@ function InvitesTab() {
                 <td className="admin-actions-cell">
                   {!c.used_by && (
                     <button
-                      className="btn-ghost-sm"
+                      className="admin-action-btn copy"
                       onClick={() => copyCode(c.code)}
                     >
                       {copied === c.code ? '已复制' : '复制'}
                     </button>
                   )}
                   <button
-                    className="btn-ghost-danger btn-sm"
+                    className="admin-action-btn delete-invite"
                     onClick={() => setDeleteTarget(c.code)}
                     title="删除邀请码"
                   >
-                    <Trash2 size={14} />
+                    ✕
                   </button>
                 </td>
               </tr>
@@ -535,11 +534,11 @@ function InvitesTab() {
         <div className="invite-batch-row">
           <span className="invite-batch-hint">{usedCount} 个已使用的邀请码</span>
           <button
-            className="btn-ghost-sm"
+            className="admin-action-btn delete-invite"
             onClick={handleBatchDelete}
             disabled={batchDeleting}
           >
-            <Trash2 size={14} /> {batchDeleting ? '删除中…' : '批量删除已使用的'}
+            {batchDeleting ? '删除中…' : '批量删除已使用的邀请码'}
           </button>
         </div>
       )}
@@ -627,46 +626,30 @@ function UsageTab() {
       {loading ? (
         <div className="admin-loading">加载中…</div>
       ) : (
-        <>
-          <div className="admin-stats-grid">
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{data.length}</span>
-              <span className="admin-stat-label">用户数</span>
-            </div>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{fmt(data.reduce((s, r) => s + (r.total_calls || 0), 0))}</span>
-              <span className="admin-stat-label">总调用次数</span>
-            </div>
-            <div className="admin-stat-card">
-              <span className="admin-stat-value">{fmt(data.reduce((s, r) => s + (r.total_prompt_tokens || 0) + (r.total_completion_tokens || 0), 0))}</span>
-              <span className="admin-stat-label">总 Token</span>
-            </div>
-          </div>
-          <div className="admin-table-wrap">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>用户名</th>
-                  <th>调用次数</th>
-                  <th>输入 Token</th>
-                  <th>输出 Token</th>
-                  <th>最近活跃</th>
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>用户名</th>
+                <th>调用次数</th>
+                <th>输入 Token</th>
+                <th>输出 Token</th>
+                <th>最近活跃</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((r) => (
+                <tr key={r.user_id}>
+                  <td>{r.username}</td>
+                  <td>{r.total_calls}</td>
+                  <td>{fmt(r.total_prompt_tokens)}</td>
+                  <td>{fmt(r.total_completion_tokens)}</td>
+                  <td>{r.last_active || '-'}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {data.map((r) => (
-                  <tr key={r.user_id}>
-                    <td>{r.username}</td>
-                    <td>{r.total_calls}</td>
-                    <td>{fmt(r.total_prompt_tokens)}</td>
-                    <td>{fmt(r.total_completion_tokens)}</td>
-                    <td>{r.last_active || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )
@@ -762,16 +745,16 @@ function ReportsTab() {
                   <td>{fmtDate(r.first_reported_at)}</td>
                   <td className="admin-actions-cell">
                     <button
-                      className="btn-ghost-sm"
+                      className="admin-action-btn"
                       onClick={() => handleResolve(r.comment_id)}
                     >
                       驳回
                     </button>
                     <button
-                      className="btn-ghost-danger btn-sm"
+                      className="admin-action-btn delete-user"
                       onClick={() => setConfirmDeleteId(r.comment_id)}
                     >
-                      <Trash2 size={14} /> 删除评论
+                      删除评论
                     </button>
                   </td>
                 </tr>

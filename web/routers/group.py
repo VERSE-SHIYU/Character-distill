@@ -43,88 +43,6 @@ class BroadcastRequest(BaseModel):
     auto_mode: bool = False
 
 
-async def _rebuild_group_session(
-    group_id: str,
-    user_id: str,
-    storage: SQLiteStore,
-) -> Any | None:
-    """Rebuild an in-memory GroupSession from the persisted DB record."""
-    from core.schema import CharacterCard
-    from core.chat_engine import ChatEngine
-    from core.rag import RAGEngine
-    from core.group_session import GroupSession
-    from deps import get_rag_config, get_memory_manager
-
-    session = await storage.get_group_session(group_id)
-    if not session:
-        return None
-    if session.get("user_id") != user_id:
-        return None
-
-    per_user_llm = await get_user_llm(user_id, storage)
-    if per_user_llm is None:
-        return None
-
-    rag_config = get_rag_config()
-    memory_manager = get_memory_manager()
-
-    engines: dict[str, ChatEngine] = {}
-    text_rag_cache: dict[str, RAGEngine] = {}
-
-    for card_id in session["card_ids"]:
-        card_rec = await storage.get_card(card_id)
-        if not card_rec:
-            continue
-        if card_rec.get("user_id") != user_id:
-            continue
-        try:
-            card = CharacterCard.model_validate_json(card_rec["card_json"])
-        except Exception:
-            continue
-
-        text_id = card_rec["text_id"]
-        if text_id not in text_rag_cache:
-            text_rec = await storage.get_text(text_id)
-            if not text_rec:
-                continue
-            rag = RAGEngine(rag_config)
-            try:
-                rag.load_existing(f"text_{text_id}")
-            except Exception:
-                rag.index(text_rec["content"])
-            text_rag_cache[text_id] = rag
-
-        engine = ChatEngine(
-            per_user_llm, text_rag_cache[text_id], card,
-            memory_manager=memory_manager,
-            card_id=card_id,
-        )
-        engines[card_id] = engine
-
-    if len(engines) < 2:
-        return None
-
-    group = GroupSession(group_id, engines)
-    _group_sessions[group_id] = group
-
-    # Restore message history from DB
-    try:
-        history = await storage.get_group_messages(group_id)
-        group.group_history = [
-            {
-                "speaker": m["speaker"],
-                "role": m["role"],
-                "content": m["content"],
-                "speaker_card_id": m.get("speaker_card_id", ""),
-            }
-            for m in history
-        ]
-    except Exception:
-        pass
-
-    return group
-
-
 def _get_group_sessions() -> dict[str, Any]:
     return _group_sessions
 
@@ -232,9 +150,15 @@ async def send_message(
     user_id = user["id"]
     group = _group_sessions.get(group_id)
     if group is None:
-        group = await _rebuild_group_session(group_id, user_id, storage)
-    if group is None:
+        # Try to rebuild from DB (future: lazy reload)
         raise HTTPException(404, "群聊会话已过期，请重新创建")
+
+    # Verify ownership via DB
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此群聊")
 
     if not req.message.strip():
         raise HTTPException(400, "消息不能为空")
@@ -274,9 +198,13 @@ async def broadcast_message(
     user_id = user["id"]
     group = _group_sessions.get(group_id)
     if group is None:
-        group = await _rebuild_group_session(group_id, user_id, storage)
-    if group is None:
         raise HTTPException(404, "群聊会话已过期，请重新创建")
+
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此群聊")
 
     if not req.message.strip() and not req.auto_mode:
         raise HTTPException(400, "消息不能为空")

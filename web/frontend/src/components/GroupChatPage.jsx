@@ -1,28 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
-import { formatChatTime } from '../utils/time'
-import { useMention } from '../utils/useMention'
-import MentionDropdown from './common/MentionDropdown'
-import ChatHistoryPanel from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
-import EmojiPicker from './common/EmojiPicker'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
   try { return JSON.parse(raw || '[]') } catch { return [] }
-}
-
-/** 通过 card_id 从后端获取单张角色卡信息 */
-async function fetchCardById(cardId) {
-  try {
-    const res = await fetchWithTimeout(`/api/cards/${cardId}`)
-    if (!res.ok) return null
-    return await res.json()
-  } catch { return null }
 }
 
 export default function GroupChatPage() {
@@ -50,74 +36,6 @@ export default function GroupChatPage() {
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
-  const msgInputRef = useRef(null)
-  const [showEmoji, setShowEmoji] = useState(false)
-
-  // ── 角色缓存：按 card_id 索引，替代 allCards ──
-  const [cardCache, setCardCache] = useState({})
-  const cardCacheRef = useRef(cardCache)
-  cardCacheRef.current = cardCache
-
-  /** 批量加载角色信息到缓存 */
-  const ensureCardsLoaded = useCallback(async (cardIds) => {
-    const missing = [...new Set(cardIds.filter(id => id && !cardCacheRef.current[id]))]
-    if (missing.length === 0) return
-    const results = await Promise.allSettled(missing.map(fetchCardById))
-    const updates = {}
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled' && r.value) {
-        const cardData = typeof r.value.card_json === 'string'
-          ? JSON.parse(r.value.card_json)
-          : r.value.card_json || {}
-        updates[missing[i]] = { ...r.value, name: cardData.name || r.value.name || '?' }
-      }
-    })
-    if (Object.keys(updates).length > 0) {
-      setCardCache(prev => ({ ...prev, ...updates }))
-    }
-  }, [])
-
-  // ── @提及（依赖 cardCache） ──
-  const mentionableItems = useMemo(() => {
-    if (!currentGroup?.card_ids) return []
-    return currentGroup.card_ids
-      .map((id) => cardCache[id])
-      .filter(Boolean)
-      .map((c) => ({ id: c.id, name: c.name || c.id }))
-  }, [currentGroup?.card_ids, cardCache])
-
-  const handleMentionSelect = useCallback((item, atPos) => {
-    setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))
-    if (atPos >= 0) {
-      setMessageText((prev) => {
-        const cursorAfter = msgInputRef.current?.selectionStart ?? prev.length
-        return prev.slice(0, atPos) + '@' + item.name + ' ' + prev.slice(cursorAfter)
-      })
-    }
-    setTimeout(() => msgInputRef.current?.focus(), 0)
-  }, [])
-
-  const mentionHook = useMention(mentionableItems, { onSelect: handleMentionSelect, maxResults: 6 })
-
-  // ── 历史记录 ──
-  const historyFetchSessions = useCallback(async (keyword) => {
-    if (!groups) return []
-    const otherGroups = groups.filter((g) => g.id !== currentGroup?.id)
-    const list = keyword
-      ? otherGroups.filter((g) => (g.name || '').toLowerCase().includes(keyword.toLowerCase()))
-      : otherGroups
-    return list.map((g) => ({
-      id: g.id,
-      title: g.name || '未命名群聊',
-      preview: `共 ${g.card_ids?.length || 0} 个角色`,
-      time: g.created_at,
-    }))
-  }, [groups, currentGroup?.id])
-
-  const historySelectSession = useCallback((session) => {
-    const g = groups.find((grp) => grp.id === session.id)
-    if (g) enterGroup(g)
-  }, [groups, enterGroup])
 
   // Create form state
   const [groupName, setGroupName] = useState('')
@@ -133,16 +51,12 @@ export default function GroupChatPage() {
       const res = await fetchWithTimeout('/api/group/list')
       const data = await res.json()
       setGroups(data.groups || [])
-      // 加载所有群成员的角色信息
-      const allIds = new Set()
-      ;(data.groups || []).forEach(g => parseCardIds(g.card_ids).forEach(id => allIds.add(id)))
-      if (allIds.size > 0) ensureCardsLoaded([...allIds])
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
-  }, [ensureCardsLoaded])
+  }, [])
 
   const runAutoConversation = useCallback(async () => {
     if (!currentGroup || autoRunning) return
@@ -215,7 +129,6 @@ export default function GroupChatPage() {
     const cardIds = parseCardIds(group.card_ids)
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
-    ensureCardsLoaded(cardIds)
     const who = userRole || authUser?.username || '用户'
     setSystemMessage(`${who} 加入了群聊`)
   }
@@ -362,7 +275,7 @@ export default function GroupChatPage() {
     return card?.name || '?'
   }
 
-  // Load card avatars from cardCache whenever cache is populated
+  // Load card avatars for the create modal and group list
   useEffect(() => {
     const ids = new Set()
     allCards.forEach((c) => { const id = c.id || c.card_id; if (id) ids.add(id) })
@@ -371,7 +284,7 @@ export default function GroupChatPage() {
     })
     ids.forEach((id) => {
       if (!cardAvatars[id]) {
-        const c = cardCache[id] || allCards.find((c) => (c.id || c.card_id) === id)
+        const c = allCards.find((c) => (c.id || c.card_id) === id)
         if (c?.avatar_data) {
           setCardAvatar(id, c.avatar_data)
         } else {
@@ -381,40 +294,18 @@ export default function GroupChatPage() {
         }
       }
     })
-  }, [allCards, groups, cardCache])
-
-  // Targeted avatar loading when entering a group — reads from cardCache immediately
-  useEffect(() => {
-    if (!currentGroup?.card_ids) return
-    currentGroup.card_ids.forEach((id) => {
-      if (!cardAvatars[id] && cardCache[id]?.avatar_data) {
-        setCardAvatar(id, cardCache[id].avatar_data)
-      }
-    })
-  }, [currentGroup?.card_ids, cardCache])
+  }, [allCards, groups])
   useEffect(() => {
     if (!currentGroup || !currentGroup.card_ids) return
     ;(async () => {
       const cards = []
       for (const cardId of currentGroup.card_ids) {
-        const cardData = cardCache[cardId] || allCards.find((c) => (c.id || c.card_id) === cardId)
+        const cardData = allCards.find((c) => (c.id || c.card_id) === cardId)
         if (cardData) cards.push(cardData)
       }
       setCurrentGroup((prev) => ({ ...prev, _cards: cards }))
     })()
-  }, [currentGroup?.id, allCards, cardCache])
-
-  // Emoji picker outside-click
-  useEffect(() => {
-    if (!showEmoji) return
-    const handler = (e) => {
-      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
-        setShowEmoji(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji])
+  }, [currentGroup?.id, allCards])
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768)
@@ -460,7 +351,7 @@ export default function GroupChatPage() {
           {groups.map((g) => {
             const cardIds = parseCardIds(g.card_ids)
             const names = cardIds
-              .map((id) => cardCache[id]?.name)
+              .map((id) => allCards.find((c) => (c.id || c.card_id) === id)?.name)
               .filter(Boolean)
             const isActive = currentGroup?.id === g.id
             return (
@@ -472,15 +363,15 @@ export default function GroupChatPage() {
               >
                 <div className="group-avatar-stack">
                   {cardIds.slice(0, 3).map((id) => (
-                    <Avatar key={id} name={cardCache[id]?.name || '?'}
-                      src={cardAvatars[id]} size={36} />
+                    <Avatar key={id} name={allCards.find(c => (c.id || c.card_id) === id)?.name || '?'}
+                      src={cardAvatars[id]} size={28} />
                   ))}
                 </div>
                 <div className="messages-conv-body">
                   <div className="messages-conv-head">
                     <span className="messages-conv-name">{g.name || '未命名群聊'}</span>
                     <span className="messages-conv-time">
-                      {formatChatTime(g.created_at)}
+                      {new Date(g.created_at.includes('T') && !g.created_at.endsWith('Z') && !g.created_at.includes('+') ? g.created_at + 'Z' : g.created_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric' })}
                     </span>
                   </div>
                   <p className="messages-conv-preview">{names.join('、')}</p>
@@ -497,12 +388,12 @@ export default function GroupChatPage() {
           {!currentGroup ? (
             <div className="messages-empty-chat">选择一个群聊或创建新群聊</div>
           ) : (
-            <div className="private-chat group-chat-layout">
+            <div className="private-chat">
               {/* Header */}
               <div className="private-chat-header">
                 {isMobile && (
                   <button type="button" className="chat-back-btn" onClick={backToList}>
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
                   </button>
                 )}
                 {editingName ? (
@@ -518,25 +409,22 @@ export default function GroupChatPage() {
                   <div className="private-chat-title-wrap">
                     <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
                     <button type="button" className="chat-rename-btn" onClick={startEditing} title="重命名">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                     </button>
                   </div>
                 )}
                 <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
-                <ChatHistoryPanel
-                  fetchSessions={historyFetchSessions}
-                  onSelectSession={historySelectSession}
-                  placeholder="搜索历史群聊…"
-                />
                 <button
                   type="button"
                   className="chat-topbar-btn"
                   onClick={() => setShowMembers(!showMembers)}
                   title="成员列表"
                 >
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <line x1="15" y1="3" x2="15" y2="21"/>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                   </svg>
                 </button>
               </div>
@@ -555,39 +443,18 @@ export default function GroupChatPage() {
                   )}
                   {messages.map((m, i) => {
                     const isUser = m.role === 'user'
-                    const showTime = i === 0 || (m.created_at && messages[i-1]?.created_at
-                      && (new Date(m.created_at) - new Date(messages[i-1].created_at)) > 5 * 60 * 1000)
                     return (
-                      <div key={m.id || i}>
-                        {showTime && (
-                          <div className="time-divider">{formatChatTime(m.created_at)}</div>
+                      <div key={m.id || i} className={`messages-row${isUser ? ' mine' : ' other'}`}>
+                        {!isUser && (
+                          <Avatar name={m.speaker || '?'} size={36} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                         )}
-                        <div className={`messages-row${isUser ? ' mine' : ' other'}`}>
-                          {isUser ? (
-                            <>
-                              <div className="messages-bubble mine">
-                                <span className="messages-msg-text">{m.content}</span>
-                                {m.created_at && (
-                                  <div className="msg-time msg-time-user">{formatChatTime(m.created_at)}</div>
-                                )}
-                              </div>
-                              <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
-                            </>
-                          ) : (
-                            <div className="group-chat-bubble">
-                              <div className="group-chat-bubble-header">
-                                <Avatar name={m.speaker || '?'} size={24} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                                <span className="group-chat-bubble-speaker">{m.speaker}</span>
-                              </div>
-                              <div className="group-chat-bubble-body">
-                                <span className="messages-msg-text">{m.content}</span>
-                              </div>
-                              {m.created_at && (
-                                <div className="group-chat-bubble-time">{formatChatTime(m.created_at)}</div>
-                              )}
-                            </div>
-                          )}
+                        <div className={`messages-bubble${isUser ? ' mine' : ' other'}`}>
+                          {!isUser && <span className="messages-bubble-speaker">{m.speaker}</span>}
+                          <span className="messages-msg-text">{m.content}</span>
                         </div>
+                        {isUser && (
+                          <Avatar name={authUser?.username || '我'} size={36} src={userAvatar} />
+                        )}
                       </div>
                     )
                   })}
@@ -599,21 +466,11 @@ export default function GroupChatPage() {
                   <div className="group-members-panel">
                     <div className="group-members-title">成员</div>
                     {currentGroup.card_ids?.map((cardId) => {
-                      const card = cardCache[cardId]
-                      let identity = ''
-                      if (card) {
-                        try {
-                          const cj = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
-                          identity = cj.identity || ''
-                        } catch {}
-                      }
+                      const card = allCards.find(c => (c.id || c.card_id) === cardId)
                       return (
                         <div key={cardId} className="group-member-item">
-                          <Avatar name={card?.name || '?'} size={40} src={cardAvatars[cardId]} />
-                          <div>
-                            <span className="group-member-name">{card?.name || '?'}</span>
-                            {identity && <span className="group-member-identity">{identity}</span>}
-                          </div>
+                          <Avatar name={card?.name || '?'} size={32} src={cardAvatars[cardId]} />
+                          <span className="group-member-name">{card?.name || '?'}</span>
                         </div>
                       )
                     })}
@@ -636,7 +493,7 @@ export default function GroupChatPage() {
                     全部
                   </button>
                   {currentGroup.card_ids?.map((cardId) => {
-                    const card = cardCache[cardId]
+                    const card = allCards.find(c => (c.id || c.card_id) === cardId)
                     const selected = targetCardIds.includes(cardId)
                     return (
                       <button
@@ -649,49 +506,29 @@ export default function GroupChatPage() {
                             : [...prev, cardId]
                         )}
                       >
-                        <Avatar name={card?.name || '?'} size={28} src={cardAvatars[cardId]} />
+                        <Avatar name={card?.name || '?'} size={20} src={cardAvatars[cardId]} />
                         {card?.name || '?'}
                       </button>
                     )
                   })}
                 </div>
-                <div style={{ position: 'relative' }}>
-                  {showEmoji && <EmojiPicker textareaRef={msgInputRef} onEmojiSelect={() => setShowEmoji(false)} />}
-                  <textarea
-                    ref={msgInputRef}
-                    className="messages-input"
-                    rows={2}
-                    placeholder={
-                      targetCardIds.length > 0
-                        ? `对 ${targetCardIds.map(id => cardCache[id]?.name || '?').join('、')} 说…`
-                        : '请先选择回复目标'
-                    }
-                    value={messageText}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setMessageText(val)
-                      mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-                    }}
-                    onKeyDown={(e) => {
-                      if (mentionHook.handleMentionKeyDown(e)) return
-                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-                    }}
-                    disabled={targetCardIds.length === 0 || sending || autoRunning}
-                  />
-                  <MentionDropdown
-                    show={mentionHook.mentionActive}
-                    items={mentionHook.mentionItems}
-                    selectedIndex={mentionHook.selectedIndex}
-                    onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
-                    position={mentionHook.mentionPosition}
-                  />
-                </div>
+                <textarea
+                  className="messages-input"
+                  rows={2}
+                  placeholder={
+                    targetCardIds.length > 0
+                      ? `对 ${targetCardIds.map(id => allCards.find(c => (c.id || c.card_id) === id)?.name || '?').join('、')} 说…`
+                      : '请先选择回复目标'
+                  }
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+                  }}
+                  disabled={targetCardIds.length === 0 || sending || autoRunning}
+                />
                 <div className="messages-input-toolbar">
                   <div className="messages-input-toolbar-left">
-                    <button type="button" data-emoji-btn className="messages-toolbar-btn" title="表情"
-                      onClick={() => setShowEmoji(!showEmoji)}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-                    </button>
                     <button
                       type="button"
                       className={`group-auto-btn${autoMode ? ' active' : ''}`}

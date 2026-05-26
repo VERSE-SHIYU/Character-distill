@@ -15,24 +15,6 @@ from routers.auth import get_current_user
 router = APIRouter(prefix="/api/market", tags=["market"])
 
 
-async def _get_ip_location(client_ip: str) -> str:
-    """Look up IP location via ip-api.com. Returns city/region or empty."""
-    import httpx
-    # Local/private IPs → show "本地" so the badge is visible during dev
-    if not client_ip or client_ip in ("127.0.0.1", "::1", "localhost") or client_ip.startswith(("192.168.", "10.", "172.16.")):
-        return "本地"
-    try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            resp = await c.get(f"http://ip-api.com/json/{client_ip}?fields=status,country,regionName,city")
-            data = resp.json()
-            if data.get("status") == "success":
-                parts = [data.get("regionName") or data.get("city") or ""]
-                return "".join(parts)
-    except Exception:
-        pass
-    return ""
-
-
 class ForkRequest(BaseModel):
     text_id: str = ""
 
@@ -417,20 +399,13 @@ async def list_post_comments(
 async def add_post_comment(
     post_id: str,
     body: CommentRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Add a comment to a post."""
     if not body.content.strip():
         raise HTTPException(400, "评论内容不能为空")
-
-    # Get client IP and look up location (like Douyin/Xiaohongshu style)
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else ""
-    ip_location = await _get_ip_location(client_ip)
-
-    comment = await storage.add_post_comment(post_id, user["id"], user["username"], body.content.strip(), ip_location)
+    comment = await storage.add_post_comment(post_id, user["id"], user["username"], body.content.strip())
     return comment
 
 
