@@ -1,0 +1,12 @@
+### 23:XX 蒸馏系统优化 5 项改动
+- **做了什么**：
+  - Item 1: 修复 token 估算系数 — `_count_tokens` 从 `len(text)//2` 改为 `max(1, int(len(text)*0.8))`，`_truncate` 同步改为 `int(max_tokens/0.8)`
+  - Item 2: 角色卡 prompt 增加 2500 tok 硬上限，超限自动截断+警告日志
+  - Item 3: 角色卡 prompt 从扁平结构重构为 4 层分组格式（## Identity & Core / Behavior & Values / Speaking Style / Memory & Experience），性格特质用 `、` 连接，情感用 `；`
+  - Item 4: EditCardModal.jsx 增加 LIMITS 常量（15 个字段的 max/maxLines/perLine）+ REL_LIMITS，Field 组件增加字符计数器，所有输入框增加 maxLength
+  - Item 5: handleSave 增加前置验证 — maxLines + perLine 行数/字符数检查 + 关系数量 ≤ 8
+- **为什么**：蒸馏 prompt 更准确地匹配实际 token 消耗，前端编辑时给予即时反馈，防止超限数据写入后端
+- **影响范围**：
+  - `core/context_engine.py` — `_count_tokens`、`_truncate`、`_build_card_section`（完全重写）
+  - `EditCardModal.jsx` — 新增 LIMITS/REL_LIMITS 常量、Field 计数器、handleSave 验证、所有 Field 的 field/value/maxLength props
+  - `global.css` — 新增 `.field-counter`、`.field-counter.over`

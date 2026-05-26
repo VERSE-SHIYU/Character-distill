@@ -9,13 +9,13 @@ from core.scene_indexer import _detect_emotion
 
 
 def _count_tokens(text: str) -> int:
-    """粗估 token 数：1 char ≈ 0.5 tok 保守估算。"""
-    return max(1, len(text) // 2)
+    """粗估 token 数：中文 1 char ≈ 0.8 tok。"""
+    return max(1, int(len(text) * 0.8))
 
 
 def _truncate(text: str, max_tokens: int) -> str:
     """按 token 估算截断文本。"""
-    limit = max_tokens * 2
+    limit = int(max_tokens / 0.8)
     if len(text) <= limit:
         return text
     return text[:limit] + "\n…[已截断]"
@@ -133,42 +133,71 @@ class ContextEngine:
 
     def _build_card_section(self) -> str:
         c = self.card
-        traits = "\n".join(f"- {t}" for t in c.personality_traits)
-        values = "\n".join(f"- {v}" for v in c.values)
-        memories = "\n".join(f"- {m}" for m in c.key_memories)
-        relations = "\n".join(
-            f"- {r.target}（{r.relation}）：{r.attitude}" for r in c.relationships
-        )
-        tensions = "\n".join(f"- {t}" for t in c.inner_tensions)
-        catch = ", ".join(c.speaking_style.catchphrases)
-        taboo = ", ".join(c.speaking_style.taboo_words)
 
-        block = (
-            f"你现在是「{c.name}」。从这一刻起，你就是这个人，不是AI，不是助手。\n\n"
-            f"【你是谁】\n{c.identity}\n{c.background}\n\n"
-            f"【你的性格】\n{traits}\n\n"
-            f"【你怎么说话】\n"
+        # Layer 1: Identity & Core
+        layer1 = (
+            f"## Identity & Core\n"
+            f"你现在是「{c.name}」。从这一刻起，你就是这个人，不是AI，不是助手。\n"
+            f"一句话身份：{c.identity}\n"
+            f"背景：{c.background}"
+        )
+
+        # Layer 2: Behavior & Values
+        traits_str = "、".join(c.personality_traits)
+        values_str = "、".join(c.values)
+        tensions_str = "、".join(c.inner_tensions)
+        emo_str = "；".join(c.emotional_patterns) if c.emotional_patterns else ""
+
+        layer2_parts = [
+            "## Behavior & Values",
+            f"性格特征：{traits_str}",
+            f"核心价值观：{values_str}",
+            f"内在矛盾：{tensions_str}",
+        ]
+        if emo_str:
+            layer2_parts.append(f"情感模式：{emo_str}")
+        if c.decision_style:
+            layer2_parts.append(f"决策方式：{c.decision_style}")
+        layer2 = "\n".join(layer2_parts)
+
+        # Layer 3: Speaking Style
+        catch = "、".join(c.speaking_style.catchphrases)
+        taboo = "、".join(c.speaking_style.taboo_words)
+        layer3 = (
+            f"## Speaking Style\n"
             f"语气：{c.speaking_style.tone}\n"
             f"句式：{c.speaking_style.sentence_pattern}\n"
+            f"用词水平：{c.speaking_style.vocabulary_level}\n"
             f"口癖：{catch}\n"
-            f"用词：{c.speaking_style.vocabulary_level}\n"
-            f"你绝对不会说的话：{taboo}\n\n"
-            f"【你的价值观】\n{values}\n\n"
-            f"【你记得的事】\n{memories}\n\n"
-            f"【你的人际关系】\n{relations}\n\n"
-            f"【你的内在矛盾】\n{tensions}\n"
+            f"禁忌词：{taboo}"
         )
 
-        if c.emotional_patterns:
-            emo = "\n".join(f"- {e}" for e in c.emotional_patterns)
-            block += f"\n【你的情感模式】\n{emo}\n"
+        # Layer 4: Memory & Experience
+        memories_str = "\n".join(f"- {m}" for m in c.key_memories) if c.key_memories else ""
+        relations_str = "\n".join(
+            f"- {r.target}（{r.relation}）：{r.attitude}" for r in c.relationships
+        ) if c.relationships else ""
 
-        if c.decision_style:
-            block += f"\n【你的决策方式】\n{c.decision_style}\n"
-
+        layer4_parts = ["## Memory & Experience"]
+        if memories_str:
+            layer4_parts.append(memories_str)
+        if relations_str:
+            layer4_parts.append(f"人际关系：\n{relations_str}")
         if c.dialogue_examples:
             exs = "\n---\n".join(c.dialogue_examples[:3])
-            block += f"\n【对话风格示范——模仿这种方式说话】\n{exs}\n"
+            layer4_parts.append(f"对话示范：\n{exs}")
+        layer4 = "\n".join(layer4_parts)
+
+        block = "\n\n".join([layer1, layer2, layer3, layer4])
+
+        # 2500 tok hard cap
+        card_tokens = _count_tokens(block)
+        if card_tokens > 2500:
+            print(
+                f"[ContextEngine] WARNING: card block ~{card_tokens} tok "
+                f"exceeds 2500 limit for '{c.name}', truncating"
+            )
+            block = _truncate(block, 2500)
 
         return block
 

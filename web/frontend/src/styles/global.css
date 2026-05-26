@@ -4966,6 +4966,18 @@ select.settings-input {
   color: #e74c3c;
 }
 
+.field-counter {
+  float: right;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.field-counter.over {
+  color: #e53935;
+  font-weight: 600;
+}
+
 .modal-input {
   height: 42px;
   padding: 0 14px;
