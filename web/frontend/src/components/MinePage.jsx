@@ -141,9 +141,25 @@ export default function MinePage() {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = async () => {
-      const base64 = reader.result
-      try { await uploadUserBanner(base64) } catch {}
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = async () => {
+        const maxW = 1200
+        const scale = Math.min(1, maxW / img.width)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width * scale
+        canvas.height = img.height * scale
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+        // step down quality until under 300 KB
+        const tryQuality = (q) => {
+          const data = canvas.toDataURL('image/jpeg', q)
+          if (data.length < 300_000 || q <= 0.1) return data
+          return tryQuality(q - 0.1)
+        }
+        const compressed = tryQuality(0.8)
+        try { await uploadUserBanner(compressed) } catch {}
+      }
+      img.src = reader.result
     }
     reader.readAsDataURL(file)
   }
