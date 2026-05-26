@@ -152,6 +152,11 @@ def _run_distill_task(
                 if _tasks.get(task_id, {}).get("status") == "error":
                     return
             if isinstance(piece, dict):
+                if "error" in piece:
+                    print(f"[distill] Stream error for {name}: {piece['error']}")
+                    with _task_lock:
+                        _tasks[task_id].update({"status": "error", "message": piece["error"], "character": name})
+                    return
                 if piece.get("heartbeat"):
                     continue
                 with _task_lock:
@@ -205,9 +210,14 @@ def _run_distill_task(
                     pass
 
         if data is None:
-            print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
-            with _task_lock:
-                _tasks[task_id].update({"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
+            if not stripped:
+                print(f"[distill] Empty format output for {name} — Map/Reduce likely failed upstream")
+                with _task_lock:
+                    _tasks[task_id].update({"status": "error", "message": "蒸馏过程异常，请查看服务器日志", "character": name})
+            else:
+                print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
+                with _task_lock:
+                    _tasks[task_id].update({"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
 
         from core.schema import CharacterCard
@@ -263,6 +273,7 @@ def _run_distill_task(
             return result
 
         result = asyncio.run(_save_card())
+        print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         with _task_lock:
             _tasks[task_id].update({
@@ -739,7 +750,9 @@ async def list_cards(
     """List all distilled character cards for a text."""
     user_id = user["id"]
     try:
-        return await storage.list_cards(text_id, user_id)
+        result = await storage.list_cards(text_id, user_id)
+        print(f"[distill] list_cards text_id={text_id} user_id={user_id} => {len(result)} cards")
+        return result
     except Exception as exc:
         print(f"[distill] List cards failed: {exc}")
         raise HTTPException(500, f"List cards failed: {exc}") from exc

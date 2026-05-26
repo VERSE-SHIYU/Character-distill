@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
-import { Heart, MessageSquare } from './Icon'
+import { Heart, MessageSquare, Trash2 } from './Icon'
 
 /* ── Expandable text ── */
 function ExpandableText({ text, maxLines = 6 }) {
@@ -215,7 +215,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
         </button>
         {showDelete && (
           <button type="button" className="post-card-delete" onClick={() => onDelete?.(post.id)}>
-            删除
+            <Trash2 size={13} /> 删除
           </button>
         )}
       </div>
@@ -235,7 +235,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                   className="post-card-comment-avatar-btn"
                   onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
                 >
-                  <Avatar name={c.username} size={24} />
+                  <Avatar name={c.username} src={c.avatar_data} size={28} />
                 </button>
                 <div className="post-card-comment-body">
                   <div className="post-card-comment-head">
@@ -246,6 +246,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                     >
                       {c.username}
                     </button>
+                    {c.ip_location && <span className="post-card-comment-ip">IP属地: {c.ip_location}</span>}
                     <span className="post-card-comment-time">{c.created_at ? fmtTime(c.created_at) : ''}</span>
                   </div>
                   <p className="post-card-comment-text">{c.content}</p>

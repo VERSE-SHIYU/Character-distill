@@ -197,7 +197,7 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     if (imgRef.current) draw(imgRef.current, 1.0, 0, 0)
   }, [draw])
 
-  // Export square base64 (200×200)
+  // Export square base64 (200×200, full image — CSS handles circular clip)
   const handleConfirm = useCallback(() => {
     const img = imgRef.current
     if (!img) return
@@ -213,13 +213,9 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     ec.width = EXPORT_SIZE
     ec.height = EXPORT_SIZE
     const ctx = ec.getContext('2d')
-    ctx.beginPath()
-    ctx.arc(EXPORT_SIZE / 2, EXPORT_SIZE / 2, EXPORT_SIZE / 2, 0, Math.PI * 2)
-    ctx.closePath()
-    ctx.clip()
     ctx.drawImage(img, srcCx - srcSize / 2, srcCy - srcSize / 2, srcSize, srcSize, 0, 0, EXPORT_SIZE, EXPORT_SIZE)
 
-    onConfirm(ec.toDataURL('image/jpeg', 0.85))
+    onConfirm(ec.toDataURL('image/png'))
   }, [onConfirm])
 
   if (!file) return null

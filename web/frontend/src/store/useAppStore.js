@@ -540,30 +540,46 @@ const useAppStore = create((set, get) => ({
           }))
           get()._persistTasks()
           if (payload.status === 'done') {
-            fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
-              .then((r) => r.json())
-              .then((cards) => {
-                // 模糊匹配：名字包含或被包含
-                const card = cards.find((c) => c.name === characterName)
-                  || cards.find((c) => c.name?.includes(characterName) || characterName?.includes(c.name))
-                  || cards[cards.length - 1]  // 兜底：取最新的一张
-                if (card) {
-                  set((s) => {
-                    const cardId = card.id   // 后端返回的字段是 id，不是 card_id
-                    const exists = s.cards.some((c) => c.id === cardId)
-                    const freshCard = { ...card, text_id: textId }
-                    const updatedCards = exists
-                      ? s.cards.map((c) => c.id === cardId ? freshCard : c)
-                      : [freshCard, ...s.cards]
-                    return {
-                      cards: updatedCards,
-                      distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
-                        ? false : true,
-                    }
-                  })
-                }
-              })
-              .catch(() => {})
+            console.log('[distill] Task done:', { taskId, textId, characterName, card_id: payload.card_id })
+            set((s) => ({
+              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
+                ? false : s.distilling,
+              currentTextId: s.currentTextId || textId,
+            }))
+            if (payload.card_id) {
+              // 刷新全量卡片列表（覆盖式更新）
+              fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
+                .then((r) => r.json())
+                .then((cards) => {
+                  console.log('[distill] Cards refreshed:', cards.length, 'cards')
+                  set({ cards })
+                })
+                .catch((err) => console.warn('[distill] Failed to refresh cards on done:', err))
+            } else {
+              // 兜底：没有 card_id 时按名字模糊匹配
+              fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
+                .then((r) => r.json())
+                .then((cards) => {
+                  const card = cards.find((c) => c.name === characterName)
+                    || cards.find((c) => c.name?.includes(characterName) || characterName?.includes(c.name))
+                    || cards[cards.length - 1]
+                  if (card) {
+                    set((s) => {
+                      const cardId = card.id
+                      const exists = s.cards.some((c) => c.id === cardId)
+                      const freshCard = { ...card, text_id: textId }
+                      return {
+                        cards: exists
+                          ? s.cards.map((c) => c.id === cardId ? freshCard : c)
+                          : [freshCard, ...s.cards],
+                      }
+                    })
+                  } else {
+                    console.warn(`[distill] Card not found by name matching: ${characterName}, cards=`, cards)
+                  }
+                })
+                .catch((err) => console.warn('[distill] Failed to fetch cards for fallback name matching:', err))
+            }
             setTimeout(() => get().removeDistillTask(taskId), 5000)
             return
           }
