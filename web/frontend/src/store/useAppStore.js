@@ -633,37 +633,35 @@ const useAppStore = create((set, get) => ({
             }))
             get()._persistTasks()
             if (payload.status !== 'done' && payload.status !== 'error') {
-              // 任务还在跑，重新开始轮询
-              get().addDistillTask(t.id, t.textId, t.character)
+              // 任务还在跑，只启动轮询，不重复添加
+              const poll = () => {
+                fetchWithTimeout(`/api/distill/task/${t.id}`)
+                  .then(r => r.json())
+                  .then(p => {
+                    set((s) => ({
+                      distillTasks: s.distillTasks.map(task =>
+                        task.id === t.id ? { ...task, ...p } : task
+                      ),
+                    }))
+                    get()._persistTasks()
+                    if (p.status !== 'done' && p.status !== 'error') setTimeout(poll, 3000)
+                  })
+                  .catch(() => setTimeout(poll, 5000))
+              }
+              setTimeout(poll, 3000)
             }
           })
-          .catch((err) => {
-            const status = err?.status
-            if (status === 403) {
-              // 权限问题，检查任务参数看能否恢复
-              fetchWithTimeout(`/api/distill/task/${t.id}/params`)
-                .then((r) => r.json())
-                .then((params) => {
-                  if (params.text_id) {
-                    // 任务还在，重新开始蒸馏（覆盖原任务）
-                    get().distillCharacter(params.text_id, params.character, true)
-                    get().removeDistillTask(t.id)
-                  } else {
-                    throw new Error('params not found')
-                  }
-                })
-                .catch(() => {
-                  set((s) => ({
-                    distillTasks: s.distillTasks.map((task) =>
-                      task.id === t.id
-                        ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
-                        : task,
-                    ),
-                    distilling: false,
-                  }))
-                  get()._persistTasks()
-                })
-            } else {
+          .catch(() => {
+            set((s) => ({
+              distillTasks: s.distillTasks.map((task) =>
+                task.id === t.id
+                  ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
+                  : task,
+              ),
+              distilling: false,
+            }))
+            get()._persistTasks()
+          })
               // 404 等 — 后端没有这个任务了
               set((s) => ({
                 distillTasks: s.distillTasks.map((task) =>
