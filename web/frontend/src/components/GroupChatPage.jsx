@@ -284,9 +284,14 @@ export default function GroupChatPage() {
     })
     ids.forEach((id) => {
       if (!cardAvatars[id]) {
-        loadCardAvatar(id).then((dataUrl) => {
-          if (dataUrl) setCardAvatar(id, dataUrl)
-        })
+        const c = allCards.find((c) => (c.id || c.card_id) === id)
+        if (c?.avatar_data) {
+          setCardAvatar(id, c.avatar_data)
+        } else {
+          loadCardAvatar(id).then((dataUrl) => {
+            if (dataUrl) setCardAvatar(id, dataUrl)
+          })
+        }
       }
     })
   }, [allCards, groups])

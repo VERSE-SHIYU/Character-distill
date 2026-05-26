@@ -237,9 +237,13 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     cards.forEach((c) => {
       if (c.id && !cardAvatars[c.id] && !avatarRequestedRef.current.has(c.id)) {
         avatarRequestedRef.current.add(c.id)
-        loadCardAvatar(c.id).then((dataUrl) => {
-          if (dataUrl) setCardAvatar(c.id, dataUrl)
-        })
+        if (c.avatar_data) {
+          setCardAvatar(c.id, c.avatar_data)
+        } else {
+          loadCardAvatar(c.id).then((dataUrl) => {
+            if (dataUrl) setCardAvatar(c.id, dataUrl)
+          })
+        }
       }
     })
   }, [cards])
@@ -762,6 +766,10 @@ function CardDetail({ card, textId }) {
   useEffect(() => {
     let cancelled = false
     if (cardAvatars[card.id]) return
+    if (card.avatar_data) {
+      setCardAvatar(card.id, card.avatar_data)
+      return
+    }
     loadCardAvatar(card.id).then((dataUrl) => {
       if (!cancelled && dataUrl) setCardAvatar(card.id, dataUrl)
     })

@@ -173,11 +173,15 @@ function ChatView() {
   useEffect(() => {
     let cancelled = false
     if (!cardId || cardAvatars[cardId]) return
+    if (currentCard?.avatar_data) {
+      setCardAvatar(cardId, currentCard.avatar_data)
+      return
+    }
     loadCardAvatar(cardId).then((dataUrl) => {
       if (!cancelled && dataUrl) setCardAvatar(cardId, dataUrl)
     })
     return () => { cancelled = true }
-  }, [cardId, cardAvatars])
+  }, [cardId, cardAvatars, currentCard])
 
   const handleAvatarChange = useCallback((e) => {
     const file = e.target.files?.[0]

@@ -1,5 +1,4 @@
 import { openDB } from 'idb'
-import { getAuthHeaders } from '../api/client'
 
 const DB_NAME = 'character_sim'
 const DB_VERSION = 1
@@ -30,12 +29,11 @@ export async function deleteAvatar(id) {
 }
 
 /**
- * Load avatar for a card — try IndexedDB first, then backend API.
+ * Load avatar for a card from IndexedDB cache.
  * Returns a data URL string or null.
  */
 export async function loadCardAvatar(cardId) {
   if (!cardId) return null
-  // Try local IndexedDB cache first
   const blob = await getAvatar(cardId)
   if (blob) {
     return new Promise((resolve) => {
@@ -45,13 +43,5 @@ export async function loadCardAvatar(cardId) {
       reader.readAsDataURL(blob)
     })
   }
-  // Fallback to backend
-  try {
-    const res = await fetch(`/api/cards/${cardId}/avatar`, { headers: { ...getAuthHeaders() } })
-    if (res.ok) {
-      const { data } = await res.json()
-      if (data) return data
-    }
-  } catch { /* no backend or no avatar saved */ }
   return null
 }

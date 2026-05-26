@@ -103,9 +103,14 @@ export default function HomePage() {
     recentSessions.forEach((s) => { if (s.card_id) ids.add(s.card_id) })
     ids.forEach((id) => {
       if (!cardAvatars[id]) {
-        loadCardAvatar(id).then((dataUrl) => {
-          if (dataUrl) setCardAvatar(id, dataUrl)
-        })
+        const card = allCards.find((c) => (c.id || c.card_id) === id)
+        if (card?.avatar_data) {
+          setCardAvatar(id, card.avatar_data)
+        } else {
+          loadCardAvatar(id).then((dataUrl) => {
+            if (dataUrl) setCardAvatar(id, dataUrl)
+          })
+        }
       }
     })
   }, [allCards, recentSessions])
