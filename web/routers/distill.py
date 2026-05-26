@@ -90,7 +90,7 @@ def _run_distill_task(
     if not acquired:
         print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
         with _task_lock:
-            _tasks[task_id] = {"status": "error", "message": "服务器繁忙，请稍后重试"}
+            _tasks.setdefault(task_id, {"user_id": user_id}).update({"status": "error", "message": "服务器繁忙，请稍后重试"})
         return
     try:
         from adapters.llm_adapter import LLMAdapter
@@ -112,7 +112,7 @@ def _run_distill_task(
 
         if not distiller or not text_manager:
             with _task_lock:
-                _tasks[task_id] = {"status": "error", "message": "请先在设置页配置 API Key"}
+                _tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
             return
 
         # Step 1: resolve character name + aliases in ONE LLM call
@@ -120,7 +120,7 @@ def _run_distill_task(
         aliases: list[str] = []
 
         with _task_lock:
-            _tasks[task_id] = {"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…", "user_id": user_id}
+            _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…"})
 
         try:
             chars = distiller.identify_characters(content)
@@ -129,12 +129,12 @@ def _run_distill_task(
         if not name:
             if not chars:
                 with _task_lock:
-                    _tasks[task_id] = {"status": "error", "message": "No characters identified"}
+                    _tasks[task_id].update({"status": "error", "message": "No characters identified"})
                 return
             name = chars[0].get("name", "")
             if not name:
                 with _task_lock:
-                    _tasks[task_id] = {"status": "error", "message": "Identified result missing name"}
+                    _tasks[task_id].update({"status": "error", "message": "Identified result missing name"})
                 return
         for c in chars:
             if c.get("name") == name:
@@ -142,7 +142,7 @@ def _run_distill_task(
                 break
 
         with _task_lock:
-            _tasks[task_id] = {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "角色已识别，开始蒸馏…", "user_id": user_id}
+            _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "角色已识别，开始蒸馏…"})
 
         # Step 2: run incremental distill (synchronous, collect full output)
         full = ""
@@ -159,13 +159,13 @@ def _run_distill_task(
                     total = piece.get("total", 1)
                     status = piece.get("status", "analyzing")
                     pct = int((current / total) * 100) if total > 0 else 0
-                    _tasks[task_id] = {
+                    _tasks[task_id].update({
                         "status": status,
                         "current": current,
                         "total": total,
                         "progress_pct": pct,
                         "character": name,
-                    }
+                    })
             else:
                 full += piece
 
@@ -185,7 +185,7 @@ def _run_distill_task(
 
         if data is None:
             with _task_lock:
-                _tasks[task_id] = {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name}
+                _tasks[task_id].update({"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
 
         from core.schema import CharacterCard
@@ -193,7 +193,7 @@ def _run_distill_task(
             card = CharacterCard.model_validate(data)
         except Exception as exc:
             with _task_lock:
-                _tasks[task_id] = {"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name}
+                _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name})
             return
 
         # Step 4: persist via fresh store + text_manager in a new event loop.
@@ -243,17 +243,17 @@ def _run_distill_task(
         result = asyncio.run(_save_card())
 
         with _task_lock:
-            _tasks[task_id] = {
+            _tasks[task_id].update({
                 "status": "done",
                 "card_id": result.get("card_id", ""),
                 "character": name,
                 "progress_pct": 100,
-            }
+            })
 
     except Exception as exc:
         print(f"[distill] Background task {task_id} failed: {exc}")
         with _task_lock:
-            _tasks[task_id] = {"status": "error", "message": str(exc), "user_id": user_id, "text_id": text_id, "character": char_name}
+            _tasks[task_id].update({"status": "error", "message": str(exc), "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
             from pathlib import Path as _Path
