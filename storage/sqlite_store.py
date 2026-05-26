@@ -493,6 +493,19 @@ class SQLiteStore(StorageBase):
         """Convert sqlite row to dict."""
         return dict(row) if row is not None else None
 
+    async def execute(self, sql: str, params=()) -> None:
+        """Execute a single SQL statement (INSERT/UPDATE/DELETE)."""
+        async with await self._connect() as conn:
+            await conn.execute(sql, params)
+            await conn.commit()
+
+    async def fetch_one(self, sql: str, params=()) -> dict | None:
+        """Query a single row, returns dict or None."""
+        async with await self._connect() as conn:
+            cursor = await conn.execute(sql, params)
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
     async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save or update one text record."""
         try:
