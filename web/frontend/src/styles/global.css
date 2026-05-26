@@ -7639,6 +7639,8 @@ select.settings-input {
   align-items: center;
   gap: 4px;
   font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 8px;
 }
 
 .market-detail-like-btn:hover {

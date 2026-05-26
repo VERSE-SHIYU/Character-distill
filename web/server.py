@@ -98,7 +98,7 @@ async def _global_exception_handler(request: Request, exc: Exception) -> JSONRes
 _origins_env = os.getenv("ALLOWED_ORIGINS", "")
 if not _origins_env:
     print(
-        "\n⚠️  ALLOWED_ORIGINS 未设置！CORS 将拒绝所有跨域请求。"
+        "\n[WARN] ALLOWED_ORIGINS 未设置！CORS 将拒绝所有跨域请求。"
         "\n   请在 .env 中设置: ALLOWED_ORIGINS=https://你的域名\n"
     )
 ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] or ["http://localhost:5173"]
