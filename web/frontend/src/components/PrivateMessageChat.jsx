@@ -24,13 +24,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
   const [inputText, setInputText] = useState('')
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
   const messagesEndRef = useRef(null)
+  const autoSendRef = useRef(false)
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -103,11 +103,30 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
   // Auto-send queued messages when back online
   useEffect(() => {
-    if (!isOnline) return
+    if (!isOnline) { autoSendRef.current = false; return }
+    if (autoSendRef.current) return
+    autoSendRef.current = true
     const queued = messages.filter(m => m._status === 'queued')
-    queued.forEach(msg => handleResend(msg))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline])
+    if (queued.length === 0) return
+    queued.forEach(async (failedMsg) => {
+      setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'sending' } : m))
+      try {
+        const res = await fetchWithTimeout('/api/messages/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+          body: JSON.stringify({ receiver_id: otherUserId, content: failedMsg.content }),
+        })
+        const data = await res.json()
+        if (data.message) {
+          setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...data.message, _status: 'sent' } : m))
+        } else {
+          setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'failed' } : m))
+        }
+      } catch {
+        setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'failed' } : m))
+      }
+    })
+  }, [isOnline, otherUserId])
 
   const handleSend = async () => {
     if (!inputText.trim() || !otherUserId) return
@@ -124,7 +143,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
     if (!isOnline) return
 
-    setSending(true)
     try {
       const res = await fetchWithTimeout('/api/messages/send', {
         method: 'POST',
@@ -139,8 +157,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       }
     } catch {
       setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
-    } finally {
-      setSending(false)
     }
   }
 
@@ -271,10 +287,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
           <button
             type="button"
             className="messages-send-btn"
-            disabled={!inputText.trim() || sending}
+            disabled={!inputText.trim()}
             onClick={handleSend}
           >
-            {sending ? '…' : '发送'}
+            发送
           </button>
         </div>
       </div>
