@@ -28,6 +28,16 @@ usermod -aG docker ubuntu
 openssl rand -hex 32
 ```
 
+## 1.5. 前端构建
+
+```bash
+cd web/frontend && npm install && npm run build
+# 确认 dist/index.html 已生成
+ls web/frontend/dist/index.html
+```
+
+> Docker 部署时，`docker compose -f docker-compose.prod.yml up -d --build` 会自动执行 build 步骤。
+
 ## 2. 环境变量
 
 ```bash

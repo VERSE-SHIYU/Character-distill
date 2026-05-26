@@ -95,7 +95,13 @@ async def _global_exception_handler(request: Request, exc: Exception) -> JSONRes
         content={"detail": "服务器内部错误，请稍后重试"},
     )
 
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "https://yourdomain.cn").split(",")
+_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+if not _origins_env:
+    print(
+        "\n⚠️  ALLOWED_ORIGINS 未设置！CORS 将拒绝所有跨域请求。"
+        "\n   请在 .env 中设置: ALLOWED_ORIGINS=https://你的域名\n"
+    )
+ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(",") if o.strip()] or ["http://localhost:5173"]
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
@@ -105,6 +111,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# ---- Auth middleware (must be before include_router for exception_handler to catch) ----
+app.add_middleware(AuthMiddleware)
 
 # ---- Mount routers ----
 app.include_router(auth_router)      # 不需要认证
@@ -160,9 +169,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
         request.state.user = user
         return await call_next(request)
-
-
-app.add_middleware(AuthMiddleware)
 
 
 @app.get("/api/health")

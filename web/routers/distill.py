@@ -64,6 +64,7 @@ class DistillRequest(BaseModel):
 
 _tasks: dict[str, dict[str, Any]] = {}
 _task_lock = threading.Lock()
+_DISTILL_SEMAPHORE = threading.Semaphore(3)  # 最多同时3个蒸馏任务
 
 
 class DistillTaskRequest(BaseModel):
@@ -85,6 +86,10 @@ def _run_distill_task(
     If *api_config* is provided (api_key, base_url, model), a per-user LLM
     is created so distillation uses the user's own API key, not the global fallback.
     """
+    acquired = _DISTILL_SEMAPHORE.acquire(timeout=5)
+    if not acquired:
+        print(f"[distill] 并发蒸馏达上限，任务排队中: {char_name}")
+        _DISTILL_SEMAPHORE.acquire()  # 阻塞等待
     try:
         from adapters.llm_adapter import LLMAdapter
         from deps import get_distiller, get_text_manager
@@ -243,6 +248,8 @@ def _run_distill_task(
         print(f"[distill] Background task {task_id} failed: {exc}")
         with _task_lock:
             _tasks[task_id] = {"status": "error", "message": str(exc)}
+    finally:
+        _DISTILL_SEMAPHORE.release()
 
 
 # ---- Shared helpers ----

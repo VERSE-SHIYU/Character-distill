@@ -19,7 +19,11 @@ def send_verification_code(to_email: str, code: str, purpose: str = "验证") ->
     if not _resend_available:
         raise RuntimeError("未安装 resend SDK，请执行: pip install resend")
     if not resend.api_key:
-        raise RuntimeError("未配置 RESEND_API_KEY")
+        print("[EmailService] WARNING: RESEND_API_KEY 未配置，验证码无法发送")
+        raise RuntimeError(
+            "邮件服务未配置。请在 .env 中设置 RESEND_API_KEY，"
+            "或联系管理员启用邮件功能。"
+        )
     from_email = os.getenv("RESEND_FROM_EMAIL", "noreply@resend.dev")
     resend.Emails.send({
         "from": from_email,
