@@ -148,7 +148,7 @@ export default function MessagesPage() {
                   className={`messages-conv-item${activeOtherId === conv.other_id ? ' active' : ''}`}
                   onClick={() => handleSelectConversation(conv.other_id, conv.username)}
                 >
-                  <Avatar name={conv.username || '?'} size={44} />
+                  <Avatar name={conv.username || '?'} src={conv.avatar_data} size={44} />
                   <div className="messages-conv-body">
                     <div className="messages-conv-head">
                       <span className="messages-conv-name">{conv.username}</span>

@@ -78,6 +78,7 @@ class GroupSession:
             system_prompt,
             [{"role": "user", "content": message}],
         )
+        engine._try_record_usage("chat")
 
         # 记录角色回复到群聊历史
         self.group_history.append({
@@ -121,6 +122,7 @@ class GroupSession:
                 system_prompt,
                 [{"role": "user", "content": user_msg}],
             )
+            engine._try_record_usage("chat")
             self.group_history.append({
                 "speaker": engine.card.name,
                 "role": "assistant",

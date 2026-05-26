@@ -270,7 +270,7 @@ export default function MarketPage() {
                       </>
                     ) : (
                       <div className="market-card-v2-cover-fallback">
-                        <Avatar name={charName} size={56} />
+                        <span className="market-card-v2-fallback-letter">{charName.charAt(0).toUpperCase()}</span>
                       </div>
                     )}
                   </div>

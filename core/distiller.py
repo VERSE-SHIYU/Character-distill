@@ -474,7 +474,8 @@ class Distiller:
                     result, _ = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}]
                     )
-                except Exception:
+                except Exception as exc:
+                    print(f"[distiller] Map chunk {i} failed: {exc}")
                     result = ""
             async with lock:
                 done_count[0] += 1
@@ -501,7 +502,8 @@ class Distiller:
             async with sem:
                 try:
                     result = await self._single_reduce_async(batch, character_name)
-                except Exception:
+                except Exception as exc:
+                    print(f"[distiller] Reduce batch {i} failed: {exc}")
                     result = ""
             async with lock:
                 done_count[0] += 1
@@ -784,7 +786,8 @@ class Distiller:
                         result, _ = await self._llm.async_chat(
                             system, [{"role": "user", "content": user}]
                         )
-                    except Exception:
+                    except Exception as exc:
+                        print(f"[distiller] Map chunk {i} failed: {exc}")
                         result = ""
                 async with lock:
                     done_count[0] += 1

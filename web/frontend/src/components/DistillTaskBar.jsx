@@ -1,6 +1,8 @@
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 
+function getStore() { return useAppStore.getState() }
+
 export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
   const setView = useAppStore((s) => s.setView)
@@ -32,8 +34,15 @@ export default function DistillTaskBar() {
             className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}`}
             onClick={() => {
               if (isDone) {
-                if (t.textId) loadCards(t.textId)
-                setView('character')
+                console.log('[DistillTaskBar] Click done task:', { textId: t.textId, character: t.character })
+                const s = getStore()
+                if (t.textId && s.currentTextId !== t.textId) {
+                  console.log('[DistillTaskBar] currentTextId mismatch, calling selectText')
+                  s.selectText(t.textId)
+                } else {
+                  if (t.textId) s.loadCards(t.textId)
+                  s.setView('character')
+                }
               }
             }}
             role={isDone ? 'button' : undefined}

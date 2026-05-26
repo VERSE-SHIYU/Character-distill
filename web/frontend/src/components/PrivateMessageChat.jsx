@@ -1,22 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { formatChatTime } from '../utils/time'
+import ChatHistoryPanel from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
-const POLL_INTERVAL = 30000
+import EmojiPicker from './common/EmojiPicker'
+const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
-
-function formatTime(dateStr) {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return ''
-  const now = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
-  if (d.toDateString() === now.toDateString()) return hhmm
-  const mmdd = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-  if (d.getFullYear() === now.getFullYear()) return `${mmdd} ${hhmm}`
-  return `${d.getFullYear()}-${mmdd} ${hhmm}`
-}
 
 export default function PrivateMessageChat({ otherUserId, otherUsername, onBack }) {
   const authUser = useAppStore((s) => s.authUser)
@@ -31,6 +21,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
 
   const messagesEndRef = useRef(null)
   const autoSendRef = useRef(false)
+  const taRef = useRef(null)
+  const [showEmoji, setShowEmoji] = useState(false)
+  const [otherAvatar, setOtherAvatar] = useState(null)
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -67,11 +60,39 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
     }
   }, [otherUserId])
 
-  // Initial load + mark read
+  // ── 历史搜索（客户端搜索已加载消息） ──
+  const historyFetchSessions = useCallback(async (keyword) => {
+    const msgs = messages
+    if (!keyword) return []
+    const q = keyword.toLowerCase()
+    const matching = msgs.filter((m) => m.content?.toLowerCase().includes(q)).slice(0, 20)
+    return matching.map((m) => ({
+      id: m.id,
+      title: m.sender_id === authUser?.id ? '我' : (otherUsername || '对方'),
+      preview: m.content?.slice(0, 60),
+      time: m.created_at,
+    }))
+  }, [messages, authUser?.id, otherUsername])
+
+  const historySelectSession = useCallback((session) => {
+    // Scroll to the message (find and scroll into view)
+    setTimeout(() => {
+      const el = document.querySelector(`[data-msg-id="${session.id}"]`)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 100)
+  }, [])
+
+  // Initial load + mark read + fetch other avatar
   useEffect(() => {
     if (!otherUserId) return
     loadMessages()
     markRead()
+    fetchWithTimeout(`/api/market/author/${otherUserId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.author?.avatar_data) setOtherAvatar(data.author.avatar_data)
+      })
+      .catch(() => {})
   }, [otherUserId, loadMessages, markRead])
 
   // Poll for new messages
@@ -127,6 +148,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       }
     })
   }, [isOnline, otherUserId])
+
+  // Emoji picker outside-click
+  useEffect(() => {
+    if (!showEmoji) return
+    const handler = (e) => {
+      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
+        setShowEmoji(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showEmoji])
 
   const handleSend = async () => {
     if (!inputText.trim() || !otherUserId) return
@@ -197,11 +230,16 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       {/* Header */}
       <div className="private-chat-header">
         <button type="button" className="chat-back-btn" onClick={onBack} title="返回">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
         </button>
-        <Avatar name={otherUsername || '?'} size={32} />
+        <span className="private-chat-back-text">返回</span>
+        <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
         <span className="private-chat-title">{otherUsername || '私信'}</span>
+        <ChatHistoryPanel
+          fetchSessions={historyFetchSessions}
+          onSelectSession={historySelectSession}
+          placeholder="搜索当前对话…"
+        />
       </div>
 
       {!isOnline && (
@@ -227,14 +265,17 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
           return (
             <React.Fragment key={msg.id}>
               {showTime && (
-                <div className="messages-time-divider">{formatTime(msg.created_at)}</div>
+                <div className="messages-time-divider">{formatChatTime(msg.created_at)}</div>
               )}
-              <div className={`messages-row${isMe ? ' mine' : ' other'}`}>
+              <div className={`messages-row${isMe ? ' mine' : ' other'}`} data-msg-id={msg.id}>
                 {!isMe && (
-                  <Avatar name={otherUsername || '?'} size={36} />
+                  <Avatar name={otherUsername || '?'} src={otherAvatar} size={52} />
                 )}
                 <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
                   <span className="messages-msg-text">{msg.content}</span>
+                  {msg.created_at && (
+                    <div className={`msg-time ${isMe ? 'msg-time-user' : ''}`}>{formatChatTime(msg.created_at)}</div>
+                  )}
                 </div>
                 {isMe && msg._status === 'queued' && (
                   <span className="messages-status queued" title="等待网络恢复">📶</span>
@@ -252,7 +293,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
                     ⚠
                   </button>
                 )}
-                {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={36} />}
+                {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={52} />}
               </div>
             </React.Fragment>
           )
@@ -263,9 +304,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       {/* Input */}
       <div className="private-chat-input-bar">
         <div className="messages-input-toolbar messages-input-toolbar-top">
-          <button type="button" className="messages-toolbar-btn" title="表情"
-            onClick={() => {/* 预留表情选择器 */}}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+          <button type="button" className="messages-toolbar-btn" title="表情" data-emoji-btn
+            onClick={() => setShowEmoji(!showEmoji)}>
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
@@ -274,14 +315,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
             </svg>
           </button>
         </div>
-        <textarea
-          className="messages-input"
-          rows={3}
-          placeholder="输入消息…"
-          value={inputText}
-          onChange={(e) => setInputText(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
+        <div style={{ position: 'relative' }}>
+          {showEmoji && <EmojiPicker textareaRef={taRef} onEmojiSelect={() => setShowEmoji(false)} />}
+          <textarea
+            ref={taRef}
+            className="messages-input"
+            rows={3}
+            placeholder="输入消息…"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+        </div>
         <div className="messages-input-toolbar messages-input-toolbar-bottom">
           <div className="messages-input-toolbar-left" />
           <button
