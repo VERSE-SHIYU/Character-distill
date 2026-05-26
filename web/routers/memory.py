@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from deps import get_memory_manager, get_storage
 from core.memory_manager import MemoryManager
@@ -34,10 +34,15 @@ async def delete_memory(
     memory_id: str,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
+    storage: SQLiteStore = Depends(get_storage),
+    card_id: str = Query(...),
 ):
-    """删除单条记忆。"""
+    """删除单条记忆。需要 card_id 校验所有权。"""
     if not memory_manager or not memory_manager.enabled:
         raise HTTPException(400, "记忆系统未启用")
+    owner_id = await storage.get_card_author_id(card_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(403, "无权删除此记忆")
     ok = memory_manager.delete(memory_id)
     if not ok:
         raise HTTPException(500, "删除失败")

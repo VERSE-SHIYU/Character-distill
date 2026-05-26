@@ -66,8 +66,9 @@ async def upload_text(
 
     if file and file.filename:
         _validate_extension(file.filename)
+        safe_name = Path(file.filename).name  # strip directory traversal
 
-        temp_path = UPLOAD_DIR / f"{uuid.uuid4().hex}_{file.filename}"
+        temp_path = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
         try:
             total_size = 0
             async with aiofiles.open(temp_path, "wb") as f:
@@ -81,7 +82,7 @@ async def upload_text(
 
             try:
                 result = await text_manager.upload_text_from_file(
-                    str(temp_path), file.filename, title, description, text_type, user_id
+                    str(temp_path), safe_name, title, description, text_type, user_id
                 )
                 text_id = result["text_id"]
                 cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
@@ -136,31 +137,27 @@ async def list_texts(
     return texts
 
 
-@router.get("/{text_id}/download-cleaned")
-async def download_cleaned(
-    text_id: str,
-    request: Request,
+@router.post("/comments/{comment_id}/like")
+async def toggle_comment_like(
+    comment_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
-) -> Response:
-    """Download cleaned plain text for chat-type imports."""
-    text_rec = await storage.get_text(text_id)
-    if not text_rec:
-        raise HTTPException(404, "Text not found")
-    if text_rec.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权下载此文本")
+) -> dict:
+    """Toggle like on a comment."""
+    return await storage.toggle_text_comment_like(comment_id, user["id"])
 
-    content = text_rec.get("content", "")
-    title = text_rec.get("title", "text")
-    safe_name = quote(f"{title}_cleaned.txt")
 
-    return Response(
-        content=content,
-        media_type="text/plain; charset=utf-8",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}",
-        },
-    )
+@router.delete("/comments/{comment_id}")
+async def delete_text_comment(
+    comment_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Delete your own comment."""
+    ok = await storage.delete_text_comment(comment_id, user["id"])
+    if not ok:
+        raise HTTPException(404, "评论不存在或无权删除")
+    return {"ok": True}
 
 
 @router.delete("/{text_id}")
@@ -186,27 +183,31 @@ async def delete_text(
     return {"ok": True}
 
 
-@router.post("/comments/{comment_id}/like")
-async def toggle_comment_like(
-    comment_id: str,
+@router.get("/{text_id}/download-cleaned")
+async def download_cleaned(
+    text_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Toggle like on a comment."""
-    return await storage.toggle_text_comment_like(comment_id, user["id"])
+) -> Response:
+    """Download cleaned plain text for chat-type imports."""
+    text_rec = await storage.get_text(text_id)
+    if not text_rec:
+        raise HTTPException(404, "Text not found")
+    if text_rec.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权下载此文本")
 
+    content = text_rec.get("content", "")
+    title = text_rec.get("title", "text")
+    safe_name = quote(f"{title}_cleaned.txt")
 
-@router.delete("/comments/{comment_id}")
-async def delete_text_comment(
-    comment_id: str,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Delete your own comment."""
-    ok = await storage.delete_text_comment(comment_id, user["id"])
-    if not ok:
-        raise HTTPException(404, "评论不存在或无权删除")
-    return {"ok": True}
+    return Response(
+        content=content,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}",
+        },
+    )
 
 
 @router.get("/{text_id}/detail")

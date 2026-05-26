@@ -658,7 +658,7 @@ function ChatView() {
                       type="button"
                       className="memory-delete-btn"
                       onClick={async () => {
-                        await fetchWithTimeout(`/api/memory/delete/${m.id}`, { method: 'DELETE' })
+                        await fetchWithTimeout(`/api/memory/delete/${m.id}?card_id=${cardId}`, { method: 'DELETE' })
                         setMemories(prev => prev.filter(x => x.id !== m.id))
                       }}
                       title="删除此记忆"

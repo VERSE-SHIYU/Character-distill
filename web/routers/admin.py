@@ -66,8 +66,11 @@ async def reset_user_password(
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
-    if len(req.new_password) < 6:
-        raise HTTPException(400, "新密码至少 6 个字符")
+    pw = req.new_password
+    if len(pw) < 8:
+        raise HTTPException(400, "新密码至少 8 个字符")
+    if not any(c.isalpha() for c in pw) or not any(c.isdigit() for c in pw):
+        raise HTTPException(400, "新密码需包含字母和数字")
     from routers.auth import password_hasher
     password_hash = password_hasher.hash(req.new_password)
     ok = await storage.reset_user_password(user_id, password_hash)
