@@ -8619,9 +8619,9 @@ select.settings-input {
 }
 
 .messages-bubble.mine {
-  background: rgba(var(--accent-rgb), 0.18);
-  color: var(--text);
-  border-radius: 10px;
+  background: #95ec69;
+  color: #1a1a1a;
+  border-radius: 8px;
 }
 
 .messages-bubble.other {
@@ -9272,13 +9272,12 @@ select.settings-input {
   gap: 12px;
 }
 
-/* Group chat character bubble — distinct from private chat bubbles */
+/* Group chat character bubble — WeChat style */
 .group-chat-bubble {
   max-width: 70%;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-left: 3px solid var(--accent);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,0.03);
   transition: box-shadow 0.2s;
@@ -9388,6 +9387,7 @@ select.settings-input {
   gap: 10px;
   transition: background 0.15s;
   cursor: default;
+  border-bottom: 1px solid var(--glass-border);
 }
 .group-chat-layout .group-member-item:hover {
   background: rgba(var(--accent-rgb), 0.04);
@@ -9397,18 +9397,20 @@ select.settings-input {
   min-width: 0;
 }
 .group-chat-layout .group-member-name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   display: block;
 }
 .group-chat-layout .group-member-identity {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: 13px;
+  color: var(--text-dim);
   display: block;
   margin-top: 2px;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 @media (max-width: 900px) {

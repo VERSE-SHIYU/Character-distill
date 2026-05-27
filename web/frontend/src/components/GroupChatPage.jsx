@@ -18,15 +18,6 @@ function parseCardIds(raw) {
   try { return JSON.parse(raw || '[]') } catch { return [] }
 }
 
-const BUBBLE_COLORS = ['#f0f7ff', '#f0fdf4', '#fef7ee', '#fdf2f8', '#f5f3ff']
-function getBubbleColor(cardId) {
-  let hash = 0
-  for (let i = 0; i < (cardId || '').length; i++) {
-    hash = cardId.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return BUBBLE_COLORS[Math.abs(hash) % BUBBLE_COLORS.length]
-}
-
 /** 通过 card_id 从后端获取单张角色卡信息 */
 async function fetchCardById(cardId) {
   try {
@@ -668,7 +659,7 @@ export default function GroupChatPage() {
                               <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
                           ) : (
-                            <div className="group-chat-bubble" style={{ background: getBubbleColor(m.card_id || m.speaker_card_id) }}>
+                            <div className="group-chat-bubble">
                               <div className="group-chat-bubble-header">
                                 <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                                 <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
@@ -703,8 +694,8 @@ export default function GroupChatPage() {
                       }
                       return (
                         <div key={cardId} className="group-member-item">
-                          <Avatar name={card?.name || '?'} size={40} src={cardAvatars[cardId]} />
-                          <div>
+                          <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
+                          <div className="group-member-info">
                             <span className="group-member-name">{card?.name || '?'}</span>
                             {identity && <span className="group-member-identity">{identity}</span>}
                           </div>
