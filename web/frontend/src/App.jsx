@@ -22,7 +22,6 @@ import MinePage from './components/MinePage'
 import TrashPage from './components/TrashPage'
 import MarketCardDetail from './components/MarketCardDetail'
 import FeedPage from './components/FeedPage'
-import BookReader from './components/BookReader'
 import DistillTaskBar from './components/DistillTaskBar'
 
 const PANELS = {
@@ -44,7 +43,6 @@ const PANELS = {
   textDetail: TextDetailPage,
   messages: MessagesPage,
   mine: MinePage,
-  reader: BookReader,
   trash: TrashPage,
 }
 

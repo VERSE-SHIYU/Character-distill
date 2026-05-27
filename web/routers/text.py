@@ -137,17 +137,6 @@ async def list_texts(
     return texts
 
 
-@router.get("/reading-progress/all")
-@limiter.limit("30/minute")
-async def get_all_reading_progress(
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> list:
-    """Get reading progress for all texts of the current user."""
-    return await storage.get_all_reading_progress(user["id"])
-
-
 @router.post("/comments/{comment_id}/like")
 async def toggle_comment_like(
     comment_id: str,
@@ -284,58 +273,6 @@ async def add_text_comment(
     )
     comment["liked_by_me"] = False
     return {"comment": comment}
-
-
-@router.get("/{text_id}/read")
-@limiter.limit("60/minute")
-async def read_text(
-    text_id: str,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Return full text content for reading."""
-    text = await storage.get_text(text_id)
-    if not text:
-        raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权阅读此文本")
-    text["content"] = text.get("content", "")
-    return {"text": text}
-
-
-class ProgressUpdate(BaseModel):
-    progress: float = 0
-    scroll_position: int = 0
-
-
-@router.post("/{text_id}/progress")
-@limiter.limit("60/minute")
-async def save_progress(
-    text_id: str,
-    body: ProgressUpdate,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Save reading progress for a text."""
-    await storage.save_reading_progress(user["id"], text_id, body.progress, body.scroll_position)
-    return {"ok": True}
-
-
-@router.get("/{text_id}/progress")
-@limiter.limit("60/minute")
-async def get_progress(
-    text_id: str,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
-) -> dict:
-    """Get reading progress for a text."""
-    progress = await storage.get_reading_progress(user["id"], text_id)
-    if not progress:
-        return {"progress": 0, "scroll_position": 0}
-    return progress
 
 
 @router.patch("/{text_id}/visibility")

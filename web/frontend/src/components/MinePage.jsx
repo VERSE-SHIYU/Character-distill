@@ -9,7 +9,6 @@ import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import { parseCardJson } from '../utils/card'
-import { getCoverGradient } from './BookReader'
 
 /* ── MineCardMenu ── */
 function MineCardMenu({ card, onRefresh }) {
@@ -103,9 +102,6 @@ export default function MinePage() {
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
 
-  // Reading progress
-  const [readingProgress, setReadingProgress] = useState({})
-
   const bannerInputRef = useRef(null)
   const [bannerCropFile, setBannerCropFile] = useState(null)
   const avatarInputRef = useRef(null)
@@ -145,16 +141,6 @@ export default function MinePage() {
         .then(data => setPosts(data.posts || []))
         .catch(() => {})
         .finally(() => setPostsLoading(false))
-    }
-    if (tab === 'books') {
-      fetchWithTimeout('/api/text/reading-progress/all')
-        .then(r => r.json())
-        .then(data => {
-          const map = {}
-          ;(data || []).forEach(p => { map[p.text_id] = p })
-          setReadingProgress(map)
-        })
-        .catch(() => {})
     }
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -411,33 +397,36 @@ export default function MinePage() {
               </button>
             </div>
           ) : (
-            <div className="mine-books-grid">
+            <div className="mine-books-list">
               {texts.map(text => {
-                const progress = readingProgress[text.id]
-                const pct = progress ? Math.round((progress.progress || 0) * 100) : 0
-                const [g1, g2] = getCoverGradient(text.id)
-                const title = text.title || text.filename || '未命名'
+                const textCards = cards.filter(c => c.text_id === text.id)
                 return (
-                  <div
-                    key={text.id}
-                    className="mine-book-cover-card"
-                    onClick={() => {
-                      useAppStore.getState().setReaderTextId(text.id)
-                      setView('reader')
-                    }}
-                  >
-                    <div
-                      className="mine-book-cover-bg"
-                      style={{ background: `linear-gradient(135deg, ${g1}, ${g2})` }}
-                    >
-                      <span className="mine-book-cover-title">{title}</span>
+                  <div key={text.id} className="mine-book-item">
+                    <div className="mine-book-header" onClick={() => setView('text')}>
+                      <span className="mine-book-icon">📖</span>
+                      <div className="mine-book-info">
+                        <span className="mine-book-title">{text.title || text.filename || '未命名'}</span>
+                        <span className="mine-book-meta">
+                          {textCards.length} 个角色 · {text.status === 'done' ? '已完成' : text.status === 'processing' ? '蒸馏中…' : '待蒸馏'}
+                        </span>
+                      </div>
                     </div>
-                    {pct > 0 && (
-                      <div className="mine-book-cover-progress">
-                        <div className="mine-book-cover-progress-bar" style={{ width: `${pct}%` }} />
+                    {textCards.length > 0 && (
+                      <div className="mine-book-cards">
+                        {textCards.map(c => {
+                          const cd = parseCardJson(c)
+                          return (
+                            <div key={c.id} className="mine-book-card-chip" onClick={() => {
+                              useAppStore.getState().setCurrentMarketCardId(c.id)
+                              setView('marketCardDetail')
+                            }}>
+                              <Avatar name={cd.name || '?'} src={c.avatar_data} size={24} />
+                              <span>{cd.name || '?'}</span>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
-                    <span className="mine-book-cover-label">{pct > 0 ? `${pct}%` : '开始阅读'}</span>
                   </div>
                 )
               })}

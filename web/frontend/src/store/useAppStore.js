@@ -70,9 +70,6 @@ const useAppStore = create((set, get) => ({
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
 
-  readerTextId: null,
-  setReaderTextId: (id) => set({ readerTextId: id }),
-
   texts: [],
   currentTextId: null,
   currentTextTitle: '',
