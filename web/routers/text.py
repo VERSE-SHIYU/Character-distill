@@ -194,6 +194,66 @@ async def delete_text(
     return {"ok": True}
 
 
+@router.get("/trash")
+@limiter.limit("30/minute")
+async def list_trash(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List soft-deleted texts for the current user."""
+    try:
+        texts = await storage.get_deleted_texts(user["id"])
+    except Exception as exc:
+        print(f"[text] List trash failed: {exc}")
+        raise HTTPException(500, f"List trash failed: {exc}") from exc
+    for t in texts:
+        t.pop("content", None)
+    return texts
+
+
+@router.post("/{text_id}/restore")
+@limiter.limit("30/minute")
+async def restore_text(
+    text_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Restore a soft-deleted text."""
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "Text not found")
+    if text.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权恢复此文本")
+    ok = await storage.restore_text(text_id)
+    if not ok:
+        raise HTTPException(400, "文本未处于删除状态")
+    return {"ok": True}
+
+
+@router.delete("/{text_id}/permanent")
+@limiter.limit("30/minute")
+async def permanent_delete_text(
+    text_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Permanently delete a text and all associated data."""
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "Text not found")
+    if text.get("deleted_at", "") == "":
+        raise HTTPException(400, "请先移入回收站再永久删除")
+    if text.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权删除此文本")
+    ok = await storage.hard_delete_text(text_id)
+    if not ok:
+        raise HTTPException(404, "Text not found")
+    return {"ok": True}
+
+
 @router.get("/{text_id}/download-cleaned")
 async def download_cleaned(
     text_id: str,

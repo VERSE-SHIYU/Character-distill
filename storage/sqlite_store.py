@@ -547,6 +547,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Reading progress migration failed: {exc}")
 
+                    # Run 054_text_soft_delete migration (ALTER TABLE ADD COLUMN)
+                    soft_del_path = migrations_dir / "054_text_soft_delete.sql"
+                    if soft_del_path.exists():
+                        try:
+                            await conn.executescript(soft_del_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Text soft delete migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -663,14 +673,14 @@ class SQLiteStore(StorageBase):
             raise
 
     async def list_texts(self, user_id: str = "") -> list[dict]:
-        """List texts for a user in descending created order."""
+        """List texts for a user in descending created order (excludes soft-deleted)."""
         try:
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
                         """
                         SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, visibility
-                        FROM texts WHERE user_id = ?
+                        FROM texts WHERE user_id = ? AND deleted_at = ''
                         ORDER BY created_at DESC
                         """, (user_id,),
                     )
@@ -678,7 +688,7 @@ class SQLiteStore(StorageBase):
                     cursor = await conn.execute(
                         """
                         SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, visibility
-                        FROM texts
+                        FROM texts WHERE deleted_at = ''
                         ORDER BY created_at DESC
                         """
                     )
@@ -717,14 +727,70 @@ class SQLiteStore(StorageBase):
             raise
 
     async def delete_text(self, id: str) -> bool:
-        """Delete one text record."""
+        """Soft-delete one text record."""
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute("DELETE FROM texts WHERE id = ?", (id,))
+                cursor = await conn.execute(
+                    "UPDATE texts SET deleted_at = datetime('now') WHERE id = ? AND deleted_at = ''",
+                    (id,),
+                )
                 await conn.commit()
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete text failed: {exc}")
+            raise
+
+    async def get_deleted_texts(self, user_id: str) -> list[dict]:
+        """List soft-deleted texts for a user."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, deleted_at
+                    FROM texts WHERE user_id = ? AND deleted_at != ''
+                    ORDER BY deleted_at DESC
+                    """,
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get deleted texts failed: {exc}")
+            raise
+
+    async def restore_text(self, id: str) -> bool:
+        """Restore a soft-deleted text."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE texts SET deleted_at = '' WHERE id = ? AND deleted_at != ''",
+                    (id,),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Restore text failed: {exc}")
+            raise
+
+    async def hard_delete_text(self, id: str) -> bool:
+        """Permanently delete a text and all associated data."""
+        try:
+            async with await self._connect() as conn:
+                # Delete reading progress
+                await conn.execute("DELETE FROM reading_progress WHERE text_id = ?", (id,))
+                # Delete sessions associated with cards of this text
+                await conn.execute(
+                    "DELETE FROM sessions WHERE card_id IN (SELECT id FROM cards WHERE text_id = ?)",
+                    (id,),
+                )
+                # Delete cards
+                await conn.execute("DELETE FROM cards WHERE text_id = ?", (id,))
+                # Delete the text itself
+                cursor = await conn.execute("DELETE FROM texts WHERE id = ?", (id,))
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Hard delete text failed: {exc}")
             raise
 
     async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:

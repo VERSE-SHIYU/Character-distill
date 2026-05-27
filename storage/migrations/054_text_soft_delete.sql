@@ -1,0 +1,1 @@
+ALTER TABLE texts ADD COLUMN deleted_at TEXT DEFAULT '';

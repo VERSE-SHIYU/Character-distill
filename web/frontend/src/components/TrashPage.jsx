@@ -33,6 +33,12 @@ export default function TrashPage() {
   const [restoreGroupId, setRestoreGroupId] = useState(null)
   const [purgeGroupId, setPurgeGroupId] = useState(null)
 
+  // Text trash
+  const [texts, setTexts] = useState([])
+  const [textsLoading, setTextsLoading] = useState(false)
+  const [restoreTextId, setRestoreTextId] = useState(null)
+  const [purgeTextId, setPurgeTextId] = useState(null)
+
   const loadTrashCards = async () => {
     setCardsLoading(true)
     try {
@@ -58,6 +64,7 @@ export default function TrashPage() {
   useEffect(() => {
     if (tab === 'cards') loadTrashCards()
     if (tab === 'groups') loadTrashGroups()
+    if (tab === 'texts') loadTrashTexts()
   }, [tab, loadTrashGroups])
 
   const handleRestore = async (cardId) => {
@@ -97,6 +104,37 @@ export default function TrashPage() {
     } catch { /* ignore */ }
   }
 
+  const loadTrashTexts = async () => {
+    setTextsLoading(true)
+    try {
+      const res = await fetchWithTimeout('/api/text/trash')
+      const data = await res.json()
+      setTexts(Array.isArray(data) ? data : [])
+    } catch { /* ignore */ } finally {
+      setTextsLoading(false)
+    }
+  }
+
+  const handleRestoreText = async () => {
+    const id = restoreTextId
+    setRestoreTextId(null)
+    if (!id) return
+    try {
+      await fetchWithTimeout(`/api/text/${id}/restore`, { method: 'POST' })
+      setTexts((prev) => prev.filter((t) => t.id !== id))
+    } catch { /* ignore */ }
+  }
+
+  const handlePurgeText = async () => {
+    const id = purgeTextId
+    setPurgeTextId(null)
+    if (!id) return
+    try {
+      await fetchWithTimeout(`/api/text/${id}/permanent`, { method: 'DELETE' })
+      setTexts((prev) => prev.filter((t) => t.id !== id))
+    } catch { /* ignore */ }
+  }
+
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <header className="panel-header">
@@ -125,6 +163,13 @@ export default function TrashPage() {
           onClick={() => setTab('groups')}
         >
           已删除群聊
+        </button>
+        <button
+          type="button"
+          className={`history-tab${tab === 'texts' ? ' active' : ''}`}
+          onClick={() => setTab('texts')}
+        >
+          已删除书籍
         </button>
       </div>
 
@@ -260,6 +305,69 @@ export default function TrashPage() {
         </>
       )}
 
+      {tab === 'texts' && (
+        <>
+          {textsLoading ? (
+            <Loading text="加载已删除书籍…" />
+          ) : texts.length === 0 ? (
+            <div className="shell-placeholder" style={{ padding: 40 }}>
+              <div className="shell-placeholder-inner">
+                <div className="shell-placeholder-icon">
+                  <svg viewBox="0 0 120 100" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" width="80" height="67" style={{ color: 'var(--text-dim)', opacity: 0.4 }}>
+                    <path d="M30 30 L25 85 C25 90 30 95 35 95 L85 95 C90 95 95 90 95 85 L90 30" />
+                    <path d="M20 30 L100 30" strokeWidth="1.5" />
+                    <path d="M45 30 L45 18 C45 14 49 10 53 10 L67 10 C71 10 75 14 75 18 L75 30" />
+                    <path d="M50 45 L50 78" />
+                    <path d="M70 45 L70 78" />
+                    <path d="M60 45 L60 78" opacity="0.6" />
+                    <path d="M5 30 L115 30" strokeWidth="0.8" opacity="0.3" />
+                    <circle cx="95" cy="15" r="3" opacity="0.3" />
+                    <circle cx="105" cy="25" r="2" opacity="0.2" />
+                    <circle cx="15" cy="85" r="2" opacity="0.25" />
+                    <circle cx="110" cy="80" r="1.5" opacity="0.2" />
+                  </svg>
+                </div>
+                <div className="shell-placeholder-title">回收站空空如也</div>
+                <div className="shell-placeholder-sub">删除的书籍会出现在这里</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 0' }}>
+              {texts.map((t) => (
+                <div key={t.id} className="history-swipe-wrapper">
+                  <div className="history-swipe-actions">
+                    <button
+                      type="button"
+                      className="history-swipe-restore"
+                      onClick={() => setRestoreTextId(t.id)}
+                    >
+                      恢复
+                    </button>
+                    <button
+                      type="button"
+                      className="history-swipe-delete"
+                      onClick={() => setPurgeTextId(t.id)}
+                    >
+                      彻底删除
+                    </button>
+                  </div>
+                  <div className="history-item" style={{ cursor: 'default' }}>
+                    <div className="history-item-text-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg></div>
+                    <div className="history-item-body">
+                      <div className="history-item-head">
+                        <span className="history-item-name">{t.title || t.filename || '未命名'}</span>
+                        <span className="history-item-time">{formatTime(t.deleted_at)}</span>
+                      </div>
+                      <p className="history-item-preview">{t.char_count?.toLocaleString() || '0'} 字</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <ConfirmModal
         isOpen={!!purgeId}
         title="彻底删除"
@@ -286,6 +394,25 @@ export default function TrashPage() {
         confirmText="彻底删除"
         onConfirm={handlePurgeGroup}
         onCancel={() => setPurgeGroupId(null)}
+        danger
+      />
+
+      <ConfirmModal
+        isOpen={!!restoreTextId}
+        title="恢复书籍"
+        message="确定恢复该书籍？恢复后可在书籍列表中查看。"
+        confirmText="恢复"
+        onConfirm={handleRestoreText}
+        onCancel={() => setRestoreTextId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={!!purgeTextId}
+        title="彻底删除"
+        message="确定彻底删除该书籍及其所有内容？此操作不可恢复。"
+        confirmText="彻底删除"
+        onConfirm={handlePurgeText}
+        onCancel={() => setPurgeTextId(null)}
         danger
       />
     </div>

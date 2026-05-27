@@ -4115,6 +4115,7 @@ html.theme-aurora::before {
 }
 
 .history-tab {
+  flex: 1;
   padding: 8px 20px;
   font-size: 13px;
   border: none;
@@ -4123,6 +4124,7 @@ html.theme-aurora::before {
   color: var(--text-secondary);
   border-bottom: 2px solid transparent;
   transition: color 0.15s, border-color 0.15s;
+  text-align: center;
 }
 
 .history-tab:hover {
@@ -4257,7 +4259,7 @@ html.theme-aurora::before {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   padding-right: 4px;
 }
 
@@ -4278,8 +4280,8 @@ html.theme-aurora::before {
 }
 
 .history-item:hover {
-  background: rgba(255, 255, 255, 0.72);
-  border-color: var(--pill-border);
+  background: color-mix(in srgb, var(--accent) 8%, var(--glass-bg));
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--glass-border));
 }
 
 .history-item-body {
@@ -4314,6 +4316,49 @@ html.theme-aurora::before {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.history-item-text-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+.history-item-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.history-item-progress-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--glass-border);
+  overflow: hidden;
+}
+.history-item-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+.history-item-progress-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.history-item-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .history-grouped {

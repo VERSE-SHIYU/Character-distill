@@ -87,11 +87,15 @@ export default function HistoryPanel({ initialTrash = false }) {
   const [selectMode, setSelectMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState(new Set())
   const [trashMode, setTrashMode] = useState(initialTrash)
-  const [chatTab, setChatTab] = useState('chat') // 'chat' | 'group'
+  const [chatTab, setChatTab] = useState('chat') // 'chat' | 'group' | 'books'
   const [groupItems, setGroupItems] = useState([])
   const [groupDetail, setGroupDetail] = useState(null)
   const [groupDetailLoading, setGroupDetailLoading] = useState(false)
+  const [textItems, setTextItems] = useState([])
+  const [textProgress, setTextProgress] = useState({})
+  const [textsLoading, setTextsLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [deleteTextId, setDeleteTextId] = useState(null)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
   const [purgeConfirmId, setPurgeConfirmId] = useState(null)
   const [clearAllConfirm, setClearAllConfirm] = useState(false)
@@ -350,6 +354,7 @@ export default function HistoryPanel({ initialTrash = false }) {
     setError(null)
     setTrashMode(false)
     if (tab === 'group') loadGroups()
+    if (tab === 'books') loadBooks()
   }
 
   async function loadGroups() {
@@ -382,6 +387,36 @@ export default function HistoryPanel({ initialTrash = false }) {
 
   const setView = useAppStore((s) => s.setView)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+
+  async function loadBooks() {
+    setTextsLoading(true)
+    try {
+      const [textsRes, progRes] = await Promise.all([
+        fetchWithTimeout('/api/text/list'),
+        fetchWithTimeout('/api/text/reading-progress/all'),
+      ])
+      const texts = await textsRes.json()
+      const progress = await progRes.json()
+      setTextItems(Array.isArray(texts) ? texts : [])
+      const map = {}
+      ;(Array.isArray(progress) ? progress : []).forEach((p) => { map[p.text_id] = p })
+      setTextProgress(map)
+    } catch (err) {
+      console.error('[HistoryPanel] load books failed:', err)
+    } finally {
+      setTextsLoading(false)
+    }
+  }
+
+  const handleDeleteText = async (textId) => {
+    setDeleteTextId(null)
+    try {
+      await fetchWithTimeout(`/api/text/${textId}`, { method: 'DELETE' })
+      setTextItems((prev) => prev.filter((t) => t.id !== textId))
+    } catch (err) {
+      console.error('[HistoryPanel] delete text failed:', err)
+    }
+  }
 
   const handleResumeGroup = (groupId) => {
     setResumeGroupId(groupId)
@@ -440,6 +475,13 @@ export default function HistoryPanel({ initialTrash = false }) {
             onClick={() => switchTab('group')}
           >
             群聊
+          </button>
+          <button
+            type="button"
+            className={`history-tab${chatTab === 'books' ? ' active' : ''}`}
+            onClick={() => switchTab('books')}
+          >
+            书籍
           </button>
         </div>
       )}
@@ -696,6 +738,76 @@ export default function HistoryPanel({ initialTrash = false }) {
         </>
       )}
 
+      {chatTab === 'books' && (
+        <>
+          {textsLoading ? (
+            <div style={{ padding: '8px 0' }}>
+              {[1, 2, 3, 4].map((i) => <SkeletonRow key={i} />)}
+            </div>
+          ) : textItems.length === 0 ? (
+            <div className="history-empty">
+              <svg className="shell-empty-svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="32" cy="32" r="26" />
+                <path d="M32 16v16l10 6" />
+              </svg>
+              <p>暂无书籍</p>
+            </div>
+          ) : (
+            <div className="history-grouped">
+              <ul className="history-list">
+                {textItems.map((t) => {
+                  const progress = textProgress[t.id]
+                  const pct = progress ? Math.round((progress.progress || 0) * 100) : 0
+                  return (
+                    <li key={t.id} className="history-swipe-wrapper">
+                      <div className="history-swipe-actions">
+                        <button
+                          type="button"
+                          className="history-swipe-delete"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDeleteTextId(t.id)
+                          }}
+                        >
+                          删除
+                        </button>
+                      </div>
+                      <div className="history-item" style={{ cursor: 'default' }}>
+                        <div className="history-item-text-icon"><Book size={20} /></div>
+                        <div className="history-item-body">
+                          <div className="history-item-head">
+                            <span className="history-item-name">{t.title || t.filename || '未命名'}</span>
+                            <span className="history-item-time">{t.char_count?.toLocaleString() || '0'} 字</span>
+                          </div>
+                          <div className="history-item-progress-row">
+                            <div className="history-item-progress-bar">
+                              <div className="history-item-progress-fill" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="history-item-progress-text">{pct}%</span>
+                          </div>
+                          <div className="history-item-actions-row">
+                            <button
+                              type="button"
+                              className="btn-primary btn-sm"
+                              onClick={() => {
+                                useAppStore.getState().setCurrentTextId(t.id)
+                                setView('reader')
+                              }}
+                            >
+                              阅读
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+
       <ConfirmModal
         isOpen={!!deleteConfirmId}
         title="删除会话"
@@ -769,6 +881,19 @@ export default function HistoryPanel({ initialTrash = false }) {
           await handleBatchDelete()
         }}
         onCancel={() => setBatchDeleteConfirm(false)}
+        danger
+      />
+      <ConfirmModal
+        isOpen={!!deleteTextId}
+        title="删除书籍"
+        message="确定删除该书籍？将移入回收站。"
+        confirmText="删除"
+        onConfirm={async () => {
+          const id = deleteTextId
+          setDeleteTextId(null)
+          await handleDeleteText(id)
+        }}
+        onCancel={() => setDeleteTextId(null)}
         danger
       />
     </div>
