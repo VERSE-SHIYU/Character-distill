@@ -169,11 +169,12 @@ Character-distill/
 │   ├── jail.local              # Fail2Ban 监狱配置
 │   └── filter.d/               # 自定义过滤规则
 ├── scripts/
-│   └── backup.sh               # SQLite 每日备份脚本（含 COS 上传）
+│   ├── backup.sh               # SQLite 每日备份脚本（含 COS 上传）
+│   ├── test_distill.py         # 蒸馏功能测试脚本
+│   └── migrate_data.py         # 数据迁移工具
 ├── tests/
 │   ├── test_chat.py
 │   ├── test_rag.py
-│   ├── test_distill.py
 │   ├── test_connection.py
 │   └── test_integration.py
 ├── data/                       # 运行时数据（自动创建）
@@ -186,7 +187,7 @@ Character-distill/
 ├── Dockerfile                  # 多阶段构建（node → python）
 ├── start_all.bat               # Windows 一键启动
 ├── stop_all.bat                # Windows 一键停止
-├── config.yaml                 # 模型/RAG/蒸馏/存储/语音/记忆配置
+├── config.example.yaml         # 配置模板（复制为 config.yaml 使用）
 ├── requirements.txt            # 生产依赖
 ├── requirements-dev.txt        # 开发额外依赖（Gradio）
 ├── .env.example
