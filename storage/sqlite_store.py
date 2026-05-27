@@ -538,6 +538,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] User bio migration failed: {exc}")
 
+                    # Run 053_reading_progress migration (CREATE TABLE IF NOT EXISTS)
+                    rp_path = migrations_dir / "053_reading_progress.sql"
+                    if rp_path.exists():
+                        try:
+                            await conn.executescript(rp_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Reading progress migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3961,3 +3970,50 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Reorder featured cards failed: {exc}")
             raise
+
+    # ---- Reading progress ----
+
+    async def save_reading_progress(self, user_id: str, text_id: str, progress: float, scroll_position: int) -> None:
+        """UPSERT reading progress for a user+text pair."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO reading_progress (user_id, text_id, progress, scroll_position, updated_at)
+                       VALUES (?, ?, ?, ?, datetime('now'))
+                       ON CONFLICT(user_id, text_id) DO UPDATE SET
+                           progress = excluded.progress,
+                           scroll_position = excluded.scroll_position,
+                           updated_at = excluded.updated_at""",
+                    (user_id, text_id, progress, scroll_position),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save reading progress failed: {exc}")
+
+    async def get_reading_progress(self, user_id: str, text_id: str) -> dict | None:
+        """Get reading progress for a user+text pair."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT progress, scroll_position, updated_at FROM reading_progress WHERE user_id = ? AND text_id = ?",
+                    (user_id, text_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get reading progress failed: {exc}")
+            return None
+
+    async def get_all_reading_progress(self, user_id: str) -> list[dict]:
+        """Get all reading progress records for a user."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT text_id, progress, scroll_position, updated_at FROM reading_progress WHERE user_id = ? ORDER BY updated_at DESC",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get all reading progress failed: {exc}")
+            return []
