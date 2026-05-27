@@ -360,39 +360,43 @@ export default function HomePage() {
               </div>
             ) : (
               <div className="home-discover-grid">
-                {discoverCards.map((c, idx) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className="market-card-v2 anim-item"
-                    style={{ animationDelay: `${idx * 50}ms` }}
-                    onClick={() => handleDiscoverCardClick(c)}
-                  >
-                    <div className="market-card-v2-cover">
-                      {c.avatar_data ? (
-                        <>
-                          <img className="market-card-v2-cover-blur" src={c.avatar_data} alt="" />
-                          <img className="market-card-v2-cover-img" src={c.avatar_data} alt={c.name || '角色'} />
-                        </>
-                      ) : (
-                        <div className="market-card-v2-cover-fallback">
-                          <span className="market-card-v2-fallback-letter">
-                            {(c.name || '?')[0]}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="market-card-v2-glass-info">
-                      <div className="market-card-v2-name">{c.name || '未知角色'}</div>
-                      <div className="market-card-v2-identity">{c.identity || ''}</div>
-                      <div className="market-card-v2-bottom">
-                        <div className="market-card-v2-stats">
-                          <span>{'❤'} {c.likes ?? 0}</span>
+                {discoverCards.map((c, idx) => {
+                  let cData = {}
+                  try { if (c.card_json) cData = JSON.parse(c.card_json) } catch {}
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="market-card-v2 anim-item"
+                      style={{ animationDelay: `${idx * 50}ms` }}
+                      onClick={() => handleDiscoverCardClick(c)}
+                    >
+                      <div className="market-card-v2-cover">
+                        {c.avatar_data ? (
+                          <>
+                            <img className="market-card-v2-cover-blur" src={c.avatar_data} alt="" />
+                            <img className="market-card-v2-cover-img" src={c.avatar_data} alt={c.name || '角色'} />
+                          </>
+                        ) : (
+                          <div className="market-card-v2-cover-fallback">
+                            <span className="market-card-v2-fallback-letter">
+                              {(c.name || '?')[0]}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="market-card-v2-glass-info">
+                        <div className="market-card-v2-name">{c.name || '未知角色'}</div>
+                        <div className="market-card-v2-identity">{cData.identity || ''}</div>
+                        <div className="market-card-v2-bottom">
+                          <div className="market-card-v2-stats">
+                            <span>{'❤'} {c.likes ?? 0}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
