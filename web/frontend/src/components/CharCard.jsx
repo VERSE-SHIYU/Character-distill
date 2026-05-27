@@ -6,7 +6,7 @@ import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
-import { Book, User, Pin, Tag, Bookmark, Globe } from './common/Icon'
+import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import RoleSetupModal from './RoleSetupModal'
@@ -335,7 +335,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
               const cardData = parseCardJson(c)
               const name = cardData.name || c.name || '?'
               return (
-                <li key={c.id} className="char-list-li" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
+                <li key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
                   <Avatar name={name} size={30} />
                   <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
                   <button
@@ -374,68 +374,78 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {/* Distilled cards list */}
       {hasCards && (
         <ul className="char-list">
-          {uniqueCards.map((c) => {
+          {uniqueCards.map((c, idx) => {
             const cardData = parseCardJson(c)
             const name = cardData.name || c.name
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
             const isPinned = pinnedCards.includes(c.id)
             const textInfo = texts.find((t) => t.id === c.text_id)
+            const isShared = sharedCards.has(c.id)
             return (
-              <li key={c.id} className="char-list-li">
-                <button
-                  type="button"
-                  className={`char-list-item${isActive ? ' active' : ''}`}
+              <li key={c.id}>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  className={`char-list-item${isActive ? ' active' : ''}${isPinned ? ' pinned' : ''}`}
                   data-card-id={c.id}
                   onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectCard({ ...c, ...cardData, text_id: textId }) }}
                 >
-                  <Avatar name={name} size={34} src={cardAvatars[c.id]} />
-                  <div className="char-list-info">
-                    <div className="char-list-name">{name}</div>
-                    {textInfo?.filename && (
-                      <span className="char-card-source"><Book size={12} /> {textInfo.filename}</span>
-                    )}
-                    {c.forked_from && (
-                      <span className="char-card-source"><Clipboard size={12} /> 已fork</span>
-                    )}
-                    <div className="char-list-identity">{identity}</div>
+                  <div className="char-card-top">
+                    <Avatar name={name} size={34} src={cardAvatars[c.id]} />
+                    <div className="char-list-info">
+                      <div className="char-list-name">{name}</div>
+                      <div className="char-list-identity">{identity}</div>
+                    </div>
                   </div>
-                </button>
-                <div className="char-actions">
-                  <button
-                    type="button"
-                    className={`char-pin-btn${isPinned ? ' pinned' : ''}`}
-                    title={isPinned ? '取消置顶' : '置顶'}
-                    onClick={(e) => togglePin(e, c.id)}
-                  >
-                    <Pin size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className={`char-share-btn${sharedCards.has(c.id) ? ' shared' : ''}`}
-                    title={sharedCards.has(c.id) ? '已分享到市场' : '分享到市场'}
-                    onClick={(e) => {
-                      if (sharedCards.has(c.id)) {
-                        handleShareToggle(e, c.id)
-                      } else {
+                  {(textInfo?.filename || c.forked_from) && (
+                    <div className="char-card-meta">
+                      {textInfo?.filename && (
+                        <span className="char-card-source"><Book size={11} /> {textInfo.filename}</span>
+                      )}
+                      {c.forked_from && (
+                        <span className="char-card-source"><Clipboard size={11} /> 已fork</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="char-card-actions">
+                    <button
+                      type="button"
+                      className={`char-card-action-btn${isPinned ? ' is-pinned' : ''}`}
+                      title={isPinned ? '取消置顶' : '置顶'}
+                      onClick={(e) => { e.stopPropagation(); togglePin(e, c.id) }}
+                    >
+                      <Pin size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className={`char-card-action-btn${isShared ? ' is-shared' : ''}`}
+                      title={isShared ? '已分享到市场' : '分享到市场'}
+                      onClick={(e) => {
                         e.stopPropagation()
-                        setShareConfirmTarget(c)
-                      }
-                    }}
-                  >
-                    {sharedCards.has(c.id) ? <Globe size={14} /> : <Bookmark size={14} />}
-                  </button>
-                  <button
-                    type="button"
-                    className="char-delete-btn"
-                    title="删除角色"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setDeleteTarget(c)
-                    }}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                        if (isShared) {
+                          handleShareToggle(e, c.id)
+                        } else {
+                          setShareConfirmTarget(c)
+                        }
+                      }}
+                    >
+                      {isShared ? <Globe size={13} /> : <Bookmark size={13} />}
+                    </button>
+                    <div className="char-card-actions-spacer" />
+                    <button
+                      type="button"
+                      className="char-card-action-btn danger"
+                      title="删除角色"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteTarget(c)
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               </li>
             )
@@ -454,34 +464,41 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
               const identity = cardData.identity || ''
               const isActive = currentCard?.id === c.id
               return (
-                <li key={c.id} className="char-list-li">
-                  <button
-                    type="button"
+                <li key={c.id}>
+                  <div
+                    role="button"
+                    tabIndex={0}
                     className={`char-list-item${isActive ? ' active' : ''}`}
                     data-card-id={c.id}
                     onClick={() => onSelectCard({ ...c, ...cardData, text_id: '' })}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectCard({ ...c, ...cardData, text_id: '' }) }}
                   >
-                    <Avatar name={name} size={34} src={cardAvatars[c.id]} />
-                    <div className="char-list-info">
-                      <div className="char-list-name">{name}</div>
-                      {c.forked_from && (
-                        <span className="char-card-source"><Clipboard size={12} /> 来自市场</span>
-                      )}
-                      <div className="char-list-identity">{identity}</div>
+                    <div className="char-card-top">
+                      <Avatar name={name} size={34} src={cardAvatars[c.id]} />
+                      <div className="char-list-info">
+                        <div className="char-list-name">{name}</div>
+                        <div className="char-list-identity">{identity}</div>
+                      </div>
                     </div>
-                  </button>
-                  <div className="char-actions">
-                    <button
-                      type="button"
-                      className="char-delete-btn"
-                      title="删除角色"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(c)
-                      }}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    {c.forked_from && (
+                      <div className="char-card-meta">
+                        <span className="char-card-source"><Clipboard size={11} /> 来自市场</span>
+                      </div>
+                    )}
+                    <div className="char-card-actions">
+                      <div className="char-card-actions-spacer" />
+                      <button
+                        type="button"
+                        className="char-card-action-btn danger"
+                        title="删除角色"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeleteTarget(c)
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </li>
               )
@@ -543,7 +560,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         {!hasCards && !hasIdentified && !identifying && (
           <button
             type="button"
-            className="btn-primary char-action-btn"
+            className="btn-primary char-action-btn-full"
             onClick={handleIdentify}
           >
             开始蒸馏

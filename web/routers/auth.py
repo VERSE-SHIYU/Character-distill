@@ -254,6 +254,7 @@ async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depen
 
     access_token = _create_access_token(user["id"], user["username"])
     refresh_token = await _create_refresh_token(user["id"], storage)
+    await storage.update_last_login(user["id"])
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -287,6 +288,7 @@ async def refresh(req: RefreshRequest, storage: SQLiteStore = Depends(get_storag
 
     access_token = _create_access_token(user["id"], user["username"])
     new_refresh_token = await _create_refresh_token(user["id"], storage)
+    await storage.update_last_login(user["id"])
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_token,

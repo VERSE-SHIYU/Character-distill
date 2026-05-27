@@ -233,6 +233,8 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
 export const adminAPI = {
   listUsers: () => fetchWithTimeout('/api/admin/users').then(r => r.json()),
 
+  getDashboard: () => fetchWithTimeout('/api/admin/dashboard').then(r => r.json()),
+
   disableUser: (userId) => postJSON(`/api/admin/users/${userId}/disable`, {}),
 
   enableUser: (userId) => postJSON(`/api/admin/users/${userId}/enable`, {}),

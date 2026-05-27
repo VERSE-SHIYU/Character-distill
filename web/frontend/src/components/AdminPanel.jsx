@@ -3,8 +3,10 @@ import { adminAPI } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
 import { Trash2 } from './common/Icon'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
 const TABS = [
+  { id: 'dashboard', label: '仪表盘' },
   { id: 'users', label: '用户管理' },
   { id: 'invites', label: '邀请码' },
   { id: 'usage', label: '用户用量' },
@@ -18,7 +20,7 @@ export default function AdminPanel() {
     <div className="admin-panel panel">
       <header className="panel-header">
         <h2 className="panel-title">管理后台</h2>
-        <p className="panel-desc">用户管理 · 邀请码 · 用量统计</p>
+        <p className="panel-desc">仪表盘 · 用户管理 · 邀请码 · 用量统计</p>
       </header>
       <div className="admin-body">
         <div className="admin-tabs">
@@ -33,9 +35,128 @@ export default function AdminPanel() {
           ))}
         </div>
         <div className="admin-content">
-          {tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : <ReportsTab />}
+          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : <ReportsTab />}
         </div>
       </div>
+    </div>
+  )
+}
+
+function fmtBytes(bytes) {
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB'
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB'
+  if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return bytes + ' B'
+}
+
+function isOnline(iso) {
+  if (!iso) return false
+  const then = new Date(iso)
+  const now = new Date()
+  return (now - then) < 20 * 60 * 1000
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '-'
+  return iso.slice(0, 16).replace('T', ' ')
+}
+
+function DashboardTab() {
+  const [stats, setStats] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await adminAPI.getDashboard()
+      setStats(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  if (loading) return <div className="admin-loading">加载中…</div>
+  if (error) return <div className="admin-error-banner"><span>{error}</span></div>
+  if (!stats) return null
+
+  const cards = [
+    { label: '今日活跃用户', value: stats.today_active_users },
+    { label: '今日新注册', value: stats.today_new_users },
+    { label: '总用户数', value: stats.total_users },
+    { label: '今日 API 调用', value: stats.today_api_calls },
+    { label: '今日 Token 消耗', value: stats.today_tokens?.toLocaleString() },
+  ]
+
+  const sys = stats.system
+  const resources = sys ? [
+    { label: '内存', used: sys.memory_used, total: sys.memory_total, percent: sys.memory_percent },
+    { label: '磁盘', used: sys.disk_used, total: sys.disk_total, percent: sys.disk_percent },
+  ] : []
+
+  return (
+    <div className="admin-card">
+      <div className="admin-card-title">系统仪表盘</div>
+      <div className="dashboard-stats-grid">
+        {cards.map((c) => (
+          <div key={c.label} className="dashboard-stat-card">
+            <span className="dashboard-stat-value">{c.value}</span>
+            <span className="dashboard-stat-label">{c.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {resources.length > 0 && (
+        <div className="dashboard-section">
+          <div className="dashboard-section-title">系统资源</div>
+          <div className="dashboard-resources">
+            {resources.map((r) => (
+              <div key={r.label} className="dashboard-resource-item">
+                <div className="dashboard-resource-header">
+                  <span>{r.label}</span>
+                  <span>{fmtBytes(r.used)} / {fmtBytes(r.total)}</span>
+                </div>
+                <div className="dashboard-progress-bar">
+                  <div
+                    className={`dashboard-progress-fill${r.percent > 80 ? ' danger' : r.percent > 60 ? ' warn' : ''}`}
+                    style={{ width: `${Math.min(r.percent, 100)}%` }}
+                  />
+                </div>
+                <span className="dashboard-progress-label">{r.percent}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {stats.trend && stats.trend.length > 0 && (
+        <div className="dashboard-section">
+          <div className="dashboard-section-title">近 7 天趋势</div>
+          <div className="dashboard-chart">
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={stats.trend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" />
+                <XAxis dataKey="day" tick={{ fontSize: 12 }} stroke="var(--text-secondary)" />
+                <YAxis tick={{ fontSize: 12 }} stroke="var(--text-secondary)" />
+                <Tooltip
+                  contentStyle={{
+                    background: 'var(--glass-bg)',
+                    border: '1px solid var(--glass-border)',
+                    borderRadius: 8,
+                    fontSize: 13,
+                  }}
+                />
+                <Line type="monotone" dataKey="calls" stroke="var(--primary)" strokeWidth={2} dot={{ r: 3 }} name="调用次数" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -195,6 +316,8 @@ function UsersTab() {
                 <th style={{ minWidth: 150 }}>邮箱</th>
                 <th style={{ minWidth: 70 }}>角色</th>
                 <th style={{ minWidth: 70 }}>状态</th>
+                <th style={{ minWidth: 70 }}>在线</th>
+                <th style={{ minWidth: 140 }}>最后登录</th>
                 <th style={{ minWidth: 100 }}>注册时间</th>
                 <th style={{ minWidth: 200 }}>操作</th>
               </tr>
@@ -210,6 +333,12 @@ function UsersTab() {
                       {u.is_disabled ? '已禁用' : '正常'}
                     </span>
                   </td>
+                  <td>
+                    <span className={`online-badge${isOnline(u.last_login_at) ? ' online' : ''}`}>
+                      {isOnline(u.last_login_at) ? '在线' : '离线'}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDateTime(u.last_login_at)}</td>
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
                     <button

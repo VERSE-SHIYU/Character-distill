@@ -442,6 +442,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Comment IP location migration failed: {exc}")
 
+                    # Run 043_user_last_login migration
+                    login_path = migrations_dir / "043_user_last_login.sql"
+                    if login_path.exists():
+                        try:
+                            await conn.executescript(login_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User last_login migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1780,12 +1790,87 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get all users failed: {exc}")
+            raise
+
+    async def update_last_login(self, user_id: str) -> None:
+        """Update the last_login_at timestamp for a user."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET last_login_at = datetime('now') WHERE id = ?",
+                    (user_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update last_login failed: {exc}")
+
+    async def get_dashboard_stats(self) -> dict:
+        """Aggregate dashboard statistics for admin panel."""
+        try:
+            async with await self._connect() as conn:
+                c = await conn.execute("SELECT COUNT(*) FROM users")
+                total_users = (await c.fetchone())[0]
+
+                c = await conn.execute(
+                    "SELECT COUNT(*) FROM users WHERE date(created_at) = date('now')"
+                )
+                today_new_users = (await c.fetchone())[0]
+
+                c = await conn.execute(
+                    "SELECT COUNT(DISTINCT user_id) FROM usage_stats WHERE date(created_at) = date('now')"
+                )
+                today_active_users = (await c.fetchone())[0]
+
+                c = await conn.execute(
+                    "SELECT COUNT(*) FROM usage_stats WHERE date(created_at) = date('now')"
+                )
+                today_api_calls = (await c.fetchone())[0]
+
+                c = await conn.execute(
+                    "SELECT COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage_stats WHERE date(created_at) = date('now')"
+                )
+                today_tokens = (await c.fetchone())[0]
+
+                c = await conn.execute(
+                    """SELECT date(created_at) AS day,
+                              COUNT(*) AS calls,
+                              COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS tokens
+                       FROM usage_stats
+                       WHERE created_at >= datetime('now', '-7 days')
+                       GROUP BY date(created_at)
+                       ORDER BY day ASC"""
+                )
+                rows = await c.fetchall()
+                trend = [{"day": r[0], "calls": r[1], "tokens": r[2]} for r in rows]
+
+            import psutil, shutil
+            mem = psutil.virtual_memory()
+            disk = shutil.disk_usage("/")
+
+            return {
+                "total_users": total_users,
+                "today_new_users": today_new_users,
+                "today_active_users": today_active_users,
+                "today_api_calls": today_api_calls,
+                "today_tokens": today_tokens,
+                "trend": trend,
+                "system": {
+                    "memory_total": mem.total,
+                    "memory_used": mem.used,
+                    "memory_percent": round(mem.percent, 1),
+                    "disk_total": disk.total,
+                    "disk_used": disk.used,
+                    "disk_percent": round(disk.used / disk.total * 100, 1) if disk.total else 0,
+                },
+            }
+        except Exception as exc:
+            print(f"[SQLiteStore] Get dashboard stats failed: {exc}")
             raise
 
     async def set_user_admin(self, user_id: str, is_admin: bool) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -13,6 +13,7 @@ from routers.auth import get_current_user
 from deps import get_storage, get_memory_manager
 from storage.sqlite_store import SQLiteStore
 from core.memory_manager import MemoryManager
+from limiter import limiter
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -33,6 +34,16 @@ async def list_users(
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     return await storage.get_all_users()
+
+
+@router.get("/dashboard")
+@limiter.limit("30/minute")
+async def dashboard(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    return await storage.get_dashboard_stats()
 
 
 @router.post("/users/{user_id}/disable")

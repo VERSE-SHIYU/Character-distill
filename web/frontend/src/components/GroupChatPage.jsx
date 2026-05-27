@@ -59,6 +59,14 @@ export default function GroupChatPage() {
   const cardCacheRef = useRef(cardCache)
   cardCacheRef.current = cardCache
 
+  /** 多源解析角色卡信息：优先 cardCache，其次 allCards，最后 _cards */
+  function resolveCard(cardId) {
+    return cardCache[cardId]
+      || allCards.find(c => (c.id || c.card_id) === cardId)
+      || currentGroup?._cards?.find(c => (c.id || c.card_id) === cardId)
+      || null
+  }
+
   /** 批量加载角色信息到缓存 */
   const ensureCardsLoaded = useCallback(async (cardIds) => {
     const missing = [...new Set(cardIds.filter(id => id && !cardCacheRef.current[id]))]
@@ -76,14 +84,14 @@ export default function GroupChatPage() {
     }
   }, [])
 
-  // ── @提及（依赖 cardCache） ──
+  // ── @提及（多源解析 card name） ──
   const mentionableItems = useMemo(() => {
     if (!currentGroup?.card_ids) return []
     return currentGroup.card_ids
-      .map((id) => cardCache[id])
+      .map((id) => resolveCard(id))
       .filter(Boolean)
       .map((c) => ({ id: c.id, name: c.name || c.id }))
-  }, [currentGroup?.card_ids, cardCache])
+  }, [currentGroup?.card_ids, cardCache, allCards])
 
   const handleMentionSelect = useCallback((item, atPos) => {
     setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))
@@ -97,6 +105,22 @@ export default function GroupChatPage() {
   }, [])
 
   const mentionHook = useMention(mentionableItems, { onSelect: handleMentionSelect, maxResults: 6 })
+
+  // 将 allCards 同步到 cardCache，作为 API 单卡加载的补充
+  useEffect(() => {
+    if (allCards.length === 0) return
+    const updates = {}
+    for (const card of allCards) {
+      const id = card.id || card.card_id
+      if (id && !cardCacheRef.current[id]) {
+        const cardData = parseCardJson(card)
+        updates[id] = { ...card, name: cardData.name || card.name || '?' }
+      }
+    }
+    if (Object.keys(updates).length > 0) {
+      setCardCache(prev => ({ ...prev, ...updates }))
+    }
+  }, [allCards])
 
   // ── 历史记录 ──
   const historyFetchSessions = useCallback(async (keyword) => {
@@ -184,6 +208,32 @@ export default function GroupChatPage() {
   useEffect(() => {
     loadGroups()
   }, [loadGroups])
+
+  // 预加载所有文本的角色卡到 allCards，作为 cardCache 的备份数据源
+  useEffect(() => {
+    if (!texts || texts.length === 0) return
+    let cancelled = false
+    ;(async () => {
+      const grouped = {}
+      for (const text of texts) {
+        try {
+          const res = await fetchWithTimeout(`/api/distill/cards/by-text/${text.id}`)
+          const data = await res.json()
+          const cards = []
+          for (const c of data) {
+            const cardData = parseCardJson(c)
+            cards.push({ ...c, name: cardData.name || c.name || '?' })
+          }
+          if (cards.length > 0) grouped[text.id] = cards
+        } catch { /* skip failed texts */ }
+      }
+      if (!cancelled) {
+        const flat = Object.values(grouped).flat()
+        setAllCards(flat)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [texts])
 
   // Auto-enter group when resuming from HistoryPanel
   useEffect(() => {
@@ -354,9 +404,7 @@ export default function GroupChatPage() {
 
   // Resolve character names from card_ids for display
   function getCharName(cardId) {
-    if (!currentGroup) return '?'
-    const card = currentGroup._cards?.find((c) => c.card_id === c.id)
-    return card?.name || '?'
+    return resolveCard(cardId)?.name || '?'
   }
 
   // Load card avatars from cardCache whenever cache is populated
@@ -368,7 +416,7 @@ export default function GroupChatPage() {
     })
     ids.forEach((id) => {
       if (!cardAvatars[id]) {
-        const c = cardCache[id] || allCards.find((c) => (c.id || c.card_id) === id)
+        const c = resolveCard(id)
         if (c?.avatar_data) {
           setCardAvatar(id, c.avatar_data)
         } else {
@@ -394,7 +442,7 @@ export default function GroupChatPage() {
     ;(async () => {
       const cards = []
       for (const cardId of currentGroup.card_ids) {
-        const cardData = cardCache[cardId] || allCards.find((c) => (c.id || c.card_id) === cardId)
+        const cardData = resolveCard(cardId)
         if (cardData) cards.push(cardData)
       }
       setCurrentGroup((prev) => ({ ...prev, _cards: cards }))
@@ -457,7 +505,7 @@ export default function GroupChatPage() {
           {groups.map((g) => {
             const cardIds = parseCardIds(g.card_ids)
             const names = cardIds
-              .map((id) => cardCache[id]?.name)
+              .map((id) => resolveCard(id)?.name)
               .filter(Boolean)
             const isActive = currentGroup?.id === g.id
             return (
@@ -469,7 +517,7 @@ export default function GroupChatPage() {
               >
                 <div className="group-avatar-stack">
                   {cardIds.slice(0, 3).map((id) => (
-                    <Avatar key={id} name={cardCache[id]?.name || '?'}
+                    <Avatar key={id} name={resolveCard(id)?.name || '?'}
                       src={cardAvatars[id]} size={36} />
                   ))}
                 </div>
@@ -596,7 +644,7 @@ export default function GroupChatPage() {
                   <div className="group-members-panel">
                     <div className="group-members-title">成员</div>
                     {currentGroup.card_ids?.map((cardId) => {
-                      const card = cardCache[cardId]
+                      const card = resolveCard(cardId)
                       let identity = ''
                       if (card) {
                         try {
@@ -633,7 +681,7 @@ export default function GroupChatPage() {
                     全部
                   </button>
                   {currentGroup.card_ids?.map((cardId) => {
-                    const card = cardCache[cardId]
+                    const card = resolveCard(cardId)
                     const selected = targetCardIds.includes(cardId)
                     return (
                       <button
@@ -660,7 +708,7 @@ export default function GroupChatPage() {
                     rows={2}
                     placeholder={
                       targetCardIds.length > 0
-                        ? `对 ${targetCardIds.map(id => cardCache[id]?.name || '?').join('、')} 说…`
+                        ? `对 ${targetCardIds.map(id => resolveCard(id)?.name || '?').join('、')} 说…`
                         : '请先选择回复目标'
                     }
                     value={messageText}
