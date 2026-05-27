@@ -32,8 +32,8 @@ def try_record_usage(
     if not usage:
         return
     model = getattr(llm, "_model", "") or ""
-    pt = usage["prompt_tokens"]
-    ct = usage["completion_tokens"]
+    pt = usage.get("prompt_tokens", 0)
+    ct = usage.get("completion_tokens", 0)
 
     def _do() -> None:
         try:

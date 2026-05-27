@@ -285,7 +285,7 @@ class TextManager:
         text_rec = await self._storage.get_text(text_id)
         if not text_rec:
             raise ValueError("Text not found")
-        content = text_rec["content"]
+        content = text_rec.get("content", "")
 
         try:
             chars = await asyncio.to_thread(
@@ -330,7 +330,7 @@ class TextManager:
         text_rec = await self._storage.get_text(text_id)
         if not text_rec:
             raise ValueError("Text not found")
-        content = text_rec["content"]
+        content = text_rec.get("content", "")
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
         card: CharacterCard | None = None
@@ -431,7 +431,7 @@ class TextManager:
         actual_card_id = result_card.get("id") or card_id
 
         text_rec = await self._storage.get_text(text_id)
-        content = text_rec["content"]
+        content = text_rec.get("content", "")
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = await self._build_all_characters(text_id, existing_cards)

@@ -574,7 +574,7 @@ export default function GroupChatPage() {
                             <div className="group-chat-bubble">
                               <div className="group-chat-bubble-header">
                                 <Avatar name={m.speaker || '?'} size={24} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                                <span className="group-chat-bubble-speaker">{m.speaker}</span>
+                                <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
                               </div>
                               <div className="group-chat-bubble-body">
                                 <span className="messages-msg-text">{m.content}</span>

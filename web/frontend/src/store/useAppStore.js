@@ -890,7 +890,7 @@ const useAppStore = create((set, get) => ({
         set((s) => {
           const msgs = [...s.messages]
           const last = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = { ...last, content: last.content + token }
+          msgs[msgs.length - 1] = { ...last, content: (last?.content || '') + token }
           return { messages: msgs }
         })
       },
@@ -981,7 +981,7 @@ const useAppStore = create((set, get) => ({
         set((s) => {
           const msgs = [...s.messages]
           const last = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = { ...last, content: last.content + token }
+          msgs[msgs.length - 1] = { ...last, content: (last?.content || '') + token }
           return { messages: msgs }
         })
       },
