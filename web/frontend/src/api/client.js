@@ -285,6 +285,29 @@ export const adminAPI = {
     `/api/admin/reports/${commentId}/delete-comment`,
     { method: 'POST' },
   ).then(r => r.json()),
+
+  // ---- P1: Content Moderation ----
+  listCards: () => fetchWithTimeout('/api/admin/cards').then(r => r.json()),
+  takedownCard: (cardId) => fetchWithTimeout(`/api/admin/cards/${cardId}/takedown`, { method: 'POST' }).then(r => r.json()),
+  listPosts: () => fetchWithTimeout('/api/admin/posts').then(r => r.json()),
+  deletePost: (postId) => fetchWithTimeout(`/api/admin/posts/${postId}`, { method: 'DELETE' }).then(r => r.json()),
+  banUser: (userId) => fetchWithTimeout(`/api/admin/users/${userId}/ban`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(r => r.json()),
+
+  // ---- P1-2: System logs & Tasks ----
+  getLogs: () => fetchWithTimeout('/api/admin/logs').then(r => r.json()),
+  getTasks: () => fetchWithTimeout('/api/admin/tasks').then(r => r.json()),
+
+  // ---- P2: User Detail ----
+  getUserDetail: (userId) => fetchWithTimeout(`/api/admin/users/${userId}/detail`).then(r => r.json()),
+
+  // ---- P2: Announcements ----
+  createAnnouncement: (content) => fetchWithTimeout('/api/admin/announcement', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) }).then(r => r.json()),
+  deleteAnnouncement: (id) => fetchWithTimeout(`/api/admin/announcement/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  listAnnouncements: () => fetchWithTimeout('/api/admin/announcements').then(r => r.json()),
+
+  // ---- P2: CSV Export ----
+  exportUsersCSV: () => fetchWithTimeout('/api/admin/export/users').then(r => r.text()),
+  exportUsageCSV: () => fetchWithTimeout('/api/admin/export/usage').then(r => r.text()),
 }
 
 export function getMyUsage() {

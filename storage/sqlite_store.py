@@ -452,6 +452,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] User last_login migration failed: {exc}")
 
+                    # Run 044_announcements migration (CREATE TABLE IF NOT EXISTS)
+                    announce_path = migrations_dir / "044_announcements.sql"
+                    if announce_path.exists():
+                        try:
+                            await conn.executescript(announce_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Announcements migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2212,6 +2221,225 @@ class SQLiteStore(StorageBase):
             raise
         except Exception as exc:
             print(f"[SQLiteStore] Delete user failed: {exc}")
+            raise
+
+    # ---- Admin: Content Moderation ----
+
+    async def list_all_cards_admin(self) -> list[dict]:
+        """List all cards with user info for admin review."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT c.id, c.text_id, c.name, c.created_at, c.user_id, c.visibility,
+                              c.deleted_at, c.card_json, COALESCE(u.username, '') AS username
+                       FROM cards c
+                       LEFT JOIN users u ON u.id = c.user_id
+                       ORDER BY c.created_at DESC"""
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List all cards admin failed: {exc}")
+            raise
+
+    async def takedown_card(self, card_id: str) -> bool:
+        """Set a public card to private (takedown)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE cards SET visibility = 'private' WHERE id = ? AND visibility = 'public'",
+                    (card_id,),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Takedown card failed: {exc}")
+            raise
+
+    async def list_all_posts_admin(self) -> list[dict]:
+        """List all user posts for admin review."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT p.id, p.user_id, p.content, p.visibility, p.created_at,
+                              COALESCE(u.username, '') AS username
+                       FROM user_posts p
+                       LEFT JOIN users u ON u.id = p.user_id
+                       ORDER BY p.created_at DESC"""
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List all posts admin failed: {exc}")
+            raise
+
+    async def admin_delete_post(self, post_id: str) -> bool:
+        """Delete any post by id (admin)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM user_posts WHERE id = ?", (post_id,)
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Admin delete post failed: {exc}")
+            raise
+
+    async def ban_user_and_contents(self, user_id: str, admin_id: str) -> dict:
+        """Disable user + delete their posts + resolve comment reports."""
+        counts = {"posts_deleted": 0, "reports_resolved": 0}
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("UPDATE users SET is_disabled = 1 WHERE id = ?", (user_id,))
+                cursor = await conn.execute("DELETE FROM user_posts WHERE user_id = ?", (user_id,))
+                counts["posts_deleted"] = cursor.rowcount
+                cursor = await conn.execute(
+                    """UPDATE comment_reports SET status = 'resolved', resolved_by = ?
+                       WHERE comment_id IN (SELECT id FROM text_comments WHERE user_id = ?)
+                       AND status = 'pending'""",
+                    (admin_id, user_id),
+                )
+                counts["reports_resolved"] = cursor.rowcount
+                await conn.commit()
+            return counts
+        except Exception as exc:
+            print(f"[SQLiteStore] Ban user failed: {exc}")
+            raise
+
+    # ---- Admin: User Detail ----
+
+    async def get_user_detail(self, user_id: str) -> dict:
+        """Get user detail for admin: info + cards + sessions + usage + login history."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at FROM users WHERE id = ?",
+                    (user_id,),
+                )
+                user = await cursor.fetchone()
+                if not user:
+                    raise ValueError("用户不存在")
+                result = dict(user)
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM cards WHERE user_id = ? AND deleted_at IS NULL", (user_id,)
+                )
+                result["cards_count"] = (await cursor.fetchone())[0]
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM sessions WHERE user_id = ?", (user_id,)
+                )
+                result["sessions_count"] = (await cursor.fetchone())[0]
+                cursor = await conn.execute(
+                    """SELECT COUNT(*) AS calls,
+                              COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                              COALESCE(SUM(completion_tokens), 0) AS completion_tokens
+                       FROM usage_stats WHERE user_id = ?""",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+                result["usage"] = dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+                cursor = await conn.execute(
+                    "SELECT created_at FROM usage_stats WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+                result["login_history"] = [r[0] for r in rows]
+            return result
+        except ValueError:
+            raise
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user detail failed: {exc}")
+            raise
+
+    # ---- Admin: Announcements ----
+
+    async def create_announcement(self, content: str) -> dict:
+        """Create a new announcement (deactivates previous ones)."""
+        import uuid
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("UPDATE announcements SET is_active = 0")
+                aid = uuid.uuid4().hex[:12]
+                await conn.execute(
+                    "INSERT INTO announcements (id, content, is_active) VALUES (?, ?, 1)",
+                    (aid, content),
+                )
+                await conn.commit()
+                cursor = await conn.execute("SELECT * FROM announcements WHERE id = ?", (aid,))
+                row = await cursor.fetchone()
+            return dict(row) if row else {"id": aid, "content": content, "is_active": 1}
+        except Exception as exc:
+            print(f"[SQLiteStore] Create announcement failed: {exc}")
+            raise
+
+    async def delete_announcement(self, announcement_id: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM announcements WHERE id = ?", (announcement_id,)
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete announcement failed: {exc}")
+            raise
+
+    async def get_active_announcement(self) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1"
+                )
+                row = await cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get active announcement failed: {exc}")
+            raise
+
+    async def list_announcements(self) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM announcements ORDER BY created_at DESC"
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] List announcements failed: {exc}")
+            raise
+
+    # ---- Admin: CSV Export ----
+
+    async def export_users_csv(self) -> str:
+        """Export all users as CSV."""
+        import io, csv
+        try:
+            users = await self.get_all_users()
+            output = io.StringIO()
+            fieldnames = ["id", "username", "email", "is_admin", "is_disabled", "created_at", "last_login_at"]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            for u in users:
+                writer.writerow({k: u.get(k, "") for k in fieldnames})
+            return output.getvalue()
+        except Exception as exc:
+            print(f"[SQLiteStore] Export users CSV failed: {exc}")
+            raise
+
+    async def export_usage_csv(self) -> str:
+        """Export usage summary as CSV."""
+        import io, csv
+        try:
+            data = await self.get_all_usage_summary()
+            output = io.StringIO()
+            fieldnames = ["user_id", "username", "total_calls", "total_prompt_tokens", "total_completion_tokens", "last_active"]
+            writer = csv.DictWriter(output, fieldnames=fieldnames)
+            writer.writeheader()
+            for d in data:
+                writer.writerow({k: d.get(k, "") for k in fieldnames})
+            return output.getvalue()
+        except Exception as exc:
+            print(f"[SQLiteStore] Export usage CSV failed: {exc}")
             raise
 
     # ---- Usage stats ----

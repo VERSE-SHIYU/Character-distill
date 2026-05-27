@@ -13,6 +13,7 @@ from routers.auth import get_current_user
 from deps import get_storage, get_memory_manager
 from storage.sqlite_store import SQLiteStore
 from core.memory_manager import MemoryManager
+from core.log_collector import get_recent_logs
 from limiter import limiter
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -254,3 +255,220 @@ async def delete_reported_comment(
     if not ok:
         raise HTTPException(500, "操作失败")
     return {"ok": True}
+
+
+# ============================================================
+# P1-1: Content Moderation
+# ============================================================
+
+
+@router.get("/cards")
+@limiter.limit("30/minute")
+async def admin_list_cards(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List all cards with user info for admin review."""
+    return await storage.list_all_cards_admin()
+
+
+@router.post("/cards/{card_id}/takedown")
+@limiter.limit("30/minute")
+async def admin_takedown_card(
+    request: Request,
+    card_id: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, bool]:
+    """Set a public card to private (takedown)."""
+    ok = await storage.takedown_card(card_id)
+    if not ok:
+        raise HTTPException(404, "卡片不存在或已是非公开状态")
+    return {"ok": True}
+
+
+@router.get("/posts")
+@limiter.limit("30/minute")
+async def admin_list_posts(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List all user posts for admin review."""
+    return await storage.list_all_posts_admin()
+
+
+@router.delete("/posts/{post_id}")
+@limiter.limit("30/minute")
+async def admin_delete_post(
+    request: Request,
+    post_id: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, bool]:
+    """Delete any user post by id."""
+    ok = await storage.admin_delete_post(post_id)
+    if not ok:
+        raise HTTPException(404, "帖子不存在")
+    return {"ok": True}
+
+
+class BanUserRequest(BaseModel):
+    admin_id: str = ""
+
+
+@router.post("/users/{user_id}/ban")
+@limiter.limit("30/minute")
+async def admin_ban_user(
+    request: Request,
+    user_id: str,
+    req: BanUserRequest,
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Disable user + delete their posts + resolve reports."""
+    if user_id == admin_user.get("id"):
+        raise HTTPException(400, "不能封禁自己的账号")
+    admin_id = req.admin_id or admin_user["id"]
+    counts = await storage.ban_user_and_contents(user_id, admin_id)
+    return {"ok": True, **counts}
+
+
+# ============================================================
+# P1-2: System logs & Task status
+# ============================================================
+
+
+@router.get("/logs")
+@limiter.limit("30/minute")
+async def admin_logs(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    """Return recent WARNING+ log entries from the ring buffer."""
+    return get_recent_logs(limit=100)
+
+
+@router.get("/tasks")
+@limiter.limit("30/minute")
+async def admin_tasks(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+) -> list[dict[str, Any]]:
+    """List all distill tasks with owner info."""
+    from routers.distill import _tasks, _task_lock
+    with _task_lock:
+        result = [
+            {"task_id": tid, **task}
+            for tid, task in list(_tasks.items())
+        ]
+    return result
+
+
+# ============================================================
+# P2-2: User Detail
+# ============================================================
+
+
+@router.get("/users/{user_id}/detail")
+@limiter.limit("30/minute")
+async def admin_user_detail(
+    request: Request,
+    user_id: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get detailed user info for admin: stats, cards, sessions, usage, login history."""
+    try:
+        return await storage.get_user_detail(user_id)
+    except ValueError:
+        raise HTTPException(404, "用户不存在")
+
+
+# ============================================================
+# P2-1: Announcements
+# ============================================================
+
+
+class AnnouncementCreateRequest(BaseModel):
+    content: str
+
+
+@router.post("/announcement")
+@limiter.limit("30/minute")
+async def admin_create_announcement(
+    request: Request,
+    req: AnnouncementCreateRequest,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Create a new announcement (deactivates previous ones)."""
+    if not req.content.strip():
+        raise HTTPException(400, "公告内容不能为空")
+    return await storage.create_announcement(req.content.strip())
+
+
+@router.delete("/announcement/{announcement_id}")
+@limiter.limit("30/minute")
+async def admin_delete_announcement(
+    request: Request,
+    announcement_id: str,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, bool]:
+    """Delete an announcement by id."""
+    ok = await storage.delete_announcement(announcement_id)
+    if not ok:
+        raise HTTPException(404, "公告不存在")
+    return {"ok": True}
+
+
+@router.get("/announcements")
+@limiter.limit("30/minute")
+async def admin_list_announcements(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """List all announcements."""
+    return await storage.list_announcements()
+
+
+# ============================================================
+# P2-3: Data Export
+# ============================================================
+
+
+@router.get("/export/users")
+@limiter.limit("30/minute")
+async def admin_export_users(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+):
+    """Export all users as CSV."""
+    from fastapi.responses import PlainTextResponse
+    csv_str = await storage.export_users_csv()
+    return PlainTextResponse(
+        csv_str,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=users.csv"},
+    )
+
+
+@router.get("/export/usage")
+@limiter.limit("30/minute")
+async def admin_export_usage(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+):
+    """Export usage summary as CSV."""
+    from fastapi.responses import PlainTextResponse
+    csv_str = await storage.export_usage_csv()
+    return PlainTextResponse(
+        csv_str,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=usage.csv"},
+    )

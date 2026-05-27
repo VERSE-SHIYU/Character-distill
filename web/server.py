@@ -22,7 +22,7 @@ if str(_WEB_DIR) not in sys.path:
 import yaml
 from pydantic import BaseModel
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -52,6 +52,7 @@ from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
+from core.log_collector import install_log_collector
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
 _LEGACY_STATIC_DIR = _WEB_DIR / "static"
@@ -71,6 +72,11 @@ app.state.limiter = limiter
 
 
 @app.on_event("startup")
+async def _startup():
+    install_log_collector()
+    await _preload_embedding()
+
+
 async def _preload_embedding():
     """Preload SentenceTransformer model so first chat is fast (1-2s instead of 5s)."""
     from core.embeddings import create_safe_embedding_fn
@@ -169,6 +175,22 @@ app.include_router(market_router)
 app.include_router(group_router)
 app.include_router(message_router)
 app.include_router(memory_router)
+
+
+# ---- Public: announce router ----
+_announce_router = APIRouter(prefix="/api/announcement", tags=["announce"])
+
+
+@_announce_router.get("/active")
+async def public_active_announcement(
+    storage: SQLiteStore = Depends(get_storage),
+):
+    """Get the currently active announcement (no auth required)."""
+    return await storage.get_active_announcement() or {}
+
+
+app.include_router(_announce_router)
+
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
