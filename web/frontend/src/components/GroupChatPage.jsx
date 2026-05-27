@@ -18,6 +18,15 @@ function parseCardIds(raw) {
   try { return JSON.parse(raw || '[]') } catch { return [] }
 }
 
+const BUBBLE_COLORS = ['#f0f7ff', '#f0fdf4', '#fef7ee', '#fdf2f8', '#f5f3ff']
+function getBubbleColor(cardId) {
+  let hash = 0
+  for (let i = 0; i < (cardId || '').length; i++) {
+    hash = cardId.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return BUBBLE_COLORS[Math.abs(hash) % BUBBLE_COLORS.length]
+}
+
 /** 通过 card_id 从后端获取单张角色卡信息 */
 async function fetchCardById(cardId) {
   try {
@@ -52,6 +61,7 @@ export default function GroupChatPage() {
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
+  const [autoTurn, setAutoTurn] = useState(0)
   const msgInputRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
@@ -172,6 +182,7 @@ export default function GroupChatPage() {
   const runAutoConversation = useCallback(async () => {
     if (!currentGroup || autoRunning) return
     setAutoRunning(true)
+    setAutoTurn(0)
     autoStopRef.current = false
 
     const cardIds = [...currentGroup.card_ids]
@@ -181,6 +192,7 @@ export default function GroupChatPage() {
       if (turnIndex >= MAX_AUTO_TURNS) break
       const targetId = cardIds[turnIndex % cardIds.length]
       turnIndex++
+      setAutoTurn(turnIndex)
 
       try {
         await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
@@ -656,9 +668,9 @@ export default function GroupChatPage() {
                               <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
                           ) : (
-                            <div className="group-chat-bubble">
+                            <div className="group-chat-bubble" style={{ background: getBubbleColor(m.card_id || m.speaker_card_id) }}>
                               <div className="group-chat-bubble-header">
-                                <Avatar name={m.speaker || '?'} size={24} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                                <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                                 <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
                               </div>
                               <div className="group-chat-bubble-body">
@@ -705,6 +717,14 @@ export default function GroupChatPage() {
 
               {/* Input */}
               <div className="private-chat-input-bar">
+                {autoRunning && (
+                  <div className="group-auto-banner">
+                    <span>🎬 自动对话中… (第 {autoTurn}/{MAX_AUTO_TURNS} 轮)</span>
+                    <button type="button" className="group-auto-banner-stop" onClick={stopAutoConversation}>
+                      停止
+                    </button>
+                  </div>
+                )}
                 <div className="group-target-selector">
                   <button
                     type="button"
@@ -787,7 +807,7 @@ export default function GroupChatPage() {
                       }}
                       title={autoMode ? '停止自动对话' : '自动对话模式'}
                     >
-                      {autoMode ? '⏸ 暂停' : '▶ 自动对话'}
+                      {autoMode ? '停止' : '▶ 自动对话'}
                     </button>
                   </div>
                   <button
@@ -847,6 +867,17 @@ export default function GroupChatPage() {
             {selectedTextId && (
               <div className="group-create-section">
                 <label className="modal-label">选择角色（至少 2 个）</label>
+                {selectedCardIds.length > 0 && (
+                  <div className="group-create-selected-summary">
+                    <span>已选 {selectedCardIds.length} 个角色</span>
+                    {selectedCardIds.map((id) => {
+                      const card = resolveCard(id) || cardsByText[selectedTextId]?.find(c => (c.id || c.card_id) === id)
+                      return (
+                        <Avatar key={id} name={card?.name || '?'} size={24} src={cardAvatars[id]} />
+                      )
+                    })}
+                  </div>
+                )}
                 <div className="group-create-card-list">
                   {(cardsByText[selectedTextId] || []).length === 0 && (
                     <p className="group-create-empty">该书暂无角色卡</p>
@@ -854,6 +885,8 @@ export default function GroupChatPage() {
                   {(cardsByText[selectedTextId] || []).map((c) => {
                     const cardId = c.id || c.card_id
                     const selected = selectedCardIds.includes(cardId)
+                    let identity = ''
+                    try { const cj = parseCardJson(c); identity = cj.identity || '' } catch {}
                     return (
                       <div
                         key={cardId}
@@ -861,8 +894,13 @@ export default function GroupChatPage() {
                         onClick={() => toggleCard(cardId)}
                       >
                         <Avatar name={c.name} size={36} src={cardAvatars[cardId]} />
-                        <span className="group-create-card-name">{c.name}</span>
-                        <span className="group-create-card-check">{selected ? '✓' : ''}</span>
+                        <div className="group-create-card-info">
+                          <span className="group-create-card-name">{c.name}</span>
+                          {identity && <span className="group-create-card-identity">{identity}</span>}
+                        </div>
+                        <div className={`group-create-card-checkbox${selected ? ' checked' : ''}`}>
+                          {selected ? '✓' : ''}
+                        </div>
                       </div>
                     )
                   })}

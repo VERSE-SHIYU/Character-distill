@@ -9294,9 +9294,9 @@ select.settings-input {
   padding: 8px 12px 2px;
 }
 .group-chat-bubble-speaker {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--primary);
 }
 .group-chat-bubble-body {
   padding: 2px 12px 6px;
@@ -9313,24 +9313,58 @@ select.settings-input {
   opacity: 0.65;
 }
 
-/* Target selector — horizontal scroll instead of messy wrap */
+/* Target selector — wrap instead of horizontal scroll */
 .group-chat-layout .group-target-selector {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+  flex-wrap: wrap;
+  overflow: visible;
   padding: 8px 12px 0;
   gap: 6px;
-  scrollbar-width: none;
-}
-.group-chat-layout .group-target-selector::-webkit-scrollbar {
-  display: none;
 }
 .group-chat-layout .group-target-chip {
   padding: 5px 12px;
   font-size: 13px;
-  gap: 5px;
-  border-radius: 20px;
-  flex-shrink: 0;
+}
+
+/* Auto conversation banner */
+.group-auto-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  margin: 0 12px 8px;
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--accent);
+  animation: group-auto-pulse 1.5s ease-in-out infinite;
+}
+@keyframes group-auto-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.group-auto-banner-stop {
+  background: #e74c3c;
+  color: #fff;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+.group-auto-banner-stop:hover {
+  background: #c0392b;
+}
+
+/* Toolbar auto button — red when running */
+.messages-input-toolbar .group-auto-btn.active {
+  background: #e74c3c;
+  border-color: #e74c3c;
+  color: #fff;
+  animation: none;
 }
 
 /* Member panel refinements */
@@ -9416,6 +9450,51 @@ select.settings-input {
   margin-left: auto;
   color: var(--accent);
   font-weight: 700;
+}
+
+.group-create-card-checkbox {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.group-create-card-checkbox.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.group-create-card-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.group-create-card-identity {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-create-selected-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(var(--accent-rgb), 0.06);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text);
+  flex-wrap: wrap;
 }
 
 /* ── Group Create Modal ── */
