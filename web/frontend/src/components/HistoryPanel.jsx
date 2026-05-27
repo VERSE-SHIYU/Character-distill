@@ -790,7 +790,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                               type="button"
                               className="btn-primary btn-sm"
                               onClick={() => {
-                                useAppStore.getState().setCurrentTextId(t.id)
+                                useAppStore.getState().setReaderTextId(t.id)
                                 setView('reader')
                               }}
                             >
