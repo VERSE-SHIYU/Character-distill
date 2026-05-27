@@ -518,6 +518,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Group soft delete migration failed: {exc}")
 
+                    # Run 051_message_reactions migration (CREATE TABLE + ALTER TABLE)
+                    mr_path = migrations_dir / "051_message_reactions.sql"
+                    if mr_path.exists():
+                        try:
+                            await conn.executescript(mr_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Message reactions migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1666,14 +1676,16 @@ class SQLiteStore(StorageBase):
             raise
 
     async def save_group_message(
-        self, group_id: str, speaker: str, role: str, content: str, speaker_card_id: str = ""
+        self, group_id: str, speaker: str, role: str, content: str,
+        speaker_card_id: str = "", reply_to_id: int | None = None,
+        reply_to_preview: str = "",
     ) -> int:
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (group_id, speaker, role, content, speaker_card_id),
+                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview),
                 )
                 await conn.commit()
                 return cursor.lastrowid
@@ -1685,16 +1697,88 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, group_id, speaker, role, content, speaker_card_id, created_at
+                    """SELECT id, group_id, speaker, role, content, speaker_card_id, created_at,
+                              reply_to_id, reply_to_preview
                        FROM group_messages
                        WHERE group_id = ?
                        ORDER BY id ASC""",
                     (group_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            messages = [dict(row) for row in rows]
+            # Attach reactions to each message
+            msg_ids = [m["id"] for m in messages]
+            if msg_ids:
+                reactions_map = await self.get_reactions(msg_ids)
+                for m in messages:
+                    m["reactions"] = reactions_map.get(m["id"], [])
+            return messages
         except Exception as exc:
             print(f"[SQLiteStore] Get group messages failed: {exc}")
+            raise
+
+    async def toggle_reaction(self, message_id: int, user_id: str, emoji: str) -> bool:
+        """Toggle a reaction. Returns True if added, False if removed."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+                    (message_id, user_id, emoji),
+                )
+                existing = await cursor.fetchone()
+                if existing:
+                    await conn.execute(
+                        "DELETE FROM message_reactions WHERE id = ?",
+                        (existing["id"],),
+                    )
+                    await conn.commit()
+                    return False
+                else:
+                    await conn.execute(
+                        """INSERT INTO message_reactions (message_id, user_id, emoji)
+                           VALUES (?, ?, ?)""",
+                        (message_id, user_id, emoji),
+                    )
+                    await conn.commit()
+                    return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle reaction failed: {exc}")
+            raise
+
+    async def get_reactions(self, message_ids: list[int]) -> dict[int, list]:
+        """Batch query reactions for given message IDs.
+        Returns { message_id: [{ emoji, count, users }] }
+        """
+        if not message_ids:
+            return {}
+        try:
+            async with await self._connect() as conn:
+                placeholders = ",".join("?" * len(message_ids))
+                cursor = await conn.execute(
+                    f"""SELECT message_id, emoji, user_id
+                        FROM message_reactions
+                        WHERE message_id IN ({placeholders})
+                        ORDER BY id ASC""",
+                    message_ids,
+                )
+                rows = await cursor.fetchall()
+            result: dict[int, dict[str, dict]] = {}
+            for row in rows:
+                mid = row["message_id"]
+                emoji = row["emoji"]
+                uid = row["user_id"]
+                if mid not in result:
+                    result[mid] = {}
+                if emoji not in result[mid]:
+                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
+                result[mid][emoji]["count"] += 1
+                result[mid][emoji]["users"].append(uid)
+            return {
+                mid: list(emoji_map.values())
+                for mid, emoji_map in result.items()
+            }
+        except Exception as exc:
+            print(f"[SQLiteStore] Get reactions failed: {exc}")
             raise
 
     async def update_group_session(self, id: str, name: str) -> None:

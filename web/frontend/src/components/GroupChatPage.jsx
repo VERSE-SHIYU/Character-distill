@@ -54,8 +54,12 @@ export default function GroupChatPage() {
   const autoStopRef = useRef(false)
   const [autoTurn, setAutoTurn] = useState(0)
   const msgInputRef = useRef(null)
+  const messagesAreaRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
+
+  // ── 引用回复 ──
+  const [replyTo, setReplyTo] = useState(null) // { id, speaker, preview }
 
   // ── 角色缓存：按 card_id 索引，替代 allCards ──
   const [allCards, setAllCards] = useState([])
@@ -412,15 +416,40 @@ export default function GroupChatPage() {
         target_card_ids: [...targetCardIds],
         message: messageText,
         speaker,
+        reply_to_id: replyTo?.id || null,
       })
       // Reload history once after all replies
       await loadHistory(currentGroup.id)
       setMessageText('')
       setTargetCardIds([])
+      setReplyTo(null)
     } catch (err) {
       setError(err.message)
     } finally {
       setSending(false)
+    }
+  }
+
+  async function reactToMessage(messageId, emoji) {
+    if (!currentGroup) return
+    try {
+      await fetchWithTimeout(`/api/group/${currentGroup.id}/message/${messageId}/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emoji }),
+      })
+      await loadHistory(currentGroup.id)
+    } catch (err) {
+      console.error('React failed:', err)
+    }
+  }
+
+  function scrollToMessage(messageId) {
+    const el = document.querySelector(`[data-msg-id="${messageId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('msg-highlight-flash')
+      setTimeout(() => el.classList.remove('msg-highlight-flash'), 1500)
     }
   }
 
@@ -628,7 +657,7 @@ export default function GroupChatPage() {
 
               {/* Messages */}
               <div className="private-chat-body">
-                <div className="group-chat-messages-area">
+                <div className="group-chat-messages-area" ref={messagesAreaRef}>
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
@@ -642,35 +671,105 @@ export default function GroupChatPage() {
                     const isUser = m.role === 'user'
                     const showTime = i === 0 || (m.created_at && messages[i-1]?.created_at
                       && (new Date(m.created_at) - new Date(messages[i-1].created_at)) > 5 * 60 * 1000)
+                    const reactions = m.reactions || []
+                    const QUICK_EMOJIS = ['👍','❤️','😂','😮','😢','🔥']
                     return (
-                      <div key={m.id || i}>
+                      <div key={m.id || i} data-msg-id={m.id}>
                         {showTime && (
                           <div className="time-divider">{formatChatTime(m.created_at)}</div>
                         )}
                         <div className={`messages-row${isUser ? ' mine' : ' other'}`}>
                           {isUser ? (
                             <>
-                              <div className="messages-bubble mine">
+                              <div className="messages-bubble mine group-msg-bubble">
+                                <div className="group-msg-bubble-actions">
+                                  <button type="button" className="msg-action-btn" title="引用"
+                                    onClick={() => {
+                                      setReplyTo({ id: m.id, speaker: '我', preview: m.content?.slice(0, 60) })
+                                      msgInputRef.current?.focus()
+                                    }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                  </button>
+                                  <div className="msg-quick-reactions">
+                                    {QUICK_EMOJIS.map(e => (
+                                      <button key={e} type="button" className="msg-quick-reaction-btn"
+                                        onClick={() => reactToMessage(m.id, e)}>{e}</button>
+                                    ))}
+                                  </div>
+                                </div>
+                                {m.reply_to_id && m.reply_to_preview && (
+                                  <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
+                                    <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
+                                    <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
+                                  </div>
+                                )}
                                 <span className="messages-msg-text">{m.content}</span>
                                 {m.created_at && (
                                   <div className="msg-time msg-time-user">{formatChatTime(m.created_at)}</div>
+                                )}
+                                {reactions.length > 0 && (
+                                  <div className="msg-reactions">
+                                    {reactions.map((r, ri) => (
+                                      <button key={ri} type="button"
+                                        className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                                        onClick={() => reactToMessage(m.id, r.emoji)}>
+                                        {r.emoji} {r.count}
+                                      </button>
+                                    ))}
+                                  </div>
                                 )}
                               </div>
                               <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
                           ) : (
-                            <div className="group-chat-bubble">
-                              <div className="group-chat-bubble-header">
-                                <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                                <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
+                            <>
+                              <Avatar name={m.speaker || '?'} size={40} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                              <div>
+                                <div className="group-chat-bubble">
+                                  <div className="group-chat-bubble-header">
+                                    <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
+                                    <div className="group-msg-bubble-actions">
+                                      <button type="button" className="msg-action-btn" title="引用"
+                                        onClick={() => {
+                                          setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
+                                          msgInputRef.current?.focus()
+                                        }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                      </button>
+                                      <div className="msg-quick-reactions">
+                                        {QUICK_EMOJIS.map(e => (
+                                          <button key={e} type="button" className="msg-quick-reaction-btn"
+                                            onClick={() => reactToMessage(m.id, e)}>{e}</button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="group-chat-bubble-body">
+                                    {m.reply_to_id && m.reply_to_preview && (
+                                      <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
+                                        <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
+                                        <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
+                                      </div>
+                                    )}
+                                    <span className="messages-msg-text">{m.content}</span>
+                                  </div>
+                                  {m.created_at && (
+                                    <div className="group-chat-bubble-time">{formatChatTime(m.created_at)}</div>
+                                  )}
+                                  {reactions.length > 0 && (
+                                    <div className="msg-reactions" style={{ padding: '0 12px 6px' }}>
+                                      {reactions.map((r, ri) => (
+                                        <button key={ri} type="button"
+                                          className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                                          onClick={() => reactToMessage(m.id, r.emoji)}>
+                                          {r.emoji} {r.count}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
-                              <div className="group-chat-bubble-body">
-                                <span className="messages-msg-text">{m.content}</span>
-                              </div>
-                              {m.created_at && (
-                                <div className="group-chat-bubble-time">{formatChatTime(m.created_at)}</div>
-                              )}
-                            </div>
+                            </>
                           )}
                         </div>
                       </div>
@@ -713,6 +812,18 @@ export default function GroupChatPage() {
                     <span>🎬 自动对话中… (第 {autoTurn}/{MAX_AUTO_TURNS} 轮)</span>
                     <button type="button" className="group-auto-banner-stop" onClick={stopAutoConversation}>
                       停止
+                    </button>
+                  </div>
+                )}
+                {replyTo && (
+                  <div className="reply-preview-bar">
+                    <div className="reply-preview-info">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                      <span className="reply-preview-label">回复 {replyTo.speaker}:</span>
+                      <span className="reply-preview-text">{replyTo.preview}</span>
+                    </div>
+                    <button type="button" className="reply-preview-close" onClick={() => setReplyTo(null)}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
                 )}

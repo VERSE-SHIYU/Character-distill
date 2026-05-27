@@ -36,12 +36,17 @@ class SendMessageRequest(BaseModel):
     target_card_id: str
     message: str
     speaker: str = ""
+    reply_to_id: int | None = None
 
 class BroadcastRequest(BaseModel):
     target_card_ids: list[str]
     message: str
     speaker: str = ""
     auto_mode: bool = False
+    reply_to_id: int | None = None
+
+class ReactRequest(BaseModel):
+    emoji: str
 
 
 async def _rebuild_group_session(
@@ -256,9 +261,19 @@ async def send_message(
             raise HTTPException(500, f"群聊消息发送失败: {exc}") from exc
 
     # Persist to DB
+    reply_preview = ""
+    if req.reply_to_id:
+        try:
+            history = await storage.get_group_messages(group_id)
+            replied = next((m for m in history if m["id"] == req.reply_to_id), None)
+            if replied:
+                reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
+        except Exception:
+            pass
     try:
         await storage.save_group_message(
             group_id, req.speaker or "导演", "user", req.message, "",
+            reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
         )
         await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
@@ -304,10 +319,20 @@ async def broadcast_message(
             raise HTTPException(500, f"群聊广播失败: {exc}") from exc
 
     # 持久化
+    reply_preview = ""
+    if req.reply_to_id:
+        try:
+            history = await storage.get_group_messages(group_id)
+            replied = next((m for m in history if m["id"] == req.reply_to_id), None)
+            if replied:
+                reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
+        except Exception:
+            pass
     try:
         if not req.auto_mode:
             await storage.save_group_message(
                 group_id, req.speaker or "导演", "user", req.message, "",
+                reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
             )
         for r in results:
             if r["reply"]:
@@ -319,6 +344,29 @@ async def broadcast_message(
 
     return {"replies": results}
 
+
+@router.post("/{group_id}/message/{message_id}/react")
+@limiter.limit("60/minute")
+async def toggle_reaction(
+    group_id: str,
+    message_id: int,
+    req: ReactRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Toggle a reaction emoji on a message."""
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+
+    if not req.emoji.strip():
+        raise HTTPException(400, "emoji 不能为空")
+
+    added = await storage.toggle_reaction(message_id, user["id"], req.emoji.strip())
+    return {"ok": True, "added": added}
 
 @router.get("/{group_id}/history")
 @limiter.limit("60/minute")

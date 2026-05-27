@@ -9270,6 +9270,8 @@ select.settings-input {
 .group-chat-layout .group-chat-messages-area {
   padding: 16px 20px;
   gap: 12px;
+  overflow-x: visible;
+  overflow-y: auto;
 }
 
 /* Group chat character bubble — WeChat style */
@@ -9278,7 +9280,7 @@ select.settings-input {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 1px 3px rgba(0,0,0,0.03);
   transition: box-shadow 0.2s;
 }
@@ -9414,10 +9416,201 @@ select.settings-input {
 }
 
 @media (max-width: 900px) {
-  .group-chat-layout .group-members-panel { width: 180px; }
+  .group-chat-layout .group-members-panel { width: 220px; }
 }
 @media (max-width: 768px) {
   .group-chat-layout .group-members-panel { display: none; }
+}
+
+/* ── Group Chat: Reactions ── */
+.group-msg-bubble-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+/* Mine: actions overlay top-right, absolute within bubble */
+.messages-bubble.mine.group-msg-bubble {
+  position: relative;
+}
+.messages-bubble.mine .group-msg-bubble-actions {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 2;
+}
+/* Other: actions in header, pushed right by flex */
+.group-chat-bubble-header .group-msg-bubble-actions {
+  margin-left: auto;
+}
+.messages-bubble:hover .group-msg-bubble-actions,
+.group-chat-bubble:hover .group-msg-bubble-actions {
+  opacity: 1;
+}
+
+.msg-action-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  font-size: 12px;
+  padding: 0;
+}
+.msg-action-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.msg-quick-reactions {
+  display: flex;
+  gap: 2px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 2px 4px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.msg-quick-reaction-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 50%;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+  padding: 0;
+}
+.msg-quick-reaction-btn:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+  transform: scale(1.2);
+}
+
+.msg-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.msg-reaction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: rgba(var(--accent-rgb), 0.04);
+  font-size: 12px;
+  color: var(--text-sec);
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.msg-reaction-badge:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: var(--accent);
+}
+.msg-reaction-badge.mine {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+/* ── Group Chat: Reply ── */
+.reply-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 6px 16px;
+  margin: 0 12px 4px;
+  background: rgba(var(--accent-rgb), 0.06);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-sec);
+}
+.reply-preview-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.reply-preview-label {
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.reply-preview-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.reply-preview-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+.reply-preview-close:hover {
+  color: var(--text);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.msg-reply-quote {
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid var(--accent);
+  background: rgba(var(--accent-rgb), 0.04);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.msg-reply-quote:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.msg-reply-quote-speaker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 1px;
+}
+.msg-reply-quote-text {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes msg-highlight-flash {
+  0% { background: rgba(var(--accent-rgb), 0.15); }
+  100% { background: transparent; }
+}
+.msg-highlight-flash {
+  animation: msg-highlight-flash 1.5s ease-out;
+  border-radius: 6px;
+}
+
+/* ── Group Chat: mine bubble adjustments for actions ── */
+.group-chat-page .messages-row.mine .messages-bubble.mine {
+  margin-right: 6px;
 }
 
 /* Group create card selection */
