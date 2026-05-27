@@ -6,6 +6,37 @@ import Loading from './common/Loading'
 
 const PAGE_SIZE = 20
 
+function getDateKey(iso) {
+  if (!iso) return ''
+  let s = iso
+  if (!s.includes('T')) s = s.replace(' ', 'T')
+  if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
+  const date = new Date(s)
+  if (isNaN(date.getTime())) return ''
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function getDateLabel(iso) {
+  if (!iso) return ''
+  let s = iso
+  if (!s.includes('T')) s = s.replace(' ', 'T')
+  if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
+  const date = new Date(s)
+  if (isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const dayDiff = Math.floor((today - target) / 86400000)
+
+  if (dayDiff === 0) return '今天'
+  if (dayDiff === 1) return '昨天'
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`
+}
+
 export default function FeedPage() {
   const setView = useAppStore((s) => s.setView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
@@ -15,8 +46,15 @@ export default function FeedPage() {
   const [loading, setLoading] = useState(true)
   const [hasMore, setHasMore] = useState(true)
   const [error, setError] = useState(null)
+  const [showBackTop, setShowBackTop] = useState(false)
   const sentinelRef = useRef(null)
   const loadingRef = useRef(false)
+
+  useEffect(() => {
+    const onScroll = () => setShowBackTop(window.scrollY > 800)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
   const fetchPosts = useCallback(async (p, append = false) => {
     setLoading(true)
@@ -61,6 +99,11 @@ export default function FeedPage() {
     if (page > 1) fetchPosts(page, true)
   }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleRefresh = () => {
+    setPage(1)
+    fetchPosts(1)
+  }
+
   const handleLike = async (postId) => {
     try {
       const res = await fetchWithTimeout(`/api/market/post/${postId}/like`, { method: 'POST' })
@@ -73,11 +116,27 @@ export default function FeedPage() {
     } catch {}
   }
 
+  // Build rendered list interleaving date dividers
+  let lastDateKey = null
+  const rendered = []
+  posts.forEach((p) => {
+    const dk = getDateKey(p.created_at)
+    if (dk && dk !== lastDateKey) {
+      rendered.push({ type: 'divider', key: `date-${dk}`, label: getDateLabel(p.created_at) })
+      lastDateKey = dk
+    }
+    rendered.push({ type: 'post', key: p.id, data: p })
+  })
+
   return (
     <div className="panel">
       <header className="panel-header">
-        <h1 className="panel-title">动态</h1>
-        <p className="panel-desc">关注的人的最新动态</p>
+        <div className="feed-header-row">
+          <h1 className="panel-title">动态</h1>
+          <button type="button" className="feed-refresh-btn" onClick={handleRefresh} disabled={loading}>
+            刷新
+          </button>
+        </div>
       </header>
 
       {error && <div className="error-box">{error}</div>}
@@ -103,19 +162,29 @@ export default function FeedPage() {
 
       {posts.length > 0 && (
         <div className="feed-list">
-          {posts.map((p) => (
-            <PostCard
-              key={p.id}
-              post={p}
-              onLike={handleLike}
-              onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
-            />
-          ))}
+          {rendered.map((item) =>
+            item.type === 'divider' ? (
+              <div key={item.key} className="feed-date-divider">{item.label}</div>
+            ) : (
+              <PostCard
+                key={item.key}
+                post={item.data}
+                onLike={handleLike}
+                onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+              />
+            )
+          )}
         </div>
       )}
 
       {hasMore && <div ref={sentinelRef} style={{ height: 1 }} />}
       {loading && posts.length > 0 && <div className="feed-loading-more">加载更多…</div>}
+
+      {showBackTop && (
+        <button type="button" className="feed-back-top" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          ↑
+        </button>
+      )}
     </div>
   )
 }

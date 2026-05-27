@@ -124,7 +124,7 @@ function isOnline(user) {
   if (!ts) return false
   const then = new Date(ts)
   const now = new Date()
-  return (now - then) < 5 * 60 * 1000
+  return (now - then) < 10 * 60 * 1000
 }
 
 function fmtDateTime(iso) {
@@ -1571,7 +1571,12 @@ function AnnouncementsTab() {
           </button>
           {showEmoji && (
             <div style={{ position: 'relative' }}>
-              <EmojiPicker textareaRef={annTaRef} onEmojiSelect={() => setShowEmoji(false)} />
+              <EmojiPicker textareaRef={annTaRef} controlled onEmojiSelect={(emoji) => {
+                const ta = annTaRef.current
+                const pos = ta.selectionStart
+                setContent(content.slice(0, pos) + emoji + content.slice(pos))
+                setShowEmoji(false)
+              }} />
             </div>
           )}
           <div className="announcement-align-group">
@@ -1614,7 +1619,7 @@ function AnnouncementsTab() {
                   <Trash2 size={14} />
                 </button>
               </div>
-              <div className="announcement-item-content" style={{ textAlign: a.align || 'left' }}>{a.content}</div>
+              <div className="announcement-item-content" style={{ textAlign: a.align || 'left', whiteSpace: 'pre-wrap' }}>{a.content}</div>
             </div>
           ))}
         </div>

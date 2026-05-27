@@ -76,13 +76,13 @@ const CATEGORIES = [
   },
 ]
 
-export default function EmojiPicker({ onEmojiSelect, textareaRef }) {
+export default function EmojiPicker({ onEmojiSelect, textareaRef, controlled }) {
   const [catIdx, setCatIdx] = useState(0)
   const pickerRef = useRef(null)
   const catBarRef = useRef(null)
 
   const handleClick = useCallback((emoji) => {
-    if (textareaRef?.current) {
+    if (textareaRef?.current && !controlled) {
       const ta = textareaRef.current
       const start = ta.selectionStart
       const end = ta.selectionEnd
@@ -93,8 +93,7 @@ export default function EmojiPicker({ onEmojiSelect, textareaRef }) {
       ta.dispatchEvent(new Event('input', { bubbles: true }))
     }
     onEmojiSelect?.(emoji)
-  }, [onEmojiSelect, textareaRef])
-
+  }, [onEmojiSelect, textareaRef, controlled])
   // Scroll active category into view in the tab bar
   useEffect(() => {
     const el = catBarRef.current?.children[catIdx]
