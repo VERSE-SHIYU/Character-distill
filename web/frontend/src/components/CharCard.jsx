@@ -373,84 +373,42 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
       {/* Distilled cards list */}
       {hasCards && (
-        <ul className="char-list">
+        <div className="char-list">
           {uniqueCards.map((c, idx) => {
             const cardData = parseCardJson(c)
             const name = cardData.name || c.name
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
-            const isPinned = pinnedCards.includes(c.id)
             const textInfo = texts.find((t) => t.id === c.text_id)
             const isShared = sharedCards.has(c.id)
+            const createdAt = c.created_at || ''
             return (
-              <li key={c.id}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  className={`char-list-item${isActive ? ' active' : ''}${isPinned ? ' pinned' : ''}`}
-                  data-card-id={c.id}
-                  onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectCard({ ...c, ...cardData, text_id: textId }) }}
-                >
-                  <div className="char-card-top">
-                    <Avatar name={name} size={34} src={cardAvatars[c.id]} />
-                    <div className="char-list-info">
-                      <div className="char-list-name">{name}</div>
-                      <div className="char-list-identity">{identity}</div>
-                    </div>
-                  </div>
-                  {(textInfo?.filename || c.forked_from) && (
-                    <div className="char-card-meta">
-                      {textInfo?.filename && (
-                        <span className="char-card-source"><Book size={11} /> {textInfo.filename}</span>
-                      )}
-                      {c.forked_from && (
-                        <span className="char-card-source"><Clipboard size={11} /> 已fork</span>
-                      )}
-                    </div>
-                  )}
-                  <div className="char-card-actions">
-                    <button
-                      type="button"
-                      className={`char-card-action-btn${isPinned ? ' is-pinned' : ''}`}
-                      title={isPinned ? '取消置顶' : '置顶'}
-                      onClick={(e) => { e.stopPropagation(); togglePin(e, c.id) }}
-                    >
-                      <Pin size={13} />
-                    </button>
-                    <button
-                      type="button"
-                      className={`char-card-action-btn${isShared ? ' is-shared' : ''}`}
-                      title={isShared ? '已分享到市场' : '分享到市场'}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        if (isShared) {
-                          handleShareToggle(e, c.id)
-                        } else {
-                          setShareConfirmTarget(c)
-                        }
-                      }}
-                    >
-                      {isShared ? <Globe size={13} /> : <Bookmark size={13} />}
-                    </button>
-                    <div className="char-card-actions-spacer" />
-                    <button
-                      type="button"
-                      className="char-card-action-btn danger"
-                      title="删除角色"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setDeleteTarget(c)
-                      }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+              <div
+                key={c.id}
+                role="button"
+                tabIndex={0}
+                className={`char-list-item${isActive ? ' active' : ''}`}
+                data-card-id={c.id}
+                onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectCard({ ...c, ...cardData, text_id: textId }) }}
+              >
+                <Avatar name={name} size={40} src={cardAvatars[c.id]} />
+                <div className="char-list-info">
+                  <div className="char-list-name">{name}</div>
+                  <div className="char-list-identity">{identity}</div>
+                  <div className="char-card-footer">
+                    {textInfo?.filename && (
+                      <span className="char-card-source-line">{textInfo.filename}</span>
+                    )}
                   </div>
                 </div>
-              </li>
+                <span className={'char-card-status' + (isShared ? ' shared' : '')}>
+                  {isShared ? '已公开' : '私有'}
+                </span>
+              </div>
             )
           })}
-        </ul>
+        </div>
       )}
 
       {/* Standalone cards (forked from market, no text attachment) */}

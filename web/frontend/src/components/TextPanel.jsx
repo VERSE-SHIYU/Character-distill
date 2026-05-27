@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import useAppStore from '../store/useAppStore'
 import ErrorBox from './common/ErrorBox'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
-import { fetchWithTimeout } from '../api/client'
+import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { MessageSquare, Book, File } from './common/Icon'
+import { parseCardJson } from '../utils/card'
+import Avatar from './common/Avatar'
+import EditCardModal from './EditCardModal'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
@@ -78,6 +82,10 @@ export default function TextPanel() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const setView = useAppStore((s) => s.setView)
+  const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
+  const startChat = useAppStore((s) => s.startChat)
+
+  const [activeTab, setActiveTab] = useState('text') // 'text' | 'character'
 
   const inputRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
@@ -186,18 +194,33 @@ export default function TextPanel() {
   const displayError = localError || error
 
   return (
-    <div className="text-panel panel">
+    <div className="creation-panel panel">
+      {/* ── Desktop Tab bar ── */}
+      <div className="creation-tab-bar">
+        <button
+          type="button"
+          className={`creation-tab${activeTab === 'text' ? ' active' : ''}`}
+          onClick={() => setActiveTab('text')}
+        >
+          文本管理
+        </button>
+        <button
+          type="button"
+          className={`creation-tab${activeTab === 'character' ? ' active' : ''}`}
+          onClick={() => setActiveTab('character')}
+        >
+          角色管理
+        </button>
+      </div>
+
+      {activeTab === 'text' ? (
+        <>
       <header className="panel-header">
         <h1 className="panel-title">文本管理</h1>
         <p className="panel-desc">
           上传小说、剧本或聊天记录，用于角色识别与蒸馏
         </p>
       </header>
-
-      <div className="history-tab-bar">
-        <button className="history-tab active">文本管理</button>
-        <button className="history-tab" onClick={() => setView('character')}>角色管理</button>
-      </div>
 
       {displayError && (
         <ErrorBox message={displayError} onDismiss={() => setLocalError(null)} />
@@ -250,130 +273,65 @@ export default function TextPanel() {
         ) : texts.length === 0 ? (
           <p className="text-list-empty">暂无文本，请先上传</p>
         ) : (
-          <ul className="text-list">
-            {texts.map((t) => (
-              <li
-                key={t.id}
-                className={`text-list-item${currentTextId === t.id ? ' selected' : ''}`}
-              >
-                <button
-                  type="button"
-                  className="text-list-main"
-                  onClick={() => selectText(t.id)}
-                >
-                  <div className="text-list-headline">
-                    <span className="text-list-filename" title={t.title || t.filename}>
+          <div className="creation-text-grid">
+            {texts.map((t) => {
+              const ext = extOf(t.filename || '')
+              const iconColor = ext === '.txt' ? '#4a90d9' : ext === '.md' ? '#4caf50' : '#999'
+              const statusClass = cardCounts[t.id] > 0 ? 'done' : 'pending'
+              const statusLabel = cardCounts[t.id] > 0 ? '已完成' : '待蒸馏'
+              return (
+                <div key={t.id} className="creation-text-card">
+                  <div className="creation-text-icon" style={{ color: iconColor }}>
+                    <Book size={22} />
+                  </div>
+                  <div className="creation-text-info">
+                    <div className="creation-text-title" title={t.title || t.filename}>
                       {t.title || t.filename || '未命名'}
-                    </span>
-                    {(() => {
-                      const est = timeEstimate(t.char_count, t.text_type)
-                      return est ? <span className={`text-meta${t.char_count > (t.text_type === 'chat' ? 2000000 : 1000000) ? ' chars-red' : ''}`}>{est.icon} {est.text}</span> : null
-                    })()}
-                    {cardCounts[t.id] > 0 && (
-                      <span className="text-list-badge">{cardCounts[t.id]} 个角色</span>
-                    )}
+                    </div>
+                    <div className="creation-text-meta">
+                      <span className="creation-text-filename">{t.filename}</span>
+                      <span className="creation-text-chars">{formatCount(t.char_count)} 字</span>
+                      <span className={`creation-text-status status-${statusClass}`}>{statusLabel}</span>
+                    </div>
                   </div>
-                  <div className="text-list-meta">
-                    <span className={`text-list-chars ${charCountClass(t.char_count)}`}>
-                      {`${formatCount(t.char_count)} 字`}
-                    </span>
-                    {t.text_type === 'chat' && t.original_char_count != null && t.original_char_count !== t.char_count && (
-                      <span className="text-list-cleaned">
-                        {`已清洗：${formatCount(t.original_char_count)} 字 → ${formatCount(t.char_count)} 字（保留 ${(t.char_count / t.original_char_count * 100).toFixed(0)}%）`}
-                      </span>
-                    )}
-                    <span className="text-list-time">
-                      {formatTime(t.created_at)}
-                    </span>
-                  </div>
-                  <span
-                    className="text-list-expand-toggle"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setExpandedId(expandedId === t.id ? null : t.id)
-                    }}
-                    title={expandedId === t.id ? '收起预览' : '展开预览'}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); setExpandedId(expandedId === t.id ? null : t.id) } }}
-                  >
-                    {expandedId === t.id ? '▲' : '▼'}
-                  </span>
-                </button>
-
-                {t.description && (
-                  <div className="text-list-desc">{t.description}</div>
-                )}
-
-                {expandedId === t.id && t.preview && (
-                  <div className="text-list-preview">
-                    <p className="text-list-preview-text">{t.preview}{t.char_count > 300 ? '…' : ''}</p>
-                    <p className="text-list-preview-meta">
-                      {`${formatCount(t.char_count)} 字 · 已导入 ${formatTime(t.created_at)}`}
-                    </p>
-                  </div>
-                )}
-
-                <div className="text-list-actions">
-                  <button
-                    type="button"
-                    className="btn-ghost text-list-action-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      selectText(t.id)
-                    }}
-                  >
-                    管理角色
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-ghost text-list-action-btn"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setCurrentTextDetailId(t.id)
-                      setView('textDetail')
-                    }}
-                    title="查看详情"
-                  >
-                    详情
-                  </button>
-                  {t.text_type === 'chat' && (
+                  <div className="creation-text-actions">
                     <button
                       type="button"
-                      className="btn-ghost text-list-action-btn"
-                      onClick={async (e) => {
+                      className="btn-ghost btn-sm"
+                      onClick={(e) => {
                         e.stopPropagation()
-                        try {
-                          const res = await fetchWithTimeout(`/api/text/${t.id}/download-cleaned`)
-                          const blob = await res.blob()
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = `${t.title || 'chat'}_cleaned.txt`
-                          document.body.appendChild(a)
-                          a.click()
-                          a.remove()
-                          URL.revokeObjectURL(url)
-                        } catch { /* ignore */ }
+                        useAppStore.getState().setReaderTextId(t.id)
+                        useAppStore.getState().setView('reader')
                       }}
-                      title="下载清洗后文本"
+                      title="阅读"
                     >
-                      {'\u{1F4E5}'} 下载清洗文本
+                      阅读
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    className="btn-ghost text-list-action-btn text-list-action-danger"
-                    disabled={deletingId === t.id}
-                    onClick={(e) => onDelete(e, t.id)}
-                    title="删除"
-                  >
-                    {deletingId === t.id ? '…' : '删除'}
-                  </button>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        selectText(t.id)
+                      }}
+                      title="蒸馏角色"
+                    >
+                      蒸馏
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost btn-sm creation-action-danger"
+                      disabled={deletingId === t.id}
+                      onClick={(e) => onDelete(e, t.id)}
+                      title="删除"
+                    >
+                      {deletingId === t.id ? '…' : '删除'}
+                    </button>
+                  </div>
                 </div>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
         )}
       </section>
 
@@ -469,6 +427,231 @@ export default function TextPanel() {
         onCancel={() => setDeleteConfirmId(null)}
         danger
       />
+        </>
+      ) : (
+        <CharacterManagement
+          setView={setView}
+          selectText={selectText}
+          startChat={startChat}
+          setCurrentMarketCardId={setCurrentMarketCardId}
+        />
+      )}
+    </div>
+  )
+}
+
+/* ==============================
+   角色管理 Tab（全部角色卡网格）
+   ============================== */
+
+function CharacterManagement({ setView, selectText, startChat, setCurrentMarketCardId }) {
+  const texts = useAppStore((s) => s.texts)
+  const loadTexts = useAppStore((s) => s.loadTexts)
+  const [allCards, setAllCards] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [filterTextId, setFilterTextId] = useState('')
+  const [menuOpen, setMenuOpen] = useState(null)
+  const [editCard, setEditCard] = useState(null)
+  const menuRef = useRef(null)
+
+  // Close menu on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  // Load all cards
+  useEffect(() => {
+    if (texts.length === 0) { loadTexts(); return }
+    let cancelled = false
+    ;(async () => {
+      setLoading(true)
+      const all = []
+      // Per-text cards
+      for (const t of texts) {
+        try {
+          const res = await fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
+          if (res.ok) {
+            const cards = await res.json()
+            for (const c of cards) {
+              all.push({ ...c, _textInfo: t, _source: t.title || t.filename })
+            }
+          }
+        } catch {}
+      }
+      // Standalone cards
+      try {
+        const res = await fetchWithTimeout('/api/distill/cards/standalone', { headers: { ...getAuthHeaders() } })
+        if (res.ok) {
+          const cards = await res.json()
+          for (const c of cards) {
+            all.push({ ...c, _source: '来自市场' })
+          }
+        }
+      } catch {}
+      if (!cancelled) setAllCards(all)
+      setLoading(false)
+    })()
+    return () => { cancelled = true }
+  }, [texts, loadTexts])
+
+  const filtered = filterTextId
+    ? allCards.filter((c) => c.text_id === filterTextId)
+    : allCards
+
+  const sourceOptions = [...new Set(allCards.map((c) => c._source || '未知').filter(Boolean))]
+
+  const distinctTextIds = [...new Set(allCards.filter((c) => c.text_id).map((c) => c.text_id))]
+
+  return (
+    <div className="creation-char-section">
+      <header className="panel-header">
+        <h1 className="panel-title">角色管理</h1>
+        <p className="panel-desc">管理所有蒸馏角色卡，点击 ⋯ 进行操作</p>
+      </header>
+
+      {/* Source filter */}
+      {sourceOptions.length > 0 && (
+        <div className="creation-char-filter-bar">
+          <button
+            type="button"
+            className={`creation-char-filter-pill${filterTextId === '' ? ' active' : ''}`}
+            onClick={() => setFilterTextId('')}
+          >
+            全部 ({allCards.length})
+          </button>
+          {distinctTextIds.map((tid) => {
+            const t = texts.find((tx) => tx.id === tid)
+            const label = t?.title || t?.filename || tid.slice(0, 8)
+            const count = allCards.filter((c) => c.text_id === tid).length
+            return (
+              <button
+                key={tid}
+                type="button"
+                className={`creation-char-filter-pill${filterTextId === tid ? ' active' : ''}`}
+                onClick={() => setFilterTextId(tid)}
+              >
+                {label} ({count})
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {loading ? (
+        <Loading text="加载角色…" />
+      ) : filtered.length === 0 ? (
+        <div className="creation-char-empty">
+          <p>暂无角色卡，先去上传文本蒸馏角色吧</p>
+          <button className="btn-primary" onClick={() => setView('text')}>前往文本管理</button>
+        </div>
+      ) : (
+        <div className="creation-char-grid">
+          {filtered.map((c) => {
+            const data = parseCardJson(c)
+            const name = data.name || c.name || '?'
+            const identity = data.identity || ''
+            const isPublic = !!c.published_id
+            const sourceText = c._source || ''
+            const createdAt = c.created_at || ''
+            return (
+              <div key={c.id} className="creation-char-card">
+                <Avatar name={name} src={null} size={48} />
+                <div className="creation-char-info">
+                  <div className="creation-char-name">{name}</div>
+                  <div className="creation-char-identity">{identity}</div>
+                  <div className="creation-char-footer">
+                    {sourceText && <span className="creation-char-source">{sourceText}</span>}
+                    {createdAt && <span className="creation-char-time">{formatTime(createdAt)}</span>}
+                  </div>
+                </div>
+                <span className={`creation-char-status${isPublic ? ' public' : ''}`}>
+                  {isPublic ? '已公开' : '私有'}
+                </span>
+                <div className="creation-char-menu-wrap">
+                  <button
+                    type="button"
+                    className="creation-char-menu-btn"
+                    onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === c.id ? null : c.id) }}
+                  >
+                    ⋯
+                  </button>
+                  {menuOpen === c.id && (
+                    <div className="creation-char-dropdown" ref={menuRef}>
+                      <button type="button" onClick={() => { setMenuOpen(null); setEditCard(c) }}>
+                        编辑
+                      </button>
+                      <button type="button" onClick={async () => {
+                        setMenuOpen(null)
+                        try {
+                          await startChat(c)
+                        } catch {}
+                      }}>
+                        聊天
+                      </button>
+                      <button type="button" onClick={() => {
+                        setMenuOpen(null)
+                        setCurrentMarketCardId(c.id)
+                        setView('marketCardDetail')
+                      }}>
+                        发布到市场
+                      </button>
+                      <button type="button" className="danger" onClick={async () => {
+                        setMenuOpen(null)
+                        if (!confirm(`确定删除「${name}」？`)) return
+                        try {
+                          await fetchWithTimeout(`/api/cards/${c.id}`, {
+                            method: 'DELETE',
+                            headers: { ...getAuthHeaders() },
+                          })
+                          setAllCards((prev) => prev.filter((x) => x.id !== c.id))
+                        } catch (err) {
+                          console.error('Delete card failed:', err)
+                        }
+                      }}>
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {editCard && (
+        <EditCardModal
+          isOpen={!!editCard}
+          data={parseCardJson(editCard)}
+          cardId={editCard.id || editCard.card_id}
+          onSave={async (cardJson) => {
+            try {
+              await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
+              })
+              setEditCard(null)
+              // Refresh all cards
+              const res = await fetchWithTimeout(`/api/distill/cards/by-text/${editCard.text_id}`)
+              if (res.ok) {
+                const cards = await res.json()
+                setAllCards((prev) => prev.map((c) => c.text_id === editCard.text_id
+                  ? cards.find((nc) => nc.id === c.id) || c
+                  : c
+                ))
+              }
+            } catch {}
+          }}
+          onClose={() => setEditCard(null)}
+        />
+      )}
     </div>
   )
 }

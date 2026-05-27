@@ -2084,18 +2084,17 @@ html.theme-aurora::before {
 .text-upload-zone {
   flex-shrink: 0;
   position: relative;
-  border: 2px dashed rgba(var(--accent-rgb), 0.35);
-  border-radius: 16px;
-  padding: 32px 24px;
+  border: 2px dashed var(--glass-border);
+  border-radius: 12px;
+  padding: 28px 20px;
   text-align: center;
-  background: rgba(var(--accent-rgb), 0.04);
-  transition: border-color 0.2s, background 0.2s, transform 0.2s var(--ease-spring);
+  background: transparent;
+  transition: border-color 0.2s, background 0.2s;
 }
 
 .text-upload-zone.drag-over {
-  border-color: var(--cream-green);
-  background: rgba(var(--accent-rgb), 0.1);
-  transform: scale(1.01);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.04);
 }
 
 .text-upload-zone.uploading {
@@ -2407,6 +2406,352 @@ html.theme-aurora::before {
   max-width: 400px;
 }
 
+/* ===== Creation Panel (tabs + card-based layout) ===== */
+.creation-panel.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+}
+
+.creation-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--glass-border);
+  margin: 0 0 16px;
+  flex-shrink: 0;
+}
+
+.creation-tab {
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.creation-tab:hover {
+  color: var(--text);
+}
+
+.creation-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ── Text cards ── */
+.creation-text-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.creation-text-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--glass-bg);
+  transition: box-shadow 0.2s;
+}
+
+.creation-text-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.creation-text-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.03);
+}
+
+.creation-text-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.creation-text-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.creation-text-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.creation-text-filename {
+  color: var(--text-secondary);
+}
+
+.creation-text-chars {
+  color: var(--text-dim);
+}
+
+.creation-text-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.creation-text-status.status-done {
+  background: rgba(76, 175, 80, 0.12);
+  color: #2e7d32;
+}
+
+.creation-text-status.status-pending {
+  background: rgba(158, 158, 158, 0.12);
+  color: #616161;
+}
+
+.creation-text-status.status-running {
+  background: rgba(33, 150, 243, 0.12);
+  color: #1565c0;
+  animation: pulse-blue 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-blue {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+.creation-text-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.creation-text-actions .btn-ghost {
+  font-size: 12px;
+  padding: 4px 12px;
+  height: 30px;
+}
+
+.creation-action-danger {
+  color: #e53935 !important;
+}
+
+.creation-action-danger:hover {
+  background: rgba(229, 57, 53, 0.08) !important;
+}
+
+/* ── Character management tab ── */
+.creation-char-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  flex: 1;
+}
+
+.creation-char-filter-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  flex-shrink: 0;
+}
+
+.creation-char-filter-pill {
+  padding: 4px 14px;
+  font-size: 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.creation-char-filter-pill:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.creation-char-filter-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.creation-char-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-dim);
+}
+
+.creation-char-empty p {
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.creation-char-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.creation-char-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--glass-bg);
+  position: relative;
+  transition: box-shadow 0.2s;
+}
+
+.creation-char-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.creation-char-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.creation-char-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.creation-char-identity {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 6px;
+}
+
+.creation-char-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.creation-char-source {
+  color: var(--text-secondary);
+}
+
+.creation-char-time {
+  color: var(--text-dim);
+}
+
+.creation-char-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(158, 158, 158, 0.12);
+  color: #616161;
+}
+
+.creation-char-status.public {
+  background: rgba(76, 175, 80, 0.12);
+  color: #2e7d32;
+}
+
+/* ── Character action menu ── */
+.creation-char-menu-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.creation-char-menu-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.creation-char-menu-btn:hover {
+  background: rgba(0,0,0,0.05);
+}
+
+.creation-char-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 100;
+  min-width: 140px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.creation-char-dropdown button {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  font-size: 13px;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 6px;
+  color: var(--text);
+  transition: background 0.1s;
+}
+
+.creation-char-dropdown button:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.creation-char-dropdown button.danger {
+  color: #e53935;
+}
+
+.creation-char-dropdown button.danger:hover {
+  background: rgba(229, 57, 53, 0.08);
+}
+
 /* ===== Character Panel ===== */
 .char-panel .error-box {
   flex-shrink: 0;
@@ -2476,48 +2821,33 @@ html.theme-aurora::before {
 .char-list-item {
   position: relative;
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
   width: 100%;
-  padding: 12px 12px 6px;
-  border-radius: 14px;
-  border: 1px solid rgba(0,0,0,0.05);
-  background: linear-gradient(160deg, rgba(255,255,255,0.75), rgba(255,255,255,0.25));
-  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
   cursor: pointer;
   font: inherit;
   text-align: left;
   color: inherit;
-  transition: all 0.2s ease;
+  transition: box-shadow 0.2s, border-color 0.2s;
   min-width: 0;
 }
 
-/* Pinned indicator — warm accent bar at top */
-.char-list-item.pinned::before {
-  content: '';
-  position: absolute;
-  top: -0.5px;
-  left: 16px;
-  right: 16px;
-  height: 3px;
-  border-radius: 0 0 3px 3px;
-  background: linear-gradient(90deg, #d4a574, #c4956a);
-}
-
 .char-list-item:hover {
-  transform: translateY(-1px);
-  border-color: rgba(0,0,0,0.08);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.03);
-  background: linear-gradient(160deg, rgba(255,255,255,0.88), rgba(255,255,255,0.35));
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
 }
 
 .char-list-item:active {
-  transform: scale(0.97);
+  transform: scale(0.98);
 }
 
 .char-list-item.active {
-  border-color: rgba(180,140,100,0.25);
-  background: linear-gradient(160deg, rgba(255,252,246,0.95), rgba(255,255,255,0.45));
-  box-shadow: 0 0 0 1px rgba(180,140,100,0.12), 0 2px 6px rgba(0,0,0,0.04);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.15), 0 2px 6px rgba(0,0,0,0.04);
 }
 
 /* Card top row: avatar + name + identity */
@@ -2572,6 +2902,70 @@ html.theme-aurora::before {
   align-items: center;
   gap: 3px;
   line-height: 1.4;
+}
+
+/* ── Sidebar card extras ── */
+.char-card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.char-card-source-line {
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.char-card-time {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.char-card-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(158, 158, 158, 0.12);
+  color: #616161;
+  margin-left: auto;
+  align-self: flex-start;
+}
+
+.char-card-status.shared {
+  background: rgba(76, 175, 80, 0.12);
+  color: #2e7d32;
+}
+
+.char-card-menu-wrap {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: 2px;
+}
+
+.char-card-menu-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+
+.char-card-menu-btn:hover {
+  background: rgba(0,0,0,0.05);
 }
 
 /* Card footer action row */
