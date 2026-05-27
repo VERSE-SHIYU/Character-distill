@@ -1883,18 +1883,17 @@ function FeaturedTab() {
   return (
     <div className="admin-card">
       <div className="admin-card-title">推荐管理</div>
-      <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+      <p className="admin-featured-desc">
         管理首页"编辑推荐"区块，最多 10 个角色，可通过上移/下移按钮调整顺序。
       </p>
 
       {msg && <div className={`${msg.includes('失败') || msg.includes('上限') ? 'admin-error-banner' : 'admin-success-banner'}`}>{msg}</div>}
 
       {/* Search */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div className="admin-featured-search">
         <input
           type="text"
           className="admin-input"
-          style={{ flex: 1 }}
           placeholder="搜索角色名称…"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
@@ -1907,12 +1906,12 @@ function FeaturedTab() {
 
       {/* Search results */}
       {searchResults.length > 0 && (
-        <div className="admin-card" style={{ marginBottom: 16, padding: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-dim)' }}>搜索结果</div>
+        <div className="admin-featured-result">
+          <div className="admin-featured-result-title">搜索结果</div>
           {searchResults.map((c) => (
-            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
-              <span style={{ flex: 1, fontSize: 13 }}>{c.name || '?'}</span>
-              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{c.identity || ''}</span>
+            <div key={c.id} className="admin-featured-result-item">
+              <span className="admin-featured-result-name">{c.name || '?'}</span>
+              <span className="admin-featured-result-identity">{c.identity || ''}</span>
               <button
                 className="btn-primary btn-sm"
                 onClick={() => handleAdd(c.id)}
@@ -1931,31 +1930,27 @@ function FeaturedTab() {
       ) : items.length === 0 ? (
         <div className="admin-empty">暂无置顶角色</div>
       ) : (
-        <div className="admin-list">
-          {items.map((fc, idx) => (
-            <div key={fc.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--glass-border)' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-dim)', width: 24, flexShrink: 0 }}>{idx + 1}</span>
-              <div style={{ width: 48, height: 48, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--glass-border)' }}>
-                {fc.avatar_data ? (
-                  <img src={fc.avatar_data} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                ) : (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.2)', background: 'var(--accent)' }}>
-                    {(fc.name || '?')[0]}
-                  </div>
-                )}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fc.name || '未知角色'}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fc.identity || ''}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                <button className="btn-ghost btn-sm" onClick={() => handleMoveUp(idx)} disabled={idx === 0} title="上移" style={{ fontSize: 16, lineHeight: 1, padding: '4px 8px' }}>↑</button>
-                <button className="btn-ghost btn-sm" onClick={() => handleMoveDown(idx)} disabled={idx === items.length - 1} title="下移" style={{ fontSize: 16, lineHeight: 1, padding: '4px 8px' }}>↓</button>
-                <button className="btn-ghost-danger btn-sm" onClick={() => handleRemove(fc.id)} title="删除" style={{ padding: '4px 8px' }}>✕</button>
-              </div>
+        items.map((fc, idx) => (
+          <div key={fc.id} className="admin-featured-list-item">
+            <span className="admin-featured-rank">{idx + 1}</span>
+            <div className="admin-featured-thumb">
+              {fc.avatar_data ? (
+                <img src={fc.avatar_data} alt="" />
+              ) : (
+                <div className="admin-featured-thumb-placeholder">{(fc.name || '?')[0]}</div>
+              )}
             </div>
-          ))}
-        </div>
+            <div className="admin-featured-info">
+              <div className="admin-featured-name">{fc.name || '未知角色'}</div>
+              <div className="admin-featured-identity">{fc.identity || ''}</div>
+            </div>
+            <div className="admin-featured-actions">
+              <button className="btn-ghost btn-sm admin-featured-btn" onClick={() => handleMoveUp(idx)} disabled={idx === 0} title="上移">↑</button>
+              <button className="btn-ghost btn-sm admin-featured-btn" onClick={() => handleMoveDown(idx)} disabled={idx === items.length - 1} title="下移">↓</button>
+              <button className="btn-ghost-danger btn-sm" onClick={() => handleRemove(fc.id)} title="删除">✕</button>
+            </div>
+          </div>
+        ))
       )}
     </div>
   )
