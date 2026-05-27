@@ -9141,8 +9141,8 @@ select.settings-input {
 }
 
 .messages-bubble.mine {
-  background: #95ec69;
-  color: #1a1a1a;
+  background: color-mix(in srgb, var(--accent) 85%, white);
+  color: #fff;
   border-radius: 8px;
 }
 
