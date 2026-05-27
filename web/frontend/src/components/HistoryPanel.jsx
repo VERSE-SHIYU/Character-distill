@@ -67,6 +67,8 @@ async function downloadExport(sessionId, format) {
 
 export default function HistoryPanel({ initialTrash = false }) {
   const texts = useAppStore((s) => s.texts)
+  const textProgress = useAppStore((s) => s.textProgress)
+  const loadTextProgress = useAppStore((s) => s.loadTextProgress)
   const cards = useAppStore((s) => s.cards)
   const resumeSession = useAppStore((s) => s.resumeSession)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
@@ -92,7 +94,6 @@ export default function HistoryPanel({ initialTrash = false }) {
   const [groupDetail, setGroupDetail] = useState(null)
   const [groupDetailLoading, setGroupDetailLoading] = useState(false)
   const [textItems, setTextItems] = useState([])
-  const [textProgress, setTextProgress] = useState({})
   const [textsLoading, setTextsLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const [deleteTextId, setDeleteTextId] = useState(null)
@@ -391,16 +392,19 @@ export default function HistoryPanel({ initialTrash = false }) {
   async function loadBooks() {
     setTextsLoading(true)
     try {
-      const [textsRes, progRes] = await Promise.all([
-        fetchWithTimeout('/api/text/list'),
-        fetchWithTimeout('/api/text/reading-progress/all'),
-      ])
-      const texts = await textsRes.json()
-      const progress = await progRes.json()
-      setTextItems(Array.isArray(texts) ? texts : [])
-      const map = {}
-      ;(Array.isArray(progress) ? progress : []).forEach((p) => { map[p.text_id] = p })
-      setTextProgress(map)
+      let items = Array.isArray(texts) ? texts : []
+      if (items.length === 0) {
+        const res = await fetchWithTimeout('/api/text/list')
+        items = await res.json()
+        items = Array.isArray(items) ? items : []
+      }
+      setTextItems(items)
+
+      let pMap = textProgress
+      if (!pMap || Object.keys(pMap).length === 0) {
+        await loadTextProgress()
+        pMap = useAppStore.getState().textProgress || {}
+      }
     } catch (err) {
       console.error('[HistoryPanel] load books failed:', err)
     } finally {

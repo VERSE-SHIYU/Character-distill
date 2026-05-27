@@ -74,6 +74,18 @@ const useAppStore = create((set, get) => ({
   setReaderTextId: (id) => set({ readerTextId: id }),
 
   texts: [],
+  textProgress: {},
+  loadTextProgress: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/text/reading-progress/all')
+      const data = await res.json()
+      const map = {}
+      ;(Array.isArray(data) ? data : []).forEach((p) => { map[p.text_id] = p })
+      set({ textProgress: map })
+    } catch (err) {
+      console.error('[store] loadTextProgress failed:', err)
+    }
+  },
   currentTextId: null,
   currentTextTitle: '',
 
