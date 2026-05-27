@@ -110,6 +110,38 @@ export default function MinePage() {
   const [bannerCropFile, setBannerCropFile] = useState(null)
   const avatarInputRef = useRef(null)
   const [avatarCropFile, setAvatarCropFile] = useState(null)
+  const [showEmoji, setShowEmoji] = useState(false)
+  const textareaRef = useRef(null)
+  const emojiRef = useRef(null)
+
+  // Emoji data
+  const EMOJI_LIST = [
+    { label: '常用', items: ['😀','😂','🤣','😊','😍','🥰','😘','😭','😢','😤','😡','🥺','😱','😴','🤔','🤗','🤩','😎','🙄','😏','😈','👻','💀','🤡','👍','👎','👏','🙏','💪','❤️','🔥','⭐','🎉','🎈','💯','✨','🌈','🌸','🍀'] },
+    { label: '人物', items: ['👋','✌️','🤞','🤟','🤘','👌','🤏','👈','👉','👆','👇','☝️','✋','🤚','🖐️','🖖','👊','✊','🤛','🤜','🫶','🤝','💅','🧑‍💻','👨‍💻','👩‍💻','🧑‍🎨','💃','🕺'] },
+    { label: '自然', items: ['🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🐔','🐧','🐦','🦋','🌻','🌹','🌺','🍎','🍕','🍔','🍟','🍦','☕','🍰','🧁'] },
+  ]
+
+  const insertEmoji = (emoji) => {
+    const ta = textareaRef.current
+    if (!ta) { setPostContent(prev => prev + emoji); return }
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const text = postContent
+    const newText = text.slice(0, start) + emoji + text.slice(end)
+    setPostContent(newText)
+    requestAnimationFrame(() => {
+      ta.selectionStart = ta.selectionEnd = start + emoji.length
+      ta.focus()
+    })
+  }
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target)) setShowEmoji(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const loadData = () => {
     if (!authUser?.id) return
@@ -439,6 +471,7 @@ export default function MinePage() {
           <>
             <div className="mine-composer">
               <textarea
+                ref={textareaRef}
                 className="mine-composer-input"
                 placeholder="写点什么…"
                 rows={3}
@@ -446,7 +479,37 @@ export default function MinePage() {
                 onChange={(e) => setPostContent(e.target.value)}
               />
               <div className="mine-composer-toolbar">
-                <div />
+                <div className="mine-composer-emoji-wrap" ref={emojiRef}>
+                  <button
+                    type="button"
+                    className="mine-composer-emoji-btn"
+                    onClick={() => setShowEmoji(prev => !prev)}
+                    title="表情"
+                  >
+                    😊
+                  </button>
+                  {showEmoji && (
+                    <div className="mine-composer-emoji-panel">
+                      {EMOJI_LIST.map(group => (
+                        <div key={group.label} className="emoji-group">
+                          <div className="emoji-group-label">{group.label}</div>
+                          <div className="emoji-group-grid">
+                            {group.items.map(em => (
+                              <button
+                                key={em}
+                                type="button"
+                                className="emoji-item"
+                                onClick={() => insertEmoji(em)}
+                              >
+                                {em}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button
                   type="button"
                   className="btn-primary btn-sm"
