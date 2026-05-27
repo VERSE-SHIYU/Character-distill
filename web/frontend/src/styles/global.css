@@ -8880,6 +8880,49 @@ select.settings-input {
 }
 .chat-rename-btn:hover { opacity: 1; color: var(--accent); }
 
+.chat-delete-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+.chat-delete-btn:hover { opacity: 1; color: #e74c3c; }
+
+.messages-conv-item-wrap {
+  position: relative;
+}
+
+.messages-conv-delete-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.35);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 2;
+}
+.messages-conv-item-wrap:hover .messages-conv-delete-btn {
+  opacity: 1;
+}
+.messages-conv-delete-btn:hover {
+  background: #e74c3c;
+}
+
 .private-chat-title-input {
   font-size: 15px;
   font-weight: 600;

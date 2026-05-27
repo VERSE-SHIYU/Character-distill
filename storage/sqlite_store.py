@@ -508,6 +508,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Announcement align migration failed: {exc}")
 
+                    # Run 050_group_soft_delete migration (ALTER TABLE ADD COLUMN)
+                    gsd_path = migrations_dir / "050_group_soft_delete.sql"
+                    if gsd_path.exists():
+                        try:
+                            await conn.executescript(gsd_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Group soft delete migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1578,7 +1588,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at FROM group_sessions WHERE id = ?",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -1597,7 +1607,7 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT id, name, card_ids, user_id, created_at
                        FROM group_sessions
-                       WHERE user_id = ?
+                       WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",
                     (user_id,),
                 )
@@ -1610,6 +1620,49 @@ class SQLiteStore(StorageBase):
             return results
         except Exception as exc:
             print(f"[SQLiteStore] List group sessions failed: {exc}")
+            raise
+
+    async def get_deleted_group_sessions(self, user_id: str) -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, name, card_ids, user_id, created_at, deleted_at
+                       FROM group_sessions
+                       WHERE user_id = ? AND deleted_at != '' AND deleted_at IS NOT NULL
+                       ORDER BY deleted_at DESC""",
+                    (user_id,),
+                )
+                rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                d = dict(row)
+                d["card_ids"] = json.loads(d["card_ids"])
+                results.append(d)
+            return results
+        except Exception as exc:
+            print(f"[SQLiteStore] Get deleted group sessions failed: {exc}")
+            raise
+
+    async def restore_group_session(self, id: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE group_sessions SET deleted_at = '' WHERE id = ?",
+                    (id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Restore group session failed: {exc}")
+            raise
+
+    async def hard_delete_group_session(self, id: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM group_messages WHERE group_id = ?", (id,))
+                await conn.execute("DELETE FROM group_sessions WHERE id = ?", (id,))
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Hard delete group session failed: {exc}")
             raise
 
     async def save_group_message(
@@ -1659,8 +1712,10 @@ class SQLiteStore(StorageBase):
     async def delete_group_session(self, id: str) -> None:
         try:
             async with await self._connect() as conn:
-                await conn.execute("DELETE FROM group_messages WHERE group_id = ?", (id,))
-                await conn.execute("DELETE FROM group_sessions WHERE id = ?", (id,))
+                await conn.execute(
+                    "UPDATE group_sessions SET deleted_at = datetime('now') WHERE id = ?",
+                    (id,),
+                )
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Delete group session failed: {exc}")

@@ -245,6 +245,10 @@ async def send_message(
     if req.target_card_id not in group.engines:
         raise HTTPException(400, "目标角色不在群聊中")
 
+    session_rec = await storage.get_group_session(group_id)
+    if session_rec and session_rec.get("deleted_at"):
+        raise HTTPException(410, "群聊已被删除")
+
     async with group.lock:
         try:
             resp = await group.send(req.target_card_id, req.message)
@@ -289,6 +293,10 @@ async def broadcast_message(
     if invalid:
         raise HTTPException(400, f"目标角色不在群聊中: {invalid}")
 
+    session_rec = await storage.get_group_session(group_id)
+    if session_rec and session_rec.get("deleted_at"):
+        raise HTTPException(410, "群聊已被删除")
+
     async with group.lock:
         try:
             results = await group.broadcast(req.message, req.target_card_ids, auto_mode=req.auto_mode)
@@ -327,6 +335,9 @@ async def get_history(
     if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此群聊")
 
+    if session.get("deleted_at"):
+        raise HTTPException(410, "群聊已被删除")
+
     messages = await storage.get_group_messages(group_id)
     return {"messages": messages}
 
@@ -348,6 +359,8 @@ async def rename_group(
         raise HTTPException(404, "群聊不存在")
     if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权操作此群聊")
+    if session.get("deleted_at"):
+        raise HTTPException(410, "群聊已被删除")
     await storage.update_group_session(group_id, req.name.strip())
     return {"ok": True}
 
@@ -360,12 +373,63 @@ async def delete_group(
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """删除群聊会话及所有消息。"""
+    """软删除群聊会话（移入回收站）。"""
     session = await storage.get_group_session(group_id)
     if not session:
         raise HTTPException(404, "群聊不存在")
     if session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权操作")
     await storage.delete_group_session(group_id)
+    _group_sessions.pop(group_id, None)
+    return {"ok": True}
+
+
+@router.get("/trash")
+@limiter.limit("30/minute")
+async def list_trash_groups(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """列出已删除的群聊。"""
+    groups = await storage.get_deleted_group_sessions(user["id"])
+    return {"groups": groups}
+
+
+@router.post("/{group_id}/restore")
+@limiter.limit("30/minute")
+async def restore_group(
+    group_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """恢复已删除的群聊。"""
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+    if not session.get("deleted_at"):
+        raise HTTPException(400, "群聊未被删除")
+    await storage.restore_group_session(group_id)
+    return {"ok": True}
+
+
+@router.delete("/{group_id}/permanent")
+@limiter.limit("30/minute")
+async def permanent_delete_group(
+    group_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """永久删除群聊及其所有消息。"""
+    session = await storage.get_group_session(group_id)
+    if not session:
+        raise HTTPException(404, "群聊不存在")
+    if session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作")
+    await storage.hard_delete_group_session(group_id)
     _group_sessions.pop(group_id, None)
     return {"ok": True}

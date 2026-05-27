@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { fetchWithTimeout } from '../api/client'
 import HistoryPanel from './HistoryPanel'
 import Avatar from './common/Avatar'
@@ -6,11 +6,32 @@ import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
 
+function formatTime(iso) {
+  if (!iso) return '—'
+  try {
+    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
+    return new Date(s).toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
 export default function TrashPage() {
   const [tab, setTab] = useState('chat')
   const [cards, setCards] = useState([])
   const [cardsLoading, setCardsLoading] = useState(false)
   const [purgeId, setPurgeId] = useState(null)
+
+  // Group trash
+  const [groups, setGroups] = useState([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [restoreGroupId, setRestoreGroupId] = useState(null)
+  const [purgeGroupId, setPurgeGroupId] = useState(null)
 
   const loadTrashCards = async () => {
     setCardsLoading(true)
@@ -23,9 +44,21 @@ export default function TrashPage() {
     }
   }
 
+  const loadTrashGroups = useCallback(async () => {
+    setGroupsLoading(true)
+    try {
+      const res = await fetchWithTimeout('/api/group/trash')
+      const data = await res.json()
+      setGroups(data.groups || [])
+    } catch { /* ignore */ } finally {
+      setGroupsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (tab === 'cards') loadTrashCards()
-  }, [tab])
+    if (tab === 'groups') loadTrashGroups()
+  }, [tab, loadTrashGroups])
 
   const handleRestore = async (cardId) => {
     try {
@@ -44,11 +77,31 @@ export default function TrashPage() {
     } catch { /* ignore */ }
   }
 
+  const handleRestoreGroup = async () => {
+    const id = restoreGroupId
+    setRestoreGroupId(null)
+    if (!id) return
+    try {
+      await fetchWithTimeout(`/api/group/${id}/restore`, { method: 'POST' })
+      setGroups((prev) => prev.filter((g) => g.id !== id))
+    } catch { /* ignore */ }
+  }
+
+  const handlePurgeGroup = async () => {
+    const id = purgeGroupId
+    setPurgeGroupId(null)
+    if (!id) return
+    try {
+      await fetchWithTimeout(`/api/group/${id}/permanent`, { method: 'DELETE' })
+      setGroups((prev) => prev.filter((g) => g.id !== id))
+    } catch { /* ignore */ }
+  }
+
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <header className="panel-header">
         <h1 className="panel-title">回收站</h1>
-        <p className="panel-desc">管理已删除的对话和角色卡</p>
+        <p className="panel-desc">管理已删除的对话、角色卡和群聊</p>
       </header>
 
       <div className="history-tab-bar">
@@ -65,6 +118,13 @@ export default function TrashPage() {
           onClick={() => setTab('cards')}
         >
           已删除角色卡
+        </button>
+        <button
+          type="button"
+          className={`history-tab${tab === 'groups' ? ' active' : ''}`}
+          onClick={() => setTab('groups')}
+        >
+          已删除群聊
         </button>
       </div>
 
@@ -135,6 +195,71 @@ export default function TrashPage() {
         </>
       )}
 
+      {tab === 'groups' && (
+        <>
+          {groupsLoading ? (
+            <Loading text="加载已删除群聊…" />
+          ) : groups.length === 0 ? (
+            <div className="shell-placeholder" style={{ padding: 40 }}>
+              <div className="shell-placeholder-inner">
+                <div className="shell-placeholder-icon">
+                  <svg viewBox="0 0 120 100" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" width="80" height="67" style={{ color: 'var(--text-dim)', opacity: 0.4 }}>
+                    <path d="M30 30 L25 85 C25 90 30 95 35 95 L85 95 C90 95 95 90 95 85 L90 30" />
+                    <path d="M20 30 L100 30" strokeWidth="1.5" />
+                    <path d="M45 30 L45 18 C45 14 49 10 53 10 L67 10 C71 10 75 14 75 18 L75 30" />
+                    <path d="M50 45 L50 78" />
+                    <path d="M70 45 L70 78" />
+                    <path d="M60 45 L60 78" opacity="0.6" />
+                    <path d="M5 30 L115 30" strokeWidth="0.8" opacity="0.3" />
+                    <circle cx="95" cy="15" r="3" opacity="0.3" />
+                    <circle cx="105" cy="25" r="2" opacity="0.2" />
+                    <circle cx="15" cy="85" r="2" opacity="0.25" />
+                    <circle cx="110" cy="80" r="1.5" opacity="0.2" />
+                  </svg>
+                </div>
+                <div className="shell-placeholder-title">回收站空空如也</div>
+                <div className="shell-placeholder-sub">删除的群聊会出现在这里</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 0' }}>
+              {groups.map((g) => (
+                <div key={g.id} className="history-swipe-wrapper">
+                  <div className="history-swipe-actions">
+                    <button
+                      type="button"
+                      className="history-swipe-restore"
+                      onClick={() => setRestoreGroupId(g.id)}
+                    >
+                      恢复
+                    </button>
+                    <button
+                      type="button"
+                      className="history-swipe-delete"
+                      onClick={() => setPurgeGroupId(g.id)}
+                    >
+                      彻底删除
+                    </button>
+                  </div>
+                  <div className="history-item" style={{ cursor: 'default' }}>
+                    <Avatar name={g.name || '群聊'} size={40} />
+                    <div className="history-item-body">
+                      <div className="history-item-head">
+                        <span className="history-item-name">{g.name || '未命名群聊'}</span>
+                        <span className="history-item-time">{formatTime(g.deleted_at)}</span>
+                      </div>
+                      <p className="history-item-preview">
+                        {Array.isArray(g.card_ids) ? g.card_ids.length : 0} 个角色
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <ConfirmModal
         isOpen={!!purgeId}
         title="彻底删除"
@@ -142,6 +267,25 @@ export default function TrashPage() {
         confirmText="彻底删除"
         onConfirm={handlePurge}
         onCancel={() => setPurgeId(null)}
+        danger
+      />
+
+      <ConfirmModal
+        isOpen={!!restoreGroupId}
+        title="恢复群聊"
+        message="确定恢复该群聊？恢复后可在群聊列表中查看。"
+        confirmText="恢复"
+        onConfirm={handleRestoreGroup}
+        onCancel={() => setRestoreGroupId(null)}
+      />
+
+      <ConfirmModal
+        isOpen={!!purgeGroupId}
+        title="彻底删除"
+        message="确定彻底删除该群聊及其所有消息？此操作不可恢复。"
+        confirmText="彻底删除"
+        onConfirm={handlePurgeGroup}
+        onCancel={() => setPurgeGroupId(null)}
         danger
       />
     </div>

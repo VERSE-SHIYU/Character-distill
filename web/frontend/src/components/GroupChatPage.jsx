@@ -4,6 +4,7 @@ import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
+import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import MentionDropdown from './common/MentionDropdown'
@@ -53,6 +54,7 @@ export default function GroupChatPage() {
   const autoStopRef = useRef(false)
   const msgInputRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
+  const [deleteGroupId, setDeleteGroupId] = useState(null)
 
   // ── 角色缓存：按 card_id 索引，替代 allCards ──
   const [allCards, setAllCards] = useState([])
@@ -291,6 +293,23 @@ export default function GroupChatPage() {
     setEditingName(true)
   }
 
+  const handleDeleteGroup = useCallback(async () => {
+    const id = deleteGroupId
+    setDeleteGroupId(null)
+    if (!id) return
+    try {
+      await fetchWithTimeout(`/api/group/${id}`, { method: 'DELETE' })
+      if (currentGroup?.id === id) {
+        setCurrentGroup(null)
+        setMessages([])
+        setShowMembers(false)
+      }
+      loadGroups()
+    } catch (err) {
+      setError(err.message || '删除失败')
+    }
+  }, [deleteGroupId, currentGroup?.id, loadGroups])
+
   function backToList() {
     setCurrentGroup(null)
     setMessages([])
@@ -509,28 +528,40 @@ export default function GroupChatPage() {
               .filter(Boolean)
             const isActive = currentGroup?.id === g.id
             return (
-              <button
-                key={g.id}
-                type="button"
-                className={`messages-conv-item${isActive ? ' active' : ''}`}
-                onClick={() => enterGroup(g)}
-              >
-                <div className="group-avatar-stack">
-                  {cardIds.slice(0, 3).map((id) => (
-                    <Avatar key={id} name={resolveCard(id)?.name || '?'}
-                      src={cardAvatars[id]} size={36} />
-                  ))}
-                </div>
-                <div className="messages-conv-body">
-                  <div className="messages-conv-head">
-                    <span className="messages-conv-name">{g.name || '未命名群聊'}</span>
-                    <span className="messages-conv-time">
-                      {formatChatTime(g.created_at)}
-                    </span>
+              <div key={g.id} className="messages-conv-item-wrap">
+                <button
+                  type="button"
+                  className={`messages-conv-item${isActive ? ' active' : ''}`}
+                  onClick={() => enterGroup(g)}
+                >
+                  <div className="group-avatar-stack">
+                    {cardIds.slice(0, 3).map((id) => (
+                      <Avatar key={id} name={resolveCard(id)?.name || '?'}
+                        src={cardAvatars[id]} size={36} />
+                    ))}
                   </div>
-                  <p className="messages-conv-preview">{names.join('、')}</p>
-                </div>
-              </button>
+                  <div className="messages-conv-body">
+                    <div className="messages-conv-head">
+                      <span className="messages-conv-name">{g.name || '未命名群聊'}</span>
+                      <span className="messages-conv-time">
+                        {formatChatTime(g.created_at)}
+                      </span>
+                    </div>
+                    <p className="messages-conv-preview">{names.join('、')}</p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="messages-conv-delete-btn"
+                  onClick={(e) => { e.stopPropagation(); setDeleteGroupId(g.id) }}
+                  title="删除群聊"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                  </svg>
+                </button>
+              </div>
             )
           })}
         </div>
@@ -564,6 +595,12 @@ export default function GroupChatPage() {
                     <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
                     <button type="button" className="chat-rename-btn" onClick={startEditing} title="重命名">
                       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button type="button" className="chat-delete-btn" onClick={() => setDeleteGroupId(currentGroup.id)} title="删除群聊">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                      </svg>
                     </button>
                   </div>
                 )}
@@ -843,6 +880,16 @@ export default function GroupChatPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!deleteGroupId}
+        title="删除群聊"
+        message="确定将该群聊移入回收站？消息记录将保留，可后续恢复。"
+        confirmText="删除"
+        onConfirm={handleDeleteGroup}
+        onCancel={() => setDeleteGroupId(null)}
+        danger
+      />
     </div>
   )
 }

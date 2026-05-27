@@ -712,7 +712,7 @@ export default function HistoryPanel({ initialTrash = false }) {
       <ConfirmModal
         isOpen={!!deleteGroupId}
         title="删除群聊"
-        message="确定删除该群聊及其所有消息？此操作不可恢复。"
+        message="确定删除该群聊？将移入回收站，可后续恢复。"
         confirmText="删除"
         onConfirm={async () => {
           const id = deleteGroupId
