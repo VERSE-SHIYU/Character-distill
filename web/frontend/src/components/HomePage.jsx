@@ -101,7 +101,7 @@ export default function HomePage() {
     if (selectedTag) params.set('tag', selectedTag)
     fetchWithTimeout(`/api/market/list?${params}`)
       .then((r) => r.json())
-      .then((data) => { if (!cancelled) setDiscoverCards(data.items || []) })
+      .then((data) => { if (!cancelled) setDiscoverCards(data.cards || []) })
       .catch(() => {})
       .finally(() => { if (!cancelled) setDiscoverLoading(false) })
     return () => { cancelled = true }
@@ -284,31 +284,35 @@ export default function HomePage() {
             <div className="home-featured-section">
               <h2 className="home-section-title">编辑推荐</h2>
               <div className="home-featured-bar">
-                {featuredCards.map((fc) => (
-                  <button
-                    key={fc.id}
-                    type="button"
-                    className="home-featured-card"
-                    onClick={() => { setCurrentMarketCardId(fc.card_id); setView('marketCardDetail') }}
-                  >
-                    <div className="home-featured-cover">
-                      {fc.avatar_data ? (
-                        <>
-                          <img className="home-featured-blur" src={fc.avatar_data} alt="" />
-                          <img className="home-featured-img" src={fc.avatar_data} alt={fc.name || '角色'} />
-                        </>
-                      ) : (
-                        <div className="home-featured-fallback">
-                          <span className="home-featured-letter">{(fc.name || '?')[0]}</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="home-featured-info">
-                      <div className="home-featured-name">{fc.name || '未知角色'}</div>
-                      <div className="home-featured-identity">{fc.identity || ''}</div>
-                    </div>
-                  </button>
-                ))}
+                {featuredCards.map((fc) => {
+                  let fcData = {}
+                  try { if (fc.card_json) fcData = JSON.parse(fc.card_json) } catch {}
+                  return (
+                    <button
+                      key={fc.id}
+                      type="button"
+                      className="home-featured-card"
+                      onClick={() => { setCurrentMarketCardId(fc.card_id); setView('marketCardDetail') }}
+                    >
+                      <div className="home-featured-cover">
+                        {fc.avatar_data ? (
+                          <>
+                            <img className="home-featured-blur" src={fc.avatar_data} alt="" />
+                            <img className="home-featured-img" src={fc.avatar_data} alt={fc.name || '角色'} />
+                          </>
+                        ) : (
+                          <div className="home-featured-fallback">
+                            <span className="home-featured-letter">{(fc.name || '?')[0]}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="home-featured-info">
+                        <div className="home-featured-name">{fc.name || '未知角色'}</div>
+                        <div className="home-featured-identity">{fcData.identity || ''}</div>
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -383,7 +387,7 @@ export default function HomePage() {
                       <div className="market-card-v2-identity">{c.identity || ''}</div>
                       <div className="market-card-v2-bottom">
                         <div className="market-card-v2-stats">
-                          <span>{'❤'} {c.likes_count ?? 0}</span>
+                          <span>{'❤'} {c.likes ?? 0}</span>
                         </div>
                       </div>
                     </div>

@@ -3676,7 +3676,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT fc.id, fc.card_id, fc.sort_order, fc.created_at,
-                              c.name, c.identity, c.avatar_data, c.likes,
+                              c.name, c.card_json, c.avatar_data, c.likes,
                               c.card_json, c.user_id,
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(u.avatar_data, '') AS author_avatar
