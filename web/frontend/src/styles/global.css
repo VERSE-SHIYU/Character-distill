@@ -13612,10 +13612,33 @@ select.settings-input {
   flex-shrink: 0;
 }
 
-.reader-progress-text {
-  font-size: 12px;
+.reader-page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  border: 1px solid rgba(128,128,128,0.2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text, #333);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.reader-page-btn:hover:not(:disabled) {
+  background: rgba(128,128,128,0.08);
+  border-color: var(--accent, #667eea);
+}
+.reader-page-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.reader-page-info {
+  font-size: 13px;
   color: var(--text-dim, #888);
-  min-width: 36px;
+  min-width: 60px;
+  text-align: center;
 }
 
 .reader-bottom-group {

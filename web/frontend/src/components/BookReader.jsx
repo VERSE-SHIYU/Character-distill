@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 
@@ -72,6 +72,27 @@ function extractTOC(content) {
   return toc
 }
 
+function paginateContent(content, maxChars = 5000) {
+  if (!content) return ['']
+  // Split by ## heading (chapters)
+  const chapters = content.split(/\n(?=## )/).filter(Boolean)
+  if (chapters.length > 1) return chapters
+  // Fallback: split at paragraph boundaries
+  const paragraphs = content.split(/\n\n+/)
+  const pages = []
+  let cur = ''
+  for (const p of paragraphs) {
+    if (cur.length + p.length > maxChars && cur) {
+      pages.push(cur.trim())
+      cur = p
+    } else {
+      cur += (cur ? '\n\n' : '') + p
+    }
+  }
+  if (cur.trim()) pages.push(cur.trim())
+  return pages.length > 0 ? pages : [content]
+}
+
 function stringToHash(str) {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
@@ -118,13 +139,13 @@ export default function BookReader() {
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem(LS_THEME_KEY) === 'dark'
   })
-  const [progress, setProgress] = useState(0)
-  const [showTOC, setShowTOC] = useState(false)
+  const [currentPage, setCurrentPage] = useState(0)
   const [toc, setToc] = useState([])
+  const [showTOC, setShowTOC] = useState(false)
 
-  const contentRef = useRef(null)
-  const saveTimerRef = useRef(null)
-  const lastSavedRef = useRef(0)
+  const pages = useMemo(() => paginateContent(content), [content])
+  const totalPages = pages.length
+  const initializedPageRef = useRef(false)
 
   useEffect(() => {
     if (!readerTextId) {
@@ -138,6 +159,7 @@ export default function BookReader() {
 
     setLoading(true)
     setError('')
+    initializedPageRef.current = false
 
     Promise.all([
       fetchWithTimeout(`/api/text/${readerTextId}/read`).then((r) => {
@@ -151,15 +173,6 @@ export default function BookReader() {
         setContent(c)
         setTitle(textData.text?.title || title)
         setToc(extractTOC(c))
-        setProgress(progressData.progress || 0)
-        lastSavedRef.current = progressData.scroll_position || 0
-
-        // Restore scroll after render
-        requestAnimationFrame(() => {
-          if (contentRef.current && progressData.scroll_position) {
-            contentRef.current.scrollTop = progressData.scroll_position
-          }
-        })
       })
       .catch((err) => {
         setError(err.message)
@@ -167,32 +180,34 @@ export default function BookReader() {
       .finally(() => setLoading(false))
   }, [readerTextId])
 
-  // Save progress with throttle
-  const saveProgress = useCallback((scrollPos) => {
-    const now = Date.now()
-    if (now - lastSavedRef.current < 4000) return
-    lastSavedRef.current = now
+  // Initialize page from saved progress once content/pages are ready
+  useEffect(() => {
+    if (!content || initializedPageRef.current) return
+    initializedPageRef.current = true
+    // Fetch progress again to get saved page number
+    fetchWithTimeout(`/api/text/${readerTextId}/progress`)
+      .then((r) => r.json())
+      .then((data) => {
+        const savedPage = Math.round((data.progress || 0) * totalPages)
+        setCurrentPage(Math.min(Math.max(0, savedPage), totalPages - 1))
+      })
+      .catch(() => {})
+  }, [content, totalPages])
 
-    const totalHeight = contentRef.current?.scrollHeight || 1
-    const pct = Math.min(1, scrollPos / (totalHeight - window.innerHeight))
-
-    fetchWithTimeout(`/api/text/${readerTextId}/progress`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ progress: pct, scroll_position: scrollPos }),
-    }).catch(() => {})
-  }, [readerTextId])
-
-  const handleScroll = useCallback(() => {
+  // Save progress on page change
+  const saveTimerRef = useRef(null)
+  useEffect(() => {
+    if (!content || totalPages <= 1) return
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
-      if (contentRef.current) {
-        const sp = contentRef.current.scrollTop
-        setProgress(contentRef.current.scrollTop)
-        saveProgress(sp)
-      }
-    }, 500)
-  }, [saveProgress])
+      const pct = totalPages > 1 ? currentPage / (totalPages - 1) : 0
+      fetchWithTimeout(`/api/text/${readerTextId}/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ progress: pct, scroll_position: currentPage }),
+      }).catch(() => {})
+    }, 300)
+  }, [currentPage, content, totalPages])
 
   const handleFontSizeChange = (delta) => {
     const idx = FONT_SIZES.indexOf(fontSize)
@@ -214,26 +229,21 @@ export default function BookReader() {
     setView('mine')
   }
 
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(0, Math.min(totalPages - 1, page)))
+  }
+
   const scrollToHeader = (headerText) => {
-    if (!contentRef.current) return
-    const html = contentRef.current.innerHTML
-    const idx = html.indexOf(`>${headerText}</h`)
-    if (idx >= 0) {
-      // Find the nearest block-level element
-      const before = html.substring(0, idx)
-      const lineBreaks = (before.match(/</g) || []).length
-      const children = contentRef.current.children
-      if (children[lineBreaks]) {
-        children[lineBreaks].scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Find which page contains this header
+    for (let i = 0; i < pages.length; i++) {
+      if (pages[i].includes(headerText)) {
+        setCurrentPage(i)
+        setShowTOC(false)
+        return
       }
     }
     setShowTOC(false)
   }
-
-  const totalHeight = contentRef.current?.scrollHeight || 1
-  const visibleHeight = contentRef.current?.clientHeight || 1
-  const scrollTop = contentRef.current?.scrollTop || 0
-  const progressPct = Math.min(100, Math.round((scrollTop / (totalHeight - visibleHeight)) * 100)) || 0
 
   if (loading) {
     return (
@@ -287,18 +297,30 @@ export default function BookReader() {
         </div>
       )}
 
-      {/* Content */}
+      {/* Content — render only current page */}
       <div
-        ref={contentRef}
-        className="reader-content"
+        className="reader-content reader-content-paged"
         style={{ fontSize: `${fontSize}px` }}
-        onScroll={handleScroll}
-        dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(pages[currentPage] || '') }}
       />
 
       {/* Bottom bar */}
       <div className="reader-bottom-bar">
-        <span className="reader-progress-text">{progressPct}%</span>
+        {totalPages > 1 ? (
+          <>
+            <button className="reader-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 0}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              上一页
+            </button>
+            <span className="reader-page-info">{currentPage + 1} / {totalPages}</span>
+            <button className="reader-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages - 1}>
+              下一页
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </>
+        ) : (
+          <span className="reader-page-info">1 / 1</span>
+        )}
         <div className="reader-bottom-group">
           <button className="reader-bottom-btn" onClick={() => handleFontSizeChange(-1)} disabled={fontSize <= FONT_SIZES[0]} title="缩小字体">
             A<sup>-</sup>
