@@ -102,6 +102,9 @@ export default function MinePage() {
   // Following state
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
+  // Followers state
+  const [followers, setFollowers] = useState([])
+  const [followersLoading, setFollowersLoading] = useState(false)
 
   // Reading progress
   const [readingProgress, setReadingProgress] = useState({})
@@ -169,6 +172,14 @@ export default function MinePage() {
         .then(data => setFollowing(data.users || []))
         .catch(() => {})
         .finally(() => setFollowingLoading(false))
+    }
+    if (tab === 'followers') {
+      setFollowersLoading(true)
+      fetchWithTimeout(`/api/market/author/${authUser?.id}/followers`)
+        .then(r => r.json())
+        .then(data => setFollowers(data.followers || []))
+        .catch(() => {})
+        .finally(() => setFollowersLoading(false))
     }
     if (tab === 'posts') {
       setPostsLoading(true)
@@ -254,6 +265,7 @@ export default function MinePage() {
     { key: 'characters', label: '角色', icon: <Theater size={15} /> },
     { key: 'books', label: '书籍', icon: <Book size={15} /> },
     { key: 'posts', label: '动态', icon: <MessageSquare size={15} /> },
+    { key: 'followers', label: '粉丝', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> },
     { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
     { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   ]
@@ -336,7 +348,21 @@ export default function MinePage() {
             )}
           </div>
           <div className="mine-profile-stats">
-            {cards.length}角色 · {texts.length}书籍 · {followersCount}粉丝 · {followingCount}关注
+            <button type="button" className="mine-stat-btn" onClick={() => setTab('characters')}>
+              <span className="mine-stat-num">{cards.length}</span>角色
+            </button>
+            <span className="mine-stat-dot">·</span>
+            <button type="button" className="mine-stat-btn" onClick={() => setTab('books')}>
+              <span className="mine-stat-num">{texts.length}</span>书籍
+            </button>
+            <span className="mine-stat-dot">·</span>
+            <button type="button" className="mine-stat-btn" onClick={() => setTab('followers')}>
+              <span className="mine-stat-num">{followersCount}</span>粉丝
+            </button>
+            <span className="mine-stat-dot">·</span>
+            <button type="button" className="mine-stat-btn" onClick={() => setTab('following')}>
+              <span className="mine-stat-num">{followingCount}</span>关注
+            </button>
           </div>
         </div>
       </div>
@@ -572,6 +598,33 @@ export default function MinePage() {
         )}
 
         {/* 关注 tab */}
+        {/* 粉丝 tab */}
+        {tab === 'followers' && (
+          followersLoading ? (
+            <Loading text="加载粉丝…" />
+          ) : followers.length === 0 ? (
+            <div className="mine-onboard-card">
+              <h3 className="mine-onboard-title">还没有粉丝</h3>
+              <p className="mine-onboard-desc">发布优质角色卡和动态来吸引粉丝</p>
+            </div>
+          ) : (
+            <div className="mine-follow-list">
+              {followers.map(f => (
+                <button
+                  key={f.id}
+                  className="mine-follow-item"
+                  onClick={() => { setAuthorUserId(f.id); setView('author') }}
+                >
+                  <Avatar name={f.username || '?'} size={40} src={f.avatar_data} />
+                  <div className="mine-follow-info">
+                    <span className="mine-follow-name">{f.username}</span>
+                    {f.bio && <span className="mine-follow-bio">{f.bio}</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )
+        )}
         {tab === 'following' && (
           followingLoading ? (
             <Loading text="加载中…" />

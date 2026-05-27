@@ -10476,6 +10476,27 @@ select.settings-input {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+.mine-stat-btn {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: inherit;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+.mine-stat-btn:hover {
+  background: var(--accent-soft, rgba(var(--accent-rgb), 0.1));
+}
+.mine-stat-num {
+  font-weight: 700;
+  margin-right: 2px;
+}
+.mine-stat-dot {
+  color: var(--text-dim);
+  margin: 0 2px;
+}
 
 .mine-profile-header .mine-avatar {
   border: 3px solid var(--bg-card, var(--bg-page));
