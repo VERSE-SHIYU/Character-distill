@@ -11942,3 +11942,107 @@ select.settings-input {
   margin-top: 2px;
 }
 
+/* ---- Sidebar Search ---- */
+.sidebar-search-wrap {
+  position: relative;
+  padding: 0 12px 8px;
+}
+.sidebar-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  transition: border-color 0.2s;
+}
+.sidebar-search-box:focus-within {
+  border-color: var(--accent);
+}
+.sidebar-search-icon {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.sidebar-search-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 0;
+}
+.sidebar-search-input::placeholder {
+  color: var(--text-dim);
+}
+.sidebar-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  right: 12px;
+  margin-top: 4px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--card-blur, blur(20px));
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  box-shadow: var(--shadow, 0 8px 32px rgba(0,0,0,0.3));
+  max-height: 360px;
+  overflow-y: auto;
+  z-index: 100;
+  padding: 8px 0;
+}
+.sidebar-search-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.sidebar-search-group {
+  padding: 4px 0;
+}
+.sidebar-search-group-title {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 16px 6px;
+  font-weight: 600;
+}
+.sidebar-search-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s;
+  color: var(--text);
+}
+.sidebar-search-item:hover {
+  background: var(--accent-soft, rgba(var(--accent-rgb), 0.1));
+}
+.sidebar-search-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.sidebar-search-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sidebar-search-item-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
