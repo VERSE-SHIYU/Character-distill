@@ -3,7 +3,6 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
-import { Zap } from './common/Icon'
 
 const PAGE_SIZE = 20
 
@@ -88,7 +87,12 @@ export default function FeedPage() {
       {!loading && !error && posts.length === 0 && (
         <div className="shell-placeholder">
           <div className="shell-placeholder-inner">
-            <div className="shell-placeholder-icon"><Zap size={32} /></div>
+            <div className="shell-placeholder-icon">
+              <svg className="shell-empty-svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 36l52-28-14 28-14 4" />
+                <path d="M16 38l14 20 6-24" />
+              </svg>
+            </div>
             <div className="shell-placeholder-title">还没有动态</div>
             <div className="shell-placeholder-sub">
               去关注一些创作者，他们的动态会显示在这里

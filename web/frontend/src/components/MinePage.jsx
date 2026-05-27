@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import { SkeletonCard } from './common/Skeleton'
 import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
@@ -183,7 +184,13 @@ export default function MinePage() {
     { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
   ]
 
-  if (loading) return <Loading text="加载中…" />
+  if (loading) return (
+    <div className="mine-page-v2" style={{ padding: 20 }}>
+      <div className="market-grid-v2">
+        {[1, 2, 3, 4].map((i) => <SkeletonCard key={i} />)}
+      </div>
+    </div>
+  )
 
   return (
     <div className="mine-page-v2">

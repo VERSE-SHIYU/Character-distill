@@ -77,6 +77,16 @@ async def list_tags(request: Request) -> dict:
     return {"tags": PRESET_TAGS}
 
 
+@router.get("/featured")
+@limiter.limit("60/minute")
+async def featured_cards(
+    request: Request,
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """Return featured (admin-pinned) cards, ordered by sort_order."""
+    return await storage.get_featured_cards()
+
+
 @router.get("/list")
 @limiter.limit("60/minute")
 async def list_cards(

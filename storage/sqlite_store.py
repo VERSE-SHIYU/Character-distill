@@ -479,6 +479,15 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Review log migration failed: {exc}")
 
+                    # Run 047_featured_cards migration (CREATE TABLE IF NOT EXISTS)
+                    fc_path = migrations_dir / "047_featured_cards.sql"
+                    if fc_path.exists():
+                        try:
+                            await conn.executescript(fc_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Featured cards migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3658,3 +3667,70 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get card forks failed: {exc}")
             return []
+
+    # ---- Admin: Featured Cards ----
+
+    async def get_featured_cards(self) -> list[dict]:
+        """Return featured cards with full card info, ordered by sort_order."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT fc.id, fc.card_id, fc.sort_order, fc.created_at,
+                              c.name, c.identity, c.avatar_data, c.likes,
+                              c.card_json, c.user_id,
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(u.avatar_data, '') AS author_avatar
+                       FROM featured_cards fc
+                       JOIN cards c ON c.id = fc.card_id
+                       LEFT JOIN users u ON u.id = c.user_id
+                       ORDER BY fc.sort_order ASC"""
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get featured cards failed: {exc}")
+            return []
+
+    async def add_featured_card(self, card_id: str) -> str | None:
+        """Add a card to featured. Returns the new row id or None on failure."""
+        import uuid
+        try:
+            fid = uuid.uuid4().hex[:12]
+            async with await self._connect() as conn:
+                # Get next sort_order
+                cursor = await conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM featured_cards")
+                row = await cursor.fetchone()
+                next_order = row[0] if row else 0
+                await conn.execute(
+                    "INSERT INTO featured_cards (id, card_id, sort_order) VALUES (?, ?, ?)",
+                    (fid, card_id, next_order),
+                )
+                await conn.commit()
+            return fid
+        except Exception as exc:
+            print(f"[SQLiteStore] Add featured card failed: {exc}")
+            return None
+
+    async def remove_featured_card(self, id: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute("DELETE FROM featured_cards WHERE id = ?", (id,))
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Remove featured card failed: {exc}")
+            return False
+
+    async def reorder_featured_cards(self, ids: list[str]) -> None:
+        """Update sort_order based on array index."""
+        try:
+            async with await self._connect() as conn:
+                for idx, fid in enumerate(ids):
+                    await conn.execute(
+                        "UPDATE featured_cards SET sort_order = ? WHERE id = ?",
+                        (idx, fid),
+                    )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Reorder featured cards failed: {exc}")
+            raise

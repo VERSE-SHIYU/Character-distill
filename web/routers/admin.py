@@ -547,3 +547,65 @@ async def admin_review_log(
 ) -> list[dict]:
     """Return recent AI review logs."""
     return await storage.get_review_logs(50)
+
+
+# ============================================================
+# Admin: Featured Cards
+# ============================================================
+
+
+class AddFeaturedRequest(BaseModel):
+    card_id: str
+
+
+class ReorderFeaturedRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/featured")
+@limiter.limit("30/minute")
+async def admin_add_featured(
+    request: Request,
+    req: AddFeaturedRequest,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Add a card to the featured list (max 10)."""
+    featured = await storage.get_featured_cards()
+    if len(featured) >= 10:
+        raise HTTPException(400, "置顶角色已达上限（最多 10 个）")
+    # Check for duplicates
+    if any(fc["card_id"] == req.card_id for fc in featured):
+        raise HTTPException(400, "该角色已在置顶列表中")
+    fid = await storage.add_featured_card(req.card_id)
+    if not fid:
+        raise HTTPException(500, "添加置顶失败")
+    return {"id": fid}
+
+
+@router.delete("/featured/{id}")
+@limiter.limit("30/minute")
+async def admin_remove_featured(
+    id: str,
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Remove a card from the featured list."""
+    ok = await storage.remove_featured_card(id)
+    if not ok:
+        raise HTTPException(404, "置顶记录不存在")
+    return {"ok": True}
+
+
+@router.patch("/featured/reorder")
+@limiter.limit("30/minute")
+async def admin_reorder_featured(
+    request: Request,
+    req: ReorderFeaturedRequest,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Reorder featured cards by id array index."""
+    await storage.reorder_featured_cards(req.ids)
+    return {"ok": True}

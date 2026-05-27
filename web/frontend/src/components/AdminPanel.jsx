@@ -16,6 +16,7 @@ const TABS = [
   { id: 'announcements', label: '公告' },
   { id: 'config', label: '配置中心' },
   { id: 'export', label: '数据导出' },
+  { id: 'featured', label: '推荐管理' },
 ]
 
 export default function AdminPanel() {
@@ -40,7 +41,7 @@ export default function AdminPanel() {
           ))}
         </div>
         <div className="admin-content">
-          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : tab === 'reports' ? <ReportsTab /> : tab === 'audit' ? <ContentAuditTab /> : tab === 'system' ? <SystemLogTab /> : tab === 'announcements' ? <AnnouncementsTab /> : tab === 'config' ? <ConfigTab /> : <ExportTab />}
+          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : tab === 'reports' ? <ReportsTab /> : tab === 'audit' ? <ContentAuditTab /> : tab === 'system' ? <SystemLogTab /> : tab === 'announcements' ? <AnnouncementsTab /> : tab === 'config' ? <ConfigTab /> : tab === 'export' ? <ExportTab /> : <FeaturedTab />}
         </div>
       </div>
     </div>
@@ -1710,6 +1711,176 @@ function ExportTab() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ── FeaturedTab: 推荐管理 ── */
+function FeaturedTab() {
+  const [items, setItems] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  const loadFeatured = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await fetchWithTimeout('/api/market/featured')
+      const list = await data.json()
+      setItems(Array.isArray(list) ? list : [])
+    } catch (err) {
+      setMsg(`加载失败: ${err.message}`)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadFeatured() }, [loadFeatured])
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    setSearching(true)
+    setMsg('')
+    try {
+      const res = await fetchWithTimeout(`/api/market/search?q=${encodeURIComponent(searchQuery.trim())}&page=1&page_size=10`)
+      const data = await res.json()
+      setSearchResults(data.cards || [])
+    } catch (err) {
+      setMsg(`搜索失败: ${err.message}`)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const handleAdd = async (cardId) => {
+    if (items.length >= 10) { setMsg('置顶已达上限（10 个）'); return }
+    setMsg('')
+    try {
+      await adminAPI.addFeatured(cardId)
+      setSearchResults([])
+      setSearchQuery('')
+      await loadFeatured()
+      setMsg('已添加到置顶')
+    } catch (err) {
+      setMsg(`添加失败: ${err.message}`)
+    }
+  }
+
+  const handleRemove = async (id) => {
+    setMsg('')
+    try {
+      await adminAPI.removeFeatured(id)
+      await loadFeatured()
+    } catch (err) {
+      setMsg(`删除失败: ${err.message}`)
+    }
+  }
+
+  const handleMoveUp = async (idx) => {
+    if (idx === 0) return
+    const ids = items.map(it => it.id)
+    ;[ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]]
+    setMsg('')
+    try {
+      await adminAPI.reorderFeatured(ids)
+      await loadFeatured()
+    } catch (err) {
+      setMsg(`排序失败: ${err.message}`)
+    }
+  }
+
+  const handleMoveDown = async (idx) => {
+    if (idx === items.length - 1) return
+    const ids = items.map(it => it.id)
+    ;[ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]]
+    setMsg('')
+    try {
+      await adminAPI.reorderFeatured(ids)
+      await loadFeatured()
+    } catch (err) {
+      setMsg(`排序失败: ${err.message}`)
+    }
+  }
+
+  return (
+    <div className="admin-card">
+      <div className="admin-card-title">推荐管理</div>
+      <p style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 16 }}>
+        管理首页"编辑推荐"区块，最多 10 个角色，可通过上移/下移按钮调整顺序。
+      </p>
+
+      {msg && <div className={`${msg.includes('失败') || msg.includes('上限') ? 'admin-error-banner' : 'admin-success-banner'}`}>{msg}</div>}
+
+      {/* Search */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <input
+          type="text"
+          className="admin-input"
+          style={{ flex: 1 }}
+          placeholder="搜索角色名称…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+        />
+        <button className="btn-primary" onClick={handleSearch} disabled={searching}>
+          {searching ? '搜索中…' : '搜索'}
+        </button>
+      </div>
+
+      {/* Search results */}
+      {searchResults.length > 0 && (
+        <div className="admin-card" style={{ marginBottom: 16, padding: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-dim)' }}>搜索结果</div>
+          {searchResults.map((c) => (
+            <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' }}>
+              <span style={{ flex: 1, fontSize: 13 }}>{c.name || '?'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{c.identity || ''}</span>
+              <button
+                className="btn-primary btn-sm"
+                onClick={() => handleAdd(c.id)}
+                disabled={items.some(fc => fc.card_id === c.id)}
+              >
+                {items.some(fc => fc.card_id === c.id) ? '已添加' : '置顶'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Current featured list */}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : items.length === 0 ? (
+        <div className="admin-empty">暂无置顶角色</div>
+      ) : (
+        <div className="admin-list">
+          {items.map((fc, idx) => (
+            <div key={fc.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid var(--glass-border)' }}>
+              <span style={{ fontSize: 12, color: 'var(--text-dim)', width: 24, flexShrink: 0 }}>{idx + 1}</span>
+              <div style={{ width: 48, height: 48, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: 'var(--glass-border)' }}>
+                {fc.avatar_data ? (
+                  <img src={fc.avatar_data} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.2)', background: 'var(--accent)' }}>
+                    {(fc.name || '?')[0]}
+                  </div>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fc.name || '未知角色'}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fc.identity || ''}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn-ghost btn-sm" onClick={() => handleMoveUp(idx)} disabled={idx === 0} title="上移" style={{ fontSize: 16, lineHeight: 1, padding: '4px 8px' }}>↑</button>
+                <button className="btn-ghost btn-sm" onClick={() => handleMoveDown(idx)} disabled={idx === items.length - 1} title="下移" style={{ fontSize: 16, lineHeight: 1, padding: '4px 8px' }}>↓</button>
+                <button className="btn-ghost-danger btn-sm" onClick={() => handleRemove(fc.id)} title="删除" style={{ padding: '4px 8px' }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

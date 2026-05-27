@@ -316,6 +316,11 @@ export const adminAPI = {
 
   // ---- P3-2: Review Log ----
   getReviewLogs: () => fetchWithTimeout('/api/admin/review-log').then(r => r.json()),
+
+  // ---- Featured Cards ----
+  addFeatured: (cardId) => postJSON('/api/admin/featured', { card_id: cardId }),
+  removeFeatured: (id) => fetchWithTimeout(`/api/admin/featured/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  reorderFeatured: (ids) => fetchWithTimeout('/api/admin/featured/reorder', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) }).then(r => r.json()),
 }
 
 export function getMyUsage() {

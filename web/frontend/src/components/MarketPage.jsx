@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import { SkeletonCard } from './common/Skeleton'
 import ErrorBox from './common/ErrorBox'
 import { Heart, Book } from './common/Icon'
 import { parseCardJson } from '../utils/card'
@@ -233,14 +234,24 @@ export default function MarketPage() {
       {/* Error */}
       {error && <ErrorBox message={error} />}
 
-      {/* Loading */}
-      {loading && <Loading text="加载角色市场…" />}
+      {/* Loading — skeleton */}
+      {loading && (
+        <div className="market-grid-v2">
+          {[1, 2, 3, 4, 5, 6].map((i) => <SkeletonCard key={i} />)}
+        </div>
+      )}
 
       {/* Empty */}
       {!loading && !error && cards.length === 0 && (
         <div className="shell-placeholder">
           <div className="shell-placeholder-inner">
-            <div className="shell-placeholder-icon">{'\u{1F50D}'}</div>
+            <div className="shell-placeholder-icon">
+              <svg className="shell-empty-svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="26" cy="26" r="14" />
+                <path d="M36 36l16 16" />
+                <path d="M48 6l3 8 8 3-8 3-3 8-3-8-8-3 8-3z" />
+              </svg>
+            </div>
             <div className="shell-placeholder-title">
               {query ? '未找到匹配角色' : '角色市场还是空的'}
             </div>
@@ -255,12 +266,12 @@ export default function MarketPage() {
       {!loading && cards.length > 0 && (
         <>
           <div className="market-grid-v2">
-            {cards.map((c) => {
+            {cards.map((c, idx) => {
               const cardData = parseCardJson(c)
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (
-                <div key={c.id} className="market-card-v2" onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
+                <div key={c.id} className="market-card-v2 anim-item" style={{ animationDelay: `${idx * 50}ms` }} onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
                   <div className="market-card-v2-cover">
                     {c.avatar_data ? (
                       <>

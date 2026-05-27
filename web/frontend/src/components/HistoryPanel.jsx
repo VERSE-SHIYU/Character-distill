@@ -5,6 +5,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
+import { SkeletonRow } from './common/Skeleton'
 import { loadCardAvatar } from '../store/db'
 import { Book, Clipboard, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
@@ -528,9 +529,17 @@ export default function HistoryPanel({ initialTrash = false }) {
       {chatTab === 'chat' && (
         <>
       {loading ? (
-        <Loading text="加载会话…" />
+        <div style={{ padding: '8px 0' }}>
+          {[1, 2, 3, 4].map((i) => <SkeletonRow key={i} />)}
+        </div>
       ) : items.length === 0 ? (
-        <p className="history-empty">{trashMode ? '回收站为空' : '暂无匹配的会话'}</p>
+        <div className="history-empty">
+          <svg className="shell-empty-svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="32" cy="32" r="26" />
+            <path d="M32 16v16l10 6" />
+          </svg>
+          <p>{trashMode ? '回收站为空' : '暂无匹配的会话'}</p>
+        </div>
       ) : (
         <div className="history-grouped" ref={listRef}>
           {Object.entries(groupedItems).map(([textId, sessionList]) => {
@@ -544,8 +553,8 @@ export default function HistoryPanel({ initialTrash = false }) {
                 </h3>
                 {!collapsedGroups[textId] && (
                 <ul className="history-list">
-                  {sessionList.map((it) => (
-                    <li key={it.id} className={`history-swipe-wrapper${selectMode ? ' select-mode' : ''}`}>
+                  {sessionList.map((it, idx) => (
+                    <li key={it.id} className={`history-swipe-wrapper anim-item${selectMode ? ' select-mode' : ''}`} style={{ animationDelay: `${idx * 50}ms` }}>
                       {selectMode && !trashMode && (
                         <input
                           type="checkbox"
@@ -636,9 +645,17 @@ export default function HistoryPanel({ initialTrash = false }) {
       {chatTab === 'group' && (
         <>
           {loading ? (
-            <Loading text="加载群聊…" />
+            <div style={{ padding: '8px 0' }}>
+              {[1, 2, 3, 4].map((i) => <SkeletonRow key={i} />)}
+            </div>
           ) : groupItems.length === 0 ? (
-            <p className="history-empty">暂无群聊记录</p>
+            <div className="history-empty">
+              <svg className="shell-empty-svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="32" cy="32" r="26" />
+                <path d="M32 16v16l10 6" />
+              </svg>
+              <p>暂无群聊记录</p>
+            </div>
           ) : (
             <div className="history-grouped" ref={listRef}>
               {groupItems.map((g) => {
