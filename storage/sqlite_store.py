@@ -528,6 +528,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Message reactions migration failed: {exc}")
 
+                    # Run 052_user_bio migration (ALTER TABLE ADD COLUMN)
+                    bio_path = migrations_dir / "052_user_bio.sql"
+                    if bio_path.exists():
+                        try:
+                            await conn.executescript(bio_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User bio migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1915,7 +1925,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible, cards_visible, books_visible FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible, cards_visible, books_visible, bio FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()

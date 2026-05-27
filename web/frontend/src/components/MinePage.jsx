@@ -6,6 +6,7 @@ import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
 import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
+import ImageCropModal from './common/ImageCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 
@@ -85,6 +86,8 @@ export default function MinePage() {
   const [loading, setLoading] = useState(true)
   const [cards, setCards] = useState([])
   const [texts, setTexts] = useState([])
+  const [bioEditing, setBioEditing] = useState(false)
+  const [bioDraft, setBioDraft] = useState('')
   const [followersCount, setFollowersCount] = useState(0)
   const [followingCount, setFollowingCount] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -101,6 +104,8 @@ export default function MinePage() {
 
   const bannerInputRef = useRef(null)
   const [bannerCropFile, setBannerCropFile] = useState(null)
+  const avatarInputRef = useRef(null)
+  const [avatarCropFile, setAvatarCropFile] = useState(null)
 
   const loadData = () => {
     if (!authUser?.id) return
@@ -176,6 +181,29 @@ export default function MinePage() {
 
   const handleBannerCropCancel = () => setBannerCropFile(null)
 
+  const handleAvatarSelect = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setAvatarCropFile(file)
+    e.target.value = ''
+  }
+
+  const handleAvatarCropConfirm = async (croppedDataUrl) => {
+    setAvatarCropFile(null)
+    try {
+      await fetchWithTimeout('/api/auth/avatar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar_data: croppedDataUrl }),
+      })
+      useAppStore.setState({ userAvatar: croppedDataUrl })
+    } catch (e) {
+      console.error('[MinePage] Avatar upload failed:', e)
+    }
+  }
+
+  const handleAvatarCropCancel = () => setAvatarCropFile(null)
+
   const tabs = [
     { key: 'characters', label: '角色', icon: <Theater size={15} /> },
     { key: 'books', label: '书籍', icon: <Book size={15} /> },
@@ -213,9 +241,47 @@ export default function MinePage() {
 
       {/* ── Profile Header ── */}
       <div className="mine-profile-header">
-        <Avatar name={authUser?.username || '?'} src={userAvatar} size={72} className="mine-avatar" />
+        <div className="mine-avatar-wrap">
+          <Avatar name={authUser?.username || '?'} src={userAvatar} size={72} className="mine-avatar" onClick={() => avatarInputRef.current?.click()} />
+          <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+          <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
+        </div>
         <div className="mine-profile-info">
           <h2 className="mine-profile-name">{authUser?.username}</h2>
+          {bioEditing ? (
+            <input
+              className="mine-bio-input"
+              value={bioDraft}
+              onChange={e => setBioDraft(e.target.value)}
+              onBlur={async () => {
+                setBioEditing(false)
+                const bio = bioDraft.trim()
+                if (bio !== (authUser?.bio || '')) {
+                  try {
+                    await fetchWithTimeout('/api/auth/bio', {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ bio }),
+                    })
+                    useAppStore.setState({ authUser: { ...authUser, bio } })
+                  } catch {}
+                }
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') e.target.blur()
+                if (e.key === 'Escape') { setBioEditing(false); setBioDraft(authUser?.bio || '') }
+              }}
+              autoFocus
+              placeholder="写一句话介绍自己…"
+              maxLength={200}
+            />
+          ) : (
+            <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
+              {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
+            </div>
+          )}
           <button type="button" className="mine-edit-btn" onClick={() => setView('settings')}>编辑资料</button>
         </div>
       </div>
@@ -285,6 +351,8 @@ export default function MinePage() {
                 const cardData = parseCardJson(card)
                 const name = cardData.name || card.name || '?'
                 const identity = cardData.identity || ''
+                const isNew = card.created_at && (Date.now() - new Date(card.created_at).getTime()) < 3 * 24 * 60 * 60 * 1000
+                const isPublic = card.visibility === 'public'
                 return (
                   <div key={card.id} className="market-card-v2" onClick={() => {
                     useAppStore.getState().setCurrentMarketCardId(card.id)
@@ -301,6 +369,10 @@ export default function MinePage() {
                           <span className="market-card-v2-fallback-letter">{name.charAt(0).toUpperCase()}</span>
                         </div>
                       )}
+                      <div className="market-card-v2-badges">
+                        {isNew && <span className="card-badge-new">新</span>}
+                        {isPublic && <span className="card-badge-public" title="已公开到市场" />}
+                      </div>
                     </div>
                     <div className="market-card-v2-glass-info">
                       <div className="market-card-v2-name">{name}</div>
@@ -318,10 +390,10 @@ export default function MinePage() {
         {tab === 'books' && (
           texts.length === 0 ? (
             <div className="mine-onboard-card">
-              <h3 className="mine-onboard-title">还没有导入书籍</h3>
+              <h3 className="mine-onboard-title">还没有上传文本</h3>
               <p className="mine-onboard-desc">上传小说或聊天记录，AI 会自动识别并蒸馏角色</p>
               <button type="button" className="btn-primary" onClick={() => setView('text')}>
-                去上传文本
+                去上传
               </button>
             </div>
           ) : (
@@ -405,7 +477,10 @@ export default function MinePage() {
             ) : posts.length === 0 ? (
               <div className="mine-onboard-card">
                 <h3 className="mine-onboard-title">还没有动态</h3>
-                <p className="mine-onboard-desc">分享你的想法、角色或创作</p>
+                <p className="mine-onboard-desc">发一条让别人认识你</p>
+                <button type="button" className="btn-primary" onClick={() => document.querySelector('.mine-composer-input')?.focus()}>
+                  发动态
+                </button>
               </div>
             ) : (
               <div className="mine-posts-list">
@@ -442,7 +517,7 @@ export default function MinePage() {
               <h3 className="mine-onboard-title">还没有关注任何人</h3>
               <p className="mine-onboard-desc">去角色市场发现有趣的创作者</p>
               <button type="button" className="btn-primary" onClick={() => setView('market')}>
-                浏览市场
+                去市场看看
               </button>
             </div>
           ) : (
@@ -500,6 +575,11 @@ export default function MinePage() {
         file={bannerCropFile}
         onConfirm={handleBannerCropConfirm}
         onCancel={handleBannerCropCancel}
+      />
+      <ImageCropModal
+        file={avatarCropFile}
+        onConfirm={handleAvatarCropConfirm}
+        onCancel={handleAvatarCropCancel}
       />
     </div>
   )

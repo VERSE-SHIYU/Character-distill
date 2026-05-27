@@ -229,10 +229,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
     <div className="private-chat">
       {/* Header */}
       <div className="private-chat-header">
-        <button type="button" className="chat-back-btn" onClick={onBack} title="返回">
+        <button type="button" className="chat-back-btn" onClick={onBack} style={{ gap: 4 }}>
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          返回
         </button>
-        <span className="private-chat-back-text">返回</span>
         <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
         <span className="private-chat-title">{otherUsername || '私信'}</span>
         <ChatHistoryPanel

@@ -471,6 +471,21 @@ async def bind_email(
     return {"ok": True, "email": email}
 
 
+@router.put("/bio")
+@limiter.limit("10/minute")
+async def update_bio(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    body = await request.json()
+    bio = (body.get("bio", "") or "").strip()[:200]
+    await storage.execute(
+        "UPDATE users SET bio = ? WHERE id = ?", (bio, user["id"])
+    )
+    return {"ok": True, "bio": bio}
+
+
 # ---- Helpers ----
 
 def _create_access_token(user_id: str, username: str) -> str:
@@ -509,4 +524,5 @@ def _user_response(user: dict[str, Any]) -> dict[str, Any]:
         "created_at": user.get("created_at", ""),
         "is_admin": bool(user.get("is_admin", False)),
         "is_disabled": bool(user.get("is_disabled", False)),
+        "bio": user.get("bio", ""),
     }

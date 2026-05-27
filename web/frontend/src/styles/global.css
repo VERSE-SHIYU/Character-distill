@@ -4036,7 +4036,7 @@ html.theme-aurora::before {
 .history-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 7px 16px 7px 12px;
   border: none;
   border-radius: 20px;
@@ -7823,8 +7823,8 @@ select.settings-input {
 }
 .market-grid-v2 {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
 }
 
 /* ── Market Card V2 — Spotify-style full-image card ── */
@@ -7856,6 +7856,37 @@ select.settings-input {
   position: absolute;
   inset: 0;
   overflow: hidden;
+}
+
+.market-card-v2-badges {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  pointer-events: none;
+}
+.card-badge-new {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #f59e0b;
+  color: #fff;
+  line-height: 1.4;
+}
+.card-badge-public {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.5);
 }
 
 /* Layer 1: 模糊底图 — 永远填满，消灭黑边 */
@@ -9800,7 +9831,7 @@ select.settings-input {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 5;
-  max-height: 200px;
+  max-height: 220px;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -9821,7 +9852,7 @@ select.settings-input {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center;
+  object-position: center 30%;
   z-index: 1;
 }
 
@@ -9880,13 +9911,64 @@ select.settings-input {
   flex-shrink: 0;
 }
 
-.mine-profile-info {
+.mine-avatar-wrap {
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.mine-avatar-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.4);
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  color: #fff;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.mine-avatar-wrap:hover .mine-avatar-overlay {
+  opacity: 1;
+}
+
+.mine-profile-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding-bottom: 6px;
   flex: 1;
   min-width: 0;
+}
+
+.mine-bio-display {
+  font-size: 13px;
+  color: var(--text-sec);
+  cursor: text;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.mine-bio-display:hover {
+  color: var(--text);
+}
+.mine-bio-placeholder {
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 12px;
+}
+.mine-bio-input {
+  width: 100%;
+  max-width: 320px;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.06);
+  color: var(--text);
+  outline: none;
+  font-family: inherit;
 }
 
 .mine-profile-name {
@@ -9922,10 +10004,10 @@ select.settings-input {
 /* ── 统计卡片 ── */
 .mine-stats-row {
   display: flex;
-  gap: 12px;
-  padding: 20px 24px 16px;
+  gap: 16px;
+  margin: 16px 24px;
   border-bottom: 1px solid var(--glass-border);
-  margin-bottom: 8px;
+  padding-bottom: 16px;
 }
 
 .mine-stat-card {
@@ -9964,7 +10046,8 @@ select.settings-input {
 .mine-tab-bar {
   display: flex;
   gap: 4px;
-  padding: 16px 24px 0;
+  margin: 0 24px;
+  padding: 16px 0 0;
   border-bottom: 1px solid var(--glass-border);
 }
 
@@ -9998,7 +10081,7 @@ select.settings-input {
 /* ── Tab 内容 ── */
 .mine-tab-content {
   flex: 1;
-  padding: 16px 24px 24px;
+  padding: 20px 24px;
   overflow-y: auto;
 }
 
@@ -10215,11 +10298,11 @@ select.settings-input {
 @media (max-width: 640px) {
   .mine-banner { max-height: 160px; }
   .mine-profile-header { padding: 0 16px; margin-top: -28px; }
-  .mine-stats-row { padding: 16px 16px 0; gap: 8px; }
+  .mine-stats-row { margin: 12px 16px; gap: 8px; padding-bottom: 12px; }
   .mine-stat-card { padding: 10px 4px; }
   .mine-stat-number { font-size: 18px; }
-  .mine-tab-bar { padding: 12px 16px 0; }
-  .mine-tab-content { padding: 12px 16px 20px; }
+  .mine-tab-bar { margin: 0 16px; padding: 12px 0 0; }
+  .mine-tab-content { padding: 16px 16px 20px; }
   .mine-onboard-steps { flex-direction: column; gap: 12px; }
 }
 
