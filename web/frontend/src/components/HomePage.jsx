@@ -211,7 +211,7 @@ export default function HomePage() {
           {/* 步骤 1 — 激活 */}
           <div className="home-onboard-card home-onboard-card-active">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
                 <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
                 <path d="M12 6v7" />
@@ -234,7 +234,7 @@ export default function HomePage() {
           {/* 步骤 2 — 未激活 */}
           <div className="home-onboard-card">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" />
                 <circle cx="18" cy="5" r="1" fill="var(--text-dim)" stroke="none" />
                 <circle cx="6" cy="19" r="1.2" fill="var(--text-dim)" stroke="none" />
@@ -250,11 +250,11 @@ export default function HomePage() {
           {/* 步骤 3 — 未激活 */}
           <div className="home-onboard-card">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                <path d="M8 10h.01" stroke-width="2.5" />
-                <path d="M12 10h.01" stroke-width="2.5" />
-                <path d="M16 10h.01" stroke-width="2.5" />
+                <path d="M8 10h.01" strokeWidth="2.5" />
+                <path d="M12 10h.01" strokeWidth="2.5" />
+                <path d="M16 10h.01" strokeWidth="2.5" />
               </svg>
             </div>
             <div className="home-onboard-body">

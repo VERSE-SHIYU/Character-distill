@@ -109,7 +109,7 @@ export default function App() {
         try {
           const annRes = await fetchWithTimeout('/api/announcement/active')
           const annData = await annRes.json()
-          if (annData.announcement) setAnnouncement(annData.announcement)
+          if (annData && annData.content) setAnnouncement(annData)
         } catch {}
       } catch {
         logout()
