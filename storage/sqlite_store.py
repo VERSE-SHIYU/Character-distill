@@ -929,6 +929,52 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Search public cards total failed: {exc}")
             return 0
 
+    async def global_search(self, keyword: str, user_id: str = "") -> dict:
+        """Search cards, texts, users by keyword. Returns max 5 per type."""
+        like = f"%{keyword}%"
+        try:
+            async with await self._connect() as conn:
+                # Cards (public only)
+                cur = await conn.execute(
+                    """SELECT c.id, c.name, c.card_json, c.avatar_data,
+                              COALESCE(u.username, '') AS author_name
+                       FROM cards c
+                       LEFT JOIN users u ON u.id = c.user_id
+                       WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                         AND c.name LIKE ?
+                       ORDER BY c.likes DESC
+                       LIMIT 5""",
+                    (like,),
+                )
+                cards = [dict(r) for r in await cur.fetchall()]
+
+                # Texts (user's own only)
+                cur = await conn.execute(
+                    """SELECT id, title, filename, char_count
+                       FROM texts
+                       WHERE user_id = ? AND (title LIKE ? OR filename LIKE ?)
+                       ORDER BY created_at DESC
+                       LIMIT 5""",
+                    (user_id, like, like),
+                )
+                texts = [dict(r) for r in await cur.fetchall()]
+
+                # Users
+                cur = await conn.execute(
+                    """SELECT id, username, avatar_data
+                       FROM users
+                       WHERE username LIKE ? AND is_disabled = 0
+                       ORDER BY username
+                       LIMIT 5""",
+                    (like,),
+                )
+                users = [dict(r) for r in await cur.fetchall()]
+
+            return {"cards": cards, "texts": texts, "users": users}
+        except Exception as exc:
+            print(f"[SQLiteStore] Global search failed: {exc}")
+            return {"cards": [], "texts": [], "users": []}
+
     async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
         """Deep copy a public card for a new user. Returns the new card dict."""
         original = await self.get_card(card_id)

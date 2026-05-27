@@ -130,6 +130,19 @@ async def search_cards(
     return {"cards": cards, "total": total, "page": page, "page_size": page_size}
 
 
+@router.get("/global-search")
+@limiter.limit("30/minute")
+async def global_search(
+    request: Request,
+    q: str = Query("", min_length=1, max_length=50),
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Search across cards, texts, and users. Max 5 results per type."""
+    results = await storage.global_search(q.strip(), user["id"])
+    return results
+
+
 @router.get("/my/following")
 @limiter.limit("60/minute")
 async def my_following(

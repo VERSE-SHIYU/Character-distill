@@ -334,3 +334,8 @@ export function updateApiConfig(body) {
     body: JSON.stringify(body),
   }).then(r => r.json())
 }
+
+export function globalSearch(q) {
+  return fetchWithTimeout(`/api/market/global-search?q=${encodeURIComponent(q)}`)
+    .then(r => r.json())
+}
