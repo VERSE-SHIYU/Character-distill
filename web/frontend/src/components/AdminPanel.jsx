@@ -2,48 +2,111 @@ import { useState, useEffect, useCallback } from 'react'
 import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
-import { Trash2 } from './common/Icon'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-const TABS = [
-  { id: 'dashboard', label: '仪表盘' },
-  { id: 'users', label: '用户管理' },
-  { id: 'invites', label: '邀请码' },
-  { id: 'usage', label: '用户用量' },
-  { id: 'reports', label: '举报管理' },
-  { id: 'audit', label: '内容审核' },
-  { id: 'system', label: '系统日志' },
-  { id: 'announcements', label: '公告' },
-  { id: 'config', label: '配置中心' },
-  { id: 'export', label: '数据导出' },
-  { id: 'featured', label: '推荐管理' },
+const NAV_GROUPS = [
+  { label: '概览', items: [
+    { id: 'dashboard', label: '仪表盘', icon: DashIcon },
+  ]},
+  { label: '用户', items: [
+    { id: 'users', label: '用户管理', icon: UsersIcon },
+    { id: 'invites', label: '邀请码', icon: Ticket },
+    { id: 'usage', label: '用户用量', icon: BarChartIcon },
+  ]},
+  { label: '内容', items: [
+    { id: 'reports', label: '举报管理', icon: Flag },
+    { id: 'audit', label: '内容审核', icon: Shield },
+    { id: 'featured', label: '推荐管理', icon: Star },
+  ]},
+  { label: '系统', items: [
+    { id: 'system', label: '系统日志', icon: Terminal },
+    { id: 'announcements', label: '公告', icon: Megaphone },
+    { id: 'config', label: '配置中心', icon: Settings },
+    { id: 'export', label: '数据导出', icon: Download },
+  ]},
 ]
 
+/* ── SVG 圆环进度条 ── */
+function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
+  const r = (size - strokeWidth) / 2
+  const circ = r * 2 * Math.PI
+  const offset = circ - (Math.min(percent, 100) / 100) * circ
+  const color = percent > 80 ? '#ef4444' : percent > 60 ? '#f59e0b' : 'var(--primary)'
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--pill-bg)" strokeWidth={strokeWidth} />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={strokeWidth}
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        transform={`rotate(-90 ${size / 2} ${size / 2})`} style={{ transition: 'stroke-dashoffset .6s ease' }} />
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central"
+        fontSize={size * 0.2} fontWeight={700} fill="var(--text-primary)">{percent}%</text>
+    </svg>
+  )
+}
+
 export default function AdminPanel() {
-  const [tab, setTab] = useState('users')
+  const [tab, setTab] = useState('dashboard')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('charsim-theme') || 'light' } catch { return 'light' }
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem('charsim-theme', theme) } catch {}
+  }, [theme])
+
+  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark')
+
+  const renderTab = () => {
+    switch (tab) {
+      case 'dashboard': return <DashboardTab />
+      case 'users': return <UsersTab />
+      case 'invites': return <InvitesTab />
+      case 'usage': return <UsageTab />
+      case 'reports': return <ReportsTab />
+      case 'audit': return <ContentAuditTab />
+      case 'system': return <SystemLogTab />
+      case 'announcements': return <AnnouncementsTab />
+      case 'config': return <ConfigTab />
+      case 'export': return <ExportTab />
+      case 'featured': return <FeaturedTab />
+      default: return <DashboardTab />
+    }
+  }
 
   return (
-    <div className="admin-panel panel">
-      <header className="panel-header">
-        <h2 className="panel-title">管理后台</h2>
-        <p className="panel-desc">仪表盘 · 用户管理 · 邀请码 · 用量统计</p>
-      </header>
-      <div className="admin-body">
-        <div className="admin-tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              className={`admin-tab${tab === t.id ? ' active' : ''}`}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="admin-content">
-          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : tab === 'reports' ? <ReportsTab /> : tab === 'audit' ? <ContentAuditTab /> : tab === 'system' ? <SystemLogTab /> : tab === 'announcements' ? <AnnouncementsTab /> : tab === 'config' ? <ConfigTab /> : tab === 'export' ? <ExportTab /> : <FeaturedTab />}
-        </div>
-      </div>
+    <div className="admin-layout">
+      <button className="admin-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
+
+      <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
+        <div className="admin-sidebar-title">管理后台</div>
+        {NAV_GROUPS.map(g => (
+          <div key={g.label} className="admin-nav-group">
+            <div className="admin-nav-group-label">{g.label}</div>
+            {g.items.map(item => {
+              const Icon = item.icon
+              return (
+                <button key={item.id}
+                  className={`admin-nav-item${tab === item.id ? ' active' : ''}`}
+                  onClick={() => { setTab(item.id); setSidebarOpen(false) }}>
+                  <Icon size={16} /> {item.label}
+                </button>
+              )
+            })}
+          </div>
+        ))}
+        <button className="admin-theme-toggle" onClick={toggleTheme}>
+          <Sun size={15} /> / <Moon size={15} />
+        </button>
+      </aside>
+
+      {sidebarOpen && <div className="admin-overlay" onClick={() => setSidebarOpen(false)} />}
+
+      <main className="admin-main">
+        {renderTab()}
+      </main>
     </div>
   )
 }
@@ -65,6 +128,14 @@ function isOnline(iso) {
 function fmtDateTime(iso) {
   if (!iso) return '-'
   return iso.slice(0, 16).replace('T', ' ')
+}
+
+const STAT_CARD_STYLES = {
+  '今日活跃用户': { icon: UsersIcon, bg: 'rgba(59,130,246,0.10)', color: '#3b82f6' },
+  '今日新注册': { icon: UsersIcon, bg: 'rgba(34,197,94,0.10)', color: '#22c55e' },
+  '总用户数': { icon: UsersIcon, bg: 'rgba(139,92,246,0.10)', color: '#8b5cf6' },
+  '今日 API 调用': { icon: BarChartIcon, bg: 'rgba(249,115,22,0.10)', color: '#f97316' },
+  '今日 Token 消耗': { icon: BarChartIcon, bg: 'rgba(6,182,212,0.10)', color: '#06b6d4' },
 }
 
 function DashboardTab() {
@@ -100,40 +171,38 @@ function DashboardTab() {
   ]
 
   const sys = stats.system
-  const resources = sys ? [
-    { label: '内存', used: sys.memory_used, total: sys.memory_total, percent: sys.memory_percent },
-    { label: '磁盘', used: sys.disk_used, total: sys.disk_total, percent: sys.disk_percent },
-  ] : []
 
   return (
     <div className="admin-card">
       <div className="admin-card-title">系统仪表盘</div>
-      <div className="dashboard-stats-grid">
-        {cards.map((c) => (
-          <div key={c.label} className="dashboard-stat-card">
-            <span className="dashboard-stat-value">{c.value}</span>
-            <span className="dashboard-stat-label">{c.label}</span>
-          </div>
-        ))}
+      <div className="dashboard-grid">
+        {cards.map((c) => {
+          const s = STAT_CARD_STYLES[c.label] || { icon: DashIcon, bg: 'var(--pill-bg)', color: 'var(--text-dim)' }
+          const Icon = s.icon
+          return (
+            <div key={c.label} className="stat-card" style={{ background: s.bg }}>
+              <div className="stat-card-icon" style={{ color: s.color }}>
+                <Icon size={24} />
+              </div>
+              <div className="stat-value" style={{ color: 'var(--text-primary)' }}>{c.value ?? '-'}</div>
+              <div className="stat-label">{c.label}</div>
+            </div>
+          )
+        })}
       </div>
 
-      {resources.length > 0 && (
+      {sys && (
         <div className="dashboard-section">
           <div className="dashboard-section-title">系统资源</div>
-          <div className="dashboard-resources">
-            {resources.map((r) => (
-              <div key={r.label} className="dashboard-resource-item">
-                <div className="dashboard-resource-header">
-                  <span>{r.label}</span>
-                  <span>{fmtBytes(r.used)} / {fmtBytes(r.total)}</span>
-                </div>
-                <div className="dashboard-progress-bar">
-                  <div
-                    className={`dashboard-progress-fill${r.percent > 80 ? ' danger' : r.percent > 60 ? ' warn' : ''}`}
-                    style={{ width: `${Math.min(r.percent, 100)}%` }}
-                  />
-                </div>
-                <span className="dashboard-progress-label">{r.percent}%</span>
+          <div className="dashboard-ring-grid">
+            {[
+              { label: '内存', percent: sys.memory_percent, used: sys.memory_used, total: sys.memory_total },
+              { label: '磁盘', percent: sys.disk_percent, used: sys.disk_used, total: sys.disk_total },
+            ].map(r => (
+              <div key={r.label} className="dashboard-ring-item">
+                <CircularProgress percent={r.percent} />
+                <div className="dashboard-ring-label">{r.label}</div>
+                <div className="dashboard-ring-detail">{fmtBytes(r.used)} / {fmtBytes(r.total)}</div>
               </div>
             ))}
           </div>
@@ -145,7 +214,13 @@ function DashboardTab() {
           <div className="dashboard-section-title">近 7 天趋势</div>
           <div className="dashboard-chart">
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={stats.trend}>
+              <AreaChart data={stats.trend}>
+                <defs>
+                  <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--glass-border)" />
                 <XAxis dataKey="day" tick={{ fontSize: 12 }} stroke="var(--text-secondary)" />
                 <YAxis tick={{ fontSize: 12 }} stroke="var(--text-secondary)" />
@@ -157,8 +232,9 @@ function DashboardTab() {
                     fontSize: 13,
                   }}
                 />
-                <Line type="monotone" dataKey="calls" stroke="var(--primary)" strokeWidth={2} dot={{ r: 3 }} name="调用次数" />
-              </LineChart>
+                <Area type="monotone" dataKey="calls" stroke="var(--primary)" strokeWidth={2}
+                  fill="url(#areaGrad)" dot={{ r: 3 }} name="调用次数" />
+              </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
