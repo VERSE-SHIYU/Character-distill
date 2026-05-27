@@ -209,7 +209,7 @@ export default function App() {
       <main className="main-panel">
         {announcement && !annDismissed && (
           <div className="announcement-banner">
-            <span className="announcement-banner-text">{announcement.content}</span>
+            <span className="announcement-banner-text" style={{ whiteSpace: 'pre-wrap', textAlign: announcement.align || 'left' }}>{announcement.content}</span>
             <button className="announcement-banner-close" onClick={() => setAnnDismissed(true)}>✕</button>
           </div>
         )}

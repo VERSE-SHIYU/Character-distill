@@ -498,6 +498,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] User last_active migration failed: {exc}")
 
+                    # Run 049_announcement_align migration (ALTER TABLE ADD COLUMN)
+                    aa_path = migrations_dir / "049_announcement_align.sql"
+                    if aa_path.exists():
+                        try:
+                            await conn.executescript(aa_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Announcement align migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2454,7 +2464,7 @@ class SQLiteStore(StorageBase):
 
     # ---- Admin: Announcements ----
 
-    async def create_announcement(self, content: str) -> dict:
+    async def create_announcement(self, content: str, align: str = 'left') -> dict:
         """Create a new announcement (deactivates previous ones)."""
         import uuid
         try:
@@ -2462,13 +2472,13 @@ class SQLiteStore(StorageBase):
                 await conn.execute("UPDATE announcements SET is_active = 0")
                 aid = uuid.uuid4().hex[:12]
                 await conn.execute(
-                    "INSERT INTO announcements (id, content, is_active) VALUES (?, ?, 1)",
-                    (aid, content),
+                    "INSERT INTO announcements (id, content, is_active, align) VALUES (?, ?, 1, ?)",
+                    (aid, content, align),
                 )
                 await conn.commit()
                 cursor = await conn.execute("SELECT * FROM announcements WHERE id = ?", (aid,))
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": aid, "content": content, "is_active": 1}
+            return dict(row) if row else {"id": aid, "content": content, "is_active": 1, "align": align}
         except Exception as exc:
             print(f"[SQLiteStore] Create announcement failed: {exc}")
             raise

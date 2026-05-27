@@ -393,6 +393,7 @@ async def admin_user_detail(
 
 class AnnouncementCreateRequest(BaseModel):
     content: str
+    align: str = 'left'
 
 
 @router.post("/announcement")
@@ -406,7 +407,8 @@ async def admin_create_announcement(
     """Create a new announcement (deactivates previous ones)."""
     if not req.content.strip():
         raise HTTPException(400, "公告内容不能为空")
-    return await storage.create_announcement(req.content.strip())
+    align = req.align if req.align in ('left', 'center', 'right') else 'left'
+    return await storage.create_announcement(req.content.strip(), align)
 
 
 @router.delete("/announcement/{announcement_id}")

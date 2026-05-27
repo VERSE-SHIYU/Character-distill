@@ -1,0 +1,1 @@
+ALTER TABLE announcements ADD COLUMN align TEXT NOT NULL DEFAULT 'left';

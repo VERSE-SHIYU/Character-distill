@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import EmojiPicker from './common/EmojiPicker'
 
 const NAV_GROUPS = [
   { label: '概览', items: [
@@ -1442,6 +1443,9 @@ function AnnouncementsTab() {
   const [creating, setCreating] = useState(false)
   const [actionMsg, setActionMsg] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [showEmoji, setShowEmoji] = useState(false)
+  const [centerAlign, setCenterAlign] = useState(false)
+  const annTaRef = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -1463,8 +1467,9 @@ function AnnouncementsTab() {
     setCreating(true)
     setError('')
     try {
-      await adminAPI.createAnnouncement(content.trim())
+      await adminAPI.createAnnouncement(content.trim(), centerAlign ? 'center' : 'left')
       setContent('')
+      setCenterAlign(false)
       setActionMsg('公告已发布')
       setTimeout(() => setActionMsg(''), 2000)
       await load()
@@ -1487,6 +1492,17 @@ function AnnouncementsTab() {
     }
   }
 
+  useEffect(() => {
+    if (!showEmoji) return
+    const handler = (e) => {
+      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
+        setShowEmoji(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showEmoji])
+
   const fmtDate = (iso) => {
     if (!iso) return '-'
     return iso.slice(0, 16).replace('T', ' ')
@@ -1505,15 +1521,47 @@ function AnnouncementsTab() {
 
       <div className="announcement-create">
         <textarea
+          ref={annTaRef}
           className="announcement-textarea"
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="输入公告内容…"
           rows={3}
         />
-        <button className="btn-primary" onClick={handleCreate} disabled={creating || !content.trim()}>
-          {creating ? '发布中…' : '发布公告'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            type="button"
+            data-emoji-btn
+            className="btn-ghost btn-sm"
+            onClick={() => setShowEmoji(!showEmoji)}
+            title="插入 emoji"
+          >
+            😊
+          </button>
+          {showEmoji && (
+            <div style={{ position: 'relative' }}>
+              <EmojiPicker textareaRef={annTaRef} onEmojiSelect={() => setShowEmoji(false)} />
+            </div>
+          )}
+          <button
+            type="button"
+            className={`btn-ghost btn-sm${centerAlign ? ' active' : ''}`}
+            onClick={() => setCenterAlign(!centerAlign)}
+            title={centerAlign ? '取消居中' : '居中显示'}
+            style={{ fontWeight: centerAlign ? 600 : 400 }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="7" y1="12" x2="17" y2="12" />
+              <line x1="5" y1="18" x2="19" y2="18" />
+              <line x1="9" y1="10" x2="15" y2="10" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+          </button>
+          <button className="btn-primary" onClick={handleCreate} disabled={creating || !content.trim()} style={{ marginLeft: 'auto' }}>
+            {creating ? '发布中…' : '发布公告'}
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -1533,7 +1581,7 @@ function AnnouncementsTab() {
                   <Trash2 size={14} />
                 </button>
               </div>
-              <div className="announcement-item-content">{a.content}</div>
+              <div className="announcement-item-content" style={{ textAlign: a.align || 'left' }}>{a.content}</div>
             </div>
           ))}
         </div>
