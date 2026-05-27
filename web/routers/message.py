@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from deps import get_storage
+from limiter import limiter
 from storage.sqlite_store import SQLiteStore
 from routers.auth import get_current_user
 from pydantic import BaseModel
@@ -19,7 +20,9 @@ router = APIRouter(prefix="/api/messages", tags=["messages"])
 
 
 @router.get("/conversations")
+@limiter.limit("60/minute")
 async def get_conversations(
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -29,7 +32,9 @@ async def get_conversations(
 
 
 @router.get("/with/{other_id}")
+@limiter.limit("60/minute")
 async def get_conversation_messages(
+    request: Request,
     other_id: str,
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
@@ -42,7 +47,9 @@ async def get_conversation_messages(
 
 
 @router.post("/send")
+@limiter.limit("30/minute")
 async def send_message(
+    request: Request,
     body: SendMessageRequest,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -60,7 +67,9 @@ async def send_message(
 
 
 @router.post("/read/{other_id}")
+@limiter.limit("30/minute")
 async def mark_read(
+    request: Request,
     other_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -71,7 +80,9 @@ async def mark_read(
 
 
 @router.get("/unread-count")
+@limiter.limit("60/minute")
 async def unread_count(
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:

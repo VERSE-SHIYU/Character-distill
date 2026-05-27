@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from deps import get_memory_manager, get_storage
 from core.memory_manager import MemoryManager
+from limiter import limiter
 from routers.auth import get_current_user
 from storage.sqlite_store import SQLiteStore
 
@@ -13,8 +14,10 @@ router = APIRouter(prefix="/api/memory", tags=["memory"])
 
 
 @router.get("/list/{card_id}")
+@limiter.limit("60/minute")
 async def list_memories(
     card_id: str,
+    request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
     storage: SQLiteStore = Depends(get_storage),
@@ -30,8 +33,10 @@ async def list_memories(
 
 
 @router.delete("/delete/{memory_id}")
+@limiter.limit("30/minute")
 async def delete_memory(
     memory_id: str,
+    request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
     storage: SQLiteStore = Depends(get_storage),
@@ -50,8 +55,10 @@ async def delete_memory(
 
 
 @router.delete("/clear/{card_id}")
+@limiter.limit("30/minute")
 async def clear_memories(
     card_id: str,
+    request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
     storage: SQLiteStore = Depends(get_storage),

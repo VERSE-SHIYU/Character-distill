@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from deps import get_storage, get_user_llm, get_sessions
+from limiter import limiter
 from storage.sqlite_store import SQLiteStore
 from routers.auth import get_current_user
 
@@ -130,6 +131,7 @@ def _get_group_sessions() -> dict[str, Any]:
 
 
 @router.post("/create")
+@limiter.limit("30/minute")
 async def create_group(
     req: CreateGroupRequest,
     request: Request,
@@ -210,6 +212,7 @@ async def create_group(
 
 
 @router.get("/list")
+@limiter.limit("60/minute")
 async def list_groups(
     request: Request,
     user: dict = Depends(get_current_user),
@@ -221,6 +224,7 @@ async def list_groups(
 
 
 @router.post("/{group_id}/send")
+@limiter.limit("30/minute")
 async def send_message(
     group_id: str,
     req: SendMessageRequest,
@@ -263,6 +267,7 @@ async def send_message(
 
 
 @router.post("/{group_id}/broadcast")
+@limiter.limit("30/minute")
 async def broadcast_message(
     group_id: str,
     req: BroadcastRequest,
@@ -308,6 +313,7 @@ async def broadcast_message(
 
 
 @router.get("/{group_id}/history")
+@limiter.limit("60/minute")
 async def get_history(
     group_id: str,
     request: Request,
@@ -326,9 +332,11 @@ async def get_history(
 
 
 @router.patch("/{group_id}/rename")
+@limiter.limit("30/minute")
 async def rename_group(
     group_id: str,
     req: RenameGroupRequest,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -345,8 +353,10 @@ async def rename_group(
 
 
 @router.delete("/{group_id}")
+@limiter.limit("30/minute")
 async def delete_group(
     group_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:

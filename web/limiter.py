@@ -21,3 +21,6 @@ def _get_real_ip(request) -> str:
 
 
 limiter = Limiter(key_func=_get_real_ip)
+
+# Public alias for route handlers that need client IP (e.g. market.py comments)
+get_client_ip = _get_real_ip

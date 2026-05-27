@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from deps import get_storage
+from limiter import limiter
 from storage.sqlite_store import SQLiteStore
 from routers.auth import get_current_user
 
@@ -22,6 +23,7 @@ class AvatarSaveRequest(BaseModel):
 
 
 @router.get("/{card_id}/avatar")
+@limiter.limit("60/minute")
 async def get_card_avatar(
     card_id: str,
     request: Request,
@@ -41,6 +43,7 @@ async def get_card_avatar(
 
 
 @router.put("/{card_id}/avatar")
+@limiter.limit("30/minute")
 async def save_card_avatar(
     card_id: str,
     body: AvatarSaveRequest,
@@ -64,8 +67,10 @@ async def save_card_avatar(
 
 
 @router.get("/{card_id}/export")
+@limiter.limit("60/minute")
 async def export_card(
     card_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> Response:
@@ -98,7 +103,9 @@ async def export_card(
 
 
 @router.get("/trash")
+@limiter.limit("60/minute")
 async def list_trash(
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict]:
@@ -107,8 +114,10 @@ async def list_trash(
 
 
 @router.get("/{card_id}")
+@limiter.limit("60/minute")
 async def get_card(
     card_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -122,8 +131,10 @@ async def get_card(
 
 
 @router.post("/{card_id}/restore")
+@limiter.limit("30/minute")
 async def restore_card_route(
     card_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -140,8 +151,10 @@ async def restore_card_route(
 
 
 @router.delete("/{card_id}/purge")
+@limiter.limit("30/minute")
 async def purge_card_route(
     card_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -158,8 +171,10 @@ async def purge_card_route(
 
 
 @router.delete("/{card_id}")
+@limiter.limit("30/minute")
 async def delete_card_route(
     card_id: str,
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:

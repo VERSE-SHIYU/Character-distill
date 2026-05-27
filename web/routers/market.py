@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 
 from deps import get_storage
+from limiter import get_client_ip, limiter
 from storage.sqlite_store import SQLiteStore
 from routers.auth import get_current_user
 
@@ -69,6 +70,7 @@ class UpdatePublishRequest(BaseModel):
 
 
 @router.get("/list")
+@limiter.limit("60/minute")
 async def list_cards(
     request: Request,
     page: int = Query(1, ge=1),
@@ -89,6 +91,7 @@ async def list_cards(
 
 
 @router.get("/search")
+@limiter.limit("60/minute")
 async def search_cards(
     request: Request,
     q: str = Query("", min_length=1),
@@ -109,7 +112,9 @@ async def search_cards(
 
 
 @router.get("/my/following")
+@limiter.limit("60/minute")
 async def my_following(
+    request: Request,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
@@ -119,7 +124,9 @@ async def my_following(
 
 
 @router.get("/feed")
+@limiter.limit("60/minute")
 async def feed(
+    request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
     user: dict = Depends(get_current_user),
@@ -133,7 +140,9 @@ async def feed(
 
 
 @router.get("/author/{user_id}")
+@limiter.limit("60/minute")
 async def get_author(
+    request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -169,7 +178,9 @@ async def get_author(
 
 
 @router.get("/author/{user_id}/followers")
+@limiter.limit("60/minute")
 async def get_author_followers(
+    request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -180,7 +191,9 @@ async def get_author_followers(
 
 
 @router.patch("/author/visibility")
+@limiter.limit("30/minute")
 async def update_privacy(
+    request: Request,
     body: dict,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -207,7 +220,9 @@ async def update_privacy(
 
 
 @router.get("/author/{user_id}/posts")
+@limiter.limit("60/minute")
 async def get_author_posts(
+    request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -221,7 +236,9 @@ async def get_author_posts(
 
 
 @router.post("/author/{user_id}/follow")
+@limiter.limit("30/minute")
 async def toggle_follow_author(
+    request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -236,7 +253,9 @@ async def toggle_follow_author(
 
 
 @router.post("/author/posts")
+@limiter.limit("30/minute")
 async def create_post(
+    request: Request,
     body: PostRequest,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -251,7 +270,9 @@ async def create_post(
 
 
 @router.get("/card/{card_id}")
+@limiter.limit("60/minute")
 async def get_card_detail(
+    request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -267,7 +288,9 @@ async def get_card_detail(
 
 
 @router.post("/{card_id}/publish")
+@limiter.limit("30/minute")
 async def publish_card(
+    request: Request,
     card_id: str,
     body: PublishRequest,
     user: dict = Depends(get_current_user),
@@ -293,7 +316,9 @@ async def publish_card(
 
 
 @router.put("/{card_id}/publish")
+@limiter.limit("30/minute")
 async def update_published_card(
+    request: Request,
     card_id: str,
     body: UpdatePublishRequest,
     user: dict = Depends(get_current_user),
@@ -319,7 +344,9 @@ async def update_published_card(
 
 
 @router.get("/{card_id}/versions")
+@limiter.limit("60/minute")
 async def get_card_versions(
+    request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -330,7 +357,9 @@ async def get_card_versions(
 
 
 @router.delete("/{card_id}/versions/{version_id}")
+@limiter.limit("30/minute")
 async def delete_card_version(
+    request: Request,
     card_id: str,
     version_id: str,
     user: dict = Depends(get_current_user),
@@ -346,7 +375,9 @@ async def delete_card_version(
 
 
 @router.put("/{card_id}/versions/{version_id}")
+@limiter.limit("30/minute")
 async def update_card_version(
+    request: Request,
     card_id: str,
     version_id: str,
     body: dict,
@@ -369,7 +400,9 @@ async def update_card_version(
 
 
 @router.get("/{card_id}/forks")
+@limiter.limit("60/minute")
 async def get_card_forks(
+    request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -380,7 +413,9 @@ async def get_card_forks(
 
 
 @router.delete("/{card_id}")
+@limiter.limit("30/minute")
 async def delete_market_card(
+    request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -403,7 +438,9 @@ async def delete_market_card(
 
 
 @router.get("/post/{post_id}/comments")
+@limiter.limit("60/minute")
 async def list_post_comments(
+    request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -414,6 +451,7 @@ async def list_post_comments(
 
 
 @router.post("/post/{post_id}/comments")
+@limiter.limit("30/minute")
 async def add_post_comment(
     post_id: str,
     body: CommentRequest,
@@ -426,8 +464,7 @@ async def add_post_comment(
         raise HTTPException(400, "评论内容不能为空")
 
     # Get client IP and look up location (like Douyin/Xiaohongshu style)
-    forwarded = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else ""
+    client_ip = get_client_ip(request)
     ip_location = await _get_ip_location(client_ip)
 
     comment = await storage.add_post_comment(post_id, user["id"], user["username"], body.content.strip(), ip_location)
@@ -435,7 +472,9 @@ async def add_post_comment(
 
 
 @router.post("/post/{post_id}/like")
+@limiter.limit("30/minute")
 async def like_post(
+    request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -445,7 +484,9 @@ async def like_post(
 
 
 @router.delete("/posts/{post_id}")
+@limiter.limit("30/minute")
 async def delete_post(
+    request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -464,7 +505,9 @@ async def delete_post(
 
 
 @router.get("/{card_id}/comments")
+@limiter.limit("60/minute")
 async def list_comments(
+    request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
@@ -475,7 +518,9 @@ async def list_comments(
 
 
 @router.post("/{card_id}/comments")
+@limiter.limit("30/minute")
 async def add_comment(
+    request: Request,
     card_id: str,
     body: CommentRequest,
     user: dict = Depends(get_current_user),
@@ -492,7 +537,9 @@ async def add_comment(
 
 
 @router.post("/{card_id}/comments/batch-delete")
+@limiter.limit("30/minute")
 async def batch_delete_comments(
+    request: Request,
     card_id: str,
     body: dict,
     user: dict = Depends(get_current_user),
@@ -512,7 +559,9 @@ async def batch_delete_comments(
 
 
 @router.delete("/{card_id}/comments/{comment_id}")
+@limiter.limit("30/minute")
 async def delete_comment(
+    request: Request,
     card_id: str,
     comment_id: str,
     user: dict = Depends(get_current_user),
@@ -535,7 +584,9 @@ async def delete_comment(
 
 
 @router.post("/{card_id}/comments/{comment_id}/report")
+@limiter.limit("30/minute")
 async def report_comment(
+    request: Request,
     card_id: str,
     comment_id: str,
     body: dict,
@@ -553,6 +604,7 @@ async def report_comment(
 
 
 @router.post("/{card_id}/fork")
+@limiter.limit("30/minute")
 async def fork_card(
     card_id: str,
     body: ForkRequest,
@@ -569,6 +621,7 @@ async def fork_card(
 
 
 @router.post("/{card_id}/like")
+@limiter.limit("30/minute")
 async def like_card(
     card_id: str,
     request: Request,
@@ -583,6 +636,7 @@ async def like_card(
 
 
 @router.patch("/{card_id}/visibility")
+@limiter.limit("30/minute")
 async def set_visibility(
     card_id: str,
     body: VisibilityUpdate,
