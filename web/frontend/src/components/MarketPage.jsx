@@ -5,6 +5,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { Heart, Book } from './common/Icon'
+import { parseCardJson } from '../utils/card'
 
 const PAGE_SIZE = 20
 
@@ -255,9 +256,7 @@ export default function MarketPage() {
         <>
           <div className="market-grid-v2">
             {cards.map((c) => {
-              const cardData = typeof c.card_json === 'string'
-                ? JSON.parse(c.card_json)
-                : c.card_json || {}
+              const cardData = parseCardJson(c)
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (

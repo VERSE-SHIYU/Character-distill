@@ -10,6 +10,7 @@ import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
+import { parseCardJson } from '../utils/card'
 import MentionDropdown from './common/MentionDropdown'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import EmojiPicker from './common/EmojiPicker'
@@ -105,9 +106,7 @@ function ChatView() {
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
 
-  const cardData = typeof currentCard.card_json === 'string'
-    ? JSON.parse(currentCard.card_json)
-    : currentCard.card_json || currentCard
+  const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
 

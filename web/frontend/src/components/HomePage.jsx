@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import { loadCardAvatar } from '../store/db'
+import { parseCardJson } from '../utils/card'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -41,14 +42,6 @@ function previewText(text, max = 60) {
 function truncate(str, max) {
   if (!str) return ''
   return str.length > max ? `${str.slice(0, max)}…` : str
-}
-
-function parseCardJson(card) {
-  if (!card) return {}
-  if (typeof card.card_json === 'string') {
-    try { return JSON.parse(card.card_json) } catch { return {} }
-  }
-  return card.card_json || card
 }
 
 export default function HomePage() {

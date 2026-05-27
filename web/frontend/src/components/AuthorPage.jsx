@@ -7,6 +7,7 @@ import PostCard from './common/PostCard'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
+import { parseCardJson } from '../utils/card'
 
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
@@ -132,17 +133,17 @@ export default function AuthorPage({ embedded = false }) {
   }
 
   const getCharName = (card) => {
-    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    const cd = parseCardJson(card)
     return cd.name || card.name || '?'
   }
 
   const getCharIdentity = (card) => {
-    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    const cd = parseCardJson(card)
     return cd.identity || ''
   }
 
   const getCharBackground = (card) => {
-    const cd = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    const cd = parseCardJson(card)
     return cd.background || ''
   }
 

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from adapters.llm_adapter import LLMAdapter
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard
+from core.utils import try_record_usage
 
 
 IDENTIFY_SYSTEM_PROMPT = (
@@ -102,28 +103,14 @@ class Distiller:
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
-        if not self._storage or not self._user_id:
-            return
-        if usage is None:
-            usage = self._llm.last_usage
-        if not usage:
-            return
-        storage = self._storage
-        user_id = self._user_id
-        model = getattr(self._llm, '_model', '') or ''
-        pt, ct = usage["prompt_tokens"], usage["completion_tokens"]
-
-        def _do():
-            try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(
-                    storage.record_usage(user_id, action, pt, ct, model)
-                )
-                loop.close()
-            except Exception as exc:
-                print(f"[Distiller] Record usage failed (non-fatal): {exc}")
-
-        threading.Thread(target=_do, daemon=True).start()
+        try_record_usage(
+            storage=self._storage,
+            user_id=self._user_id,
+            llm=self._llm,
+            action=action,
+            usage=usage,
+            source="Distiller",
+        )
 
     # ── static prompt helpers ──────────────────────────────────────────
 

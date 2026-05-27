@@ -6,6 +6,7 @@ import Loading from './common/Loading'
 import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
+import { parseCardJson } from '../utils/card'
 
 /* ── MineCardMenu ── */
 function MineCardMenu({ card, onRefresh }) {
@@ -26,7 +27,7 @@ function MineCardMenu({ card, onRefresh }) {
 
   const handleDelete = async (e) => {
     e.stopPropagation()
-    const cardData = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+    const cardData = parseCardJson(card)
     const name = cardData.name || card.name || '?'
     if (!confirm(`确定删除角色「${name}」？`)) return
     try {
@@ -274,7 +275,7 @@ export default function MinePage() {
           ) : (
             <div className="market-grid-v2">
               {cards.map(card => {
-                const cardData = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+                const cardData = parseCardJson(card)
                 const name = cardData.name || card.name || '?'
                 const identity = cardData.identity || ''
                 return (
@@ -334,7 +335,7 @@ export default function MinePage() {
                     {textCards.length > 0 && (
                       <div className="mine-book-cards">
                         {textCards.map(c => {
-                          const cd = typeof c.card_json === 'string' ? JSON.parse(c.card_json) : c.card_json || {}
+                          const cd = parseCardJson(c)
                           return (
                             <div key={c.id} className="mine-book-card-chip" onClick={() => {
                               useAppStore.getState().setCurrentMarketCardId(c.id)

@@ -10,6 +10,7 @@ import MentionDropdown from './common/MentionDropdown'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import EmojiPicker from './common/EmojiPicker'
+import { parseCardJson } from '../utils/card'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -66,9 +67,7 @@ export default function GroupChatPage() {
     const updates = {}
     results.forEach((r, i) => {
       if (r.status === 'fulfilled' && r.value) {
-        const cardData = typeof r.value.card_json === 'string'
-          ? JSON.parse(r.value.card_json)
-          : r.value.card_json || {}
+        const cardData = parseCardJson(r.value)
         updates[missing[i]] = { ...r.value, name: cardData.name || r.value.name || '?' }
       }
     })
@@ -266,9 +265,7 @@ export default function GroupChatPage() {
         const data = await res.json()
         const cards = []
         for (const c of data) {
-          const cardData = typeof c.card_json === 'string'
-            ? JSON.parse(c.card_json)
-            : c.card_json || {}
+          const cardData = parseCardJson(c)
           cards.push({ ...c, name: cardData.name || c.name || '?' })
         }
         if (cards.length > 0) grouped[text.id] = cards
@@ -603,7 +600,7 @@ export default function GroupChatPage() {
                       let identity = ''
                       if (card) {
                         try {
-                          const cj = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+                          const cj = parseCardJson(card)
                           identity = cj.identity || ''
                         } catch {}
                       }

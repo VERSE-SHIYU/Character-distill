@@ -8,6 +8,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { Book, User, Pin, Tag, Bookmark, Globe } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
+import { parseCardJson } from '../utils/card'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
@@ -204,7 +205,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const uniqueCards = (() => {
     const seen = new Set()
     return sortedCards.filter((c) => {
-      const d = typeof c.card_json === 'string' ? JSON.parse(c.card_json) : c.card_json || c
+      const d = parseCardJson(c)
       const name = d.name || c.name
       if (!name || seen.has(name)) return false
       seen.add(name)
@@ -331,9 +332,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         ) : (
           <ul className="char-list">
             {deletedCards.map((c) => {
-              const cardData = typeof c.card_json === 'string'
-                ? JSON.parse(c.card_json)
-                : c.card_json || c
+              const cardData = parseCardJson(c)
               const name = cardData.name || c.name || '?'
               return (
                 <li key={c.id} className="char-list-li" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
@@ -376,9 +375,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       {hasCards && (
         <ul className="char-list">
           {uniqueCards.map((c) => {
-            const cardData = typeof c.card_json === 'string'
-              ? JSON.parse(c.card_json)
-              : c.card_json || c
+            const cardData = parseCardJson(c)
             const name = cardData.name || c.name
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
@@ -452,9 +449,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           <h3 className="char-identified-title"><Globe size={16} /> 来自市场</h3>
           <ul className="char-list">
             {standaloneCards.map((c) => {
-              const cardData = typeof c.card_json === 'string'
-                ? JSON.parse(c.card_json)
-                : c.card_json || c
+              const cardData = parseCardJson(c)
               const name = cardData.name || c.name
               const identity = cardData.identity || ''
               const isActive = currentCard?.id === c.id
@@ -505,9 +500,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             {identifiedChars.map((ch, i) => {
               const name = ch.name || `Character ${i + 1}`
               const already = cards.some((c) => {
-                const d = typeof c.card_json === 'string'
-                  ? JSON.parse(c.card_json)
-                  : c.card_json || c
+                const d = parseCardJson(c)
                 return (d.name || c.name) === name
               })
               return (
@@ -754,9 +747,7 @@ function CardDetail({ card, textId }) {
   const [publishMessage, setPublishMessage] = useState('')
   const [publishSending, setPublishSending] = useState(false)
 
-  const data = typeof card.card_json === 'string'
-    ? JSON.parse(card.card_json)
-    : card.card_json || card
+  const data = parseCardJson(card)
   const name = data.name || card.name || '?'
   const style = data.speaking_style || {}
   const rels = data.relationships || []

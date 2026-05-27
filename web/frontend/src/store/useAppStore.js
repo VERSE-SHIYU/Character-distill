@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
+import { parseCardJson } from '../utils/card'
 
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
@@ -774,9 +775,7 @@ const useAppStore = create((set, get) => ({
     // Cancel previous in-flight request
     if (state._chatAbort) state._chatAbort.abort()
 
-    const data = typeof card.card_json === 'string'
-      ? JSON.parse(card.card_json)
-      : card.card_json || card
+    const data = parseCardJson(card)
 
     // Optimistic UI: switch to chat view immediately
     const abort = new AbortController()

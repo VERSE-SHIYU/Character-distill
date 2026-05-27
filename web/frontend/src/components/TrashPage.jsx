@@ -4,6 +4,7 @@ import HistoryPanel from './HistoryPanel'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
+import { parseCardJson } from '../utils/card'
 
 export default function TrashPage() {
   const [tab, setTab] = useState('chat')
@@ -98,9 +99,7 @@ export default function TrashPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '12px 0' }}>
               {cards.map((card) => {
-                const cardData = typeof card.card_json === 'string'
-                  ? JSON.parse(card.card_json)
-                  : card.card_json || {}
+                const cardData = parseCardJson(card)
                 const name = cardData.name || card.name || '?'
                 return (
                   <div key={card.id} className="history-swipe-wrapper">

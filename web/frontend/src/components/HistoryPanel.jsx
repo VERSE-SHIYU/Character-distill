@@ -7,6 +7,7 @@ import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { loadCardAvatar } from '../store/db'
 import { Book, Clipboard, Trash2 } from './common/Icon'
+import { parseCardJson } from '../utils/card'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -107,9 +108,7 @@ export default function HistoryPanel({ initialTrash = false }) {
       let n = c.name
       if (!n && c.card_json) {
         try {
-          const parsed = typeof c.card_json === 'string'
-            ? JSON.parse(c.card_json)
-            : c.card_json
+          const parsed = parseCardJson(c)
           n = parsed?.name
         } catch { /* ignore */ }
       }

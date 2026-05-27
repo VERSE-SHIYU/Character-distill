@@ -7,6 +7,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+import { parseCardJson } from '../utils/card'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -340,7 +341,7 @@ export default function MarketCardDetail() {
   const handleEditSave = async (formData) => {
     setEditing(true)
     try {
-      const currentCardJson = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+      const currentCardJson = parseCardJson(card)
       const updatedJson = {
         ...currentCardJson,
         name: formData.name.trim(),
@@ -425,9 +426,9 @@ export default function MarketCardDetail() {
 
   const cardData = (() => {
     const raw = viewVersion
-      ? (typeof viewVersion.card_json_snapshot === 'string' ? JSON.parse(viewVersion.card_json_snapshot) : viewVersion.card_json_snapshot || {})
-      : card.card_json
-    return typeof raw === 'string' ? JSON.parse(raw) : raw || {}
+      ? parseCardJson(viewVersion.card_json_snapshot)
+      : parseCardJson(card);
+    return raw || {};
   })()
   const charName = cardData.name || card.name || '?'
   const identity = cardData.identity || ''
@@ -743,7 +744,7 @@ export default function MarketCardDetail() {
                 ) : (
                   <div className="fork-list">
                     {forks.map((f) => {
-                      const forkData = typeof f.card_json === 'string' ? JSON.parse(f.card_json) : f.card_json || {}
+                      const forkData = parseCardJson(f)
                       return (
                         <div key={f.id} className="fork-item">
                           <Avatar name={forkData.name || f.name || '?'} size={40} />
@@ -913,7 +914,7 @@ export default function MarketCardDetail() {
 
       {/* ── Edit card modal ── */}
       {showEditModal && (() => {
-        const current = typeof card.card_json === 'string' ? JSON.parse(card.card_json) : card.card_json || {}
+        const current = parseCardJson(card)
         const readForm = () => {
           const el = editFormRef.current
           if (!el) return {}

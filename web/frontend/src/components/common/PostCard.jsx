@@ -3,6 +3,7 @@ import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
 import { Heart, MessageSquare, Trash2 } from './Icon'
+import { parseCardJson } from '../../utils/card'
 
 /* ── Expandable text ── */
 function ExpandableText({ text, maxLines = 6 }) {
@@ -174,10 +175,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
 
       {/* Card reference */}
       {post.card_id && (() => {
-        let cardData = null
-        if (post.card_json) {
-          try { cardData = typeof post.card_json === 'string' ? JSON.parse(post.card_json) : post.card_json } catch {}
-        }
+        const cardData = post.card_json ? parseCardJson(post) : null
         const cardName = post.card_name || '关联角色'
         const cardIdentity = cardData?.identity || ''
         const parseDate = (iso) => iso ? new Date(iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso) : null
