@@ -6897,7 +6897,7 @@ select.settings-input {
   box-shadow: var(--card-shadow);
   padding: 28px;
   max-width: 100%;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .admin-card-title {
@@ -11612,6 +11612,18 @@ select.settings-input {
   flex-direction: column;
   gap: 8px;
   margin-bottom: 20px;
+}
+
+.announcement-align-group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.announcement-align-group .btn-ghost.active {
+  background: var(--pill-bg);
+  color: var(--pill-text);
+  border-color: var(--pill-border);
 }
 
 .announcement-textarea {

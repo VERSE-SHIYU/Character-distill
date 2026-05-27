@@ -144,6 +144,7 @@ function DashboardTab() {
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [selectedDay, setSelectedDay] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -235,9 +236,39 @@ function DashboardTab() {
                   }}
                 />
                 <Area type="monotone" dataKey="calls" stroke="var(--primary)" strokeWidth={2}
-                  fill="url(#areaGrad)" dot={{ r: 3 }} name="调用次数" />
+                  fill="url(#areaGrad)" name="调用次数"
+                  dot={(dotProps) => {
+                    const { cx, cy, payload, index } = dotProps
+                    if (cx == null || cy == null) return null
+                    const isActive = selectedDay && payload.day === selectedDay.day
+                    return (
+                      <circle key={`dot-${index}`}
+                        cx={cx} cy={cy} r={isActive ? 7 : 5}
+                        fill="var(--primary)" stroke="#fff" strokeWidth={2}
+                        style={{ cursor: 'pointer', transition: 'r .15s' }}
+                        onClick={() => setSelectedDay(payload)}
+                      />
+                    )
+                  }}
+                  activeDot={(dotProps) => {
+                    const { cx, cy, index } = dotProps
+                    if (cx == null || cy == null) return null
+                    return (
+                      <circle key={`active-dot-${index}`} cx={cx} cy={cy} r={7} fill="var(--primary)" stroke="#fff" strokeWidth={2} />
+                    )
+                  }}
+                />
               </AreaChart>
             </ResponsiveContainer>
+            {selectedDay && (
+              <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-primary)', textAlign: 'center' }}>
+                点击了 <strong>{selectedDay.day}</strong> — {selectedDay.calls} 次调用
+                <button
+                  style={{ marginLeft: 10, background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: 13, textDecoration: 'underline' }}
+                  onClick={() => setSelectedDay(null)}
+                >取消选择</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1444,7 +1475,7 @@ function AnnouncementsTab() {
   const [actionMsg, setActionMsg] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [showEmoji, setShowEmoji] = useState(false)
-  const [centerAlign, setCenterAlign] = useState(false)
+  const [textAlign, setTextAlign] = useState('left')
   const annTaRef = useRef(null)
 
   const load = useCallback(async () => {
@@ -1467,9 +1498,9 @@ function AnnouncementsTab() {
     setCreating(true)
     setError('')
     try {
-      await adminAPI.createAnnouncement(content.trim(), centerAlign ? 'center' : 'left')
+      await adminAPI.createAnnouncement(content.trim(), textAlign)
       setContent('')
-      setCenterAlign(false)
+      setTextAlign('left')
       setActionMsg('公告已发布')
       setTimeout(() => setActionMsg(''), 2000)
       await load()
@@ -1543,21 +1574,23 @@ function AnnouncementsTab() {
               <EmojiPicker textareaRef={annTaRef} onEmojiSelect={() => setShowEmoji(false)} />
             </div>
           )}
-          <button
-            type="button"
-            className={`btn-ghost btn-sm${centerAlign ? ' active' : ''}`}
-            onClick={() => setCenterAlign(!centerAlign)}
-            title={centerAlign ? '取消居中' : '居中显示'}
-            style={{ fontWeight: centerAlign ? 600 : 400 }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="7" y1="12" x2="17" y2="12" />
-              <line x1="5" y1="18" x2="19" y2="18" />
-              <line x1="9" y1="10" x2="15" y2="10" />
-              <line x1="9" y1="14" x2="15" y2="14" />
-            </svg>
-          </button>
+          <div className="announcement-align-group">
+            {[
+              { key: 'left', label: '左', svg: <svg key="left" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="15" y2="12" /><line x1="3" y1="18" x2="19" y2="18" /></svg> },
+              { key: 'center', label: '中', svg: <svg key="center" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="6" x2="17" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="5" y1="18" x2="19" y2="18" /></svg> },
+              { key: 'right', label: '右', svg: <svg key="right" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6" /><line x1="9" y1="12" x2="21" y2="12" /><line x1="5" y1="18" x2="21" y2="18" /></svg> },
+            ].map(a => (
+              <button
+                key={a.key}
+                className={`btn-ghost btn-sm${textAlign === a.key ? ' active' : ''}`}
+                onClick={() => setTextAlign(a.key)}
+                title={`${a.label}对齐`}
+                style={{ fontWeight: textAlign === a.key ? 600 : 400 }}
+              >
+                {a.svg}
+              </button>
+            ))}
+          </div>
           <button className="btn-primary" onClick={handleCreate} disabled={creating || !content.trim()} style={{ marginLeft: 'auto' }}>
             {creating ? '发布中…' : '发布公告'}
           </button>
