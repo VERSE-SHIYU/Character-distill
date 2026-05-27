@@ -9774,6 +9774,15 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   background: var(--glass-bg);
+  transition: width 0.25s ease, opacity 0.2s ease;
+}
+
+.group-right-panel.collapsed {
+  width: 0;
+  opacity: 0;
+  padding: 0;
+  border: none;
+  overflow: hidden;
 }
 
 .group-right-section {

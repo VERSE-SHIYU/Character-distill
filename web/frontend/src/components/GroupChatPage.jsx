@@ -45,9 +45,18 @@ export default function GroupChatPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
-  const [showMembers, setShowMembers] = useState(false)
+  const [showMembers, setShowMembers] = useState(() => {
+    try { return localStorage.getItem('group-members-open') !== 'false' } catch { return true }
+  })
   const [editingName, setEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState('')
+  const toggleMembers = () => {
+    setShowMembers(prev => {
+      const next = !prev
+      try { localStorage.setItem('group-members-open', String(next)) } catch {}
+      return next
+    })
+  }
   const MAX_AUTO_TURNS = 20
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
@@ -641,12 +650,28 @@ export default function GroupChatPage() {
                   <button
                     type="button"
                     className="chat-topbar-btn"
-                    onClick={() => setShowMembers(!showMembers)}
+                    onClick={toggleMembers}
                     title="成员列表"
                   >
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="3" width="18" height="18" rx="2"/>
                       <line x1="15" y1="3" x2="15" y2="21"/>
+                    </svg>
+                  </button>
+                )}
+                {!isMobile && (
+                  <button
+                    type="button"
+                    className="chat-topbar-btn"
+                    onClick={toggleMembers}
+                    title={showMembers ? '收起成员' : '展开成员'}
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      {showMembers ? (
+                        <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>
+                      ) : (
+                        <path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>
+                      )}
                     </svg>
                   </button>
                 )}
@@ -777,7 +802,7 @@ export default function GroupChatPage() {
 
                 {/* 右侧栏：历史记录 + 成员列表 */}
                 {(!isMobile || showMembers) && (
-                  <div className="group-right-panel">
+                  <div className={`group-right-panel${showMembers ? '' : ' collapsed'}`}>
                     <div className="group-right-section">
                       <div className="group-right-section-title">历史记录</div>
                       <ChatHistoryPanel
