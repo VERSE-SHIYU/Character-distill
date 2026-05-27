@@ -210,46 +210,69 @@ export default function AuthorPage({ embedded = false }) {
                       <span className="author-stats-hidden">统计数据已隐藏</span>
                     )}
                   </div>
+                  {/* Followers/Following modals — rendered at overlay level */}
                   {showFollowers && (
-                    <div className="stat-follow-popup">
-                      {followersList.length === 0 ? (
-                        <div className="stat-follow-empty">暂无粉丝</div>
-                      ) : (
-                        followersList.map((f) => (
-                          <div key={f.id || f.user_id} className="stat-follow-item">
-                            <button type="button" className="stat-follow-user-btn" onClick={() => { setAuthorUserId(f.id || f.user_id); setView('author') }}>
-                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
-                              <span>{f.username}</span>
-                            </button>
-                            {authUser?.id !== (f.id || f.user_id) && (
-                              <button type="button" className="btn-sm btn-outline stat-follow-msg-btn" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
-                                私信
-                              </button>
-                            )}
+                    <div className="stat-follow-modal-overlay" onClick={() => setShowFollowers(false)}>
+                      <div className="stat-follow-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="stat-follow-modal-header">
+                          <h3>{followersCount} 粉丝</h3>
+                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowers(false)}>✕</button>
+                        </div>
+                        {followersList.length === 0 ? (
+                          <div className="stat-follow-empty">暂无粉丝</div>
+                        ) : (
+                          <div className="stat-follow-modal-list">
+                            {followersList.map((f) => (
+                              <div key={f.id || f.user_id} className="stat-follow-modal-item">
+                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowers(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
+                                  <Avatar name={f.username || '?'} src={f.avatar_data || null} size={36} />
+                                  <div className="stat-follow-modal-info">
+                                    <span className="stat-follow-modal-name">{f.username}</span>
+                                    {f.bio && <span className="stat-follow-modal-bio">{f.bio}</span>}
+                                  </div>
+                                </button>
+                                {authUser?.id !== (f.id || f.user_id) && (
+                                  <button type="button" className="btn-sm btn-outline" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                    私信
+                                  </button>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        ))
-                      )}
+                        )}
+                      </div>
                     </div>
                   )}
                   {showFollowing && (
-                    <div className="stat-follow-popup">
-                      {followingList.length === 0 ? (
-                        <div className="stat-follow-empty">暂无关注</div>
-                      ) : (
-                        followingList.map((f) => (
-                          <div key={f.id || f.user_id} className="stat-follow-item">
-                            <button type="button" className="stat-follow-user-btn" onClick={() => { setAuthorUserId(f.id || f.user_id); setView('author') }}>
-                              <Avatar name={f.username || '?'} src={f.avatar_data || null} size={28} />
-                              <span>{f.username}</span>
-                            </button>
-                            {authUser?.id !== (f.id || f.user_id) && (
-                              <button type="button" className="btn-sm btn-outline stat-follow-msg-btn" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
-                                私信
-                              </button>
-                            )}
+                    <div className="stat-follow-modal-overlay" onClick={() => setShowFollowing(false)}>
+                      <div className="stat-follow-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="stat-follow-modal-header">
+                          <h3>{followingCount} 关注</h3>
+                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowing(false)}>✕</button>
+                        </div>
+                        {followingList.length === 0 ? (
+                          <div className="stat-follow-empty">暂无关注</div>
+                        ) : (
+                          <div className="stat-follow-modal-list">
+                            {followingList.map((f) => (
+                              <div key={f.id || f.user_id} className="stat-follow-modal-item">
+                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowing(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
+                                  <Avatar name={f.username || '?'} src={f.avatar_data || null} size={36} />
+                                  <div className="stat-follow-modal-info">
+                                    <span className="stat-follow-modal-name">{f.username}</span>
+                                    {f.bio && <span className="stat-follow-modal-bio">{f.bio}</span>}
+                                  </div>
+                                </button>
+                                {authUser?.id !== (f.id || f.user_id) && (
+                                  <button type="button" className="btn-sm btn-outline" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                    私信
+                                  </button>
+                                )}
+                              </div>
+                            ))}
                           </div>
-                        ))
-                      )}
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>

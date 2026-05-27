@@ -12452,34 +12452,80 @@ select.settings-input {
   text-decoration: underline;
 }
 
-.stat-follow-popup {
-  margin-top: 8px;
-  padding: 12px 16px;
-  background: var(--glass-bg);
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--card-shadow);
-  max-height: 240px;
-  overflow-y: auto;
-}
-.stat-follow-item {
+/* ── Author page followers/following modal ── */
+.stat-follow-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  background: rgba(0,0,0,0.35);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  font-size: 13px;
-  color: var(--text);
+  justify-content: center;
+  padding: 20px;
+}
+.stat-follow-modal {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 400px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.stat-follow-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.stat-follow-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.stat-follow-modal-close {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  line-height: 1;
+  transition: background 0.15s;
+}
+.stat-follow-modal-close:hover {
+  background: var(--accent-soft, rgba(128,128,128,0.15));
 }
 .stat-follow-empty {
   text-align: center;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-dim);
-  padding: 12px 0;
+  padding: 40px 20px;
 }
-.stat-follow-user-btn {
+.stat-follow-modal-list {
+  overflow-y: auto;
+  padding: 8px 0;
+  flex: 1;
+}
+.stat-follow-modal-item {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 8px 20px;
+  transition: background 0.15s;
+}
+.stat-follow-modal-item:hover {
+  background: var(--accent-soft, rgba(128,128,128,0.08));
+}
+.stat-follow-modal-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   background: none;
   border: none;
   padding: 0;
@@ -12490,18 +12536,24 @@ select.settings-input {
   min-width: 0;
   text-align: left;
 }
-.stat-follow-user-btn:hover {
-  opacity: 0.7;
+.stat-follow-modal-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
-.stat-follow-user-btn span {
+.stat-follow-modal-name {
+  font-size: 14px;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.stat-follow-msg-btn {
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 2px 8px;
+.stat-follow-modal-bio {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .stat-visibility-toggle {
   background: none;
