@@ -12305,7 +12305,7 @@ select.settings-input {
 
 /* ── 首页欢迎区 ── */
 .home-welcome {
-  margin-bottom: 16px;
+  margin-bottom: 28px;
 }
 
 .home-greeting {
@@ -12364,6 +12364,57 @@ select.settings-input {
 /* ── 首页推荐角色区 ── */
 .home-discover-section {
   margin-bottom: 24px;
+}
+
+/* ── 引导占位卡 ── */
+.home-guide-card {
+  border: 2px dashed var(--glass-border);
+  background: transparent;
+}
+.home-guide-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 8px;
+  color: var(--text-dim);
+}
+.home-guide-card-plus {
+  font-size: 36px;
+  font-weight: 300;
+  line-height: 1;
+}
+.home-guide-card-text {
+  font-size: 13px;
+}
+.home-guide-card:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.home-guide-card:hover .home-guide-card-inner {
+  color: var(--primary);
+}
+
+/* ── 空角色英雄区 ── */
+.home-empty-hero {
+  text-align: center;
+  padding: 60px 20px;
+}
+.home-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+.home-empty-hero h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+.home-empty-hero p {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin-bottom: 20px;
 }
 
 .home-discover-grid {

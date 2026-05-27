@@ -375,6 +375,13 @@ export default function HomePage() {
                   <SkeletonCard key={i} />
                 ))}
               </div>
+            ) : discoverCards.length === 0 && selectedTag === '' ? (
+              <div className="home-empty-hero">
+                <div className="home-empty-icon">✨</div>
+                <h3>还没有公开角色</h3>
+                <p>上传小说或聊天记录，AI 蒸馏出角色，成为第一个创作者</p>
+                <button className="btn-primary" onClick={() => setView('text')}>开始创作</button>
+              </div>
             ) : discoverCards.length === 0 ? (
               <div className="home-no-chars">
                 <p style={{ fontSize: 14, color: 'var(--text-dim)' }}>该分类暂无推荐角色</p>
@@ -418,6 +425,14 @@ export default function HomePage() {
                     </button>
                   )
                 })}
+                {discoverCards.length < 4 && Array.from({ length: 4 - discoverCards.length }).map((_, i) => (
+                  <button key={`guide-${i}`} className="market-card-v2 home-guide-card" onClick={() => setView('text')}>
+                    <div className="home-guide-card-inner">
+                      <span className="home-guide-card-plus">+</span>
+                      <span className="home-guide-card-text">创建角色</span>
+                    </div>
+                  </button>
+                ))}
               </div>
             )}
           </div>
