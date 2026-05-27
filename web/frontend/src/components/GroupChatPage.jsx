@@ -637,22 +637,19 @@ export default function GroupChatPage() {
                   </div>
                 )}
                 <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
-                <ChatHistoryPanel
-                  fetchSessions={historyFetchSessions}
-                  onSelectSession={historySelectSession}
-                  placeholder="搜索历史群聊…"
-                />
-                <button
-                  type="button"
-                  className="chat-topbar-btn"
-                  onClick={() => setShowMembers(!showMembers)}
-                  title="成员列表"
-                >
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <line x1="15" y1="3" x2="15" y2="21"/>
-                  </svg>
-                </button>
+                {isMobile && (
+                  <button
+                    type="button"
+                    className="chat-topbar-btn"
+                    onClick={() => setShowMembers(!showMembers)}
+                    title="成员列表"
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      <line x1="15" y1="3" x2="15" y2="21"/>
+                    </svg>
+                  </button>
+                )}
               </div>
 
               {/* Messages */}
@@ -778,29 +775,40 @@ export default function GroupChatPage() {
                   {sending && <Loading text="加载中…" />}
                 </div>
 
-                {/* 成员侧栏 */}
-                {showMembers && (
-                  <div className="group-members-panel">
-                    <div className="group-members-title">成员</div>
-                    {currentGroup.card_ids?.map((cardId) => {
-                      const card = resolveCard(cardId)
-                      let identity = ''
-                      if (card) {
-                        try {
-                          const cj = parseCardJson(card)
-                          identity = cj.identity || ''
-                        } catch {}
-                      }
-                      return (
-                        <div key={cardId} className="group-member-item">
-                          <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
-                          <div className="group-member-info">
-                            <span className="group-member-name">{card?.name || '?'}</span>
-                            {identity && <span className="group-member-identity">{identity}</span>}
+                {/* 右侧栏：历史记录 + 成员列表 */}
+                {(!isMobile || showMembers) && (
+                  <div className="group-right-panel">
+                    <div className="group-right-section">
+                      <div className="group-right-section-title">历史记录</div>
+                      <ChatHistoryPanel
+                        fetchSessions={historyFetchSessions}
+                        onSelectSession={historySelectSession}
+                        placeholder="搜索历史群聊…"
+                      />
+                    </div>
+                    <div className="group-right-section-divider" />
+                    <div className="group-right-section">
+                      <div className="group-right-section-title">成员 ({currentGroup.card_ids?.length})</div>
+                      {currentGroup.card_ids?.map((cardId) => {
+                        const card = resolveCard(cardId)
+                        let identity = ''
+                        if (card) {
+                          try {
+                            const cj = parseCardJson(card)
+                            identity = cj.identity || ''
+                          } catch {}
+                        }
+                        return (
+                          <div key={cardId} className="group-member-item">
+                            <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
+                            <div className="group-member-info">
+                              <span className="group-member-name">{card?.name || '?'}</span>
+                              {identity && <span className="group-member-identity">{identity}</span>}
+                            </div>
                           </div>
-                        </div>
-                      )
-                    })}
+                        )
+                      })}
+                    </div>
                   </div>
                 )}
               </div>

@@ -9668,22 +9668,57 @@ select.settings-input {
   50% { opacity: 0.6; }
 }
 
-.group-members-panel {
-  width: 180px;
+/* ── Group Chat Right Panel ── */
+.group-right-panel {
+  width: 240px;
   flex-shrink: 0;
   border-left: 1px solid var(--glass-border);
-  padding: 12px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  background: var(--glass-bg);
 }
-.group-members-title { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.3px; padding-bottom: 4px; }
+
+.group-right-section {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-right-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 0 4px 4px;
+}
+
+.group-right-section-divider {
+  height: 1px;
+  background: var(--glass-border);
+  margin: 0 12px;
+}
+
 .group-member-item { display: flex; align-items: center; gap: 8px; }
 .group-member-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-member-identity { display: block; font-size: 11px; color: var(--text-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-@media (max-width: 768px) { .group-members-panel { display: none; } }
+/* History panel inside right sidebar */
+.group-right-panel .chat-history-panel {
+  width: 100%;
+  max-width: 100%;
+  border: none;
+  padding: 0;
+}
+.group-right-panel .chat-history-search {
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .group-right-panel { display: none; }
+}
 
 /* ── Group Chat Layout Overrides (enhanced UI) ── */
 .group-chat-layout .private-chat-body {
@@ -9697,13 +9732,15 @@ select.settings-input {
   gap: 12px;
   overflow-x: visible;
   overflow-y: auto;
+  flex: 1;
+  min-width: 0;
 }
 
-/* Group chat character bubble — WeChat style */
+/* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
   max-width: 70%;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--primary) 8%, var(--glass-bg));
+  border: 1px solid color-mix(in srgb, var(--primary) 15%, var(--glass-border));
   border-radius: 8px;
   overflow: visible;
   box-shadow: 0 1px 3px rgba(0,0,0,0.03);
@@ -10036,6 +10073,8 @@ select.settings-input {
 /* ── Group Chat: mine bubble adjustments for actions ── */
 .group-chat-page .messages-row.mine .messages-bubble.mine {
   margin-right: 6px;
+  background: color-mix(in srgb, var(--primary) 85%, white);
+  color: #fff;
 }
 
 /* Group create card selection */
