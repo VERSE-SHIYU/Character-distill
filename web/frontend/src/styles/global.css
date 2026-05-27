@@ -6508,6 +6508,7 @@ select.settings-input {
 
 .admin-content {
   min-height: 200px;
+  width: 100%;
 }
 
 /* ---- Tab switcher ---- */
@@ -11132,6 +11133,8 @@ select.settings-input {
   border: 1px solid var(--glass-border);
   border-radius: 10px;
   padding: 16px;
+  overflow: hidden;
+  width: 100%;
 }
 
 /* ===== Online / Offline badges ===== */

@@ -107,7 +107,7 @@ export default function App() {
         }
         // Fetch active announcement
         try {
-          const annRes = await fetchWithTimeout('/api/auth/announcement')
+          const annRes = await fetchWithTimeout('/api/announcement/active')
           const annData = await annRes.json()
           if (annData.announcement) setAnnouncement(annData.announcement)
         } catch {}

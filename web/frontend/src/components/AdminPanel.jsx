@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { adminAPI } from '../api/client'
+import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
 import { Trash2 } from './common/Icon'

@@ -55,6 +55,7 @@ export default function GroupChatPage() {
   const [showEmoji, setShowEmoji] = useState(false)
 
   // ── 角色缓存：按 card_id 索引，替代 allCards ──
+  const [allCards, setAllCards] = useState([])
   const [cardCache, setCardCache] = useState({})
   const cardCacheRef = useRef(cardCache)
   cardCacheRef.current = cardCache
@@ -144,7 +145,6 @@ export default function GroupChatPage() {
 
   // Create form state
   const [groupName, setGroupName] = useState('')
-  const [allCards, setAllCards] = useState([])
   const [selectedCardIds, setSelectedCardIds] = useState([])
   const [cardsByText, setCardsByText] = useState({})
   const [selectedTextId, setSelectedTextId] = useState('')
