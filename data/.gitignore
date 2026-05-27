@@ -1,0 +1,7 @@
+# 忽略临时数据库文件
+*.db
+*.sqlite
+*.sqlite3
+
+# 忽略目录占位文件
+!.gitignore

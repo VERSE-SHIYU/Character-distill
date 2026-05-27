@@ -36,8 +36,10 @@ class LLMAdapter:
         root = Path(__file__).resolve().parent.parent
         load_dotenv(root / ".env")
 
-        # Load defaults from config.yaml for unspecified params
+        # Load defaults from config.yaml (fallback to config.example.yaml)
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
+        if config_path is None and not cfg_file.exists():
+            cfg_file = root / "config.example.yaml"
         llm_cfg: dict[str, Any] = {}
         try:
             raw = cfg_file.read_text(encoding="utf-8")

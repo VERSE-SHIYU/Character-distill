@@ -22,6 +22,8 @@ from core.text_manager import TextManager
 from storage.sqlite_store import SQLiteStore
 
 _CFG_PATH = _REPO_ROOT / "config.yaml"
+if not _CFG_PATH.exists():
+    _CFG_PATH = _REPO_ROOT / "config.example.yaml"
 
 try:
     with open(_CFG_PATH, encoding="utf-8") as _f:

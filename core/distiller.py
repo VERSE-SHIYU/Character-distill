@@ -82,6 +82,8 @@ class Distiller:
         self._user_id: str = ""
         root = Path(__file__).resolve().parent.parent
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
+        if config_path is None and not cfg_file.exists():
+            cfg_file = root / "config.example.yaml"
         try:
             raw = cfg_file.read_text(encoding="utf-8")
         except OSError as exc:

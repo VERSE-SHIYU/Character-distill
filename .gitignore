@@ -226,7 +226,8 @@ __marimo__/
 # Frontend build artifacts
 web/frontend/node_modules/
 web/frontend/dist/
-data/
+data/*
+!data/.gitignore
 content/
 storage/data.db*
 services/gptsovits/*
@@ -235,6 +236,12 @@ services/gptsovits/*
 # Test audio artifacts
 *.mp3
 blocklist.json
+
+# 01-repo-scan: runtime config (track example only)
+config.yaml
+funasr_models/
+web/static/
+logs/
 
 # Claude Code session notes (already tracked ones stay in git)
 .claude/sessions/
