@@ -253,70 +253,59 @@ export default function MinePage() {
         <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />
       </div>
 
-      {/* ── Profile Header ── */}
-      <div className="mine-profile-header">
-        <div className="mine-avatar-wrap">
-          <Avatar name={authUser?.username || '?'} src={userAvatar} size={72} className="mine-avatar" onClick={() => avatarInputRef.current?.click()} />
-          <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          </div>
-          <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
-        </div>
-        <div className="mine-profile-info">
-          <h2 className="mine-profile-name">{authUser?.username}</h2>
-          {bioEditing ? (
-            <input
-              className="mine-bio-input"
-              value={bioDraft}
-              onChange={e => setBioDraft(e.target.value)}
-              onBlur={async () => {
-                setBioEditing(false)
-                const bio = bioDraft.trim()
-                if (bio !== (authUser?.bio || '')) {
-                  try {
-                    await fetchWithTimeout('/api/auth/bio', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ bio }),
-                    })
-                    useAppStore.setState({ authUser: { ...authUser, bio } })
-                  } catch {}
-                }
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Enter') e.target.blur()
-                if (e.key === 'Escape') { setBioEditing(false); setBioDraft(authUser?.bio || '') }
-              }}
-              autoFocus
-              placeholder="写一句话介绍自己…"
-              maxLength={200}
-            />
-          ) : (
-            <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
-              {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
+      {/* ── Profile Section ── */}
+      <div className="mine-profile-section">
+        <div className="mine-profile-row">
+          <div className="mine-profile-left">
+            <div className="mine-avatar-wrap">
+              <Avatar name={authUser?.username || '?'} src={userAvatar} size={60} onClick={() => avatarInputRef.current?.click()} />
+              <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              </div>
+              <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
             </div>
-          )}
-          <button type="button" className="mine-edit-btn" onClick={() => setView('settings')}>编辑资料</button>
-        </div>
-      </div>
-
-      {/* ── 统计卡片 ── */}
-      <div className="mine-stats-row">
-        <div className="mine-stat-card">
-          <span className="mine-stat-number">{followersCount}</span>
-          <span className="mine-stat-label">粉丝</span>
-        </div>
-        <div className="mine-stat-card" onClick={() => setTab('following')}>
-          <span className="mine-stat-number">{followingCount}</span>
-          <span className="mine-stat-label">关注</span>
-        </div>
-        <div className="mine-stat-card" onClick={() => setTab('characters')}>
-          <span className="mine-stat-number">{cards.length}</span>
-          <span className="mine-stat-label">角色</span>
-        </div>
-        <div className="mine-stat-card" onClick={() => setTab('books')}>
-          <span className="mine-stat-number">{texts.length}</span>
-          <span className="mine-stat-label">书籍</span>
+          </div>
+          <div className="mine-profile-mid">
+            <div className="mine-name-row">
+              <h2 className="mine-profile-name">{authUser?.username}</h2>
+              <button className="mine-edit-icon" onClick={() => setView('settings')} title="编辑资料">✏️</button>
+            </div>
+            {bioEditing ? (
+              <input
+                className="mine-bio-input"
+                value={bioDraft}
+                onChange={e => setBioDraft(e.target.value)}
+                onBlur={async () => {
+                  setBioEditing(false)
+                  const bio = bioDraft.trim()
+                  if (bio !== (authUser?.bio || '')) {
+                    try {
+                      await fetchWithTimeout('/api/auth/bio', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bio }),
+                      })
+                      useAppStore.setState({ authUser: { ...authUser, bio } })
+                    } catch {}
+                  }
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') e.target.blur()
+                  if (e.key === 'Escape') { setBioEditing(false); setBioDraft(authUser?.bio || '') }
+                }}
+                autoFocus
+                placeholder="写一句话介绍自己…"
+                maxLength={200}
+              />
+            ) : (
+              <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
+                {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
+              </div>
+            )}
+          </div>
+          <div className="mine-profile-stats">
+            {cards.length}角色 · {texts.length}书籍 · {followersCount}粉丝 · {followingCount}关注
+          </div>
         </div>
       </div>
 
