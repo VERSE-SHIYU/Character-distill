@@ -8457,6 +8457,56 @@ select.settings-input {
   height: 100%;
 }
 
+.market-detail-header {
+  display: flex;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--glass-bg);
+  backdrop-filter: var(--card-blur);
+  border-bottom: 1px solid var(--glass-border);
+  padding: 12px 20px;
+  flex-shrink: 0;
+}
+.market-detail-header-left {
+  display: flex;
+  align-items: center;
+}
+.market-detail-header-title {
+  flex: 1;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0 12px;
+}
+.market-detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.market-detail-header-actions .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.market-detail-header-actions .btn-icon:hover {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--text-primary);
+}
+
 .market-detail-scroll {
   flex: 1;
   overflow-y: auto;
@@ -8466,7 +8516,7 @@ select.settings-input {
 
 .market-detail-split {
   display: flex;
-  gap: 32px;
+  gap: 24px;
   align-items: flex-start;
 }
 
@@ -8478,7 +8528,7 @@ select.settings-input {
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   padding: 8px 0;
 }
 
@@ -8689,8 +8739,9 @@ select.settings-input {
 
 /* Comments */
 .market-detail-comments {
-  border-top: 1px solid var(--border);
-  padding-top: 20px;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--glass-border);
 }
 
 .market-detail-section-title {
@@ -11489,16 +11540,23 @@ select.settings-input {
     width: 100%;
     min-width: auto;
     position: static;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
     gap: 12px;
   }
 
   .market-detail-sidebar .market-detail-hero {
-    flex-direction: row;
-    text-align: left;
-    gap: 12px;
+    gap: 8px;
+  }
+
+  .market-detail-scroll {
+    padding: 12px 16px;
+  }
+
+  .market-detail-fixed-input {
+    padding: 10px 12px;
+  }
+  .market-detail-fixed-input .market-detail-comment-field {
+    min-width: 0;
+    width: 100%;
   }
 
   .market-detail-use-btn {

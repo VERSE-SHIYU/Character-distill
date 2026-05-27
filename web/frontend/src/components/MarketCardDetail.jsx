@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
-import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book } from './common/Icon'
+import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
@@ -69,6 +69,10 @@ export default function MarketCardDetail() {
   const [batchMode, setBatchMode] = useState(false)
   const [selectedCommentIds, setSelectedCommentIds] = useState(new Set())
   const [reportCommentId, setReportCommentId] = useState(null)
+  const [showReportCardModal, setShowReportCardModal] = useState(false)
+  const [reportCardReason, setReportCardReason] = useState('')
+  const [reportCardSending, setReportCardSending] = useState(false)
+  const [reportCardError, setReportCardError] = useState('')
   const [reportReason, setReportReason] = useState('')
   const [reportSending, setReportSending] = useState(false)
   const [reportError, setReportError] = useState('')
@@ -266,6 +270,29 @@ export default function MarketCardDetail() {
     }
   }
 
+  const handleReportCard = async () => {
+    if (!reportCardReason.trim() || reportCardSending) return
+    setReportCardSending(true)
+    setReportCardError('')
+    try {
+      const res = await fetchWithTimeout(`/api/market/${cardId}/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reportCardReason.trim() }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || '举报提交失败')
+      }
+      setShowReportCardModal(false)
+      setReportCardReason('')
+    } catch (err) {
+      setReportCardError(err.message || '提交失败，请重试')
+    } finally {
+      setReportCardSending(false)
+    }
+  }
+
   const handleDeleteVersion = async () => {
     if (!deleteVersionId) return
     const id = deleteVersionId
@@ -438,22 +465,38 @@ export default function MarketCardDetail() {
 
   return (
     <div className="panel market-detail-page">
-      <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
-        </button>
-        <h1 className="panel-title">角色详情</h1>
-        {card.user_id === authUser?.id && (
-          <button type="button" className="btn-ghost" onClick={() => setShowEditModal(true)} title="编辑" style={{ marginLeft: 'auto' }}>
-            <Edit size={16} />
+      <header className="market-detail-header">
+        <div className="market-detail-header-left">
+          <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+            返回
           </button>
-        )}
-        {(authUser?.is_admin || card.user_id === authUser?.id) && (
-          <button type="button" className="btn-ghost" onClick={() => setDeleteConfirmId(card.id)} title="删除">
-            <Trash2 size={16} />
+        </div>
+        <div className="market-detail-header-title">{charName}</div>
+        <div className="market-detail-header-actions">
+          <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+              <polyline points="16 6 12 2 8 6" />
+              <line x1="12" y1="2" x2="12" y2="15" />
+            </svg>
           </button>
-        )}
+          {card.user_id !== authUser?.id && authUser?.id && (
+            <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
+              <Flag size={16} />
+            </button>
+          )}
+          {card.user_id === authUser?.id && (
+            <button type="button" className="btn-icon" onClick={() => setShowEditModal(true)} title="编辑">
+              <Edit size={16} />
+            </button>
+          )}
+          {(authUser?.is_admin || card.user_id === authUser?.id) && (
+            <button type="button" className="btn-icon" onClick={() => setDeleteConfirmId(card.id)} title="删除">
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
@@ -911,6 +954,40 @@ export default function MarketCardDetail() {
         </div>
       )}
 
+      {/* Report card modal */}
+      {showReportCardModal && (
+        <div className="modal-overlay" onClick={() => { setShowReportCardModal(false); setReportCardReason(''); setReportCardError('') }}>
+          <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">举报角色</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
+                举报 <strong>{charName}</strong> 角色卡片
+              </p>
+              <textarea
+                className="report-reason-input"
+                placeholder="请描述举报原因（必填）…"
+                value={reportCardReason}
+                onChange={(e) => setReportCardReason(e.target.value)}
+                rows={3}
+                style={{ width: '100%', boxSizing: 'border-box', resize: 'vertical' }}
+              />
+              {reportCardError && (
+                <div className="login-error" style={{ marginTop: 8, fontSize: 13 }}>{reportCardError}</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setShowReportCardModal(false); setReportCardReason(''); setReportCardError('') }}>取消</button>
+              <button
+                className="btn-primary"
+                onClick={handleReportCard}
+                disabled={!reportCardReason.trim() || reportCardSending}
+              >
+                {reportCardSending ? '提交中…' : '提交举报'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Edit card modal ── */}
       {showEditModal && (() => {
