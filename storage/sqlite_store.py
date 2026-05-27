@@ -831,11 +831,14 @@ class SQLiteStore(StorageBase):
 
     # ── Market / public card methods ──────────────────────────
 
-    async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new") -> list[dict]:
+    async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new", tag: str = "") -> list[dict]:
         """List public cards with pagination and sorting (hot=likes, new=created_at)."""
         try:
             order = "c.likes DESC, c.created_at DESC" if sort == "hot" else "c.created_at DESC"
             offset = (page - 1) * page_size
+            tag_clause = " AND c.market_tags LIKE ?" if tag else ""
+            params: list[Any] = [f"%{tag}%"] if tag else []
+            params.extend([page_size, offset])
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
@@ -848,10 +851,10 @@ class SQLiteStore(StorageBase):
                         FROM cards c
                         LEFT JOIN users u ON u.id = c.user_id
                         LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                        WHERE c.visibility = 'public' AND c.deleted_at IS NULL{tag_clause}
                         ORDER BY {order}
                         LIMIT ? OFFSET ?""",
-                    (page_size, offset),
+                    params,
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -859,12 +862,15 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List public cards failed: {exc}")
             raise
 
-    async def list_public_cards_total(self) -> int:
+    async def list_public_cards_total(self, tag: str = "") -> int:
         """Return total count of public cards (for pagination)."""
         try:
+            tag_clause = " AND market_tags LIKE ?" if tag else ""
+            params: list[Any] = [f"%{tag}%"] if tag else []
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL"
+                    f"SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL{tag_clause}",
+                    params,
                 )
                 row = await cursor.fetchone()
             return row[0] if row else 0

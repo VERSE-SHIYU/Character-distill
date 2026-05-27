@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from adapters.llm_adapter import LLMAdapter
 from core.chat_preprocessor import ChatPreprocessor
-from core.schema import CharacterCard
+from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import try_record_usage
 
 
@@ -434,6 +434,42 @@ class Distiller:
             [{"role": "user", "content": prompt}],
         )
 
+    # ── Auto-tagging ───────────────────────────────────────────────────
+
+    def _auto_tag(self, card_dict: dict) -> list[str]:
+        """Lightweight LLM call to pick 1-3 preset tags matching the card.
+
+        Falls back to empty list on any error.
+        """
+        name = card_dict.get("name", "")
+        identity = card_dict.get("identity", "")
+        traits = "、".join(card_dict.get("personality_traits", []))
+        background = (card_dict.get("background") or "")[:200]
+
+        prompt = (
+            f"根据以下角色卡信息，从预设标签中选择1-3个最匹配的标签，只返回JSON数组。\n"
+            f"预设标签：{PRESET_TAGS}\n"
+            f"角色名：{name}\n"
+            f"身份：{identity}\n"
+            f"性格：{traits}\n"
+            f"背景：{background}"
+        )
+        try:
+            reply = self._llm.chat(
+                "你是一个角色分类助手。只返回JSON数组，不要任何其他内容。",
+                [{"role": "user", "content": prompt}],
+            )
+            import re
+            m = re.search(r"\[.*?\]", reply.strip(), re.DOTALL)
+            if m:
+                tags = json.loads(m.group(0))
+                if isinstance(tags, list):
+                    return [t for t in tags if t in PRESET_TAGS][:3]
+            return []
+        except Exception as exc:
+            print(f"[distiller] Auto-tagging failed (silent): {exc}")
+            return []
+
     # ── MapReduce internals ────────────────────────────────────────────
 
     async def _run_map_concurrent(
@@ -712,10 +748,23 @@ class Distiller:
                 raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
 
         try:
-            return CharacterCard.model_validate(data)
+            card = CharacterCard.model_validate(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
             raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+
+        # AI auto-tagging (fails open)
+        try:
+            card_dict = card.model_dump()
+            tags = self._auto_tag(card_dict)
+            if tags:
+                card_dict["tags"] = tags
+                # Re-validate so tags are included in model_dump()
+                card = CharacterCard.model_validate(card_dict)
+        except Exception as exc:
+            print(f"[distiller] Auto-tagging failed (silent): {exc}")
+
+        return card
 
     def distill_incremental_stream(
         self,

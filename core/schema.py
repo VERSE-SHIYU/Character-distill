@@ -2,6 +2,12 @@
 
 from pydantic import BaseModel
 
+# 预设标签列表 — 用于角色分类和 AI 自动打标
+PRESET_TAGS = [
+    "恋爱", "动漫", "游戏", "治愈", "悬疑", "古风", "校园",
+    "奇幻", "科幻", "日常", "虐心", "搞笑", "男频", "女频", "原创",
+]
+
 
 class SpeakingStyle(BaseModel):
     """说话风格"""
@@ -38,3 +44,4 @@ class CharacterCard(BaseModel):
     emotional_patterns: list[str] = []  # 情感模式：什么情况下会生气/开心/沉默/逃避
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
     character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话
+    tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）

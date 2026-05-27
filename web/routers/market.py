@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 
+from core.schema import PRESET_TAGS
 from deps import get_storage
 from limiter import get_client_ip, limiter
 from storage.sqlite_store import SQLiteStore
@@ -69,6 +70,13 @@ class UpdatePublishRequest(BaseModel):
 # ── Concrete routes first (no wildcard card_id) ──
 
 
+@router.get("/tags")
+@limiter.limit("60/minute")
+async def list_tags(request: Request) -> dict:
+    """Return the list of preset tags for character classification."""
+    return {"tags": PRESET_TAGS}
+
+
 @router.get("/list")
 @limiter.limit("60/minute")
 async def list_cards(
@@ -76,12 +84,13 @@ async def list_cards(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     sort: str = Query("new", regex="^(new|hot)$"),
+    tag: str = Query("", description="Filter by preset tag"),
     user: dict = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
-    """List public cards with pagination and sorting."""
-    cards = await storage.list_public_cards(page, page_size, sort)
-    total = await storage.list_public_cards_total()
+    """List public cards with pagination and sorting. Optionally filter by tag."""
+    cards = await storage.list_public_cards(page, page_size, sort, tag)
+    total = await storage.list_public_cards_total(tag)
     liked_ids = await storage.get_liked_card_ids(user["id"])
 
     for c in cards:
@@ -331,9 +340,21 @@ async def publish_card(
     card_json_str = card.get("card_json", "{}")
     if isinstance(card_json_str, dict):
         card_json_str = json.dumps(card_json_str, ensure_ascii=False)
+
+    # Auto-sync AI tags to market_tags if user didn't provide them
+    market_tags = body.market_tags.strip()
+    if not market_tags:
+        try:
+            cj = json.loads(card_json_str) if isinstance(card_json_str, str) else card_json_str
+            ai_tags = cj.get("tags", [])
+            if ai_tags:
+                market_tags = ",".join(ai_tags[:5])
+        except Exception:
+            pass
+
     ok = await storage.publish_card(
         card_id, user["id"],
-        body.market_description, body.market_tags, body.publish_message,
+        body.market_description, market_tags, body.publish_message,
         card_json_str,
     )
     if not ok:

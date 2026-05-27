@@ -228,6 +228,16 @@ def _run_distill_task(
                 _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name})
             return
 
+        # AI auto-tagging (fails open)
+        try:
+            card_dict = card.model_dump()
+            tags = distiller._auto_tag(card_dict)
+            if tags:
+                card_dict["tags"] = tags
+                card = CharacterCard.model_validate(card_dict)
+        except Exception as exc:
+            print(f"[distill] Auto-tagging failed (silent): {exc}")
+
         # Step 4: persist via fresh store + text_manager in a new event loop.
         # Using the singleton text_manager's _storage would reuse a connection
         # created in the main event loop — unsafe across threads.  Instead,
