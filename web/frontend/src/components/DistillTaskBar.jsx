@@ -34,10 +34,10 @@ export default function DistillTaskBar() {
             className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}`}
             onClick={() => {
               if (isDone) {
-                console.log('[DistillTaskBar] Click done task:', { textId: t.textId, character: t.character })
+
                 const s = getStore()
                 if (t.textId && s.currentTextId !== t.textId) {
-                  console.log('[DistillTaskBar] currentTextId mismatch, calling selectText')
+
                   s.selectText(t.textId)
                 } else {
                   if (t.textId) s.loadCards(t.textId)

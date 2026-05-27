@@ -20,7 +20,6 @@ if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
 
 import yaml
-from pathlib import Path as _Path
 from pydantic import BaseModel
 
 from fastapi import Depends, FastAPI, HTTPException, Request

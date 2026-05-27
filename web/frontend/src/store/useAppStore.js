@@ -541,7 +541,7 @@ const useAppStore = create((set, get) => ({
           }))
           get()._persistTasks()
           if (payload.status === 'done') {
-            console.log('[distill] Task done:', { taskId, textId, characterName, card_id: payload.card_id })
+
             set((s) => ({
               distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
                 ? false : s.distilling,
@@ -552,7 +552,7 @@ const useAppStore = create((set, get) => ({
               fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
                 .then((r) => r.json())
                 .then((cards) => {
-                  console.log('[distill] Cards refreshed:', cards.length, 'cards')
+
                   set({ cards })
                 })
                 .catch((err) => console.warn('[distill] Failed to refresh cards on done:', err))
