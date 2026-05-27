@@ -111,8 +111,8 @@ class FunASRServer:
             traceback.print_exc()
             try:
                 await websocket.send(json.dumps({"text": "", "is_final": True}))
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[FunASR] Processing error: {exc}")
 
     async def start(self):
         print(f"[FunASR] Starting WebSocket server on ws://{self.host}:{self.port}", flush=True)

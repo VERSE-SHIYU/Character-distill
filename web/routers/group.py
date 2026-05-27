@@ -119,8 +119,8 @@ async def _rebuild_group_session(
             }
             for m in history
         ]
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[Group] Session rebuild failed: {exc}")
 
     return group
 

@@ -1848,8 +1848,8 @@ class SQLiteStore(StorageBase):
             if encrypted:
                 try:
                     api_key = self._get_fernet().decrypt(encrypted.encode()).decode()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"[SQLiteStore] API key decrypt failed: {exc}")
             return {
                 "api_key": api_key,
                 "base_url": row[1] or "https://api.deepseek.com",
@@ -2744,9 +2744,8 @@ class SQLiteStore(StorageBase):
                     row = await cursor.fetchone()
                     if row and row[0]:
                         avatar_data = row[0]
-                except Exception:
-                    pass
-                await conn.commit()
+                except Exception as exc:
+                    print(f"[SQLiteStore] Avatar data query failed: {exc}")
             return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
         except Exception as exc:
             print(f"[SQLiteStore] Add post comment failed: {exc}")

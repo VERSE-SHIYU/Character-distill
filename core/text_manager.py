@@ -505,8 +505,8 @@ class TextManager:
                 for char in all_characters:
                     if char["name"] in name_to_aliases:
                         char["aliases"] = name_to_aliases[char["name"]]
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"[TextManager] Alias cache merge failed: {exc}")
         return all_characters
 
     def _create_session(
