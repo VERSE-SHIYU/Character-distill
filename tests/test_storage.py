@@ -73,8 +73,30 @@ class TestTextCrud:
         deleted = await store.delete_text(text_id)
         assert deleted is True
 
+        # Soft-deleted: text still exists with deleted_at set
         got = await store.get_text(text_id)
-        assert got is None
+        assert got is not None
+        assert got.get("deleted_at", "") != ""
+
+        # Should not appear in normal listing
+        texts = await store.list_texts()
+        assert text_id not in {t["id"] for t in texts}
+
+        # Should appear in deleted texts listing
+        deleted_list = await store.get_deleted_texts("")
+        assert text_id in {t["id"] for t in deleted_list}
+
+        # Restore works
+        restored = await store.restore_text(text_id)
+        assert restored is True
+        got2 = await store.get_text(text_id)
+        assert got2.get("deleted_at", "") == ""
+
+        # Hard delete
+        await store.delete_text(text_id)
+        await store.hard_delete_text(text_id)
+        got3 = await store.get_text(text_id)
+        assert got3 is None
 
     async def test_delete_nonexistent(self, store):
         assert await store.delete_text("no_such_id") is False

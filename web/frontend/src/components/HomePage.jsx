@@ -67,6 +67,7 @@ export default function HomePage() {
   const [selectedTag, setSelectedTag] = useState('')
   const [discoverCards, setDiscoverCards] = useState([])
   const [discoverLoading, setDiscoverLoading] = useState(true)
+  const [showTags, setShowTags] = useState(false)
 
   // ---- 置顶推荐 ----
   const [featuredCards, setFeaturedCards] = useState([])
@@ -300,6 +301,36 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* E. 最近对话 */}
+          {recentSessions.length > 0 && (
+            <div className="home-recent-section">
+              <h2 className="home-section-title">最近对话</h2>
+              <div className="home-recent-container">
+                <div className="home-recent-list">
+                  {recentSessions.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className="home-recent-item"
+                      onClick={() => handleResume(s.id)}
+                      disabled={resumingId === s.id}
+                    >
+                      <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
+                      <div className="home-recent-body">
+                        <div className="home-recent-head">
+                          <span className="home-recent-name">{s.character_name}</span>
+                          <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                        </div>
+                        <span className="home-recent-preview">{previewText(s.last_message)}</span>
+                      </div>
+                      {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* A1. 编辑推荐 */}
           {featuredCards.length > 0 && (
             <div className="home-featured-section">
@@ -338,37 +369,44 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* B. 标签筛选栏 */}
-          <div className="home-tags-section">
-            <div className="home-tags-bar">
-              <button
-                type="button"
-                className={`home-tags-pill${selectedTag === '' ? ' active' : ''}`}
-                onClick={() => setSelectedTag('')}
-              >
-                全部
-              </button>
-              {tags.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  className={`home-tags-pill${selectedTag === tag ? ' active' : ''}`}
-                  onClick={() => setSelectedTag(tag)}
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* C. 推荐角色区 */}
+          {/* C. 发现角色区 */}
           <div className="home-discover-section">
             <div className="home-section-header">
               <h2 className="home-section-title">发现角色</h2>
-              <button type="button" className="home-view-all-btn" onClick={() => setView('market')}>
-                查看更多
-              </button>
+              <div className="home-section-header-actions">
+                <button
+                  type="button"
+                  className="home-tags-toggle-btn"
+                  onClick={() => setShowTags(prev => !prev)}
+                >
+                  🏷️筛选
+                </button>
+                <button type="button" className="home-view-all-btn" onClick={() => setView('market')}>
+                  查看更多 &gt;
+                </button>
+              </div>
             </div>
+            {showTags && (
+              <div className="home-tags-bar-inline">
+                <button
+                  type="button"
+                  className={`home-tags-pill${selectedTag === '' ? ' active' : ''}`}
+                  onClick={() => setSelectedTag('')}
+                >
+                  全部
+                </button>
+                {tags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={`home-tags-pill${selectedTag === tag ? ' active' : ''}`}
+                    onClick={() => { setSelectedTag(tag); setShowTags(true) }}
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
             {discoverLoading ? (
               <div className="home-discover-grid">
                 {[1, 2, 3, 4].map((i) => (
@@ -439,38 +477,8 @@ export default function HomePage() {
 
           {/* D. 管理员置顶（预留）— 后端暂无 featured API，空状态不渲染 */}
 
-          {/* E. 最近对话 */}
-          {recentSessions.length > 0 && (
-            <div className="home-recent-section">
-              <h2 className="home-section-title">最近对话</h2>
-              <div className="home-recent-container">
-                <div className="home-recent-list">
-                  {recentSessions.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className="home-recent-item"
-                      onClick={() => handleResume(s.id)}
-                      disabled={resumingId === s.id}
-                    >
-                      <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
-                      <div className="home-recent-body">
-                        <div className="home-recent-head">
-                          <span className="home-recent-name">{s.character_name}</span>
-                          <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
-                        </div>
-                        <span className="home-recent-preview">{previewText(s.last_message)}</span>
-                      </div>
-                      {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* F. 我的角色（下移到底部） */}
-          <div className="home-card-section" style={{ marginTop: 20 }}>
+          {/* F. 我的角色 */}
+          <div className="home-card-section">
             <div className="home-section-header">
               <h2 className="home-section-title">我的角色</h2>
               {allCards.length > 4 && (

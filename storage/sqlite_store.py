@@ -663,7 +663,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
