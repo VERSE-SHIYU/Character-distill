@@ -71,6 +71,8 @@ export default function App() {
   const isLoggedIn = useAppStore((s) => s.isLoggedIn)
   const logout = useAppStore((s) => s.logout)
   const [authChecking, setAuthChecking] = useState(true)
+  const [announcement, setAnnouncement] = useState(null)
+  const [annDismissed, setAnnDismissed] = useState(false)
 
   useEffect(() => {
     initTheme()
@@ -103,6 +105,12 @@ export default function App() {
         if (!configured) {
           setView('settings')
         }
+        // Fetch active announcement
+        try {
+          const annRes = await fetchWithTimeout('/api/auth/announcement')
+          const annData = await annRes.json()
+          if (annData.announcement) setAnnouncement(annData.announcement)
+        } catch {}
       } catch {
         logout()
         setView('login')
@@ -199,6 +207,12 @@ export default function App() {
       />
 
       <main className="main-panel">
+        {announcement && !annDismissed && (
+          <div className="announcement-banner">
+            <span className="announcement-banner-text">{announcement.content}</span>
+            <button className="announcement-banner-close" onClick={() => setAnnDismissed(true)}>✕</button>
+          </div>
+        )}
         <MainContent />
       </main>
       <DistillTaskBar />

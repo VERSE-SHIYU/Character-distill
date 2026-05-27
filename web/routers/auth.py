@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import secrets
 import uuid
@@ -19,6 +20,8 @@ from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_config, get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
+
+logger = logging.getLogger("charsim.auth")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -253,8 +256,10 @@ async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depen
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())
     if user is None:
+        logger.warning("Login failed: unknown username '%s' from %s", req.username.strip(), request.client.host if request.client else "unknown")
         raise HTTPException(401, "用户名或密码错误")
     if not password_hasher.verify(req.password, user["password_hash"]):
+        logger.warning("Login failed: wrong password for '%s' from %s", req.username.strip(), request.client.host if request.client else "unknown")
         raise HTTPException(401, "用户名或密码错误")
     if user.get("is_disabled"):
         raise HTTPException(403, "账号已被禁用")
@@ -332,6 +337,16 @@ async def me(
     resp["cards_visible"] = bool(user.get("cards_visible", True))
     resp["books_visible"] = bool(user.get("books_visible", True))
     return resp
+
+
+@router.get("/announcement")
+async def get_announcement(
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Return the current active announcement (if any)."""
+    ann = await storage.get_active_announcement()
+    return {"announcement": ann}
 
 
 @router.patch("/api-config")
