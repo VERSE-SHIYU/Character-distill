@@ -129,7 +129,7 @@ export default function FeedPage() {
   })
 
   return (
-    <div className="panel">
+    <div className="panel feed-page">
       <header className="panel-header">
         <div className="feed-header-row">
           <h1 className="panel-title">动态</h1>

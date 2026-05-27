@@ -10262,13 +10262,13 @@ select.settings-input {
 
 /* ── Author Page ── */
 
-.author-page { padding: 0 16px 24px; }
+.author-page { padding: 0 24px 24px; max-width: 680px; margin: 0 auto; }
 
 .author-hero {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 24px 0;
+  padding: 20px 0 16px;
 }
 .author-hero-text { flex: 1; min-width: 0; }
 .author-name { font-size: 20px; font-weight: 700; margin: 0; }
@@ -10276,7 +10276,7 @@ select.settings-input {
 
 .author-stats {
   display: flex;
-  gap: 20px;
+  gap: 16px;
   margin-top: 8px;
   font-size: 13px;
   color: var(--text-secondary);
@@ -10925,6 +10925,7 @@ select.settings-input {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 0;
 }
 
 /* ===== Author Page Character Cards ===== */
@@ -10932,6 +10933,7 @@ select.settings-input {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
+  padding: 0;
 }
 
 .author-char-card {
@@ -11665,6 +11667,11 @@ select.settings-input {
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
   z-index: 50;
   transition: opacity 0.2s;
+}
+
+/* ── FeedPage scroll fix: override .panel overflow:hidden ── */
+.feed-page.panel {
+  overflow-y: auto;
 }
 
 .feed-header-row {
