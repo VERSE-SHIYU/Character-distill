@@ -215,6 +215,7 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <h1 className="login-title">Character Distill</h1>
+        <p className="login-subtitle">角色蒸馏 · 智能对话</p>
 
         <div className="login-tabs">
           <button
