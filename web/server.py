@@ -121,9 +121,23 @@ app.add_middleware(
 # ---- Auth middleware ----
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+import time
 
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/announcement/active"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
+
+# Throttle last_active updates to once per 5 min per user
+_last_active_ticks: dict[str, float] = {}
+
+
+def _maybe_update_last_active(user_id: str) -> None:
+    now = time.time()
+    last = _last_active_ticks.get(user_id, 0)
+    if now - last < 300:
+        return
+    _last_active_ticks[user_id] = now
+    import asyncio
+    asyncio.ensure_future(get_storage().update_last_active(user_id))
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -156,6 +170,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if user.get("is_disabled"):
             return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
         request.state.user = user
+        _maybe_update_last_active(user_id)
         return await call_next(request)
 
 

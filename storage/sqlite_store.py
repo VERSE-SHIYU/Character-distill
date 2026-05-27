@@ -488,6 +488,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Featured cards migration failed: {exc}")
 
+                    # Run 048_user_last_active migration (ALTER TABLE ADD COLUMN)
+                    la_path = migrations_dir / "048_user_last_active.sql"
+                    if la_path.exists():
+                        try:
+                            await conn.executescript(la_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] User last_active migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1878,7 +1888,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -1897,6 +1907,18 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update last_login failed: {exc}")
+
+    async def update_last_active(self, user_id: str) -> None:
+        """Update the last_active_at timestamp for a user."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET last_active_at = datetime('now') WHERE id = ?",
+                    (user_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update last_active failed: {exc}")
 
     async def get_dashboard_stats(self) -> dict:
         """Aggregate dashboard statistics for admin panel."""
@@ -2393,7 +2415,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at FROM users WHERE id = ?",
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at FROM users WHERE id = ?",
                     (user_id,),
                 )
                 user = await cursor.fetchone()

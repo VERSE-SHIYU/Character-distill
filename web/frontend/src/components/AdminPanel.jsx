@@ -118,11 +118,12 @@ function fmtBytes(bytes) {
   return bytes + ' B'
 }
 
-function isOnline(iso) {
-  if (!iso) return false
-  const then = new Date(iso)
+function isOnline(user) {
+  const ts = user.last_active_at || user.last_login_at
+  if (!ts) return false
+  const then = new Date(ts)
   const now = new Date()
-  return (now - then) < 20 * 60 * 1000
+  return (now - then) < 5 * 60 * 1000
 }
 
 function fmtDateTime(iso) {
@@ -420,8 +421,8 @@ function UsersTab() {
                     </span>
                   </td>
                   <td>
-                    <span className={`online-badge${isOnline(u.last_login_at) ? ' online' : ''}`}>
-                      {isOnline(u.last_login_at) ? '在线' : '离线'}
+                    <span className={`online-badge${isOnline(u) ? ' online' : ''}`}>
+                      {isOnline(u) ? '在线' : '离线'}
                     </span>
                   </td>
                   <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDateTime(u.last_login_at)}</td>

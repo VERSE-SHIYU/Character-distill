@@ -555,9 +555,9 @@ export default function MarketCardDetail() {
                 className={`market-detail-like-btn${liked ? ' liked' : ''}`}
                 onClick={handleLike}
               >
-                {liked ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {likes}
+                {liked ? <Heart size={16} fill="currentColor" /> : <Heart size={16} />} <span className="market-detail-stat-num">{likes}</span>
               </button>
-              <span className="market-detail-comment-count"><MessageSquare size={14} /> {comments.length}</span>
+              <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>
             </div>
             <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
               {forking ? '添加中…' : '使用角色'}

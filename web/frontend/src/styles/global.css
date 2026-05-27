@@ -5702,7 +5702,7 @@ select.settings-input {
   justify-content: flex-start;
   text-align: left;
   overflow-y: auto;
-  padding: 12px 28px 24px;
+  padding: 16px 28px 32px;
 }
 
 .home-page .panel-title {
@@ -5762,7 +5762,6 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
 }
 
 .home-view-all-btn {
@@ -7833,10 +7832,16 @@ select.settings-input {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--bg-card);
+  background: transparent;
+  border: none;
+  outline: none;
   border-radius: 14px;
   overflow: hidden;
   cursor: pointer;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
   transition: transform 0.25s ease, box-shadow 0.25s ease;
   aspect-ratio: 4 / 5;
 }
@@ -8222,17 +8227,26 @@ select.settings-input {
   border-radius: 8px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  line-height: 1;
   transition: transform 0.18s, background 0.18s;
 }
 
 .market-detail-comment-count {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 14px;
   padding: 4px 8px;
   border-radius: 8px;
+  line-height: 1;
+}
+
+.market-detail-stat-num {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .market-detail-like-btn:hover {
@@ -11890,16 +11904,22 @@ select.settings-input {
 
 /* ── 首页推荐角色区 ── */
 .home-discover-section {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
 }
 
 .home-discover-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: 16px;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 800px) {
+  .home-discover-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
   .home-discover-grid {
     grid-template-columns: repeat(2, 1fr);
     gap: 12px;
@@ -11963,11 +11983,12 @@ select.settings-input {
 }
 
 .home-onboard-icon {
-  font-size: 32px;
-  line-height: 1;
   flex-shrink: 0;
   width: 48px;
-  text-align: center;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .home-onboard-body {
@@ -12123,7 +12144,7 @@ select.settings-input {
 
 /* ── 首页编辑推荐 ── */
 .home-featured-section {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .home-featured-bar {
@@ -12132,7 +12153,7 @@ select.settings-input {
   overflow-x: auto;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .home-featured-bar::-webkit-scrollbar {
