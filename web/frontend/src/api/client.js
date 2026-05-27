@@ -308,6 +308,14 @@ export const adminAPI = {
   // ---- P2: CSV Export ----
   exportUsersCSV: () => fetchWithTimeout('/api/admin/export/users').then(r => r.text()),
   exportUsageCSV: () => fetchWithTimeout('/api/admin/export/usage').then(r => r.text()),
+
+  // ---- P3-1: Config Center ----
+  getConfigChangelog: () => fetchWithTimeout('/api/admin/config/changelog').then(r => r.json()),
+  setRegistrationMode: (mode) => fetchWithTimeout('/api/admin/config/registration-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) }).then(r => r.json()),
+  setRateLimits: (limits) => fetchWithTimeout('/api/admin/config/rate-limits', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(limits) }).then(r => r.json()),
+
+  // ---- P3-2: Review Log ----
+  getReviewLogs: () => fetchWithTimeout('/api/admin/review-log').then(r => r.json()),
 }
 
 export function getMyUsage() {

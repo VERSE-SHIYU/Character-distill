@@ -16,7 +16,7 @@ from pwdlib import PasswordHash
 from pydantic import BaseModel
 
 from core.email_service import send_verification_code
-from deps import clear_user_llm_cache, get_storage
+from deps import clear_user_llm_cache, get_config, get_storage
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 
@@ -165,22 +165,27 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
     if not _is_strong_password(req.password):
         raise HTTPException(400, "密码至少 8 位，需包含字母和数字")
 
+    # Check registration mode
+    reg_cfg = get_config().get("registration", {})
+    invite_required = reg_cfg.get("mode", "invite_only") != "open"
+
     inv = req.invite_code.strip()
-    if not inv:
+    if invite_required and not inv:
         raise HTTPException(400, "需要邀请码才能注册")
 
-    # Seed invite: if no codes exist and ADMIN_INVITE_CODE is set, auto-create
-    admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
-    if admin_seed and inv == admin_seed:
-        existing_codes = await storage.list_invite_codes()
-        if not existing_codes:
-            await storage.create_invite_code(admin_seed, "system")
+    if inv:
+        # Seed invite: if no codes exist and ADMIN_INVITE_CODE is set, auto-create
+        admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
+        if admin_seed and inv == admin_seed:
+            existing_codes = await storage.list_invite_codes()
+            if not existing_codes:
+                await storage.create_invite_code(admin_seed, "system")
 
-    invite = await storage.get_invite_code(inv)
-    if not invite:
-        raise HTTPException(400, "邀请码无效")
-    if invite.get("used_by"):
-        raise HTTPException(400, "邀请码已被使用")
+        invite = await storage.get_invite_code(inv)
+        if not invite:
+            raise HTTPException(400, "邀请码无效")
+        if invite.get("used_by"):
+            raise HTTPException(400, "邀请码已被使用")
 
     existing = await storage.get_user_by_username(username)
     if existing:
@@ -199,9 +204,11 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
     user = await storage.create_user(user_id, username, password_hash, email)
-    await storage.use_invite_code(inv, user["id"])
+    if inv:
+        await storage.use_invite_code(inv, user["id"])
 
     # First user with seed code becomes admin
+    admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
     if admin_seed and inv == admin_seed:
         await storage.set_user_admin(user["id"], True)
         user["is_admin"] = True

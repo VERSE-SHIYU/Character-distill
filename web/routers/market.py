@@ -302,6 +302,32 @@ async def publish_card(
         raise HTTPException(404, "Card not found")
     if card.get("user_id") != user["id"]:
         raise HTTPException(403, "无权操作此角色卡")
+
+    # AI auto-review (fails open)
+    try:
+        from adapters.llm_adapter import LLMAdapter
+        from core.moderation.auto_review import auto_review_card
+        llm = LLMAdapter()
+        card_json = card.get("card_json", {})
+        if isinstance(card_json, str):
+            try:
+                card_json = json.loads(card_json)
+            except Exception:
+                card_json = {}
+        review = await auto_review_card(card_json, llm)
+        import uuid as _uuid
+        await storage.save_review_log(
+            _uuid.uuid4().hex[:12], card_id, user["id"],
+            "pass" if review["pass"] else "reject",
+            review.get("reason", ""),
+        )
+        if not review["pass"]:
+            raise HTTPException(400, f"发布失败：内容审核未通过 — {review['reason']}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[market] Auto-review failed (fails open): {exc}")
+
     card_json_str = card.get("card_json", "{}")
     if isinstance(card_json_str, dict):
         card_json_str = json.dumps(card_json_str, ensure_ascii=False)

@@ -14,6 +14,7 @@ const TABS = [
   { id: 'audit', label: '内容审核' },
   { id: 'system', label: '系统日志' },
   { id: 'announcements', label: '公告' },
+  { id: 'config', label: '配置中心' },
   { id: 'export', label: '数据导出' },
 ]
 
@@ -39,7 +40,7 @@ export default function AdminPanel() {
           ))}
         </div>
         <div className="admin-content">
-          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : tab === 'reports' ? <ReportsTab /> : tab === 'audit' ? <ContentAuditTab /> : tab === 'system' ? <SystemLogTab /> : tab === 'announcements' ? <AnnouncementsTab /> : <ExportTab />}
+          {tab === 'dashboard' ? <DashboardTab /> : tab === 'users' ? <UsersTab /> : tab === 'invites' ? <InvitesTab /> : tab === 'usage' ? <UsageTab /> : tab === 'reports' ? <ReportsTab /> : tab === 'audit' ? <ContentAuditTab /> : tab === 'system' ? <SystemLogTab /> : tab === 'announcements' ? <AnnouncementsTab /> : tab === 'config' ? <ConfigTab /> : <ExportTab />}
         </div>
       </div>
     </div>
@@ -1030,6 +1031,7 @@ function ReportsTab() {
 function ContentAuditTab() {
   const [cards, setCards] = useState([])
   const [posts, setPosts] = useState([])
+  const [reviewLogs, setReviewLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [subTab, setSubTab] = useState('cards')
@@ -1039,9 +1041,10 @@ function ContentAuditTab() {
     setLoading(true)
     setError('')
     try {
-      const [c, p] = await Promise.all([adminAPI.listCards(), adminAPI.listPosts()])
+      const [c, p, r] = await Promise.all([adminAPI.listCards(), adminAPI.listPosts(), adminAPI.getReviewLogs()])
       setCards(c)
       setPosts(p)
+      setReviewLogs(r)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -1099,6 +1102,7 @@ function ContentAuditTab() {
       <div className="admin-subtabs">
         <button className={`admin-subtab${subTab === 'cards' ? ' active' : ''}`} onClick={() => setSubTab('cards')}>角色卡</button>
         <button className={`admin-subtab${subTab === 'posts' ? ' active' : ''}`} onClick={() => setSubTab('posts')}>用户帖子</button>
+        <button className={`admin-subtab${subTab === 'reviews' ? ' active' : ''}`} onClick={() => setSubTab('reviews')}>AI 审核记录</button>
       </div>
 
       {subTab === 'cards' ? (
@@ -1172,6 +1176,38 @@ function ContentAuditTab() {
               ))}
               {posts.length === 0 && (
                 <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 24 }}>暂无帖子</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {subTab === 'reviews' && (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 80 }}>角色卡</th>
+                <th style={{ minWidth: 60 }}>结果</th>
+                <th style={{ minWidth: 200 }}>原因</th>
+                <th style={{ minWidth: 140 }}>时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reviewLogs.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.card_name || r.card_id?.slice(0, 8)}</td>
+                  <td>
+                    <span className={`admin-status${r.result === 'reject' ? ' disabled' : ''}`}>
+                      {r.result === 'pass' ? '通过' : r.result === 'reject' ? '拒绝' : r.result}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason || '-'}</td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{r.created_at?.slice(0, 16).replace('T', ' ')}</td>
+                </tr>
+              ))}
+              {reviewLogs.length === 0 && (
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: 24 }}>暂无审核记录</td></tr>
               )}
             </tbody>
           </table>
@@ -1438,6 +1474,170 @@ function AnnouncementsTab() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
+// P3-1: Config Center
+// ============================================================
+
+function ConfigTab() {
+  const [changelog, setChangelog] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [regMode, setRegMode] = useState('invite_only')
+  const [settingsRegMode, setSettingsRegMode] = useState('invite_only')
+  const [rateDefault, setRateDefault] = useState('')
+  const [rateLogin, setRateLogin] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [subTab, setSubTab] = useState('settings')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const cl = await adminAPI.getConfigChangelog()
+      setChangelog(cl)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleSetRegMode = async (mode) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const res = await adminAPI.setRegistrationMode(mode)
+      setSettingsRegMode(res.mode)
+      setMsg(`注册模式已切换为 ${res.mode === 'open' ? '开放注册' : '仅邀请码'}`)
+      setTimeout(() => setMsg(''), 3000)
+    } catch (err) {
+      setMsg(`设置失败: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleSetRateLimits = async () => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const body = {}
+      if (rateDefault) body.default = rateDefault
+      if (rateLogin) body.login = rateLogin
+      await adminAPI.setRateLimits(body)
+      setMsg('限流阈值已更新')
+      setTimeout(() => setMsg(''), 3000)
+    } catch (err) {
+      setMsg(`设置失败: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const fmtDate = (iso) => {
+    if (!iso) return '-'
+    return iso.slice(0, 16).replace('T', ' ')
+  }
+
+  return (
+    <div className="admin-card">
+      <div className="admin-card-title">配置中心</div>
+      {error && (
+        <div className="admin-error-banner">
+          <span>{error}</span>
+          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+        </div>
+      )}
+      {msg && <div className={`${msg.includes('失败') ? 'admin-error-banner' : 'admin-success-banner'}`}>{msg}</div>}
+
+      <div className="admin-subtabs">
+        <button className={`admin-subtab${subTab === 'settings' ? ' active' : ''}`} onClick={() => setSubTab('settings')}>运行设置</button>
+        <button className={`admin-subtab${subTab === 'changelog' ? ' active' : ''}`} onClick={() => setSubTab('changelog')}>变更日志</button>
+      </div>
+
+      {subTab === 'settings' ? (
+        <div className="config-settings-grid">
+          <div className="config-section">
+            <div className="config-section-title">注册模式</div>
+            <p className="config-section-desc">控制新用户注册是否需要邀请码。</p>
+            <div className="config-toggle-row">
+              <button
+                className={`btn-ghost${settingsRegMode === 'invite_only' ? ' active' : ''}`}
+                onClick={() => handleSetRegMode('invite_only')}
+                disabled={saving || settingsRegMode === 'invite_only'}
+              >
+                仅邀请码
+              </button>
+              <button
+                className={`btn-ghost${settingsRegMode === 'open' ? ' active' : ''}`}
+                onClick={() => handleSetRegMode('open')}
+                disabled={saving || settingsRegMode === 'open'}
+              >
+                开放注册
+              </button>
+              <span className="config-current-badge">当前: {settingsRegMode === 'open' ? '开放注册' : '仅邀请码'}</span>
+            </div>
+          </div>
+
+          <div className="config-section">
+            <div className="config-section-title">限流阈值</div>
+            <p className="config-section-desc">设置 API 限流频率（格式如 "60/minute"）。</p>
+            <div className="config-fields-row">
+              <label className="config-field">
+                <span>默认</span>
+                <input value={rateDefault} onChange={(e) => setRateDefault(e.target.value)} placeholder="60/minute" />
+              </label>
+              <label className="config-field">
+                <span>登录</span>
+                <input value={rateLogin} onChange={(e) => setRateLogin(e.target.value)} placeholder="10/minute" />
+              </label>
+              <button className="btn-primary" onClick={handleSetRateLimits} disabled={saving || (!rateDefault && !rateLogin)}>
+                {saving ? '保存中…' : '更新'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {loading ? (
+            <div className="admin-loading">加载中…</div>
+          ) : changelog.length === 0 ? (
+            <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无变更记录</p>
+          ) : (
+            <div className="admin-table-wrap">
+              <table className="admin-table">
+                <thead>
+                  <tr>
+                    <th style={{ minWidth: 60 }}>管理员</th>
+                    <th style={{ minWidth: 80 }}>字段</th>
+                    <th style={{ minWidth: 100 }}>旧值</th>
+                    <th style={{ minWidth: 100 }}>新值</th>
+                    <th style={{ minWidth: 140 }}>时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changelog.map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.admin_username}</td>
+                      <td><code style={{ fontSize: 12 }}>{c.field}</code></td>
+                      <td style={{ fontSize: 13, color: 'var(--text-secondary)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.old_value || '-'}</td>
+                      <td style={{ fontSize: 13, maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.new_value || '-'}</td>
+                      <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDate(c.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

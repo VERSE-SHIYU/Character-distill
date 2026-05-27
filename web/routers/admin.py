@@ -10,7 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from routers.auth import get_current_user
-from deps import get_storage, get_memory_manager
+from deps import get_config, get_storage, get_memory_manager, patch_config
 from storage.sqlite_store import SQLiteStore
 from core.memory_manager import MemoryManager
 from core.log_collector import get_recent_logs
@@ -472,3 +472,78 @@ async def admin_export_usage(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=usage.csv"},
     )
+
+
+# ============================================================
+# P3-1: Config Center
+# ============================================================
+
+
+@router.get("/config/changelog")
+@limiter.limit("30/minute")
+async def admin_config_changelog(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """Return recent config changelog entries."""
+    return await storage.get_config_changelog(50)
+
+
+class RegistrationModeRequest(BaseModel):
+    mode: str  # "invite_only" | "open"
+
+
+@router.post("/config/registration-mode")
+@limiter.limit("30/minute")
+async def admin_set_registration_mode(
+    request: Request,
+    req: RegistrationModeRequest,
+    _admin: dict = Depends(require_admin),
+) -> dict[str, str]:
+    """Set registration mode: 'invite_only' or 'open'."""
+    mode = req.mode.strip().lower()
+    if mode not in ("invite_only", "open"):
+        raise HTTPException(400, "mode 必须是 invite_only 或 open")
+    cfg = patch_config("registration", {"mode": mode})
+    current = cfg.get("registration", {})
+    return {"mode": current.get("mode", mode)}
+
+
+class RateLimitsRequest(BaseModel):
+    default: str | None = None
+    login: str | None = None
+
+
+@router.post("/config/rate-limits")
+@limiter.limit("30/minute")
+async def admin_set_rate_limits(
+    request: Request,
+    req: RateLimitsRequest,
+    _admin: dict = Depends(require_admin),
+) -> dict[str, str]:
+    """Set rate-limit thresholds in config.yaml."""
+    cfg = get_config()
+    limits = cfg.get("rate_limits", {})
+    if req.default is not None:
+        limits["default"] = req.default
+    if req.login is not None:
+        limits["login"] = req.login
+    patch_config("rate_limits", limits)
+    return {"default": limits.get("default", ""), "login": limits.get("login", "")}
+
+
+# ============================================================
+# P3-2: Review log
+# ============================================================
+
+
+@router.get("/review-log")
+@limiter.limit("30/minute")
+async def admin_review_log(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+) -> list[dict]:
+    """Return recent AI review logs."""
+    return await storage.get_review_logs(50)

@@ -202,3 +202,216 @@ class TestSessionCrud:
         """Saving a session with a non-existent card_id should raise."""
         with pytest.raises(Exception):
             await store.save_session(session_id, "no_such_card", "user", "")
+
+
+# ── P3-1: Config changelog ────────────────────────────────────────────
+
+class TestConfigChangelog:
+    """save_config_change → get_config_changelog."""
+
+    async def test_save_and_list(self, store):
+        await store.save_config_change("chg_1", "admin1", "Admin", "base_url", "old", "new")
+        await store.save_config_change("chg_2", "admin1", "Admin", "model", "v1", "v2")
+        logs = await store.get_config_changelog(10)
+        assert len(logs) == 2
+        fields = {r["field"] for r in logs}
+        assert "base_url" in fields
+        assert "model" in fields
+
+    async def test_empty(self, store):
+        assert await store.get_config_changelog(10) == []
+
+    async def test_limit(self, store):
+        for i in range(5):
+            await store.save_config_change(f"chg_{i}", "a", "A", "f", f"old{i}", f"new{i}")
+        logs = await store.get_config_changelog(3)
+        assert len(logs) == 3
+
+
+# ── P3-2: Review log ──────────────────────────────────────────────────
+
+class TestReviewLog:
+    """save_review_log → get_review_logs — requires a card record."""
+
+    async def test_save_and_list(self, store, text_id, card_id):
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{"name": "张三"}')
+        await store.save_review_log("rev_1", card_id, "user1", "pass", "")
+        await store.save_review_log("rev_2", card_id, "user1", "reject", "违规内容")
+        logs = await store.get_review_logs(10)
+        assert len(logs) == 2
+        results = {r["result"] for r in logs}
+        assert "pass" in results
+        assert "reject" in results
+        reject = next(r for r in logs if r["result"] == "reject")
+        assert reject["reason"] == "违规内容"
+        assert reject["card_name"] == "张三"
+
+    async def test_empty(self, store):
+        assert await store.get_review_logs(10) == []
+
+
+# ── P1-1: Content Moderation ─────────────────────────────────────────
+
+class TestContentModeration:
+    """list_all_cards_admin, takedown_card, list_all_posts_admin, admin_delete_post, ban_user_and_contents."""
+
+    async def _create_user(self, store, uid: str, name: str) -> str:
+        import hashlib
+        try:
+            await store.create_user(uid, name, hashlib.sha256(b"p").hexdigest())
+        except ValueError:
+            pass
+        return uid
+
+    async def test_list_all_cards_admin(self, store, text_id, card_id):
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{"name": "张三"}', user_id="u_admin_list")
+        cards = await store.list_all_cards_admin()
+        ids = {c["id"] for c in cards}
+        assert card_id in ids
+        card = next(c for c in cards if c["id"] == card_id)
+        assert card["name"] == "张三"
+
+    async def test_takedown_card(self, store, text_id, card_id):
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}', user_id="u_takedown")
+        # First make it public (simulate publishing to market)
+        await store.update_card_visibility(card_id, "public")
+        ok = await store.takedown_card(card_id)
+        assert ok is True
+        card = await store.get_card(card_id)
+        assert card["visibility"] == "private"
+
+    async def test_takedown_nonexistent(self, store):
+        ok = await store.takedown_card("no_such_card")
+        assert ok is False
+
+    async def test_list_all_posts_admin(self, store):
+        uid = "u_posts_admin"
+        await self._create_user(store, uid, "poster")
+        async with aiosqlite.connect(store.db_path) as conn:
+            await conn.execute("INSERT INTO user_posts (id, user_id, content) VALUES (?, ?, ?)",
+                               ("post_1", uid, "Hello world"))
+            await conn.commit()
+        posts = await store.list_all_posts_admin()
+        ids = {p["id"] for p in posts}
+        assert "post_1" in ids
+        post = next(p for p in posts if p["id"] == "post_1")
+        assert post["content"] == "Hello world"
+
+    async def test_admin_delete_post(self, store):
+        uid = "u_del_post"
+        await self._create_user(store, uid, "deleter")
+        async with aiosqlite.connect(store.db_path) as conn:
+            await conn.execute("INSERT INTO user_posts (id, user_id, content) VALUES (?, ?, ?)",
+                               ("post_del", uid, "delete me"))
+            await conn.commit()
+        ok = await store.admin_delete_post("post_del")
+        assert ok is True
+        posts = await store.list_all_posts_admin()
+        assert "post_del" not in {p["id"] for p in posts}
+
+    async def test_admin_delete_post_nonexistent(self, store):
+        assert await store.admin_delete_post("no_such_post") is False
+
+    async def test_ban_user_and_contents(self, store):
+        uid = "u_ban"
+        await self._create_user(store, uid, "banned_user")
+        async with aiosqlite.connect(store.db_path) as conn:
+            await conn.execute("INSERT INTO user_posts (id, user_id, content) VALUES (?, ?, ?)",
+                               ("post_ban1", uid, "bad post"))
+            await conn.execute("INSERT INTO user_posts (id, user_id, content) VALUES (?, ?, ?)",
+                               ("post_ban2", uid, "another bad post"))
+            await conn.commit()
+        counts = await store.ban_user_and_contents(uid, "admin_id")
+        assert counts["posts_deleted"] >= 2
+        user = await store.get_user_by_id(uid)
+        assert user is not None
+        assert user.get("is_disabled") == 1
+
+
+# ── P2-1: Announcements ──────────────────────────────────────────────
+
+class TestAnnouncements:
+    """create_announcement, delete_announcement, get_active_announcement, list_announcements."""
+
+    async def test_create_and_get_active(self, store):
+        a1 = await store.create_announcement("First announcement")
+        assert a1["is_active"] == 1
+        active = await store.get_active_announcement()
+        assert active is not None
+        assert active["content"] == "First announcement"
+
+    async def test_create_deactivates_previous(self, store):
+        await store.create_announcement("First")
+        await store.create_announcement("Second")
+        active = await store.get_active_announcement()
+        assert active["content"] == "Second"
+        all_a = await store.list_announcements()
+        assert len(all_a) == 2
+
+    async def test_get_active_none(self, store):
+        active = await store.get_active_announcement()
+        assert active is None
+
+    async def test_delete_announcement(self, store):
+        a = await store.create_announcement("Delete me")
+        ok = await store.delete_announcement(a["id"])
+        assert ok is True
+        active = await store.get_active_announcement()
+        assert active is None
+
+    async def test_delete_nonexistent(self, store):
+        assert await store.delete_announcement("no_such") is False
+
+    async def test_list_announcements(self, store):
+        await store.create_announcement("A")
+        await store.create_announcement("B")
+        all_a = await store.list_announcements()
+        assert len(all_a) == 2
+        contents = {a["content"] for a in all_a}
+        assert "A" in contents
+        assert "B" in contents
+
+
+# ── P2-2: User Detail ────────────────────────────────────────────────
+
+class TestUserDetail:
+    """get_user_detail."""
+
+    async def test_get_user_detail(self, store):
+        uid = "u_detail"
+        import hashlib
+        await store.create_user(uid, "detailed_user", hashlib.sha256(b"p").hexdigest())
+        detail = await store.get_user_detail(uid)
+        assert detail["id"] == uid
+        assert detail["username"] == "detailed_user"
+        assert isinstance(detail["cards_count"], int)
+        assert isinstance(detail["usage"], dict)
+
+    async def test_get_user_detail_nonexistent(self, store):
+        with pytest.raises(ValueError, match="用户不存在"):
+            await store.get_user_detail("no_such_user")
+
+
+# ── P2-3: CSV Export ─────────────────────────────────────────────────
+
+class TestCsvExport:
+    """export_users_csv, export_usage_csv."""
+
+    async def test_export_users_csv(self, store):
+        uid = "u_csv"
+        import hashlib
+        await store.create_user(uid, "csv_user", hashlib.sha256(b"p").hexdigest())
+        csv_str = await store.export_users_csv()
+        assert "username" in csv_str
+        assert "csv_user" in csv_str
+
+    async def test_export_users_csv_empty_ok(self, store):
+        csv_str = await store.export_users_csv()
+        assert "username" in csv_str
+
+    async def test_export_usage_csv(self, store):
+        csv_str = await store.export_usage_csv()
+        assert "total_calls" in csv_str

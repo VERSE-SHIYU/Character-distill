@@ -156,6 +156,26 @@ def get_config() -> dict[str, Any]:
     return dict(_config)
 
 
+def get_config_path() -> str:
+    """Return the config.yaml file path."""
+    return str(_CFG_PATH)
+
+
+def patch_config(key: str, value: Any) -> dict[str, Any]:
+    """Update a top-level key in the in-memory config and persist to disk.
+
+    Does NOT trigger LLM reload — use for registration, rate_limits etc.
+    """
+    global _config
+    _config[key] = value
+    try:
+        with open(_CFG_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(_config, f, allow_unicode=True, default_flow_style=False)
+    except Exception as exc:
+        print(f"[deps] Failed to persist config: {exc}")
+    return dict(_config)
+
+
 def reset_llm_and_dependents() -> None:
     """Hot-reload: recreate LLM, Distiller, TextManager, and MemoryManager singletons after config.yaml changes."""
     global _llm, _distiller, _text_manager, _summary_threshold, _config, _rag_config, _memory_config, _memory_manager

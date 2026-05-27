@@ -52,6 +52,7 @@ from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
+from storage.sqlite_store import SQLiteStore
 from core.log_collector import install_log_collector
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -229,35 +230,51 @@ class UpdateConfigRequest(BaseModel):
 
 
 @app.post("/api/settings/config")
-def update_settings_config(
+@limiter.limit("30/minute")
+async def update_settings_config(
+    request: Request,
     req: UpdateConfigRequest,
-    _admin: dict = Depends(require_admin),
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update LLM + voice config at runtime and persist to config.yaml."""
     try:
         cfg = get_config()
         llm = cfg.setdefault("llm", {})
-        if req.base_url is not None and req.base_url.strip():
-            llm["base_url"] = req.base_url.strip()
-        if req.model is not None and req.model.strip():
-            llm["model"] = req.model.strip()
-        if req.api_key is not None and req.api_key.strip():
-            llm["api_key"] = req.api_key.strip()
-        if req.summary_threshold is not None:
-            llm["summary_threshold"] = req.summary_threshold
+        changes = []
+
+        def _changed(field: str, old: Any, new: Any) -> bool:
+            return new is not None and str(new).strip() and str(new).strip() != str(old).strip()
+
+        for field, val in [("base_url", req.base_url), ("model", req.model), ("api_key", req.api_key), ("summary_threshold", req.summary_threshold)]:
+            old = llm.get(field, "")
+            if val is not None and (not isinstance(val, str) or val.strip()):
+                new_val = val.strip() if isinstance(val, str) else val
+                if str(new_val) != str(old):
+                    changes.append((field, str(old), str(new_val)))
+                    llm[field] = new_val
 
         voice = cfg.setdefault("voice", {})
-        if req.gptsovits_url is not None and req.gptsovits_url.strip():
-            voice["gptsovits_url"] = req.gptsovits_url.strip()
-        if req.funasr_url is not None and req.funasr_url.strip():
-            voice["funasr_url"] = req.funasr_url.strip()
+        for field, val in [("gptsovits_url", req.gptsovits_url), ("funasr_url", req.funasr_url)]:
+            old = voice.get(field, "")
+            if val is not None and val.strip() and val.strip() != str(old).strip():
+                changes.append((field, str(old), val.strip()))
+                voice[field] = val.strip()
 
         cfg_path = _REPO_ROOT / "config.yaml"
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
+        # Log config changes
+        if changes:
+            import uuid
+            for field, old_val, new_val in changes:
+                await storage.save_config_change(
+                    uuid.uuid4().hex[:12], admin_user["id"], admin_user.get("username", ""),
+                    field, old_val, new_val,
+                )
+
         # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
-        # 重建 LLM/Distiller/TextManager 单例使新配置即时生效
         reset_llm_and_dependents()
 
         return {

@@ -461,6 +461,24 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Announcements migration failed: {exc}")
 
+                    # Run 045_config_changelog migration (CREATE TABLE IF NOT EXISTS)
+                    cl_path = migrations_dir / "045_config_changelog.sql"
+                    if cl_path.exists():
+                        try:
+                            await conn.executescript(cl_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Config changelog migration failed: {exc}")
+
+                    # Run 046_review_log migration (CREATE TABLE IF NOT EXISTS)
+                    rl_path = migrations_dir / "046_review_log.sql"
+                    if rl_path.exists():
+                        try:
+                            await conn.executescript(rl_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Review log migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2295,8 +2313,8 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute("DELETE FROM user_posts WHERE user_id = ?", (user_id,))
                 counts["posts_deleted"] = cursor.rowcount
                 cursor = await conn.execute(
-                    """UPDATE comment_reports SET status = 'resolved', resolved_by = ?
-                       WHERE comment_id IN (SELECT id FROM text_comments WHERE user_id = ?)
+                    """UPDATE card_comment_reports SET status = 'resolved', resolver_id = ?
+                       WHERE comment_id IN (SELECT id FROM card_comments WHERE user_id = ?)
                        AND status = 'pending'""",
                     (admin_id, user_id),
                 )
@@ -2441,6 +2459,65 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Export usage CSV failed: {exc}")
             raise
+
+    # ---- P3-1: Config changelog ----
+
+    async def save_config_change(self, change_id: str, admin_id: str, admin_username: str, field: str, old_value: str, new_value: str) -> None:
+        """Record a config change in the changelog."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO config_changelog (id, admin_id, admin_username, field, old_value, new_value) VALUES (?, ?, ?, ?, ?, ?)",
+                    (change_id, admin_id, admin_username, field, old_value, new_value),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save config change failed: {exc}")
+
+    async def get_config_changelog(self, limit: int = 50) -> list[dict]:
+        """Return recent config changelog entries."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM config_changelog ORDER BY created_at DESC LIMIT ?", (limit,)
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get config changelog failed: {exc}")
+            return []
+
+    # ---- P3-2: Review log ----
+
+    async def save_review_log(self, review_id: str, card_id: str, user_id: str, result: str, reason: str = "") -> None:
+        """Record an AI review result."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO review_log (id, card_id, user_id, result, reason) VALUES (?, ?, ?, ?, ?)",
+                    (review_id, card_id, user_id, result, reason),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save review log failed: {exc}")
+
+    async def get_review_logs(self, limit: int = 50) -> list[dict]:
+        """Return recent review logs with card info."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.id, r.card_id, r.user_id, r.result, r.reason, r.created_at,
+                              COALESCE(c.name, '') AS card_name
+                       FROM review_log r
+                       LEFT JOIN cards c ON c.id = r.card_id
+                       ORDER BY r.created_at DESC LIMIT ?""",
+                    (limit,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get review logs failed: {exc}")
+            return []
 
     # ---- Usage stats ----
 
@@ -2964,20 +3041,6 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get feed posts failed: {exc}")
             return []
-
-    async def admin_delete_post(self, post_id: str) -> bool:
-        """Admin: delete any post by id. Returns True if deleted."""
-        try:
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "DELETE FROM user_posts WHERE id = ?",
-                    (post_id,),
-                )
-                await conn.commit()
-            return cursor.rowcount > 0
-        except Exception as exc:
-            print(f"[SQLiteStore] Admin delete post failed: {exc}")
-            return False
 
     async def toggle_post_like(self, post_id: str, user_id: str) -> dict:
         """Toggle like on a post. Returns {'liked': bool, 'likes': int}."""
