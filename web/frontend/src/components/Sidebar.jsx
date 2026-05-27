@@ -400,9 +400,6 @@ function SidebarHeader({ pinned, onTogglePin }) {
           <span><Svg size={22}><path d="M4 19.5A2.5 2.5 0 016.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" /></Svg></span>
           <span className="sidebar-logo-text">CharSim</span>
         </div>
-        <div className="sidebar-sub">
-          {'角色蒸馏与沉浸式对话'}
-        </div>
       </div>
       <button
         type="button"
