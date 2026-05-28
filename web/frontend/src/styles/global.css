@@ -6850,19 +6850,20 @@ select.settings-input {
 
 .login-card {
   width: 100%;
-  max-width: 400px;
+  max-width: 380px;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--card-radius);
   box-shadow: var(--card-shadow);
   backdrop-filter: var(--card-blur);
   -webkit-backdrop-filter: var(--card-blur);
-  padding: 40px 36px;
+  padding: 36px 32px 32px;
+  margin: auto;
 }
 
 .login-title {
   text-align: center;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   color: var(--text-primary);
   margin: 0 0 4px;
@@ -6870,15 +6871,16 @@ select.settings-input {
 
 .login-subtitle {
   text-align: center;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-dim);
-  margin: 0 0 28px;
+  margin: 0 0 20px;
+  font-weight: 400;
 }
 
 .login-tabs {
   display: flex;
   gap: 0;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   border-radius: 10px;
   overflow: hidden;
   background: var(--pill-bg);
@@ -6886,7 +6888,7 @@ select.settings-input {
 
 .login-tab {
   flex: 1;
-  padding: 10px 0;
+  padding: 11px 0;
   border: none;
   background: transparent;
   font-size: 14px;
@@ -6919,21 +6921,23 @@ select.settings-input {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
+  padding-left: 2px;
 }
 
 .login-field input {
   padding: 12px 14px;
-  border: 1px solid var(--input-border);
+  border: 1.5px solid var(--input-border);
   border-radius: 12px;
   background: var(--input-bg);
   font-size: 15px;
   color: var(--text-primary);
   outline: none;
-  transition: border-color .2s;
+  transition: border-color .2s, box-shadow .2s;
 }
 
 .login-field input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.1);
 }
 
 .login-error {
@@ -6949,6 +6953,7 @@ select.settings-input {
   background: rgba(0,0,0,0.06);
   border-radius: 2px;
   overflow: hidden;
+  margin-top: -8px;
 }
 
 .login-pw-strength-bar {
@@ -6967,12 +6972,17 @@ select.settings-input {
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  transition: background .2s;
-  margin-top: 4px;
+  transition: background .2s, transform .15s;
+  margin-top: 2px;
 }
 
-.login-submit:hover {
+.login-submit:hover:not(:disabled) {
   background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.login-submit:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .login-submit:disabled {
@@ -6993,12 +7003,12 @@ select.settings-input {
 
 .login-code-btn {
   flex-shrink: 0;
-  padding: 8px 14px;
+  padding: 8px 12px;
   border: 1px solid var(--pill-border);
   border-radius: var(--btn-radius);
   background: var(--card-bg);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
   transition: all .2s;
@@ -7017,7 +7027,7 @@ select.settings-input {
 
 .login-back-link {
   text-align: center;
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 .login-link-btn {
@@ -7026,12 +7036,14 @@ select.settings-input {
   color: var(--text-dim);
   font-size: 13px;
   cursor: pointer;
-  text-decoration: underline;
-  padding: 4px 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  transition: color .2s, background .2s;
 }
 
 .login-link-btn:hover {
   color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.06);
 }
 
 /* ==================== Sidebar User ==================== */
