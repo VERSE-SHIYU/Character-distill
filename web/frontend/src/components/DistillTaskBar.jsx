@@ -27,7 +27,13 @@ export default function DistillTaskBar() {
                 ? `正在识别角色 ${t.character || '…'}`
                 : t.status === 'checking'
                   ? `正在恢复任务 ${t.character || '…'}`
-                  : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`
+                  : t.status === 'analyzing'
+                    ? `正在分析片段 ${t.current || 0}/${t.total || 0}...`
+                    : t.status === 'merging'
+                      ? `正在合并角色信息...`
+                    : t.status === 'formatting'
+                      ? `正在生成角色卡...`
+                      : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`
         return (
           <div
             key={t.id}

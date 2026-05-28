@@ -64,8 +64,8 @@ L. 角色弧线：此人从故事开始到结束经历了怎样的变化？分2-
 class Distiller:
     """基于 LLM 的角色识别与角色卡蒸馏。"""
 
-    SAFE_SINGLE_REDUCE = 60
-    MAP_CONCURRENCY = 10
+    SAFE_SINGLE_REDUCE = 80
+    MAP_CONCURRENCY = 30
 
     def __init__(
         self,
