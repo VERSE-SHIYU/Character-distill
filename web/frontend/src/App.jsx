@@ -1,29 +1,31 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
 import { initTheme } from './utils/theme'
 import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
-import TextPanel from './components/TextPanel'
-import CharCard from './components/CharCard'
-import ChatArea from './components/ChatArea'
-import HistoryPanel from './components/HistoryPanel'
-import SettingsPanel from './components/SettingsPanel'
-import HomePage from './components/HomePage'
-import VoicePanel from './components/VoicePanel'
 import LoginPage from './components/LoginPage'
-import AdminPanel from './components/AdminPanel'
-import ProfilePage from './components/ProfilePage'
-import MarketPage from './components/MarketPage'
-import AuthorPage from './components/AuthorPage'
-import GroupChatPage from './components/GroupChatPage'
-import TextDetailPage from './components/TextDetailPage'
-import MessagesPage from './components/MessagesPage'
-import MinePage from './components/MinePage'
-import TrashPage from './components/TrashPage'
-import MarketCardDetail from './components/MarketCardDetail'
-import FeedPage from './components/FeedPage'
-import BookReader from './components/BookReader'
 import DistillTaskBar from './components/DistillTaskBar'
+import Loading from './components/common/Loading'
+
+const TextPanel = lazy(() => import('./components/TextPanel'))
+const CharCard = lazy(() => import('./components/CharCard'))
+const ChatArea = lazy(() => import('./components/ChatArea'))
+const HistoryPanel = lazy(() => import('./components/HistoryPanel'))
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
+const HomePage = lazy(() => import('./components/HomePage'))
+const VoicePanel = lazy(() => import('./components/VoicePanel'))
+const AdminPanel = lazy(() => import('./components/AdminPanel'))
+const ProfilePage = lazy(() => import('./components/ProfilePage'))
+const MarketPage = lazy(() => import('./components/MarketPage'))
+const AuthorPage = lazy(() => import('./components/AuthorPage'))
+const GroupChatPage = lazy(() => import('./components/GroupChatPage'))
+const TextDetailPage = lazy(() => import('./components/TextDetailPage'))
+const MessagesPage = lazy(() => import('./components/MessagesPage'))
+const MinePage = lazy(() => import('./components/MinePage'))
+const TrashPage = lazy(() => import('./components/TrashPage'))
+const MarketCardDetail = lazy(() => import('./components/MarketCardDetail'))
+const FeedPage = lazy(() => import('./components/FeedPage'))
+const BookReader = lazy(() => import('./components/BookReader'))
 
 const PANELS = {
   home: HomePage,
@@ -61,7 +63,9 @@ function MainContent() {
   const Panel = PANELS[view] || HomePage
   return (
     <div className={`view-transition${visible ? ' in' : ''}`}>
-      <Panel />
+      <Suspense fallback={<Loading text="加载中…" />}>
+        <Panel />
+      </Suspense>
     </div>
   )
 }
