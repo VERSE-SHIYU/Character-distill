@@ -477,7 +477,7 @@ async def get_affinity(
     storage: SQLiteStore = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
-    """Return affinity scores for a session."""
+    """Return affinity scores for a session (incl. inner_voice, mood_emoji, stage)."""
     # Always verify ownership via DB first
     db_session = await storage.get_session(session_id)
     if not db_session:
@@ -492,8 +492,30 @@ async def get_affinity(
     # Fallback to DB (server restarted)
     data = await storage.get_session_affinity(session_id)
     if data:
-        return {"affinity": data["affinity"], "trust": data["trust"], "mood": data["mood"], "guard": data["guard"], "reason": ""}
-    return {"affinity": 50, "trust": 30, "mood": "平静", "guard": 70, "reason": ""}
+        aff = data.get("affinity", 50)
+        reason = data.get("reason", "")
+        # Try to parse extended JSON from affinity_reason
+        extended = {}
+        if reason:
+            try:
+                extended = json.loads(reason)
+            except (json.JSONDecodeError, TypeError):
+                extended = {"inner_voice": reason, "mood_emoji": "😊"}
+        # Calculate stage
+        from core.chat_engine import _calc_stage
+        stage_name, stage_emoji = _calc_stage(aff)
+        return {
+            "affinity": aff,
+            "trust": data.get("trust", 30),
+            "mood": data.get("mood", "平静"),
+            "guard": data.get("guard", 70),
+            "reason": reason,
+            "inner_voice": extended.get("inner_voice", ""),
+            "mood_emoji": extended.get("mood_emoji", "😊"),
+            "stage": stage_name,
+            "stage_emoji": stage_emoji,
+        }
+    return {"affinity": 50, "trust": 30, "mood": "平静", "guard": 70, "reason": "", "inner_voice": "", "mood_emoji": "😊", "stage": "陌生", "stage_emoji": "🫥"}
 
 
 @router.post("/reset")

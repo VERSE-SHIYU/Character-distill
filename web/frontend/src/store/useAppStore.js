@@ -272,7 +272,7 @@ const useAppStore = create((set, get) => ({
   webSearchEnabled: false,
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
-  affinity: { affinity: 50, trust: 30, mood: '平静', guard: 70, reason: '' },
+  affinity: { affinity: 50, trust: 30, mood: '平静', guard: 70, reason: '', inner_voice: '', mood_emoji: '😊', stage: '陌生', stage_emoji: '🫥' },
   affinityOpen: localStorage.getItem('affinity_open') !== 'false',
   setAffinityOpen: (val) => {
     localStorage.setItem('affinity_open', val ? 'true' : 'false')

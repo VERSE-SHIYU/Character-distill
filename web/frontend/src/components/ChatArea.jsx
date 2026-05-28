@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, Heart, Smile, Shield, Handshake, MessageSquare, Mic, Book, File } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Mic, Book, File } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -101,8 +101,6 @@ function ChatView() {
   const webSearchEnabled = useAppStore((s) => s.webSearchEnabled)
   const setWebSearchEnabled = useAppStore((s) => s.setWebSearchEnabled)
   const affinity = useAppStore((s) => s.affinity)
-  const affinityOpen = useAppStore((s) => s.affinityOpen)
-  const setAffinityOpen = useAppStore((s) => s.setAffinityOpen)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
   const authUser = useAppStore((s) => s.authUser)
@@ -130,6 +128,20 @@ function ChatView() {
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [memoryToast, setMemoryToast] = useState(false)
+  const [stageToast, setStageToast] = useState(null) // { stage, stage_emoji }
+
+  // Stage upgrade toast detection
+  const prevStageRef = useRef(affinity.stage)
+  useEffect(() => {
+    const current = affinity.stage
+    const prev = prevStageRef.current
+    if (current && prev && current !== prev && affinity.affinity > 0) {
+      setStageToast({ stage: current, stage_emoji: affinity.stage_emoji || '' })
+      const t = setTimeout(() => setStageToast(null), 2500)
+      return () => clearTimeout(t)
+    }
+    prevStageRef.current = current
+  }, [affinity.stage, affinity.affinity, affinity.stage_emoji])
 
   // Reply-to state
   const [replyTo, setReplyTo] = useState(null) // { id, preview }
@@ -248,7 +260,7 @@ function ChatView() {
 
   const handleCropCancel = useCallback(() => setCropFile(null), [])
 
-  // ---- Global audio player for voice bubbles ----
+
   const audioRef = useRef(null)
   const [playingMsgId, setPlayingMsgId] = useState(null)
 
@@ -373,6 +385,28 @@ function ChatView() {
     setRetractConfirm(true)
   }, [])
 
+  // Affinity popup state
+  const [showInnerVoice, setShowInnerVoice] = useState(false)
+  const innerVoicePopupRef = useRef(null)
+  // More menu state
+  const [showMore, setShowMore] = useState(false)
+  const moreMenuRef = useRef(null)
+
+  // Close popup/menu on outside click
+  useEffect(() => {
+    if (!showInnerVoice && !showMore) return
+    const handler = (e) => {
+      if (showInnerVoice && !e.target.closest('[data-affinity-trigger]') && !e.target.closest('.inner-voice-popup')) {
+        setShowInnerVoice(false)
+      }
+      if (showMore && !e.target.closest('[data-more-trigger]') && !e.target.closest('.chat-more-menu')) {
+        setShowMore(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showInnerVoice, showMore])
+
   const scrollToMessage = useCallback((msgId) => {
     const el = document.querySelector(`[data-msg-id="${msgId}"]`)
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -380,100 +414,40 @@ function ChatView() {
 
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
-      {/* Top bar */}
-      <div className="chat-topbar">
-        <div className="chat-topbar-left">
+      {/* ── Compact header wrapper (positioned for popup/menu) ── */}
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+      <div className="chat-topbar-compact">
+        <div className="chat-topbar-compact-left">
+          <button type="button" className="chat-topbar-back" onClick={() => setView('character')} title="返回">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          </button>
           <button
             type="button"
-            className="chat-avatar-edit-wrap"
+            className="chat-topbar-avatar-btn"
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
           >
-            <Avatar name={charName} src={avatarUrl} size={75} />
-            <span className="chat-avatar-edit-icon">{'\u{1F4F7}'}</span>
+            <Avatar name={charName} src={avatarUrl} size={32} />
           </button>
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            onChange={handleAvatarChange}
-          />
-          <input
-            ref={userAvatarInputRef}
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            onChange={handleUserAvatarChange}
-          />
-          <div className="chat-topbar-info">
-            <span className="chat-topbar-name">{charName}</span>
-            {charIdentity && (
-              <span className="chat-topbar-badge">{charIdentity}</span>
+          <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
+          <input ref={userAvatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleUserAvatarChange} />
+          <div className="chat-topbar-compact-name-row">
+            <span className="chat-topbar-compact-name">{charName}</span>
+            {charIdentity && <span className="chat-topbar-badge-compact">{charIdentity}</span>}
+            {affinityEnabled && (
+              <button
+                type="button"
+                data-affinity-trigger
+                className="chat-topbar-mood-btn"
+                onClick={() => setShowInnerVoice(v => !v)}
+                title={affinity.mood || '情感状态'}
+              >
+                {affinity.mood_emoji || '😊'}
+              </button>
             )}
           </div>
         </div>
-        <div className="chat-topbar-actions">
-          <div className="chat-voice-indicator">
-            <span className={`voice-dot ${voiceEnabled ? 'on' : 'off'}`} />
-            <button
-              type="button"
-              className="voice-toggle-mini"
-              onClick={() => setVoiceEnabled(!voiceEnabled)}
-              title={voiceEnabled ? '关闭语音' : '开启语音'}
-            >
-              {voiceEnabled ? <Speaker size={16} /> : <SpeakerOff size={16} />}
-            </button>
-          </div>
-          <div className="chat-web-search-ctl">
-            <button
-              type="button"
-              className={`chat-topbar-btn web-search-toggle${webSearchEnabled ? ' active' : ''}`}
-              onClick={() => setWebSearchEnabled(!webSearchEnabled)}
-              title={webSearchEnabled ? '关闭现实增强' : '开启现实增强'}
-            >
-              <Globe size={16} />
-            </button>
-            <span className={`web-search-label${webSearchEnabled ? ' active' : ''}`}>
-              {webSearchEnabled ? '现实增强：开' : '现实增强：关'}
-            </span>
-          </div>
-          <div className="chat-font-size-ctl">
-            <button
-              type="button"
-              className="chat-topbar-btn chat-font-btn"
-              onClick={() => setFontLevel(Math.max(0, fontLevel - 1))}
-              disabled={fontLevel === 0}
-              title="缩小字体"
-            >
-              <FontDecrease size={16} />
-            </button>
-            <button
-              type="button"
-              className="chat-topbar-btn chat-font-btn"
-              onClick={() => setFontLevel(Math.min(2, fontLevel + 1))}
-              disabled={fontLevel === 2}
-              title="放大字体"
-            >
-              <FontIncrease size={16} />
-            </button>
-          </div>
-          <button
-            type="button"
-            className="chat-topbar-btn"
-            onClick={handleReset}
-            title="重置对话"
-          >
-            <RefreshCw size={16} />
-          </button>
-          <button
-            type="button"
-            className="chat-topbar-btn"
-            onClick={() => setView('character')}
-            title="返回角色列表"
-          >
-            <User size={16} />
-          </button>
+        <div className="chat-topbar-compact-right">
           <ChatHistoryPanel
             fetchSessions={historyFetchSessions}
             onSelectSession={historySelectSession}
@@ -481,55 +455,64 @@ function ChatView() {
           />
           <button
             type="button"
-            className="chat-topbar-btn"
-            title="角色记忆"
-            onClick={() => { setShowMemoryPanel(true); loadMemories() }}
+            data-more-trigger
+            className="chat-topbar-more-btn"
+            onClick={() => setShowMore(v => !v)}
+            title="更多"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7.5L12 22l-3-5.5C7 14.5 5 12 5 9a7 7 0 0 1 7-7z"/>
-              <circle cx="12" cy="9" r="2.5"/>
-            </svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
           </button>
         </div>
       </div>
 
-      {/* Affinity panel */}
-      {affinityEnabled && affinityOpen ? (
-        <div className="affinity-bar">
-          <button
-            type="button"
-            className="affinity-toggle"
-            onClick={() => setAffinityOpen(false)}
-            title="收起情感面板"
-          >
-            <span className="affinity-toggle-arrow">▼</span>
-            <span className="affinity-toggle-label">情感状态</span>
-            <AffinityInline value={affinity.affinity} icon={<Heart size={14} />} label="好感" />
-            <AffinityInline value={affinity.trust} icon={<Handshake size={14} />} label="信任" />
-          </button>
-          <div className="affinity-detail">
-            <AffinityItem value={affinity.affinity} icon={<Heart size={14} />} label="好感" />
-            <AffinityItem value={affinity.trust} icon={<Handshake size={14} />} label="信任" />
-            <AffinityItem value={affinity.mood} icon={<Smile size={14} />} label="情绪" isMood />
-            <AffinityItem value={affinity.guard} icon={<Shield size={14} />} label="防御" />
-            {affinity.reason && (
-              <span className="affinity-reason" title={affinity.reason}>
-                {affinity.reason}
-              </span>
-            )}
+      {/* ── Inner voice popup (replaces old affinity bar) ── */}
+      {showInnerVoice && (
+        <div className="inner-voice-popup" ref={innerVoicePopupRef}>
+          <div className="inner-voice-header">
+            {affinity.mood_emoji || '😊'} {charName}此刻的想法
+          </div>
+          <div className="inner-voice-text">"{affinity.inner_voice || '…'}"</div>
+          <div className="inner-voice-footer">
+            <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
+            <span className="inner-voice-stats">♡{affinity.affinity} 🤝{affinity.trust} 🛡{affinity.guard}</span>
           </div>
         </div>
-      ) : affinityEnabled ? (
-        <button
-          type="button"
-          className="affinity-float-toggle"
-          onClick={() => setAffinityOpen(true)}
-          title="显示情感面板"
-        >
-          <Heart size={18} />
-        </button>
-      ) : null}
+      )}
+
+      {/* ── More menu ── */}
+      {showMore && (
+        <div className="chat-more-menu" ref={moreMenuRef}>
+          <button type="button" className="chat-more-item" onClick={() => { setVoiceEnabled(!voiceEnabled); setShowMore(false) }}>
+            {voiceEnabled ? <Speaker size={16} /> : <SpeakerOff size={16} />}
+            <span>{voiceEnabled ? '关闭语音' : '开启语音'}</span>
+          </button>
+          <button type="button" className={`chat-more-item${webSearchEnabled ? ' active' : ''}`} onClick={() => { setWebSearchEnabled(!webSearchEnabled); setShowMore(false) }}>
+            <Globe size={16} />
+            <span>现实增强</span>
+          </button>
+          <button type="button" className="chat-more-item" onClick={() => { setFontLevel(Math.max(0, fontLevel - 1)); setShowMore(false) }} disabled={fontLevel === 0}>
+            <FontDecrease size={16} />
+            <span>缩小字号</span>
+          </button>
+          <button type="button" className="chat-more-item" onClick={() => { setFontLevel(Math.min(2, fontLevel + 1)); setShowMore(false) }} disabled={fontLevel === 2}>
+            <FontIncrease size={16} />
+            <span>放大字号</span>
+          </button>
+          <button type="button" className="chat-more-item" onClick={() => { setView('character'); setShowMore(false) }}>
+            <User size={16} />
+            <span>角色列表</span>
+          </button>
+          <button type="button" className="chat-more-item" onClick={() => { setShowMemoryPanel(true); loadMemories(); setShowMore(false) }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7.5L12 22l-3-5.5C7 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+            <span>角色记忆</span>
+          </button>
+          <button type="button" className="chat-more-item chat-more-item-danger" onClick={() => { handleReset(); setShowMore(false) }}>
+            <RefreshCw size={16} />
+            <span>重置对话</span>
+          </button>
+        </div>
+      )}
+      </div>
 
       {/* User role bar */}
       <div className="user-role-bar">
@@ -770,6 +753,11 @@ function ChatView() {
       {/* Memory toast */}
       {memoryToast && (
         <div className="memory-toast">将记录到角色记忆</div>
+      )}
+
+      {/* Stage upgrade toast */}
+      {stageToast && (
+        <div className="stage-toast">🎉 你和{charName}的关系变为「{stageToast.stage_emoji} {stageToast.stage}」</div>
       )}
     </div>
   )
@@ -1096,11 +1084,11 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
 
-      <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
         {showEmoji && <EmojiPicker textareaRef={taRef} controlled={true} onEmojiSelect={(emoji) => {
           const ta = taRef.current
-          const start = ta?.selectionStart || text.length
-          const newText = text.slice(0, start) + emoji + text.slice(ta?.selectionEnd || start)
+          const start = ta?.selectionStart ?? text.length
+          const newText = text.slice(0, start) + emoji + text.slice(ta?.selectionEnd ?? start)
           setText(newText)
           setShowEmoji(false)
           requestAnimationFrame(() => {
@@ -1112,6 +1100,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
             }
           })
         }} />}
+        <div style={{ overflow: 'hidden', borderRadius: 'inherit' }}>
         <textarea
           ref={taRef}
           className="chat-textarea"
@@ -1133,6 +1122,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
           }}
           disabled={disabled}
         />
+        </div>
         <MentionDropdown
           show={mentionHook.mentionActive}
           items={mentionHook.mentionItems}
@@ -1154,36 +1144,4 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
   )
 }
 
-// ---- Affinity helpers ----
 
-function affinityColor(value) {
-  if (value <= 30) return 'var(--affinity-low, #9ca3af)'
-  if (value <= 50) return 'var(--affinity-mid, #3b82f6)'
-  if (value <= 70) return 'var(--affinity-good, #22c55e)'
-  if (value <= 90) return 'var(--affinity-high, #f97316)'
-  return 'var(--affinity-max, #ef4444)'
-}
-
-function AffinityItem({ value, icon, label, isMood }) {
-  const color = isMood ? 'var(--accent)' : affinityColor(value)
-  return (
-    <span className="affinity-item" style={{ color }} title={`${label}: ${value}`}>
-      <span className="affinity-icon">{icon}</span>
-      {isMood ? (
-        <span className="affinity-mood">{value}</span>
-      ) : (
-        <span className="affinity-value">{value}</span>
-      )}
-    </span>
-  )
-}
-
-function AffinityInline({ value, icon, label }) {
-  const color = affinityColor(value)
-  return (
-    <span className="affinity-inline" style={{ color }} title={`${label}: ${value}`}>
-      <span className="affinity-inline-icon">{icon}</span>
-      <span className="affinity-inline-value">{value}</span>
-    </span>
-  )
-}

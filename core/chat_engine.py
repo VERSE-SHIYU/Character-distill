@@ -16,6 +16,24 @@ from core.schema import CharacterCard
 from core.utils import try_record_usage
 
 
+# IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
+AFFINITY_STAGES = [
+    (0, 18, "陌生", "🫥"),      # IOS 1-2, Bogardus 6-7
+    (18, 36, "认识", "🙂"),     # IOS 3-4, Bogardus 4-5
+    (36, 55, "熟悉", "😊"),     # IOS 5-6, Bogardus 3
+    (55, 73, "朋友", "😄"),     # IOS 7-8, Bogardus 2
+    (73, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
+    (91, 101, "心意相通", "💕"), # IOS 11, Bogardus 1
+]
+
+
+def _calc_stage(affinity: int) -> tuple[str, str]:
+    for lo, hi, name, emoji in AFFINITY_STAGES:
+        if lo <= affinity < hi:
+            return name, emoji
+    return "陌生", "🫥"
+
+
 class ChatEngine:
     """组合 LLM、向量检索与角色卡，维护多轮对话历史。"""
 
@@ -30,19 +48,7 @@ class ChatEngine:
         card_id: str = "",
         context_window: int = 100,
     ) -> None:
-        """注入模型适配器、RAG 引擎与角色卡。
-
-        Args:
-            llm: 大语言模型适配器。
-            rag: 向量检索引擎。
-            card: 结构化角色卡。
-            all_characters: 角色信息列表（含 name/aliases），传入后
-                ``chat`` / ``chat_stream`` 会自动按当前角色过滤 RAG 片段。
-            user_role: 用户扮演的角色名，非空时注入 system prompt。
-            memory_manager: Mem0 MemoryManager 实例（可选）。
-            card_id: 角色卡 ID，用于 Mem0 隔离不同角色的记忆。
-            context_window: 送入 LLM 的最近历史条数上限，超出的靠 Mem0 补充。
-        """
+        """注入模型适配器、RAG 引擎与角色卡。"""
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
@@ -61,6 +67,12 @@ class ChatEngine:
         self._mood: str = "平静"
         self._guard: int = 70
         self._affinity_reason: str = ""
+        self._inner_voice: str = ""
+        self._mood_emoji: str = "😊"
+        self._prev_stage: str = ""
+        self._stage: str = ""
+        self._stage_emoji: str = ""
+        self._stage_upgraded: bool = False
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -71,6 +83,10 @@ class ChatEngine:
                 self._mood = init_data.get("mood", "平静")
                 self._guard = max(0, min(100, init_data.get("guard", 70)))
                 self._affinity_reason = init_data.get("reason", "")
+                self._inner_voice = init_data.get("inner_voice", "")
+                self._mood_emoji = init_data.get("mood_emoji", "😊")
+                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._prev_stage = self._stage
             except Exception as exc:
                 print(f"[ChatEngine] Initial affinity calc failed, using defaults: {exc}")
 
@@ -215,6 +231,22 @@ class ChatEngine:
                 f"{rag_context}"
             )
 
+        # 情感状态注入（iPET ACL 2025 情绪渗透 + Kohne & Montag CHB 2026 行为模式）
+        if getattr(self, 'affinity_enabled', True):
+            prompt += (
+                f"\n\n[当前情感状态——影响你的语气和态度]\n"
+                f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100\n"
+                f"你此刻的情绪：{self._mood}\n"
+                f"你的内心想法：{self._inner_voice}\n\n"
+                "根据以上状态自然调整你的说话方式：\n"
+                "- 好感<30时：冷淡、简短、不主动展开话题\n"
+                "- 好感30-55时：礼貌但保持距离，偶尔敷衍\n"
+                "- 好感55-73时：愿意聊，会开玩笑，偶尔关心对方\n"
+                "- 好感>73时：话变多、语气亲近、会用昵称、主动分享心事\n"
+                "- 好感>91时：完全信任，说话不设防，会撒娇或示弱\n"
+                "不要直接提及数值，通过语气和内容自然体现。"
+            )
+
         return prompt
 
     def chat(self, user_message: str, voice_mode: bool = False) -> str:
@@ -347,6 +379,10 @@ class ChatEngine:
                 self._mood = init.get("mood", "平静")
                 self._guard = max(0, min(100, init.get("guard", 70)))
                 self._affinity_reason = init.get("reason", "")
+                self._inner_voice = init.get("inner_voice", "")
+                self._mood_emoji = init.get("mood_emoji", "😊")
+                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._prev_stage = self._stage
                 return
             except Exception:
                 pass
@@ -355,34 +391,61 @@ class ChatEngine:
         self._mood = data.get("mood", "平静")
         self._guard = data.get("guard", 70)
         self._affinity_reason = data.get("reason", "")
+        # 尝试 JSON 解析扩展数据（兼容旧格式纯文本 reason）
+        _reason = self._affinity_reason or ""
+        try:
+            _parsed = json.loads(_reason)
+            self._inner_voice = _parsed.get("inner_voice", "")
+            self._mood_emoji = _parsed.get("mood_emoji", "😊")
+        except (json.JSONDecodeError, TypeError):
+            self._inner_voice = _reason
+            self._mood_emoji = "😊"
+        self._stage, self._stage_emoji = _calc_stage(self._affinity)
+        self._prev_stage = self._stage
 
     def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
-        """异步评估四维好感度变化。"""
+        """异步评估好感度变化：角色第一人称内心独白 + 情绪惯性 + 关系阶段。"""
         if not self.llm:
             return
         if not getattr(self, 'affinity_enabled', True):
             return
 
         user_role = (self.user_role or "对方").strip()
+        # 记录旧阶段用于检测阶段变化
+        old_stage = self._stage
+        _values = getattr(self.card, 'values', []) or []
+        _tensions = getattr(self.card, 'inner_tensions', []) or []
 
         prompt = (
-            "你是情感分析专家。根据以下角色设定和对话，评估角色对对方的情感状态变化。\n\n"
-            f"角色：{self.card.name}\n"
-            f"价值观：{', '.join(self.card.values[:3])}\n"
-            f"内在矛盾：{', '.join(self.card.inner_tensions[:2])}\n"
-            f"人际关系中对话者的位置：{user_role}\n\n"
-            f"当前状态：好感={self._affinity}, 信任={self._trust}, 情绪={self._mood}, 防御={self._guard}\n\n"
-            f"对方说：{user_message}\n"
-            f"角色回复：{assistant_reply}\n\n"
-            "根据角色性格，输出 JSON（只输出 JSON）：\n"
-            '{"affinity": 数字0-100, "trust": 数字0-100, "mood": "平静/开心/悲伤/愤怒/紧张/甜蜜", '
-            '"guard": 数字0-100, "reason": "一句话原因"}\n'
-            "变化规则：\n"
-            "- 单次变化幅度不超过 ±10\n"
-            "- 踩到角色雷点（背叛、谎言、触及旧伤）→ 好感-5~-10，防御+10\n"
-            "- 温柔关心但不逼迫 → 好感+3~5，防御-3~5\n"
-            "- 表白/深情告白 → 好感±看角色性格，防御+5（害怕）\n"
-            "- 日常闲聊 → 变化 ±1~2"
+            f"你现在就是{self.card.name}本人。\n"
+            f"性格特征：{', '.join(_values[:3])}\n"
+            f"内在矛盾：{', '.join(_tensions[:2])}\n"
+            f"对话者身份：{user_role}\n\n"
+            f"当前情感状态：好感={self._affinity}, 信任={self._trust}, 情绪={self._mood}, 防御={self._guard}\n"
+            f"上一刻的内心想法：{self._inner_voice}\n\n"
+            f"对方刚才说：{user_message}\n"
+            f"你回复了：{assistant_reply}\n\n"
+            "现在，用你自己的口吻写出你此刻真实的内心想法。\n\n"
+            "要求：\n"
+            "1. 用第一人称，用你的性格说话。傲娇不会直说喜欢，内向会犹豫，暴躁会骂人。\n"
+            "2. 写2-3句内心独白，要有情绪的微妙层次，不要笼统的'我觉得还行'。\n"
+            "3. 如果对方触碰了你的痛点或雷区，反应要激烈但符合你的性格。\n"
+            "4. 如果上一刻你在生气，对方道歉了，你不应该立刻原谅——你需要时间消化。\n\n"
+            "情绪惯性规则（依据AnnaAgent ACL 2025情绪动态演化模型）：\n"
+            "- 单轮数值变化不超过 ±8\n"
+            "- 正面情绪建立慢（+3~5/轮），负面情绪爆发快（-5~8/轮）\n"
+            "- 防御值下降速度 = 信任上升速度的0.6倍（信任建立慢，防御松懈更慢）\n"
+            "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
+            "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
+            "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
+            "{\n"
+            '  "affinity": 0-100整数,\n'
+            '  "trust": 0-100整数,\n'
+            '  "mood": "具体情绪词（如释然/微酸/警觉/心软/嘴硬心软/又气又心疼/微微上头）",\n'
+            '  "guard": 0-100整数,\n'
+            '  "inner_voice": "你的第一人称内心独白2-3句",\n'
+            '  "mood_emoji": "一个最贴合此刻情绪的emoji"\n'
+            "}"
         )
 
         storage = self._storage
@@ -402,7 +465,23 @@ class ChatEngine:
                 self._trust = max(0, min(100, data.get("trust", self._trust)))
                 self._mood = data.get("mood", self._mood)
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
-                self._affinity_reason = data.get("reason", "")
+                self._inner_voice = data.get("inner_voice", self._inner_voice)
+                self._mood_emoji = data.get("mood_emoji", self._mood_emoji)
+                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._stage_upgraded = self._stage != old_stage
+                self._prev_stage = old_stage
+                # 阶段升级时在内心独白末尾追加祝贺
+                if self._stage_upgraded:
+                    self._inner_voice += f"\n（我们的关系似乎更近了…现在是「{self._stage}」阶段）"
+                # 扩展数据序列化存入 affinity_reason
+                extended = {
+                    "inner_voice": self._inner_voice,
+                    "mood_emoji": self._mood_emoji,
+                    "mood_word": self._mood,
+                    "stage": self._stage,
+                    "stage_emoji": self._stage_emoji,
+                }
+                self._affinity_reason = json.dumps(extended, ensure_ascii=False)
                 if storage and session_id:
                     import sqlite3
                     try:
@@ -425,26 +504,23 @@ class ChatEngine:
         card: CharacterCard,
         user_role: str,
     ) -> dict[str, Any]:
-        """根据角色卡人际关系 + 用户扮演身份，动态计算初始四维好感度。
-
-        关系判定优先级：亲密度 > 对立度 > 普通相识 > 陌生人。
-        """
+        """依据 IOS₁₁ (Scientific Reports 2024) + Trust Revisited (JSPR 2025) 计算初始值。"""
         user = (user_role or "").strip()
 
-        # 无身份：默认陌生人
+        # 无身份：陌生人（IOS₁₁ 1-2级）
         if not user:
             return {
-                "affinity": 50, "trust": 30, "mood": "平静", "guard": 70,
-                "reason": f"{card.name} 对陌生人保持中立",
+                "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
+                "inner_voice": "谁？不认识。先看看什么情况。",
+                "mood_emoji": "🫥",
+                "reason": f"{card.name} 对陌生人保持高度警惕",
             }
 
-        # 遍历角色卡人际关系列表，找到匹配的用户身份
+        # 遍历角色卡人际关系列表
         for rel in (card.relationships or []):
             target = (rel.target or "").strip()
             if not target:
                 continue
-            # Guard: require ≥2 chars for substring match to avoid single-char
-            # false positives (e.g. "明" matching "明朝学生")
             if target != user and not (
                 len(target) >= 2 and len(user) >= 2
                 and (target in user or user in target)
@@ -453,7 +529,7 @@ class ChatEngine:
             relation = (rel.relation or "").lower()
             attitude = (rel.attitude or "").lower()
 
-            # 1) 亲密关系
+            # 亲密关系（IOS₁₁ 9-10级，Bogardus 1级）
             _close = ["朋友", "兄弟", "姐妹", "挚友", "搭档", "队友",
                        "恋人", "情侣", "夫妻", "家人", "亲人",
                        "父子", "父女", "母子", "母女"]
@@ -461,53 +537,61 @@ class ChatEngine:
                 has_conflict = any(w in attitude for w in ["矛盾", "复杂", "爱恨", "疏远", "冷战"])
                 if has_conflict:
                     return {
-                        "affinity": 70, "trust": 55, "mood": "紧张", "guard": 68,
+                        "affinity": 68, "trust": 48, "mood": "紧张", "guard": 62,
+                        "inner_voice": f"又见到{target}了...心里说不上来什么感觉，明明那么熟悉，却好像隔了什么。",
+                        "mood_emoji": "😔",
                         "reason": f"{card.name} 与 {target}（{rel.relation}）关系复杂，心存芥蒂",
                     }
                 return {
-                    "affinity": 82, "trust": 72, "mood": "开心", "guard": 48,
+                    "affinity": 82, "trust": 72, "mood": "开心", "guard": 25,
+                    "inner_voice": f"{target}来了，看到{target}心情就会好起来。",
+                    "mood_emoji": "😊",
                     "reason": f"{card.name} 视 {target} 为{rel.relation}",
                 }
 
-            # 2) 对立关系
+            # 对立关系（IOS₁₁ 1级，Bogardus 7级）
             _hostile = ["敌人", "仇人", "对手", "情敌", "死敌"]
             if any(w in relation for w in _hostile):
                 return {
-                    "affinity": 22, "trust": 15, "mood": "紧张", "guard": 92,
+                    "affinity": 10, "trust": 5, "mood": "敌意", "guard": 95,
+                    "inner_voice": f"{target}...看到这个名字就来气。",
+                    "mood_emoji": "😤",
                     "reason": f"{card.name} 视 {target} 为{rel.relation}，充满敌意",
                 }
 
-            # 3) 普通相识
+            # 普通相识（IOS₁₁ 5-6级，Bogardus 3-4级）
             _acquaintance = ["同学", "同事", "邻居", "认识", "普通", "路人", "同行"]
             if any(w in relation for w in _acquaintance):
                 return {
-                    "affinity": 60, "trust": 42, "mood": "平静", "guard": 62,
+                    "affinity": 50, "trust": 35, "mood": "平静", "guard": 58,
+                    "inner_voice": f"是{target}啊，还行吧，不算陌生也不算多熟。",
+                    "mood_emoji": "🙂",
                     "reason": f"{card.name} 认识 {target}（{rel.relation}），关系普通",
                 }
 
-            # 4) 其他已知关系（兜底）
+            # 兜底
             return {
-                "affinity": 55, "trust": 40, "mood": "平静", "guard": 65,
+                "affinity": 40, "trust": 28, "mood": "平静", "guard": 60,
+                "inner_voice": f"嗯，{target}来了，好好相处吧。",
+                "mood_emoji": "🙂",
                 "reason": f"{card.name} 与 {target} 是{rel.relation}",
             }
 
-        # 未匹配到任何关系 → 陌生人。根据 user_role 语义微调
+        # 未匹配关系 → 按 user_role 语义微调
         _fan_words = ["粉丝", "歌迷", "影迷", "书迷"]
-        _neutral = ["路人", "陌生人", "顾客", "记者", "学生"]
         if any(w in user for w in _fan_words):
             return {
-                "affinity": 65, "trust": 40, "mood": "开心", "guard": 55,
+                "affinity": 38, "trust": 15, "mood": "平静", "guard": 68,
+                "inner_voice": f"又一个{user}...客气点就好，保持距离。",
+                "mood_emoji": "🙂",
                 "reason": f"{card.name} 对{user}保持友好但有所保留",
             }
-        if any(w in user for w in _neutral) or "路" in user:
-            return {
-                "affinity": 45, "trust": 25, "mood": "平静", "guard": 82,
-                "reason": f"{card.name} 对陌生人{user}保持警惕",
-            }
 
-        # 完全未知身份
+        # 完全陌生人（IOS₁₁ 1-2级，Bogardus 6-7级）
         return {
-            "affinity": 48, "trust": 28, "mood": "平静", "guard": 75,
+            "affinity": 15, "trust": 10, "mood": "警觉", "guard": 85,
+            "inner_voice": "谁？不认识。先看看什么情况。",
+            "mood_emoji": "🫥",
             "reason": f"{card.name} 不认识{user}，态度谨慎",
         }
 
@@ -518,6 +602,10 @@ class ChatEngine:
             "mood": self._mood,
             "guard": self._guard,
             "reason": self._affinity_reason,
+            "inner_voice": self._inner_voice,
+            "mood_emoji": self._mood_emoji,
+            "stage": self._stage,
+            "stage_emoji": self._stage_emoji,
         }
 
     def reset(self) -> None:
