@@ -861,7 +861,7 @@ const useAppStore = create((set, get) => ({
         affinity_enabled: get().affinityEnabled,
       })
       set((s) => {
-        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false })
+        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at })
         if (data.summary) {
           msgs.splice(msgs.length - 2, 0, { role: 'summary', content: data.summary })
         }
@@ -916,10 +916,10 @@ const useAppStore = create((set, get) => ({
         set((s) => {
           const msgs = [...s.messages]
           if (payload.user_msg_id && msgs.length >= 2) {
-            msgs[msgs.length - 2] = { ...msgs[msgs.length - 2], id: payload.user_msg_id }
+            msgs[msgs.length - 2] = { ...msgs[msgs.length - 2], id: payload.user_msg_id, timestamp: payload.user_created_at }
           }
           if (payload.char_msg_id) {
-            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id }
+            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id, timestamp: payload.char_created_at }
           }
           if (payload.summary) {
             const userIdx = msgs.length - 2
@@ -1045,6 +1045,7 @@ const useAppStore = create((set, get) => ({
         role: m.role,
         content: m.content,
         id: m.id,
+        timestamp: m.created_at,
       }))
       set({
         sessionId: session.id || sessionId,

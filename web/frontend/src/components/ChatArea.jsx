@@ -452,6 +452,7 @@ function ChatView() {
             fetchSessions={historyFetchSessions}
             onSelectSession={historySelectSession}
             placeholder="搜索历史对话…"
+            overlay
           />
           <button
             type="button"

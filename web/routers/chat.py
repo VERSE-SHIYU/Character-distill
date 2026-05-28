@@ -241,6 +241,8 @@ async def _do_chat(
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
+        "user_created_at": user_rec.get("created_at", "") if not hidden else "",
+        "char_created_at": char_rec.get("created_at", ""),
         "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
     }
     if engine and engine.last_summary:
@@ -374,6 +376,8 @@ async def _do_chat_stream(
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
                 "user_msg_id": user_msg_id,
                 "char_msg_id": char_msg_id,
+                "user_created_at": user_rec.get("created_at", "") if not hidden else "",
+                "char_created_at": char_rec.get("created_at", ""),
                 "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
             }
             if engine and engine.last_summary:
