@@ -140,9 +140,10 @@ def _run_distill_task(
                             t["message"] = f"预处理文本… (已处理 {elapsed} 秒)"
             threading.Thread(target=_coref_hb, daemon=True).start()
             try:
-                chars = distiller.identify_characters(content)
-            finally:
-                _identify_hb_stop_coref.set()
+                try:
+                    chars = distiller.identify_characters(content)
+                finally:
+                    _identify_hb_stop_coref.set()
                 if chars:
                     import time as _time
                     _coref_start = _time.time()
@@ -205,10 +206,10 @@ def _run_distill_task(
         threading.Thread(target=_identify_hb, daemon=True).start()
         try:
             chars = distiller.identify_characters(content)
-        finally:
-            _identify_hb_stop.set()
         except Exception:
             chars = []
+        finally:
+            _identify_hb_stop.set()
         if not name:
             if not chars:
                 with _task_lock:
