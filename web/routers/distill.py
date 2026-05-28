@@ -102,6 +102,19 @@ def _run_distill_task(
         with _task_lock:
             _tasks.setdefault(task_id, {"user_id": user_id}).update({"status": "error", "message": "服务器繁忙，请稍后重试"})
         return
+    # ── Global task heartbeat: elapsed_seconds for every phase ──────
+    _task_hb_stop = threading.Event()
+    _task_start_time = time.time()
+    def _task_heartbeat():
+        while not _task_hb_stop.wait(5):
+            elapsed = int(time.time() - _task_start_time)
+            with _task_lock:
+                t = _tasks.get(task_id)
+                if t and t.get("status") not in ("done", "error", "", None):
+                    t["elapsed_seconds"] = elapsed
+    threading.Thread(target=_task_heartbeat, daemon=True).start()
+    # ────────────────────────────────────────────────────────────────
+
     try:
         from adapters.llm_adapter import LLMAdapter
         from deps import get_distiller, get_text_manager
@@ -374,6 +387,13 @@ def _run_distill_task(
                 print(f"[distill] Scene index failed (non-fatal): {exc}")
             return result
 
+        with _task_lock:
+            _tasks[task_id].update({
+                "status": "saving",
+                "progress_pct": 95,
+                "message": "正在保存角色卡…",
+            })
+
         result = asyncio.run(_save_card())
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
@@ -405,6 +425,7 @@ def _run_distill_task(
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
+        _task_hb_stop.set()
         _DISTILL_SEMAPHORE.release()
 
 
