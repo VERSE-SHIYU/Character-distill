@@ -62,7 +62,7 @@ export default function DistillTaskBar() {
             <span className="distill-task-text">{statusText}</span>
             {!isDone && !isError && (
               <span className="distill-task-bar-track">
-                <span className={`distill-task-bar-fill${!t.progress_pct ? ' indeterminate' : ''}`} style={{ width: `${t.progress_pct || 0}%` }} />
+                <span className={`distill-task-bar-fill${(!t.progress_pct || t.progress_pct <= 5) ? ' indeterminate' : ''}`} style={{ width: `${t.progress_pct || 0}%` }} />
               </span>
             )}
             {!isDone && !isError && (
