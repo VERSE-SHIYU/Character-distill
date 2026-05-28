@@ -550,7 +550,7 @@ const useAppStore = create((set, get) => ({
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
               t.id === taskId
-                ? { ...t, status: payload.status, progress_pct: payload.progress_pct || 0, card_id: payload.card_id, message: payload.message }
+                ? { ...t, ...payload, progress_pct: payload.progress_pct || 0 }
                 : t,
             ),
           }))
@@ -607,7 +607,7 @@ const useAppStore = create((set, get) => ({
             get()._persistTasks()
             return
           }
-          setTimeout(poll, 3000)
+          setTimeout(poll, 2000)
         })
         .catch((err) => {
           const status = err?.status

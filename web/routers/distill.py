@@ -106,7 +106,7 @@ def _run_distill_task(
     _task_hb_stop = threading.Event()
     _task_start_time = time.time()
     def _task_heartbeat():
-        while not _task_hb_stop.wait(5):
+        while not _task_hb_stop.wait(2):
             elapsed = int(time.time() - _task_start_time)
             with _task_lock:
                 t = _tasks.get(task_id)
@@ -145,7 +145,7 @@ def _run_distill_task(
             _identify_hb_stop_coref = threading.Event()
             _identify_hb_start_coref = time.time()
             def _coref_hb():
-                while not _identify_hb_stop_coref.wait(5):
+                while not _identify_hb_stop_coref.wait(2):
                     elapsed = int(time.time() - _identify_hb_start_coref)
                     with _task_lock:
                         t = _tasks.get(task_id)
@@ -210,7 +210,7 @@ def _run_distill_task(
         _identify_hb_stop = threading.Event()
         _identify_hb_start = time.time()
         def _identify_hb():
-            while not _identify_hb_stop.wait(5):
+            while not _identify_hb_stop.wait(2):
                 elapsed = int(time.time() - _identify_hb_start)
                 with _task_lock:
                     t = _tasks.get(task_id)
@@ -592,6 +592,7 @@ async def distill_start(
 async def distill_task_status(
     task_id: str,
     user: dict = Depends(get_current_user),
+    request: Request = None,
 ) -> dict[str, Any]:
     """Poll distillation task status."""
     with _task_lock:
