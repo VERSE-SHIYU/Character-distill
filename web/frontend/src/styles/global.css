@@ -7891,6 +7891,19 @@ select.settings-input {
   transition: width .5s;
 }
 
+.distill-task-bar-fill.indeterminate {
+  width: 30% !important;
+  background: linear-gradient(90deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 40%, var(--accent)) 50%, var(--primary) 100%);
+  background-size: 200% 100%;
+  animation: distill-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes distill-indeterminate {
+  0%   { width: 15%; background-position: 200% 0; }
+  50%  { width: 45%; background-position: 0% 0; }
+  100% { width: 15%; background-position: -200% 0; }
+}
+
 .distill-task-close {
   flex-shrink: 0;
   width: 20px;

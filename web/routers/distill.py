@@ -132,7 +132,32 @@ def _run_distill_task(
             try:
                 chars = distiller.identify_characters(content)
                 if chars:
-                    resolved = distiller.coref_resolve(content, chars)
+                    import time as _time
+                    _coref_start = _time.time()
+                    chunk_count = len(content) // 6000 + 1
+
+                    with _task_lock:
+                        _tasks[task_id].update({
+                            "current": 0,
+                            "total": chunk_count,
+                            "message": f"预处理文本… 0/{chunk_count}",
+                        })
+
+                    def _coref_progress(current: int, total: int) -> None:
+                        elapsed = int(_time.time() - _coref_start)
+                        pct = 3 + int((current / total) * 17) if total > 0 else 3
+                        msg = f"预处理文本… {current}/{total}"
+                        if elapsed > 30:
+                            msg += f" (已处理 {elapsed} 秒)"
+                        with _task_lock:
+                            _tasks[task_id].update({
+                                "progress_pct": min(pct, 20),
+                                "current": current,
+                                "total": total,
+                                "message": msg,
+                            })
+
+                    resolved = distiller.coref_resolve(content, chars, progress_callback=_coref_progress)
                     if resolved:
                         async def _write_resolved():
                             from pathlib import Path as _Path

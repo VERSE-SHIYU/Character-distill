@@ -21,19 +21,21 @@ export default function DistillTaskBar() {
           ? `${t.character} 蒸馏完成，点击查看`
           : isError
             ? `${t.character || ''} 蒸馏失败: ${t.message || '未知错误'}`
-            : t.status === 'queued'
-              ? `${t.character || '…'} 排队等待中…`
-              : t.status === 'identifying'
-                ? `正在识别角色 ${t.character || '…'}`
-                : t.status === 'checking'
-                  ? `正在恢复任务 ${t.character || '…'}`
-                  : t.status === 'analyzing'
-                    ? `正在分析片段 ${t.current || 0}/${t.total || 0}...`
-                    : t.status === 'merging'
-                      ? `正在合并角色信息...`
-                    : t.status === 'formatting'
-                      ? `正在生成角色卡...`
-                      : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`
+            : t.message
+              ? t.message
+              : t.status === 'queued'
+                ? `${t.character || '…'} 排队等待中…`
+                : t.status === 'identifying'
+                  ? `正在识别角色 ${t.character || '…'}`
+                  : t.status === 'checking'
+                    ? `正在恢复任务 ${t.character || '…'}`
+                    : t.status === 'analyzing'
+                      ? `正在分析片段 ${t.current || 0}/${t.total || 0}...`
+                      : t.status === 'merging'
+                        ? `正在合并角色信息...`
+                      : t.status === 'formatting'
+                        ? `正在生成角色卡...`
+                        : `正在蒸馏 ${t.character || '…'} ${t.progress_pct || 0}%`
         return (
           <div
             key={t.id}
@@ -60,7 +62,7 @@ export default function DistillTaskBar() {
             <span className="distill-task-text">{statusText}</span>
             {!isDone && !isError && (
               <span className="distill-task-bar-track">
-                <span className="distill-task-bar-fill" style={{ width: `${t.progress_pct || 0}%` }} />
+                <span className={`distill-task-bar-fill${!t.progress_pct ? ' indeterminate' : ''}`} style={{ width: `${t.progress_pct || 0}%` }} />
               </span>
             )}
             {!isDone && !isError && (

@@ -8,6 +8,7 @@ import queue
 import threading
 from pathlib import Path
 from typing import Any
+import collections.abc as _cabc
 
 import yaml
 from pydantic import ValidationError
@@ -284,6 +285,7 @@ class Distiller:
 
     def coref_resolve(
         self, text: str, characters: list[dict[str, Any]], chunk_size: int = 6000, overlap: int = 500,
+        progress_callback: collections.abc.Callable[[int, int], object] | None = None,
     ) -> str:
         """全文共指消解+说话人补全。
 
@@ -341,7 +343,18 @@ class Distiller:
             return result
 
         async def _resolve_all():
-            tasks = [_resolve_chunk(c[2]) for c in chunks]
+            total = len(chunks)
+            completed = 0
+
+            async def _tracked(chunk_text: str) -> str:
+                nonlocal completed
+                result = await _resolve_chunk(chunk_text)
+                completed += 1
+                if progress_callback is not None:
+                    progress_callback(completed, total)
+                return result
+
+            tasks = [_tracked(c[2]) for c in chunks]
             return await asyncio.gather(*tasks)
 
         try:
