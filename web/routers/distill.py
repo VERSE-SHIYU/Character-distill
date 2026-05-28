@@ -151,7 +151,7 @@ def _run_distill_task(
                 break
 
         with _task_lock:
-            _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "角色已识别，开始蒸馏…"})
+            _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
         # Step 2: run incremental distill (synchronous, collect full output)
         full = ""
@@ -173,12 +173,20 @@ def _run_distill_task(
                     total = piece.get("total", 1)
                     status = piece.get("status", "analyzing")
                     pct = int((current / total) * 100) if total > 0 else 0
+                    msg = (
+                        f"分析片段 {current}/{total}"
+                        if status == "analyzing"
+                        else "合并角色信息…"
+                        if status == "merging"
+                        else "生成角色卡…"
+                    )
                     _tasks[task_id].update({
                         "status": status,
                         "current": current,
                         "total": total,
                         "progress_pct": pct,
                         "character": name,
+                        "message": msg,
                     })
             else:
                 full += piece
@@ -300,6 +308,7 @@ def _run_distill_task(
                 "card_id": result.get("card_id", ""),
                 "character": name,
                 "progress_pct": 100,
+                "message": "蒸馏完成 ✓",
             })
 
     except Exception as exc:
