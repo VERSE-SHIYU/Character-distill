@@ -2413,7 +2413,7 @@ html.theme-aurora::before {
   display: flex;
   flex-direction: column;
   gap: 0;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .creation-tab-bar {
