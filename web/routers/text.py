@@ -108,7 +108,7 @@ async def upload_text(
         record = await storage.get_text(text_id)
     except Exception as exc:
         print(f"[text] Get text record failed: {exc}")
-        raise HTTPException(500, f"Get text record failed: {exc}") from exc
+        raise HTTPException(500, "获取文本记录失败，请稍后重试") from exc
 
     if record:
         record.pop("content", None)
@@ -129,7 +129,7 @@ async def list_texts(
         texts = await storage.list_texts(user_id)
     except Exception as exc:
         print(f"[text] List texts failed: {exc}")
-        raise HTTPException(500, f"List texts failed: {exc}") from exc
+        raise HTTPException(500, "获取文本列表失败，请稍后重试") from exc
 
     for t in texts:
         content = t.pop("content", None) or ""
@@ -188,7 +188,7 @@ async def delete_text(
         ok = await storage.delete_text(text_id)
     except Exception as exc:
         print(f"[text] Delete text failed: {exc}")
-        raise HTTPException(500, f"Delete text failed: {exc}") from exc
+        raise HTTPException(500, "删除文本失败，请稍后重试") from exc
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}
@@ -206,7 +206,7 @@ async def list_trash(
         texts = await storage.get_deleted_texts(user["id"])
     except Exception as exc:
         print(f"[text] List trash failed: {exc}")
-        raise HTTPException(500, f"List trash failed: {exc}") from exc
+        raise HTTPException(500, "获取回收站列表失败，请稍后重试") from exc
     for t in texts:
         t.pop("content", None)
     return texts

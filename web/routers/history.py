@@ -42,7 +42,7 @@ async def list_sessions(
         return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id)
     except Exception as exc:
         print(f"[history] List sessions failed: {exc}")
-        raise HTTPException(500, f"List sessions failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.get("/trash")
@@ -57,7 +57,7 @@ async def list_trash(
         return await storage.list_trash_sessions(user_id)
     except Exception as exc:
         print(f"[history] List trash failed: {exc}")
-        raise HTTPException(500, f"List trash failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.delete("/trash/purge")
@@ -73,7 +73,7 @@ async def purge_trash(
         return {"ok": True, "purged": count}
     except Exception as exc:
         print(f"[history] Purge trash failed: {exc}")
-        raise HTTPException(500, f"Purge trash failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.post("/clear-all")
@@ -89,7 +89,7 @@ async def clear_all_sessions(
         return {"ok": True, "deleted": count}
     except Exception as exc:
         print(f"[history] Clear all sessions failed: {exc}")
-        raise HTTPException(500, f"Clear all sessions failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 # ---- Parameterized routes (/{session_id}/...) ----
@@ -117,7 +117,7 @@ async def export_session(
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[history] Export session failed: {exc}")
-        raise HTTPException(500, f"Export failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     if format.lower().strip() == "txt":
         return PlainTextResponse(content)
@@ -141,7 +141,7 @@ async def get_session_detail(
         messages = await storage.get_messages(session_id)
     except Exception as exc:
         print(f"[history] Get messages failed: {exc}")
-        raise HTTPException(500, f"Get messages failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     return {"session": session, "messages": messages}
 
 
@@ -216,7 +216,7 @@ async def resume_session(
         raise HTTPException(504, "会话恢复超时，请稍后重试")
     except Exception as exc:
         print(f"[history] Rebuild engine for {session_id} failed: {exc}")
-        raise HTTPException(500, f"Rebuild session failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # 5. Steal the engine into the original session_id
     if new_session_id != session_id:
@@ -230,7 +230,7 @@ async def resume_session(
         db_messages = await storage.get_messages(session_id)
     except Exception as exc:
         print(f"[history] Load messages for {session_id} failed: {exc}")
-        raise HTTPException(500, f"Load messages failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Convert DB roles to engine roles, skipping summary (not a valid LLM role)
     engine.history = [
@@ -289,7 +289,7 @@ async def restore_session(
         ok = await storage.restore_session(session_id)
     except Exception as exc:
         print(f"[history] Restore session failed: {exc}")
-        raise HTTPException(500, f"Restore session failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     if not ok:
         raise HTTPException(404, "Session not found in trash")
     return {"ok": True}
@@ -316,7 +316,7 @@ async def delete_session(
             ok = await storage.delete_session(session_id)
     except Exception as exc:
         print(f"[history] Delete session failed: {exc}")
-        raise HTTPException(500, f"Delete session failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"ok": True}

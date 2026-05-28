@@ -62,7 +62,7 @@ async def save_card_avatar(
     try:
         await storage.save_card_avatar(card_id, body.data)
     except Exception as exc:
-        raise HTTPException(500, f"Save failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     return {"ok": True}
 
 

@@ -325,7 +325,7 @@ async def _do_identify(text: str, distiller: Distiller) -> dict[str, Any]:
         chars = await asyncio.to_thread(distiller.identify_characters, text)
     except Exception as exc:
         print(f"[distill] Identify characters failed: {exc}")
-        raise HTTPException(500, f"Identify failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     return {"characters": chars}
 
 
@@ -340,7 +340,7 @@ async def _resolve_character_name(
         chars = await asyncio.to_thread(distiller.identify_characters, text)
     except Exception as exc:
         print(f"[distill] Auto-identify failed: {exc}")
-        raise HTTPException(500, f"Identify failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
     if not chars:
         raise HTTPException(400, "No characters identified")
     name = chars[0].get("name", "")
@@ -418,7 +418,7 @@ async def distill_by_text_id(
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
-        raise HTTPException(500, f"Distill failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.post("/start")
@@ -690,7 +690,7 @@ async def reindex_rag(
         chars = await asyncio.to_thread(distiller.identify_characters, content)
     except Exception as exc:
         print(f"[distill] Reindex identify failed: {exc}")
-        raise HTTPException(500, f"Identify failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     count = 0
     for sid, session in sessions.items():
@@ -765,7 +765,7 @@ async def list_cards(
         return result
     except Exception as exc:
         print(f"[distill] List cards failed: {exc}")
-        raise HTTPException(500, f"List cards failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.get("/cards/standalone")
@@ -779,7 +779,7 @@ async def list_standalone_cards(
         return await storage.list_standalone_cards(user["id"])
     except Exception as exc:
         print(f"[distill] List standalone cards failed: {exc}")
-        raise HTTPException(500, f"List standalone cards failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.get("/cards/{card_id}/export")
@@ -879,7 +879,7 @@ async def start_session(
             all_characters = []
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
-        raise HTTPException(500, f"Create session failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     try:
         await storage.save_session(session_id, req.card_id, req.user_role, "", user_id)
@@ -989,7 +989,7 @@ async def legacy_distill(
         text_id = upload_result["text_id"]
     except Exception as exc:
         print(f"[distill] Auto-save text failed: {exc}")
-        raise HTTPException(500, f"Save text failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     char_name = await _resolve_character_name(text, req.character_name, distiller)
 
@@ -999,4 +999,4 @@ async def legacy_distill(
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
-        raise HTTPException(500, f"Distill failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc

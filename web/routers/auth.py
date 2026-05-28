@@ -152,7 +152,7 @@ async def send_code(
     try:
         send_verification_code(email, code, purpose_label)
     except RuntimeError as exc:
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "邮件发送失败，请稍后重试")
     return {"ok": True}
 
 
@@ -364,7 +364,7 @@ async def update_api_config(
         return {"ok": True}
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
-        raise HTTPException(500, f"Update API config failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.get("/usage")

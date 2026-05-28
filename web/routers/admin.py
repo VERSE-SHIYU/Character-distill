@@ -30,7 +30,9 @@ async def require_admin(
 # ---- Users ----
 
 @router.get("/users")
+@limiter.limit("30/minute")
 async def list_users(
+    request: Request,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
@@ -48,7 +50,9 @@ async def dashboard(
 
 
 @router.post("/users/{user_id}/disable")
+@limiter.limit("30/minute")
 async def disable_user(
+    request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -58,7 +62,9 @@ async def disable_user(
 
 
 @router.post("/users/{user_id}/enable")
+@limiter.limit("30/minute")
 async def enable_user(
+    request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -72,7 +78,9 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.patch("/users/{user_id}/reset-password")
+@limiter.limit("30/minute")
 async def reset_user_password(
+    request: Request,
     user_id: str,
     req: ResetPasswordRequest,
     _admin: dict = Depends(require_admin),
@@ -92,7 +100,9 @@ async def reset_user_password(
 
 
 @router.delete("/users/{user_id}")
+@limiter.limit("30/minute")
 async def delete_user(
+    request: Request,
     user_id: str,
     admin_user: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -118,7 +128,7 @@ async def delete_user(
         raise HTTPException(404, "用户不存在")
     except Exception as exc:
         print(f"[admin] Delete user failed: {exc}")
-        raise HTTPException(500, f"Delete user failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 class SetEmailRequest(BaseModel):
@@ -126,7 +136,9 @@ class SetEmailRequest(BaseModel):
 
 
 @router.patch("/users/{user_id}/email")
+@limiter.limit("30/minute")
 async def set_user_email(
+    request: Request,
     user_id: str,
     req: SetEmailRequest,
     _admin: dict = Depends(require_admin),
@@ -138,7 +150,9 @@ async def set_user_email(
 
 
 @router.delete("/users/{user_id}/email")
+@limiter.limit("30/minute")
 async def clear_user_email(
+    request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -155,7 +169,9 @@ class GenerateInviteRequest(BaseModel):
 
 
 @router.post("/invite/generate")
+@limiter.limit("30/minute")
 async def generate_invites(
+    request: Request,
     req: GenerateInviteRequest,
     admin_user: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -170,7 +186,9 @@ async def generate_invites(
 
 
 @router.get("/invite/list")
+@limiter.limit("30/minute")
 async def list_invites(
+    request: Request,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
@@ -178,7 +196,9 @@ async def list_invites(
 
 
 @router.delete("/invite/{code}")
+@limiter.limit("30/minute")
 async def delete_invite(
+    request: Request,
     code: str,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -193,11 +213,13 @@ async def delete_invite(
         raise
     except Exception as exc:
         print(f"[admin] Delete invite failed: {exc}")
-        raise HTTPException(500, f"Delete invite failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.delete("/invites/used")
+@limiter.limit("30/minute")
 async def delete_used_invites(
+    request: Request,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -207,11 +229,13 @@ async def delete_used_invites(
         return {"ok": True, "deleted": count}
     except Exception as exc:
         print(f"[admin] Delete used invites failed: {exc}")
-        raise HTTPException(500, f"Delete used invites failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.get("/usage")
+@limiter.limit("30/minute")
 async def admin_usage(
+    request: Request,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
@@ -223,7 +247,9 @@ async def admin_usage(
 
 
 @router.get("/reports")
+@limiter.limit("30/minute")
 async def list_reports(
+    request: Request,
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
@@ -232,7 +258,9 @@ async def list_reports(
 
 
 @router.post("/reports/{comment_id}/resolve")
+@limiter.limit("30/minute")
 async def resolve_reports(
+    request: Request,
     comment_id: str,
     admin_user: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
@@ -245,7 +273,9 @@ async def resolve_reports(
 
 
 @router.post("/reports/{comment_id}/delete-comment")
+@limiter.limit("30/minute")
 async def delete_reported_comment(
+    request: Request,
     comment_id: str,
     admin_user: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),

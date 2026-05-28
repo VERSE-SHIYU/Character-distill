@@ -298,7 +298,7 @@ async def preview_ref_audio(
         audio = Path(cache_path).read_bytes()
         return Response(content=audio, media_type="audio/wav")
     except Exception as exc:
-        raise HTTPException(500, f"GPT-SoVITS 合成失败: {exc}")
+        raise HTTPException(500, "操作失败，请稍后重试")
 
 
 # ---- Reference audio for GPT-SoVITS voice cloning ----
@@ -415,7 +415,7 @@ async def delete_ref_audio(
         return JSONResponse({"ok": True})
     except Exception as exc:
         print(f"[voice] Delete ref audio failed: {exc}")
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "删除参考音频失败，请稍后重试")
 
 
 # ---- ASR (FunASR via WebSocket) ----
@@ -478,7 +478,7 @@ async def speech_to_text(
         raise
     except Exception as exc:
         print(f"[voice] ASR failed: {exc}")
-        raise HTTPException(500, f"语音识别失败: {str(exc)}")
+        raise HTTPException(500, "语音识别失败，请稍后重试")
     finally:
         for p in [tmp_in_path, tmp_wav_path]:
             try:

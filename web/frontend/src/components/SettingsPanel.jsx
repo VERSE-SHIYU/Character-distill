@@ -13,6 +13,7 @@ export default function SettingsPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [apiForm, setApiForm] = useState({ base_url: '', model: '', api_key: '' })
+  const [provider, setProvider] = useState('deepseek')
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
@@ -42,9 +43,12 @@ export default function SettingsPanel() {
         const meData = await meRes.json()
         if (!cancelled) {
           setHasApiKey(meData.has_api_key)
+          const savedBaseUrl = meData.base_url || ''
+          const savedModel = meData.model || ''
+          setProvider(savedBaseUrl.includes('deepseek.com') ? 'deepseek' : 'custom')
           setApiForm({
-            base_url: meData.base_url || 'https://api.deepseek.com',
-            model: meData.model || 'deepseek-v4-pro',
+            base_url: savedBaseUrl || 'https://api.deepseek.com',
+            model: savedModel || 'deepseek-v4-pro',
             api_key: meData.has_api_key ? MASKED_KEY : '',
           })
           useAppStore.setState({ apiConfigured: meData.has_api_key })
@@ -83,46 +87,103 @@ export default function SettingsPanel() {
           <Loading text="加载配置…" />
         ) : (
           <div className="settings-fields">
-            <label className="settings-field">
-              <span className="settings-label">base_url</span>
-              <input
-                type="text"
-                className="settings-input"
-                value={apiForm.base_url}
-                onChange={(e) => setApiForm((f) => ({ ...f, base_url: e.target.value }))}
-              />
-            </label>
-            <label className="settings-field">
-              <span className="settings-label">model</span>
-              <input
-                type="text"
-                className="settings-input"
-                value={apiForm.model}
-                onChange={(e) => setApiForm((f) => ({ ...f, model: e.target.value }))}
-              />
-            </label>
-            <p className="settings-hint">
-              模型能力直接影响角色扮演质量。推荐使用 deepseek-v4-pro 或 claude-sonnet-4-20250514。
-            </p>
-            <label className="settings-field">
-              <span className="settings-label">api_key</span>
-              <div className="settings-api-key-row">
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  className="settings-input"
-                  placeholder={hasApiKey ? '已配置，留空不修改' : '不修改请留空'}
-                  value={apiForm.api_key}
-                  onChange={(e) => setApiForm((f) => ({ ...f, api_key: e.target.value }))}
-                />
-                <button
-                  type="button"
-                  className="btn-ghost settings-show-key-btn"
-                  onClick={() => setShowApiKey((v) => !v)}
-                >
-                  {showApiKey ? '隐藏' : '显示'}
-                </button>
-              </div>
-            </label>
+            {/* Provider selector */}
+            <div className="provider-selector">
+              <button
+                type="button"
+                className={`provider-card${provider === 'deepseek' ? ' active' : ''}`}
+                onClick={() => {
+                  setProvider('deepseek')
+                  setApiForm((f) => ({ ...f, base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro' }))
+                }}
+              >
+                <div className="provider-card-title">DeepSeek <span className="provider-card-badge">推荐</span></div>
+                <div className="provider-card-desc">自动填充，只需填写 API Key</div>
+              </button>
+              <button
+                type="button"
+                className={`provider-card${provider === 'custom' ? ' active' : ''}`}
+                onClick={() => setProvider('custom')}
+              >
+                <div className="provider-card-title">其他模型</div>
+                <div className="provider-card-desc">手动配置 base_url、model 和 API Key</div>
+              </button>
+            </div>
+
+            {/* DeepSeek mode: only api_key */}
+            {provider === 'deepseek' && (
+              <>
+                <label className="settings-field">
+                  <span className="settings-label">api_key</span>
+                  <div className="settings-api-key-row">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      className="settings-input"
+                      placeholder={hasApiKey ? '已配置，留空不修改' : '输入 DeepSeek API Key'}
+                      value={apiForm.api_key}
+                      onChange={(e) => setApiForm((f) => ({ ...f, api_key: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost settings-show-key-btn"
+                      onClick={() => setShowApiKey((v) => !v)}
+                    >
+                      {showApiKey ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                </label>
+                <p className="settings-hint">
+                  🔗 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer" className="settings-link">前往 DeepSeek 官网获取 API Key</a>
+                </p>
+              </>
+            )}
+
+            {/* Custom mode: all three fields */}
+            {provider === 'custom' && (
+              <>
+                <label className="settings-field">
+                  <span className="settings-label">base_url</span>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={apiForm.base_url}
+                    onChange={(e) => setApiForm((f) => ({ ...f, base_url: e.target.value }))}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="settings-label">model</span>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={apiForm.model}
+                    onChange={(e) => setApiForm((f) => ({ ...f, model: e.target.value }))}
+                  />
+                </label>
+                <p className="settings-hint">
+                  模型能力直接影响角色扮演质量。推荐使用 deepseek-v4-pro 或 claude-sonnet-4-20250514。
+                </p>
+                <label className="settings-field">
+                  <span className="settings-label">api_key</span>
+                  <div className="settings-api-key-row">
+                    <input
+                      type={showApiKey ? 'text' : 'password'}
+                      className="settings-input"
+                      placeholder={hasApiKey ? '已配置，留空不修改' : '输入 API Key'}
+                      value={apiForm.api_key}
+                      onChange={(e) => setApiForm((f) => ({ ...f, api_key: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost settings-show-key-btn"
+                      onClick={() => setShowApiKey((v) => !v)}
+                    >
+                      {showApiKey ? '隐藏' : '显示'}
+                    </button>
+                  </div>
+                </label>
+              </>
+            )}
+
             <button
               type="button"
               className="btn-primary"

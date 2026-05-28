@@ -190,7 +190,7 @@ async def _do_chat(
             rag_ctx = getattr(engine, '_last_rag_context', '') or ''
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")
-        raise HTTPException(500, f"Chat failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
@@ -443,7 +443,7 @@ async def revoke_messages(
         count = await storage.delete_messages_after(req.session_id, req.message_id)
     except Exception as exc:
         print(f"[chat] Revoke messages failed: {exc}")
-        raise HTTPException(500, f"Revoke failed: {exc}") from exc
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Rebuild in-memory engine.history and message_ids from remaining DB rows
     try:

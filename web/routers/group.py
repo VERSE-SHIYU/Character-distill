@@ -177,7 +177,7 @@ async def create_group(
         try:
             card = CharacterCard.model_validate_json(card_rec["card_json"])
         except Exception as exc:
-            raise HTTPException(500, f"角色卡 {card_id} 数据损坏: {exc}") from exc
+            raise HTTPException(500, "操作失败，请稍后重试") from exc
 
         text_id = card_rec["text_id"]
         if text_id not in text_rag_cache:
@@ -258,7 +258,7 @@ async def send_message(
         try:
             resp = await group.send(req.target_card_id, req.message)
         except Exception as exc:
-            raise HTTPException(500, f"群聊消息发送失败: {exc}") from exc
+            raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Persist to DB
     reply_preview = ""
@@ -316,7 +316,7 @@ async def broadcast_message(
         try:
             results = await group.broadcast(req.message, req.target_card_ids, auto_mode=req.auto_mode)
         except Exception as exc:
-            raise HTTPException(500, f"群聊广播失败: {exc}") from exc
+            raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # 持久化
     reply_preview = ""
