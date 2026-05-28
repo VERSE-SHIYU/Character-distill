@@ -18,11 +18,6 @@ const NAV_ITEMS = [
     label: '首页',
   },
   {
-    id: 'feed',
-    icon: <Svg size={20} d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />,
-    label: '动态',
-  },
-  {
     id: 'workbench',
     icon: <Svg size={20} d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z" />,
     label: '创作',
@@ -40,6 +35,16 @@ const NAV_ITEMS = [
     label: '群聊',
   },
   {
+    id: 'history',
+    icon: (
+      <Svg size={20}>
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </Svg>
+    ),
+    label: '历史',
+  },
+  {
     id: 'market',
     icon: (
       <Svg size={20}>
@@ -51,16 +56,6 @@ const NAV_ITEMS = [
     label: '市场',
   },
   {
-    id: 'history',
-    icon: (
-      <Svg size={20}>
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </Svg>
-    ),
-    label: '记录',
-  },
-  {
     id: 'trash',
     icon: (
       <Svg size={20}>
@@ -69,6 +64,11 @@ const NAV_ITEMS = [
       </Svg>
     ),
     label: '回收站',
+  },
+  {
+    id: 'feed',
+    icon: <Svg size={20} d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z" />,
+    label: '动态',
   },
   {
     id: 'mine',

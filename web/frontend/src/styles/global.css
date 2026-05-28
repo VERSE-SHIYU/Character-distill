@@ -3577,40 +3577,75 @@ html.theme-aurora::before {
   background: rgba(var(--accent-rgb), 0.12);
   color: var(--accent);
 }
-
-/* ── Inner voice popup (replaces old affinity bar) ── */
-.inner-voice-popup {
-  position: absolute;
-  top: 50px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 50;
-  min-width: 260px;
-  max-width: 320px;
-  background: #ffffff;
-  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
-  border-radius: 14px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.13);
-  padding: 16px;
-}
-.inner-voice-header {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text, #1f2937);
-  margin-bottom: 10px;
+.chat-topbar-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.chat-topbar-btn:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--text);
+}
+.chat-topbar-btn svg {
+  transition: transform 0.25s ease;
+}
+.chat-topbar-btn:hover svg {
+  transform: scale(1.12);
+}
+
+/* ── Inner voice popup ── */
+.inner-voice-popup {
+  position: absolute;
+  top: 54px;
+  left: 12px;
+  z-index: 50;
+  width: 280px;
+  background: #ffffff;
+  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.13);
+  padding: 14px;
+}
+.inner-voice-popup::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 60px;
+  width: 10px;
+  height: 10px;
+  background: #ffffff;
+  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+  border-right: none;
+  border-bottom: none;
+  transform: rotate(45deg);
+}
+.inner-voice-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text, #1f2937);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .inner-voice-text {
-  font-size: 14px;
+  font-size: 13.5px;
   font-style: italic;
-  line-height: 1.7;
+  line-height: 1.6;
   color: var(--text-secondary, #6b7280);
-  padding: 10px 0;
+  padding: 8px 0;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
   border-bottom: 1px solid var(--glass-border, rgba(0,0,0,0.06));
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .inner-voice-text::before { content: "\201C"; }
 .inner-voice-text::after { content: "\201D"; }
@@ -3621,7 +3656,7 @@ html.theme-aurora::before {
   gap: 8px;
 }
 .inner-voice-stats {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-dim, #9ca3af);
   letter-spacing: 1px;
 }
@@ -3629,9 +3664,9 @@ html.theme-aurora::before {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 10px;
+  padding: 2px 8px;
   border-radius: 99px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   background: rgba(var(--accent-rgb, 99,102,241), 0.12);
   color: var(--accent, #6366f1);
@@ -3665,6 +3700,12 @@ html.theme-aurora::before {
 :root.is-midnight .inner-voice-popup,
 .midnight .inner-voice-popup,
 [data-theme="dark"] .inner-voice-popup {
+  background: #1e2330;
+  border-color: rgba(255,255,255,0.08);
+}
+:root.is-midnight .inner-voice-popup::before,
+.midnight .inner-voice-popup::before,
+[data-theme="dark"] .inner-voice-popup::before {
   background: #1e2330;
   border-color: rgba(255,255,255,0.08);
 }
@@ -3860,23 +3901,19 @@ html.theme-aurora::before {
   padding-top: 2px;
 }
 
-.chat-msg-avatar img,
-.chat-msg-avatar .avatar-circle {
-  width: 42px;
-  height: 42px;
-}
+/* Avatar size controlled by the <Avatar size={68}> prop (inline style) */
 
 /* User avatar — circular, matches character avatar */
 .user-avatar-circle {
-  width: 42px;
-  height: 42px;
+  width: 68px;
+  height: 68px;
   border-radius: 50%;
   background: var(--primary);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 700;
   flex-shrink: 0;
   overflow: hidden;
@@ -9930,6 +9967,8 @@ select.settings-input {
 }
 
 .group-auto-btn {
+  display: inline-flex;
+  align-items: center;
   padding: 4px 12px;
   border-radius: 14px;
   border: 1px solid var(--glass-border);
@@ -10117,6 +10156,11 @@ select.settings-input {
 }
 .group-auto-banner-stop:hover {
   background: #c0392b;
+}
+.group-auto-generating {
+  font-size: 12px;
+  color: var(--text-secondary);
+  animation: group-auto-pulse 1.2s ease-in-out infinite;
 }
 
 /* Toolbar auto button — red when running */

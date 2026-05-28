@@ -62,6 +62,7 @@ export default function GroupChatPage() {
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
   const [autoTurn, setAutoTurn] = useState(0)
+  const [generatingForName, setGeneratingForName] = useState(null)
   const msgInputRef = useRef(null)
   const messagesAreaRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
@@ -198,6 +199,7 @@ export default function GroupChatPage() {
       turnIndex++
       setAutoTurn(turnIndex)
 
+      setGeneratingForName(resolveCard(targetId)?.name || '?')
       try {
         await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
           target_card_ids: [targetId],
@@ -205,8 +207,10 @@ export default function GroupChatPage() {
           speaker: '__DIRECTOR__',
           auto_mode: true,
         })
-        await loadHistory(currentGroup.id)
+        setGeneratingForName(null)
+        await loadHistory(currentGroup.id, true)
       } catch (err) {
+        setGeneratingForName(null)
         console.error('Auto conversation error:', err)
         break
       }
@@ -264,8 +268,8 @@ export default function GroupChatPage() {
     }
   }, [resumeGroupId, groups])
 
-  async function loadHistory(groupId) {
-    setLoading(true)
+  async function loadHistory(groupId, skipLoading = false) {
+    if (!skipLoading) setLoading(true)
     setError(null)
     try {
       const res = await fetchWithTimeout(`/api/group/${groupId}/history`)
@@ -274,7 +278,7 @@ export default function GroupChatPage() {
     } catch (err) {
       setError(err.message)
     } finally {
-      setLoading(false)
+      if (!skipLoading) setLoading(false)
     }
   }
 
@@ -666,11 +670,12 @@ export default function GroupChatPage() {
                     onClick={toggleMembers}
                     title={showMembers ? '收起成员' : '展开成员'}
                   >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="chat-topbar-btn-icon">
+                      <rect x="3" y="3" width="18" height="18" rx="2.5" />
                       {showMembers ? (
-                        <path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>
+                        <line x1="15" y1="3" x2="15" y2="21" />
                       ) : (
-                        <path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>
+                        <line x1="15" y1="3" x2="15" y2="21" strokeDasharray="2.5 2.5" opacity="0.3" />
                       )}
                     </svg>
                   </button>
@@ -843,6 +848,7 @@ export default function GroupChatPage() {
                 {autoRunning && (
                   <div className="group-auto-banner">
                     <span>🎬 自动对话中… (第 {autoTurn}/{MAX_AUTO_TURNS} 轮)</span>
+                    {generatingForName && <span className="group-auto-generating"> • {generatingForName} 生成中…</span>}
                     <button type="button" className="group-auto-banner-stop" onClick={stopAutoConversation}>
                       停止
                     </button>
@@ -942,7 +948,11 @@ export default function GroupChatPage() {
                       }}
                       title={autoMode ? '停止自动对话' : '自动对话模式'}
                     >
-                      {autoMode ? '停止' : '▶ 自动对话'}
+                      {autoMode ? (
+                        <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -2, marginRight: 3 }}><rect x="6" y="6" width="12" height="12" rx="2"/></svg> 停止</>
+                      ) : (
+                        <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -2, marginRight: 3 }}><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity="0.9"/></svg> 自动对话</>
+                      )}
                     </button>
                   </div>
                   <button
