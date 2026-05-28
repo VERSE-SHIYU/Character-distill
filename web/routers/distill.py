@@ -129,8 +129,20 @@ def _run_distill_task(
         if needs_coref:
             with _task_lock:
                 _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 3, "character": char_name, "message": "预处理文本…"})
+            _identify_hb_stop_coref = threading.Event()
+            _identify_hb_start_coref = time.time()
+            def _coref_hb():
+                while not _identify_hb_stop_coref.wait(5):
+                    elapsed = int(time.time() - _identify_hb_start_coref)
+                    with _task_lock:
+                        t = _tasks.get(task_id)
+                        if t and t.get("status") == "analyzing":
+                            t["message"] = f"预处理文本… (已处理 {elapsed} 秒)"
+            threading.Thread(target=_coref_hb, daemon=True).start()
             try:
                 chars = distiller.identify_characters(content)
+            finally:
+                _identify_hb_stop_coref.set()
                 if chars:
                     import time as _time
                     _coref_start = _time.time()
@@ -181,8 +193,20 @@ def _run_distill_task(
         with _task_lock:
             _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…"})
 
+        _identify_hb_stop = threading.Event()
+        _identify_hb_start = time.time()
+        def _identify_hb():
+            while not _identify_hb_stop.wait(5):
+                elapsed = int(time.time() - _identify_hb_start)
+                with _task_lock:
+                    t = _tasks.get(task_id)
+                    if t and t.get("status") == "identifying":
+                        t["message"] = f"正在识别角色… (已处理 {elapsed} 秒)"
+        threading.Thread(target=_identify_hb, daemon=True).start()
         try:
             chars = distiller.identify_characters(content)
+        finally:
+            _identify_hb_stop.set()
         except Exception:
             chars = []
         if not name:
