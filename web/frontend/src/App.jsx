@@ -41,7 +41,7 @@ const PANELS = {
   market: MarketPage,
   marketCardDetail: MarketCardDetail,
   feed: FeedPage,
-  author: AuthorPage,
+  author: MinePage,
   groupChat: GroupChatPage,
   textDetail: TextDetailPage,
   messages: MessagesPage,

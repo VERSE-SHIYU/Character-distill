@@ -10520,6 +10520,12 @@ select.settings-input {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+.mine-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
 .mine-stat-btn {
   border: none;
   background: transparent;
@@ -10887,6 +10893,7 @@ select.settings-input {
   .mine-profile-section { padding: 12px 16px; }
   .mine-profile-row { flex-wrap: wrap; }
   .mine-profile-stats { width: 100%; padding-top: 8px; }
+  .mine-profile-actions { width: 100%; justify-content: flex-end; padding-top: 8px; }
   .mine-tab-bar { padding: 0 16px; }
   .mine-tab-content { padding: 16px 16px 20px; }
   .mine-onboard-steps { flex-direction: column; gap: 12px; }

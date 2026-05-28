@@ -74,14 +74,36 @@ function MineCardMenu({ card, onRefresh }) {
 /* ── MinePage ── */
 export default function MinePage() {
   const authUser = useAppStore((s) => s.authUser)
+  const authorUserId = useAppStore((s) => s.authorUserId)
+  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const userBanner = useAppStore((s) => s.userBanner)
   const uploadUserBanner = useAppStore((s) => s.uploadUserBanner)
   const fetchUserBanner = useAppStore((s) => s.fetchUserBanner)
+  const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
-  const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
+
+  const isMe = !authorUserId || authorUserId === authUser?.id
+  const userId = isMe ? authUser?.id : authorUserId
+  const prof = isMe ? authUser : profileAuthor
+  const username = prof?.username || '?'
+  const avatarSrc = isMe ? userAvatar : profileAuthor?.avatar_data
+
+  // Clear authorUserId when navigating to "mine" view (same component, no remount)
+  useEffect(() => {
+    if (currentView === 'mine') setAuthorUserId(null)
+  }, [currentView]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Clear authorUserId on unmount
+  useEffect(() => {
+    return () => setAuthorUserId(null)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Store fetched author data when viewing others
+  const [profileAuthor, setProfileAuthor] = useState(null)
+  const [isFollowing, setIsFollowing] = useState(false)
 
   const [tab, setTab] = useState('characters')
   const [loading, setLoading] = useState(true)
@@ -147,21 +169,25 @@ export default function MinePage() {
   }, [])
 
   const loadData = () => {
-    if (!authUser?.id) return
+    if (!userId) return
     setLoading(true)
     Promise.all([
-      fetchWithTimeout(`/api/market/author/${authUser.id}`).then(r => r.json()),
-      fetchUserBanner?.(),
+      fetchWithTimeout(`/api/market/author/${userId}`).then(r => r.json()),
+      !isMe ? Promise.resolve(null) : fetchUserBanner?.(),
     ]).then(([authorData]) => {
       setCards(authorData.cards || [])
       setTexts(authorData.texts || [])
       setFollowersCount(authorData.followers_count || 0)
       setFollowingCount(authorData.following_count || 0)
+      if (!isMe) {
+        if (authorData.author) setProfileAuthor(authorData.author)
+        setIsFollowing(authorData.is_following || false)
+      }
     }).catch(() => {})
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { loadData() }, [authUser?.id, refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadData() }, [userId, refreshKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tab data lazy loading
   useEffect(() => {
@@ -175,7 +201,7 @@ export default function MinePage() {
     }
     if (tab === 'followers') {
       setFollowersLoading(true)
-      fetchWithTimeout(`/api/market/author/${authUser?.id}/followers`)
+      fetchWithTimeout(`/api/market/author/${userId}/followers`)
         .then(r => r.json())
         .then(data => setFollowers(data.followers || []))
         .catch(() => {})
@@ -183,7 +209,7 @@ export default function MinePage() {
     }
     if (tab === 'posts') {
       setPostsLoading(true)
-      fetchWithTimeout(`/api/market/author/${authUser?.id}/posts`)
+      fetchWithTimeout(`/api/market/author/${userId}/posts`)
         .then(r => r.json())
         .then(data => setPosts(data.posts || []))
         .catch(() => {})
@@ -202,6 +228,18 @@ export default function MinePage() {
   }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => setRefreshKey(k => k + 1)
+
+  const handleFollow = async () => {
+    if (!authorUserId) return
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/follow`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      setIsFollowing(data.following)
+    } catch {}
+  }
 
   const handleBannerSelect = (e) => {
     const file = e.target.files?.[0]
@@ -291,10 +329,12 @@ export default function MinePage() {
           <div className="mine-banner-fallback" />
         )}
         <div className="mine-banner-overlay" />
-        <button type="button" className="mine-banner-upload" onClick={() => bannerInputRef.current?.click()} title="更换封面">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> 更换封面
-        </button>
-        <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />
+        {isMe && (
+          <button type="button" className="mine-banner-upload" onClick={() => bannerInputRef.current?.click()} title="更换封面">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> 更换封面
+          </button>
+        )}
+        {isMe && <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />}
       </div>
 
       {/* ── Profile Section ── */}
@@ -302,48 +342,58 @@ export default function MinePage() {
         <div className="mine-profile-row">
           <div className="mine-profile-left">
             <div className="mine-avatar-wrap">
-              <Avatar name={authUser?.username || '?'} src={userAvatar} size={60} onClick={() => avatarInputRef.current?.click()} />
-              <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-              </div>
-              <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
+              <Avatar name={username} src={avatarSrc} size={60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
+              {isMe && (
+                <>
+                  <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  </div>
+                  <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
+                </>
+              )}
             </div>
           </div>
           <div className="mine-profile-mid">
             <div className="mine-name-row">
-              <h2 className="mine-profile-name">{authUser?.username}</h2>
-              <button className="mine-edit-icon" onClick={() => setView('settings')} title="编辑资料">✏️</button>
+              <h2 className="mine-profile-name">{username}</h2>
+              {isMe && <button className="mine-edit-icon" onClick={() => setView('settings')} title="编辑资料">✏️</button>}
             </div>
-            {bioEditing ? (
-              <input
-                className="mine-bio-input"
-                value={bioDraft}
-                onChange={e => setBioDraft(e.target.value)}
-                onBlur={async () => {
-                  setBioEditing(false)
-                  const bio = bioDraft.trim()
-                  if (bio !== (authUser?.bio || '')) {
-                    try {
-                      await fetchWithTimeout('/api/auth/bio', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bio }),
-                      })
-                      useAppStore.setState({ authUser: { ...authUser, bio } })
-                    } catch {}
-                  }
-                }}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') e.target.blur()
-                  if (e.key === 'Escape') { setBioEditing(false); setBioDraft(authUser?.bio || '') }
-                }}
-                autoFocus
-                placeholder="写一句话介绍自己…"
-                maxLength={200}
-              />
+            {isMe ? (
+              bioEditing ? (
+                <input
+                  className="mine-bio-input"
+                  value={bioDraft}
+                  onChange={e => setBioDraft(e.target.value)}
+                  onBlur={async () => {
+                    setBioEditing(false)
+                    const bio = bioDraft.trim()
+                    if (bio !== (authUser?.bio || '')) {
+                      try {
+                        await fetchWithTimeout('/api/auth/bio', {
+                          method: 'PUT',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ bio }),
+                        })
+                        useAppStore.setState({ authUser: { ...authUser, bio } })
+                      } catch {}
+                    }
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') e.target.blur()
+                    if (e.key === 'Escape') { setBioEditing(false); setBioDraft(authUser?.bio || '') }
+                  }}
+                  autoFocus
+                  placeholder="写一句话介绍自己…"
+                  maxLength={200}
+                />
+              ) : (
+                <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
+                  {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
+                </div>
+              )
             ) : (
-              <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
-                {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
+              <div className="mine-bio-display" style={{ cursor: 'default' }}>
+                {profileAuthor?.bio || ''}
               </div>
             )}
           </div>
@@ -364,12 +414,34 @@ export default function MinePage() {
               <span className="mine-stat-num">{followingCount}</span>关注
             </button>
           </div>
+          {!isMe && (
+            <div className="mine-profile-actions">
+              <button
+                type="button"
+                className="btn-primary btn-sm"
+                onClick={() => {
+                  setMessageTargetUserId(authorUserId)
+                  setMessageTargetUsername(profileAuthor?.username || '')
+                  setView('messages')
+                }}
+              >
+                发私信
+              </button>
+              <button
+                type="button"
+                className={`btn-sm ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}
+                onClick={handleFollow}
+              >
+                {isFollowing ? '已关注' : '关注'}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── Tab 栏 ── */}
       <div className="mine-tab-bar">
-        {tabs.map(t => (
+        {tabs.filter(t => isMe || t.key !== 'messages').map(t => (
           <button
             key={t.key}
             type="button"
@@ -386,26 +458,33 @@ export default function MinePage() {
         {/* 角色 tab */}
         {tab === 'characters' && (
           cards.length === 0 ? (
-            <div className="mine-onboard-card">
-              <h3 className="mine-onboard-title">创建你的第一个角色</h3>
-              <div className="mine-onboard-steps">
-                <div className="mine-onboard-step">
-                  <span className="mine-onboard-step-num">1</span>
-                  <span>上传小说或聊天记录</span>
+            isMe ? (
+              <div className="mine-onboard-card">
+                <h3 className="mine-onboard-title">创建你的第一个角色</h3>
+                <div className="mine-onboard-steps">
+                  <div className="mine-onboard-step">
+                    <span className="mine-onboard-step-num">1</span>
+                    <span>上传小说或聊天记录</span>
+                  </div>
+                  <div className="mine-onboard-step">
+                    <span className="mine-onboard-step-num">2</span>
+                    <span>AI 自动蒸馏角色卡</span>
+                  </div>
+                  <div className="mine-onboard-step">
+                    <span className="mine-onboard-step-num">3</span>
+                    <span>公开分享到角色市场</span>
+                  </div>
                 </div>
-                <div className="mine-onboard-step">
-                  <span className="mine-onboard-step-num">2</span>
-                  <span>AI 自动蒸馏角色卡</span>
-                </div>
-                <div className="mine-onboard-step">
-                  <span className="mine-onboard-step-num">3</span>
-                  <span>公开分享到角色市场</span>
-                </div>
+                <button type="button" className="btn-primary" onClick={() => setView('text')}>
+                  去上传文本
+                </button>
               </div>
-              <button type="button" className="btn-primary" onClick={() => setView('text')}>
-                去上传文本
-              </button>
-            </div>
+            ) : (
+              <div className="mine-onboard-card">
+                <h3 className="mine-onboard-title">暂无公开角色</h3>
+                <p className="mine-onboard-desc">该用户还没有公开的角色卡</p>
+              </div>
+            )
           ) : (
             <div className="market-grid-v2">
               {cards.map(card => {
@@ -439,7 +518,7 @@ export default function MinePage() {
                       <div className="market-card-v2-name">{name}</div>
                       {identity && <div className="market-card-v2-identity">{identity}</div>}
                     </div>
-                    <MineCardMenu card={card} onRefresh={handleRefresh} />
+                    {isMe && <MineCardMenu card={card} onRefresh={handleRefresh} />}
                   </div>
                 )
               })}
@@ -451,11 +530,11 @@ export default function MinePage() {
         {tab === 'books' && (
           texts.length === 0 ? (
             <div className="mine-onboard-card">
-              <h3 className="mine-onboard-title">还没有上传文本</h3>
-              <p className="mine-onboard-desc">上传小说或聊天记录，AI 会自动识别并蒸馏角色</p>
-              <button type="button" className="btn-primary" onClick={() => setView('text')}>
+              <h3 className="mine-onboard-title">{isMe ? '还没有上传文本' : '暂无公开书籍'}</h3>
+              <p className="mine-onboard-desc">{isMe ? '上传小说或聊天记录，AI 会自动识别并蒸馏角色' : '该用户还没有公开的书籍'}</p>
+              {isMe && <button type="button" className="btn-primary" onClick={() => setView('text')}>
                 去上传
-              </button>
+              </button>}
             </div>
           ) : (
             <div className="mine-books-grid">
@@ -495,81 +574,83 @@ export default function MinePage() {
         {/* 动态 tab */}
         {tab === 'posts' && (
           <>
-            <div className="mine-composer">
-              <textarea
-                ref={textareaRef}
-                className="mine-composer-input"
-                placeholder="写点什么…"
-                rows={3}
-                value={postContent}
-                onChange={(e) => setPostContent(e.target.value)}
-              />
-              <div className="mine-composer-toolbar">
-                <div className="mine-composer-emoji-wrap" ref={emojiRef}>
+            {isMe && (
+              <div className="mine-composer">
+                <textarea
+                  ref={textareaRef}
+                  className="mine-composer-input"
+                  placeholder="写点什么…"
+                  rows={3}
+                  value={postContent}
+                  onChange={(e) => setPostContent(e.target.value)}
+                />
+                <div className="mine-composer-toolbar">
+                  <div className="mine-composer-emoji-wrap" ref={emojiRef}>
+                    <button
+                      type="button"
+                      className="mine-composer-emoji-btn"
+                      onClick={() => setShowEmoji(prev => !prev)}
+                      title="表情"
+                    >
+                      😊
+                    </button>
+                    {showEmoji && (
+                      <div className="mine-composer-emoji-panel">
+                        {EMOJI_LIST.map(group => (
+                          <div key={group.label} className="emoji-group">
+                            <div className="emoji-group-label">{group.label}</div>
+                            <div className="emoji-group-grid">
+                              {group.items.map(em => (
+                                <button
+                                  key={em}
+                                  type="button"
+                                  className="emoji-item"
+                                  onClick={() => insertEmoji(em)}
+                                >
+                                  {em}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
-                    className="mine-composer-emoji-btn"
-                    onClick={() => setShowEmoji(prev => !prev)}
-                    title="表情"
+                    className="btn-primary btn-sm"
+                    disabled={!postContent.trim() || posting}
+                    onClick={async () => {
+                      setPosting(true)
+                      try {
+                        await fetchWithTimeout('/api/market/author/posts', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                          body: JSON.stringify({ content: postContent, visibility: 'public' }),
+                        })
+                        setPostContent('')
+                        const res = await fetchWithTimeout(`/api/market/author/${userId}/posts`)
+                        const data = await res.json()
+                        setPosts(data.posts || [])
+                      } catch {}
+                      finally { setPosting(false) }
+                    }}
                   >
-                    😊
+                    {posting ? '发布中…' : '发布'}
                   </button>
-                  {showEmoji && (
-                    <div className="mine-composer-emoji-panel">
-                      {EMOJI_LIST.map(group => (
-                        <div key={group.label} className="emoji-group">
-                          <div className="emoji-group-label">{group.label}</div>
-                          <div className="emoji-group-grid">
-                            {group.items.map(em => (
-                              <button
-                                key={em}
-                                type="button"
-                                className="emoji-item"
-                                onClick={() => insertEmoji(em)}
-                              >
-                                {em}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
-                <button
-                  type="button"
-                  className="btn-primary btn-sm"
-                  disabled={!postContent.trim() || posting}
-                  onClick={async () => {
-                    setPosting(true)
-                    try {
-                      await fetchWithTimeout('/api/market/author/posts', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                        body: JSON.stringify({ content: postContent, visibility: 'public' }),
-                      })
-                      setPostContent('')
-                      const res = await fetchWithTimeout(`/api/market/author/${authUser.id}/posts`)
-                      const data = await res.json()
-                      setPosts(data.posts || [])
-                    } catch {}
-                    finally { setPosting(false) }
-                  }}
-                >
-                  {posting ? '发布中…' : '发布'}
-                </button>
               </div>
-            </div>
+            )}
 
             {postsLoading ? (
               <Loading text="加载动态…" />
             ) : posts.length === 0 ? (
               <div className="mine-onboard-card">
-                <h3 className="mine-onboard-title">还没有动态</h3>
-                <p className="mine-onboard-desc">发一条让别人认识你</p>
-                <button type="button" className="btn-primary" onClick={() => document.querySelector('.mine-composer-input')?.focus()}>
+                <h3 className="mine-onboard-title">{isMe ? '还没有动态' : '暂无动态'}</h3>
+                <p className="mine-onboard-desc">{isMe ? '发一条让别人认识你' : '该用户还没有发布动态'}</p>
+                {isMe && <button type="button" className="btn-primary" onClick={() => document.querySelector('.mine-composer-input')?.focus()}>
                   发动态
-                </button>
+                </button>}
               </div>
             ) : (
               <div className="mine-posts-list">
@@ -579,7 +660,7 @@ export default function MinePage() {
                     post={p}
                     onLike={async (id) => {
                       await fetchWithTimeout(`/api/market/post/${id}/like`, { method: 'POST', headers: getAuthHeaders() })
-                      const res = await fetchWithTimeout(`/api/market/author/${authUser.id}/posts`)
+                      const res = await fetchWithTimeout(`/api/market/author/${userId}/posts`)
                       const data = await res.json()
                       setPosts(data.posts || [])
                     }}
@@ -589,7 +670,7 @@ export default function MinePage() {
                       await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
                       setPosts(prev => prev.filter(p => p.id !== id))
                     }}
-                    showDelete={true}
+                    showDelete={isMe}
                   />
                 ))}
               </div>
@@ -604,8 +685,8 @@ export default function MinePage() {
             <Loading text="加载粉丝…" />
           ) : followers.length === 0 ? (
             <div className="mine-onboard-card">
-              <h3 className="mine-onboard-title">还没有粉丝</h3>
-              <p className="mine-onboard-desc">发布优质角色卡和动态来吸引粉丝</p>
+              <h3 className="mine-onboard-title">{isMe ? '还没有粉丝' : '暂无粉丝'}</h3>
+              <p className="mine-onboard-desc">{isMe ? '发布优质角色卡和动态来吸引粉丝' : '该用户还没有粉丝'}</p>
             </div>
           ) : (
             <div className="mine-follow-list">
