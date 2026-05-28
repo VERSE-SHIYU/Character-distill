@@ -320,10 +320,10 @@ export default function MinePage() {
     <div className="mine-page-v2">
       {/* ── Banner ── */}
       <div className="mine-banner">
-        {userBanner ? (
+        {(isMe ? userBanner : profileAuthor?.banner_data) ? (
           <>
-            <img src={userBanner} alt="" className="mine-banner-blur" aria-hidden="true" />
-            <img src={userBanner} alt="" className="mine-banner-img" />
+            <img src={isMe ? userBanner : profileAuthor?.banner_data} alt="" className="mine-banner-blur" aria-hidden="true" />
+            <img src={isMe ? userBanner : profileAuthor?.banner_data} alt="" className="mine-banner-img" />
           </>
         ) : (
           <div className="mine-banner-fallback" />

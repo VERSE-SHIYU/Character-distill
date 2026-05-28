@@ -198,6 +198,7 @@ class ChatEngine:
             "7. 绝不跳出角色提供 meta 评论（如\"这个角色会...\"）\n"
             "8. 记住之前对话中的情感状态，不要突然变脸——情绪变化需要有触发事件\n"
             "9. 对话者提到你在意的人或事时，表现出对应的情感反应\n"
+            "10. 用户可能会用 emoji 表达情绪，请自然理解并回应，不要解释 emoji 含义。\n"
         )
 
         if self.user_role:
@@ -403,14 +404,17 @@ class ChatEngine:
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
                 self._affinity_reason = data.get("reason", "")
                 if storage and session_id:
-                    loop = asyncio.new_event_loop()
-                    loop.run_until_complete(
-                        storage.update_session_affinity(
-                            session_id, self._affinity, self._trust,
-                            self._mood, self._guard, self._affinity_reason,
+                    import sqlite3
+                    try:
+                        conn = sqlite3.connect(str(storage.db_path))
+                        conn.execute(
+                            "UPDATE sessions SET affinity=?, trust=?, mood=?, guard=?, affinity_reason=? WHERE id=?",
+                            (self._affinity, self._trust, self._mood, self._guard, self._affinity_reason, session_id),
                         )
-                    )
-                    loop.close()
+                        conn.commit()
+                        conn.close()
+                    except Exception as db_exc:
+                        print(f"[ChatEngine] Affinity DB save failed: {db_exc}")
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
 

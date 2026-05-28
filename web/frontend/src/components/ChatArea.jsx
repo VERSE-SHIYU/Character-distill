@@ -105,6 +105,7 @@ function ChatView() {
   const setAffinityOpen = useAppStore((s) => s.setAffinityOpen)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
+  const authUser = useAppStore((s) => s.authUser)
 
   const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
@@ -129,6 +130,20 @@ function ChatView() {
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
   const [memoryToast, setMemoryToast] = useState(false)
+
+  // Reply-to state
+  const [replyTo, setReplyTo] = useState(null) // { id, preview }
+  // Reactions map: msgIndex -> [{ emoji, count, users }]
+  const [reactions, setReactions] = useState({})
+
+  // Load reactions when messages change
+  useEffect(() => {
+    if (!sessionId || messages.length === 0) { setReactions({}); return }
+    fetchWithTimeout(`/api/chat/session/${sessionId}/reactions`)
+      .then(r => r.json())
+      .then(data => setReactions(data.reactions || {}))
+      .catch(() => {})
+  }, [sessionId, messages.length])
 
   const resumeSession = useAppStore((s) => s.resumeSession)
 
@@ -339,13 +354,15 @@ function ChatView() {
   const handleSend = useCallback(
     (text) => {
       if (!text.trim() || sending) return
-      cancelStreamRef.current = sendMessageStream(text)
+      const rt = replyTo
+      cancelStreamRef.current = sendMessageStream(text, rt?.id || null, rt?.preview || '')
+      setReplyTo(null)
       if (/记住|别忘了|你要记得|帮我记/.test(text)) {
         setMemoryToast(true)
         setTimeout(() => setMemoryToast(false), 2000)
       }
     },
-    [sending, sendMessageStream],
+    [sending, sendMessageStream, replyTo],
   )
 
   const handleReset = useCallback(() => {
@@ -354,6 +371,11 @@ function ChatView() {
 
   const handleRevoke = useCallback(() => {
     setRetractConfirm(true)
+  }, [])
+
+  const scrollToMessage = useCallback((msgId) => {
+    const el = document.querySelector(`[data-msg-id="${msgId}"]`)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [])
 
   return (
@@ -576,7 +598,7 @@ function ChatView() {
           const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
           const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
           return (
-            <div key={i}>
+            <div key={i} data-msg-id={msg.id}>
               {showTime && (
                 <div className="time-divider">{formatChatTime(msg.timestamp)}</div>
               )}
@@ -600,6 +622,31 @@ function ChatView() {
                 userAvatarUrl={userAvatarUrl}
                 onUserAvatarClick={() => userAvatarInputRef.current?.click()}
                 timestamp={msg.timestamp}
+                reactions={reactions[msg.id] || []}
+                replyToPreview={msg.reply_to_preview}
+                replyToId={msg.reply_to_id}
+                onReact={async (emoji) => {
+                  if (!msg.id) return
+                  try {
+                    await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                      body: JSON.stringify({ emoji }),
+                    })
+                    const res = await fetchWithTimeout(`/api/chat/session/${sessionId}/reactions`)
+                    const data = await res.json()
+                    setReactions(data.reactions || {})
+                  } catch {}
+                }}
+                onReply={() => {
+                  const preview = isUser
+                    ? `我: ${(msg.content || '').slice(0, 60)}`
+                    : `${charName}: ${(msg.content || '').slice(0, 60)}`
+                  setReplyTo({ id: msg.id, preview })
+                }}
+                msgId={msg.id}
+                authUser={authUser}
+                onScrollToMessage={scrollToMessage}
               />
             </div>
           )
@@ -616,6 +663,8 @@ function ChatView() {
         recordingDuration={recordingDuration}
         sendVoiceMessage={sendVoiceMessage}
         mentionableItems={[{ id: currentCard.id, name: charName }]}
+        replyTo={replyTo}
+        onCancelReply={() => setReplyTo(null)}
       />
 
       <RoleSetupModal
@@ -728,9 +777,10 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
   const [hovered, setHovered] = useState(false)
   const [showRetracted, setShowRetracted] = useState(false)
+  const QUICK_EMOJIS = ['👍','❤️','😂','😮','😢','🔥']
 
   const userInitial = (userRole || '我').charAt(0)
 
@@ -750,6 +800,14 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         </div>
       )}
       <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
+        {/* Reply quote */}
+        {replyToId && replyToPreview && (
+          <div className="msg-reply-quote" onClick={() => onScrollToMessage?.(replyToId)}>
+            <div className="msg-reply-quote-speaker">{replyToPreview.split(':')[0]}</div>
+            <div className="msg-reply-quote-text">{replyToPreview.split(':').slice(1).join(':')}</div>
+          </div>
+        )}
+
         {!isUser && retracted ? (
           <span className="chat-bubble-text">
             <div className="msg-retracted" onClick={() => setShowRetracted(!showRetracted)}>
@@ -778,6 +836,33 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         )}
         {timestamp && (
           <div className={`msg-time ${isUser ? 'msg-time-user' : ''}`}>{formatChatTime(timestamp)}</div>
+        )}
+
+        {/* Reactions */}
+        {reactions.length > 0 && (
+          <div className="msg-reactions">
+            {reactions.map((r, ri) => (
+              <button key={ri} type="button"
+                className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                onClick={() => onReact?.(r.emoji)}>
+                {r.emoji} {r.count}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Hover action bar */}
+        {hovered && onReact && onReply && (
+          <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -18, right: 0, zIndex: 10 }}>
+            <button type="button" className="msg-action-btn" title="引用回复"
+              onClick={onReply}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            </button>
+            {QUICK_EMOJIS.map(e => (
+              <button key={e} type="button" className="msg-quick-reaction-btn"
+                onClick={() => onReact(e)}>{e}</button>
+            ))}
+          </div>
         )}
       </div>
       {isUser && onRevoke && isLastUserMsg && (
@@ -832,7 +917,7 @@ function SummaryBubble({ content }) {
 
 // ---- Input bar ----
 
-function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage, mentionableItems }) {
+function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage, mentionableItems, replyTo, onCancelReply }) {
   const [text, setText] = useState('')
   const taRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
@@ -969,6 +1054,18 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
 
   return (
     <div className="chat-input-bar">
+      {replyTo && (
+        <div className="reply-preview-bar" style={{ margin: 0, position: 'absolute', left: 0, right: 0, bottom: '100%', borderRadius: '6px 6px 0 0' }}>
+          <div className="reply-preview-info">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <span className="reply-preview-label">回复:</span>
+            <span className="reply-preview-text">{replyTo.preview}</span>
+          </div>
+          <button type="button" className="reply-preview-close" onClick={onCancelReply}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      )}
       {funasrReady ? (
         <button
           type="button"
@@ -999,8 +1096,22 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
       </button>
 
-      <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {showEmoji && <EmojiPicker textareaRef={taRef} onEmojiSelect={() => setShowEmoji(false)} />}
+      <div style={{ position: 'relative', flex: 1, minWidth: 0, overflow: 'hidden' }}>
+        {showEmoji && <EmojiPicker textareaRef={taRef} controlled={true} onEmojiSelect={(emoji) => {
+          const ta = taRef.current
+          const start = ta?.selectionStart || text.length
+          const newText = text.slice(0, start) + emoji + text.slice(ta?.selectionEnd || start)
+          setText(newText)
+          setShowEmoji(false)
+          requestAnimationFrame(() => {
+            if (ta) {
+              ta.focus()
+              ta.selectionStart = ta.selectionEnd = start + emoji.length
+              ta.style.height = 'auto'
+              ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
+            }
+          })
+        }} />}
         <textarea
           ref={taRef}
           className="chat-textarea"

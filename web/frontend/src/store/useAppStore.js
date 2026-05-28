@@ -887,19 +887,22 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  sendMessageStream: (message) => {
+  sendMessageStream: (message, reply_to_id = null, reply_to_preview = '') => {
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return () => {}
 
-    const userMsg = { role: 'user', content: message }
+    const userMsg = { role: 'user', content: message, reply_to_id, reply_to_preview }
     const charMsg = { role: 'char', content: '' }
     set({ messages: [...messages, userMsg, charMsg], sending: true, error: null })
 
     let fullReply = ''
 
+    const body = { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled }
+    if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
+
     return streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled },
+      body,
       (token) => {
         fullReply += token
         set((s) => {

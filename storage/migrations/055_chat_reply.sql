@@ -1,0 +1,2 @@
+ALTER TABLE messages ADD COLUMN reply_to_id INTEGER DEFAULT NULL;
+ALTER TABLE messages ADD COLUMN reply_to_preview TEXT DEFAULT '';

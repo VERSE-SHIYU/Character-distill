@@ -128,6 +128,8 @@ class ChatRequest(BaseModel):
     web_search: bool = False  # enable reality-enhanced web search
     voice_mode: bool = False  # strip parentheses/action descriptions for voice output
     affinity_enabled: bool = True  # enable/disable backend affinity evaluation
+    reply_to_id: int | None = None
+    reply_to_preview: str = ""
 
 
 class RevokeRequest(BaseModel):
@@ -154,6 +156,8 @@ async def _do_chat(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
+    reply_to_id: int | None = None,
+    reply_to_preview: str = "",
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
@@ -184,9 +188,11 @@ async def _do_chat(
             engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
             engine.affinity_enabled = affinity_enabled
+        # Prepend quote context for LLM if replying
+        llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
         async with session["lock"]:
-            resp = await asyncio.to_thread(engine.chat, msg, voice_mode=voice_mode)
+            resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
             rag_ctx = getattr(engine, '_last_rag_context', '') or ''
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")
@@ -197,7 +203,7 @@ async def _do_chat(
     char_msg_id = None
     try:
         if not hidden:
-            user_rec = await storage.save_message(session_id, "user", msg, "")
+            user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
             user_msg_id = user_rec["id"]
         char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500])
         char_msg_id = char_rec["id"]
@@ -235,6 +241,7 @@ async def _do_chat(
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
+        "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
     }
     if engine and engine.last_summary:
         result["summary"] = engine.last_summary
@@ -252,6 +259,8 @@ async def _do_chat_stream(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
+    reply_to_id: int | None = None,
+    reply_to_preview: str = "",
 ):
     """Core streaming chat logic with SSE output."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
@@ -296,7 +305,7 @@ async def _do_chat_stream(
         char_msg_id: int | None = None
         try:
             if not hidden:
-                user_rec = await storage.save_message(session_id, "user", msg, "")
+                user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
                 user_msg_id = user_rec["id"]
         except Exception as exc:
             print(f"[chat] Save user message failed (non-fatal): {exc}")
@@ -306,8 +315,10 @@ async def _do_chat_stream(
             engine._storage = storage
             engine._user_id = user_id
             print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages")
+            # Prepend quote context for LLM if replying
+            llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
             async with session["lock"]:
-                stream = engine.chat_stream(msg, voice_mode=voice_mode)
+                stream = engine.chat_stream(llm_msg, voice_mode=voice_mode)
                 # Drive full stream generation under lock to prevent history interleaving
                 first_piece, done = await asyncio.to_thread(_next_piece, stream)
                 if not done:
@@ -363,6 +374,7 @@ async def _do_chat_stream(
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
                 "user_msg_id": user_msg_id,
                 "char_msg_id": char_msg_id,
+                "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
@@ -417,8 +429,8 @@ async def send_message(
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview)
 
 
 @router.post("/revoke")
@@ -495,6 +507,47 @@ async def reset_session(
     """Reset the in-memory chat history (keep the character card)."""
     user_id = user["id"]
     return await _do_reset(req.session_id, storage, sessions, user_id)
+
+
+class ReactRequest(BaseModel):
+    emoji: str
+
+
+@router.post("/message/{message_id}/react")
+async def react_to_message(
+    message_id: int,
+    req: ReactRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, bool]:
+    """Toggle a reaction on a chat message."""
+    if not req.emoji.strip():
+        raise HTTPException(400, "Emoji cannot be empty")
+    added = await storage.toggle_reaction(message_id, user["id"], req.emoji)
+    return {"added": added}
+
+
+@router.get("/session/{session_id}/reactions")
+async def get_session_reactions(
+    session_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+    sessions: dict = Depends(get_sessions),
+) -> dict:
+    """Return all reactions for messages in a session."""
+    # Verify ownership
+    db_session = await storage.get_session(session_id)
+    if not db_session:
+        raise HTTPException(404, "Session not found")
+    if db_session.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此会话")
+
+    messages = await storage.get_messages(session_id)
+    msg_ids = [m["id"] for m in messages if m.get("id")]
+    reactions = await storage.get_reactions(msg_ids)
+    return {"reactions": reactions}
 
 
 # ---- Legacy compat routes (/api/chat, /api/reset) ----

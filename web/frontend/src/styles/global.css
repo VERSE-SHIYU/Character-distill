@@ -4011,6 +4011,7 @@ html.theme-aurora::before {
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-top: 1px solid rgba(var(--accent-rgb), 0.08);
+  min-width: 0;
 }
 
 .chat-textarea {
@@ -4028,6 +4029,8 @@ html.theme-aurora::before {
   outline: none;
   line-height: 1.5;
   transition: border-color 0.2s, box-shadow 0.2s;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chat-textarea:focus {

@@ -557,6 +557,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Text soft delete migration failed: {exc}")
 
+                    # Run 055_chat_reply migration (ALTER TABLE ADD COLUMN)
+                    chat_reply_path = migrations_dir / "055_chat_reply.sql"
+                    if chat_reply_path.exists():
+                        try:
+                            await conn.executescript(chat_reply_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Chat reply migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1610,17 +1620,18 @@ class SQLiteStore(StorageBase):
             raise
 
     async def save_message(
-        self, session_id: str, role: str, content: str, rag_context: str
+        self, session_id: str, role: str, content: str, rag_context: str,
+        reply_to_id: int | None = None, reply_to_preview: str = "",
     ) -> dict:
         """Save one message and touch session updated_at."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, rag_context)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (session_id, role, content, rag_context),
+                    (session_id, role, content, rag_context, reply_to_id, reply_to_preview),
                 )
                 await conn.execute(
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1631,7 +1642,7 @@ class SQLiteStore(StorageBase):
 
                 row_cursor = await conn.execute(
                     """
-                    SELECT id, session_id, role, content, rag_context, created_at
+                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview
                     FROM messages
                     WHERE id = ?
                     """,
@@ -1649,7 +1660,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT id, session_id, role, content, rag_context, created_at
+                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview
                     FROM messages
                     WHERE session_id = ?
                     ORDER BY id ASC
@@ -2000,7 +2011,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, profile_stats_visible, cards_visible, books_visible, bio FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
