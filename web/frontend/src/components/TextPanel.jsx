@@ -389,6 +389,14 @@ export default function TextPanel() {
                 </button>
                 <button
                   type="button"
+                  className={`text-type-option${textType === 'classic' ? ' active' : ''}`}
+                  onClick={() => setTextType('classic')}
+                >
+                  <span className="text-type-icon"><Book size={14} /></span>
+                  <span className="text-type-label">名著/严肃文学</span>
+                </button>
+                <button
+                  type="button"
                   className={`text-type-option${textType === 'chat' ? ' active' : ''}`}
                   onClick={() => setTextType('chat')}
                 >
@@ -396,6 +404,11 @@ export default function TextPanel() {
                   <span className="text-type-label">聊天记录</span>
                 </button>
               </div>
+              {textType === 'classic' && (
+                <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6, lineHeight: 1.5 }}>
+                  名著模式将进行深度文本预处理，上传时间较长
+                </p>
+              )}
             </div>
 
             <div className="modal-actions">

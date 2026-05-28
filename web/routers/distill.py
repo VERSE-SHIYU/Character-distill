@@ -24,6 +24,15 @@ from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 from routers.auth import get_current_user
 
+
+def _get_distill_content(text_rec: dict) -> str:
+    """优先读取共指消解版文本，fallback到原文。"""
+    resolved = text_rec.get("content_resolved", "")
+    if resolved and text_rec.get("coref_resolved"):
+        return resolved
+    return text_rec["content"]
+
+
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
 
@@ -395,7 +404,7 @@ async def distill_by_text_id(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = text_rec["content"]
+    content = _get_distill_content(text_rec)
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
     try:
@@ -456,7 +465,7 @@ async def distill_start(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = text_rec["content"]
+    content = _get_distill_content(text_rec)
     text_type = text_rec.get("text_type", "story")
     task_id = _uuid.uuid4().hex[:12]
 
@@ -557,7 +566,7 @@ async def distill_stream(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = text_rec["content"]
+    content = _get_distill_content(text_rec)
     text_type = text_rec.get("text_type", "story")
     char_name = req.character_name.strip()
 
@@ -684,7 +693,7 @@ async def reindex_rag(
     text_rec = await storage.get_text(text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    content = text_rec["content"]
+    content = _get_distill_content(text_rec)
 
     try:
         chars = await asyncio.to_thread(distiller.identify_characters, content)
@@ -858,7 +867,7 @@ async def start_session(
             text_rec = await storage.get_text(req.text_id)
             if not text_rec:
                 raise HTTPException(404, "Text not found")
-            content = text_rec["content"]
+            content = _get_distill_content(text_rec)
             existing_cards = await storage.list_cards(req.text_id, user_id)
             all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
             rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)

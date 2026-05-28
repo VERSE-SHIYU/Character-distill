@@ -1,0 +1,2 @@
+ALTER TABLE texts ADD COLUMN content_resolved TEXT DEFAULT '';
+ALTER TABLE texts ADD COLUMN coref_resolved INTEGER DEFAULT 0;

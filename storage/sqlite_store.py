@@ -567,6 +567,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Chat reply migration failed: {exc}")
 
+                    # Run 056_coref_resolved migration (ALTER TABLE ADD COLUMN)
+                    coref_resolved_path = migrations_dir / "056_coref_resolved.sql"
+                    if coref_resolved_path.exists():
+                        try:
+                            await conn.executescript(coref_resolved_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Coref resolved migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -641,15 +651,15 @@ class SQLiteStore(StorageBase):
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
@@ -658,9 +668,11 @@ class SQLiteStore(StorageBase):
                         description = excluded.description,
                         text_type = excluded.text_type,
                         original_char_count = excluded.original_char_count,
-                        user_id = excluded.user_id
+                        user_id = excluded.user_id,
+                        content_resolved = excluded.content_resolved,
+                        coref_resolved = excluded.coref_resolved
                     """,
-                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id),
+                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved),
                 )
                 await conn.commit()
             return await self.get_text(id) or {}
@@ -673,7 +685,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()

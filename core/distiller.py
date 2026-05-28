@@ -282,6 +282,92 @@ class Distiller:
             chunks.append(current)
         return chunks
 
+    def coref_resolve(
+        self, text: str, characters: list[dict[str, Any]], chunk_size: int = 6000, overlap: int = 500,
+    ) -> str:
+        """全文共指消解+说话人补全。
+
+        将文本分chunk（带重叠），对每个chunk调LLM替换代词/昵称/省略为角色名，
+        并为省略说话人的对话补全说话人标记。
+
+        Args:
+            text: 原始全文。
+            characters: identify_characters返回的角色列表（含aliases）。
+            chunk_size: 每chunk字符数。
+            overlap: chunk间重叠字符数。
+
+        Returns:
+            共指消解后的全文。
+        """
+        import asyncio
+
+        alias_lines = []
+        for c in characters:
+            name = c.get("name", "")
+            aliases = c.get("aliases", [])
+            if name:
+                if aliases:
+                    alias_lines.append(f"  {name} → 别名：{'、'.join(aliases)}")
+                else:
+                    alias_lines.append(f"  {name}")
+        alias_table = "\n".join(alias_lines) if alias_lines else "（无角色信息）"
+
+        system_prompt = (
+            "你是共指消解专家。对以下文本做两件事：\n"
+            "1. 将所有代词（他、她、我、你等）和别名/昵称替换为角色全名。\n"
+            "2. 为省略说话人的对话补全说话人标记（如 道：'...' 改为 某某道：'...'）。\n\n"
+            "角色及别名：\n" + alias_table + "\n\n"
+            "规则：\n"
+            "- 只替换能确定指代对象的。不确定的保持原样。\n"
+            "- 保持原文的段落结构、标点、格式完全不变。\n"
+            "- 不要添加、删除或改写任何内容，只做替换。\n"
+            "- 直接输出替换后的文本，不要任何解释或前缀。"
+        )
+
+        chunks = []
+        start = 0
+        while start < len(text):
+            end = min(start + chunk_size, len(text))
+            chunks.append((start, end, text[start:end]))
+            if end >= len(text):
+                break
+            start = end - overlap
+
+        async def _resolve_chunk(chunk_text: str) -> str:
+            result, _ = await self._llm.async_chat(
+                system_prompt,
+                [{"role": "user", "content": chunk_text}],
+            )
+            return result
+
+        async def _resolve_all():
+            tasks = [_resolve_chunk(c[2]) for c in chunks]
+            return await asyncio.gather(*tasks)
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                results = pool.submit(lambda: asyncio.run(_resolve_all())).result()
+        else:
+            results = asyncio.run(_resolve_all())
+
+        if len(results) == 1:
+            return results[0]
+
+        final = results[0][:chunk_size - overlap]
+        for i in range(1, len(results)):
+            if i < len(results) - 1:
+                final += results[i][overlap:chunk_size - overlap]
+            else:
+                final += results[i][overlap:]
+
+        return final
+
     @staticmethod
     def _split_chunks_chat(text: str, chunk_size: int) -> list[str]:
         """Split chat logs by date, ensuring Q&A pairs stay intact.
@@ -615,6 +701,14 @@ class Distiller:
             text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)。
         """
         is_chat = text_type == "chat"
+        is_classic = text_type == "classic"
+
+        # 参数分档：classic类型用更大的chunk和profile
+        chunk_size = self._chunk_size
+        max_profile_len = self._max_profile_len
+        if is_classic:
+            chunk_size = max(chunk_size, 6000)
+            max_profile_len = max(max_profile_len, 12000)
 
         # Chat: Layer 0+1 already done at upload time; only Layer 2 here
         if is_chat:
@@ -625,9 +719,9 @@ class Distiller:
         match_terms = [character_name] + aliases
 
         if is_chat:
-            chunks = self._split_chunks_chat(text, self._chunk_size)
+            chunks = self._split_chunks_chat(text, chunk_size)
         else:
-            chunks = self._split_chunks(text, self._chunk_size)
+            chunks = self._split_chunks(text, chunk_size)
 
         relevant = [c for c in chunks if any(t in c for t in match_terms)]
         if not relevant:
@@ -689,14 +783,14 @@ class Distiller:
             raise ValueError("蒸馏失败：未能从文本中提取到角色信息")
 
         # Compress if needed
-        if len(profile_draft) > self._max_profile_len:
+        if len(profile_draft) > max_profile_len:
             try:
                 profile_draft = self._llm.chat(
-                    f"压缩以下「{character_name}」的角色档案到{self._max_profile_len}字以内。\n"
+                    f"压缩以下「{character_name}」的角色档案到{max_profile_len}字以内。\n"
                     "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
                     "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
                     "合并重复信息，但不要删除矛盾点。",
-                    [{"role": "user", "content": f"请压缩到{self._max_profile_len}字以内：\n\n{profile_draft}"}],
+                    [{"role": "user", "content": f"请压缩到{max_profile_len}字以内：\n\n{profile_draft}"}],
                 )
             except Exception as exc:
                 print(f"[distiller] Profile compression failed: {exc}")
@@ -782,6 +876,12 @@ class Distiller:
         text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)
         """
         is_chat = text_type == "chat"
+        is_classic = text_type == "classic"
+
+        # 参数分档：classic类型用更大的chunk和profile
+        chunk_size = self._chunk_size
+        if is_classic:
+            chunk_size = max(chunk_size, 6000)
 
         # Chat preprocessing
         # Chat: Layer 0+1 already done at upload time; only Layer 2 here
@@ -793,9 +893,9 @@ class Distiller:
         match_terms = [character_name] + aliases
 
         if is_chat:
-            chunks = self._split_chunks_chat(text, self._chunk_size)
+            chunks = self._split_chunks_chat(text, chunk_size)
         else:
-            chunks = self._split_chunks(text, self._chunk_size)
+            chunks = self._split_chunks(text, chunk_size)
 
         relevant = [c for c in chunks if any(t in c for t in match_terms)]
         if not relevant:

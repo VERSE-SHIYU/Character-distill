@@ -209,9 +209,30 @@ class TextManager:
                 raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
 
         text_id = uuid.uuid4().hex[:12]
+        content_resolved = ""
+        coref_resolved = 0
+
+        # Story/Classic: run coreference resolution + speaker completion
+        if text_type in ("story", "classic"):
+            try:
+                coref_chunk = 6000 if text_type == "classic" else 5000
+                chars = await asyncio.to_thread(
+                    self._distiller.identify_characters, cleaned
+                )
+                if chars:
+                    content_resolved = await asyncio.to_thread(
+                        self._distiller.coref_resolve, cleaned, chars, coref_chunk
+                    )
+                    coref_resolved = 1
+                    print(f"[TextManager] Coref resolved: {len(cleaned)} → {len(content_resolved)} chars")
+            except Exception as exc:
+                print(f"[TextManager] Coref resolution failed (non-fatal): {exc}")
+                content_resolved = ""
+                coref_resolved = 0
+
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id, content_resolved, coref_resolved)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -269,9 +290,30 @@ class TextManager:
                 raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
 
         text_id = uuid.uuid4().hex[:12]
+        content_resolved = ""
+        coref_resolved = 0
+
+        # Story/Classic: run coreference resolution + speaker completion
+        if text_type in ("story", "classic"):
+            try:
+                coref_chunk = 6000 if text_type == "classic" else 5000
+                chars = await asyncio.to_thread(
+                    self._distiller.identify_characters, cleaned
+                )
+                if chars:
+                    content_resolved = await asyncio.to_thread(
+                        self._distiller.coref_resolve, cleaned, chars, coref_chunk
+                    )
+                    coref_resolved = 1
+                    print(f"[TextManager] Coref resolved: {len(cleaned)} → {len(content_resolved)} chars")
+            except Exception as exc:
+                print(f"[TextManager] Coref resolution failed (non-fatal): {exc}")
+                content_resolved = ""
+                coref_resolved = 0
+
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
+            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id, content_resolved, coref_resolved)
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
