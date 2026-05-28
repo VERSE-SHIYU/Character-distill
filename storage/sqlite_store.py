@@ -680,6 +680,19 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Save text failed: {exc}")
             raise
 
+    async def update_text_resolved(self, text_id: str, content_resolved: str) -> None:
+        """Write back coref-resolved content and mark coref_resolved=1."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET content_resolved=?, coref_resolved=1 WHERE id=?",
+                    (content_resolved, text_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] update_text_resolved failed: {exc}")
+            raise
+
     async def get_text(self, id: str) -> dict | None:
         """Get one text record by id."""
         try:

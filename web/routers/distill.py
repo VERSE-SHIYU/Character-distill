@@ -85,6 +85,7 @@ class DistillTaskRequest(BaseModel):
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
+    needs_coref: bool = False,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -123,6 +124,30 @@ def _run_distill_task(
             with _task_lock:
                 _tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
             return
+
+        # Step 0: run coreference resolution if the text was uploaded without it
+        if needs_coref:
+            with _task_lock:
+                _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 3, "character": char_name, "message": "预处理文本…"})
+            try:
+                chars = distiller.identify_characters(content)
+                if chars:
+                    resolved = distiller.coref_resolve(content, chars)
+                    if resolved:
+                        async def _write_resolved():
+                            from pathlib import Path as _Path
+                            from deps import get_config
+                            from storage.sqlite_store import SQLiteStore
+                            cfg = get_config()
+                            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
+                            store = SQLiteStore(db_path)
+                            await store._ensure_initialized()
+                            await store.update_text_resolved(text_id, resolved)
+                        asyncio.run(_write_resolved())
+                        content = resolved
+                        print(f"[distill] Coref resolved on-demand: {len(content)} chars")
+            except Exception as exc:
+                print(f"[distill] Coref resolution failed (non-fatal): {exc}")
 
         # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
@@ -474,8 +499,9 @@ async def distill_start(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = _get_distill_content(text_rec)
     text_type = text_rec.get("text_type", "story")
+    needs_coref = not text_rec.get("coref_resolved") and text_type in ("story", "classic")
+    content = text_rec["content"] if needs_coref else _get_distill_content(text_rec)
     task_id = _uuid.uuid4().hex[:12]
 
     with _task_lock:
@@ -483,7 +509,7 @@ async def distill_start(
 
     thread = threading.Thread(
         target=_run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config, needs_coref),
         daemon=True,
     )
     thread.start()
