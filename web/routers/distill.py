@@ -85,7 +85,6 @@ class DistillTaskRequest(BaseModel):
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
-    needs_coref: bool = False,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -102,19 +101,6 @@ def _run_distill_task(
         with _task_lock:
             _tasks.setdefault(task_id, {"user_id": user_id}).update({"status": "error", "message": "服务器繁忙，请稍后重试"})
         return
-    # ── Global task heartbeat: elapsed_seconds for every phase ──────
-    _task_hb_stop = threading.Event()
-    _task_start_time = time.time()
-    def _task_heartbeat():
-        while not _task_hb_stop.wait(2):
-            elapsed = int(time.time() - _task_start_time)
-            with _task_lock:
-                t = _tasks.get(task_id)
-                if t and t.get("status") not in ("done", "error", "", None):
-                    t["elapsed_seconds"] = elapsed
-    threading.Thread(target=_task_heartbeat, daemon=True).start()
-    # ────────────────────────────────────────────────────────────────
-
     try:
         from adapters.llm_adapter import LLMAdapter
         from deps import get_distiller, get_text_manager
@@ -138,68 +124,6 @@ def _run_distill_task(
                 _tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
             return
 
-        # Step 0: run coreference resolution if the text was uploaded without it
-        if needs_coref:
-            with _task_lock:
-                _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 3, "character": char_name, "message": "预处理文本…"})
-            _identify_hb_stop_coref = threading.Event()
-            _identify_hb_start_coref = time.time()
-            def _coref_hb():
-                while not _identify_hb_stop_coref.wait(2):
-                    elapsed = int(time.time() - _identify_hb_start_coref)
-                    with _task_lock:
-                        t = _tasks.get(task_id)
-                        if t and t.get("status") == "analyzing":
-                            t["message"] = f"预处理文本… (已处理 {elapsed} 秒)"
-            threading.Thread(target=_coref_hb, daemon=True).start()
-            try:
-                try:
-                    chars = distiller.identify_characters(content)
-                finally:
-                    _identify_hb_stop_coref.set()
-                if chars:
-                    import time as _time
-                    _coref_start = _time.time()
-                    chunk_count = len(content) // 6000 + 1
-
-                    with _task_lock:
-                        _tasks[task_id].update({
-                            "current": 0,
-                            "total": chunk_count,
-                            "message": f"预处理文本… 0/{chunk_count}",
-                        })
-
-                    def _coref_progress(current: int, total: int) -> None:
-                        elapsed = int(_time.time() - _coref_start)
-                        pct = 3 + int((current / total) * 17) if total > 0 else 3
-                        msg = f"预处理文本… {current}/{total}"
-                        if elapsed > 30:
-                            msg += f" (已处理 {elapsed} 秒)"
-                        with _task_lock:
-                            _tasks[task_id].update({
-                                "progress_pct": min(pct, 20),
-                                "current": current,
-                                "total": total,
-                                "message": msg,
-                            })
-
-                    resolved = distiller.coref_resolve(content, chars, progress_callback=_coref_progress)
-                    if resolved:
-                        async def _write_resolved():
-                            from pathlib import Path as _Path
-                            from deps import get_config
-                            from storage.sqlite_store import SQLiteStore
-                            cfg = get_config()
-                            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
-                            store = SQLiteStore(db_path)
-                            await store._ensure_initialized()
-                            await store.update_text_resolved(text_id, resolved)
-                        asyncio.run(_write_resolved())
-                        content = resolved
-                        print(f"[distill] Coref resolved on-demand: {len(content)} chars")
-            except Exception as exc:
-                print(f"[distill] Coref resolution failed (non-fatal): {exc}")
-
         # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
         aliases: list[str] = []
@@ -207,22 +131,10 @@ def _run_distill_task(
         with _task_lock:
             _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…"})
 
-        _identify_hb_stop = threading.Event()
-        _identify_hb_start = time.time()
-        def _identify_hb():
-            while not _identify_hb_stop.wait(2):
-                elapsed = int(time.time() - _identify_hb_start)
-                with _task_lock:
-                    t = _tasks.get(task_id)
-                    if t and t.get("status") == "identifying":
-                        t["message"] = f"正在识别角色… (已处理 {elapsed} 秒)"
-        threading.Thread(target=_identify_hb, daemon=True).start()
         try:
             chars = distiller.identify_characters(content)
         except Exception:
             chars = []
-        finally:
-            _identify_hb_stop.set()
         if not name:
             if not chars:
                 with _task_lock:
@@ -260,14 +172,18 @@ def _run_distill_task(
                     current = piece.get("current", 0)
                     total = piece.get("total", 1)
                     status = piece.get("status", "analyzing")
-                    pct = int((current / total) * 100) if total > 0 else 0
-                    msg = (
-                        f"分析片段 {current}/{total}"
-                        if status == "analyzing"
-                        else "合并角色信息…"
-                        if status == "merging"
-                        else "生成角色卡…"
-                    )
+                    if status == "analyzing":
+                        pct = 10 + int((current / total) * 60) if total > 0 else 10
+                        msg = f"分析角色 {current}/{total}"
+                    elif status == "merging":
+                        pct = 70 + int((current / total) * 20) if total > 0 else 75
+                        msg = f"合并角色信息 {current}/{total}"
+                    elif status == "formatting":
+                        pct = 92
+                        msg = "生成角色卡…"
+                    else:
+                        pct = 10
+                        msg = ""
                     _tasks[task_id].update({
                         "status": status,
                         "current": current,
@@ -425,7 +341,6 @@ def _run_distill_task(
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
-        _task_hb_stop.set()
         _DISTILL_SEMAPHORE.release()
 
 
@@ -571,8 +486,7 @@ async def distill_start(
         raise HTTPException(404, "Text not found")
 
     text_type = text_rec.get("text_type", "story")
-    needs_coref = not text_rec.get("coref_resolved") and text_type in ("story", "classic")
-    content = text_rec["content"] if needs_coref else _get_distill_content(text_rec)
+    content = _get_distill_content(text_rec)
     task_id = _uuid.uuid4().hex[:12]
 
     with _task_lock:
@@ -580,7 +494,7 @@ async def distill_start(
 
     thread = threading.Thread(
         target=_run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config, needs_coref),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config),
         daemon=True,
     )
     thread.start()

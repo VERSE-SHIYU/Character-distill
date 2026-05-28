@@ -284,7 +284,7 @@ class Distiller:
         return chunks
 
     def coref_resolve(
-        self, text: str, characters: list[dict[str, Any]], chunk_size: int = 6000, overlap: int = 500,
+        self, text: str, characters: list[dict[str, Any]], chunk_size: int = 6000,
         progress_callback: collections.abc.Callable[[int, int], object] | None = None,
     ) -> str:
         """全文共指消解+说话人补全。
@@ -333,7 +333,7 @@ class Distiller:
             chunks.append((start, end, text[start:end]))
             if end >= len(text):
                 break
-            start = end - overlap
+            start = end
 
         async def _resolve_chunk(chunk_text: str) -> str:
             result, _ = await self._llm.async_chat(
@@ -369,17 +369,7 @@ class Distiller:
         else:
             results = asyncio.run(_resolve_all())
 
-        if len(results) == 1:
-            return results[0]
-
-        final = results[0][:chunk_size - overlap]
-        for i in range(1, len(results)):
-            if i < len(results) - 1:
-                final += results[i][overlap:chunk_size - overlap]
-            else:
-                final += results[i][overlap:]
-
-        return final
+        return "".join(results)
 
     @staticmethod
     def _split_chunks_chat(text: str, chunk_size: int) -> list[str]:

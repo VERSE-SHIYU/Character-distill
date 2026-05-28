@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,6 +20,114 @@ from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
+
+
+# ── Upload task store (background identify + coref with progress) ─────
+_upload_tasks: dict[str, dict[str, Any]] = {}
+_upload_task_lock = threading.Lock()
+
+
+def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
+    """Background: identify characters + coref resolve, update task progress."""
+    try:
+        from deps import get_distiller
+
+        with _upload_task_lock:
+            _upload_tasks[task_id] = {"status": "parsing", "progress_pct": 5, "message": "解析文件中…", "text_id": text_id}
+
+        # Run inside a fresh event loop
+        async def _do():
+            from deps import get_config
+            from pathlib import Path as _Path
+            cfg = get_config()
+            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
+            store = SQLiteStore(db_path)
+            await store._ensure_initialized()
+
+            text_rec = await store.get_text(text_id)
+            if not text_rec:
+                with _upload_task_lock:
+                    _upload_tasks[task_id].update({"status": "error", "message": "文本未找到"})
+                return
+
+            content = text_rec.get("content", "")
+            text_type = text_rec.get("text_type", "story")
+
+            # Only story/classic need coref
+            if text_type not in ("story", "classic"):
+                with _upload_task_lock:
+                    _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成", "text_id": text_id})
+                return
+
+            # Step: identify characters
+            with _upload_task_lock:
+                _upload_tasks[task_id].update({"status": "identifying", "progress_pct": 10, "message": "识别角色中…"})
+
+            per_user_llm = None
+            api_config = await store.get_user_api_config(user_id)
+            if api_config and api_config.get("api_key"):
+                from adapters.llm_adapter import LLMAdapter
+                per_user_llm = LLMAdapter(
+                    api_key=api_config["api_key"],
+                    base_url=api_config.get("base_url", "https://api.deepseek.com"),
+                    model=api_config.get("model", "deepseek-v4-pro"),
+                )
+
+            distiller = get_distiller(llm=per_user_llm)
+            if distiller is None:
+                with _upload_task_lock:
+                    _upload_tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
+                return
+
+            try:
+                chars = await asyncio.to_thread(distiller.identify_characters, content)
+            except Exception as exc:
+                print(f"[text] Upload identify failed {text_id}: {exc}")
+                chars = []
+
+            if not chars:
+                with _upload_task_lock:
+                    _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成（未识别到角色）", "text_id": text_id})
+                return
+
+            # Step: coref resolve with per-chunk progress
+            chunk_count = len(content) // 6000 + 1
+            with _upload_task_lock:
+                _upload_tasks[task_id].update({
+                    "status": "resolving", "progress_pct": 15, "message": f"预处理文本 0/{chunk_count}",
+                    "current": 0, "total": chunk_count,
+                })
+
+            def _on_progress(current: int, total: int) -> None:
+                pct = 15 + int((current / total) * 70) if total > 0 else 15
+                with _upload_task_lock:
+                    _upload_tasks[task_id].update({
+                        "progress_pct": min(pct, 90),
+                        "current": current,
+                        "total": total,
+                        "message": f"预处理文本 {current}/{total}",
+                    })
+
+            try:
+                resolved = await asyncio.to_thread(
+                    distiller.coref_resolve, content, chars,
+                    progress_callback=_on_progress,
+                )
+            except Exception as exc:
+                print(f"[text] Upload coref failed {text_id}: {exc}")
+                resolved = ""
+
+            if resolved:
+                await store.update_text_resolved(text_id, resolved)
+
+            with _upload_task_lock:
+                _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成", "text_id": text_id})
+
+        asyncio.run(_do())
+    except Exception as exc:
+        print(f"[text] Upload task {task_id} failed: {exc}")
+        with _upload_task_lock:
+            _upload_tasks[task_id] = {"status": "error", "message": str(exc)}
 
 
 class CommentCreate(BaseModel):
@@ -104,17 +215,55 @@ async def upload_text(
     else:
         raise HTTPException(400, "Must provide file or text")
 
+    # Start background upload task for story/classic (coref resolution with progress)
+    upload_task_id = ""
+    if text_type in ("story", "classic"):
+        upload_task_id = uuid.uuid4().hex[:12]
+        thread = threading.Thread(
+            target=_run_upload_task,
+            args=(upload_task_id, text_id, user_id),
+            daemon=True,
+        )
+        thread.start()
+
     try:
         record = await storage.get_text(text_id)
     except Exception as exc:
         print(f"[text] Get text record failed: {exc}")
         raise HTTPException(500, "获取文本记录失败，请稍后重试") from exc
 
+    response: dict[str, Any] = record or {"id": text_id}
     if record:
         record.pop("content", None)
         if cleaning_stats:
             record["cleaning_stats"] = cleaning_stats
-    return record or {"id": text_id}
+    if upload_task_id:
+        response["upload_task_id"] = upload_task_id
+        with _upload_task_lock:
+            _upload_tasks.setdefault(upload_task_id, {})
+            _upload_tasks[upload_task_id]["text_id"] = text_id
+    return response
+
+
+@router.get("/upload-task/{task_id}")
+async def get_upload_task_status(
+    task_id: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Poll upload preprocessing task status (identify + coref)."""
+    with _upload_task_lock:
+        task = _upload_tasks.get(task_id)
+    if task is None:
+        raise HTTPException(404, "Upload task not found")
+    # Clean up done/error tasks after 5 minutes
+    if task.get("status") in ("done", "error"):
+        now = time.time()
+        with _upload_task_lock:
+            if "completed_at" not in task:
+                task["completed_at"] = now
+            elif now - task["completed_at"] > 300:
+                _upload_tasks.pop(task_id, None)
+    return task
 
 
 @router.get("/list")

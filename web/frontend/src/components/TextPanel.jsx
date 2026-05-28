@@ -77,6 +77,7 @@ export default function TextPanel() {
   const loadTexts = useAppStore((s) => s.loadTexts)
   const uploadText = useAppStore((s) => s.uploadText)
   const uploadProgress = useAppStore((s) => s.uploadProgress)
+  const uploadTaskProgress = useAppStore((s) => s.uploadTaskProgress)
   const deleteText = useAppStore((s) => s.deleteText)
   const selectText = useAppStore((s) => s.selectText)
   const currentTextId = useAppStore((s) => s.currentTextId)
@@ -259,6 +260,12 @@ export default function TextPanel() {
         <div className="upload-progress">
           <div className="progress-bar" style={{ width: `${uploadProgress}%` }} />
           <span>{uploadProgress}% 上传中...</span>
+        </div>
+      )}
+      {uploadProgress === null && uploadTaskProgress !== null && (
+        <div className="upload-progress">
+          <div className="progress-bar" style={{ width: `${uploadTaskProgress.progress_pct || 0}%` }} />
+          <span>{uploadTaskProgress.message || '预处理中…'}</span>
         </div>
       )}
 

@@ -406,6 +406,9 @@ const useAppStore = create((set, get) => ({
   uploadProgress: null,
   setUploadProgress: (val) => set({ uploadProgress: val }),
 
+  uploadTaskProgress: null,
+  setUploadTaskProgress: (val) => set({ uploadTaskProgress: val }),
+
   uploadText: async (file, title, description, textType = 'story') => {
     const MAX_SIZE = 100 * 1024 * 1024 // 100MB
     if (file.size > MAX_SIZE) {
@@ -432,6 +435,29 @@ const useAppStore = create((set, get) => ({
         if (xhr.status === 200) {
           const data = JSON.parse(xhr.responseText)
           get().loadTexts()
+
+          // Start polling upload task if present (story/classic coref)
+          const uploadTaskId = data.upload_task_id
+          if (uploadTaskId) {
+            const poll = () => {
+              fetchWithTimeout(`/api/text/upload-task/${uploadTaskId}`)
+                .then((r) => r.json())
+                .then((task) => {
+                  if (task.status === 'done' || task.status === 'error') {
+                    set({ uploadTaskProgress: null })
+                    get().loadTexts()
+                  } else {
+                    set({ uploadTaskProgress: task })
+                    setTimeout(poll, 500)
+                  }
+                })
+                .catch(() => {
+                  set({ uploadTaskProgress: null })
+                })
+            }
+            poll()
+          }
+
           resolve(data)
         } else {
           if (xhr.status === 401) removeAuth()
