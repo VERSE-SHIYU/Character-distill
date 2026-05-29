@@ -10381,9 +10381,24 @@ select.settings-input {
 /* GroupChatPage right panel → history sidebar mode */
 .group-right-panel.history-sidebar-mode {
   width: auto;
-  overflow-y: auto;
+  overflow: hidden;
   transition: none;
+  min-height: 0;
 }
+
+/* History section: flex:1 so .history-sidebar-content height:100% resolves to computed height */
+.group-right-panel.history-sidebar-mode > .group-right-section:has(.history-sidebar-content) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Members section: auto-height, scroll if overflow */
+.group-right-panel.history-sidebar-mode > .group-right-section:not(:has(.history-sidebar-content)) {
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
 .group-right-panel.collapsed.history-sidebar-mode {
   width: auto;
   opacity: 1;
