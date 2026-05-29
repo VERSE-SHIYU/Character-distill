@@ -3292,7 +3292,9 @@ class SQLiteStore(StorageBase):
                 visibility_clause = "" if include_private else "AND visibility = 'public'"
                 cursor = await conn.execute(
                     f"""SELECT id, name, card_json, forked_from, likes, created_at, avatar_data,
-                              market_description, market_tags, visibility
+                              market_description, market_tags, visibility,
+                              (SELECT COUNT(*) FROM sessions WHERE card_id = cards.id) AS chat_count,
+                              (SELECT title FROM texts WHERE id = cards.text_id) AS text_title
                        FROM cards WHERE user_id = ? AND deleted_at IS NULL {visibility_clause}
                        ORDER BY created_at DESC""",
                     (user_id,),

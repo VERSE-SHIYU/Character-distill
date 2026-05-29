@@ -305,7 +305,7 @@ export default function MinePage() {
     { key: 'posts', label: '动态', icon: <MessageSquare size={15} /> },
     { key: 'followers', label: '粉丝', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> },
     { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-    { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> },
+    { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> },
   ]
 
   if (loading) return (
@@ -510,13 +510,19 @@ export default function MinePage() {
                         </div>
                       )}
                       <div className="market-card-v2-badges">
-                        {isNew && <span className="card-badge-new">新</span>}
+                        {isNew && <span className="card-badge-new">新创建</span>}
                         {isPublic && <span className="card-badge-public" title="已公开到市场" />}
                       </div>
                     </div>
                     <div className="market-card-v2-glass-info">
                       <div className="market-card-v2-name">{name}</div>
                       {identity && <div className="market-card-v2-identity">{identity}</div>}
+                      <div className="market-card-v2-stats">
+                        ❤️{card.likes ?? 0} · 💬{card.chat_count ?? 0} · {card.visibility === 'public' ? '🌐公开' : '🔒私有'}
+                      </div>
+                      {card.text_title && (
+                        <div className="market-card-v2-source">来自《{card.text_title}》</div>
+                      )}
                     </div>
                     {isMe && <MineCardMenu card={card} onRefresh={handleRefresh} />}
                   </div>
