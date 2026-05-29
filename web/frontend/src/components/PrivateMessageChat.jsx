@@ -24,6 +24,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
   const taRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const [otherAvatar, setOtherAvatar] = useState(null)
+  const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
+  const [otherOnlineHidden, setOtherOnlineHidden] = useState(false)
+  const [otherLastActive, setOtherLastActive] = useState('')
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -82,6 +85,20 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
     }, 100)
   }, [])
 
+  // ── Online status ──
+  const fetchOnlineStatus = useCallback(async () => {
+    if (!otherUserId) return
+    try {
+      const res = await fetchWithTimeout(`/api/auth/user/${otherUserId}/online`)
+      const data = await res.json()
+      setOtherOnline(data.online)
+      setOtherOnlineHidden(data.hidden)
+      setOtherLastActive(data.last_active_at || '')
+    } catch {
+      // ignore
+    }
+  }, [otherUserId])
+
   // Initial load + mark read + fetch other avatar
   useEffect(() => {
     if (!otherUserId) return
@@ -93,7 +110,15 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
         if (data.author?.avatar_data) setOtherAvatar(data.author.avatar_data)
       })
       .catch(() => {})
-  }, [otherUserId, loadMessages, markRead])
+    fetchOnlineStatus()
+  }, [otherUserId, loadMessages, markRead, fetchOnlineStatus])
+
+  // Poll online status every 30s
+  useEffect(() => {
+    if (!otherUserId) return
+    const timer = setInterval(fetchOnlineStatus, 30000)
+    return () => clearInterval(timer)
+  }, [otherUserId, fetchOnlineStatus])
 
   // Poll for new messages
   useEffect(() => {
@@ -234,7 +259,15 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
           返回
         </button>
         <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
-        <span className="private-chat-title">{otherUsername || '私信'}</span>
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          <span className="private-chat-title">{otherUsername || '私信'}</span>
+          {!otherOnlineHidden && (
+            <span style={{ fontSize: 12, color: otherOnline ? '#22c55e' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: otherOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+              {otherOnline === null ? '' : otherOnline ? '在线' : formatChatTime(otherLastActive)}
+            </span>
+          )}
+        </div>
         <ChatHistoryPanel
           fetchSessions={historyFetchSessions}
           onSelectSession={historySelectSession}

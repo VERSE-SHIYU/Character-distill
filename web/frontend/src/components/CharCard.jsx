@@ -20,6 +20,20 @@ export default function CharCard() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
   const setView = useAppStore((s) => s.setView)
+  const previousView = useAppStore((s) => s.previousView)
+  const previousViewContext = useAppStore((s) => s.previousViewContext)
+  const clearPreviousView = useAppStore((s) => s.clearPreviousView)
+  const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+
+  const goBack = useCallback(() => {
+    if (previousView === 'groupChat' && previousViewContext?.groupId) {
+      setResumeGroupId(previousViewContext.groupId)
+      setView('groupChat')
+      clearPreviousView()
+    } else {
+      setView('text')
+    }
+  }, [previousView, previousViewContext, setView, setResumeGroupId, clearPreviousView])
 
   if (!currentTextId) {
     return (
@@ -52,14 +66,14 @@ export default function CharCard() {
     <div className="char-panel panel">
       {/* Breadcrumb */}
       <nav className="breadcrumb">
-        <button type="button" className="breadcrumb-item" onClick={() => setView('text')}>
+        <button type="button" className="breadcrumb-item" onClick={goBack}>
           文本管理
         </button>
         <span className="breadcrumb-sep">›</span>
         <button
           type="button"
           className="breadcrumb-item breadcrumb-current"
-          onClick={() => setView('text')}
+          onClick={goBack}
         >
           {filename}
         </button>
@@ -68,7 +82,7 @@ export default function CharCard() {
       </nav>
 
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('text')} title="返回文本管理">
+        <button type="button" className="chat-back-btn" onClick={goBack} title="返回">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回
         </button>

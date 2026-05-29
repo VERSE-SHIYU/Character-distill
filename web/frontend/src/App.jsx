@@ -100,7 +100,28 @@ export default function App() {
       try {
         const res = await fetchWithTimeout('/api/auth/me')
         const user = await res.json()
-        useAppStore.setState({ authUser: user, isLoggedIn: true, currentView: 'home' })
+
+        // Restore saved navigation state (skip login/settings — login is for unauthenticated, settings is handled by apiConfigured check)
+        const savedView = localStorage.getItem('nav_view') || 'home'
+        const restoreView = (savedView === 'login' || savedView === 'settings') ? 'home' : savedView
+        const navUpdates = { authUser: user, isLoggedIn: true, currentView: restoreView }
+        if (savedView === 'author' || savedView === 'mine') {
+          const savedId = localStorage.getItem('nav_author_user_id')
+          if (savedId) navUpdates.authorUserId = savedId
+        }
+        if (savedView === 'marketCardDetail') {
+          const savedId = localStorage.getItem('nav_market_card_id')
+          if (savedId) navUpdates.currentMarketCardId = savedId
+        }
+        if (savedView === 'textDetail') {
+          const savedId = localStorage.getItem('nav_text_detail_id')
+          if (savedId) navUpdates.currentTextDetailId = savedId
+        }
+        if (savedView === 'messages') {
+          const savedId = localStorage.getItem('nav_msg_target_user_id')
+          if (savedId) navUpdates.messageTargetUserId = savedId
+        }
+        useAppStore.setState(navUpdates)
         if (user.avatar_data) {
           useAppStore.setState({ userAvatar: user.avatar_data })
         }

@@ -10242,6 +10242,7 @@ select.settings-input {
   flex-direction: column;
   background: var(--glass-bg);
   transition: width 0.25s ease, opacity 0.2s ease;
+  position: relative;
 }
 
 .group-right-panel.collapsed {
@@ -10385,7 +10386,7 @@ select.settings-input {
   width: auto;
   height: 100%;
   max-height: 100%;
-  overflow-y: auto;
+  overflow: hidden;
   transition: none;
   min-height: 0;
 }
@@ -10408,6 +10409,84 @@ select.settings-input {
   padding: inherit;
   border-left: 1px solid var(--glass-border);
   overflow: hidden;
+}
+
+/* ── Right panel tab bar ── */
+.group-right-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--glass-border);
+  padding: 0 8px;
+  min-height: 42px;
+}
+.group-right-tab {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  position: relative;
+  white-space: nowrap;
+  transition: color .15s;
+}
+.group-right-tab:hover { color: var(--text); }
+.group-right-tab.active { color: var(--accent); }
+.group-right-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.group-right-tab-spacer { flex: 1; }
+.group-right-tab-btn {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent;
+  color: var(--text-dim); cursor: pointer;
+  border-radius: 6px; flex-shrink: 0;
+  transition: color .15s, background .15s;
+}
+.group-right-tab-btn:hover {
+  color: var(--text);
+  background: rgba(128,128,128,0.08);
+}
+
+/* ── Right panel tab content (scrollable) ── */
+.group-right-tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* ── Character info overlay (floats above tab content) ── */
+.group-char-info-overlay {
+  position: absolute;
+  inset: 42px 0 0 0;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+
+/* ── Member list inside tab ── */
+.group-right-member-list {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 /* ── Group Chat Filter Bar ── */

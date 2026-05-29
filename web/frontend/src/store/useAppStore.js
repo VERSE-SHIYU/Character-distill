@@ -22,11 +22,17 @@ const useAppStore = create((set, get) => ({
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },
 
+  _clearNavState: () => {
+    const keys = ['nav_view', 'nav_author_user_id', 'nav_text_detail_id', 'nav_market_card_id', 'nav_msg_target_user_id']
+    keys.forEach((k) => localStorage.removeItem(k))
+  },
+
   logout: () => {
     // Best-effort server-side logout
     fetchWithTimeout('/api/auth/logout', { method: 'POST' }).catch(() => {})
     removeAuth()
     if (get()._chatAbort) get()._chatAbort.abort()
+    get()._clearNavState()
     set({
       authUser: null,
       isLoggedIn: false,
@@ -45,21 +51,42 @@ const useAppStore = create((set, get) => ({
 
   // ---- Navigation ----
 
-  currentView: 'home',
+  currentView: localStorage.getItem('nav_view') || 'home',
+  previousView: null,        // for returning after viewCard etc.
+  previousViewContext: null, // e.g. { groupId } for groupChat
+  setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
+  clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
   authorUserId: null,
-  setAuthorUserId: (userId) => set({ authorUserId: userId }),
+  setAuthorUserId: (userId) => {
+    set({ authorUserId: userId })
+    if (userId) localStorage.setItem('nav_author_user_id', userId)
+    else localStorage.removeItem('nav_author_user_id')
+  },
   currentTextDetailId: null,
-  setCurrentTextDetailId: (id) => set({ currentTextDetailId: id }),
+  setCurrentTextDetailId: (id) => {
+    set({ currentTextDetailId: id })
+    if (id) localStorage.setItem('nav_text_detail_id', id)
+    else localStorage.removeItem('nav_text_detail_id')
+  },
   currentMarketCardId: null,
-  setCurrentMarketCardId: (id) => set({ currentMarketCardId: id }),
+  setCurrentMarketCardId: (id) => {
+    set({ currentMarketCardId: id })
+    if (id) localStorage.setItem('nav_market_card_id', id)
+    else localStorage.removeItem('nav_market_card_id')
+  },
   messageTargetUserId: null,
-  setMessageTargetUserId: (id) => set({ messageTargetUserId: id }),
+  setMessageTargetUserId: (id) => {
+    set({ messageTargetUserId: id })
+    if (id) localStorage.setItem('nav_msg_target_user_id', id)
+    else localStorage.removeItem('nav_msg_target_user_id')
+  },
   messageTargetUsername: null,
   setMessageTargetUsername: (name) => set({ messageTargetUsername: name }),
   setView: (view) => {
     const updates = { currentView: view, error: null }
     if (view === 'home' || view === 'text') updates.currentTextTitle = ''
     set(updates)
+    localStorage.setItem('nav_view', view)
   },
 
   goBack: () => {
