@@ -176,6 +176,21 @@ function ChatView() {
     resumeSession(session.id).catch(() => {})
   }, [resumeSession])
 
+  const handleExport = useCallback(() => {
+    const header = `角色名: ${charName}\n导出时间: ${new Date().toLocaleString('zh-CN')}\n---\n`
+    const body = messages.map(m => {
+      const time = m.timestamp ? new Date(m.timestamp).toLocaleString('zh-CN') : ''
+      const speaker = m.role === 'user' ? (userRole || '我') : charName
+      return `[${time}] ${speaker}: ${m.content || ''}`
+    }).join('\n')
+    const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `${charName}.txt`
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+  }, [charName, messages, userRole])
+
   useEffect(() => {
     if (!userRole && !sessionId) setShowRoleModal(true)
   }, [])
@@ -453,6 +468,7 @@ function ChatView() {
             onSelectSession={historySelectSession}
             placeholder="搜索历史对话…"
             overlay
+            onExport={handleExport}
           />
           <button
             type="button"

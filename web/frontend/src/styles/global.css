@@ -5006,6 +5006,59 @@ html.theme-aurora::before {
   padding: 4px 0;
 }
 
+/* Date chips in history overlay */
+.chat-history-dates {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  flex-shrink: 0;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--glass-border, rgba(128,128,128,0.08));
+}
+.chat-history-dates::-webkit-scrollbar { display: none; }
+.chat-history-date-chip {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border, rgba(128,128,128,0.15));
+  background: transparent;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.chat-history-date-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chat-history-date-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Export button in overlay header */
+.chat-history-export-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: background 0.12s;
+}
+.chat-history-export-btn:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+}
+
 /* ===== Settings Panel ===== */
 .settings-panel {
   overflow-y: auto;
@@ -9634,6 +9687,12 @@ select.settings-input {
   justify-content: flex-end;
   padding: 6px 12px 10px;
 }
+.messages-input-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
 
 .messages-send-btn {
   flex-shrink: 0;
@@ -10129,6 +10188,165 @@ select.settings-input {
   .group-right-panel { display: none; }
 }
 
+/* ── Group Chat Filter Bar ── */
+.group-filter-bar {
+  padding: 6px 20px 0;
+  flex-shrink: 0;
+}
+.group-filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: none;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all .15s;
+  position: relative;
+}
+.group-filter-toggle:hover,
+.group-filter-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.group-filter-active-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  position: absolute;
+  top: -2px;
+  right: -2px;
+}
+.group-filter-panel {
+  margin-top: 6px;
+  padding: 10px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.group-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.group-filter-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  min-width: 36px;
+}
+.group-filter-date-input {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+.group-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.group-filter-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all .15s;
+}
+.group-filter-chip.active,
+.group-filter-chip:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.group-filter-reset {
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  align-self: flex-end;
+  padding: 2px 6px;
+}
+.group-filter-reset:hover {
+  text-decoration: underline;
+}
+
+/* ── Group Chat Character Info Panel ── */
+.group-char-info-panel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-bottom: 1px solid var(--glass-border);
+  position: relative;
+}
+.group-char-info-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.group-char-info-close:hover {
+  background: rgba(0,0,0,0.05);
+  color: var(--text);
+}
+.group-char-info-name {
+  margin-top: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+.group-char-info-identity {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  text-align: center;
+}
+.group-char-info-traits {
+  width: 100%;
+  margin-top: 10px;
+}
+.group-char-info-tag-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.group-char-info-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.group-char-info-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ── Group Chat Layout Overrides (enhanced UI) ── */
 .group-chat-layout .private-chat-body {
   flex-direction: row;
@@ -10169,6 +10387,12 @@ select.settings-input {
   font-size: 14px;
   font-weight: 600;
   color: var(--primary);
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.group-chat-bubble-speaker:hover {
+  opacity: .7;
+  text-decoration: underline;
 }
 .group-chat-bubble-body {
   padding: 2px 12px 6px;

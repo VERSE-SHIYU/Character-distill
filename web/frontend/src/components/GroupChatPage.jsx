@@ -37,6 +37,7 @@ export default function GroupChatPage() {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
+  const viewCard = useAppStore((s) => s.viewCard)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -67,6 +68,11 @@ export default function GroupChatPage() {
   const messagesAreaRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
+  const [filterDate, setFilterDate] = useState('')
+  const [filterSpeaker, setFilterSpeaker] = useState('')
+  const [showFilter, setShowFilter] = useState(false)
+  const [selectedCharCardInfo, setSelectedCharCardInfo] = useState(null)
+  const charInfoPanelRef = useRef(null)
 
   // ── 引用回复 ──
   const [replyTo, setReplyTo] = useState(null) // { id, speaker, preview }
@@ -282,6 +288,24 @@ export default function GroupChatPage() {
     }
   }
 
+  const filteredMessages = useMemo(() => {
+    let result = messages
+    if (filterDate) {
+      result = result.filter(m => {
+        const d = m.created_at ? new Date(m.created_at).toISOString().slice(0, 10) : ''
+        return d === filterDate
+      })
+    }
+    if (filterSpeaker) {
+      result = result.filter(m => m.speaker === filterSpeaker)
+    }
+    return result
+  }, [messages, filterDate, filterSpeaker])
+
+  const uniqueSpeakers = useMemo(() => {
+    return [...new Set(messages.filter(m => !m.role || m.role !== 'user').map(m => m.speaker).filter(Boolean))]
+  }, [messages])
+
   function enterGroup(group) {
     const cardIds = parseCardIds(group.card_ids)
     setCurrentGroup({ ...group, card_ids: cardIds })
@@ -290,6 +314,25 @@ export default function GroupChatPage() {
     const who = userRole || authUser?.username || '用户'
     setSystemMessage(`${who} 加入了群聊`)
   }
+
+  const handleExport = useCallback(() => {
+    if (!currentGroup) return
+    const names = currentGroup.card_ids.map(id => {
+      return cardCache[id]?.name || allCards.find(c => (c.id || c.card_id) === id)?.name || ''
+    }).filter(Boolean)
+    const header = `群聊: ${currentGroup.name || '未命名群聊'}\n导出时间: ${new Date().toLocaleString('zh-CN')}\n参与角色: ${names.join('、')}\n---\n`
+    const body = messages.map(m => {
+      const time = m.created_at ? new Date(m.created_at).toLocaleString('zh-CN') : ''
+      const speaker = m.speaker || (m.role === 'user' ? '我' : '?')
+      return `[${time}] ${speaker}: ${m.content || ''}`
+    }).join('\n')
+    const blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = `群聊_${currentGroup.name || '未命名'}.txt`
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+  }, [currentGroup, messages, cardCache, allCards])
 
   async function handleRename() {
     const name = editNameValue.trim()
@@ -525,6 +568,18 @@ export default function GroupChatPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showEmoji])
 
+  // Character info panel outside-click
+  useEffect(() => {
+    if (!selectedCharCardInfo) return
+    const handler = (e) => {
+      if (!e.target.closest('.group-char-info-panel') && !e.target.closest('.group-chat-bubble-speaker')) {
+        setSelectedCharCardInfo(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [selectedCharCardInfo])
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768)
     window.addEventListener('resize', onResize)
@@ -682,19 +737,48 @@ export default function GroupChatPage() {
                 )}
               </div>
 
+              {/* Filter bar */}
+              <div className="group-filter-bar">
+                <button type="button" className={`group-filter-toggle${showFilter ? ' active' : ''}`} onClick={() => setShowFilter(!showFilter)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                  筛选
+                  {(filterDate || filterSpeaker) && <span className="group-filter-active-dot" />}
+                </button>
+                {showFilter && (
+                  <div className="group-filter-panel">
+                    <div className="group-filter-row">
+                      <label className="group-filter-label">日期</label>
+                      <input type="date" className="group-filter-date-input" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
+                    </div>
+                    <div className="group-filter-row">
+                      <label className="group-filter-label">角色</label>
+                      <div className="group-filter-chips">
+                        <button type="button" className={`group-filter-chip${!filterSpeaker ? ' active' : ''}`} onClick={() => setFilterSpeaker('')}>全部</button>
+                        {uniqueSpeakers.map(name => (
+                          <button key={name} type="button" className={`group-filter-chip${filterSpeaker === name ? ' active' : ''}`} onClick={() => setFilterSpeaker(name)}>{name}</button>
+                        ))}
+                      </div>
+                    </div>
+                    {(filterDate || filterSpeaker) && (
+                      <button type="button" className="group-filter-reset" onClick={() => { setFilterDate(''); setFilterSpeaker('') }}>重置</button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Messages */}
               <div className="private-chat-body">
                 <div className="group-chat-messages-area" ref={messagesAreaRef}>
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
-                  {messages.length === 0 && !systemMessage && (
+                  {filteredMessages.length === 0 && !systemMessage && (
                     <div className="messages-empty-state messages-empty-state--borderless">
                       <p className="messages-empty-title">群聊已创建</p>
                       <p className="messages-empty-desc">选择角色并发送第一条消息</p>
                     </div>
                   )}
-                  {messages.map((m, i) => {
+                  {filteredMessages.map((m, i) => {
                     const isUser = m.role === 'user'
                     const showTime = i === 0 || (m.created_at && messages[i-1]?.created_at
                       && (new Date(m.created_at) - new Date(messages[i-1].created_at)) > 5 * 60 * 1000)
@@ -754,7 +838,39 @@ export default function GroupChatPage() {
                               <div>
                                 <div className="group-chat-bubble">
                                   <div className="group-chat-bubble-header">
-                                    <span className="group-chat-bubble-speaker">{m.speaker || '?'}</span>
+                                    <span className="group-chat-bubble-speaker" style={{ cursor: 'pointer' }} onClick={() => {
+                                      const cardId = m.card_id || m.speaker_card_id
+                                      let cardData = cardId ? resolveCard(cardId) : null
+                                      // Fallback: search by speaker name across all sources
+                                      if (!cardData && m.speaker) {
+                                        const name = m.speaker.toLowerCase()
+                                        cardData = allCards.find(c => (c.name || '').toLowerCase() === name)
+                                          || Object.values(cardCache).find(c => (c.name || '').toLowerCase() === name)
+                                          || currentGroup?._cards?.find(c => (c.name || '').toLowerCase() === name)
+                                          || null
+                                      }
+                                      const fallbackId = cardData?.id || cardData?.card_id || cardId
+                                      if (cardData) {
+                                        const parsed = parseCardJson(cardData)
+                                        setSelectedCharCardInfo({
+                                          cardId: fallbackId,
+                                          name: parsed.name || cardData.name || m.speaker || '?',
+                                          identity: parsed.identity || '',
+                                          personality_traits: parsed.personality_traits || [],
+                                          avatar_data: cardData.avatar_data || cardAvatars[fallbackId],
+                                          rawCard: cardData,
+                                        })
+                                      } else {
+                                        setSelectedCharCardInfo({
+                                          cardId: null,
+                                          name: m.speaker || '?',
+                                          identity: '',
+                                          personality_traits: [],
+                                          avatar_data: null,
+                                          rawCard: null,
+                                        })
+                                      }
+                                    }}>{m.speaker || '?'}</span>
                                     <div className="group-msg-bubble-actions">
                                       <button type="button" className="msg-action-btn" title="引用"
                                         onClick={() => {
@@ -805,15 +921,47 @@ export default function GroupChatPage() {
                   {sending && <Loading text="加载中…" />}
                 </div>
 
-                {/* 右侧栏：历史记录 + 成员列表 */}
+                {/* 右侧栏：历史记录 + 成员列表 + 角色信息 */}
                 {(!isMobile || showMembers) && (
                   <div className={`group-right-panel${showMembers ? '' : ' collapsed'}`}>
+                    {selectedCharCardInfo && (
+                      <div className="group-char-info-panel">
+                        <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                        <Avatar name={selectedCharCardInfo.name} size={56} src={selectedCharCardInfo.avatar_data} />
+                        <div className="group-char-info-name">{selectedCharCardInfo.name}</div>
+                        {selectedCharCardInfo.identity && <div className="group-char-info-identity">{selectedCharCardInfo.identity}</div>}
+                        {selectedCharCardInfo.personality_traits?.length > 0 && (
+                          <div className="group-char-info-traits">
+                            <div className="group-char-info-tag-label">性格特征</div>
+                            <div className="group-char-info-tags">
+                              {selectedCharCardInfo.personality_traits.slice(0, 3).map((t, i) => (
+                                <span key={i} className="group-char-info-tag">{t}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {selectedCharCardInfo.rawCard ? (
+                          <button type="button" className="btn-primary btn-sm" style={{ marginTop: 12, width: '100%' }} onClick={() => {
+                            setView('character')
+                            viewCard(selectedCharCardInfo.rawCard)
+                            setSelectedCharCardInfo(null)
+                          }}>
+                            查看完整卡片
+                          </button>
+                        ) : (
+                          <span style={{ marginTop: 12, fontSize: 12, color: 'var(--text-dim)' }}>未找到角色卡</span>
+                        )}
+                      </div>
+                    )}
                     <div className="group-right-section">
                       <div className="group-right-section-title">历史记录</div>
                       <ChatHistoryPanel
                         fetchSessions={historyFetchSessions}
                         onSelectSession={historySelectSession}
                         placeholder="搜索历史群聊…"
+                        onExport={handleExport}
                       />
                     </div>
                     <div className="group-right-section-divider" />
@@ -899,7 +1047,27 @@ export default function GroupChatPage() {
                   })}
                 </div>
                 <div style={{ position: 'relative' }}>
-                  {showEmoji && <EmojiPicker textareaRef={msgInputRef} onEmojiSelect={() => setShowEmoji(false)} />}
+                  {showEmoji && (
+                    <EmojiPicker
+                      controlled
+                      onEmojiSelect={(emoji) => {
+                        setMessageText(prev => {
+                          const ta = msgInputRef.current
+                          if (ta) {
+                            const start = ta.selectionStart
+                            const newVal = prev.slice(0, start) + emoji + prev.slice(ta.selectionEnd)
+                            setTimeout(() => {
+                              ta.selectionStart = ta.selectionEnd = start + emoji.length
+                              ta.focus()
+                            }, 0)
+                            return newVal
+                          }
+                          return prev + emoji
+                        })
+                        setShowEmoji(false)
+                      }}
+                    />
+                  )}
                   <textarea
                     ref={msgInputRef}
                     className="messages-input"

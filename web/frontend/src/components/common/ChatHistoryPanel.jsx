@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatChatTime } from '../../utils/time'
 import Loading from './Loading'
 
@@ -9,14 +9,17 @@ import Loading from './Loading'
  *   fetchSessions: (keyword) => Promise<Array<{id, title, preview, time, extra?}>>
  *   onSelectSession: (session) => void
  *   placeholder: string - search placeholder text
+ *   overlay: bool - show as full overlay (vs dropdown)
+ *   onExport: () => void - optional export handler, shows export button in overlay
  */
-export default function ChatHistoryPanel({ fetchSessions, onSelectSession, placeholder = '搜索历史消息…', overlay = false }) {
+export default function ChatHistoryPanel({ fetchSessions, onSelectSession, placeholder = '搜索历史消息…', overlay = false, onExport }) {
   const [open, setOpen] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [panelStyle, setPanelStyle] = useState({})
+  const [selectedDate, setSelectedDate] = useState('')
   const toggleRef = useRef(null)
   const panelRef = useRef(null)
   const inputRef = useRef(null)
@@ -46,15 +49,20 @@ export default function ChatHistoryPanel({ fetchSessions, onSelectSession, place
     return () => clearTimeout(timer)
   }, [keyword, open, doFetch])
 
+  const closePanel = useCallback(() => {
+    setOpen(false)
+    setKeyword('')
+    setLoaded(false)
+    setSelectedDate('')
+  }, [])
+
   // Click outside to close
   useEffect(() => {
     if (!open) return
     const handler = (e) => {
       if (panelRef.current && !panelRef.current.contains(e.target) &&
           toggleRef.current && !toggleRef.current.contains(e.target)) {
-        setOpen(false)
-        setKeyword('')
-        setLoaded(false)
+        closePanel()
       }
     }
     document.addEventListener('mousedown', handler)
@@ -64,9 +72,8 @@ export default function ChatHistoryPanel({ fetchSessions, onSelectSession, place
   const toggle = () => {
     const next = !open
     setOpen(next)
-    if (!next) { setKeyword(''); setLoaded(false) }
+    if (!next) { setKeyword(''); setLoaded(false); setSelectedDate('') }
     else {
-      // Position the panel relative to the toggle button
       if (toggleRef.current) {
         const rect = toggleRef.current.getBoundingClientRect()
         setPanelStyle({
@@ -77,6 +84,42 @@ export default function ChatHistoryPanel({ fetchSessions, onSelectSession, place
       }
       setTimeout(() => inputRef.current?.focus(), 100)
     }
+  }
+
+  // ── Date grouping (overlay only) ──
+  const dateGroups = useMemo(() => {
+    if (!overlay) return []
+    const dates = new Set()
+    for (const s of sessions) {
+      if (s.time) {
+        try {
+          const d = new Date(s.time).toISOString().slice(0, 10)
+          if (d) dates.add(d)
+        } catch {}
+      }
+    }
+    return [...dates].sort().reverse()
+  }, [sessions, overlay])
+
+  const filteredSessions = useMemo(() => {
+    if (!selectedDate || !overlay) return sessions
+    return sessions.filter(s => {
+      if (!s.time) return false
+      try { return new Date(s.time).toISOString().slice(0, 10) === selectedDate } catch { return false }
+    })
+  }, [sessions, selectedDate, overlay])
+
+  const displaySessions = overlay ? filteredSessions : sessions
+
+  function fmtDateLabel(isoDate) {
+    if (!isoDate) return ''
+    const d = new Date(isoDate + 'T00:00:00')
+    const today = new Date()
+    const todayStr = today.toISOString().slice(0, 10)
+    const yesterdayStr = new Date(today.getTime() - 86400000).toISOString().slice(0, 10)
+    if (isoDate === todayStr) return '今天'
+    if (isoDate === yesterdayStr) return '昨天'
+    return `${d.getMonth() + 1}月${d.getDate()}日`
   }
 
   return (
@@ -122,7 +165,7 @@ export default function ChatHistoryPanel({ fetchSessions, onSelectSession, place
                 key={s.id || i}
                 type="button"
                 className="chat-history-item"
-                onClick={() => { onSelectSession(s); setOpen(false); setKeyword(''); setLoaded(false) }}
+                onClick={() => { onSelectSession(s); closePanel() }}
               >
                 <div className="chat-history-item-title">{s.title || '会话'}</div>
                 <div className="chat-history-item-preview">{s.preview || ''}</div>
@@ -150,22 +193,44 @@ export default function ChatHistoryPanel({ fetchSessions, onSelectSession, place
                 onChange={(e) => setKeyword(e.target.value)}
               />
             </div>
-            <button type="button" className="chat-history-overlay-close" onClick={() => { setOpen(false); setKeyword(''); setLoaded(false) }}>
+            {onExport && (
+              <button type="button" className="chat-history-export-btn" onClick={onExport} title="导出对话">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="7 10 12 15 17 10"/>
+                  <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </button>
+            )}
+            <button type="button" className="chat-history-overlay-close" onClick={closePanel}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
 
+          {dateGroups.length > 1 && (
+            <div className="chat-history-dates">
+              {[{ key: '', label: '全部' }, ...dateGroups.map(d => ({ key: d, label: fmtDateLabel(d) }))].map(item => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`chat-history-date-chip${selectedDate === item.key ? ' active' : ''}`}
+                  onClick={() => setSelectedDate(item.key)}
+                >{item.label}</button>
+              ))}
+            </div>
+          )}
+
           <div className="chat-history-overlay-body">
             {loading && <Loading text="搜索中…" />}
-            {!loading && sessions.length === 0 && (
+            {!loading && displaySessions.length === 0 && (
               <div className="chat-history-empty">{keyword ? '无匹配结果' : '暂无历史记录'}</div>
             )}
-            {!loading && sessions.map((s, i) => (
+            {!loading && displaySessions.map((s, i) => (
               <button
                 key={s.id || i}
                 type="button"
                 className="chat-history-item"
-                onClick={() => { onSelectSession(s); setOpen(false); setKeyword(''); setLoaded(false) }}
+                onClick={() => { onSelectSession(s); closePanel() }}
               >
                 <div className="chat-history-item-title">{s.title || '会话'}</div>
                 <div className="chat-history-item-preview">{s.preview || ''}</div>
