@@ -126,14 +126,14 @@ import time
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/announcement/active"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login")
 
-# Throttle last_active updates to once per 5 min per user
+# Throttle last_active updates to once per 60s per user
 _last_active_ticks: dict[str, float] = {}
 
 
 def _maybe_update_last_active(user_id: str) -> None:
     now = time.time()
     last = _last_active_ticks.get(user_id, 0)
-    if now - last < 300:
+    if now - last < 60:
         return
     _last_active_ticks[user_id] = now
     import asyncio

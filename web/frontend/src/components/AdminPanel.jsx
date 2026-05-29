@@ -3,6 +3,7 @@ import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
+import { formatChatTime } from '../utils/time'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import EmojiPicker from './common/EmojiPicker'
 
@@ -129,8 +130,12 @@ function isOnline(user) {
 
 function fmtTimeAgo(iso) {
   if (!iso) return ''
-  const then = new Date(iso).getTime()
+  let s = iso
+  if (!s.includes('T')) s = s.replace(' ', 'T')
+  if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
+  const then = new Date(s).getTime()
   const now = Date.now()
+  if (isNaN(then)) return iso.slice(0, 16).replace('T', ' ')
   const diff = Math.floor((now - then) / 1000)
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
@@ -464,7 +469,7 @@ function UsersTab() {
                       {u.online ? '在线' : u.last_active_at ? `${fmtTimeAgo(u.last_active_at)}` : '离线'}
                     </span>
                   </td>
-                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{u.last_active_at ? u.last_active_at.slice(0, 16).replace('T', ' ') : '-'}</td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{u.last_active_at ? formatChatTime(u.last_active_at) : '-'}</td>
                   <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDate(u.last_login_at)}</td>
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">

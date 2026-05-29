@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import os
@@ -100,9 +99,6 @@ class TokenResponse(BaseModel):
 
 # ---- Dependency ----
 
-# ── Throttled last_active_at tracker ──
-_last_active_throttle: dict[str, float] = {}
-
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
@@ -125,13 +121,6 @@ async def get_current_user(
         raise HTTPException(401, "用户不存在")
     if user.get("is_disabled"):
         raise HTTPException(403, "账号已被禁用")
-
-    # ── Throttled last_active_at update (fire-and-forget, max 1/min) ──
-    now = time.time()
-    last = _last_active_throttle.get(user_id, 0.0)
-    if now - last > 60:
-        _last_active_throttle[user_id] = now
-        asyncio.ensure_future(storage.update_last_active(user_id))
 
     return user
 
