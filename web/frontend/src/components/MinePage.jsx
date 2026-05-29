@@ -85,6 +85,10 @@ export default function MinePage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
 
+  // Store fetched author data when viewing others
+  const [profileAuthor, setProfileAuthor] = useState(null)
+  const [isFollowing, setIsFollowing] = useState(false)
+
   const isMe = !authorUserId || authorUserId === authUser?.id
   const userId = isMe ? authUser?.id : authorUserId
   const prof = isMe ? authUser : profileAuthor
@@ -100,10 +104,6 @@ export default function MinePage() {
   useEffect(() => {
     return () => setAuthorUserId(null)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Store fetched author data when viewing others
-  const [profileAuthor, setProfileAuthor] = useState(null)
-  const [isFollowing, setIsFollowing] = useState(false)
 
   const [tab, setTab] = useState('characters')
   const [loading, setLoading] = useState(true)
