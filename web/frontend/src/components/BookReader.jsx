@@ -62,22 +62,116 @@ function renderMarkdown(text) {
   return result.join('\n')
 }
 
-function extractTOC(content) {
-  const toc = []
-  const re = /^#{1,3}\s+(.+)$/gm
-  let match
-  while ((match = re.exec(content)) !== null) {
-    toc.push({ level: match[0].startsWith('###') ? 3 : match[0].startsWith('##') ? 2 : 1, title: match[1] })
+function detectChapters(content) {
+  if (!content) return [{ title: '全文', level: 1, index: 0 }]
+
+  const rules = [
+    // 1. Markdown 标题（优先）
+    { re: /^#{1,3}\s+(.+)$/gm, normalize: (m, idx) => ({
+      title: m[1],
+      level: m[0].startsWith('###') ? 3 : m[0].startsWith('##') ? 2 : 1,
+      index: idx,
+    })},
+    // 2. 中文章节：第X章/节/回/卷/篇
+    { re: /^\s*(第[一二三四五六七八九十百千\d]+[章节回卷篇])\s*(.*)$/gm, normalize: (m, idx) => ({
+      title: (m[1] + (m[2] ? ' ' + m[2].trim() : '')).trim(),
+      level: 1,
+      index: idx,
+    })},
+    // 3. 英文 Chapter X
+    { re: /^\s*[Cc]hapter\s+\d+.*$/gm, normalize: (m, idx) => ({
+      title: m[0].trim(),
+      level: 1,
+      index: idx,
+    })},
+    // 4. 独占一行的数字（章节编号）
+    { re: /^\s*(\d{1,4})\s*$/gm, normalize: (m, idx) => ({
+      title: m[1],
+      level: 2,
+      index: idx,
+    })},
+  ]
+
+  for (const rule of rules) {
+    const chapters = []
+    let match
+    while ((match = rule.re.exec(content)) !== null) {
+      chapters.push(rule.normalize(match, match.index))
+    }
+    if (chapters.length >= 2) return chapters
   }
-  return toc
+
+  // 自动按长度分章
+  return autoChunkByLength(content, 3000)
 }
 
-function paginateContent(content, maxChars = 5000) {
+function autoChunkByLength(content, chunkSize) {
+  const paragraphs = content.split(/\n\n+/)
+  const chapters = []
+  let sectionNum = 0
+  let searchFrom = 0
+
+  for (let i = 0; i < paragraphs.length; ) {
+    sectionNum++
+    let totalLen = 0
+    const chunkLines = []
+    while (i < paragraphs.length && totalLen < chunkSize) {
+      chunkLines.push(paragraphs[i])
+      totalLen += paragraphs[i].length + (chunkLines.length > 1 ? 2 : 0)
+      i++
+    }
+    const chunkText = chunkLines.join('\n\n')
+    const idx = content.indexOf(chunkText, searchFrom)
+    chapters.push({
+      title: `第${sectionNum}节`,
+      level: 1,
+      index: idx >= 0 ? idx : searchFrom,
+    })
+    searchFrom = idx >= 0 ? idx + chunkText.length : searchFrom + chunkText.length
+  }
+
+  if (chapters.length <= 1) {
+    return [{ title: '全文', level: 1, index: 0 }]
+  }
+  return chapters
+}
+
+function splitByParagraphs(text, maxChars) {
+  const paragraphs = text.split(/\n\n+/)
+  const pages = []
+  let cur = ''
+  for (const p of paragraphs) {
+    if (cur.length + p.length > maxChars && cur) {
+      pages.push(cur.trim())
+      cur = p
+    } else {
+      cur += (cur ? '\n\n' : '') + p
+    }
+  }
+  if (cur.trim()) pages.push(cur.trim())
+  return pages
+}
+
+function paginateContent(content, maxChars = 5000, chapters) {
   if (!content) return ['']
-  // Split by ## heading (chapters)
-  const chapters = content.split(/\n(?=## )/).filter(Boolean)
-  if (chapters.length > 1) return chapters
-  // Fallback: split at paragraph boundaries
+
+  if (chapters && chapters.length > 1) {
+    const pages = []
+    for (let i = 0; i < chapters.length; i++) {
+      const start = chapters[i].index
+      const end = i < chapters.length - 1 ? chapters[i + 1].index : content.length
+      const chapterText = content.slice(start, end).trim()
+      if (!chapterText) continue
+      if (chapterText.length <= maxChars) {
+        pages.push(chapterText)
+      } else {
+        pages.push(...splitByParagraphs(chapterText, maxChars))
+      }
+    }
+    return pages.length > 0 ? pages : [content]
+  }
+
+  // 无章节信息：按段落分页
   const paragraphs = content.split(/\n\n+/)
   const pages = []
   let cur = ''
@@ -91,6 +185,11 @@ function paginateContent(content, maxChars = 5000) {
   }
   if (cur.trim()) pages.push(cur.trim())
   return pages.length > 0 ? pages : [content]
+}
+
+/** 向后兼容：不返回 index */
+function extractTOC(content) {
+  return detectChapters(content).map((ch) => ({ level: ch.level, title: ch.title }))
 }
 
 function stringToHash(str) {
@@ -140,10 +239,11 @@ export default function BookReader() {
     return localStorage.getItem(LS_THEME_KEY) === 'dark'
   })
   const [currentPage, setCurrentPage] = useState(0)
-  const [toc, setToc] = useState([])
   const [showTOC, setShowTOC] = useState(false)
 
-  const pages = useMemo(() => paginateContent(content), [content])
+  const chapters = useMemo(() => detectChapters(content), [content])
+  const toc = useMemo(() => chapters.map((ch) => ({ level: ch.level, title: ch.title })), [chapters])
+  const pages = useMemo(() => paginateContent(content, 5000, chapters), [content, chapters])
   const totalPages = pages.length
   const initializedPageRef = useRef(false)
 
@@ -172,7 +272,6 @@ export default function BookReader() {
         const c = textData.text?.content || ''
         setContent(c)
         setTitle(textData.text?.title || title)
-        setToc(extractTOC(c))
       })
       .catch((err) => {
         setError(err.message)
@@ -245,6 +344,18 @@ export default function BookReader() {
     setShowTOC(false)
   }
 
+  const activeTocIndex = useMemo(() => {
+    let lastMatch = -1
+    for (let p = 0; p <= currentPage; p++) {
+      for (let i = 0; i < toc.length; i++) {
+        if (pages[p]?.includes(toc[i].title)) {
+          lastMatch = i
+        }
+      }
+    }
+    return lastMatch
+  }, [toc, currentPage, pages])
+
   if (loading) {
     return (
       <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`}>
@@ -279,23 +390,27 @@ export default function BookReader() {
         )}
       </div>
 
-      {/* TOC panel */}
-      {showTOC && toc.length > 0 && (
-        <div className="reader-toc-overlay" onClick={() => setShowTOC(false)}>
-          <div className="reader-toc-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="reader-toc-title">目录</div>
-            {toc.map((item, i) => (
-              <div
-                key={i}
-                className={`reader-toc-item reader-toc-level-${item.level}`}
-                onClick={() => scrollToHeader(item.title)}
-              >
-                {item.title}
-              </div>
-            ))}
-          </div>
+      {/* TOC drawer */}
+      <div className={`reader-toc-drawer-overlay${showTOC ? ' open' : ''}`} onClick={() => setShowTOC(false)} />
+      <div className={`reader-toc-drawer${showTOC ? ' open' : ''}`}>
+        <div className="reader-toc-header">
+          <div className="reader-toc-title">目录</div>
+          <button className="reader-toc-close" onClick={() => setShowTOC(false)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
-      )}
+        <div className="reader-toc-body">
+          {toc.map((item, i) => (
+            <div
+              key={i}
+              className={`reader-toc-item reader-toc-level-${item.level}${i === activeTocIndex ? ' active' : ''}`}
+              onClick={() => scrollToHeader(item.title)}
+            >
+              {item.title}
+            </div>
+          ))}
+        </div>
+      </div>
 
       {/* Content — render only current page */}
       <div

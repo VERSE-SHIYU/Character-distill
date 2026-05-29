@@ -54,6 +54,7 @@ export default function GroupChatPage() {
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
+  const autoAbortRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
   const [generatingForName, setGeneratingForName] = useState(null)
   const msgInputRef = useRef(null)
@@ -224,6 +225,8 @@ export default function GroupChatPage() {
       turnIndex++
       setAutoTurn(turnIndex)
 
+      const ac = new AbortController()
+      autoAbortRef.current = ac
       setGeneratingForName(resolveCard(targetId)?.name || '?')
       try {
         await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
@@ -231,24 +234,32 @@ export default function GroupChatPage() {
           message: '__AUTO_CONTINUE__',
           speaker: '__DIRECTOR__',
           auto_mode: true,
-        })
+        }, undefined, ac.signal)
         setGeneratingForName(null)
         await loadHistory(currentGroup.id, true)
       } catch (err) {
         setGeneratingForName(null)
+        if (err.name === 'AbortError') break
         console.error('Auto conversation error:', err)
         break
       }
 
-      await new Promise(r => setTimeout(r, 1500))
+      // Abortable delay: resolve early when stop is triggered
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 1500)
+        const onAbort = () => { clearTimeout(timer); resolve() }
+        ac.signal.addEventListener('abort', onAbort, { once: true })
+      })
     }
 
+    autoAbortRef.current = null
     setAutoRunning(false)
     setAutoMode(false)
   }, [currentGroup, autoRunning])
 
   const stopAutoConversation = useCallback(() => {
     autoStopRef.current = true
+    autoAbortRef.current?.abort()
     setAutoMode(false)
   }, [])
 
@@ -704,7 +715,8 @@ export default function GroupChatPage() {
           {!currentGroup ? (
             <div className="messages-empty-chat">选择一个群聊或创建新群聊</div>
           ) : (
-            <div className="private-chat group-chat-layout">
+            <div className={`private-chat group-chat-layout`} ref={historyOpen ? splitContainerRef : undefined}>
+              <div className="group-chat-main" style={historyOpen ? { flex: splitRatio, minWidth: 0 } : undefined}>
               {/* Header */}
               <div className="private-chat-header">
                 {isMobile && (
@@ -828,9 +840,8 @@ export default function GroupChatPage() {
               </div>
 
               {/* Messages */}
-              <div className="private-chat-body" ref={historyOpen ? splitContainerRef : undefined}>
-                <div className="group-chat-messages-area" ref={messagesAreaRef}
-                     style={historyOpen ? { flex: splitRatio, minWidth: 0 } : undefined}>
+              <div className="private-chat-body">
+                <div className="group-chat-messages-area" ref={messagesAreaRef}>
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
@@ -982,83 +993,83 @@ export default function GroupChatPage() {
                   })}
                   {sending && <Loading text="加载中…" />}
                 </div>
-
-                {/* 右侧栏：历史记录 + 角色信息 + 成员列表 */}
-                {historyOpen && (
-                  <>
-                    <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-                    <div className="group-right-panel history-sidebar-mode"
-                         style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' }}>
-                      {selectedCharCardInfo && (
-                        <div className="group-char-info-panel">
-                          <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                        </button>
-                        <Avatar name={selectedCharCardInfo.name} size={56} src={selectedCharCardInfo.avatar_data} />
-                        <div className="group-char-info-name">{selectedCharCardInfo.name}</div>
-                        {selectedCharCardInfo.identity && <div className="group-char-info-identity">{selectedCharCardInfo.identity}</div>}
-                        {selectedCharCardInfo.personality_traits?.length > 0 && (
-                          <div className="group-char-info-traits">
-                            <div className="group-char-info-tag-label">性格特征</div>
-                            <div className="group-char-info-tags">
-                              {selectedCharCardInfo.personality_traits.slice(0, 3).map((t, i) => (
-                                <span key={i} className="group-char-info-tag">{t}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {selectedCharCardInfo.rawCard ? (
-                          <button type="button" className="btn-primary btn-sm" style={{ marginTop: 12, width: '100%' }} onClick={() => {
-                            setView('character')
-                            viewCard(selectedCharCardInfo.rawCard)
-                            setSelectedCharCardInfo(null)
-                          }}>
-                            查看完整卡片
-                          </button>
-                        ) : (
-                          <span style={{ marginTop: 12, fontSize: 12, color: 'var(--text-dim)' }}>未找到角色卡</span>
-                        )}
-                      </div>
-                    )}
-                    <div className="group-right-section">
-                      {!historyOpen && <div className="group-right-section-title">历史记录</div>}
-                      <ChatHistoryPanel
-                        mode="sidebar"
-                        open={true}
-                        onClose={() => setHistoryOpen(false)}
-                        fetchSessions={historyFetchSessions}
-                        onSelectSession={historySelectSession}
-                        placeholder="搜索历史群聊…"
-                        onExport={handleExport}
-                      />
-                    </div>
-                    <div className="group-right-section-divider" />
-                    <div className="group-right-section">
-                      <div className="group-right-section-title">成员 ({currentGroup.card_ids?.length})</div>
-                      {currentGroup.card_ids?.map((cardId) => {
-                        const card = resolveCard(cardId)
-                        let identity = ''
-                        if (card) {
-                          try {
-                            const cj = parseCardJson(card)
-                            identity = cj.identity || ''
-                          } catch {}
-                        }
-                        return (
-                          <div key={cardId} className="group-member-item">
-                            <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
-                            <div className="group-member-info">
-                              <span className="group-member-name">{card?.name || '?'}</span>
-                              {identity && <span className="group-member-identity">{identity}</span>}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </>
-                )}
               </div>
+
+              {/* 右侧栏：历史记录 + 角色信息 + 成员列表 */}
+              {historyOpen && (
+                <>
+                  <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
+                  <div className="group-right-panel history-sidebar-mode"
+                       style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' }}>
+                    {selectedCharCardInfo && (
+                      <div className="group-char-info-panel">
+                        <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                      <Avatar name={selectedCharCardInfo.name} size={56} src={selectedCharCardInfo.avatar_data} />
+                      <div className="group-char-info-name">{selectedCharCardInfo.name}</div>
+                      {selectedCharCardInfo.identity && <div className="group-char-info-identity">{selectedCharCardInfo.identity}</div>}
+                      {selectedCharCardInfo.personality_traits?.length > 0 && (
+                        <div className="group-char-info-traits">
+                          <div className="group-char-info-tag-label">性格特征</div>
+                          <div className="group-char-info-tags">
+                            {selectedCharCardInfo.personality_traits.slice(0, 3).map((t, i) => (
+                              <span key={i} className="group-char-info-tag">{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {selectedCharCardInfo.rawCard ? (
+                        <button type="button" className="btn-primary btn-sm" style={{ marginTop: 12, width: '100%' }} onClick={() => {
+                          setView('character')
+                          viewCard(selectedCharCardInfo.rawCard)
+                          setSelectedCharCardInfo(null)
+                        }}>
+                          查看完整卡片
+                        </button>
+                      ) : (
+                        <span style={{ marginTop: 12, fontSize: 12, color: 'var(--text-dim)' }}>未找到角色卡</span>
+                      )}
+                    </div>
+                  )}
+                  <div className="group-right-section">
+                    {!historyOpen && <div className="group-right-section-title">历史记录</div>}
+                    <ChatHistoryPanel
+                      mode="sidebar"
+                      open={true}
+                      onClose={() => setHistoryOpen(false)}
+                      fetchSessions={historyFetchSessions}
+                      onSelectSession={historySelectSession}
+                      placeholder="搜索历史群聊…"
+                      onExport={handleExport}
+                    />
+                  </div>
+                  <div className="group-right-section-divider" />
+                  <div className="group-right-section">
+                    <div className="group-right-section-title">成员 ({currentGroup.card_ids?.length})</div>
+                    {currentGroup.card_ids?.map((cardId) => {
+                      const card = resolveCard(cardId)
+                      let identity = ''
+                      if (card) {
+                        try {
+                          const cj = parseCardJson(card)
+                          identity = cj.identity || ''
+                        } catch {}
+                      }
+                      return (
+                        <div key={cardId} className="group-member-item">
+                          <Avatar name={card?.name || '?'} size={44} src={cardAvatars[cardId]} />
+                          <div className="group-member-info">
+                            <span className="group-member-name">{card?.name || '?'}</span>
+                            {identity && <span className="group-member-identity">{identity}</span>}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+              )}
 
               {/* Input */}
               <div className="private-chat-input-bar">
@@ -1147,6 +1158,7 @@ export default function GroupChatPage() {
                     </button>
                   </div>
               </div>
+            </div>
             </div>
           )}
         </div>

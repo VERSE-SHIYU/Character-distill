@@ -100,7 +100,7 @@ export default function App() {
       try {
         const res = await fetchWithTimeout('/api/auth/me')
         const user = await res.json()
-        useAppStore.setState({ authUser: user, isLoggedIn: true })
+        useAppStore.setState({ authUser: user, isLoggedIn: true, currentView: 'home' })
         if (user.avatar_data) {
           useAppStore.setState({ userAvatar: user.avatar_data })
         }

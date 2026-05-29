@@ -9,6 +9,7 @@ import { SkeletonRow } from './common/Skeleton'
 import { loadCardAvatar } from '../store/db'
 import { Book, Clipboard, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
+import { formatChatTime } from '../utils/time'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -26,19 +27,9 @@ function useDebouncedValue(value, delayMs) {
   return debounced
 }
 
-function formatTime(iso) {
+function fmtTime(iso) {
   if (!iso) return '—'
-  try {
-    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
-    return new Date(s).toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
+  try { return formatChatTime(iso) } catch { return iso }
 }
 
 function previewText(text, max = 72) {
@@ -662,7 +653,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                               )}
                             </div>
                             <span className="history-item-time">
-                              {formatTime(it.last_message_at || it.updated_at)}
+                              {fmtTime(it.last_message_at || it.updated_at)}
                             </span>
                           </div>
                           <p className="history-item-preview">
@@ -729,7 +720,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                       <div className="history-item-body">
                         <div className="history-item-head">
                           <span className="history-item-name">{g.name || '未命名群聊'}</span>
-                          <span className="history-item-time">{formatTime(g.created_at)}</span>
+                          <span className="history-item-time">{fmtTime(g.created_at)}</span>
                         </div>
                         <p className="history-item-preview">{cardIds.length} 个角色</p>
                       </div>
@@ -1025,7 +1016,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
             <span className="chat-topbar-user-badge">{session.user_role}</span>
           )}
           <p className="history-detail-meta">
-            {formatTime(session.updated_at || session.created_at)}
+            {fmtTime(session.updated_at || session.created_at)}
           </p>
         </div>
       </header>

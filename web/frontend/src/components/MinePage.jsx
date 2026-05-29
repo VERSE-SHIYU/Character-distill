@@ -705,17 +705,26 @@ export default function MinePage() {
           ) : (
             <div className="mine-follow-list">
               {followers.map(f => (
-                <button
-                  key={f.id}
-                  className="mine-follow-item"
-                  onClick={() => { setAuthorUserId(f.id); setView('author') }}
-                >
-                  <Avatar name={f.username || '?'} size={40} src={f.avatar_data} />
-                  <div className="mine-follow-info">
-                    <span className="mine-follow-name">{f.username}</span>
-                    {f.bio && <span className="mine-follow-bio">{f.bio}</span>}
+                <div key={f.id} className="mine-follow-card">
+                  <button type="button" className="mine-follow-card-main" onClick={() => { setAuthorUserId(f.id); setView('author') }}>
+                    <Avatar name={f.username || '?'} size={44} src={f.avatar_data} />
+                    <div className="mine-follow-info">
+                      <span className="mine-follow-name">{f.username}</span>
+                      {f.bio && <span className="mine-follow-bio">{f.bio}</span>}
+                    </div>
+                  </button>
+                  <div className="mine-follow-actions">
+                    {isMe && (
+                      <button
+                        type="button"
+                        className="btn-sm btn-outline"
+                        onClick={() => { setMessageTargetUserId(f.id); setView('messages') }}
+                      >
+                        发私信
+                      </button>
+                    )}
                   </div>
-                </button>
+                </div>
               ))}
             </div>
           )
