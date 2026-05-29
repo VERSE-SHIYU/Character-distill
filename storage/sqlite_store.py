@@ -3765,16 +3765,24 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update text visibility failed: {exc}")
             return False
 
-    async def get_author_texts(self, user_id: str) -> list[dict]:
-        """Get public texts for an author profile. Returns metadata only, no content."""
+    async def get_author_texts(self, user_id: str, viewer_id: str = "") -> list[dict]:
+        """Get texts for an author profile. Returns all texts if viewer is the author, public only otherwise."""
         try:
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    """SELECT id, title, description, text_type, char_count, created_at
-                       FROM texts WHERE user_id = ? AND visibility = 'public'
-                       ORDER BY created_at DESC""",
-                    (user_id,),
-                )
+                if viewer_id == user_id:
+                    cursor = await conn.execute(
+                        """SELECT id, title, description, text_type, char_count, created_at, visibility
+                           FROM texts WHERE user_id = ?
+                           ORDER BY created_at DESC""",
+                        (user_id,),
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """SELECT id, title, description, text_type, char_count, created_at, visibility
+                           FROM texts WHERE user_id = ? AND visibility = 'public'
+                           ORDER BY created_at DESC""",
+                        (user_id,),
+                    )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
         except Exception as exc:

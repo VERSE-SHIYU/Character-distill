@@ -188,7 +188,7 @@ async def get_author(
     following_ids = await storage.get_following(user["id"])
     followers_count = await storage.get_followers_count(user_id)
     following_count = await storage.get_following_count(user_id)
-    texts = await storage.get_author_texts(user_id)
+    texts = await storage.get_author_texts(user_id, user["id"])
     stats_visible = bool(author.get("profile_stats_visible", 1) or is_self)
     cards_visible = bool(author.get("cards_visible", 1) or is_self)
     books_visible = bool(author.get("books_visible", 1) or is_self)
