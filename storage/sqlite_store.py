@@ -725,7 +725,7 @@ class SQLiteStore(StorageBase):
                     cursor = await conn.execute(
                         """
                         SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility
-                        FROM texts WHERE user_id = ? AND deleted_at = ''
+                        FROM texts WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                         ORDER BY created_at DESC
                         """, (user_id,),
                     )
@@ -733,7 +733,7 @@ class SQLiteStore(StorageBase):
                     cursor = await conn.execute(
                         """
                         SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility
-                        FROM texts WHERE deleted_at = ''
+                        FROM texts WHERE (deleted_at IS NULL OR deleted_at = '')
                         ORDER BY created_at DESC
                         """
                     )
@@ -776,7 +776,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "UPDATE texts SET deleted_at = datetime('now') WHERE id = ? AND deleted_at = ''",
+                    "UPDATE texts SET deleted_at = datetime('now') WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')",
                     (id,),
                 )
                 await conn.commit()
@@ -3830,14 +3830,14 @@ class SQLiteStore(StorageBase):
                 if viewer_id == user_id:
                     cursor = await conn.execute(
                         """SELECT id, title, description, text_type, char_count, created_at, visibility
-                           FROM texts WHERE user_id = ?
+                           FROM texts WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                            ORDER BY created_at DESC""",
                         (user_id,),
                     )
                 else:
                     cursor = await conn.execute(
                         """SELECT id, title, description, text_type, char_count, created_at, visibility
-                           FROM texts WHERE user_id = ? AND visibility = 'public'
+                           FROM texts WHERE user_id = ? AND visibility = 'public' AND (deleted_at IS NULL OR deleted_at = '')
                            ORDER BY created_at DESC""",
                         (user_id,),
                     )
