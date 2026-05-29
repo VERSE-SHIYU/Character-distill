@@ -56,6 +56,7 @@ export default function ProfilePage() {
           stats_visible: data.profile_stats_visible !== false,
           cards_visible: data.cards_visible !== false,
           books_visible: data.books_visible !== false,
+          following_visible: data.following_visible !== false,
         })
       })
       .catch(() => {})
@@ -77,6 +78,7 @@ export default function ProfilePage() {
           stats_visible: data.stats_visible !== false,
           cards_visible: data.cards_visible !== false,
           books_visible: data.books_visible !== false,
+          following_visible: data.following_visible !== false,
         })
       })
       .catch(() => {})
@@ -427,6 +429,7 @@ export default function ProfilePage() {
           { key: 'stats_visible', label: '粉丝/关注数公开' },
           { key: 'cards_visible', label: '角色列表公开' },
           { key: 'books_visible', label: '书籍列表公开' },
+          { key: 'following_visible', label: '关注列表公开' },
         ].map(({ key, label }) => (
           <div key={key} className="profile-privacy-row">
             <span>{label}</span>

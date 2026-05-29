@@ -339,6 +339,7 @@ async def me(
     resp["profile_stats_visible"] = bool(user.get("profile_stats_visible", True))
     resp["cards_visible"] = bool(user.get("cards_visible", True))
     resp["books_visible"] = bool(user.get("books_visible", True))
+    resp["following_visible"] = bool(user.get("following_visible", True))
     return resp
 
 

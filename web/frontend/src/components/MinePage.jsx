@@ -243,7 +243,7 @@ export default function MinePage() {
         })
         .catch(() => {})
     }
-  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, userId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = () => setRefreshKey(k => k + 1)
 
