@@ -208,6 +208,7 @@ async def get_author(
         "stats_visible": bool(stats_visible),
         "cards_visible": bool(cards_visible),
         "books_visible": bool(books_visible),
+        "following_visible": bool(author.get("following_visible", 1)),
     }
 
 
@@ -222,6 +223,26 @@ async def get_author_followers(
     """Get followers with details for an author."""
     followers = await storage.get_followers_details(user_id)
     return {"followers": followers}
+
+
+@router.get("/author/{user_id}/following")
+@limiter.limit("60/minute")
+async def get_author_following(
+    request: Request,
+    user_id: str,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get following with details for an author, respecting privacy."""
+    is_self = user_id == user["id"]
+    author = await storage.get_user_by_id(user_id)
+    if not author:
+        raise HTTPException(404, "用户不存在")
+    following_visible = bool(author.get("following_visible", 1))
+    if is_self or following_visible:
+        following = await storage.get_following_details(user_id)
+        return {"following": following, "locked": False}
+    return {"following": [], "locked": True}
 
 
 @router.patch("/author/visibility")
@@ -240,6 +261,8 @@ async def update_privacy(
         kwargs["cards_visible"] = body["cards_visible"]
     if "books_visible" in body:
         kwargs["books_visible"] = body["books_visible"]
+    if "following_visible" in body:
+        kwargs["following_visible"] = body["following_visible"]
     if not kwargs:
         return {"ok": True}
     ok = await storage.set_user_privacy(user["id"], **kwargs)
@@ -250,6 +273,7 @@ async def update_privacy(
         "stats_visible": kwargs.get("profile_stats_visible", None),
         "cards_visible": kwargs.get("cards_visible", None),
         "books_visible": kwargs.get("books_visible", None),
+        "following_visible": kwargs.get("following_visible", None),
     }
 
 

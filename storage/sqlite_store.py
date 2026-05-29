@@ -587,6 +587,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Presence visibility migration failed: {exc}")
 
+                    # Run 058_following_visible migration (ALTER TABLE ADD COLUMN)
+                    following_vis_path = migrations_dir / "058_following_visible.sql"
+                    if following_vis_path.exists():
+                        try:
+                            await conn.executescript(following_vis_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Following visibility migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2078,7 +2088,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility, following_visible FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -2089,7 +2099,7 @@ class SQLiteStore(StorageBase):
 
     async def set_user_privacy(self, user_id: str, **kwargs) -> bool:
         """Set privacy fields (stats_visible, cards_visible, books_visible)."""
-        allowed = {'profile_stats_visible', 'cards_visible', 'books_visible'}
+        allowed = {'profile_stats_visible', 'cards_visible', 'books_visible', 'following_visible'}
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
             return True
@@ -3278,7 +3288,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = ?",
+                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = ? AND f.follower_id != f.following_id",
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
@@ -3852,7 +3862,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM user_follows WHERE following_id = ?",
+                    "SELECT COUNT(*) FROM user_follows WHERE following_id = ? AND follower_id != following_id",
                     (user_id,),
                 )
                 row = await cursor.fetchone()

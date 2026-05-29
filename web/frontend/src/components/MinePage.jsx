@@ -126,6 +126,7 @@ export default function MinePage() {
   // Following state
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
+  const [followingLocked, setFollowingLocked] = useState(false)
   // Followers state
   const [followers, setFollowers] = useState([])
   const [followersLoading, setFollowersLoading] = useState(false)
@@ -172,6 +173,9 @@ export default function MinePage() {
 
   const loadData = () => {
     if (!userId) return
+    setFollowers([])
+    setFollowing([])
+    setFollowingLocked(false)
     setLoading(true)
     Promise.all([
       fetchWithTimeout(`/api/market/author/${userId}`).then(r => r.json()),
@@ -196,9 +200,20 @@ export default function MinePage() {
   useEffect(() => {
     if (tab === 'following') {
       setFollowingLoading(true)
-      fetchWithTimeout('/api/market/my/following')
+      setFollowingLocked(false)
+      const url = isMe
+        ? '/api/market/my/following'
+        : `/api/market/author/${userId}/following`
+      fetchWithTimeout(url)
         .then(r => r.json())
-        .then(data => setFollowing(data.users || []))
+        .then(data => {
+          if (data.locked) {
+            setFollowingLocked(true)
+            setFollowing([])
+          } else {
+            setFollowing(data.following || data.users || [])
+          }
+        })
         .catch(() => {})
         .finally(() => setFollowingLoading(false))
     }
@@ -735,6 +750,11 @@ export default function MinePage() {
         {tab === 'following' && (
           followingLoading ? (
             <Loading text="加载中…" />
+          ) : followingLocked ? (
+            <div className="mine-onboard-card">
+              <h3 className="mine-onboard-title">🔒 关注列表未公开</h3>
+              <p className="mine-onboard-desc">该用户未公开关注列表</p>
+            </div>
           ) : following.length === 0 ? (
             <div className="mine-onboard-card">
               <h3 className="mine-onboard-title">还没有关注任何人</h3>

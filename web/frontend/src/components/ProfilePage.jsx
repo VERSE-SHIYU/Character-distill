@@ -38,7 +38,7 @@ export default function ProfilePage() {
   const [showPasswordForm, setShowPasswordForm] = useState(false)
 
   // Privacy + stats
-  const [privacy, setPrivacy] = useState({ stats_visible: true, cards_visible: true, books_visible: true })
+  const [privacy, setPrivacy] = useState({ stats_visible: true, cards_visible: true, books_visible: true, following_visible: true })
   const [stats, setStats] = useState({ followers_count: 0, following_count: 0, cards_count: 0, texts_count: 0 })
 
   useEffect(() => {

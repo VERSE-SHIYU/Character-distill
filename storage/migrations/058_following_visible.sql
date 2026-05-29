@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN following_visible INTEGER NOT NULL DEFAULT 1;
