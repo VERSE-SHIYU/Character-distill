@@ -923,8 +923,6 @@ class SQLiteStore(StorageBase):
                     )
                     card["liked_by_me"] = await like_cursor.fetchone() is not None
                     card["is_market_card"] = card["visibility"] == "public"
-                    if "visibility" in card:
-                        del card["visibility"]
                 return card
         except Exception as exc:
             print(f"[SQLiteStore] Get card detail failed: {exc}")

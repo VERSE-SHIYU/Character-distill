@@ -127,7 +127,10 @@ export default function MarketCardDetail() {
     } catch {} finally { setCommentsLoading(false) }
   }, [cardId])
 
-  useEffect(() => { loadComments() }, [loadComments])
+  useEffect(() => {
+    if (card?.visibility !== 'public') return
+    loadComments()
+  }, [card, loadComments])
 
   const loadVersions = useCallback(async () => {
     if (!cardId) return
@@ -150,9 +153,10 @@ export default function MarketCardDetail() {
   }, [cardId])
 
   useEffect(() => {
+    if (card?.visibility !== 'public') return
     if (activeTab === 'versions') loadVersions()
     if (activeTab === 'forks') loadForks()
-  }, [activeTab, loadVersions, loadForks])
+  }, [activeTab, loadVersions, loadForks, card])
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 960)
@@ -169,6 +173,7 @@ export default function MarketCardDetail() {
   }
 
   const handleLike = async () => {
+    if (card?.visibility !== 'public') return
     try {
       const res = await fetchWithTimeout(`/api/market/${cardId}/like`, { method: 'POST' })
       const data = await res.json()
@@ -469,7 +474,7 @@ export default function MarketCardDetail() {
   const background = cardData.background || ''
   const cardStyle = cardData.speaking_style || {}
   const rels = cardData.relationships || []
-  const isMarketCard = card?.is_market_card ?? true
+  const isMarketCard = card?.visibility === 'public'
 
   return (
     <div className="panel market-detail-page">
