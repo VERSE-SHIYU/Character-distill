@@ -74,6 +74,33 @@ export default function GroupChatPage() {
   const [selectedCharCardInfo, setSelectedCharCardInfo] = useState(null)
   const charInfoPanelRef = useRef(null)
 
+  // ── History sidebar split layout ──
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [splitRatio, setSplitRatio] = useState(0.7)
+  const splitContainerRef = useRef(null)
+
+  const onSplitterMouseDown = useCallback((e) => {
+    e.preventDefault()
+    const container = splitContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const startX = e.clientX
+    const startRatio = splitRatio
+    const onMove = (ev) => {
+      const dx = ev.clientX - startX
+      const totalW = rect.width
+      let ratio = (totalW * startRatio + dx) / totalW
+      ratio = Math.min(0.8, Math.max(0.4, ratio))
+      setSplitRatio(ratio)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [splitRatio])
+
   // ── 引用回复 ──
   const [replyTo, setReplyTo] = useState(null) // { id, speaker, preview }
 
@@ -705,6 +732,19 @@ export default function GroupChatPage() {
                   </div>
                 )}
                 <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
+                {!isMobile && (
+                  <button
+                    type="button"
+                    className="chat-topbar-btn"
+                    onClick={() => setHistoryOpen(prev => !prev)}
+                    title={historyOpen ? '收起历史' : '历史记录'}
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                  </button>
+                )}
                 {isMobile && (
                   <button
                     type="button"
@@ -767,8 +807,9 @@ export default function GroupChatPage() {
               </div>
 
               {/* Messages */}
-              <div className="private-chat-body">
-                <div className="group-chat-messages-area" ref={messagesAreaRef}>
+              <div className="private-chat-body" ref={historyOpen ? splitContainerRef : undefined}>
+                <div className="group-chat-messages-area" ref={messagesAreaRef}
+                     style={historyOpen ? { flex: splitRatio, minWidth: 0 } : undefined}>
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
@@ -922,11 +963,14 @@ export default function GroupChatPage() {
                 </div>
 
                 {/* 右侧栏：历史记录 + 成员列表 + 角色信息 */}
-                {(!isMobile || showMembers) && (
-                  <div className={`group-right-panel${showMembers ? '' : ' collapsed'}`}>
-                    {selectedCharCardInfo && (
-                      <div className="group-char-info-panel">
-                        <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
+                {(!isMobile || showMembers || historyOpen) && (
+                  <>
+                    {historyOpen && <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />}
+                    <div className={`group-right-panel${showMembers || historyOpen ? '' : ' collapsed'}${historyOpen ? ' history-sidebar-mode' : ''}`}
+                         style={historyOpen ? { flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' } : undefined}>
+                      {selectedCharCardInfo && (
+                        <div className="group-char-info-panel">
+                          <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                         </button>
                         <Avatar name={selectedCharCardInfo.name} size={56} src={selectedCharCardInfo.avatar_data} />
@@ -956,15 +1000,19 @@ export default function GroupChatPage() {
                       </div>
                     )}
                     <div className="group-right-section">
-                      <div className="group-right-section-title">历史记录</div>
+                      {!historyOpen && <div className="group-right-section-title">历史记录</div>}
                       <ChatHistoryPanel
+                        mode={historyOpen ? "sidebar" : "dropdown"}
+                        open={historyOpen}
+                        onClose={() => setHistoryOpen(false)}
                         fetchSessions={historyFetchSessions}
                         onSelectSession={historySelectSession}
                         placeholder="搜索历史群聊…"
                         onExport={handleExport}
                       />
                     </div>
-                    <div className="group-right-section-divider" />
+                    {!historyOpen && <div className="group-right-section-divider" />}
+                    {!historyOpen && (
                     <div className="group-right-section">
                       <div className="group-right-section-title">成员 ({currentGroup.card_ids?.length})</div>
                       {currentGroup.card_ids?.map((cardId) => {
@@ -987,7 +1035,9 @@ export default function GroupChatPage() {
                         )
                       })}
                     </div>
+                    )}
                   </div>
+                </>
                 )}
               </div>
 

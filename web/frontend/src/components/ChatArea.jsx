@@ -427,6 +427,28 @@ function ChatView() {
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [])
 
+  // ── Sidebar history splitter ──
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [splitRatio, setSplitRatio] = useState(0.65)
+  const splitContainerRef = useRef(null)
+
+  const onSplitterMouseDown = useCallback((e) => {
+    e.preventDefault()
+    const container = splitContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const onMove = (moveE) => {
+      const ratio = (moveE.clientX - rect.left) / rect.width
+      setSplitRatio(Math.min(0.8, Math.max(0.4, ratio)))
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
+
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
       {/* ── Compact header wrapper (positioned for popup/menu) ── */}
@@ -463,13 +485,18 @@ function ChatView() {
           </div>
         </div>
         <div className="chat-topbar-compact-right">
-          <ChatHistoryPanel
-            fetchSessions={historyFetchSessions}
-            onSelectSession={historySelectSession}
-            placeholder="搜索历史对话…"
-            overlay
-            onExport={handleExport}
-          />
+          <button
+            type="button"
+            className={`chat-history-toggle${historyOpen ? ' active' : ''}`}
+            onClick={() => setHistoryOpen(v => !v)}
+            title="历史记录"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            历史
+          </button>
           <button
             type="button"
             data-more-trigger
@@ -580,92 +607,112 @@ function ChatView() {
         </div>
       )}
 
-      {/* Messages */}
-      <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
-        {messages.map((msg, i) => {
-          if (msg.role === 'summary') {
-            return <SummaryBubble key={i} content={msg.content} />
-          }
+      {/* Messages + Input in split layout */}
+      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
+        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
+            {messages.map((msg, i) => {
+              if (msg.role === 'summary') {
+                return <SummaryBubble key={i} content={msg.content} />
+              }
 
-          // Time divider: show if gap from previous message > 5 min
-          const prevMsg = i > 0 ? messages[i - 1] : null
-          const showTime = prevMsg && msg.timestamp && prevMsg.timestamp
-            ? (new Date(msg.timestamp) - new Date(prevMsg.timestamp)) > 5 * 60 * 1000
-            : false
+              // Time divider: show if gap from previous message > 5 min
+              const prevMsg = i > 0 ? messages[i - 1] : null
+              const showTime = prevMsg && msg.timestamp && prevMsg.timestamp
+                ? (new Date(msg.timestamp) - new Date(prevMsg.timestamp)) > 5 * 60 * 1000
+                : false
 
-          const isUser = msg.role === 'user'
-          const isStreaming = sending && !isUser && i === messages.length - 1
-          const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
-          const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
-          return (
-            <div key={i} data-msg-id={msg.id}>
-              {showTime && (
-                <div className="time-divider">{formatChatTime(msg.timestamp)}</div>
-              )}
-              <MessageBubble
-                index={i}
-                isUser={isUser}
-                isLastUserMsg={i === lastUserMsgIndex}
-                content={msg.content}
-                retracted={msg.retracted}
-                charName={charName}
-                avatarUrl={avatarUrl}
-                userRole={userRole}
-                isStreaming={isStreaming}
-                onRevoke={isUser ? handleRevoke : null}
-                revokeCooldown={revokeCooldown}
-                playTTS={playTTS}
-                isPlaying={ttsPlayingId === i}
-                audioUrl={msg.audio_url}
-                isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
-                onPlayAudio={playAudio}
-                userAvatarUrl={userAvatarUrl}
-                onUserAvatarClick={() => userAvatarInputRef.current?.click()}
-                timestamp={msg.timestamp}
-                reactions={reactions[msg.id] || []}
-                replyToPreview={msg.reply_to_preview}
-                replyToId={msg.reply_to_id}
-                onReact={async (emoji) => {
-                  if (!msg.id) return
-                  try {
-                    await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                      body: JSON.stringify({ emoji }),
-                    })
-                    const res = await fetchWithTimeout(`/api/chat/session/${sessionId}/reactions`)
-                    const data = await res.json()
-                    setReactions(data.reactions || {})
-                  } catch {}
-                }}
-                onReply={() => {
-                  const preview = isUser
-                    ? `我: ${(msg.content || '').slice(0, 60)}`
-                    : `${charName}: ${(msg.content || '').slice(0, 60)}`
-                  setReplyTo({ id: msg.id, preview })
-                }}
-                msgId={msg.id}
-                authUser={authUser}
-                onScrollToMessage={scrollToMessage}
+              const isUser = msg.role === 'user'
+              const isStreaming = sending && !isUser && i === messages.length - 1
+              const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
+              const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
+              return (
+                <div key={i} data-msg-id={msg.id}>
+                  {showTime && (
+                    <div className="time-divider">{formatChatTime(msg.timestamp)}</div>
+                  )}
+                  <MessageBubble
+                    index={i}
+                    isUser={isUser}
+                    isLastUserMsg={i === lastUserMsgIndex}
+                    content={msg.content}
+                    retracted={msg.retracted}
+                    charName={charName}
+                    avatarUrl={avatarUrl}
+                    userRole={userRole}
+                    isStreaming={isStreaming}
+                    onRevoke={isUser ? handleRevoke : null}
+                    revokeCooldown={revokeCooldown}
+                    playTTS={playTTS}
+                    isPlaying={ttsPlayingId === i}
+                    audioUrl={msg.audio_url}
+                    isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
+                    onPlayAudio={playAudio}
+                    userAvatarUrl={userAvatarUrl}
+                    onUserAvatarClick={() => userAvatarInputRef.current?.click()}
+                    timestamp={msg.timestamp}
+                    reactions={reactions[msg.id] || []}
+                    replyToPreview={msg.reply_to_preview}
+                    replyToId={msg.reply_to_id}
+                    onReact={async (emoji) => {
+                      if (!msg.id) return
+                      try {
+                        await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                          body: JSON.stringify({ emoji }),
+                        })
+                        const res = await fetchWithTimeout(`/api/chat/session/${sessionId}/reactions`)
+                        const data = await res.json()
+                        setReactions(data.reactions || {})
+                      } catch {}
+                    }}
+                    onReply={() => {
+                      const preview = isUser
+                        ? `我: ${(msg.content || '').slice(0, 60)}`
+                        : `${charName}: ${(msg.content || '').slice(0, 60)}`
+                      setReplyTo({ id: msg.id, preview })
+                    }}
+                    msgId={msg.id}
+                    authUser={authUser}
+                    onScrollToMessage={scrollToMessage}
+                  />
+                </div>
+              )
+            })}
+            <div ref={bottomRef} />
+          </div>
+
+          <ChatInput
+            onSend={handleSend}
+            disabled={sending}
+            voiceStatus={voiceStatus}
+            isRecording={isRecording}
+            recordingDuration={recordingDuration}
+            sendVoiceMessage={sendVoiceMessage}
+            mentionableItems={[{ id: currentCard.id, name: charName }]}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+          />
+        </div>
+
+        {historyOpen && (
+          <>
+            <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
+            <div className="history-sidebar">
+              <ChatHistoryPanel
+                mode="sidebar"
+                open={historyOpen}
+                onClose={() => setHistoryOpen(false)}
+                fetchSessions={historyFetchSessions}
+                onSelectSession={historySelectSession}
+                placeholder="搜索历史对话…"
+                onExport={handleExport}
               />
             </div>
-          )
-        })}
-        <div ref={bottomRef} />
+          </>
+        )}
       </div>
-
-      {/* Input */}
-      <ChatInput
-        onSend={handleSend}
-        disabled={sending}
-        voiceStatus={voiceStatus}
-        isRecording={isRecording}
-        recordingDuration={recordingDuration}
-        sendVoiceMessage={sendVoiceMessage}
-        mentionableItems={[{ id: currentCard.id, name: charName }]}
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-      />
 
       <RoleSetupModal
         isOpen={showRoleModal}
