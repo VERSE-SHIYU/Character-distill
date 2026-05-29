@@ -88,6 +88,8 @@ export default function MinePage() {
   // Store fetched author data when viewing others
   const [profileAuthor, setProfileAuthor] = useState(null)
   const [isFollowing, setIsFollowing] = useState(false)
+  const [followsMe, setFollowsMe] = useState(false)
+  const followLabel = isFollowing && followsMe ? '互相关注' : isFollowing ? '已关注' : followsMe ? '回关' : '关注'
 
   const isMe = !authorUserId || authorUserId === authUser?.id
   const userId = isMe ? authUser?.id : authorUserId
@@ -182,6 +184,7 @@ export default function MinePage() {
       if (!isMe) {
         if (authorData.author) setProfileAuthor(authorData.author)
         setIsFollowing(authorData.is_following || false)
+        setFollowsMe(authorData.follows_me || false)
       }
     }).catch(() => {})
       .finally(() => setLoading(false))
@@ -432,7 +435,7 @@ export default function MinePage() {
                 className={`btn-sm ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}
                 onClick={handleFollow}
               >
-                {isFollowing ? '已关注' : '关注'}
+                {followLabel}
               </button>
             </div>
           )}

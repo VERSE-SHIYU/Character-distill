@@ -186,6 +186,7 @@ async def get_author(
     is_self = user_id == user["id"]
     cards = await storage.get_author_cards(user_id, include_private=is_self)
     following_ids = await storage.get_following(user["id"])
+    target_following = await storage.get_following(user_id)
     followers_count = await storage.get_followers_count(user_id)
     following_count = await storage.get_following_count(user_id)
     texts = await storage.get_author_texts(user_id, user["id"])
@@ -201,6 +202,7 @@ async def get_author(
         "cards": cards,
         "texts": texts,
         "is_following": user_id in following_ids,
+        "follows_me": user["id"] in target_following,
         "followers_count": followers_count,
         "following_count": following_count,
         "stats_visible": bool(stats_visible),
