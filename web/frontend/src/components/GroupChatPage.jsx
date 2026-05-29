@@ -46,18 +46,10 @@ export default function GroupChatPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
-  const [showMembers, setShowMembers] = useState(() => {
-    try { return localStorage.getItem('group-members-open') !== 'false' } catch { return true }
-  })
   const [editingName, setEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState('')
-  const toggleMembers = () => {
-    setShowMembers(prev => {
-      const next = !prev
-      try { localStorage.setItem('group-members-open', String(next)) } catch {}
-      return next
-    })
-  }
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
+  const moreMenuRef = useRef(null)
   const MAX_AUTO_TURNS = 20
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
@@ -392,7 +384,6 @@ export default function GroupChatPage() {
       if (currentGroup?.id === id) {
         setCurrentGroup(null)
         setMessages([])
-        setShowMembers(false)
       }
       loadGroups()
     } catch (err) {
@@ -403,7 +394,6 @@ export default function GroupChatPage() {
   function backToList() {
     setCurrentGroup(null)
     setMessages([])
-    setShowMembers(false)
     loadGroups()
   }
 
@@ -486,7 +476,9 @@ export default function GroupChatPage() {
   const [targetCardIds, setTargetCardIds] = useState([])
 
   async function handleSend() {
-    if (!messageText.trim() || targetCardIds.length === 0 || !currentGroup) return
+    if (!messageText.trim() || !currentGroup) return
+    const targets = targetCardIds.length > 0 ? targetCardIds : currentGroup.card_ids
+    if (targets.length === 0) return
 
     if (autoRunning) stopAutoConversation()
 
@@ -496,7 +488,7 @@ export default function GroupChatPage() {
     try {
       // Broadcast: one director message, all targets reply in parallel
       const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
-        target_card_ids: [...targetCardIds],
+        target_card_ids: [...targets],
         message: messageText,
         speaker,
         reply_to_id: replyTo?.id || null,
@@ -606,6 +598,18 @@ export default function GroupChatPage() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [selectedCharCardInfo])
+
+  // More menu outside-click
+  useEffect(() => {
+    if (!moreMenuOpen) return
+    const handler = (e) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target)) {
+        setMoreMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [moreMenuOpen])
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768)
@@ -718,62 +722,79 @@ export default function GroupChatPage() {
                     autoFocus
                   />
                 ) : (
-                  <div className="private-chat-title-wrap">
+                  <div className="group-header-left">
                     <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
-                    <button type="button" className="chat-rename-btn" onClick={startEditing} title="重命名">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    </button>
-                    <button type="button" className="chat-delete-btn" onClick={() => setDeleteGroupId(currentGroup.id)} title="删除群聊">
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                      </svg>
-                    </button>
+                    <div className="group-avatar-stack">
+                      {currentGroup.card_ids?.slice(0, 5).map(id => (
+                        <Avatar key={id} name={resolveCard(id)?.name || '?'} size={22} src={cardAvatars[id]} />
+                      ))}
+                    </div>
+                    <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
                   </div>
                 )}
-                <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
-                {!isMobile && (
-                  <button
-                    type="button"
-                    className="chat-topbar-btn"
-                    onClick={() => setHistoryOpen(prev => !prev)}
-                    title={historyOpen ? '收起历史' : '历史记录'}
-                  >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <polyline points="12 6 12 12 16 14" />
-                    </svg>
-                  </button>
-                )}
-                {isMobile && (
-                  <button
-                    type="button"
-                    className="chat-topbar-btn"
-                    onClick={toggleMembers}
-                    title="成员列表"
-                  >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2"/>
-                      <line x1="15" y1="3" x2="15" y2="21"/>
-                    </svg>
-                  </button>
-                )}
-                {!isMobile && (
-                  <button
-                    type="button"
-                    className="chat-topbar-btn"
-                    onClick={toggleMembers}
-                    title={showMembers ? '收起成员' : '展开成员'}
-                  >
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="chat-topbar-btn-icon">
-                      <rect x="3" y="3" width="18" height="18" rx="2.5" />
-                      {showMembers ? (
-                        <line x1="15" y1="3" x2="15" y2="21" />
+                {!editingName && (
+                  <div className="group-header-right">
+                    <button
+                      type="button"
+                      className={`chat-topbar-btn group-auto-btn-header${autoMode ? ' active' : ''}`}
+                      onClick={() => {
+                        if (autoMode) {
+                          stopAutoConversation()
+                        } else {
+                          setAutoMode(true)
+                          runAutoConversation()
+                        }
+                      }}
+                      title={autoMode ? '停止自动对话' : '自动对话'}
+                    >
+                      {autoMode ? (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                       ) : (
-                        <line x1="15" y1="3" x2="15" y2="21" strokeDasharray="2.5 2.5" opacity="0.3" />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity="0.9"/></svg>
                       )}
-                    </svg>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-topbar-btn"
+                      onClick={() => setHistoryOpen(prev => !prev)}
+                      title={historyOpen ? '收起历史' : '历史记录'}
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                    </button>
+                    <div className="group-more-menu" ref={moreMenuRef}>
+                      <button
+                        type="button"
+                        className="chat-topbar-btn"
+                        onClick={() => setMoreMenuOpen(prev => !prev)}
+                        title="更多"
+                      >
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="1" />
+                          <circle cx="19" cy="12" r="1" />
+                          <circle cx="5" cy="12" r="1" />
+                        </svg>
+                      </button>
+                      {moreMenuOpen && (
+                        <div className="group-more-menu-dropdown">
+                          <button type="button" className="group-more-menu-item" onClick={() => { setMoreMenuOpen(false); startEditing() }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            重命名
+                          </button>
+                          <button type="button" className="group-more-menu-item" onClick={() => { setMoreMenuOpen(false); handleExport() }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            导出对话
+                          </button>
+                          <button type="button" className="group-more-menu-item group-more-menu-item-danger" onClick={() => { setMoreMenuOpen(false); setDeleteGroupId(currentGroup.id) }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                            删除群聊
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 
@@ -962,12 +983,12 @@ export default function GroupChatPage() {
                   {sending && <Loading text="加载中…" />}
                 </div>
 
-                {/* 右侧栏：历史记录 + 成员列表 + 角色信息 */}
-                {(!isMobile || showMembers || historyOpen) && (
+                {/* 右侧栏：历史记录 + 角色信息 + 成员列表 */}
+                {historyOpen && (
                   <>
-                    {historyOpen && <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />}
-                    <div className={`group-right-panel${showMembers || historyOpen ? '' : ' collapsed'}${historyOpen ? ' history-sidebar-mode' : ''}`}
-                         style={historyOpen ? { flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' } : undefined}>
+                    <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
+                    <div className="group-right-panel history-sidebar-mode"
+                         style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' }}>
                       {selectedCharCardInfo && (
                         <div className="group-char-info-panel">
                           <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
@@ -1002,8 +1023,8 @@ export default function GroupChatPage() {
                     <div className="group-right-section">
                       {!historyOpen && <div className="group-right-section-title">历史记录</div>}
                       <ChatHistoryPanel
-                        mode={historyOpen ? "sidebar" : "dropdown"}
-                        open={historyOpen}
+                        mode="sidebar"
+                        open={true}
                         onClose={() => setHistoryOpen(false)}
                         fetchSessions={historyFetchSessions}
                         onSelectSession={historySelectSession}
@@ -1011,8 +1032,7 @@ export default function GroupChatPage() {
                         onExport={handleExport}
                       />
                     </div>
-                    {!historyOpen && <div className="group-right-section-divider" />}
-                    {!historyOpen && (
+                    <div className="group-right-section-divider" />
                     <div className="group-right-section">
                       <div className="group-right-section-title">成员 ({currentGroup.card_ids?.length})</div>
                       {currentGroup.card_ids?.map((cardId) => {
@@ -1035,7 +1055,6 @@ export default function GroupChatPage() {
                         )
                       })}
                     </div>
-                    )}
                   </div>
                 </>
                 )}
@@ -1064,124 +1083,69 @@ export default function GroupChatPage() {
                     </button>
                   </div>
                 )}
-                <div className="group-target-selector">
-                  <button
-                    type="button"
-                    className={`group-target-chip${targetCardIds.length === currentGroup.card_ids?.length ? ' active' : ''}`}
-                    onClick={() => setTargetCardIds(
-                      targetCardIds.length === currentGroup.card_ids?.length
-                        ? []
-                        : [...currentGroup.card_ids]
-                    )}
-                  >
-                    全部
-                  </button>
-                  {currentGroup.card_ids?.map((cardId) => {
-                    const card = resolveCard(cardId)
-                    const selected = targetCardIds.includes(cardId)
-                    return (
-                      <button
-                        key={cardId}
-                        type="button"
-                        className={`group-target-chip${selected ? ' active' : ''}`}
-                        onClick={() => setTargetCardIds(prev =>
-                          prev.includes(cardId)
-                            ? prev.filter(id => id !== cardId)
-                            : [...prev, cardId]
-                        )}
-                      >
-                        <Avatar name={card?.name || '?'} size={28} src={cardAvatars[cardId]} />
-                        {card?.name || '?'}
+                <div className="group-input-row">
+                    <div style={{ position: 'relative' }}>
+                      <button type="button" data-emoji-btn className="group-input-emoji-btn" title="表情"
+                        onClick={() => setShowEmoji(!showEmoji)}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
                       </button>
-                    )
-                  })}
-                </div>
-                <div style={{ position: 'relative' }}>
-                  {showEmoji && (
-                    <EmojiPicker
-                      controlled
-                      onEmojiSelect={(emoji) => {
-                        setMessageText(prev => {
-                          const ta = msgInputRef.current
-                          if (ta) {
-                            const start = ta.selectionStart
-                            const newVal = prev.slice(0, start) + emoji + prev.slice(ta.selectionEnd)
-                            setTimeout(() => {
-                              ta.selectionStart = ta.selectionEnd = start + emoji.length
-                              ta.focus()
-                            }, 0)
-                            return newVal
-                          }
-                          return prev + emoji
-                        })
-                        setShowEmoji(false)
-                      }}
-                    />
-                  )}
-                  <textarea
-                    ref={msgInputRef}
-                    className="messages-input"
-                    rows={2}
-                    placeholder={
-                      targetCardIds.length > 0
-                        ? `对 ${targetCardIds.map(id => resolveCard(id)?.name || '?').join('、')} 说…`
-                        : '请先选择回复目标'
-                    }
-                    value={messageText}
-                    onChange={(e) => {
-                      const val = e.target.value
-                      setMessageText(val)
-                      mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-                    }}
-                    onKeyDown={(e) => {
-                      if (mentionHook.handleMentionKeyDown(e)) return
-                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-                    }}
-                    disabled={targetCardIds.length === 0 || sending || autoRunning}
-                  />
-                  <MentionDropdown
-                    show={mentionHook.mentionActive}
-                    items={mentionHook.mentionItems}
-                    selectedIndex={mentionHook.selectedIndex}
-                    onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
-                    position={mentionHook.mentionPosition}
-                  />
-                </div>
-                <div className="messages-input-toolbar">
-                  <div className="messages-input-toolbar-left">
-                    <button type="button" data-emoji-btn className="messages-toolbar-btn" title="表情"
-                      onClick={() => setShowEmoji(!showEmoji)}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-                    </button>
+                      {showEmoji && (
+                        <EmojiPicker
+                        controlled
+                        onEmojiSelect={(emoji) => {
+                          setMessageText(prev => {
+                            const ta = msgInputRef.current
+                            if (ta) {
+                              const start = ta.selectionStart
+                              const newVal = prev.slice(0, start) + emoji + prev.slice(ta.selectionEnd)
+                              setTimeout(() => {
+                                ta.selectionStart = ta.selectionEnd = start + emoji.length
+                                ta.focus()
+                              }, 0)
+                              return newVal
+                            }
+                            return prev + emoji
+                          })
+                          setShowEmoji(false)
+                        }}
+                      />
+                    )}
+                    </div>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                      <textarea
+                        ref={msgInputRef}
+                        className="messages-input"
+                        rows={2}
+                        placeholder="输入消息…（@指定角色）"
+                        value={messageText}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setMessageText(val)
+                          mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
+                        }}
+                        onKeyDown={(e) => {
+                          if (mentionHook.handleMentionKeyDown(e)) return
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
+                        }}
+                        disabled={sending || autoRunning}
+                      />
+                      <MentionDropdown
+                        show={mentionHook.mentionActive}
+                        items={mentionHook.mentionItems}
+                        selectedIndex={mentionHook.selectedIndex}
+                        onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
+                        position={mentionHook.mentionPosition}
+                      />
+                    </div>
                     <button
                       type="button"
-                      className={`group-auto-btn${autoMode ? ' active' : ''}`}
-                      onClick={() => {
-                        if (autoMode) {
-                          stopAutoConversation()
-                        } else {
-                          setAutoMode(true)
-                          runAutoConversation()
-                        }
-                      }}
-                      title={autoMode ? '停止自动对话' : '自动对话模式'}
+                      className="messages-send-btn"
+                      disabled={!messageText.trim() || sending}
+                      onClick={handleSend}
                     >
-                      {autoMode ? (
-                        <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -2, marginRight: 3 }}><rect x="6" y="6" width="12" height="12" rx="2"/></svg> 停止</>
-                      ) : (
-                        <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: -2, marginRight: 3 }}><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity="0.9"/></svg> 自动对话</>
-                      )}
+                      {sending ? '…' : '发送'}
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    className="messages-send-btn"
-                    disabled={targetCardIds.length === 0 || !messageText.trim() || sending}
-                    onClick={handleSend}
-                  >
-                    {sending ? '…' : targetCardIds.length > 1 ? `发送 (${targetCardIds.length})` : '发送'}
-                  </button>
-                </div>
               </div>
             </div>
           )}

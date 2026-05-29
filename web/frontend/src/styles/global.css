@@ -10070,9 +10070,116 @@ select.settings-input {
 
 .group-header-count { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
 
-.messages-bubble-speaker { display: block; font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+/* ── Group Chat Header (refactored) ── */
+.group-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.group-header-left .private-chat-title {
+  flex-shrink: 0;
+}
 
-.group-target-selector { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px 0; }
+.group-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ⋯ More menu */
+.group-more-menu {
+  position: relative;
+}
+.group-more-menu-dropdown {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 160px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 4px;
+  z-index: 100;
+}
+.group-more-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-family: inherit;
+}
+.group-more-menu-item:hover {
+  background: var(--secondary);
+}
+.group-more-menu-item svg {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+.group-more-menu-item-danger:hover {
+  background: rgba(231, 76, 60, 0.1);
+  color: #e74c3c;
+}
+.group-more-menu-item-danger:hover svg {
+  color: #e74c3c;
+}
+
+/* Header auto-dialogue button */
+.group-auto-btn-header {
+  width: 32px;
+  height: 32px;
+}
+.group-auto-btn-header.active {
+  color: #e74c3c;
+  animation: pulse-fade 1.5s ease-in-out infinite;
+}
+
+/* ── Group Input Row (refactored) ── */
+.group-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px 10px;
+}
+.group-input-emoji-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 8px;
+  flex-shrink: 0;
+  margin-bottom: 2px;
+}
+.group-input-emoji-btn:hover {
+  background: var(--secondary);
+  color: var(--text);
+}
+.group-input-row .messages-input {
+  border-radius: 8px;
+}
+.group-input-row .messages-send-btn {
+  height: 36px;
+  margin-bottom: 2px;
+}
+
+.messages-bubble-speaker { display: block; font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
 
 .group-target-chip {
   display: inline-flex;
@@ -10095,30 +10202,6 @@ select.settings-input {
 }
 .group-target-chip:hover:not(.active) {
   border-color: rgba(var(--accent-rgb), 0.3);
-  color: var(--accent);
-}
-
-.group-auto-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--glass-border);
-  background: transparent;
-  font-size: 12px;
-  color: var(--text-sec);
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.group-auto-btn.active {
-  background: rgba(var(--accent-rgb), 0.15);
-  border-color: var(--accent);
-  color: var(--accent);
-  animation: pulse-fade 1.5s ease-in-out infinite;
-}
-.group-auto-btn:hover:not(.active) {
-  border-color: var(--accent);
   color: var(--accent);
 }
 
@@ -10510,13 +10593,7 @@ select.settings-input {
   opacity: 0.65;
 }
 
-/* Target selector — wrap instead of horizontal scroll */
-.group-chat-layout .group-target-selector {
-  flex-wrap: wrap;
-  overflow: visible;
-  padding: 8px 12px 0;
-  gap: 6px;
-}
+/* Target selector chips (also used in create modal) */
 .group-chat-layout .group-target-chip {
   padding: 5px 12px;
   font-size: 13px;
@@ -10561,13 +10638,6 @@ select.settings-input {
   animation: group-auto-pulse 1.2s ease-in-out infinite;
 }
 
-/* Toolbar auto button — red when running */
-.messages-input-toolbar .group-auto-btn.active {
-  background: #e74c3c;
-  border-color: #e74c3c;
-  color: #fff;
-  animation: none;
-}
 
 /* Member panel refinements */
 .group-chat-layout .group-members-panel {
