@@ -48,6 +48,7 @@ export default function MarketCardDetail() {
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const previousView = useAppStore((s) => s.previousView)
+  const previousViewContext = useAppStore((s) => s.previousViewContext)
   const clearPreviousView = useAppStore((s) => s.clearPreviousView)
 
   const [card, setCard] = useState(null)
@@ -480,7 +481,13 @@ export default function MarketCardDetail() {
     <div className="panel market-detail-page">
       <header className="market-detail-header">
         <div className="market-detail-header-left">
-          <button type="button" className="chat-back-btn" onClick={() => { clearPreviousView(); setView(previousView === 'groupChat' ? 'groupChat' : 'market') }} title="返回">
+          <button type="button" className="chat-back-btn" onClick={() => {
+            if (previousView === 'groupChat' && previousViewContext?.groupId) {
+              useAppStore.getState().setResumeGroupId(previousViewContext.groupId)
+            }
+            clearPreviousView()
+            setView(previousView === 'groupChat' ? 'groupChat' : 'market')
+          }} title="返回">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
             返回
           </button>
