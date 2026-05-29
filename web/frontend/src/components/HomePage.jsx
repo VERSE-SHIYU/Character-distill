@@ -191,6 +191,10 @@ export default function HomePage() {
   const cardCount = allCards.length
   const textCount = texts.length
   const isNewUser = allCards.length === 0 && recentSessions.length === 0 && !cardsLoading
+  const validDiscoverCards = discoverCards.filter(c => {
+    let d = {}; try { if (c.card_json) d = JSON.parse(c.card_json) } catch {}
+    return d.name || c.character_name
+  })
 
   return (
     <div className="home-page panel">
@@ -284,17 +288,17 @@ export default function HomePage() {
           <div className="home-welcome">
             <div className="home-greeting">{greeting}，{username}</div>
             <div className="home-stats-bar">
-              <div className="home-stats-item">
+              <div className="home-stats-item" onClick={() => setView('character')}>
                 <span className="home-stats-num">{cardCount}</span>
                 <span className="home-stats-label">角色</span>
               </div>
               <div className="home-stats-divider" />
-              <div className="home-stats-item">
+              <div className="home-stats-item" onClick={() => document.querySelector('.home-recent-section')?.scrollIntoView({ behavior: 'smooth' })}>
                 <span className="home-stats-num">{recentSessions.length > 0 ? recentSessions.length : '-'}</span>
                 <span className="home-stats-label">对话</span>
               </div>
               <div className="home-stats-divider" />
-              <div className="home-stats-item">
+              <div className="home-stats-item" onClick={() => setView('text')}>
                 <span className="home-stats-num">{textCount}</span>
                 <span className="home-stats-label">文本</span>
               </div>
@@ -307,25 +311,31 @@ export default function HomePage() {
               <h2 className="home-section-title">最近对话</h2>
               <div className="home-recent-container">
                 <div className="home-recent-list">
-                  {recentSessions.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className="home-recent-item"
-                      onClick={() => handleResume(s.id)}
-                      disabled={resumingId === s.id}
-                    >
-                      <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
-                      <div className="home-recent-body">
-                        <div className="home-recent-head">
-                          <span className="home-recent-name">{s.character_name}</span>
-                          <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                  {recentSessions.map((s) => {
+                    const sourceTitle = s.text_title || texts.find(t => t.id === s.text_id)?.title || texts.find(t => t.id === s.text_id)?.filename || ''
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="home-recent-item"
+                        onClick={() => handleResume(s.id)}
+                        disabled={resumingId === s.id}
+                      >
+                        <Avatar name={s.character_name || '?'} size={36} src={cardAvatars[s.card_id]} />
+                        <div className="home-recent-body">
+                          <div className="home-recent-head">
+                            <span className="home-recent-name">
+                              {s.character_name}
+                              {sourceTitle && <span className="home-recent-source"> · {sourceTitle.length > 8 ? sourceTitle.slice(0, 8) + '…' : sourceTitle}</span>}
+                            </span>
+                            <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                          </div>
+                          <span className="home-recent-preview">{previewText(s.last_message) || '点击继续对话'}</span>
                         </div>
-                        <span className="home-recent-preview">{previewText(s.last_message)}</span>
-                      </div>
-                      {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
-                    </button>
-                  ))}
+                        {resumingId === s.id && <span className="home-recent-loading">加载中…</span>}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
             </div>
@@ -424,9 +434,20 @@ export default function HomePage() {
               <div className="home-no-chars">
                 <p style={{ fontSize: 14, color: 'var(--text-dim)' }}>该分类暂无推荐角色</p>
               </div>
+            ) : validDiscoverCards.length === 0 && selectedTag === '' ? (
+              <div className="home-empty-hero">
+                <div className="home-empty-icon">✨</div>
+                <h3>还没有公开角色</h3>
+                <p>上传小说或聊天记录，AI 蒸馏出角色，成为第一个创作者</p>
+                <button className="btn-primary" onClick={() => setView('text')}>开始创作</button>
+              </div>
+            ) : validDiscoverCards.length === 0 ? (
+              <div className="home-no-chars">
+                <p style={{ fontSize: 14, color: 'var(--text-dim)' }}>该分类暂无推荐角色</p>
+              </div>
             ) : (
               <div className="home-discover-grid">
-                {discoverCards.map((c, idx) => {
+                {validDiscoverCards.map((c, idx) => {
                   let cData = {}
                   try { if (c.card_json) cData = JSON.parse(c.card_json) } catch {}
                   return (
@@ -463,7 +484,7 @@ export default function HomePage() {
                     </button>
                   )
                 })}
-                {discoverCards.length < 4 && Array.from({ length: 4 - discoverCards.length }).map((_, i) => (
+                {validDiscoverCards.length < 4 && Array.from({ length: 4 - validDiscoverCards.length }).map((_, i) => (
                   <button key={`guide-${i}`} className="market-card-v2 home-guide-card" onClick={() => setView('text')}>
                     <div className="home-guide-card-inner">
                       <span className="home-guide-card-plus">+</span>

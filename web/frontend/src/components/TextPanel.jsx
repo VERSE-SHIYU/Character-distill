@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, Fragment } from 'react'
 import { createPortal } from 'react-dom'
 import useAppStore from '../store/useAppStore'
 import ErrorBox from './common/ErrorBox'
@@ -472,6 +472,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
   const [filterTextId, setFilterTextId] = useState('')
   const [menuOpen, setMenuOpen] = useState(null)
   const [editCard, setEditCard] = useState(null)
+  const [expandedGroups, setExpandedGroups] = useState({})
   const menuRef = useRef(null)
 
   // Close menu on outside click
@@ -528,6 +529,22 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
 
   const distinctTextIds = [...new Set(allCards.filter((c) => c.text_id).map((c) => c.text_id))]
 
+  const grouped = (() => {
+    const map = new Map()
+    filtered.forEach(c => {
+      const data = parseCardJson(c)
+      const name = data.name || c.name || '?'
+      if (!map.has(name)) map.set(name, [])
+      map.get(name).push(c)
+    })
+    const result = []
+    map.forEach((cards, name) => {
+      cards.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      result.push({ name, latest: cards[0], versions: cards })
+    })
+    return result
+  })()
+
   return (
     <div className="creation-char-section">
       <header className="panel-header">
@@ -548,6 +565,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
           {distinctTextIds.map((tid) => {
             const t = texts.find((tx) => tx.id === tid)
             const label = t?.title || t?.filename || tid.slice(0, 8)
+            const shortLabel = label.length > 8 ? label.slice(0, 8) + '…' : label
             const count = allCards.filter((c) => c.text_id === tid).length
             return (
               <button
@@ -555,8 +573,9 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                 type="button"
                 className={`creation-char-filter-pill${filterTextId === tid ? ' active' : ''}`}
                 onClick={() => setFilterTextId(tid)}
+                title={label}
               >
-                {label} ({count})
+                {shortLabel} ({count})
               </button>
             )
           })}
@@ -572,74 +591,161 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
         </div>
       ) : (
         <div className="creation-char-grid">
-          {filtered.map((c) => {
+          {grouped.map((group) => {
+            const c = group.latest
             const data = parseCardJson(c)
             const name = data.name || c.name || '?'
             const identity = data.identity || ''
             const isPublic = !!c.published_id
             const sourceText = c._source || ''
             const createdAt = c.created_at || ''
+            const hasVersions = group.versions.length > 1
+            const isExpanded = !!expandedGroups[name]
             return (
-              <div key={c.id} className="creation-char-card">
-                <Avatar name={name} src={null} size={48} />
-                <div className="creation-char-info">
-                  <div className="creation-char-name">{name}</div>
-                  <div className="creation-char-identity">{identity}</div>
-                  <div className="creation-char-footer">
-                    {sourceText && <span className="creation-char-source">{sourceText}</span>}
-                    {createdAt && <span className="creation-char-time">{formatTime(createdAt)}</span>}
+              <Fragment key={c.id}>
+                <div className="creation-char-card">
+                  <Avatar name={name} src={null} size={48} />
+                  <div className="creation-char-info">
+                    <div className="creation-char-name-row">
+                      <span className="creation-char-name">{name}</span>
+                      <span className={`creation-char-status${isPublic ? ' public' : ''}`}>
+                        <span className={`status-dot ${isPublic ? 'public' : 'private'}`} />
+                        {isPublic ? '已公开' : '私有'}
+                      </span>
+                    </div>
+                    <div className="creation-char-identity">{identity}</div>
+                    <div className="creation-char-footer">
+                      {sourceText && <span className="creation-char-source" title={sourceText}>{sourceText.length > 10 ? sourceText.slice(0, 10) + '…' : sourceText}</span>}
+                      {createdAt && <span className="creation-char-time">{formatTime(createdAt)}</span>}
+                      {hasVersions && (
+                        <span className="creation-char-version-badge" onClick={(e) => { e.stopPropagation(); setExpandedGroups(prev => ({ ...prev, [name]: !isExpanded })) }}>
+                          {isExpanded ? '收起' : `共${group.versions.length}个版本`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="creation-char-menu-wrap">
+                    <button
+                      type="button"
+                      className="creation-char-menu-btn"
+                      onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === c.id ? null : c.id) }}
+                    >
+                      ⋯
+                    </button>
+                    {menuOpen === c.id && (
+                      <div className="creation-char-dropdown" ref={menuRef}>
+                        <button type="button" onClick={() => { setMenuOpen(null); setEditCard(c) }}>
+                          编辑
+                        </button>
+                        <button type="button" onClick={async () => {
+                          setMenuOpen(null)
+                          try {
+                            await startChat(c)
+                          } catch {}
+                        }}>
+                          聊天
+                        </button>
+                        <button type="button" onClick={() => {
+                          setMenuOpen(null)
+                          setCurrentMarketCardId(c.id)
+                          setView('marketCardDetail')
+                        }}>
+                          发布到市场
+                        </button>
+                        <button type="button" className="danger" onClick={async () => {
+                          setMenuOpen(null)
+                          if (!confirm(`确定删除「${name}」？`)) return
+                          try {
+                            await fetchWithTimeout(`/api/cards/${c.id}`, {
+                              method: 'DELETE',
+                              headers: { ...getAuthHeaders() },
+                            })
+                            setAllCards((prev) => prev.filter((x) => x.id !== c.id))
+                          } catch (err) {
+                            console.error('Delete card failed:', err)
+                          }
+                        }}>
+                          删除
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-                <span className={`creation-char-status${isPublic ? ' public' : ''}`}>
-                  {isPublic ? '已公开' : '私有'}
-                </span>
-                <div className="creation-char-menu-wrap">
-                  <button
-                    type="button"
-                    className="creation-char-menu-btn"
-                    onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === c.id ? null : c.id) }}
-                  >
-                    ⋯
-                  </button>
-                  {menuOpen === c.id && (
-                    <div className="creation-char-dropdown" ref={menuRef}>
-                      <button type="button" onClick={() => { setMenuOpen(null); setEditCard(c) }}>
-                        编辑
-                      </button>
-                      <button type="button" onClick={async () => {
-                        setMenuOpen(null)
-                        try {
-                          await startChat(c)
-                        } catch {}
-                      }}>
-                        聊天
-                      </button>
-                      <button type="button" onClick={() => {
-                        setMenuOpen(null)
-                        setCurrentMarketCardId(c.id)
-                        setView('marketCardDetail')
-                      }}>
-                        发布到市场
-                      </button>
-                      <button type="button" className="danger" onClick={async () => {
-                        setMenuOpen(null)
-                        if (!confirm(`确定删除「${name}」？`)) return
-                        try {
-                          await fetchWithTimeout(`/api/cards/${c.id}`, {
-                            method: 'DELETE',
-                            headers: { ...getAuthHeaders() },
-                          })
-                          setAllCards((prev) => prev.filter((x) => x.id !== c.id))
-                        } catch (err) {
-                          console.error('Delete card failed:', err)
-                        }
-                      }}>
-                        删除
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
+                {hasVersions && isExpanded && (
+                  <div className="creation-char-version-list">
+                    {group.versions.slice(1).map((vc) => {
+                      const vData = parseCardJson(vc)
+                      const vIdentity = vData.identity || ''
+                      const vIsPublic = !!vc.published_id
+                      const vSourceText = vc._source || ''
+                      const vCreatedAt = vc.created_at || ''
+                      return (
+                        <div key={vc.id} className="creation-char-card-version">
+                          <Avatar name={name} src={null} size={32} />
+                          <div className="creation-char-info">
+                            <div className="creation-char-name-row">
+                              <span className="creation-char-name">{name}</span>
+                              <span className={`creation-char-status${vIsPublic ? ' public' : ''}`}>
+                                <span className={`status-dot ${vIsPublic ? 'public' : 'private'}`} />
+                                {vIsPublic ? '已公开' : '私有'}
+                              </span>
+                            </div>
+                            <div className="creation-char-identity">{vIdentity}</div>
+                            <div className="creation-char-footer">
+                              {vSourceText && <span className="creation-char-source" title={vSourceText}>{vSourceText.length > 10 ? vSourceText.slice(0, 10) + '…' : vSourceText}</span>}
+                              {vCreatedAt && <span className="creation-char-time">{formatTime(vCreatedAt)}</span>}
+                            </div>
+                          </div>
+                          <div className="creation-char-menu-wrap">
+                            <button
+                              type="button"
+                              className="creation-char-menu-btn"
+                              onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === vc.id ? null : vc.id) }}
+                            >
+                              ⋯
+                            </button>
+                            {menuOpen === vc.id && (
+                              <div className="creation-char-dropdown" ref={menuRef}>
+                                <button type="button" onClick={() => { setMenuOpen(null); setEditCard(vc) }}>
+                                  编辑
+                                </button>
+                                <button type="button" onClick={async () => {
+                                  setMenuOpen(null)
+                                  try { await startChat(vc) } catch {}
+                                }}>
+                                  聊天
+                                </button>
+                                <button type="button" onClick={() => {
+                                  setMenuOpen(null)
+                                  setCurrentMarketCardId(vc.id)
+                                  setView('marketCardDetail')
+                                }}>
+                                  发布到市场
+                                </button>
+                                <button type="button" className="danger" onClick={async () => {
+                                  setMenuOpen(null)
+                                  if (!confirm(`确定删除「${name}」？`)) return
+                                  try {
+                                    await fetchWithTimeout(`/api/cards/${vc.id}`, {
+                                      method: 'DELETE',
+                                      headers: { ...getAuthHeaders() },
+                                    })
+                                    setAllCards((prev) => prev.filter((x) => x.id !== vc.id))
+                                  } catch (err) {
+                                    console.error('Delete card failed:', err)
+                                  }
+                                }}>
+                                  删除
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </Fragment>
             )
           })}
         </div>
