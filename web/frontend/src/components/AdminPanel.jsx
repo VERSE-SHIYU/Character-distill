@@ -127,8 +127,14 @@ function isOnline(user) {
   return (now - then) < 10 * 60 * 1000
 }
 
-function fmtDateTime(iso) {
-  if (!iso) return '-'
+function fmtTimeAgo(iso) {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  const now = Date.now()
+  const diff = Math.floor((now - then) / 1000)
+  if (diff < 60) return '刚刚'
+  if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
+  if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
   return iso.slice(0, 16).replace('T', ' ')
 }
 
@@ -436,7 +442,8 @@ function UsersTab() {
                 <th style={{ minWidth: 70 }}>角色</th>
                 <th style={{ minWidth: 70 }}>状态</th>
                 <th style={{ minWidth: 70 }}>在线</th>
-                <th style={{ minWidth: 140 }}>最后登录</th>
+                <th style={{ minWidth: 100 }}>最后活跃</th>
+                <th style={{ minWidth: 100 }}>最后登录</th>
                 <th style={{ minWidth: 100 }}>注册时间</th>
                 <th style={{ minWidth: 200 }}>操作</th>
               </tr>
@@ -453,11 +460,12 @@ function UsersTab() {
                     </span>
                   </td>
                   <td>
-                    <span className={`online-badge${isOnline(u) ? ' online' : ''}`}>
-                      {isOnline(u) ? '在线' : '离线'}
+                    <span className={`online-badge${u.online ? ' online' : ''}`} title={u.last_active_at ? `最后活跃: ${u.last_active_at.slice(0, 16).replace('T', ' ')}` : ''}>
+                      {u.online ? '在线' : u.last_active_at ? `${fmtTimeAgo(u.last_active_at)}` : '离线'}
                     </span>
                   </td>
-                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDateTime(u.last_login_at)}</td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{u.last_active_at ? u.last_active_at.slice(0, 16).replace('T', ' ') : '-'}</td>
+                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDate(u.last_login_at)}</td>
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
                     <button
@@ -672,10 +680,19 @@ function UsersTab() {
                     <span className={`admin-status${detailData.is_disabled ? ' disabled' : ''}`}>
                       {detailData.is_disabled ? '已禁用' : '正常'}
                     </span>
+                    <span style={{ marginLeft: 8 }}>
+                      <span className={`online-badge${detailData.online ? ' online' : ''}`}>
+                        {detailData.online ? '在线' : '离线'}
+                      </span>
+                    </span>
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">注册时间</span>
                     <span className="user-detail-value">{detailData.created_at?.slice(0, 16).replace('T', ' ')}</span>
+                  </div>
+                  <div className="user-detail-field">
+                    <span className="user-detail-label">最后活跃</span>
+                    <span className="user-detail-value">{detailData.last_active_at ? detailData.last_active_at.slice(0, 16).replace('T', ' ') : '-'}</span>
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">最后登录</span>

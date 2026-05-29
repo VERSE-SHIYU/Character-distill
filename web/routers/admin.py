@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -36,7 +37,19 @@ async def list_users(
     _admin: dict = Depends(require_admin),
     storage: SQLiteStore = Depends(get_storage),
 ) -> list[dict[str, Any]]:
-    return await storage.get_all_users()
+    users = await storage.get_all_users()
+    now = time.time()
+    for u in users:
+        ts = u.get("last_active_at") or u.get("last_login_at")
+        if ts:
+            try:
+                dt = __import__("datetime").datetime.fromisoformat(ts)
+                u["online"] = (now - dt.timestamp()) < 300  # 5 min
+            except Exception:
+                u["online"] = False
+        else:
+            u["online"] = False
+    return users
 
 
 @router.get("/dashboard")
@@ -411,7 +424,17 @@ async def admin_user_detail(
 ) -> dict:
     """Get detailed user info for admin: stats, cards, sessions, usage, login history."""
     try:
-        return await storage.get_user_detail(user_id)
+        detail = await storage.get_user_detail(user_id)
+        ts = detail.get("last_active_at") or detail.get("last_login_at")
+        if ts:
+            try:
+                dt = __import__("datetime").datetime.fromisoformat(ts)
+                detail["online"] = (time.time() - dt.timestamp()) < 300
+            except Exception:
+                detail["online"] = False
+        else:
+            detail["online"] = False
+        return detail
     except ValueError:
         raise HTTPException(404, "用户不存在")
 

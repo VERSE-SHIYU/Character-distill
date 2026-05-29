@@ -577,6 +577,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Coref resolved migration failed: {exc}")
 
+                    # Run 057_presence_visibility migration (ALTER TABLE ADD COLUMN)
+                    presence_vis_path = migrations_dir / "057_presence_visibility.sql"
+                    if presence_vis_path.exists():
+                        try:
+                            await conn.executescript(presence_vis_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Presence visibility migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2036,7 +2046,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio FROM users WHERE id = ?",
+                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -2064,6 +2074,22 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Set user privacy failed: {exc}")
+            return False
+
+    async def set_user_presence_visibility(self, user_id: str, visibility: str) -> bool:
+        """Set presence_visibility for a user: 'all', 'friends', or 'none'."""
+        if visibility not in ('all', 'friends', 'none'):
+            return False
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET presence_visibility = ? WHERE id = ?",
+                    (visibility, user_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Set presence visibility failed: {exc}")
             return False
 
     # ---- Email & verification codes ----
@@ -2158,7 +2184,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -3816,6 +3842,62 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get following count failed: {exc}")
             return 0
+
+    async def is_friend(self, user_id: str, target_id: str) -> bool:
+        """Mutual follow = friend."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM user_follows WHERE follower_id = ? AND following_id = ?",
+                    (user_id, target_id),
+                )
+                a = (await cursor.fetchone())[0]
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM user_follows WHERE follower_id = ? AND following_id = ?",
+                    (target_id, user_id),
+                )
+                b = (await cursor.fetchone())[0]
+            return a > 0 and b > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Is friend check failed: {exc}")
+            return False
+
+    async def can_see_online_status(self, viewer_id: str, target_id: str, is_admin: bool = False) -> bool:
+        """Check if viewer can see target's online status based on target's privacy setting + reciprocity."""
+        if viewer_id == target_id:
+            return True
+        if is_admin:
+            return True
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT presence_visibility FROM users WHERE id = ?", (target_id,)
+                )
+                row = await cursor.fetchone()
+                if not row:
+                    return False
+                target_vis = row[0]
+
+                # Also check viewer's own setting for reciprocity
+                cursor = await conn.execute(
+                    "SELECT presence_visibility FROM users WHERE id = ?", (viewer_id,)
+                )
+                viewer_row = await cursor.fetchone()
+        except Exception as exc:
+            print(f"[SQLiteStore] Can see online status failed: {exc}")
+            return False
+
+        # Reciprocity: if viewer hides their own status, they can't see others'
+        if viewer_row and viewer_row[0] == 'none':
+            return False
+
+        if target_vis == 'all':
+            return True
+        if target_vis == 'none':
+            return False
+        if target_vis == 'friends':
+            return await self.is_friend(viewer_id, target_id)
+        return False
 
     # ──── Market publish / version / fork API ────
 

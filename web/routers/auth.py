@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
 import secrets
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -98,6 +100,10 @@ class TokenResponse(BaseModel):
 
 # ---- Dependency ----
 
+# ── Throttled last_active_at tracker ──
+_last_active_throttle: dict[str, float] = {}
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: SQLiteStore = Depends(get_storage),
@@ -119,6 +125,14 @@ async def get_current_user(
         raise HTTPException(401, "用户不存在")
     if user.get("is_disabled"):
         raise HTTPException(403, "账号已被禁用")
+
+    # ── Throttled last_active_at update (fire-and-forget, max 1/min) ──
+    now = time.time()
+    last = _last_active_throttle.get(user_id, 0.0)
+    if now - last > 60:
+        _last_active_throttle[user_id] = now
+        asyncio.ensure_future(storage.update_last_active(user_id))
+
     return user
 
 
@@ -484,6 +498,71 @@ async def update_bio(
         "UPDATE users SET bio = ? WHERE id = ?", (bio, user["id"])
     )
     return {"ok": True, "bio": bio}
+
+
+# ---- Presence visibility ----
+
+@router.get("/presence-visibility")
+@limiter.limit("30/minute")
+async def get_presence_visibility(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, str]:
+    """Get current user's presence visibility setting."""
+    return {"presence_visibility": user.get("presence_visibility", "friends")}
+
+
+@router.put("/presence-visibility")
+@limiter.limit("10/minute")
+async def update_presence_visibility(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Update presence visibility setting: 'all', 'friends', or 'none'."""
+    body = await request.json()
+    visibility = body.get("presence_visibility", "").strip()
+    if visibility not in ("all", "friends", "none"):
+        raise HTTPException(400, "presence_visibility 必须是 all/friends/none")
+    ok = await storage.set_user_presence_visibility(user["id"], visibility)
+    if not ok:
+        raise HTTPException(500, "保存失败")
+    return {"ok": True, "presence_visibility": visibility}
+
+
+@router.get("/user/{user_id}/online")
+@limiter.limit("60/minute")
+async def get_user_online_status(
+    request: Request,
+    user_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Get another user's online status with privacy enforcement."""
+    target = await storage.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+
+    can_see = await storage.can_see_online_status(
+        user["id"], user_id, is_admin=user.get("is_admin", False)
+    )
+    if not can_see:
+        return {"online": None, "last_active_at": None, "hidden": True}
+
+    ts = target.get("last_active_at") or target.get("last_login_at")
+    online = False
+    if ts:
+        try:
+            dt = datetime.fromisoformat(ts)
+            online = (time.time() - dt.timestamp()) < 300
+        except Exception:
+            pass
+    return {
+        "online": online,
+        "last_active_at": target.get("last_active_at"),
+        "hidden": False,
+    }
 
 
 # ---- Helpers ----
