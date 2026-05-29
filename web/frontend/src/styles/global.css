@@ -10235,7 +10235,9 @@ select.settings-input {
   width: 240px;
   flex-shrink: 0;
   border-left: 1px solid var(--glass-border);
-  overflow-y: auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--glass-bg);
@@ -10381,22 +10383,23 @@ select.settings-input {
 /* GroupChatPage right panel → history sidebar mode */
 .group-right-panel.history-sidebar-mode {
   width: auto;
-  overflow: hidden;
+  height: 100%;
+  max-height: 100%;
+  overflow-y: auto;
   transition: none;
   min-height: 0;
 }
 
-/* History section: flex:1 so .history-sidebar-content height:100% resolves to computed height */
-.group-right-panel.history-sidebar-mode > .group-right-section:has(.history-sidebar-content) {
-  flex: 1;
+/* All sections: fill remaining space equally, scroll independently when content overflows */
+.group-right-panel.history-sidebar-mode > .group-right-section {
+  flex: 1 1 0%;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
-/* Members section: auto-height, scroll if overflow */
-.group-right-panel.history-sidebar-mode > .group-right-section:not(:has(.history-sidebar-content)) {
-  overflow-y: auto;
-  flex-shrink: 0;
+/* First section (history, when char info absent): remove top gap to align with chat header */
+.group-right-panel.history-sidebar-mode > .group-right-section:first-child {
+  padding-top: 0;
 }
 
 .group-right-panel.collapsed.history-sidebar-mode {
@@ -10511,6 +10514,7 @@ select.settings-input {
   align-items: center;
   border-bottom: 1px solid var(--glass-border);
   position: relative;
+  flex-shrink: 0;
 }
 .group-char-info-close {
   position: absolute;
@@ -10570,6 +10574,9 @@ select.settings-input {
 .private-chat.group-chat-layout {
   flex-direction: row;
   align-items: stretch;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .group-chat-main {
@@ -10577,6 +10584,7 @@ select.settings-input {
   flex-direction: column;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .group-chat-layout .private-chat-body {
