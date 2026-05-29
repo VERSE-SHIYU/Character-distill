@@ -113,6 +113,21 @@ async def list_trash(
     return await storage.list_deleted_cards(user["id"])
 
 
+@router.get("/{card_id}/detail")
+@limiter.limit("60/minute")
+async def get_card_detail(
+    card_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """Get card detail with author info — works for both market and non-market cards."""
+    card = await storage.get_card_detail(card_id, user["id"])
+    if not card:
+        raise HTTPException(404, "角色不存在")
+    return card
+
+
 @router.get("/{card_id}")
 @limiter.limit("60/minute")
 async def get_card(

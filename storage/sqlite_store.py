@@ -896,6 +896,40 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get card failed: {exc}")
             raise
 
+    async def get_card_detail(self, card_id: str, user_id: str) -> dict | None:
+        """Get card detail with author info — works for both market and non-market cards."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT c.id, c.name, c.card_json, c.user_id, c.likes, c.created_at,
+                              c.avatar_data, c.visibility,
+                              c.market_description, c.market_tags, c.publish_message,
+                              COALESCE(u.username, '') AS author_name,
+                              COALESCE(t.title, '') AS text_title,
+                              (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                              COALESCE(u.avatar_data, '') AS author_avatar
+                        FROM cards c
+                        LEFT JOIN users u ON u.id = c.user_id
+                        LEFT JOIN texts t ON t.id = c.text_id
+                        WHERE c.id = ? AND c.deleted_at IS NULL""",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+                card = dict(row) if row else None
+                if card:
+                    like_cursor = await conn.execute(
+                        "SELECT 1 FROM card_likes WHERE card_id = ? AND user_id = ?",
+                        (card_id, user_id),
+                    )
+                    card["liked_by_me"] = await like_cursor.fetchone() is not None
+                    card["is_market_card"] = card["visibility"] == "public"
+                    if "visibility" in card:
+                        del card["visibility"]
+                return card
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card detail failed: {exc}")
+            return None
+
     async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
         """Get a single public card with author info and like status."""
         try:

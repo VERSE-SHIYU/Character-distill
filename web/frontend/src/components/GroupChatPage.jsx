@@ -37,9 +37,9 @@ export default function GroupChatPage() {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
-  const viewCard = useAppStore((s) => s.viewCard)
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const clearPreviousView = useAppStore((s) => s.clearPreviousView)
+  const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -1136,9 +1136,10 @@ export default function GroupChatPage() {
                         )}
                         {selectedCharCardInfo.rawCard ? (
                           <button type="button" className="btn-primary btn-sm" style={{ marginTop: 12, width: '100%' }} onClick={() => {
+                            const raw = selectedCharCardInfo.rawCard
+                            setCurrentMarketCardId(raw?.id || raw?.card_id)
                             setPreviousView('groupChat', { groupId: currentGroup?.id })
-                            setView('character')
-                            viewCard(selectedCharCardInfo.rawCard)
+                            setView('marketCardDetail')
                             setSelectedCharCardInfo(null)
                           }}>
                             查看完整卡片
@@ -1176,9 +1177,9 @@ export default function GroupChatPage() {
                             }
                             const handleMemberClick = () => {
                               if (!card) return
+                              setCurrentMarketCardId(card.id || card.card_id)
                               setPreviousView('groupChat', { groupId: currentGroup?.id })
-                              setView('character')
-                              viewCard(card)
+                              setView('marketCardDetail')
                             }
                             return (
                               <div key={cardId} className="group-member-item" style={{ cursor: 'pointer' }} onClick={handleMemberClick}>

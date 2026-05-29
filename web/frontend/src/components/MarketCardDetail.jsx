@@ -47,6 +47,8 @@ export default function MarketCardDetail() {
   const startChat = useAppStore((s) => s.startChat)
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
+  const previousView = useAppStore((s) => s.previousView)
+  const clearPreviousView = useAppStore((s) => s.clearPreviousView)
 
   const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -95,7 +97,7 @@ export default function MarketCardDetail() {
   useEffect(() => {
     if (!cardId) { setView('market'); return }
     setLoading(true)
-    fetchWithTimeout(`/api/market/card/${cardId}`)
+    fetchWithTimeout(`/api/card/${cardId}/detail`)
       .then((r) => r.json())
       .then((data) => {
         setCard(data)
@@ -105,7 +107,12 @@ export default function MarketCardDetail() {
       .catch((err) => {
         console.error('[MarketCardDetail] load failed:', err)
         useAppStore.getState().setCurrentMarketCardId(null)
-        setView('market')
+        if (previousView === 'groupChat') {
+          clearPreviousView()
+          setView('groupChat')
+        } else {
+          setView('market')
+        }
       })
       .finally(() => setLoading(false))
   }, [cardId, setView])
@@ -462,12 +469,13 @@ export default function MarketCardDetail() {
   const background = cardData.background || ''
   const cardStyle = cardData.speaking_style || {}
   const rels = cardData.relationships || []
+  const isMarketCard = card?.is_market_card ?? true
 
   return (
     <div className="panel market-detail-page">
       <header className="market-detail-header">
         <div className="market-detail-header-left">
-          <button type="button" className="chat-back-btn" onClick={() => setView('market')} title="返回">
+          <button type="button" className="chat-back-btn" onClick={() => { clearPreviousView(); setView(previousView === 'groupChat' ? 'groupChat' : 'market') }} title="返回">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
             返回
           </button>
@@ -593,14 +601,16 @@ export default function MarketCardDetail() {
 
             {/* Stats + use button */}
             <div className="market-detail-stats">
-              <button
-                type="button"
-                className={`market-detail-like-btn${liked ? ' liked' : ''}`}
-                onClick={handleLike}
-              >
-                {liked ? <Heart size={16} fill="currentColor" /> : <Heart size={16} />} <span className="market-detail-stat-num">{likes}</span>
-              </button>
-              <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>
+              {isMarketCard && (
+                <button
+                  type="button"
+                  className={`market-detail-like-btn${liked ? ' liked' : ''}`}
+                  onClick={handleLike}
+                >
+                  {liked ? <Heart size={16} fill="currentColor" /> : <Heart size={16} />} <span className="market-detail-stat-num">{likes}</span>
+                </button>
+              )}
+              {isMarketCard && <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>}
             </div>
             <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
               {forking ? '添加中…' : '使用角色'}
@@ -688,6 +698,7 @@ export default function MarketCardDetail() {
               )}
             </div>
 
+            {isMarketCard && (<>
             <div className="market-detail-tabs">
               <button type="button" className={`market-detail-tab${activeTab === 'detail' ? ' active' : ''}`} onClick={() => setActiveTab('detail')}>
                 <MessageSquare size={14} /> 评论 ({comments.length})
@@ -806,6 +817,7 @@ export default function MarketCardDetail() {
                 )}
               </div>
             )}
+            </>)}
           </main>
         </div>
       </div>
