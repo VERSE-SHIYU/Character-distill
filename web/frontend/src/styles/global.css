@@ -2772,7 +2772,7 @@ html.theme-aurora::before {
   min-width: 240px;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
   padding: 4px 0;
 }
 
