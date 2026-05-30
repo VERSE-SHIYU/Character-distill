@@ -131,6 +131,39 @@ export default function MinePage() {
   const [postsLoading, setPostsLoading] = useState(false)
   const [postContent, setPostContent] = useState('')
   const [posting, setPosting] = useState(false)
+  const [postLocation, setPostLocation] = useState('')
+  const [locationLoading, setLocationLoading] = useState(false)
+
+  const handleAddLocation = () => {
+    if (!navigator.geolocation) {
+      alert('您的浏览器不支持定位功能')
+      return
+    }
+    setLocationLoading(true)
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1&accept-language=zh`,
+            { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
+          )
+          const data = await res.json()
+          const address = data.display_name || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+          setPostLocation(address)
+        } catch {
+          setPostLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`)
+        } finally {
+          setLocationLoading(false)
+        }
+      },
+      () => {
+        alert('无法获取位置，请检查浏览器定位权限')
+        setLocationLoading(false)
+      },
+      { enableHighAccuracy: false, timeout: 10000 }
+    )
+  }
 
   // Following state
   const [following, setFollowing] = useState([])
@@ -678,6 +711,26 @@ export default function MinePage() {
                   </div>
                   <button
                     type="button"
+                    className={`mine-composer-loc-btn${postLocation ? ' has-loc' : ''}`}
+                    onClick={handleAddLocation}
+                    disabled={locationLoading}
+                    title="添加位置"
+                  >
+                    {locationLoading ? '⏳ 定位中…' : postLocation ? `📍 ${postLocation.slice(0, 20)}${postLocation.length > 20 ? '…' : ''}` : '📍 添加位置'}
+                  </button>
+                  {postLocation && (
+                    <button
+                      type="button"
+                      className="mine-composer-loc-clear"
+                      onClick={() => setPostLocation('')}
+                      title="取消位置"
+                    >
+                      ✕
+                    </button>
+                  )}
+                  <div style={{ flex: 1 }} />
+                  <button
+                    type="button"
                     className="btn-primary btn-sm"
                     disabled={!postContent.trim() || posting}
                     onClick={async () => {
@@ -686,9 +739,10 @@ export default function MinePage() {
                         await fetchWithTimeout('/api/market/author/posts', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                          body: JSON.stringify({ content: postContent, visibility: 'public' }),
+                          body: JSON.stringify({ content: postContent, visibility: 'public', location: postLocation }),
                         })
                         setPostContent('')
+                        setPostLocation('')
                         const res = await fetchWithTimeout(`/api/market/author/${userId}/posts`)
                         const data = await res.json()
                         setPosts(data.posts || [])

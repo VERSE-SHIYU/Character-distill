@@ -54,6 +54,7 @@ class PostRequest(BaseModel):
     visibility: str = "public"
     images: str = ""
     card_id: str = ""
+    location: str = ""
 
 
 class PublishRequest(BaseModel):
@@ -344,7 +345,7 @@ async def create_post(
         raise HTTPException(400, "内容不能为空")
     if body.visibility not in ("public", "private"):
         raise HTTPException(400, "visibility 必须是 'public' 或 'private'")
-    post = await storage.add_post(user["id"], body.content.strip(), body.visibility, body.images, body.card_id)
+    post = await storage.add_post(user["id"], body.content.strip(), body.visibility, body.images, body.card_id, body.location)
     return {"post": post}
 
 

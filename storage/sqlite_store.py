@@ -616,6 +616,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Group persona migration failed: {exc}")
 
+                    # Run 061_post_location migration
+                    post_loc_path = migrations_dir / "061_post_location.sql"
+                    if post_loc_path.exists():
+                        try:
+                            await conn.executescript(post_loc_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Post location migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3408,23 +3418,23 @@ class SQLiteStore(StorageBase):
 
     # ── User Posts ──
 
-    async def add_post(self, user_id: str, content: str, visibility: str, images: str = "", card_id: str = "") -> dict:
+    async def add_post(self, user_id: str, content: str, visibility: str, images: str = "", card_id: str = "", location: str = "") -> dict:
         """Add a new post. Returns the created post dict."""
         import uuid
         post_id = uuid.uuid4().hex[:12]
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO user_posts (id, user_id, content, visibility, images, card_id) VALUES (?, ?, ?, ?, ?, ?)",
-                    (post_id, user_id, content, visibility, images, card_id),
+                    "INSERT INTO user_posts (id, user_id, content, visibility, images, card_id, location) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (post_id, user_id, content, visibility, images, card_id, location),
                 )
                 await conn.commit()
                 cursor = await conn.execute(
-                    "SELECT id, user_id, content, visibility, images, card_id, likes, created_at FROM user_posts WHERE id = ?",
+                    "SELECT id, user_id, content, visibility, images, card_id, likes, created_at, location FROM user_posts WHERE id = ?",
                     (post_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0}
+            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0, "location": location}
         except Exception as exc:
             print(f"[SQLiteStore] Add post failed: {exc}")
             raise
@@ -3433,7 +3443,7 @@ class SQLiteStore(StorageBase):
         """Get posts for a user. viewer_id==user_id sees all, others see only public."""
         try:
             async with await self._connect() as conn:
-                base = """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id, p.likes, p.created_at,
+                base = """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id, p.likes, p.created_at, p.location,
                                  COALESCE(u.username, '') AS author_name,
                                  COALESCE(u.avatar_data, '') AS author_avatar,
                                  (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
@@ -3474,7 +3484,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 offset = (page - 1) * page_size
                 cursor = await conn.execute(
-                    """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id,
+                    """SELECT p.id, p.user_id, p.content, p.visibility, p.images, p.card_id, p.location,
                               p.likes, p.created_at,
                               COALESCE(u.username, '') AS author_name,
                               COALESCE(u.avatar_data, '') AS author_avatar,

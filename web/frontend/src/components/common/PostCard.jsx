@@ -195,6 +195,9 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
         )
       })()}
 
+      {/* Location */}
+      {post.location && <div className="post-card-location">{'\u{1F4CD}'} {post.location}</div>}
+
       {/* Action bar */}
       <div className="post-card-actions">
         <button
