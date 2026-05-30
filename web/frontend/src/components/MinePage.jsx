@@ -716,7 +716,17 @@ export default function MinePage() {
                     disabled={locationLoading}
                     title="添加位置"
                   >
-                    {locationLoading ? '⏳ 定位中…' : postLocation ? `📍 ${postLocation.slice(0, 20)}${postLocation.length > 20 ? '…' : ''}` : '📍 添加位置'}
+                    {locationLoading ? (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin-icon"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                        定位中…
+                      </>
+                    ) : (
+                      <>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        {postLocation ? postLocation.slice(0, 20) + (postLocation.length > 20 ? '…' : '') : '添加位置'}
+                      </>
+                    )}
                   </button>
                   {postLocation && (
                     <button
@@ -725,7 +735,7 @@ export default function MinePage() {
                       onClick={() => setPostLocation('')}
                       title="取消位置"
                     >
-                      ✕
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   )}
                   <div style={{ flex: 1 }} />

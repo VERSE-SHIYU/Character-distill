@@ -12104,6 +12104,13 @@ select.settings-input {
   background: var(--secondary);
   color: var(--text);
 }
+.spin-icon {
+  animation: spin 1.5s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 .mine-composer-emoji-panel {
   position: absolute;
   bottom: 100%;
