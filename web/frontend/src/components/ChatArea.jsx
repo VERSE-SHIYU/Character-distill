@@ -21,6 +21,7 @@ export default function ChatArea() {
   const resumeLoading = useAppStore((s) => s.resumeLoading)
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
 
   // Auto-recover: only create session when user is actually on the chat view
@@ -60,7 +61,11 @@ export default function ChatArea() {
             <button
               type="button"
               className="home-action-btn"
-              onClick={() => setView('character')}
+              onClick={() => {
+                const tid = currentTextId || currentCard?.text_id
+                if (tid) selectText(tid)
+                else setView('character')
+              }}
             >
               <User size={16} /> 选择已有角色
             </button>
@@ -477,7 +482,11 @@ function ChatView() {
           <div style={{ position: 'relative', flexShrink: 0 }}>
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
-          <button type="button" className="chat-topbar-back" onClick={() => setView('character')} title="返回">
+          <button type="button" className="chat-topbar-back" onClick={() => {
+            const tid = currentCard?.text_id
+            if (tid) selectText(tid)
+            else setView('character')
+          }} title="返回">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <button
@@ -565,7 +574,12 @@ function ChatView() {
             <FontIncrease size={16} />
             <span>放大字号</span>
           </button>
-          <button type="button" className="chat-more-item" onClick={() => { setView('character'); setShowMore(false) }}>
+          <button type="button" className="chat-more-item" onClick={() => {
+            const tid = currentCard?.text_id
+            if (tid) { selectText(tid) }
+            else { setView('character') }
+            setShowMore(false)
+          }}>
             <User size={16} />
             <span>角色列表</span>
           </button>
@@ -622,7 +636,11 @@ function ChatView() {
             <button
               type="button"
               className="chat-context-link"
-              onClick={() => setView('character')}
+              onClick={() => {
+                const tid = currentCard?.text_id || currentTextId
+                if (tid) selectText(tid)
+                else setView('character')
+              }}
             >
               {textLabel}
             </button>
