@@ -143,6 +143,12 @@ export default function MessagesPage() {
           >
             <div className="messages-sidebar-header">
               <h2 className="messages-sidebar-title">私信</h2>
+              {activeOtherId && (
+                <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+                  返回
+                </button>
+              )}
             </div>
             {convLoading ? (
               <Loading text="加载中…" />
@@ -185,7 +191,6 @@ export default function MessagesPage() {
               <PrivateMessageChat
                 otherUserId={activeOtherId}
                 otherUsername={activeUsername}
-                onBack={handleBackFromChat}
               />
             )}
           </div>

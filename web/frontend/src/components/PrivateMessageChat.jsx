@@ -8,7 +8,7 @@ import EmojiPicker from './common/EmojiPicker'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 
-export default function PrivateMessageChat({ otherUserId, otherUsername, onBack }) {
+export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
 
@@ -277,10 +277,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
       {/* Header */}
       <div className="private-chat-header">
         <div className="private-chat-header-left">
-          <button type="button" className="chat-back-btn" onClick={onBack}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-            返回
-          </button>
           <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
           <div className="private-chat-header-info">
             <span className="private-chat-title">{otherUsername || '私信'}</span>

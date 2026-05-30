@@ -9548,6 +9548,7 @@ select.settings-input {
 .messages-sidebar-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   height: 52px;
   padding: 0 16px;
   border-bottom: 1px solid var(--glass-border);
