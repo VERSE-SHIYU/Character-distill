@@ -3703,6 +3703,14 @@ html.theme-aurora::before {
   justify-content: space-between;
   gap: 8px;
 }
+.inner-voice-mood {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent, #6366f1);
+  text-align: center;
+  padding: 4px 0 8px;
+  line-height: 1.4;
+}
 .inner-voice-stats {
   font-size: 11px;
   color: var(--text-dim, #9ca3af);

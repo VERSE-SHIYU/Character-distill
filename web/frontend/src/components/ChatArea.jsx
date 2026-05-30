@@ -538,6 +538,7 @@ function ChatView() {
             {affinity.mood_emoji || '😊'} {charName}此刻的想法
           </div>
           <div className="inner-voice-text">"{affinity.inner_voice || '…'}"</div>
+          <div className="inner-voice-mood">{affinity.mood_emoji} {affinity.mood}</div>
           <div className="inner-voice-footer">
             <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
             <span className="inner-voice-stats">♡{affinity.affinity} 🤝{affinity.trust} 🛡{affinity.guard}</span>
