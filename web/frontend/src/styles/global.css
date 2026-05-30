@@ -10511,9 +10511,12 @@ select.settings-input {
 .history-sidebar {
   display: flex;
   flex-direction: column;
+  flex: 1 0 0;
   min-width: 280px;
   max-width: 50vw;
-  background: var(--bg-page);
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
   border-left: 1px solid var(--glass-border);
   overflow: hidden;
 }

@@ -408,7 +408,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
         {historyOpen && (
           <>
             <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-            <div className="history-sidebar">
+            <div className="history-sidebar" style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
               <ChatHistoryPanel
                 mode="sidebar"
                 open={historyOpen}
