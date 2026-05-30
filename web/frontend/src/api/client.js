@@ -241,6 +241,8 @@ export const adminAPI = {
 
   deleteUser: (userId) => fetchWithTimeout(`/api/admin/users/${userId}`, { method: 'DELETE' }).then(r => r.json()),
 
+  batchDeleteUsers: (userIds) => postJSON('/api/admin/users/batch-delete', { user_ids: userIds }),
+
   resetPassword: (userId, newPassword) => fetchWithTimeout(
     `/api/admin/users/${userId}/reset-password`,
     {

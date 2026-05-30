@@ -297,10 +297,13 @@ function UsersTab() {
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
   const [resetOk, setResetOk] = useState('')
+  const [selectedUsers, setSelectedUsers] = useState(new Set())
+  const [batchDeleting, setBatchDeleting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState('')
   const [confirmName, setConfirmName] = useState('')
+  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
   const [emailTarget, setEmailTarget] = useState(null)
   const [newEmail, setNewEmail] = useState('')
   const [emailError, setEmailError] = useState('')
@@ -415,6 +418,40 @@ function UsersTab() {
     }
   }
 
+  const toggleSelectUser = (userId) => {
+    setSelectedUsers((prev) => {
+      const next = new Set(prev)
+      if (next.has(userId)) next.delete(userId)
+      else next.add(userId)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    const selectable = users.filter((u) => u.id !== authUser?.id)
+    if (selectable.length === 0) return
+    const allSelected = selectable.every((u) => selectedUsers.has(u.id))
+    if (allSelected) {
+      setSelectedUsers(new Set())
+    } else {
+      setSelectedUsers(new Set(selectable.map((u) => u.id)))
+    }
+  }
+
+  const handleBatchDelete = async () => {
+    setBatchDeleting(true)
+    try {
+      await adminAPI.batchDeleteUsers([...selectedUsers])
+      setSelectedUsers(new Set())
+      setBatchDeleteConfirm(false)
+      await load()
+    } catch (err) {
+      setActionError(err.message || '批量删除失败')
+    } finally {
+      setBatchDeleting(false)
+    }
+  }
+
   const fmtDate = (iso) => {
     if (!iso) return '-'
     return iso.slice(0, 10)
@@ -438,10 +475,26 @@ function UsersTab() {
       {loading ? (
         <div className="admin-loading">加载中…</div>
       ) : (
-        <div className="admin-table-wrap">
+        <>
+          {selectedUsers.size > 0 && (
+            <div className="admin-batch-bar">
+              <span>已选 {selectedUsers.size} 个用户</span>
+              <button className="btn-sm btn-outline" onClick={() => setSelectedUsers(new Set())}>取消选择</button>
+              <button className="btn-sm btn-danger" onClick={() => setBatchDeleteConfirm(true)} disabled={batchDeleting}>
+                批量删除
+              </button>
+            </div>
+          )}
+          <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
               <tr>
+                <th style={{ width: 36 }}>
+                  <input type="checkbox" onChange={toggleSelectAll}
+                    checked={users.filter((u) => u.id !== authUser?.id).length > 0 &&
+                      users.filter((u) => u.id !== authUser?.id).every((u) => selectedUsers.has(u.id))}
+                  />
+                </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
                 <th style={{ minWidth: 150 }}>邮箱</th>
                 <th style={{ minWidth: 70 }}>角色</th>
@@ -456,6 +509,11 @@ function UsersTab() {
             <tbody>
               {users.map((u) => (
                 <tr key={u.id}>
+                  <td>
+                    {u.id !== authUser?.id && (
+                      <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
+                    )}
+                  </td>
                   <td>{u.username}</td>
                   <td>{u.email || <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>未绑定</span>}</td>
                   <td>{u.is_admin ? '管理员' : '用户'}</td>
@@ -521,6 +579,7 @@ function UsersTab() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* Set email modal */}
@@ -614,6 +673,18 @@ function UsersTab() {
           </div>
         </div>
       )}
+
+      {/* Batch delete modal */}
+      <ConfirmModal
+        isOpen={batchDeleteConfirm}
+        title="批量删除用户"
+        message={`确定删除已选的 ${selectedUsers.size} 个用户？此操作不可逆。`}
+        confirmText={`删除 ${selectedUsers.size} 个用户`}
+        danger
+        onConfirm={handleBatchDelete}
+        onCancel={() => setBatchDeleteConfirm(false)}
+        disabled={batchDeleting}
+      />
 
       <ConfirmModal
         isOpen={!!disableConfirm}

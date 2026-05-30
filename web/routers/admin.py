@@ -144,6 +144,42 @@ async def delete_user(
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
+class BatchDeleteRequest(BaseModel):
+    user_ids: list[str]
+
+
+@router.post("/users/batch-delete")
+@limiter.limit("10/minute")
+async def batch_delete_users(
+    request: Request,
+    req: BatchDeleteRequest,
+    admin_user: dict = Depends(require_admin),
+    storage: SQLiteStore = Depends(get_storage),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
+) -> dict[str, Any]:
+    """Batch cascade-delete users."""
+    if not req.user_ids:
+        raise HTTPException(400, "请选择要删除的用户")
+    if admin_user.get("id") in req.user_ids:
+        raise HTTPException(400, "不能删除自己的账号")
+
+    deleted = 0
+    failed = 0
+    for user_id in req.user_ids:
+        try:
+            card_ids = await storage.get_user_card_ids(user_id)
+            if memory_manager and memory_manager.enabled:
+                for cid in card_ids:
+                    memory_manager.delete_all(cid)
+            await storage.delete_user(user_id)
+            deleted += 1
+        except Exception as exc:
+            print(f"[admin] Batch delete user {user_id} failed: {exc}")
+            failed += 1
+
+    return {"ok": True, "deleted": deleted, "failed": failed}
+
+
 class SetEmailRequest(BaseModel):
     email: str
 
