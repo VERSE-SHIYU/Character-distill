@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
-import { MessageSquare, Theater, Book } from './common/Icon'
+import { MessageSquare, Theater, Book, Lock } from './common/Icon'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -32,6 +32,7 @@ export default function AuthorPage({ embedded = false }) {
   const [showFollowing, setShowFollowing] = useState(false)
   const [followersList, setFollowersList] = useState([])
   const [followingList, setFollowingList] = useState([])
+  const [followingLocked, setFollowingLocked] = useState(false)
   const [statsVisible, setStatsVisible] = useState(true)
 
   // Posts
@@ -162,14 +163,20 @@ export default function AuthorPage({ embedded = false }) {
   const toggleFollowing = useCallback(async () => {
     if (showFollowing) { setShowFollowing(false); return }
     try {
-      const res = await fetchWithTimeout('/api/market/my/following', {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/following`, {
         headers: { ...getAuthHeaders() },
       })
       const data = await res.json()
-      setFollowingList(data.following || data.users || [])
+      if (data.locked) {
+        setFollowingLocked(true)
+        setFollowingList([])
+      } else {
+        setFollowingLocked(false)
+        setFollowingList(data.following || [])
+      }
       setShowFollowing(true)
     } catch { /* ignore */ }
-  }, [showFollowing])
+  }, [authorUserId, showFollowing])
 
   const scrollToChars = () => {
     const el = document.querySelector('.author-chars-widget') || document.querySelector('.author-cards-grid')?.closest('.author-section')
@@ -250,7 +257,12 @@ export default function AuthorPage({ embedded = false }) {
                           <h3>{followingCount} 关注</h3>
                           <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowing(false)}>✕</button>
                         </div>
-                        {followingList.length === 0 ? (
+                        {followingLocked ? (
+                          <div className="stat-follow-locked">
+                            <Lock size={20} />
+                            <span>该用户未公开关注列表</span>
+                          </div>
+                        ) : followingList.length === 0 ? (
                           <div className="stat-follow-empty">暂无关注</div>
                         ) : (
                           <div className="stat-follow-modal-list">
