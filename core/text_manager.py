@@ -524,7 +524,7 @@ class TextManager:
         if rag is None:
             rag = RAGEngine(self._rag_config)
             rag.index(text, all_characters=all_characters)
-        from web.deps import get_memory_manager
+        from deps import get_memory_manager
         engine = ChatEngine(
             self._llm, rag, card,
             all_characters=all_characters,
