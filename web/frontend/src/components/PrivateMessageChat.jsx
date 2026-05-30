@@ -276,32 +276,35 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
     <div className="private-chat">
       {/* Header */}
       <div className="private-chat-header">
-        <button type="button" className="chat-back-btn" onClick={onBack} style={{ gap: 4 }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
-        </button>
-        <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <span className="private-chat-title">{otherUsername || '私信'}</span>
-          {!otherOnlineHidden && (
-            <span style={{ fontSize: 12, color: otherOnline ? '#22c55e' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: otherOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
-              {otherOnline === null ? '' : otherOnline ? '在线' : formatChatTime(otherLastActive)}
-            </span>
-          )}
+        <div className="private-chat-header-left">
+          <button type="button" className="chat-back-btn" onClick={onBack}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+            返回
+          </button>
+          <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
+          <div className="private-chat-header-info">
+            <span className="private-chat-title">{otherUsername || '私信'}</span>
+            {!otherOnlineHidden && (
+              <span className={`private-chat-header-status${otherOnline ? ' online' : ''}`}>
+                <span className="private-chat-header-status-dot" />
+                {otherOnline === null ? '' : otherOnline ? '当前在线' : `最后在线 ${formatChatTime(otherLastActive)}`}
+              </span>
+            )}
+          </div>
         </div>
-        <button
-          type="button"
-          className={`chat-history-toggle${historyOpen ? ' active' : ''}`}
-          onClick={() => setHistoryOpen(v => !v)}
-          title="历史记录"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10" />
-            <polyline points="12 6 12 12 16 14" />
-          </svg>
-          历史
-        </button>
+        <div className="private-chat-header-right">
+          <button
+            type="button"
+            className={`chat-topbar-btn${historyOpen ? ' active' : ''}`}
+            onClick={() => setHistoryOpen(v => !v)}
+            title="历史记录"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       {!isOnline && (
