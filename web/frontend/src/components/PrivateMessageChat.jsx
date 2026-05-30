@@ -89,6 +89,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [historyFilterDate, setHistoryFilterDate] = useState('')
   const [historySearchKeyword, setHistorySearchKeyword] = useState('')
   const [historyTab, setHistoryTab] = useState('history')
+  const [historyFilterSpeaker, setHistoryFilterSpeaker] = useState('all')
 
   const filteredHistoryMessages = useMemo(() => {
     let result = messages
@@ -102,8 +103,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
       const q = historySearchKeyword.toLowerCase()
       result = result.filter(m => (m.content || '').toLowerCase().includes(q))
     }
+    if (historyFilterSpeaker === 'other') {
+      result = result.filter(m => m.sender_id !== authUser?.id)
+    } else if (historyFilterSpeaker === 'me') {
+      result = result.filter(m => m.sender_id === authUser?.id)
+    }
     return result
-  }, [messages, historyFilterDate, historySearchKeyword])
+  }, [messages, historyFilterDate, historySearchKeyword, historyFilterSpeaker, authUser?.id])
 
   const historyDateGroups = useMemo(() => {
     const dates = new Set()
@@ -438,6 +444,15 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                     onClick={() => setHistoryTab('date')}>日期</button>
                 </div>
 
+                <div className="history-speaker-tabs">
+                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'all' ? ' active' : ''}`}
+                    onClick={() => setHistoryFilterSpeaker('all')}>全部</button>
+                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'other' ? ' active' : ''}`}
+                    onClick={() => setHistoryFilterSpeaker('other')}>{otherUsername || '对方'}</button>
+                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'me' ? ' active' : ''}`}
+                    onClick={() => setHistoryFilterSpeaker('me')}>我</button>
+                </div>
+
                 {historyTab === 'date' ? (
                   <div className="history-sidebar-body">
                     <Calendar dateGroups={historyDateGroups} selectedDate={historyFilterDate}
@@ -445,15 +460,25 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                   </div>
                 ) : (
                   <div className="history-sidebar-body">
-                    {historyFilterDate && (
+                    {(historyFilterDate || historyFilterSpeaker !== 'all') && (
                       <div className="group-history-filter-bar">
                         <span className="group-history-filter-label">筛选：</span>
-                        <span className="group-history-filter-chip">
-                          {historyFilterDate}
-                          <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                          </button>
-                        </span>
+                        {historyFilterDate && (
+                          <span className="group-history-filter-chip">
+                            {historyFilterDate}
+                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          </span>
+                        )}
+                        {historyFilterSpeaker !== 'all' && (
+                          <span className="group-history-filter-chip">
+                            {historyFilterSpeaker === 'other' ? (otherUsername || '对方') : '我'}
+                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterSpeaker('all')}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </button>
+                          </span>
+                        )}
                       </div>
                     )}
                     {filteredHistoryMessages.length === 0 ? (
