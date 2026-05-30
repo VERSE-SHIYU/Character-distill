@@ -127,6 +127,8 @@ async def _rebuild_group_session(
         engines[card_id] = engine
 
     if len(engines) < 2:
+        if persona_type == "character":
+            raise HTTPException(400, "该群聊扮演角色后AI角色不足2个，无法进入。请编辑群聊增加角色或取消扮演设置")
         return None
 
     # Resolve persona name for character type

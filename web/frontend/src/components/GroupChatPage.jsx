@@ -364,6 +364,11 @@ export default function GroupChatPage() {
     if (group.user_persona_type === 'character' && group.user_persona_card_id) {
       cardIds = cardIds.filter(id => id !== group.user_persona_card_id)
     }
+    // Upfront check: playing a character can leave too few AI members
+    if (cardIds.length < 2) {
+      setError('该群聊扮演角色后AI角色不足2个，无法进入。请编辑群聊增加角色或取消扮演设置')
+      return
+    }
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
     ensureCardsLoaded(cardIds)

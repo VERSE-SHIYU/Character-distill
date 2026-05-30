@@ -51,16 +51,9 @@ class GroupSession:
         """Build user identity context to inject into each AI character's system prompt."""
         if self.user_persona_type == "character":
             cid = self.user_persona_card_id
-            engine = self.engines.get(cid) if cid else None
-            # When user plays a character, the played character's engine IS in engines
-            # (we don't remove it for normal group use — only when creating AI engines).
-            # Look up the card name from the played character's engine if available,
-            # otherwise use stored name.
+            # Played character is excluded from engines during _rebuild_group_session,
+            # so self.engines will not contain the played character. Use stored name.
             name = self.user_persona_name
-            if engine:
-                name = engine.card.name
-            if not name:
-                name = "角色"
             return (
                 f"\n\n[重要] 当前与你对话的是「{name}」本人。"
                 f"请根据你和{name}的关系来回应，不要将ta当成其他人。"
