@@ -69,6 +69,8 @@ export default function GroupChatPage() {
   const [filterDate, setFilterDate] = useState('')
   const [filterSpeaker, setFilterSpeaker] = useState('')
   const [showFilter, setShowFilter] = useState(false)
+  const [historyFilterMember, setHistoryFilterMember] = useState('')
+  const [historyFilterDate, setHistoryFilterDate] = useState('')
   const [selectedCharCardInfo, setSelectedCharCardInfo] = useState(null)
   const charInfoPanelRef = useRef(null)
 
@@ -357,6 +359,20 @@ export default function GroupChatPage() {
   const uniqueSpeakers = useMemo(() => {
     return [...new Set(messages.filter(m => !m.role || m.role !== 'user').map(m => m.speaker).filter(Boolean))]
   }, [messages])
+
+  const filteredHistoryMessages = useMemo(() => {
+    let result = messages
+    if (historyFilterDate) {
+      result = result.filter(m => {
+        const d = m.created_at ? new Date(m.created_at).toISOString().slice(0, 10) : ''
+        return d === historyFilterDate
+      })
+    }
+    if (historyFilterMember) {
+      result = result.filter(m => m.speaker_card_id === historyFilterMember)
+    }
+    return result
+  }, [messages, historyFilterDate, historyFilterMember])
 
   function enterGroup(group) {
     let cardIds = parseCardIds(group.card_ids)
@@ -1235,24 +1251,63 @@ export default function GroupChatPage() {
                           selectedDate={historySelectedDate}
                           onSelectDate={(iso) => {
                             setHistorySelectedDate(iso)
+                            setHistoryFilterDate(iso || '')
                             if (iso) setRightTab('history')
                           }}
                         />
                       </div>
                     ) : rightTab === 'history' ? (
                       <div className="group-right-tab-content">
-                        <ChatHistoryPanel
-                          mode="sidebar"
-                          open={true}
-                          onClose={() => setHistoryOpen(false)}
-                          fetchSessions={historyFetchSessions}
-                          onSelectSession={historySelectSession}
-                          placeholder="搜索历史群聊…"
-                          onExport={handleExport}
-                          selectedDate={historySelectedDate}
-                          onSelectDate={(iso) => setHistorySelectedDate(iso || '')}
-                          hideTabs
-                        />
+                        {/* Filter indicator */}
+                        {(historyFilterMember || historyFilterDate) && (
+                          <div className="group-history-filter-bar">
+                            <span className="group-history-filter-label">筛选：</span>
+                            {historyFilterMember && (() => {
+                              const card = resolveCard(historyFilterMember)
+                              return (
+                                <span className="group-history-filter-chip">
+                                  {card?.name || historyFilterMember}
+                                  <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterMember('')}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                  </button>
+                                </span>
+                              )
+                            })()}
+                            {historyFilterDate && (
+                              <span className="group-history-filter-chip">
+                                {historyFilterDate}
+                                <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                </button>
+                              </span>
+                            )}
+                            <button type="button" className="group-history-filter-clear" onClick={() => { setHistoryFilterMember(''); setHistoryFilterDate('') }}>清除</button>
+                          </div>
+                        )}
+                        {/* Message list */}
+                        {filteredHistoryMessages.length === 0 ? (
+                          <div className="group-history-empty">暂无消息</div>
+                        ) : (
+                          <div className="group-history-list">
+                            {filteredHistoryMessages.map((m, i) => {
+                              const cardId = m.card_id || m.speaker_card_id
+                              const card = cardId ? resolveCard(cardId) : null
+                              const speakerName = card?.name || m.speaker || '?'
+                              return (
+                                <div key={m.id || i} className="group-history-item">
+                                  <Avatar name={speakerName} size={28} src={cardAvatars[cardId]} />
+                                  <div className="group-history-item-body">
+                                    <div className="group-history-item-head">
+                                      <span className="group-history-item-speaker">{speakerName}</span>
+                                      <span className="group-history-item-time">{m.created_at ? formatChatTime(m.created_at) : ''}</span>
+                                    </div>
+                                    <p className="group-history-item-text">{m.content}</p>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="group-right-tab-content">
@@ -1279,6 +1334,18 @@ export default function GroupChatPage() {
                                   <span className="group-member-name">{card?.name || '?'}</span>
                                   {identity && <span className="group-member-identity">{identity}</span>}
                                 </div>
+                                <button
+                                  type="button"
+                                  className="group-member-filter-btn"
+                                  title="查看TA的发言"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setHistoryFilterMember(cardId)
+                                    setRightTab('history')
+                                  }}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                </button>
                               </div>
                             )
                           })}

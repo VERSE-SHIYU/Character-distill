@@ -10728,6 +10728,127 @@ select.settings-input {
   gap: 2px;
 }
 
+.group-member-filter-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: auto;
+}
+.group-member-filter-btn:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ── Group History Tab (right panel) ── */
+.group-history-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-wrap: wrap;
+}
+.group-history-filter-label {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.group-history-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.group-history-filter-chip-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.1);
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.group-history-filter-clear {
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  margin-left: auto;
+}
+.group-history-filter-clear:hover {
+  color: var(--accent);
+}
+.group-history-empty {
+  padding: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.group-history-list {
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.group-history-item {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+.group-history-item:hover {
+  background: var(--accent-soft);
+}
+.group-history-item-body {
+  flex: 1;
+  min-width: 0;
+}
+.group-history-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.group-history-item-speaker {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.group-history-item-time {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.group-history-item-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
 /* ── Group Chat Filter Bar ── */
 .group-filter-bar {
   padding: 6px 20px 0;
