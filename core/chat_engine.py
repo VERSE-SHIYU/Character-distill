@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import threading
 from collections.abc import Generator
 from typing import Any
 
@@ -406,9 +405,14 @@ class ChatEngine:
     def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
         """异步评估好感度变化：角色第一人称内心独白 + 情绪惯性 + 关系阶段。"""
         if not self.llm:
+            print(f"[Affinity] SKIP: self.llm is None (session={self._session_id})")
             return
         if not getattr(self, 'affinity_enabled', True):
+            print(f"[Affinity] SKIP: affinity_enabled=False (session={self._session_id})")
             return
+
+        print(f"[Affinity] ENTER session={self._session_id} card={getattr(self.card,'name','?')} "
+              f"current: aff={self._affinity} trust={self._trust} mood={self._mood} guard={self._guard}")
 
         user_role = (self.user_role or "对方").strip()
         # 记录旧阶段用于检测阶段变化
@@ -453,14 +457,21 @@ class ChatEngine:
 
         def _do():
             try:
+                print(f"[Affinity] Calling LLM...")
                 reply = self.llm.chat(
                     "你是精确的JSON输出器，只输出JSON。",
                     [{"role": "user", "content": prompt}],
                 )
+                print(f"[Affinity] LLM reply ({len(reply)} chars): {reply[:300]}")
                 m = re.search(r'\{.*\}', reply, re.DOTALL)
                 if not m:
+                    print(f"[Affinity] FAIL: no JSON object found in LLM reply")
                     return
+                print(f"[Affinity] JSON match: {m.group()[:200]}")
                 data = json.loads(m.group())
+                print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
+                      f"mood={data.get('mood')} guard={data.get('guard')} "
+                      f"inner_voice={str(data.get('inner_voice',''))[:80]}")
                 self._affinity = max(0, min(100, data.get("affinity", self._affinity)))
                 self._trust = max(0, min(100, data.get("trust", self._trust)))
                 self._mood = data.get("mood", self._mood)
@@ -482,9 +493,12 @@ class ChatEngine:
                     "stage_emoji": self._stage_emoji,
                 }
                 self._affinity_reason = json.dumps(extended, ensure_ascii=False)
+                print(f"[Affinity] UPDATED in-memory: aff={self._affinity} trust={self._trust} "
+                      f"mood={self._mood} guard={self._guard}")
                 if storage and session_id:
                     import sqlite3
                     try:
+                        print(f"[Affinity] Saving to DB: {session_id}")
                         conn = sqlite3.connect(str(storage.db_path))
                         conn.execute(
                             "UPDATE sessions SET affinity=?, trust=?, mood=?, guard=?, affinity_reason=? WHERE id=?",
@@ -492,12 +506,17 @@ class ChatEngine:
                         )
                         conn.commit()
                         conn.close()
+                        print(f"[Affinity] DB save OK")
                     except Exception as db_exc:
                         print(f"[ChatEngine] Affinity DB save failed: {db_exc}")
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
+                import traceback
+                traceback.print_exc()
 
-        threading.Thread(target=_do, daemon=True).start()
+        # 同步执行（移除 threading，确保 fetchAffinity 能拿到最新值）
+        _do()
+        print(f"[Affinity] Evaluation complete for session={self._session_id}")
 
     def _compute_initial_affinity(
         self,
