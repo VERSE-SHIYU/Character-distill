@@ -99,7 +99,7 @@ export default function MarketCardDetail() {
   useEffect(() => {
     if (!cardId) { setView('market'); return }
     setLoading(true)
-    fetchWithTimeout(`/api/card/${cardId}/detail`)
+    fetchWithTimeout(`/api/cards/${cardId}/detail`)
       .then((r) => r.json())
       .then((data) => {
         setCard(data)
