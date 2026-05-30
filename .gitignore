@@ -221,7 +221,7 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Claude Code
-.claude/settings.local.json
+.claude/
 
 # Frontend build artifacts
 web/frontend/node_modules/
@@ -242,9 +242,3 @@ config.yaml
 funasr_models/
 web/static/
 logs/
-
-# Claude Code session notes (already tracked ones stay in git)
-.claude/sessions/
-.claude/plans/
-.claude/worktrees/
-.claude/**/*.jsonl
