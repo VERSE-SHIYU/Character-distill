@@ -10274,9 +10274,13 @@ select.settings-input {
   gap: 10px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .group-header-left .private-chat-title {
   flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .group-header-right {
@@ -10370,6 +10374,8 @@ select.settings-input {
 }
 .group-input-row .messages-input {
   border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .group-input-row .messages-send-btn {
   height: 36px;
