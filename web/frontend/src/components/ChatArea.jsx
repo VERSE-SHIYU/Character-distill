@@ -451,9 +451,10 @@ function ChatView() {
 
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
-      {/* ── Compact header wrapper (positioned for popup/menu) ── */}
-      <div style={{ position: 'relative', flexShrink: 0 }}>
-      <div className="chat-topbar-compact">
+      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
+        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+          <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
           <button type="button" className="chat-topbar-back" onClick={() => setView('character')} title="返回">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
@@ -607,9 +608,6 @@ function ChatView() {
         </div>
       )}
 
-      {/* Messages + Input in split layout */}
-      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
-        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
             {messages.map((msg, i) => {
               if (msg.role === 'summary') {

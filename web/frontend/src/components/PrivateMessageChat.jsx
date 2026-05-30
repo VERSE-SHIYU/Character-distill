@@ -274,8 +274,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   return (
     <div className="private-chat">
-      {/* Header */}
-      <div className="private-chat-header">
+      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
+        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+          {/* Header */}
+          <div className="private-chat-header">
         <div className="private-chat-header-left">
           <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
           <div className="private-chat-header-info">
@@ -309,8 +311,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         </div>
       )}
 
-      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
-        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
           {/* Messages */}
           <div className="private-chat-body">
             {hasMore && (
