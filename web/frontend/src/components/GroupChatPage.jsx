@@ -262,7 +262,7 @@ export default function GroupChatPage() {
       } catch (err) {
         setGeneratingForName(null)
         if (err.name === 'AbortError') break
-        console.error('Auto conversation error:', err)
+        setError(err.message || '对话出错，请检查群聊配置')
         break
       }
 
