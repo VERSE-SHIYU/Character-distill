@@ -452,7 +452,7 @@ function ChatView() {
       result = result.filter(m => (m.content || '').toLowerCase().includes(q))
     }
     if (historyFilterSpeaker === 'other') {
-      result = result.filter(m => m.role === 'assistant')
+      result = result.filter(m => m.role !== 'user')
     } else if (historyFilterSpeaker === 'me') {
       result = result.filter(m => m.role === 'user')
     }
