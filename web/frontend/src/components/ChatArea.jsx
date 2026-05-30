@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Mic, Book, File } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
@@ -12,7 +12,7 @@ import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import { parseCardJson } from '../utils/card'
 import MentionDropdown from './common/MentionDropdown'
-import ChatHistoryPanel from './common/ChatHistoryPanel'
+import { Calendar } from './common/ChatHistoryPanel'
 import EmojiPicker from './common/EmojiPicker'
 
 export default function ChatArea() {
@@ -158,23 +158,6 @@ function ChatView() {
   }, [sessionId, messages.length])
 
   const resumeSession = useAppStore((s) => s.resumeSession)
-
-  const historyFetchSessions = useCallback(async (keyword) => {
-    try {
-      const res = await fetchWithTimeout(`/api/history/list?character=${encodeURIComponent(charName)}&keyword=${encodeURIComponent(keyword)}&page=1&page_size=20`)
-      const data = await res.json()
-      return (data.items || []).map((s) => ({
-        id: s.id,
-        title: s.character_name || charName,
-        preview: s.last_message || '',
-        time: s.last_message_at || s.updated_at,
-      }))
-    } catch { return [] }
-  }, [charName])
-
-  const historySelectSession = useCallback((session) => {
-    resumeSession(session.id).catch(() => {})
-  }, [resumeSession])
 
   const handleExport = useCallback(() => {
     const header = `角色名: ${charName}\n导出时间: ${new Date().toLocaleString('zh-CN')}\n---\n`
@@ -449,6 +432,38 @@ function ChatView() {
     document.addEventListener('mouseup', onUp)
   }, [])
 
+  // ── History panel state ──
+  const [historyFilterDate, setHistoryFilterDate] = useState('')
+  const [historySearchKeyword, setHistorySearchKeyword] = useState('')
+  const [historyTab, setHistoryTab] = useState('history')
+
+  const filteredHistoryMessages = useMemo(() => {
+    let result = messages.filter(m => m.role !== 'summary')
+    if (historyFilterDate) {
+      result = result.filter(m => {
+        const ts = m.timestamp || m.created_at
+        const d = ts ? new Date(ts).toISOString().slice(0, 10) : ''
+        return d === historyFilterDate
+      })
+    }
+    if (historySearchKeyword) {
+      const q = historySearchKeyword.toLowerCase()
+      result = result.filter(m => (m.content || '').toLowerCase().includes(q))
+    }
+    return result
+  }, [messages, historyFilterDate, historySearchKeyword])
+
+  const historyDateGroups = useMemo(() => {
+    const dates = new Set()
+    for (const m of messages) {
+      const ts = m.timestamp || m.created_at
+      if (ts) {
+        try { dates.add(new Date(ts).toISOString().slice(0, 10)) } catch {}
+      }
+    }
+    return [...dates].sort().reverse()
+  }, [messages])
+
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
       <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
@@ -698,15 +713,77 @@ function ChatView() {
           <>
             <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
             <div className="history-sidebar" style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
-              <ChatHistoryPanel
-                mode="sidebar"
-                open={historyOpen}
-                onClose={() => setHistoryOpen(false)}
-                fetchSessions={historyFetchSessions}
-                onSelectSession={historySelectSession}
-                placeholder="搜索历史对话…"
-                onExport={handleExport}
-              />
+              <div className="history-sidebar-content">
+                <div className="history-sidebar-header">
+                  <div className="chat-history-search-bar" style={{ flex: 1 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    <input type="text" className="chat-history-search-input" placeholder="搜索消息…"
+                      value={historySearchKeyword}
+                      onChange={(e) => setHistorySearchKeyword(e.target.value)} />
+                  </div>
+                  <button type="button" className="chat-history-export-btn" onClick={handleExport} title="导出对话">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                  <button type="button" className="history-sidebar-close" onClick={() => setHistoryOpen(false)}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+
+                <div className="history-date-tabs">
+                  <button type="button" className={`history-date-tab${historyTab === 'history' ? ' active' : ''}`}
+                    onClick={() => setHistoryTab('history')}>历史</button>
+                  <button type="button" className={`history-date-tab${historyTab === 'date' ? ' active' : ''}`}
+                    onClick={() => setHistoryTab('date')}>日期</button>
+                </div>
+
+                {historyTab === 'date' ? (
+                  <div className="history-sidebar-body">
+                    <Calendar dateGroups={historyDateGroups} selectedDate={historyFilterDate}
+                      onSelectDate={(iso) => { setHistoryFilterDate(iso || ''); if (iso) setHistoryTab('history') }} />
+                  </div>
+                ) : (
+                  <div className="history-sidebar-body">
+                    {historyFilterDate && (
+                      <div className="group-history-filter-bar">
+                        <span className="group-history-filter-label">筛选：</span>
+                        <span className="group-history-filter-chip">
+                          {historyFilterDate}
+                          <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                    {filteredHistoryMessages.length === 0 ? (
+                      <div className="group-history-empty">暂无消息</div>
+                    ) : (
+                      <div className="group-history-list">
+                        {filteredHistoryMessages.map((m, i) => {
+                          const isUser = m.role === 'user'
+                          const speakerName = isUser ? (userRole || '我') : charName
+                          return (
+                            <div key={m.id || i} className="group-history-item">
+                              <Avatar name={speakerName} size={28}
+                                src={isUser ? userAvatarUrl : avatarUrl} />
+                              <div className="group-history-item-body">
+                                <div className="group-history-item-head">
+                                  <span className="group-history-item-speaker">{speakerName}</span>
+                                  <span className="group-history-item-time">{m.timestamp ? formatChatTime(m.timestamp) : ''}</span>
+                                </div>
+                                <p className="group-history-item-text">{m.content}</p>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </>
         )}
