@@ -488,7 +488,7 @@ function ChatView() {
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
           <button type="button" className="chat-topbar-back" onClick={() => {
-            const tid = currentCard?.text_id
+            const tid = currentCard?.text_id || currentTextId
             if (tid) selectText(tid)
             else setView('character')
           }} title="返回">
@@ -580,7 +580,7 @@ function ChatView() {
             <span>放大字号</span>
           </button>
           <button type="button" className="chat-more-item" onClick={() => {
-            const tid = currentCard?.text_id
+            const tid = currentCard?.text_id || currentTextId
             if (tid) { selectText(tid) }
             else { setView('character') }
             setShowMore(false)
