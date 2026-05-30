@@ -102,7 +102,7 @@ export default function MessagesPage() {
   }
 
   const handleBackFromChat = () => {
-    if (isMobile) {
+    if (isMobile && mobileView === 'chat') {
       setMobileView('list')
       return
     }
@@ -110,8 +110,7 @@ export default function MessagesPage() {
       goBack()
       return
     }
-    setActiveOtherId(null)
-    setActiveUsername('')
+    setView('home')
   }
 
   // ── Render ──
@@ -122,6 +121,13 @@ export default function MessagesPage() {
         /* ── Empty state ── */
         <div className="messages-layout">
           <div className="messages-sidebar messages-sidebar-empty">
+            <div className="messages-sidebar-header">
+              <h2 className="messages-sidebar-title">私信</h2>
+              <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+                  返回
+                </button>
+            </div>
             <div className="messages-empty-state">
               <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
               <p className="messages-empty-title">暂无私信</p>
@@ -143,12 +149,10 @@ export default function MessagesPage() {
           >
             <div className="messages-sidebar-header">
               <h2 className="messages-sidebar-title">私信</h2>
-              {activeOtherId && (
-                <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
+              <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
                   返回
                 </button>
-              )}
             </div>
             {convLoading ? (
               <Loading text="加载中…" />
