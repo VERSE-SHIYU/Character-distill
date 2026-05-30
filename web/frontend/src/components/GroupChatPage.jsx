@@ -173,17 +173,17 @@ export default function GroupChatPage() {
     }
   }, [allCards])
 
-  // Compute date groups from groups for calendar
+  // Compute date groups from current group messages for calendar
   useEffect(() => {
-    if (!groups) return
+    if (!messages.length) return
     const dates = new Set()
-    for (const g of groups) {
-      if (g.created_at) {
-        try { dates.add(new Date(g.created_at).toISOString().slice(0, 10)) } catch {}
+    for (const m of messages) {
+      if (m.created_at) {
+        try { dates.add(new Date(m.created_at).toISOString().slice(0, 10)) } catch {}
       }
     }
     setHistoryDateGroups([...dates].sort().reverse())
-  }, [groups])
+  }, [messages])
 
   // Create form state
   const [groupName, setGroupName] = useState('')
