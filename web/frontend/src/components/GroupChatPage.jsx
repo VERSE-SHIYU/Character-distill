@@ -8,7 +8,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import MentionDropdown from './common/MentionDropdown'
-import ChatHistoryPanel from './common/ChatHistoryPanel'
+import ChatHistoryPanel, { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import EmojiPicker from './common/EmojiPicker'
 import { parseCardJson } from '../utils/card'
@@ -59,7 +59,9 @@ export default function GroupChatPage() {
   const autoAbortRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
   const [generatingForName, setGeneratingForName] = useState(null)
-  const [rightTab, setRightTab] = useState('history') // 'history' | 'members'
+  const [rightTab, setRightTab] = useState('history') // 'history' | 'members' | 'date'
+  const [historySelectedDate, setHistorySelectedDate] = useState('')
+  const [historyDateGroups, setHistoryDateGroups] = useState([])
   const msgInputRef = useRef(null)
   const messagesAreaRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
@@ -188,6 +190,18 @@ export default function GroupChatPage() {
     const g = groups.find((grp) => grp.id === session.id)
     if (g) enterGroup(g)
   }, [groups, enterGroup])
+
+  // Compute date groups from groups for calendar
+  useEffect(() => {
+    if (!groups) return
+    const dates = new Set()
+    for (const g of groups) {
+      if (g.created_at) {
+        try { dates.add(new Date(g.created_at).toISOString().slice(0, 10)) } catch {}
+      }
+    }
+    setHistoryDateGroups([...dates].sort().reverse())
+  }, [groups])
 
   // Create form state
   const [groupName, setGroupName] = useState('')
@@ -1098,14 +1112,19 @@ export default function GroupChatPage() {
                     <div className="group-right-tab-bar">
                       <button
                         type="button"
-                        className={`group-right-tab${rightTab === 'history' ? ' active' : ''}`}
-                        onClick={() => setRightTab('history')}
-                      >历史记录</button>
-                      <button
-                        type="button"
                         className={`group-right-tab${rightTab === 'members' ? ' active' : ''}`}
                         onClick={() => setRightTab('members')}
                       >成员 ({currentGroup.card_ids?.length})</button>
+                      <button
+                        type="button"
+                        className={`group-right-tab${rightTab === 'history' ? ' active' : ''}`}
+                        onClick={() => setRightTab('history')}
+                      >历史</button>
+                      <button
+                        type="button"
+                        className={`group-right-tab${rightTab === 'date' ? ' active' : ''}`}
+                        onClick={() => setRightTab('date')}
+                      >日期</button>
                       <div className="group-right-tab-spacer" />
                       <button type="button" className="group-right-tab-btn" onClick={handleExport} title="导出对话">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1151,7 +1170,18 @@ export default function GroupChatPage() {
                     )}
 
                     {/* Tab content */}
-                    {rightTab === 'history' ? (
+                    {rightTab === 'date' ? (
+                      <div className="group-right-tab-content">
+                        <Calendar
+                          dateGroups={historyDateGroups}
+                          selectedDate={historySelectedDate}
+                          onSelectDate={(iso) => {
+                            setHistorySelectedDate(iso)
+                            if (iso) setRightTab('history')
+                          }}
+                        />
+                      </div>
+                    ) : rightTab === 'history' ? (
                       <div className="group-right-tab-content">
                         <ChatHistoryPanel
                           mode="sidebar"
@@ -1161,6 +1191,9 @@ export default function GroupChatPage() {
                           onSelectSession={historySelectSession}
                           placeholder="搜索历史群聊…"
                           onExport={handleExport}
+                          selectedDate={historySelectedDate}
+                          onSelectDate={(iso) => setHistorySelectedDate(iso || '')}
+                          hideTabs
                         />
                       </div>
                     ) : (

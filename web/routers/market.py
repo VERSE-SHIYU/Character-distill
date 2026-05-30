@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
@@ -197,6 +199,22 @@ async def get_author(
         cards = []
     if not books_visible:
         texts = []
+
+    # Online presence
+    can_see = await storage.can_see_online_status(user["id"], user_id, is_admin=user.get("is_admin", False))
+    online = None
+    last_active_at = None
+    if can_see:
+        ts = author.get("last_active_at")
+        online = False
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts)
+                online = (time.time() - dt.timestamp()) < 300
+            except Exception:
+                pass
+        last_active_at = author.get("last_active_at")
+
     return {
         "author": {k: v for k, v in author.items() if k != "password_hash"},
         "cards": cards,
@@ -209,6 +227,9 @@ async def get_author(
         "cards_visible": bool(cards_visible),
         "books_visible": bool(books_visible),
         "following_visible": bool(author.get("following_visible", 1)),
+        "online": online,
+        "last_active_at": last_active_at,
+        "presence_hidden": not can_see,
     }
 
 

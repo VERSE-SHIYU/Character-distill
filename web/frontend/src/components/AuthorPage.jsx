@@ -8,9 +8,11 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
+import { formatChatTime } from '../utils/time'
 
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
+  const setPreviousView = useAppStore((s) => s.setPreviousView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
@@ -19,6 +21,13 @@ export default function AuthorPage({ embedded = false }) {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const startChat = useAppStore((s) => s.startChat)
+
+  const goToMessages = (userId, username) => {
+    setPreviousView('author', { authorUserId })
+    setMessageTargetUserId(userId)
+    setMessageTargetUsername(username)
+    setView('messages')
+  }
 
   const [author, setAuthor] = useState(null)
   const [cards, setCards] = useState([])
@@ -35,6 +44,9 @@ export default function AuthorPage({ embedded = false }) {
   const [followingLocked, setFollowingLocked] = useState(false)
   const [followState, setFollowState] = useState({})
   const [statsVisible, setStatsVisible] = useState(true)
+  const [authorOnline, setAuthorOnline] = useState(null) // null=loading, true, false
+  const [authorLastActive, setAuthorLastActive] = useState('')
+  const [authorPresenceHidden, setAuthorPresenceHidden] = useState(false)
 
   // Posts
   const [posts, setPosts] = useState([])
@@ -83,6 +95,9 @@ export default function AuthorPage({ embedded = false }) {
         setFollowersCount(data.followers_count || 0)
         setFollowingCount(data.following_count || 0)
         setStatsVisible(data.stats_visible !== false)
+        setAuthorOnline(data.online)
+        setAuthorLastActive(data.last_active_at || '')
+        setAuthorPresenceHidden(data.presence_hidden || false)
       } catch (err) {
         setError(err.message.includes('不存在') ? '该用户不存在或已注销' : err.message)
       } finally {
@@ -223,7 +238,15 @@ export default function AuthorPage({ embedded = false }) {
               <div className="author-hero">
                 <Avatar name={author.username || '?'} src={author.avatar_data} size={72} />
                 <div className="author-hero-text">
-                  <h2 className="author-name">{author.username}</h2>
+                  <h2 className="author-name">
+                    {author.username}
+                    {!authorPresenceHidden && authorOnline !== null && (
+                      <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+                        {authorOnline ? '在线' : formatChatTime(authorLastActive)}
+                      </span>
+                    )}
+                  </h2>
                   <div className="author-stats">
                     {statsVisible ? (<>
                       <button type="button" className="stat-btn" onClick={toggleFollowers}><strong>{followersCount}</strong> 粉丝</button>
@@ -257,7 +280,7 @@ export default function AuthorPage({ embedded = false }) {
                                 </button>
                                 {authUser?.id !== (f.id || f.user_id) && (
                                   <>
-                                    <button type="button" className="btn-sm" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                    <button type="button" className="btn-sm" onClick={() => goToMessages(f.id || f.user_id, f.username)}>
                                       私信
                                     </button>
                                     <button
@@ -304,7 +327,7 @@ export default function AuthorPage({ embedded = false }) {
                                 </button>
                                 {authUser?.id !== (f.id || f.user_id) && (
                                   <>
-                                    <button type="button" className="btn-sm" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                    <button type="button" className="btn-sm" onClick={() => goToMessages(f.id || f.user_id, f.username)}>
                                       私信
                                     </button>
                                     <button
@@ -329,7 +352,7 @@ export default function AuthorPage({ embedded = false }) {
                       type="button"
                       className="btn-ghost"
                       style={{ marginLeft: 'auto' }}
-                      onClick={() => { setMessageTargetUserId(authorUserId); setMessageTargetUsername(author.username); setView('messages') }}
+                      onClick={() => goToMessages(authorUserId, author.username)}
                     >
                       发私信
                     </button>

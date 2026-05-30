@@ -329,7 +329,8 @@ function PresenceVisibilitySetting() {
 
   const OPTIONS = [
     { value: 'all', label: '所有人可见' },
-    { value: 'friends', label: '仅好友可见' },
+    { value: 'fans', label: '仅粉丝可见' },
+    { value: 'mutual', label: '仅互关好友可见' },
     { value: 'none', label: '不展示' },
   ]
 

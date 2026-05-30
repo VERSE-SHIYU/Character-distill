@@ -5006,38 +5006,141 @@ html.theme-aurora::before {
   padding: 4px 0;
 }
 
-/* Date chips in history overlay */
-.chat-history-dates {
+/* History / Date tabs (inside ChatHistoryPanel) */
+.history-date-tabs {
   display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-  overflow-x: auto;
-  flex-shrink: 0;
-  scrollbar-width: none;
+  gap: 0;
+  padding: 0 12px;
   border-bottom: 1px solid var(--glass-border, rgba(128,128,128,0.08));
-}
-.chat-history-dates::-webkit-scrollbar { display: none; }
-.chat-history-date-chip {
   flex-shrink: 0;
-  padding: 4px 12px;
-  border-radius: 999px;
+}
+.history-date-tab {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  position: relative;
+  transition: color 0.12s;
+}
+.history-date-tab:hover { color: var(--text); }
+.history-date-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+.history-date-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  right: 25%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+/* ── Calendar Picker ── */
+.calendar-picker {
+  padding: 8px 0;
+}
+.cal-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 10px;
+}
+.cal-nav-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.cal-nav-btn:hover { background: rgba(var(--accent-rgb, 99, 102, 241), 0.08); color: var(--text); }
+.cal-nav-selects { display: flex; gap: 6px; align-items: center; }
+.cal-select {
+  padding: 4px 8px;
   border: 1px solid var(--glass-border, rgba(128,128,128,0.15));
+  border-radius: 6px;
+  background: var(--glass-bg, rgba(255,255,255,0.04));
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+.cal-select:focus { border-color: var(--accent); }
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  padding: 0 8px 4px;
+}
+.cal-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  padding: 0 8px;
+}
+.cal-day {
+  aspect-ratio: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+}
+.cal-day-empty { cursor: default; }
+.cal-day-has {
+  color: var(--text);
+  cursor: pointer;
+}
+.cal-day-has:hover {
+  background: rgba(var(--accent-rgb, 99, 102, 241), 0.12);
+}
+.cal-day-sel {
+  background: var(--accent) !important;
+  color: #fff !important;
+  font-weight: 600;
+}
+.cal-day-today:not(.cal-day-sel) {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.cal-clear {
+  display: block;
+  margin: 10px auto 0;
+  padding: 5px 20px;
+  border: 1px solid var(--glass-border, rgba(128,128,128,0.15));
+  border-radius: 999px;
   background: transparent;
   font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.12s;
-  white-space: nowrap;
 }
-.chat-history-date-chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.chat-history-date-chip.active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
+.cal-clear:hover { border-color: var(--accent); color: var(--accent); }
 
 /* Export button in overlay header */
 .chat-history-export-btn {

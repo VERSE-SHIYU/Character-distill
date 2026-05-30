@@ -500,7 +500,7 @@ async def get_presence_visibility(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, str]:
     """Get current user's presence visibility setting."""
-    return {"presence_visibility": user.get("presence_visibility", "friends")}
+    return {"presence_visibility": user.get("presence_visibility", "mutual")}
 
 
 @router.put("/presence-visibility")
@@ -510,11 +510,11 @@ async def update_presence_visibility(
     user: dict[str, Any] = Depends(get_current_user),
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Update presence visibility setting: 'all', 'friends', or 'none'."""
+    """Update presence visibility setting: 'all', 'fans', 'mutual', or 'none'."""
     body = await request.json()
     visibility = body.get("presence_visibility", "").strip()
-    if visibility not in ("all", "friends", "none"):
-        raise HTTPException(400, "presence_visibility 必须是 all/friends/none")
+    if visibility not in ("all", "fans", "mutual", "none"):
+        raise HTTPException(400, "presence_visibility 必须是 all/fans/mutual/none")
     ok = await storage.set_user_presence_visibility(user["id"], visibility)
     if not ok:
         raise HTTPException(500, "保存失败")

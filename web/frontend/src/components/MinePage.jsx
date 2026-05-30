@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -9,6 +9,7 @@ import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import { parseCardJson } from '../utils/card'
+import { formatChatTime } from '../utils/time'
 import { getCoverGradient } from './BookReader'
 
 /* ── MineCardMenu ── */
@@ -82,6 +83,7 @@ export default function MinePage() {
   const fetchUserBanner = useAppStore((s) => s.fetchUserBanner)
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const setPreviousView = useAppStore((s) => s.setPreviousView)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
 
@@ -92,6 +94,13 @@ export default function MinePage() {
   const followLabel = isFollowing && followsMe ? '互相关注' : isFollowing ? '已关注' : followsMe ? '回关' : '关注'
 
   const isMe = !authorUserId || authorUserId === authUser?.id
+
+  const goToMessages = (userId, username) => {
+    setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId })
+    setMessageTargetUserId(userId)
+    if (username) setMessageTargetUsername(username)
+    setView('messages')
+  }
   const userId = isMe ? authUser?.id : authorUserId
   const prof = isMe ? authUser : profileAuthor
   const username = prof?.username || '?'
@@ -127,6 +136,21 @@ export default function MinePage() {
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
   const [followingLocked, setFollowingLocked] = useState(false)
+
+  // Online status (self always visible)
+  const [selfOnline, setSelfOnline] = useState(null)
+  const [selfLastActive, setSelfLastActive] = useState('')
+  const fetchSelfOnline = useCallback(async () => {
+    if (!authUser?.id) return
+    try {
+      const res = await fetchWithTimeout(`/api/auth/user/${authUser.id}/online`)
+      const data = await res.json()
+      setSelfOnline(data.online)
+      setSelfLastActive(data.last_active_at || '')
+    } catch { /* ignore */ }
+  }, [authUser?.id])
+
+  useEffect(() => { fetchSelfOnline() }, [fetchSelfOnline])
   // Followers state
   const [followers, setFollowers] = useState([])
   const [followersLoading, setFollowersLoading] = useState(false)
@@ -373,7 +397,15 @@ export default function MinePage() {
           </div>
           <div className="mine-profile-mid">
             <div className="mine-name-row">
-              <h2 className="mine-profile-name">{username}</h2>
+              <h2 className="mine-profile-name">
+                {username}
+                {selfOnline !== null && (
+                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: selfOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: selfOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+                    {selfOnline ? '在线' : formatChatTime(selfLastActive)}
+                  </span>
+                )}
+              </h2>
               {isMe && <button className="mine-edit-icon" onClick={() => setView('settings')} title="编辑资料">✏️</button>}
             </div>
             {isMe ? (
@@ -437,11 +469,7 @@ export default function MinePage() {
               <button
                 type="button"
                 className="btn-primary btn-sm"
-                onClick={() => {
-                  setMessageTargetUserId(authorUserId)
-                  setMessageTargetUsername(profileAuthor?.username || '')
-                  setView('messages')
-                }}
+                onClick={() => goToMessages(authorUserId, profileAuthor?.username || '')}
               >
                 发私信
               </button>
@@ -464,7 +492,7 @@ export default function MinePage() {
             key={t.key}
             type="button"
             className={`mine-tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => t.key === 'messages' ? setView('messages') : setTab(t.key)}
+            onClick={() => t.key === 'messages' ? (setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId }), setView('messages')) : setTab(t.key)}
           >
             {t.icon} {t.label}
           </button>
@@ -736,7 +764,7 @@ export default function MinePage() {
                       <button
                         type="button"
                         className="btn-sm btn-outline"
-                        onClick={() => { setMessageTargetUserId(f.id); setView('messages') }}
+                        onClick={() => goToMessages(f.id, f.username)}
                       >
                         发私信
                       </button>
@@ -784,11 +812,7 @@ export default function MinePage() {
                     <button
                       type="button"
                       className="btn-sm btn-outline"
-                      onClick={() => {
-                        setMessageTargetUserId(u.id)
-                        setMessageTargetUsername(u.username)
-                        setView('messages')
-                      }}
+                      onClick={() => goToMessages(u.id, u.username)}
                     >
                       私信
                     </button>

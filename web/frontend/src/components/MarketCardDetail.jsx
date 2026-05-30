@@ -39,6 +39,7 @@ function fmtTime(iso) {
 
 export default function MarketCardDetail() {
   const setView = useAppStore((s) => s.setView)
+  const setPreviousView = useAppStore((s) => s.setPreviousView)
   const cardId = useAppStore((s) => s.currentMarketCardId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
@@ -587,6 +588,7 @@ export default function MarketCardDetail() {
                     className="btn-sm btn-outline"
                     onClick={(e) => {
                       e.stopPropagation()
+                      setPreviousView('marketCardDetail')
                       setMessageTargetUserId(card.user_id)
                       setMessageTargetUsername(card.author_name || '匿名')
                       setView('messages')

@@ -597,6 +597,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Following visibility migration failed: {exc}")
 
+                    # Run 059_presence_visibility_rename migration (friends → mutual)
+                    presence_rename_path = migrations_dir / "059_presence_visibility_rename.sql"
+                    if presence_rename_path.exists():
+                        try:
+                            await conn.executescript(presence_rename_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Presence visibility rename migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2119,8 +2128,8 @@ class SQLiteStore(StorageBase):
             return False
 
     async def set_user_presence_visibility(self, user_id: str, visibility: str) -> bool:
-        """Set presence_visibility for a user: 'all', 'friends', or 'none'."""
-        if visibility not in ('all', 'friends', 'none'):
+        """Set presence_visibility for a user: 'all', 'fans', 'mutual', or 'none'."""
+        if visibility not in ('all', 'fans', 'mutual', 'none'):
             return False
         try:
             async with await self._connect() as conn:
@@ -3889,6 +3898,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get following count failed: {exc}")
             return 0
 
+    async def is_following(self, user_id: str, target_id: str) -> bool:
+        """Check if user_id follows target_id."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM user_follows WHERE follower_id = ? AND following_id = ?",
+                    (user_id, target_id),
+                )
+                row = await cursor.fetchone()
+            return row[0] > 0 if row else False
+        except Exception as exc:
+            print(f"[SQLiteStore] Is following check failed: {exc}")
+            return False
+
     async def is_friend(self, user_id: str, target_id: str) -> bool:
         """Mutual follow = friend."""
         try:
@@ -3941,7 +3964,10 @@ class SQLiteStore(StorageBase):
             return True
         if target_vis == 'none':
             return False
-        if target_vis == 'friends':
+        if target_vis == 'fans':
+            # viewer must be following target (i.e. viewer is one of target's fans)
+            return await self.is_following(viewer_id, target_id)
+        if target_vis == 'mutual':
             return await self.is_friend(viewer_id, target_id)
         return False
 

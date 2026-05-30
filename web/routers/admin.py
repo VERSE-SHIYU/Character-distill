@@ -125,6 +125,12 @@ async def delete_user(
     if user_id == admin_user.get("id"):
         raise HTTPException(400, "不能删除自己的账号")
 
+    target = await storage.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    if target.get("is_admin"):
+        raise HTTPException(400, "不能删除管理员账号，请先将其降级为普通用户")
+
     # Clean up Mem0 memories for each card owned by the user
     try:
         card_ids = await storage.get_user_card_ids(user_id)
@@ -160,8 +166,19 @@ async def batch_delete_users(
     """Batch cascade-delete users."""
     if not req.user_ids:
         raise HTTPException(400, "请选择要删除的用户")
+    if len(req.user_ids) > 50:
+        raise HTTPException(400, f"单次最多删除 50 个用户，当前选择了 {len(req.user_ids)} 个")
     if admin_user.get("id") in req.user_ids:
         raise HTTPException(400, "不能删除自己的账号")
+
+    # Check for admin users in target list
+    admin_ids: list[str] = []
+    for uid in req.user_ids:
+        u = await storage.get_user_by_id(uid)
+        if u and u.get("is_admin"):
+            admin_ids.append(u.get("username", uid))
+    if admin_ids:
+        raise HTTPException(400, f"不能删除管理员账号（{', '.join(admin_ids)}），请先将其降级为普通用户")
 
     deleted = 0
     failed = 0

@@ -22,6 +22,8 @@ function formatTime(dateStr) {
 
 export default function MessagesPage() {
   const setView = useAppStore((s) => s.setView)
+  const goBack = useAppStore((s) => s.goBack)
+  const previousView = useAppStore((s) => s.previousView)
   const messageTargetUserId = useAppStore((s) => s.messageTargetUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
@@ -102,10 +104,14 @@ export default function MessagesPage() {
   const handleBackFromChat = () => {
     if (isMobile) {
       setMobileView('list')
-    } else {
-      setActiveOtherId(null)
-      setActiveUsername('')
+      return
     }
+    if (previousView) {
+      goBack()
+      return
+    }
+    setActiveOtherId(null)
+    setActiveUsername('')
   }
 
   // ── Render ──

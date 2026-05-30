@@ -304,6 +304,8 @@ function UsersTab() {
   const [deleteError, setDeleteError] = useState('')
   const [confirmName, setConfirmName] = useState('')
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+  const [batchConfirmText, setBatchConfirmText] = useState('')
+  const [batchDeleteResult, setBatchDeleteResult] = useState(null)
   const [emailTarget, setEmailTarget] = useState(null)
   const [newEmail, setNewEmail] = useState('')
   const [emailError, setEmailError] = useState('')
@@ -428,7 +430,7 @@ function UsersTab() {
   }
 
   const toggleSelectAll = () => {
-    const selectable = users.filter((u) => u.id !== authUser?.id)
+    const selectable = users.filter((u) => u.id !== authUser?.id && !u.is_admin)
     if (selectable.length === 0) return
     const allSelected = selectable.every((u) => selectedUsers.has(u.id))
     if (allSelected) {
@@ -440,13 +442,17 @@ function UsersTab() {
 
   const handleBatchDelete = async () => {
     setBatchDeleting(true)
+    setBatchDeleteResult(null)
     try {
-      await adminAPI.batchDeleteUsers([...selectedUsers])
+      const res = await adminAPI.batchDeleteUsers([...selectedUsers])
+      setBatchDeleteResult({ deleted: res.deleted, failed: res.failed })
       setSelectedUsers(new Set())
-      setBatchDeleteConfirm(false)
+      setBatchConfirmText('')
       await load()
     } catch (err) {
       setActionError(err.message || '批量删除失败')
+      setBatchDeleteConfirm(false)
+      setBatchConfirmText('')
     } finally {
       setBatchDeleting(false)
     }
@@ -491,8 +497,8 @@ function UsersTab() {
               <tr>
                 <th style={{ width: 36 }}>
                   <input type="checkbox" onChange={toggleSelectAll}
-                    checked={users.filter((u) => u.id !== authUser?.id).length > 0 &&
-                      users.filter((u) => u.id !== authUser?.id).every((u) => selectedUsers.has(u.id))}
+                    checked={users.filter((u) => u.id !== authUser?.id && !u.is_admin).length > 0 &&
+                      users.filter((u) => u.id !== authUser?.id && !u.is_admin).every((u) => selectedUsers.has(u.id))}
                   />
                 </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
@@ -510,7 +516,9 @@ function UsersTab() {
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    {u.id !== authUser?.id && (
+                    {u.id === authUser?.id ? null : u.is_admin ? (
+                      <input type="checkbox" disabled title="不能选择管理员账号" style={{ opacity: 0.35, cursor: 'not-allowed' }} />
+                    ) : (
                       <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
                     )}
                   </td>
@@ -674,17 +682,54 @@ function UsersTab() {
         </div>
       )}
 
-      {/* Batch delete modal */}
-      <ConfirmModal
-        isOpen={batchDeleteConfirm}
-        title="批量删除用户"
-        message={`确定删除已选的 ${selectedUsers.size} 个用户？此操作不可逆。`}
-        confirmText={`删除 ${selectedUsers.size} 个用户`}
-        danger
-        onConfirm={handleBatchDelete}
-        onCancel={() => setBatchDeleteConfirm(false)}
-        disabled={batchDeleting}
-      />
+      {/* Batch delete result feedback */}
+      {batchDeleteResult && (
+        <div className="admin-success-banner">
+          <span>已删除 {batchDeleteResult.deleted} 个用户{batchDeleteResult.failed > 0 && `，${batchDeleteResult.failed} 个失败`}</span>
+          <button className="admin-error-close" onClick={() => setBatchDeleteResult(null)}>✕</button>
+        </div>
+      )}
+
+      {/* Batch delete modal — enhanced confirmation */}
+      {batchDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => { if (!batchDeleting) { setBatchDeleteConfirm(false); setBatchConfirmText('') } }}>
+          <div className="modal-card" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">批量删除用户</h3>
+            <div className="modal-body">
+              <p style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 12 }}>
+                此操作不可恢复！
+              </p>
+              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                将删除以下 {selectedUsers.size} 个用户及其<strong>所有数据</strong>（角色卡、书籍、对话记录、记忆）：
+              </p>
+              <div style={{ maxHeight: 120, overflow: 'auto', marginBottom: 12, padding: 8, backgroundColor: 'var(--pill-bg)', borderRadius: 6, fontSize: 13 }}>
+                {[...selectedUsers].map((uid) => {
+                  const u = users.find((x) => x.id === uid)
+                  return <div key={uid} style={{ padding: '2px 0' }}>{u?.username || uid} {u?.is_admin ? '(管理员)' : ''}</div>
+                })}
+              </div>
+              <label className="login-field" style={{ margin: 0 }}>
+                <span>请输入 <strong>删除</strong> 确认操作</span>
+                <input
+                  type="text"
+                  value={batchConfirmText}
+                  onChange={(e) => setBatchConfirmText(e.target.value)}
+                  placeholder="删除"
+                  disabled={batchDeleting}
+                  onKeyDown={(e) => e.key === 'Enter' && batchConfirmText === '删除' && !batchDeleting && handleBatchDelete()}
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="modal-actions">
+              <button className="btn-ghost" onClick={() => { setBatchDeleteConfirm(false); setBatchConfirmText('') }} disabled={batchDeleting}>取消</button>
+              <button className="btn-danger" onClick={handleBatchDelete} disabled={batchDeleting || batchConfirmText !== '删除'}>
+                {batchDeleting ? '删除中…' : `删除 ${selectedUsers.size} 个用户`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={!!disableConfirm}

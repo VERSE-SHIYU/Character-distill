@@ -90,6 +90,11 @@ const useAppStore = create((set, get) => ({
   },
 
   goBack: () => {
+    const { previousView, previousViewContext } = get()
+    if (previousView) {
+      set({ currentView: previousView, previousView: null, previousViewContext: null })
+      return
+    }
     const { currentView } = get()
     const backMap = { chat: 'character', character: 'text', text: 'home' }
     set({ currentView: backMap[currentView] || 'home' })
