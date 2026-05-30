@@ -115,7 +115,7 @@ class MemoryManager:
         if not self.enabled:
             return []
         try:
-            results = self._mem.get_all(user_id=card_id)
+            results = self._mem.get_all(filters={"user_id": card_id})
             if isinstance(results, dict):
                 results = results.get("results", [])
             return results
