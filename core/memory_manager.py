@@ -124,11 +124,12 @@ class MemoryManager:
             return []
 
     def add_manual(self, text: str, card_id: str) -> bool:
-        """手动添加一条单文本记忆。"""
+        """手动添加一条单文本记忆。infer=False 避免 Mem0 LLM 提炼丢弃。"""
         if not self.enabled:
             return False
         try:
-            self._mem.add(text, user_id=card_id)
+            result = self._mem.add(text, user_id=card_id, infer=False)
+            print(f"[MemoryManager] manual add result: {result}")
             return True
         except Exception as exc:
             print(f"[MemoryManager] manual add failed: {exc}")
