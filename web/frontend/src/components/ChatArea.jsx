@@ -133,6 +133,10 @@ function ChatView() {
   const [showMemoryPanel, setShowMemoryPanel] = useState(false)
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
+  const [editingMemId, setEditingMemId] = useState(null)
+  const [editMemText, setEditMemText] = useState('')
+  const [addingMem, setAddingMem] = useState(false)
+  const [addMemText, setAddMemText] = useState('')
   const [memoryToast, setMemoryToast] = useState(false)
   const [stageToast, setStageToast] = useState(null) // { stage, stage_emoji }
 
@@ -896,6 +900,40 @@ function ChatView() {
               <button type="button" className="btn-ghost" onClick={() => setShowMemoryPanel(false)}>✕</button>
             </div>
             <div className="memory-panel-body">
+              {/* Add memory row */}
+              {addingMem ? (
+                <div className="memory-add-row">
+                  <textarea
+                    className="memory-add-input"
+                    placeholder="输入新记忆…"
+                    value={addMemText}
+                    onChange={e => setAddMemText(e.target.value)}
+                    rows={2}
+                  />
+                  <div className="memory-add-actions">
+                    <button type="button" className="btn-primary btn-sm" onClick={async () => {
+                      if (!addMemText.trim()) return
+                      try {
+                        const res = await fetchWithTimeout(`/api/memory/add/${cardId}`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ text: addMemText.trim() }),
+                        })
+                        if (!res.ok) { alert('添加失败'); return }
+                        setAddMemText('')
+                        setAddingMem(false)
+                        loadMemories()
+                      } catch { alert('添加失败') }
+                    }}>保存</button>
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => { setAddingMem(false); setAddMemText('') }}>取消</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="memory-add-trigger" onClick={() => setAddingMem(true)}>
+                  + 添加记忆
+                </button>
+              )}
+
               {memoriesLoading ? (
                 <p className="memory-empty">加载中…</p>
               ) : memories.length === 0 ? (
@@ -903,16 +941,46 @@ function ChatView() {
               ) : (
                 memories.map((m) => (
                   <div key={m.id} className="memory-item">
-                    <p className="memory-text">{m.memory}</p>
-                    <button
-                      type="button"
-                      className="memory-delete-btn"
-                      onClick={async () => {
-                        await fetchWithTimeout(`/api/memory/delete/${m.id}?card_id=${cardId}`, { method: 'DELETE' })
-                        setMemories(prev => prev.filter(x => x.id !== m.id))
-                      }}
-                      title="删除此记忆"
-                    >✕</button>
+                    {editingMemId === m.id ? (
+                      <div className="memory-edit-row">
+                        <textarea
+                          className="memory-edit-input"
+                          value={editMemText}
+                          onChange={e => setEditMemText(e.target.value)}
+                          rows={2}
+                        />
+                        <div className="memory-edit-actions">
+                          <button type="button" className="btn-primary btn-sm" onClick={async () => {
+                            if (!editMemText.trim()) return
+                            try {
+                              const res = await fetchWithTimeout(`/api/memory/update/${m.id}?card_id=${cardId}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ text: editMemText.trim() }),
+                              })
+                              if (!res.ok) { alert('更新失败'); return }
+                              setEditingMemId(null)
+                              loadMemories()
+                            } catch { alert('更新失败') }
+                          }}>保存</button>
+                          <button type="button" className="btn-ghost btn-sm" onClick={() => setEditingMemId(null)}>取消</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="memory-text">{m.memory}</p>
+                        <div className="memory-item-actions">
+                          <button type="button" className="memory-action-btn" onClick={() => {
+                            setEditingMemId(m.id)
+                            setEditMemText(m.memory)
+                          }} title="编辑">✎</button>
+                          <button type="button" className="memory-action-btn" onClick={async () => {
+                            await fetchWithTimeout(`/api/memory/delete/${m.id}?card_id=${cardId}`, { method: 'DELETE' })
+                            setMemories(prev => prev.filter(x => x.id !== m.id))
+                          }} title="删除">✕</button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 ))
               )}

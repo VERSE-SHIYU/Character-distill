@@ -123,6 +123,28 @@ class MemoryManager:
             print(f"[MemoryManager] Get all failed: {exc}")
             return []
 
+    def add_manual(self, text: str, card_id: str) -> bool:
+        """手动添加一条单文本记忆。"""
+        if not self.enabled:
+            return False
+        try:
+            self._mem.add(text, user_id=card_id)
+            return True
+        except Exception as exc:
+            print(f"[MemoryManager] manual add failed: {exc}")
+            return False
+
+    def update(self, memory_id: str, text: str) -> bool:
+        """更新一条记忆的内容。"""
+        if not self.enabled:
+            return False
+        try:
+            self._mem.update(memory_id=memory_id, data=text)
+            return True
+        except Exception as exc:
+            print(f"[MemoryManager] update failed: {exc}")
+            return False
+
     def delete(self, memory_id: str) -> bool:
         """删除单条记忆。"""
         if not self.enabled:

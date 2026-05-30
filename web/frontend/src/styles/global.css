@@ -10188,25 +10188,95 @@ select.settings-input {
   margin: 0;
 }
 
-.memory-delete-btn {
+.memory-item-actions {
   flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.memory-item:hover .memory-item-actions {
+  opacity: 1;
+}
+
+.memory-action-btn {
   background: none;
   border: none;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 14px;
-  padding: 2px 4px;
+  font-size: 13px;
+  padding: 2px 6px;
   border-radius: 4px;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
 
-.memory-item:hover .memory-delete-btn {
-  opacity: 1;
+.memory-action-btn:hover {
+  color: var(--text);
+  background: var(--glass-border);
 }
 
-.memory-delete-btn:hover {
-  color: #e53935;
+.memory-add-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px;
+  border: 1px dashed var(--glass-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.memory-add-trigger:hover {
+  background: var(--glass-border);
+}
+
+.memory-add-row,
+.memory-edit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.memory-add-input,
+.memory-edit-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 48px;
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.memory-add-input:focus,
+.memory-edit-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.memory-add-actions,
+.memory-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.btn-sm {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 6px;
+  min-height: 28px;
 }
 
 .memory-empty {

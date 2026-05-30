@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from deps import get_memory_manager, get_storage
 from core.memory_manager import MemoryManager
@@ -11,6 +12,14 @@ from routers.auth import get_current_user
 from storage.sqlite_store import SQLiteStore
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
+
+
+class AddMemoryRequest(BaseModel):
+    text: str
+
+
+class UpdateMemoryRequest(BaseModel):
+    text: str
 
 
 @router.get("/list/{card_id}")
@@ -30,6 +39,55 @@ async def list_memories(
         raise HTTPException(403, "无权访问此角色的记忆")
     memories = memory_manager.get_all(card_id)
     return {"memories": memories, "enabled": True}
+
+
+@router.post("/add/{card_id}")
+@limiter.limit("30/minute")
+async def add_memory(
+    card_id: str,
+    body: AddMemoryRequest,
+    request: Request,
+    user=Depends(get_current_user),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
+    storage: SQLiteStore = Depends(get_storage),
+):
+    """手动添加一条记忆。"""
+    if not memory_manager or not memory_manager.enabled:
+        raise HTTPException(400, "记忆系统未启用")
+    if not body.text.strip():
+        raise HTTPException(422, "记忆内容不能为空")
+    owner_id = await storage.get_card_author_id(card_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(403, "无权操作此角色的记忆")
+    ok = memory_manager.add_manual(body.text.strip(), card_id)
+    if not ok:
+        raise HTTPException(500, "添加失败")
+    return {"ok": True}
+
+
+@router.put("/update/{memory_id}")
+@limiter.limit("30/minute")
+async def update_memory(
+    memory_id: str,
+    body: UpdateMemoryRequest,
+    request: Request,
+    user=Depends(get_current_user),
+    memory_manager: MemoryManager | None = Depends(get_memory_manager),
+    storage: SQLiteStore = Depends(get_storage),
+    card_id: str = Query(...),
+):
+    """更新一条记忆的内容。"""
+    if not memory_manager or not memory_manager.enabled:
+        raise HTTPException(400, "记忆系统未启用")
+    if not body.text.strip():
+        raise HTTPException(422, "记忆内容不能为空")
+    owner_id = await storage.get_card_author_id(card_id)
+    if not owner_id or owner_id != user["id"]:
+        raise HTTPException(403, "无权操作此角色的记忆")
+    ok = memory_manager.update(memory_id, body.text.strip())
+    if not ok:
+        raise HTTPException(500, "更新失败")
+    return {"ok": True}
 
 
 @router.delete("/delete/{memory_id}")
