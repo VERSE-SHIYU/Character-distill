@@ -8,7 +8,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import MentionDropdown from './common/MentionDropdown'
-import ChatHistoryPanel, { Calendar } from './common/ChatHistoryPanel'
+import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import EmojiPicker from './common/EmojiPicker'
 import { parseCardJson } from '../utils/card'
@@ -172,26 +172,6 @@ export default function GroupChatPage() {
       setCardCache(prev => ({ ...prev, ...updates }))
     }
   }, [allCards])
-
-  // ── 历史记录 ──
-  const historyFetchSessions = useCallback(async (keyword) => {
-    if (!groups) return []
-    const otherGroups = groups.filter((g) => g.id !== currentGroup?.id)
-    const list = keyword
-      ? otherGroups.filter((g) => (g.name || '').toLowerCase().includes(keyword.toLowerCase()))
-      : otherGroups
-    return list.map((g) => ({
-      id: g.id,
-      title: g.name || '未命名群聊',
-      preview: `共 ${g.card_ids?.length || 0} 个角色`,
-      time: g.created_at,
-    }))
-  }, [groups, currentGroup?.id])
-
-  const historySelectSession = useCallback((session) => {
-    const g = groups.find((grp) => grp.id === session.id)
-    if (g) enterGroup(g)
-  }, [groups, enterGroup])
 
   // Compute date groups from groups for calendar
   useEffect(() => {
