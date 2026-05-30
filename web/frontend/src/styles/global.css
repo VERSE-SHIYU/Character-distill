@@ -5045,39 +5045,115 @@ html.theme-aurora::before {
 .calendar-picker {
   padding: 8px 0;
 }
+/* ── Calendar Nav ── */
 .cal-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 0 8px 10px;
+  gap: 6px;
+  padding: 0 4px 10px;
 }
 .cal-nav-btn {
   width: 28px;
   height: 28px;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--text-secondary);
   flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
 }
-.cal-nav-btn:hover { background: rgba(var(--accent-rgb, 99, 102, 241), 0.08); color: var(--text); }
-.cal-nav-selects { display: flex; gap: 6px; align-items: center; }
-.cal-select {
-  padding: 4px 8px;
-  border: 1px solid var(--glass-border, rgba(128,128,128,0.15));
-  border-radius: 6px;
-  background: var(--glass-bg, rgba(255,255,255,0.04));
-  color: var(--text);
+.cal-nav-btn:hover { background: var(--accent-soft); color: var(--text); }
+
+/* Year/month pill buttons */
+.cal-nav-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cal-nav-pills {
+  position: relative;
+}
+.cal-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius, 12px);
+  background: var(--glass-bg, rgba(255,255,255,0.75));
+  backdrop-filter: blur(12px) saturate(180%);
   font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
   cursor: pointer;
-  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
 }
-.cal-select:focus { border-color: var(--accent); }
+.cal-pill:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.cal-pill.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.cal-pill svg {
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.cal-pill.active svg {
+  transform: rotate(180deg);
+}
+
+/* Dropdown popover */
+.cal-picker-drop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  min-width: 80px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--glass-bg, rgba(255,255,255,0.95));
+  backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius, 12px);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  animation: calDropIn 0.15s ease-out;
+}
+@keyframes calDropIn {
+  from { opacity: 0; transform: translateX(-50%) translateY(-6px) scale(0.96); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0)    scale(1); }
+}
+.cal-picker-opt {
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: center;
+  font-family: inherit;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.cal-picker-opt:hover { background: var(--accent-soft); }
+.cal-picker-opt.sel {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
 
 .cal-weekdays {
   display: grid;

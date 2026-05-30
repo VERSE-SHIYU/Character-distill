@@ -4,6 +4,30 @@ import Loading from './Loading'
 
 // ── Calendar picker (also exported for external tab use) ──
 
+// ── Year/Month picker dropdown ──
+function PickerDropdown({ options, selected, onSelect, onClose, suffix = '' }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose() }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+  return (
+    <div className="cal-picker-drop" ref={ref}>
+      {options.map(opt => (
+        <button
+          key={opt.value}
+          type="button"
+          className={`cal-picker-opt${opt.value === selected ? ' sel' : ''}`}
+          onClick={() => { onSelect(opt.value); onClose() }}
+        >
+          {opt.label}{suffix}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
   const datesSet = useMemo(() => new Set(dateGroups), [dateGroups])
 
@@ -19,7 +43,6 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
 
-  // Default to month of selectedDate, or most recent date, or current month
   const defaultYear = selectedDate
     ? parseInt(selectedDate.slice(0, 4), 10)
     : dateGroups[0]
@@ -33,6 +56,7 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
 
   const [viewYear, setViewYear] = useState(defaultYear)
   const [viewMonth, setViewMonth] = useState(defaultMonth)
+  const [openPicker, setOpenPicker] = useState(null) // 'year' | 'month' | null
 
   const daysInMonth = new Date(viewYear, viewMonth, 0).getDate()
   const firstDayOfWeek = new Date(viewYear, viewMonth - 1, 1).getDay() // 0=Sun
@@ -48,8 +72,10 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
     else setViewMonth(viewMonth + 1)
   }
 
+  const yearOpts = years.map(y => ({ value: y, label: String(y) }))
+  const monthOpts = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))
+
   const dayCells = []
-  // Empty cells for days before the 1st
   for (let i = 0; i < firstDayOfWeek; i++) {
     dayCells.push(<div key={`empty-${i}`} className="cal-day cal-day-empty" />)
   }
@@ -77,15 +103,33 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
         <button type="button" className="cal-nav-btn" onClick={handlePrevMonth}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
-        <div className="cal-nav-selects">
-          <select className="cal-select" value={viewYear} onChange={e => setViewYear(parseInt(e.target.value, 10))}>
-            {years.map(y => <option key={y} value={y}>{y}年</option>)}
-          </select>
-          <select className="cal-select" value={viewMonth} onChange={e => setViewMonth(parseInt(e.target.value, 10))}>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-              <option key={m} value={m}>{m}月</option>
-            ))}
-          </select>
+        <div className="cal-nav-center">
+          <div className="cal-nav-pills">
+            <button
+              type="button"
+              className={`cal-pill${openPicker === 'year' ? ' active' : ''}`}
+              onClick={() => setOpenPicker(openPicker === 'year' ? null : 'year')}
+            >
+              {viewYear}年
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            {openPicker === 'year' && (
+              <PickerDropdown options={yearOpts} selected={viewYear} onSelect={setViewYear} onClose={() => setOpenPicker(null)} suffix="年" />
+            )}
+          </div>
+          <div className="cal-nav-pills">
+            <button
+              type="button"
+              className={`cal-pill${openPicker === 'month' ? ' active' : ''}`}
+              onClick={() => setOpenPicker(openPicker === 'month' ? null : 'month')}
+            >
+              {viewMonth}月
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            {openPicker === 'month' && (
+              <PickerDropdown options={monthOpts} selected={viewMonth} onSelect={setViewMonth} onClose={() => setOpenPicker(null)} suffix="月" />
+            )}
+          </div>
         </div>
         <button type="button" className="cal-nav-btn" onClick={handleNextMonth}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
