@@ -151,7 +151,7 @@ async def my_following(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Get authors the current user is following."""
-    users = await storage.get_following_details(user["id"])
+    users = await storage.get_following_details(user["id"], user["id"])
     return {"users": users}
 
 
@@ -221,7 +221,7 @@ async def get_author_followers(
     storage: SQLiteStore = Depends(get_storage),
 ) -> dict:
     """Get followers with details for an author."""
-    followers = await storage.get_followers_details(user_id)
+    followers = await storage.get_followers_details(user_id, user["id"])
     return {"followers": followers}
 
 
@@ -240,7 +240,7 @@ async def get_author_following(
         raise HTTPException(404, "用户不存在")
     following_visible = bool(author.get("following_visible", 1))
     if is_self or following_visible:
-        following = await storage.get_following_details(user_id)
+        following = await storage.get_following_details(user_id, user["id"])
         return {"following": following, "locked": False}
     return {"following": [], "locked": True}
 

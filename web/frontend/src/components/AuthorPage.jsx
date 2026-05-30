@@ -33,6 +33,7 @@ export default function AuthorPage({ embedded = false }) {
   const [followersList, setFollowersList] = useState([])
   const [followingList, setFollowingList] = useState([])
   const [followingLocked, setFollowingLocked] = useState(false)
+  const [followState, setFollowState] = useState({})
   const [statsVisible, setStatsVisible] = useState(true)
 
   // Posts
@@ -105,6 +106,22 @@ export default function AuthorPage({ embedded = false }) {
     } catch (err) {
       console.error('Follow failed:', err)
     }
+  }
+
+  const toggleFollowUser = async (userId) => {
+    setFollowState((prev) => ({ ...prev, [userId]: true }))
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${userId}/follow`, {
+        method: 'POST',
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      const updateFn = (prev) =>
+        prev.map((u) => (u.id || u.user_id) === userId ? { ...u, is_following: data.following } : u)
+      setFollowersList(updateFn)
+      setFollowingList(updateFn)
+    } catch { /* ignore */ }
+    setFollowState((prev) => ({ ...prev, [userId]: false }))
   }
 
   const handleDeletePost = async () => {
@@ -239,9 +256,19 @@ export default function AuthorPage({ embedded = false }) {
                                   </div>
                                 </button>
                                 {authUser?.id !== (f.id || f.user_id) && (
-                                  <button type="button" className="btn-sm btn-outline" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
-                                    私信
-                                  </button>
+                                  <>
+                                    <button type="button" className="btn-sm" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                      私信
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
+                                      onClick={() => toggleFollowUser(f.id || f.user_id)}
+                                      disabled={followState[f.id || f.user_id]}
+                                    >
+                                      {f.is_following ? '取消关注' : '关注'}
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             ))}
@@ -276,9 +303,19 @@ export default function AuthorPage({ embedded = false }) {
                                   </div>
                                 </button>
                                 {authUser?.id !== (f.id || f.user_id) && (
-                                  <button type="button" className="btn-sm btn-outline" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
-                                    私信
-                                  </button>
+                                  <>
+                                    <button type="button" className="btn-sm" onClick={() => { setMessageTargetUserId(f.id || f.user_id); setMessageTargetUsername(f.username); setView('messages') }}>
+                                      私信
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
+                                      onClick={() => toggleFollowUser(f.id || f.user_id)}
+                                      disabled={followState[f.id || f.user_id]}
+                                    >
+                                      {f.is_following ? '取消关注' : '关注'}
+                                    </button>
+                                  </>
                                 )}
                               </div>
                             ))}

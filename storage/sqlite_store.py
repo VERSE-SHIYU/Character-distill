@@ -3283,13 +3283,16 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get followers failed: {exc}")
             return []
 
-    async def get_followers_details(self, user_id: str) -> list[dict]:
-        """Get followers with id, username, avatar_data."""
+    async def get_followers_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
+        """Get followers with id, username, avatar_data, is_following, cards_count."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT u.id, u.username, u.avatar_data FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = ? AND f.follower_id != f.following_id",
-                    (user_id,),
+                    """SELECT u.id, u.username, u.avatar_data,
+                              EXISTS(SELECT 1 FROM user_follows WHERE follower_id = :viewer AND following_id = u.id) AS is_following,
+                              (SELECT COUNT(*) FROM cards WHERE user_id = u.id AND visibility = 'public' AND deleted_at IS NULL) AS cards_count
+                       FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = :uid AND f.follower_id != f.following_id""",
+                    {"uid": user_id, "viewer": viewer_id},
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -3309,15 +3312,16 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get following failed: {exc}")
             return []
 
-    async def get_following_details(self, user_id: str) -> list[dict]:
-        """Get followed users with id and username."""
+    async def get_following_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
+        """Get followed users with id, username, avatar_data, is_following, cards_count."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT u.id, u.username, u.avatar_data,
+                              EXISTS(SELECT 1 FROM user_follows WHERE follower_id = :viewer AND following_id = u.id) AS is_following,
                               (SELECT COUNT(*) FROM cards WHERE user_id = u.id AND visibility = 'public' AND deleted_at IS NULL) AS cards_count
-                       FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = ?""",
-                    (user_id,),
+                       FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = :uid""",
+                    {"uid": user_id, "viewer": viewer_id},
                 )
                 rows = await cursor.fetchall()
             return [dict(r) for r in rows]
