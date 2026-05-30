@@ -28,6 +28,28 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
   const [otherOnlineHidden, setOtherOnlineHidden] = useState(false)
   const [otherLastActive, setOtherLastActive] = useState('')
 
+  // ── Sidebar history splitter ──
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [splitRatio, setSplitRatio] = useState(0.65)
+  const splitContainerRef = useRef(null)
+
+  const onSplitterMouseDown = useCallback((e) => {
+    e.preventDefault()
+    const container = splitContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+    const onMove = (moveE) => {
+      const ratio = (moveE.clientX - rect.left) / rect.width
+      setSplitRatio(Math.min(0.8, Math.max(0.4, ratio)))
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [])
+
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
     if (!otherUserId) return
@@ -268,11 +290,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
             </span>
           )}
         </div>
-        <ChatHistoryPanel
-          fetchSessions={historyFetchSessions}
-          onSelectSession={historySelectSession}
-          placeholder="搜索当前对话…"
-        />
+        <button
+          type="button"
+          className={`chat-history-toggle${historyOpen ? ' active' : ''}`}
+          onClick={() => setHistoryOpen(v => !v)}
+          title="历史记录"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          历史
+        </button>
       </div>
 
       {!isOnline && (
@@ -281,61 +310,63 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
         </div>
       )}
 
-      {/* Messages */}
-      <div className="private-chat-body">
-        {hasMore && (
-          <div className="messages-load-more">
-            <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={loading}>
-              {loading ? '加载中…' : '加载更多'}
-            </button>
-          </div>
-        )}
-        {messages.map((msg, i) => {
-          const prev = messages[i - 1]
-          const showTime = !prev ||
-            (new Date(msg.created_at) - new Date(prev.created_at)) > 5 * 60 * 1000
-          const isMe = msg.sender_id === authUser?.id
-          return (
-            <React.Fragment key={msg.id}>
-              {showTime && (
-                <div className="messages-time-divider">{formatChatTime(msg.created_at)}</div>
-              )}
-              <div className={`messages-row${isMe ? ' mine' : ' other'}`} data-msg-id={msg.id}>
-                {!isMe && (
-                  <Avatar name={otherUsername || '?'} src={otherAvatar} size={52} />
-                )}
-                <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
-                  <span className="messages-msg-text">{msg.content}</span>
-                  {msg.created_at && (
-                    <div className={`msg-time ${isMe ? 'msg-time-user' : ''}`}>{formatChatTime(msg.created_at)}</div>
-                  )}
-                </div>
-                {isMe && msg._status === 'queued' && (
-                  <span className="messages-status queued" title="等待网络恢复">📶</span>
-                )}
-                {isMe && msg._status === 'sending' && (
-                  <span className="messages-status sending" title="发送中">⏳</span>
-                )}
-                {isMe && msg._status === 'failed' && (
-                  <button
-                    type="button"
-                    className="messages-status failed"
-                    onClick={() => handleResend(msg)}
-                    title="发送失败，点击重试"
-                  >
-                    ⚠
-                  </button>
-                )}
-                {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={52} />}
+      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
+        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+          {/* Messages */}
+          <div className="private-chat-body">
+            {hasMore && (
+              <div className="messages-load-more">
+                <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={loading}>
+                  {loading ? '加载中…' : '加载更多'}
+                </button>
               </div>
-            </React.Fragment>
-          )
-        })}
-        <div ref={messagesEndRef} />
-      </div>
+            )}
+            {messages.map((msg, i) => {
+              const prev = messages[i - 1]
+              const showTime = !prev ||
+                (new Date(msg.created_at) - new Date(prev.created_at)) > 5 * 60 * 1000
+              const isMe = msg.sender_id === authUser?.id
+              return (
+                <React.Fragment key={msg.id}>
+                  {showTime && (
+                    <div className="messages-time-divider">{formatChatTime(msg.created_at)}</div>
+                  )}
+                  <div className={`messages-row${isMe ? ' mine' : ' other'}`} data-msg-id={msg.id}>
+                    {!isMe && (
+                      <Avatar name={otherUsername || '?'} src={otherAvatar} size={52} />
+                    )}
+                    <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
+                      <span className="messages-msg-text">{msg.content}</span>
+                      {msg.created_at && (
+                        <div className={`msg-time ${isMe ? 'msg-time-user' : ''}`}>{formatChatTime(msg.created_at)}</div>
+                      )}
+                    </div>
+                    {isMe && msg._status === 'queued' && (
+                      <span className="messages-status queued" title="等待网络恢复">📶</span>
+                    )}
+                    {isMe && msg._status === 'sending' && (
+                      <span className="messages-status sending" title="发送中">⏳</span>
+                    )}
+                    {isMe && msg._status === 'failed' && (
+                      <button
+                        type="button"
+                        className="messages-status failed"
+                        onClick={() => handleResend(msg)}
+                        title="发送失败，点击重试"
+                      >
+                        ⚠
+                      </button>
+                    )}
+                    {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={52} />}
+                  </div>
+                </React.Fragment>
+              )
+            })}
+            <div ref={messagesEndRef} />
+          </div>
 
-      {/* Input */}
-      <div className="private-chat-input-bar">
+          {/* Input */}
+          <div className="private-chat-input-bar">
         <div className="messages-input-toolbar messages-input-toolbar-top">
           <button type="button" className="messages-toolbar-btn" title="表情" data-emoji-btn
             onClick={() => setShowEmoji(!showEmoji)}>
@@ -371,6 +402,24 @@ export default function PrivateMessageChat({ otherUserId, otherUsername, onBack 
             发送
           </button>
         </div>
+      </div>
+        </div>
+
+        {historyOpen && (
+          <>
+            <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
+            <div className="history-sidebar">
+              <ChatHistoryPanel
+                mode="sidebar"
+                open={historyOpen}
+                onClose={() => setHistoryOpen(false)}
+                fetchSessions={historyFetchSessions}
+                onSelectSession={historySelectSession}
+                placeholder="搜索当前对话…"
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   )
