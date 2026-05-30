@@ -330,6 +330,8 @@ async def send_message(
     async with group.lock:
         try:
             resp = await group.send(req.target_card_id, req.message)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(500, "操作失败，请稍后重试") from exc
 
@@ -391,6 +393,8 @@ async def broadcast_message(
     async with group.lock:
         try:
             results = await group.broadcast(req.message, req.target_card_ids, auto_mode=req.auto_mode)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(500, "操作失败，请稍后重试") from exc
 

@@ -51,8 +51,8 @@ class GroupSession:
         """Build user identity context to inject into each AI character's system prompt."""
         if self.user_persona_type == "character":
             cid = self.user_persona_card_id
-            # Played character is excluded from engines during _rebuild_group_session,
-            # so self.engines will not contain the played character. Use stored name.
+            # 扮演角色已在 _rebuild_group_session 中被跳过，不加入 engines；
+            # 角色名从 user_persona_name 取得。
             name = self.user_persona_name
             return (
                 f"\n\n[重要] 当前与你对话的是「{name}」本人。"
