@@ -11287,6 +11287,73 @@ select.settings-input {
 .group-create-empty { font-size: 13px; color: var(--text-dim); padding: 8px 0; margin: 0; }
 .group-create-card-name { flex: 1; font-size: 14px; color: var(--text); }
 
+/* Persona identity selection in create modal */
+.persona-options { display: flex; flex-direction: column; gap: 10px; }
+.persona-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.persona-option:hover { border-color: var(--accent-soft); }
+.persona-option.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.persona-radio {
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--text-dim);
+  flex-shrink: 0;
+  margin-top: 1px;
+  transition: border-color .15s;
+  position: relative;
+}
+.persona-option.active .persona-radio {
+  border-color: var(--accent);
+}
+.persona-option.active .persona-radio::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.persona-option-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.persona-option-desc { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.persona-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 30px;
+}
+.persona-sub .modal-input { flex: 1; min-width: 200px; }
+.persona-char-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.persona-char-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+.persona-char-btn.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+/* Right-aligned bubble speaker header for user persona */
+.group-chat-bubble-header--right { justify-content: flex-end; }
+
 /* ── Author Page ── */
 
 .author-page { padding: 0 24px 24px; max-width: 680px; margin: 0 auto; }

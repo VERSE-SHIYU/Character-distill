@@ -606,6 +606,16 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Presence visibility rename migration failed: {exc}")
 
+                    # Run 060_group_user_persona migration
+                    group_persona_path = migrations_dir / "060_group_user_persona.sql"
+                    if group_persona_path.exists():
+                        try:
+                            await conn.executescript(group_persona_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Group persona migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1762,14 +1772,22 @@ class SQLiteStore(StorageBase):
     # ── group sessions ────────────────────────────────────────────────
 
     async def create_group_session(
-        self, id: str, name: str, card_ids: list[str], user_id: str
+        self, id: str, name: str, card_ids: list[str], user_id: str,
+        user_persona_type: str = "director",
+        user_persona_card_id: str = "",
+        user_persona_name: str = "",
+        user_persona_desc: str = "",
     ) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO group_sessions (id, name, card_ids, user_id)
-                       VALUES (?, ?, ?, ?)""",
-                    (id, name, json.dumps(card_ids), user_id),
+                    """INSERT INTO group_sessions (id, name, card_ids, user_id,
+                       user_persona_type, user_persona_card_id,
+                       user_persona_name, user_persona_desc)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (id, name, json.dumps(card_ids), user_id,
+                     user_persona_type, user_persona_card_id,
+                     user_persona_name, user_persona_desc),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -1780,7 +1798,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at FROM group_sessions WHERE id = ?",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -1797,7 +1815,9 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, name, card_ids, user_id, created_at
+                    """SELECT id, name, card_ids, user_id, created_at,
+                              user_persona_type, user_persona_card_id,
+                              user_persona_name, user_persona_desc
                        FROM group_sessions
                        WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",

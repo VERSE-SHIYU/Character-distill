@@ -18,11 +18,61 @@ class GroupSession:
     send(target_card_id, message) 将历史转换为目标角色的视角后调用 LLM。
     """
 
-    def __init__(self, id: str, engines: dict[str, ChatEngine]) -> None:
+    def __init__(
+        self, id: str, engines: dict[str, ChatEngine],
+        user_persona_type: str = "director",
+        user_persona_card_id: str = "",
+        user_persona_name: str = "",
+        user_persona_desc: str = "",
+    ) -> None:
         self.id = id
         self.engines = engines  # card_id → ChatEngine
         self.group_history: list[dict[str, Any]] = []
         self.lock = asyncio.Lock()
+        self.user_persona_type = user_persona_type
+        self.user_persona_card_id = user_persona_card_id
+        self.user_persona_name = user_persona_name
+        self.user_persona_desc = user_persona_desc
+
+    @property
+    def speaker_name(self) -> str:
+        """Return the display name for the user in this group session."""
+        if self.user_persona_type == "character":
+            cid = self.user_persona_card_id
+            engine = self.engines.get(cid) if cid else None
+            if engine:
+                return engine.card.name
+            return self.user_persona_name or "角色"
+        if self.user_persona_type == "stranger":
+            return self.user_persona_name or "路人"
+        return "导演"
+
+    def _build_persona_context(self) -> str:
+        """Build user identity context to inject into each AI character's system prompt."""
+        if self.user_persona_type == "character":
+            cid = self.user_persona_card_id
+            engine = self.engines.get(cid) if cid else None
+            # When user plays a character, the played character's engine IS in engines
+            # (we don't remove it for normal group use — only when creating AI engines).
+            # Look up the card name from the played character's engine if available,
+            # otherwise use stored name.
+            name = self.user_persona_name
+            if engine:
+                name = engine.card.name
+            if not name:
+                name = "角色"
+            return (
+                f"\n\n[重要] 当前与你对话的是「{name}」本人。"
+                f"请根据你和{name}的关系来回应，不要将ta当成其他人。"
+            )
+        if self.user_persona_type == "stranger":
+            name = self.user_persona_name or "路人"
+            desc = self.user_persona_desc or "一个新加入的人"
+            return (
+                f"\n\n[重要] 当前与你对话的是「{name}」，{desc}。"
+                f"这是你此前不认识的新人物，请以初次接触的态度回应，不要把ta当成你认识的其他角色。"
+            )
+        return "\n\n[当前与你对话的是导演/旁白者]"
 
     def _convert_history(self, target_card_id: str) -> list[dict[str, str]]:
         """将群聊历史转换为目标角色的视角。
@@ -59,12 +109,14 @@ class GroupSession:
         if not engine:
             raise ValueError(f"Character {target_card_id} not in this group")
 
-        # 记录导演消息到群聊历史
+        speaker = self.speaker_name
+
+        # 记录用户消息到群聊历史
         self.group_history.append({
-            "speaker": "导演",
+            "speaker": speaker,
             "role": "user",
             "content": message,
-            "speaker_card_id": "",
+            "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
         })
 
         # 转换历史为目标角色视角，嵌入 system prompt
@@ -72,6 +124,8 @@ class GroupSession:
         system_prompt = engine._ctx_engine.build(
             converted, message, engine.user_role,
         )
+        # Inject user persona context
+        system_prompt += self._build_persona_context()
 
         # 直接调用 LLM，不走 engine.chat() 以免污染单聊历史
         response = await engine.llm.achat(
@@ -97,12 +151,14 @@ class GroupSession:
 
         auto_mode=True 时，导演消息不记入历史，改用指令 prompt 驱动角色自主发言。
         """
+        speaker = self.speaker_name
+
         if not auto_mode:
             self.group_history.append({
-                "speaker": "导演",
+                "speaker": speaker,
                 "role": "user",
                 "content": message,
-                "speaker_card_id": "",
+                "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
             })
 
         async def _reply(card_id: str) -> dict:
@@ -118,6 +174,7 @@ class GroupSession:
             system_prompt = engine._ctx_engine.build(
                 converted, user_msg, engine.user_role,
             )
+            system_prompt += self._build_persona_context()
             response = await engine.llm.achat(
                 system_prompt,
                 [{"role": "user", "content": user_msg}],

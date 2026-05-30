@@ -208,6 +208,11 @@ export default function GroupChatPage() {
   const [selectedCardIds, setSelectedCardIds] = useState([])
   const [cardsByText, setCardsByText] = useState({})
   const [selectedTextId, setSelectedTextId] = useState('')
+  const [personaStep, setPersonaStep] = useState(false)  // Second step: identity selection
+  const [personaType, setPersonaType] = useState('director') // 'director' | 'character' | 'stranger'
+  const [personaCardId, setPersonaCardId] = useState('')
+  const [personaName, setPersonaName] = useState('')
+  const [personaDesc, setPersonaDesc] = useState('')
 
   const loadGroups = useCallback(async () => {
     setLoading(true)
@@ -354,11 +359,18 @@ export default function GroupChatPage() {
   }, [messages])
 
   function enterGroup(group) {
-    const cardIds = parseCardIds(group.card_ids)
+    let cardIds = parseCardIds(group.card_ids)
+    // Exclude played character from AI members
+    if (group.user_persona_type === 'character' && group.user_persona_card_id) {
+      cardIds = cardIds.filter(id => id !== group.user_persona_card_id)
+    }
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
     ensureCardsLoaded(cardIds)
-    const who = userRole || authUser?.username || '用户'
+    const personaName = (group.user_persona_type === 'character' || group.user_persona_type === 'stranger')
+      ? (group.user_persona_name || '角色')
+      : null
+    const who = personaName || userRole || authUser?.username || '用户'
     setSystemMessage(`${who} 加入了群聊`)
   }
 
@@ -433,6 +445,11 @@ export default function GroupChatPage() {
     setSelectedCardIds([])
     setSelectedTextId('')
     setError(null)
+    setPersonaStep(false)
+    setPersonaType('director')
+    setPersonaCardId('')
+    setPersonaName('')
+    setPersonaDesc('')
 
     // Load cards grouped by text_id
     const grouped = {}
@@ -475,16 +492,33 @@ export default function GroupChatPage() {
     setSending(true)
     setError(null)
     try {
-      const data = await postJSON('/api/group/create', {
+      const body = {
         name: groupName,
         card_ids: selectedCardIds,
-      })
+        user_persona_type: personaType,
+        user_persona_card_id: personaCardId,
+        user_persona_name: personaName.trim(),
+        user_persona_desc: personaDesc.trim(),
+      }
+      const data = await postJSON('/api/group/create', body)
       setShowCreate(false)
-      // Enter the newly created group
+      // Reset create form
+      setPersonaStep(false)
+      setPersonaType('director')
+      setPersonaCardId('')
+      setPersonaName('')
+      setPersonaDesc('')
+      // Enter the newly created group — exclude played character from AI members
+      const aiCardIds = personaType === 'character' && personaCardId
+        ? selectedCardIds.filter(id => id !== personaCardId)
+        : selectedCardIds
       setCurrentGroup({
         id: data.group_id,
         name: data.name,
-        card_ids: selectedCardIds,
+        card_ids: aiCardIds,
+        user_persona_type: data.user_persona_type,
+        user_persona_card_id: data.user_persona_card_id,
+        user_persona_name: data.user_persona_name,
       })
       // Also add to sidebar list so it appears immediately
       setGroups(prev => [{ id: data.group_id, name: data.name, card_ids: JSON.stringify(selectedCardIds), created_at: new Date().toISOString() }, ...prev])
@@ -512,7 +546,12 @@ export default function GroupChatPage() {
 
     setSending(true)
     setError(null)
-    const speaker = userRole || authUser?.username || '我'
+    const personaSpeaker = (currentGroup?.user_persona_type === 'character' && currentGroup?.user_persona_name)
+      ? currentGroup.user_persona_name
+      : (currentGroup?.user_persona_type === 'stranger' && currentGroup?.user_persona_name)
+        ? currentGroup.user_persona_name
+        : null
+    const speaker = personaSpeaker || userRole || authUser?.username || '我'
     try {
       // Broadcast: one director message, all targets reply in parallel
       const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
@@ -879,14 +918,27 @@ export default function GroupChatPage() {
                         {showTime && (
                           <div className="time-divider">{formatChatTime(m.created_at)}</div>
                         )}
+                        {(() => {
+                          const personaSpeaker = (currentGroup?.user_persona_type === 'character' && currentGroup?.user_persona_name)
+                            ? currentGroup.user_persona_name
+                            : (currentGroup?.user_persona_type === 'stranger' && currentGroup?.user_persona_name)
+                              ? currentGroup.user_persona_name
+                              : null
+                          const replySpeaker = personaSpeaker || '我'
+                          return (
                         <div className={`messages-row${isUser ? ' mine' : ' other'}`}>
                           {isUser ? (
                             <>
                               <div className="messages-bubble mine group-msg-bubble">
+                                {personaSpeaker && (
+                                  <div className="group-chat-bubble-header group-chat-bubble-header--right">
+                                    <span className="group-chat-bubble-speaker">{personaSpeaker}</span>
+                                  </div>
+                                )}
                                 <div className="group-msg-bubble-actions">
                                   <button type="button" className="msg-action-btn" title="引用"
                                     onClick={() => {
-                                      setReplyTo({ id: m.id, speaker: '我', preview: m.content?.slice(0, 60) })
+                                      setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) })
                                       msgInputRef.current?.focus()
                                     }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -920,7 +972,7 @@ export default function GroupChatPage() {
                                   </div>
                                 )}
                               </div>
-                              <Avatar name={authUser?.username || '我'} size={40} src={userAvatar} />
+                              <Avatar name={personaSpeaker || authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
                           ) : (
                             <>
@@ -1005,6 +1057,7 @@ export default function GroupChatPage() {
                             </>
                           )}
                         </div>
+                      )})()}
                       </div>
                     )
                   })}
@@ -1274,7 +1327,7 @@ export default function GroupChatPage() {
               </div>
             </div>
 
-            {selectedTextId && (
+            {selectedTextId && !personaStep && (
               <div className="group-create-section">
                 <label className="modal-label">选择角色（至少 2 个）</label>
                 {selectedCardIds.length > 0 && (
@@ -1318,12 +1371,105 @@ export default function GroupChatPage() {
               </div>
             )}
 
+            {/* Step 2: Persona identity selection */}
+            {selectedTextId && personaStep && (
+              <div className="group-create-section">
+                <label className="modal-label">你以谁的身份参与？</label>
+
+                <div className="persona-options">
+                  <div
+                    className={`persona-option${personaType === 'director' ? ' active' : ''}`}
+                    onClick={() => setPersonaType('director')}
+                  >
+                    <div className="persona-radio" />
+                    <div>
+                      <div className="persona-option-title">导演 / 旁白者</div>
+                      <div className="persona-option-desc">AI 角色不知道你是谁，默认模式</div>
+                    </div>
+                  </div>
+
+                  <div
+                    className={`persona-option${personaType === 'character' ? ' active' : ''}`}
+                    onClick={() => setPersonaType('character')}
+                  >
+                    <div className="persona-radio" />
+                    <div>
+                      <div className="persona-option-title">扮演已选角色</div>
+                      <div className="persona-option-desc">选一个角色亲自扮演，AI 将把你当作该角色</div>
+                    </div>
+                  </div>
+                  {personaType === 'character' && (
+                    <div className="persona-sub">
+                      {selectedCardIds.map((id) => {
+                        const card = resolveCard(id) || cardsByText[selectedTextId]?.find(c => (c.id || c.card_id) === id)
+                        const name = card?.name || id
+                        return (
+                          <button
+                            key={id}
+                            type="button"
+                            className={`persona-char-btn${personaCardId === id ? ' active' : ''}`}
+                            onClick={() => setPersonaCardId(id)}
+                          >
+                            <Avatar name={name} size={28} src={cardAvatars[id]} />
+                            <span>{name}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <div
+                    className={`persona-option${personaType === 'stranger' ? ' active' : ''}`}
+                    onClick={() => setPersonaType('stranger')}
+                  >
+                    <div className="persona-radio" />
+                    <div>
+                      <div className="persona-option-title">路人身份</div>
+                      <div className="persona-option-desc">以一个新角色的身份加入，AI 角色不认识你</div>
+                    </div>
+                  </div>
+                  {personaType === 'stranger' && (
+                    <div className="persona-sub">
+                      <input
+                        className="modal-input"
+                        placeholder="你的名字（必填）"
+                        value={personaName}
+                        onChange={(e) => setPersonaName(e.target.value)}
+                        maxLength={20}
+                      />
+                      <input
+                        className="modal-input"
+                        placeholder={'一句话描述身份，如"路过的记者"（选填）'}
+                        value={personaDesc}
+                        onChange={(e) => setPersonaDesc(e.target.value)}
+                        maxLength={50}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="modal-actions">
-              <button type="button" className="btn-secondary" onClick={() => setShowCreate(false)}>取消</button>
-              <button type="button" className="btn-primary" onClick={handleCreate}
-                disabled={selectedCardIds.length < 2 || sending}>
-                {sending ? '创建中…' : `创建 (${selectedCardIds.length})`}
-              </button>
+              <button type="button" className="btn-secondary" onClick={() => {
+                if (personaStep) { setPersonaStep(false); setPersonaType('director'); setPersonaCardId(''); setPersonaName(''); setPersonaDesc('') }
+                else setShowCreate(false)
+              }}>{personaStep ? '上一步' : '取消'}</button>
+              {!personaStep ? (
+                <button type="button" className="btn-primary" onClick={() => {
+                  if (selectedCardIds.length < 2) { setError('请至少选择两个角色'); return }
+                  setPersonaStep(true)
+                  setError(null)
+                }}
+                  disabled={selectedCardIds.length < 2}>
+                  下一步
+                </button>
+              ) : (
+                <button type="button" className="btn-primary" onClick={handleCreate}
+                  disabled={sending || (personaType === 'stranger' && !personaName.trim())}>
+                  {sending ? '创建中…' : '创建群聊'}
+                </button>
+              )}
             </div>
           </div>
         </div>

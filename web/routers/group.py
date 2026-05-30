@@ -26,6 +26,10 @@ _group_sessions: dict[str, Any] = {}
 class CreateGroupRequest(BaseModel):
     name: str = ""
     card_ids: list[str]
+    user_persona_type: str = "director"  # "character" | "stranger" | "director"
+    user_persona_card_id: str = ""
+    user_persona_name: str = ""
+    user_persona_desc: str = ""
 
 
 class RenameGroupRequest(BaseModel):
@@ -74,10 +78,25 @@ async def _rebuild_group_session(
     rag_config = get_rag_config()
     memory_manager = get_memory_manager()
 
+    persona_type = session.get("user_persona_type", "director")
+    persona_card_id = session.get("user_persona_card_id", "")
+
     engines: dict[str, ChatEngine] = {}
     text_rag_cache: dict[str, RAGEngine] = {}
+    played_card_name = ""
 
     for card_id in session["card_ids"]:
+        # Skip the played character — user is that character, not AI
+        if persona_type == "character" and card_id == persona_card_id:
+            try:
+                card_rec = await storage.get_card(card_id)
+                if card_rec:
+                    card = CharacterCard.model_validate_json(card_rec["card_json"])
+                    played_card_name = card.name
+            except Exception:
+                pass
+            continue
+
         card_rec = await storage.get_card(card_id)
         if not card_rec:
             continue
@@ -110,7 +129,18 @@ async def _rebuild_group_session(
     if len(engines) < 2:
         return None
 
-    group = GroupSession(group_id, engines)
+    # Resolve persona name for character type
+    persona_name = session.get("user_persona_name", "")
+    if persona_type == "character" and not persona_name:
+        persona_name = played_card_name
+
+    group = GroupSession(
+        group_id, engines,
+        user_persona_type=persona_type,
+        user_persona_card_id=persona_card_id,
+        user_persona_name=persona_name,
+        user_persona_desc=session.get("user_persona_desc", ""),
+    )
     _group_sessions[group_id] = group
 
     # Restore message history from DB
@@ -155,6 +185,18 @@ async def create_group(
     if len(req.card_ids) < 2:
         raise HTTPException(400, "群聊至少需要两个角色")
 
+    # Validate persona
+    persona_type = req.user_persona_type
+    persona_card_id = req.user_persona_card_id
+    persona_name = req.user_persona_name
+    persona_desc = req.user_persona_desc
+    if persona_type not in ("director", "character", "stranger"):
+        raise HTTPException(400, "无效的身份类型")
+    if persona_type == "character" and persona_card_id not in req.card_ids:
+        raise HTTPException(400, "扮演角色必须在已选角色中")
+    if persona_type == "stranger" and not persona_name.strip():
+        raise HTTPException(400, "路人身份需要填写名字")
+
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
     from core.rag import RAGEngine
@@ -166,6 +208,7 @@ async def create_group(
     engines: dict[str, ChatEngine] = {}
     card_infos: list[dict] = []
     text_rag_cache: dict[str, RAGEngine] = {}
+    played_card_name = ""
 
     for card_id in req.card_ids:
         card_rec = await storage.get_card(card_id)
@@ -178,6 +221,13 @@ async def create_group(
             card = CharacterCard.model_validate_json(card_rec["card_json"])
         except Exception as exc:
             raise HTTPException(500, "操作失败，请稍后重试") from exc
+
+        # Track played character name
+        if persona_type == "character" and card_id == persona_card_id:
+            played_card_name = card.name
+            # Don't add to engines — user plays this character
+            card_infos.append({"card_id": card_id, "name": card.name, "played_by_user": True})
+            continue
 
         text_id = card_rec["text_id"]
         if text_id not in text_rag_cache:
@@ -199,20 +249,41 @@ async def create_group(
         engines[card_id] = engine
         card_infos.append({"card_id": card_id, "name": card.name})
 
+    # After removing played character, must still have ≥2 AI members
+    if len(engines) < 2:
+        raise HTTPException(400, "扮演角色后群聊至少还需要两个AI角色")
+
+    if persona_type == "character":
+        persona_name = persona_name or played_card_name
+
     from core.group_session import GroupSession
     group_id = uuid.uuid4().hex[:12]
-    group = GroupSession(group_id, engines)
+    group = GroupSession(
+        group_id, engines,
+        user_persona_type=persona_type,
+        user_persona_card_id=persona_card_id,
+        user_persona_name=persona_name.strip() if persona_name else "",
+        user_persona_desc=persona_desc.strip(),
+    )
     _group_sessions[group_id] = group
 
     # Persist to DB
     await storage.create_group_session(
         group_id, req.name, req.card_ids, user_id,
+        user_persona_type=persona_type,
+        user_persona_card_id=persona_card_id,
+        user_persona_name=persona_name.strip() if persona_name else "",
+        user_persona_desc=persona_desc.strip(),
     )
 
     return {
         "group_id": group_id,
         "name": req.name or "群聊",
         "characters": card_infos,
+        user_persona_type: persona_type,
+        user_persona_card_id: persona_card_id,
+        user_persona_name: persona_name.strip() if persona_name else "",
+        user_persona_desc: persona_desc.strip(),
     }
 
 
@@ -270,9 +341,12 @@ async def send_message(
                 reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
         except Exception:
             pass
+    user_speaker = req.speaker or group.speaker_name
+    user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
+
     try:
         await storage.save_group_message(
-            group_id, req.speaker or "导演", "user", req.message, "",
+            group_id, user_speaker, "user", req.message, user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
         )
         await storage.save_group_message(
@@ -328,10 +402,13 @@ async def broadcast_message(
                 reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
         except Exception:
             pass
+    user_speaker = req.speaker or group.speaker_name
+    user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
+
     try:
         if not req.auto_mode:
             await storage.save_group_message(
-                group_id, req.speaker or "导演", "user", req.message, "",
+                group_id, user_speaker, "user", req.message, user_speaker_card_id,
                 reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
             )
         for r in results:
