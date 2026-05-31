@@ -93,8 +93,12 @@ const useAppStore = create((set, get) => ({
     const { previousView, previousViewContext } = get()
     console.log('[PREV] goBack — previousView =', previousView, 'context =', previousViewContext && JSON.stringify(previousViewContext))
     if (previousView) {
-      set({ currentView: previousView, previousView: null, previousViewContext: null })
-      console.log('[PREV] goBack → restored', previousView)
+      const restore = { currentView: previousView, previousView: null, previousViewContext: null }
+      if (previousViewContext?.authorUserId) restore.authorUserId = previousViewContext.authorUserId
+      if (previousViewContext?.cardId) restore.currentMarketCardId = previousViewContext.cardId
+      if (previousViewContext?.groupId) restore.resumeGroupId = previousViewContext.groupId
+      set(restore)
+      console.log('[PREV] goBack → restored', previousView, 'with context:', Object.keys(restore))
       return
     }
     const { currentView } = get()
