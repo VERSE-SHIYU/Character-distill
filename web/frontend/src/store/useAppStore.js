@@ -798,6 +798,7 @@ const useAppStore = create((set, get) => ({
 
   selectCard: async (card) => {
     const state = get()
+    get().setPreviousView(get().currentView)
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
       set({ currentView: 'chat' })
@@ -843,6 +844,7 @@ const useAppStore = create((set, get) => ({
     }
 
     const state = get()
+    get().setPreviousView(get().currentView)
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
       set({ currentView: 'chat' })

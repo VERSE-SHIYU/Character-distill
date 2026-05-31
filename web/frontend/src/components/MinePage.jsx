@@ -251,6 +251,9 @@ export default function MinePage() {
   const [bannerCropFile, setBannerCropFile] = useState(null)
   const avatarInputRef = useRef(null)
   const [avatarCropFile, setAvatarCropFile] = useState(null)
+  const bookCoverInputRef = useRef(null)
+  const [bookCoverCropFile, setBookCoverCropFile] = useState(null)
+  const [bookCoverTargetId, setBookCoverTargetId] = useState(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const textareaRef = useRef(null)
   const emojiRef = useRef(null)
@@ -430,6 +433,52 @@ export default function MinePage() {
 
   const handleAvatarCropCancel = () => setAvatarCropFile(null)
 
+  const handleBookCoverSelect = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBookCoverCropFile(file)
+    e.target.value = ''
+  }
+
+  const handleBookCoverCropConfirm = async (croppedDataUrl) => {
+    const targetId = bookCoverTargetId
+    setBookCoverCropFile(null)
+    setBookCoverTargetId(null)
+    // Re-encode at decreasing quality until under 300 KB
+    const reEncode = (dataUrl, q) => new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const c = document.createElement('canvas')
+        c.width = img.width
+        c.height = img.height
+        c.getContext('2d').drawImage(img, 0, 0)
+        resolve(c.toDataURL('image/jpeg', q))
+      }
+      img.src = dataUrl
+    })
+    let q = 0.85
+    let result = croppedDataUrl
+    while (result.length >= 300_000 && q > 0.1) {
+      result = await reEncode(result, q)
+      q -= 0.1
+    }
+    try {
+      await fetchWithTimeout(`/api/text/${targetId}/cover`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cover_data: result }),
+      })
+      // Update local state to trigger re-render
+      setTexts(prev => prev.map(t =>
+        t.id === targetId ? { ...t, cover_data: result } : t
+      ))
+    } catch (e) {
+      console.error('[MinePage] Book cover upload failed:', e)
+    }
+  }
+
+  const handleBookCoverCropCancel = () => { setBookCoverCropFile(null); setBookCoverTargetId(null) }
+
   const tabs = [
     { key: 'characters', label: '角色', icon: <Theater size={15} /> },
     { key: 'books', label: '书籍', icon: <Book size={15} /> },
@@ -466,6 +515,7 @@ export default function MinePage() {
           </button>
         )}
         {isMe && <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />}
+        {isMe && <input ref={bookCoverInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBookCoverSelect} />}
       </div>
 
       {/* ── Profile Section ── */}
@@ -701,11 +751,28 @@ export default function MinePage() {
                       setView('reader')
                     }}
                   >
-                    <div
-                      className="mine-book-cover-bg"
-                      style={{ background: `linear-gradient(135deg, ${g1}, ${g2})` }}
-                    >
+                    <div className="mine-book-cover-bg">
+                      {text.cover_data ? (
+                        <img className="mine-book-cover-img" src={text.cover_data} alt={title} />
+                      ) : (
+                        <div className="mine-book-cover-gradient" style={{ background: `linear-gradient(135deg, ${g1}, ${g2})` }} />
+                      )}
                       <span className="mine-book-cover-title">{title}</span>
+                      {isMe && (
+                        <button
+                          type="button"
+                          className="mine-book-cover-edit"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setBookCoverTargetId(text.id)
+                            bookCoverInputRef.current?.click()
+                          }}
+                          title="更换封面"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                          换封面
+                        </button>
+                      )}
                     </div>
                     {pct > 0 && (
                       <div className="mine-book-cover-progress">
@@ -993,6 +1060,12 @@ export default function MinePage() {
         file={bannerCropFile}
         onConfirm={handleBannerCropConfirm}
         onCancel={handleBannerCropCancel}
+      />
+      <BannerCropModal
+        aspect={3 / 4}
+        file={bookCoverCropFile}
+        onConfirm={handleBookCoverCropConfirm}
+        onCancel={handleBookCoverCropCancel}
       />
       <ImageCropModal
         file={avatarCropFile}

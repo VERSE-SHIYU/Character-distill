@@ -636,6 +636,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Card comment at_reply migration failed: {exc}")
 
+                    # Run 063_text_cover migration
+                    cover_path = migrations_dir / "063_text_cover.sql"
+                    if cover_path.exists():
+                        try:
+                            await conn.executescript(cover_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Text cover migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -752,6 +762,19 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] update_text_resolved failed: {exc}")
             raise
 
+    async def update_text_cover(self, text_id: str, cover_data: str) -> None:
+        """Update cover_data for a text."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE texts SET cover_data = ? WHERE id = ?",
+                    (cover_data, text_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] update_text_cover failed: {exc}")
+            raise
+
     async def get_text(self, id: str) -> dict | None:
         """Get one text record by id."""
         try:
@@ -773,7 +796,7 @@ class SQLiteStore(StorageBase):
                 if user_id:
                     cursor = await conn.execute(
                         """
-                        SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility
+                        SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility, cover_data
                         FROM texts WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                         ORDER BY created_at DESC
                         """, (user_id,),
@@ -781,7 +804,7 @@ class SQLiteStore(StorageBase):
                 else:
                     cursor = await conn.execute(
                         """
-                        SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility
+                        SELECT id, filename, title, description, char_count, created_at, text_type, original_char_count, visibility, cover_data
                         FROM texts WHERE (deleted_at IS NULL OR deleted_at = '')
                         ORDER BY created_at DESC
                         """
@@ -3940,14 +3963,14 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if viewer_id == user_id:
                     cursor = await conn.execute(
-                        """SELECT id, title, description, text_type, char_count, created_at, visibility
+                        """SELECT id, title, description, text_type, char_count, created_at, visibility, cover_data
                            FROM texts WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                            ORDER BY created_at DESC""",
                         (user_id,),
                     )
                 else:
                     cursor = await conn.execute(
-                        """SELECT id, title, description, text_type, char_count, created_at, visibility
+                        """SELECT id, title, description, text_type, char_count, created_at, visibility, cover_data
                            FROM texts WHERE user_id = ? AND visibility = 'public' AND (deleted_at IS NULL OR deleted_at = '')
                            ORDER BY created_at DESC""",
                         (user_id,),

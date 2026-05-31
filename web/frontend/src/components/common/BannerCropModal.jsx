@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const ASPECT = 3 / 1
-const EXPORT_W = 1200
-const EXPORT_H = Math.round(EXPORT_W / ASPECT)
-const DISPLAY_W = 480
-const DISPLAY_H = Math.round(DISPLAY_W / ASPECT)
 const MIN_SCALE = 1.2
 const MAX_SCALE = 3.0
 
@@ -26,7 +21,11 @@ function renderRotated(img, rotation) {
   return c
 }
 
-export default function BannerCropModal({ file, onConfirm, onCancel }) {
+export default function BannerCropModal({ file, onConfirm, onCancel, aspect = 3 / 1 }) {
+  const DISPLAY_W = 480
+  const DISPLAY_H = Math.round(DISPLAY_W / aspect)
+  const EXPORT_W = 1200
+  const EXPORT_H = Math.round(EXPORT_W / aspect)
   const [ready, setReady] = useState(false)
   const [scale, setScale] = useState(MIN_SCALE)
   const [dragging, setDragging] = useState(false)
@@ -294,7 +293,7 @@ export default function BannerCropModal({ file, onConfirm, onCancel }) {
     <div className="modal-overlay" onClick={onCancel}>
       <div className="modal-card banner-crop-card" onClick={(e) => e.stopPropagation()}>
         <h2 className="modal-title">调整封面位置</h2>
-        <p className="banner-crop-dim-hint">建议尺寸 1200×400 · 拖拽调整位置，滚轮缩放</p>
+        <p className="banner-crop-dim-hint">建议尺寸 {EXPORT_W}×{EXPORT_H} · 拖拽调整位置，滚轮缩放</p>
 
         <div className="banner-crop-preview-wrap" ref={containerRef}>
           {!ready && <div className="crop-loading">加载中…</div>}
@@ -306,7 +305,7 @@ export default function BannerCropModal({ file, onConfirm, onCancel }) {
               display: ready ? 'block' : 'none',
               cursor: dragging ? 'grabbing' : 'grab',
               width: '100%',
-              aspectRatio: ASPECT,
+              aspectRatio: aspect,
               borderRadius: 8,
             }}
           />

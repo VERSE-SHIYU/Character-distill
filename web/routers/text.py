@@ -286,6 +286,30 @@ async def list_texts(
     return texts
 
 
+@router.put("/{text_id}/cover")
+@limiter.limit("10/minute")
+async def update_text_cover(
+    request: Request,
+    text_id: str,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict[str, Any]:
+    """Update cover_data for a text (owner only)."""
+    body = await request.json()
+    cover = body.get("cover_data", "")
+    if len(cover) > 300_000:
+        raise HTTPException(400, "封面图过大，请压缩后上传")
+
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "文本不存在")
+    if text.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权修改他人的文本封面")
+
+    await storage.update_text_cover(text_id, cover)
+    return {"ok": True}
+
+
 @router.get("/reading-progress/all")
 @limiter.limit("30/minute")
 async def get_all_reading_progress(
