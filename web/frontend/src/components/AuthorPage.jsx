@@ -53,7 +53,7 @@ export default function AuthorPage({ embedded = false }) {
   const [postsLoading, setPostsLoading] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
 
-  const isOwnProfile = authUser?.id === authorUserId
+  const isOwnProfile = !!authorUserId && authUser?.id === authorUserId
 
   // Own profile now handled by MinePage — redirect
   useEffect(() => {

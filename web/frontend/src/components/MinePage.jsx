@@ -93,7 +93,7 @@ export default function MinePage() {
   const [followsMe, setFollowsMe] = useState(false)
   const followLabel = isFollowing && followsMe ? '互相关注' : isFollowing ? '已关注' : followsMe ? '回关' : '关注'
 
-  const isMe = !authorUserId || authorUserId === authUser?.id
+  const isMe = currentView === 'mine' || (!!authorUserId && authorUserId === authUser?.id)
 
   const goToMessages = (userId, username) => {
     setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId })
@@ -111,10 +111,8 @@ export default function MinePage() {
     if (currentView === 'mine') setAuthorUserId(null)
   }, [currentView]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Clear authorUserId on unmount
-  useEffect(() => {
-    return () => setAuthorUserId(null)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // NOTE: no unmount cleanup for authorUserId — the next page may have already
+  // set a new value, and the stale cleanup would wipe it (race condition).
 
   const [tab, setTab] = useState('characters')
   const [loading, setLoading] = useState(true)
