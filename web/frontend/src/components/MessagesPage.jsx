@@ -102,18 +102,14 @@ export default function MessagesPage() {
   }
 
   const handleBackFromChat = () => {
-    console.log('[BACK] previousView =', previousView && JSON.stringify(previousView), '| isMobile =', isMobile, '| mobileView =', mobileView)
     if (isMobile && mobileView === 'chat') {
-      console.log('[BACK] mobile chat → back to conversation list')
       setMobileView('list')
       return
     }
     if (previousView) {
-      console.log('[BACK] goBack() to', previousView)
       goBack()
       return
     }
-    console.log('[BACK] no previousView, fallback to home')
     setView('home')
   }
 

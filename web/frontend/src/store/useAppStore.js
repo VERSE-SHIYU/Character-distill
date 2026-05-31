@@ -54,8 +54,8 @@ const useAppStore = create((set, get) => ({
   currentView: localStorage.getItem('nav_view') || 'home',
   previousView: null,        // for returning after viewCard etc.
   previousViewContext: null, // e.g. { groupId } for groupChat
-  setPreviousView: (view, context) => { console.log('[PREV] set →', view, context && JSON.stringify(context)); set({ previousView: view, previousViewContext: context }) },
-  clearPreviousView: () => { console.trace('[PREV] CLEARED'); set({ previousView: null, previousViewContext: null }) },
+  setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
+  clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
   authorUserId: null,
   setAuthorUserId: (userId) => {
     set({ authorUserId: userId })
@@ -91,21 +91,17 @@ const useAppStore = create((set, get) => ({
 
   goBack: () => {
     const { previousView, previousViewContext } = get()
-    console.log('[PREV] goBack — previousView =', previousView, 'context =', previousViewContext && JSON.stringify(previousViewContext))
     if (previousView) {
       const restore = { currentView: previousView, previousView: null, previousViewContext: null }
       if (previousViewContext?.authorUserId) restore.authorUserId = previousViewContext.authorUserId
       if (previousViewContext?.cardId) restore.currentMarketCardId = previousViewContext.cardId
       if (previousViewContext?.groupId) restore.resumeGroupId = previousViewContext.groupId
       set(restore)
-      console.log('[PREV] goBack → restored', previousView, 'with context:', Object.keys(restore))
       return
     }
     const { currentView } = get()
     const backMap = { chat: 'character', character: 'text', text: 'home' }
-    const target = backMap[currentView] || 'home'
-    console.log('[PREV] goBack — no previousView, backMap fallback from', currentView, '→', target)
-    set({ currentView: target })
+    set({ currentView: backMap[currentView] || 'home' })
   },
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
