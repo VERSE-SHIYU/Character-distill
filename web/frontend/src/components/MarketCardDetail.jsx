@@ -8,6 +8,7 @@ import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
+import EmojiPicker from './common/EmojiPicker'
 
 function fmtTime(iso) {
   if (!iso) return ''
@@ -58,6 +59,9 @@ export default function MarketCardDetail() {
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [commentSending, setCommentSending] = useState(false)
+  const [showCommentEmoji, setShowCommentEmoji] = useState(false)
+  const commentInputRef = useRef(null)
+  const commentEmojiRef = useRef(null)
   const [liked, setLiked] = useState(false)
   const [likes, setLikes] = useState(0)
   const [forking, setForking] = useState(false)
@@ -133,6 +137,17 @@ export default function MarketCardDetail() {
     if (card?.visibility !== 'public') return
     loadComments()
   }, [card, loadComments])
+
+  useEffect(() => {
+    if (!showCommentEmoji) return
+    const handler = (e) => {
+      if (commentEmojiRef.current && !commentEmojiRef.current.contains(e.target)) {
+        setShowCommentEmoji(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showCommentEmoji])
 
   const loadVersions = useCallback(async () => {
     if (!cardId) return
@@ -838,7 +853,28 @@ export default function MarketCardDetail() {
 
       {/* Fixed bottom: comment input */}
       <div className="market-detail-fixed-input">
+        <div className="market-detail-comment-emoji-wrap" ref={commentEmojiRef}>
+          <button
+            type="button"
+            className="market-detail-comment-emoji-btn"
+            data-emoji-btn
+            onClick={() => setShowCommentEmoji(prev => !prev)}
+            title="表情"
+          >😊</button>
+          {showCommentEmoji && (
+            <EmojiPicker
+              textareaRef={commentInputRef}
+              controlled
+              onEmojiSelect={(emoji) => {
+                setCommentText(prev => prev + emoji)
+                setShowCommentEmoji(false)
+                commentInputRef.current?.focus()
+              }}
+            />
+          )}
+        </div>
         <input
+          ref={commentInputRef}
           type="text"
           className="market-detail-comment-field"
           placeholder="写下你的评论…"
