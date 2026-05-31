@@ -130,6 +130,7 @@ export default function MinePage() {
   const [postContent, setPostContent] = useState('')
   const [posting, setPosting] = useState(false)
   const [postLocation, setPostLocation] = useState('')
+  const [locationQuery, setLocationQuery] = useState('')
   const [locationLoading, setLocationLoading] = useState(false)
   const [locationCoords, setLocationCoords] = useState(null)
   const [locationSuggestions, setLocationSuggestions] = useState([])
@@ -150,8 +151,7 @@ export default function MinePage() {
           setLocationCoords(coords)
           locationCoordsRef.current = coords
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=17&addressdetails=1&accept-language=zh`,
-            { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=17&addressdetails=1&accept-language=zh`
           )
           const data = await res.json()
           const a = data.address || {}
@@ -184,31 +184,33 @@ export default function MinePage() {
 
   const handleLocInputChange = (value) => {
     if (locSearchTimer.current) clearTimeout(locSearchTimer.current)
-    setPostLocation(value)
+    setLocationQuery(value)
     setLocationSuggestions([])
     const coords = locationCoordsRef.current
     if (!value || !coords) return
     locSearchTimer.current = setTimeout(async () => {
       const { lat, lng } = coords
-      const d = 0.02
+      const d = 0.05
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(value)}&viewbox=${lng-d},${lat-d},${lng+d},${lat+d}&limit=8&accept-language=zh`
+      console.log('[LOC] searching:', url)
       try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(value)}&viewbox=${lng-d},${lat-d},${lng+d},${lat+d}&bounded=1&limit=8&accept-language=zh`,
-          { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
-        )
+        const res = await fetch(url)
+        console.log('[LOC] status:', res.status)
         const data = await res.json()
-        if (data && Array.isArray(data)) {
+        console.log('[LOC] results:', data?.length, data)
+        if (Array.isArray(data)) {
           setLocationSuggestions(data.map(r => ({
             name: r.display_name.split(',').slice(0, 2).join(','),
             full: r.display_name,
           })))
         }
-      } catch { /* ignore */ }
+      } catch (e) { console.log('[LOC] error:', e) }
     }, 500)
   }
 
   const handleSuggestionSelect = (name) => {
     setPostLocation(name)
+    setLocationQuery('')
     setLocationSuggestions([])
   }
 
@@ -764,38 +766,43 @@ export default function MinePage() {
                     )}
                   </div>
                   {postLocation ? (
-                    <div className="mine-loc-search-wrap">
-                      <svg className="mine-loc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                      <input
-                        type="text"
-                        className="mine-loc-input"
-                        value={postLocation}
-                        onChange={(e) => handleLocInputChange(e.target.value)}
-                        placeholder="搜索附近地点或手动输入"
-                      />
-                      <button
-                        type="button"
-                        className="mine-composer-loc-clear"
-                        onClick={() => { setPostLocation(''); setLocationSuggestions([]) }}
-                        title="取消位置"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                      {locationSuggestions.length > 0 && (
-                        <div className="mine-loc-suggestions">
-                          {locationSuggestions.map((s, i) => (
-                            <button
-                              key={i}
-                              type="button"
-                              className="mine-loc-suggestion-item"
-                              onClick={() => handleSuggestionSelect(s.name)}
-                              title={s.full}
-                            >
-                              {s.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                    <div className="mine-loc-active-wrap">
+                      <div className="mine-loc-selected">
+                        <svg className="mine-loc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        <span className="mine-loc-selected-text">{postLocation}</span>
+                        <button
+                          type="button"
+                          className="mine-composer-loc-clear"
+                          onClick={() => { setPostLocation(''); setLocationQuery(''); setLocationSuggestions([]) }}
+                          title="取消位置"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </div>
+                      <div className="mine-loc-search-box">
+                        <input
+                          type="text"
+                          className="mine-loc-input"
+                          value={locationQuery}
+                          onChange={(e) => handleLocInputChange(e.target.value)}
+                          placeholder="搜索附近地点"
+                        />
+                        {locationSuggestions.length > 0 && (
+                          <div className="mine-loc-suggestions">
+                            {locationSuggestions.map((s, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                className="mine-loc-suggestion-item"
+                                onClick={() => handleSuggestionSelect(s.name)}
+                                title={s.full}
+                              >
+                                {s.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <button

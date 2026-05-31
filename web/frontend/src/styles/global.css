@@ -12351,11 +12351,32 @@ select.settings-input {
   background: var(--secondary);
   color: var(--text);
 }
-.mine-loc-search-wrap {
-  position: relative;
+.mine-loc-active-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.mine-loc-selected {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  padding: 3px 8px;
+  background: var(--secondary);
+  border-radius: 20px;
+  font-size: 12px;
+  width: fit-content;
+  max-width: 100%;
+}
+.mine-loc-selected-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  color: var(--text);
+}
+.mine-loc-search-box {
+  position: relative;
 }
 .mine-loc-icon {
   flex-shrink: 0;
