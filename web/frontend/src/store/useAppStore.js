@@ -54,8 +54,8 @@ const useAppStore = create((set, get) => ({
   currentView: localStorage.getItem('nav_view') || 'home',
   previousView: null,        // for returning after viewCard etc.
   previousViewContext: null, // e.g. { groupId } for groupChat
-  setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
-  clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
+  setPreviousView: (view, context) => { console.log('[PREV] set →', view, context && JSON.stringify(context)); set({ previousView: view, previousViewContext: context }) },
+  clearPreviousView: () => { console.trace('[PREV] CLEARED'); set({ previousView: null, previousViewContext: null }) },
   authorUserId: null,
   setAuthorUserId: (userId) => {
     set({ authorUserId: userId })
@@ -91,13 +91,17 @@ const useAppStore = create((set, get) => ({
 
   goBack: () => {
     const { previousView, previousViewContext } = get()
+    console.log('[PREV] goBack — previousView =', previousView, 'context =', previousViewContext && JSON.stringify(previousViewContext))
     if (previousView) {
       set({ currentView: previousView, previousView: null, previousViewContext: null })
+      console.log('[PREV] goBack → restored', previousView)
       return
     }
     const { currentView } = get()
     const backMap = { chat: 'character', character: 'text', text: 'home' }
-    set({ currentView: backMap[currentView] || 'home' })
+    const target = backMap[currentView] || 'home'
+    console.log('[PREV] goBack — no previousView, backMap fallback from', currentView, '→', target)
+    set({ currentView: target })
   },
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
