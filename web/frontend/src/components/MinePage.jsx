@@ -143,11 +143,19 @@ export default function MinePage() {
         try {
           const { latitude, longitude } = pos.coords
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1&accept-language=zh`,
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1&accept-language=zh`,
             { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
           )
           const data = await res.json()
-          const address = data.display_name || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
+          const a = data.address || {}
+          const parts = [
+            a.amenity || a.building || a.leisure || a.shop || a.office,
+            a.suburb || a.neighbourhood || a.city_district,
+            a.city || a.town || a.county,
+          ].filter(Boolean)
+          const address = parts.slice(0, 2).join(', ')
+            || data.display_name?.split(',').slice(0, 2).join(',')
+            || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
           setPostLocation(address)
         } catch {
           setPostLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`)
@@ -159,7 +167,7 @@ export default function MinePage() {
         alert('无法获取位置，请检查浏览器定位权限')
         setLocationLoading(false)
       },
-      { enableHighAccuracy: false, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 10000 }
     )
   }
 

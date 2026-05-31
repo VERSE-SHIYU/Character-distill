@@ -293,7 +293,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           {/* Header */}
           <div className="private-chat-header">
         <div className="private-chat-header-left">
-          <Avatar name={otherUsername || '?'} src={otherAvatar} size={32} />
+          <Avatar name={otherUsername || '?'} src={otherAvatar} size={40} />
           <div className="private-chat-header-info">
             <span className="private-chat-title">{otherUsername || '私信'}</span>
             {!otherOnlineHidden && (
