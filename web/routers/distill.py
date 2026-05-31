@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 import uuid as _uuid
@@ -26,7 +27,12 @@ from routers.auth import get_current_user
 
 
 def _get_distill_content(text_rec: dict) -> str:
-    """优先读取共指消解版文本，fallback到原文。"""
+    """优先读取共指消解版文本，fallback到原文。
+
+    DISTILL_BYPASS_COREF=1 时跳过 coref，直接用原文（A/B 验证用）。
+    """
+    if os.getenv("DISTILL_BYPASS_COREF") == "1":
+        return text_rec.get("content") or text_rec.get("content_resolved", "")
     resolved = text_rec.get("content_resolved", "")
     if resolved and text_rec.get("coref_resolved"):
         return resolved
