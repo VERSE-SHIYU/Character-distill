@@ -131,6 +131,10 @@ export default function MinePage() {
   const [posting, setPosting] = useState(false)
   const [postLocation, setPostLocation] = useState('')
   const [locationLoading, setLocationLoading] = useState(false)
+  const [locationCoords, setLocationCoords] = useState(null)
+  const [locationSuggestions, setLocationSuggestions] = useState([])
+  const locSearchTimer = useRef(null)
+  const locationCoordsRef = useRef(null)
 
   const handleAddLocation = () => {
     if (!navigator.geolocation) {
@@ -142,6 +146,9 @@ export default function MinePage() {
       async (pos) => {
         try {
           const { latitude, longitude } = pos.coords
+          const coords = { lat: latitude, lng: longitude }
+          setLocationCoords(coords)
+          locationCoordsRef.current = coords
           const res = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=17&addressdetails=1&accept-language=zh`,
             { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
@@ -158,7 +165,11 @@ export default function MinePage() {
             || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`
           setPostLocation(address)
         } catch {
-          setPostLocation(`${pos.coords.latitude.toFixed(4)}, ${pos.coords.longitude.toFixed(4)}`)
+          const { latitude, longitude } = pos.coords
+          const coords = { lat: latitude, lng: longitude }
+          setLocationCoords(coords)
+          locationCoordsRef.current = coords
+          setPostLocation(`${latitude.toFixed(4)}, ${longitude.toFixed(4)}`)
         } finally {
           setLocationLoading(false)
         }
@@ -170,6 +181,43 @@ export default function MinePage() {
       { enableHighAccuracy: true, timeout: 10000 }
     )
   }
+
+  const handleLocInputChange = (value) => {
+    if (locSearchTimer.current) clearTimeout(locSearchTimer.current)
+    setPostLocation(value)
+    setLocationSuggestions([])
+    const coords = locationCoordsRef.current
+    if (!value || !coords) return
+    locSearchTimer.current = setTimeout(async () => {
+      const { lat, lng } = coords
+      const d = 0.02
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(value)}&viewbox=${lng-d},${lat-d},${lng+d},${lat+d}&bounded=1&limit=8&accept-language=zh`,
+          { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
+        )
+        const data = await res.json()
+        if (data && Array.isArray(data)) {
+          setLocationSuggestions(data.map(r => ({
+            name: r.display_name.split(',').slice(0, 2).join(','),
+            full: r.display_name,
+          })))
+        }
+      } catch { /* ignore */ }
+    }, 500)
+  }
+
+  const handleSuggestionSelect = (name) => {
+    setPostLocation(name)
+    setLocationSuggestions([])
+  }
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (locSearchTimer.current) clearTimeout(locSearchTimer.current)
+    }
+  }, [])
 
   // Following state
   const [following, setFollowing] = useState([])
@@ -716,23 +764,38 @@ export default function MinePage() {
                     )}
                   </div>
                   {postLocation ? (
-                    <div className="mine-loc-edit-wrap">
+                    <div className="mine-loc-search-wrap">
                       <svg className="mine-loc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
                       <input
                         type="text"
                         className="mine-loc-input"
                         value={postLocation}
-                        onChange={(e) => setPostLocation(e.target.value)}
-                        placeholder="输入或修改位置"
+                        onChange={(e) => handleLocInputChange(e.target.value)}
+                        placeholder="搜索附近地点或手动输入"
                       />
                       <button
                         type="button"
                         className="mine-composer-loc-clear"
-                        onClick={() => setPostLocation('')}
+                        onClick={() => { setPostLocation(''); setLocationSuggestions([]) }}
                         title="取消位置"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </button>
+                      {locationSuggestions.length > 0 && (
+                        <div className="mine-loc-suggestions">
+                          {locationSuggestions.map((s, i) => (
+                            <button
+                              key={i}
+                              type="button"
+                              className="mine-loc-suggestion-item"
+                              onClick={() => handleSuggestionSelect(s.name)}
+                              title={s.full}
+                            >
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <button

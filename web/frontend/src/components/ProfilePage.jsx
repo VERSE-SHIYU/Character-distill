@@ -439,6 +439,12 @@ export default function ProfilePage() {
             </label>
           </div>
         ))}
+        {/* 在线状态 */}
+        <div className="profile-privacy-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8, borderBottom: 'none' }}>
+          <span>在线状态</span>
+          <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>控制其他人是否能看到你的在线状态。设为"不展示"后，你也无法查看他人的在线状态。</span>
+          <PresenceVisibilitySetting />
+        </div>
       </div>
 
       <ImageCropModal
@@ -446,6 +452,71 @@ export default function ProfilePage() {
         onConfirm={handleCropConfirm}
         onCancel={handleCropCancel}
       />
+    </div>
+  )
+}
+
+function PresenceVisibilitySetting() {
+  const [visibility, setVisibility] = useState('friends')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetchWithTimeout('/api/auth/presence-visibility')
+      .then(r => r.json())
+      .then(data => { if (!cancelled) setVisibility(data.presence_visibility || 'friends') })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const handleChange = async (value) => {
+    setSaving(true)
+    setMsg('')
+    try {
+      const res = await fetchWithTimeout('/api/auth/presence-visibility', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presence_visibility: value }),
+      })
+      if (!res.ok) throw new Error((await res.json()).detail || '保存失败')
+      setVisibility(value)
+      setMsg('已更新')
+      setTimeout(() => setMsg(''), 2000)
+    } catch (err) {
+      setMsg(`保存失败: ${err.message}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const OPTIONS = [
+    { value: 'all', label: '所有人可见' },
+    { value: 'fans', label: '仅粉丝可见' },
+    { value: 'mutual', label: '仅互关好友可见' },
+    { value: 'none', label: '不展示' },
+  ]
+
+  if (loading) return <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>加载中…</span>
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {OPTIONS.map(opt => (
+        <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '6px 0' }}>
+          <input
+            type="radio"
+            name="presence_visibility"
+            value={opt.value}
+            checked={visibility === opt.value}
+            onChange={() => handleChange(opt.value)}
+            disabled={saving}
+          />
+          <span style={{ fontSize: 14, color: 'var(--text)' }}>{opt.label}</span>
+        </label>
+      ))}
+      {msg && <span style={{ fontSize: 13, color: msg.includes('失败') ? '#ef4444' : '#22c55e' }}>{msg}</span>}
     </div>
   )
 }
