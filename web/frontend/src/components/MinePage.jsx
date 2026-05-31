@@ -143,7 +143,7 @@ export default function MinePage() {
         try {
           const { latitude, longitude } = pos.coords
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=16&addressdetails=1&accept-language=zh`,
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=17&addressdetails=1&accept-language=zh`,
             { headers: { 'User-Agent': 'CharacterDistill/1.0' } }
           )
           const data = await res.json()
@@ -715,33 +715,44 @@ export default function MinePage() {
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    className={`mine-composer-loc-btn${postLocation ? ' has-loc' : ''}`}
-                    onClick={handleAddLocation}
-                    disabled={locationLoading}
-                    title="添加位置"
-                  >
-                    {locationLoading ? (
-                      <>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin-icon"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                        定位中…
-                      </>
-                    ) : (
-                      <>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                        {postLocation ? postLocation.slice(0, 20) + (postLocation.length > 20 ? '…' : '') : '添加位置'}
-                      </>
-                    )}
-                  </button>
-                  {postLocation && (
+                  {postLocation ? (
+                    <div className="mine-loc-edit-wrap">
+                      <svg className="mine-loc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                      <input
+                        type="text"
+                        className="mine-loc-input"
+                        value={postLocation}
+                        onChange={(e) => setPostLocation(e.target.value)}
+                        placeholder="输入或修改位置"
+                      />
+                      <button
+                        type="button"
+                        className="mine-composer-loc-clear"
+                        onClick={() => setPostLocation('')}
+                        title="取消位置"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      className="mine-composer-loc-clear"
-                      onClick={() => setPostLocation('')}
-                      title="取消位置"
+                      className="mine-composer-loc-btn"
+                      onClick={handleAddLocation}
+                      disabled={locationLoading}
+                      title="添加位置"
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      {locationLoading ? (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin-icon"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                          定位中…
+                        </>
+                      ) : (
+                        <>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                          添加位置
+                        </>
+                      )}
                     </button>
                   )}
                   <div style={{ flex: 1 }} />
