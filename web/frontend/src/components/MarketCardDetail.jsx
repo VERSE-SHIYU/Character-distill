@@ -62,6 +62,11 @@ export default function MarketCardDetail() {
   const [showCommentEmoji, setShowCommentEmoji] = useState(false)
   const commentInputRef = useRef(null)
   const commentEmojiRef = useRef(null)
+  const [atVersions, setAtVersions] = useState([])
+  const [showAtPicker, setShowAtPicker] = useState(false)
+  const [atCardId, setAtCardId] = useState(null)
+  const atPickerRef = useRef(null)
+  const [atReplying, setAtReplying] = useState(false)
   const [liked, setLiked] = useState(false)
   const [likes, setLikes] = useState(0)
   const [forking, setForking] = useState(false)
@@ -139,6 +144,14 @@ export default function MarketCardDetail() {
   }, [card, loadComments])
 
   useEffect(() => {
+    if (!card || card.visibility !== 'public') return
+    fetchWithTimeout(`/api/market/card/${cardId}/book-versions`)
+      .then(r => r.json())
+      .then(d => setAtVersions(d.versions || []))
+      .catch(() => {})
+  }, [card, cardId])
+
+  useEffect(() => {
     if (!showCommentEmoji) return
     const handler = (e) => {
       if (commentEmojiRef.current && !commentEmojiRef.current.contains(e.target)) {
@@ -148,6 +161,16 @@ export default function MarketCardDetail() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showCommentEmoji])
+
+  useEffect(() => {
+    if (!showAtPicker) return
+    const handler = (e) => {
+      if (atPickerRef.current && !atPickerRef.current.contains(e.target))
+        setShowAtPicker(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showAtPicker])
 
   const loadVersions = useCallback(async () => {
     if (!cardId) return
@@ -208,8 +231,32 @@ export default function MarketCardDetail() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: commentText.trim() }),
       })
+      const currentText = commentText.trim()
+      const currentAtCardId = atCardId
       setCommentText('')
+      setAtCardId(null)
       await loadComments()
+
+      if (currentAtCardId) {
+        setAtReplying(true)
+        try {
+          await fetchWithTimeout(`/api/market/${cardId}/comments/at-reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({
+              at_card_id: currentAtCardId,
+              comment_content: currentText,
+              reply_to_comment_id: '',
+              parent_comment_content: '',
+            }),
+          })
+          await loadComments()
+        } catch {
+          // AI 回应失败不影响评论本身
+        } finally {
+          setAtReplying(false)
+        }
+      }
     } catch {} finally { setCommentSending(false) }
   }
 
@@ -758,6 +805,12 @@ export default function MarketCardDetail() {
                 <div className="market-detail-comment-list">
                   {comments.map((c) => (
                     <div key={c.id} className="market-detail-comment-item">
+                      {c.is_ai_reply ? (
+                        <div className="market-detail-ai-reply">
+                          <span className="ai-reply-label">🤖 由 {c.ai_version_label} 生成</span>
+                          <p className="market-detail-comment-text">{c.content}</p>
+                        </div>
+                      ) : (<>
                       {batchMode && card.user_id === authUser?.id && (
                         <input type="checkbox" className="comment-checkbox" checked={selectedCommentIds.has(c.id)} onChange={() => toggleSelectComment(c.id)} />
                       )}
@@ -779,9 +832,12 @@ export default function MarketCardDetail() {
                           )}
                         </div>
                       </div>
+                      </>)}
                     </div>
                   ))}
-                </div></>)}
+                </div>
+                {atReplying && <div className="market-detail-at-loading">⏳ AI 正在回应中…</div>}
+                </>)}
             </div>}
 
             {activeTab === 'versions' && (
@@ -871,6 +927,38 @@ export default function MarketCardDetail() {
                 commentInputRef.current?.focus()
               }}
             />
+          )}
+        </div>
+        <div className="market-detail-at-wrap" ref={atPickerRef}>
+          <button
+            type="button"
+            className={`market-detail-at-btn${atCardId ? ' active' : ''}`}
+            onClick={() => setShowAtPicker(p => !p)}
+            title="@角色"
+          >@</button>
+          {showAtPicker && (
+            <div className="market-detail-at-picker">
+              <div className="market-detail-at-tip">💡 想问他其他看法？把那些评论内容转述给他即可</div>
+              {atVersions.length === 0
+                ? <div className="market-detail-at-empty">本书暂无其他公开版本</div>
+                : atVersions.map(v => (
+                    <button
+                      key={v.card_id}
+                      type="button"
+                      className="market-detail-at-item"
+                      onClick={() => {
+                        setAtCardId(v.card_id)
+                        setCommentText(prev => prev + `@${v.name}【${v.author_username}】`)
+                        setShowAtPicker(false)
+                        commentInputRef.current?.focus()
+                      }}
+                    >
+                      <span className="at-item-name">{v.name}</span>
+                      <span className="at-item-author">@{v.author_username}</span>
+                    </button>
+                  ))
+              }
+            </div>
           )}
         </div>
         <input

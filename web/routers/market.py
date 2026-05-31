@@ -49,6 +49,13 @@ class CommentRequest(BaseModel):
     content: str
 
 
+class AtReplyRequest(BaseModel):
+    at_card_id: str
+    comment_content: str
+    reply_to_comment_id: str = ""
+    parent_comment_content: str = ""
+
+
 class PostRequest(BaseModel):
     content: str
     visibility: str = "public"
@@ -364,6 +371,27 @@ async def get_card_detail(
     return card
 
 
+@router.get("/card/{card_id}/book-versions")
+@limiter.limit("60/minute")
+async def get_book_versions(
+    request: Request,
+    card_id: str,
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """查同书所有 public 版本，供 @ 选择器使用。不需登录。"""
+    card = await storage.get_card(card_id)
+    if not card:
+        raise HTTPException(404, "卡不存在")
+    text_id = card.get("text_id") or ""
+    if not text_id:
+        return {"versions": []}
+    versions = await storage.get_public_cards_by_text_id(text_id)
+    return {"versions": [
+        {"card_id": v["id"], "name": v["name"], "author_username": v["author_username"]}
+        for v in versions
+    ]}
+
+
 # ── Publish / Update / Versions / Forks / Delete ──
 
 
@@ -651,6 +679,75 @@ async def add_comment(
     return comment
 
 
+@router.post("/{card_id}/comments/at-reply")
+@limiter.limit("10/minute")
+async def at_reply(
+    request: Request,
+    card_id: str,
+    body: AtReplyRequest,
+    user: dict = Depends(get_current_user),
+    storage: SQLiteStore = Depends(get_storage),
+) -> dict:
+    """用被@角色卡的设定生成 AI 回应，存为特殊评论。"""
+    import asyncio, json as _json
+    from deps import get_user_llm
+    from core.schema import CharacterCard
+
+    # 1. 校验 at_card_id 是同书 public 卡
+    src_card = await storage.get_card(card_id)
+    if not src_card:
+        raise HTTPException(404, "卡不存在")
+    text_id = src_card.get("text_id") or ""
+    at_card = await storage.get_card(body.at_card_id)
+    if not at_card or at_card.get("visibility") != "public":
+        raise HTTPException(400, "被@角色不是公开版本")
+    if text_id and at_card.get("text_id") != text_id:
+        raise HTTPException(400, "被@角色不属于同一本书")
+
+    # 2. 解析角色卡设定
+    try:
+        card_json_str = at_card.get("card_json") or "{}"
+        if isinstance(card_json_str, dict):
+            card_json_str = _json.dumps(card_json_str, ensure_ascii=False)
+        char = CharacterCard.model_validate(_json.loads(card_json_str))
+    except Exception as exc:
+        raise HTTPException(500, f"角色卡解析失败: {exc}")
+
+    # 3. 拼 system_prompt（轻量版，只用角色核心设定）
+    traits = "\n".join(f"- {t}" for t in (char.personality_traits or []))
+    system_prompt = (
+        f"你现在是「{char.name}」。你正在看一个市场评论区，有人 @ 了你。\n"
+        f"【你是谁】\n{char.identity}\n{char.background}\n"
+        f"【你的性格】\n{traits}\n"
+        f"【说话风格】语气：{char.speaking_style.tone}，句式：{char.speaking_style.sentence_pattern}\n\n"
+        "请用你的身份和语气，简短地回应下面的评论（100字以内，不要说'作为AI'之类的话）。"
+    )
+
+    # 4. 构建上下文消息
+    user_content = body.comment_content
+    if body.parent_comment_content:
+        user_content = f"（上文评论：{body.parent_comment_content}）\n{body.comment_content}"
+
+    # 5. 调 LLM（用发起人的 API key）
+    try:
+        llm = await get_user_llm(user["id"], storage)
+        ai_text = await asyncio.to_thread(
+            llm.chat, system_prompt, [{"role": "user", "content": user_content}]
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"AI 生成失败，请稍后重试：{exc}")
+
+    # 6. 版本标注（author_username 由 get_card + LEFT JOIN users 提供）
+    ai_version_label = f"{char.name}（{at_card.get('name', char.name)} · @{at_card.get('author_username') or ''}）"
+
+    # 7. 存为 AI 回应评论
+    comment = await storage.add_ai_reply_comment(
+        card_id, body.at_card_id, ai_version_label, ai_text,
+        body.reply_to_comment_id,
+    )
+    return comment
+
+
 # ── Comment delete & report (must be before wildcard {card_id} routes) ──
 
 
@@ -695,9 +792,12 @@ async def delete_comment(
     is_card_author = card_author_id == user["id"]
     if not is_comment_author and not is_card_author and not user.get("is_admin"):
         raise HTTPException(403, "无权删除此评论")
-    ok = await storage.delete_comment(comment_id)
+    ok = await storage.delete_comment(comment_id, user["id"])
     if not ok:
-        raise HTTPException(500, "删除失败")
+        # Idempotent: if another request already deleted it, that's fine
+        double_check = await storage.get_comment(comment_id)
+        if double_check:
+            raise HTTPException(500, "删除失败")
     return {"ok": True}
 
 

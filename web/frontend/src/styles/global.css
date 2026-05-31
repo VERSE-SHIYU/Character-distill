@@ -9578,6 +9578,40 @@ select.settings-input {
   z-index: 100;
 }
 
+/* @ 角色选择器 */
+.market-detail-at-wrap { position: relative; display: flex; align-items: center; flex-shrink: 0; }
+.market-detail-at-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; font-weight: 700; color: var(--text-muted);
+  padding: 4px 6px; border-radius: 6px; line-height: 1;
+  transition: background 0.15s, color 0.15s;
+}
+.market-detail-at-btn:hover, .market-detail-at-btn.active { background: var(--bg-hover); color: var(--accent); }
+.market-detail-at-picker {
+  position: absolute; bottom: calc(100% + 8px); left: 0;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px; min-width: 200px; max-width: 260px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 200;
+}
+.market-detail-at-tip { font-size: 11px; color: var(--text-muted); padding: 4px 6px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.market-detail-at-empty { font-size: 12px; color: var(--text-muted); padding: 6px; text-align: center; }
+.market-detail-at-item {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; padding: 6px 8px; border: none; background: none;
+  cursor: pointer; border-radius: 6px; transition: background 0.15s;
+}
+.market-detail-at-item:hover { background: var(--bg-hover); }
+.at-item-name { font-size: 13px; color: var(--text); font-weight: 500; }
+.at-item-author { font-size: 11px; color: var(--text-muted); }
+
+/* AI 回应评论 */
+.market-detail-ai-reply {
+  background: var(--bg-hover); border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0; padding: 8px 12px; margin-top: 4px;
+}
+.ai-reply-label { font-size: 11px; color: var(--accent); display: block; margin-bottom: 4px; }
+.market-detail-at-loading { text-align: center; font-size: 12px; color: var(--text-muted); padding: 8px; }
+
 /* ===== Messages Page ===== */
 /* ═══════════════════════════════════════════════════
    PRIVATE MESSAGES — WeChat-style dual-panel layout

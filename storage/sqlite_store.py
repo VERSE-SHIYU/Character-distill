@@ -626,6 +626,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Post location migration failed: {exc}")
 
+                    # Run 062_card_comment_at_reply migration
+                    at_reply_path = migrations_dir / "062_card_comment_at_reply.sql"
+                    if at_reply_path.exists():
+                        try:
+                            await conn.executescript(at_reply_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Card comment at_reply migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -922,11 +932,11 @@ class SQLiteStore(StorageBase):
     async def get_card(self, id: str) -> dict | None:
         """Get one card record by id."""
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = cards.id"
+            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
                        " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"SELECT id, text_id, name, card_json, created_at, user_id, visibility, forked_from, deleted_at, avatar_data, market_description, market_tags, publish_message, ({pub_sub}) AS published_id FROM cards WHERE id = ?",
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -3093,7 +3103,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT c.id, c.user_id, c.username, c.content, c.created_at, COALESCE(u.avatar_data, '') AS avatar_data FROM card_comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.card_id = ? ORDER BY c.created_at DESC",
+                    "SELECT c.id, c.user_id, c.username, c.content, c.created_at, "
+                    "COALESCE(u.avatar_data, '') AS avatar_data, "
+                    "COALESCE(c.is_ai_reply, 0) AS is_ai_reply, "
+                    "COALESCE(c.ai_card_id, '') AS ai_card_id, "
+                    "COALESCE(c.ai_version_label, '') AS ai_version_label, "
+                    "COALESCE(c.reply_to_comment_id, '') AS reply_to_comment_id "
+                    "FROM card_comments c LEFT JOIN users u ON c.user_id = u.id "
+                    "WHERE c.card_id = ? ORDER BY c.created_at ASC",
                     (card_id,),
                 )
                 rows = await cursor.fetchall()
@@ -3115,6 +3132,47 @@ class SQLiteStore(StorageBase):
             return {"id": cid, "card_id": card_id, "user_id": user_id, "username": username, "content": content}
         except Exception as exc:
             print(f"[SQLiteStore] Add comment failed: {exc}")
+            raise
+
+    async def get_public_cards_by_text_id(self, text_id: str) -> list[dict]:
+        """查同一 text_id 下所有 public 的卡，用于 @ 选择器。"""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT c.id, c.name, c.user_id, u.username AS author_username
+                       FROM cards c LEFT JOIN users u ON c.user_id = u.id
+                       WHERE c.text_id = ? AND c.visibility = 'public' AND c.deleted_at IS NULL
+                       ORDER BY c.created_at ASC""",
+                    (text_id,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] get_public_cards_by_text_id failed: {exc}")
+            return []
+
+    async def add_ai_reply_comment(
+        self, card_id: str, ai_card_id: str, ai_version_label: str,
+        content: str, reply_to_comment_id: str
+    ) -> dict:
+        import uuid
+        cid = uuid.uuid4().hex[:12]
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO card_comments
+                       (id, card_id, user_id, username, content, is_ai_reply, ai_card_id, ai_version_label, reply_to_comment_id)
+                       VALUES (?, ?, '', '', ?, 1, ?, ?, ?)""",
+                    (cid, card_id, content, ai_card_id, ai_version_label, reply_to_comment_id),
+                )
+                await conn.commit()
+            return {
+                "id": cid, "card_id": card_id, "user_id": "", "username": "",
+                "content": content, "is_ai_reply": 1, "ai_card_id": ai_card_id,
+                "ai_version_label": ai_version_label, "reply_to_comment_id": reply_to_comment_id,
+            }
+        except Exception as exc:
+            print(f"[SQLiteStore] add_ai_reply_comment failed: {exc}")
             raise
 
     async def get_card_author_id(self, card_id: str) -> str | None:
