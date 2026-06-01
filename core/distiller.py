@@ -186,15 +186,19 @@ class Distiller:
 
     @staticmethod
     def _extract_json(text: str) -> str:
-        """剥掉 markdown 代码块，提取第一个完整 JSON 对象。"""
-        import re
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if m:
-            return m.group(1)
-        start = text.find("{")
-        end = text.rfind("}")
+        """剥掉 markdown 代码块，提取最外层完整 JSON 对象（嵌套安全）。"""
+        t = text.strip()
+        # 剥 markdown code fence (```json ... ```)
+        if t.startswith("```"):
+            parts = t.split("```", 2)
+            if len(parts) >= 2:
+                t = parts[1]
+            if t.startswith("json"):
+                t = t[4:]
+        start = t.find("{")
+        end = t.rfind("}")
         if start != -1 and end > start:
-            return text[start:end + 1]
+            return t[start:end + 1]
         return text
 
     # ── public entry points (unchanged) ────────────────────────────────
