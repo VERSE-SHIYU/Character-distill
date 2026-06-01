@@ -59,6 +59,7 @@ export default function GroupChatPage() {
   const autoAbortRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
   const [autoTotal, setAutoTotal] = useState(0)
+  const [targetCardIds, setTargetCardIds] = useState([])
   const [generatingForName, setGeneratingForName] = useState(null)
   const [rightTab, setRightTab] = useState('history') // 'history' | 'members' | 'date'
   const [historySelectedDate, setHistorySelectedDate] = useState('')
@@ -547,7 +548,6 @@ export default function GroupChatPage() {
   // ── Send message ──
 
   const [messageText, setMessageText] = useState('')
-  const [targetCardIds, setTargetCardIds] = useState([])
 
   async function handleSend() {
     if (!messageText.trim() || !currentGroup) return
