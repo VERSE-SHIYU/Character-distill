@@ -52,12 +52,13 @@ export default function GroupChatPage() {
   const [editNameValue, setEditNameValue] = useState('')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const moreMenuRef = useRef(null)
-  const MAX_AUTO_TURNS = 20
+  const [rounds, setRounds] = useState(3)
   const [autoMode, setAutoMode] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
   const autoAbortRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
+  const [autoTotal, setAutoTotal] = useState(0)
   const [generatingForName, setGeneratingForName] = useState(null)
   const [rightTab, setRightTab] = useState('history') // 'history' | 'members' | 'date'
   const [historySelectedDate, setHistorySelectedDate] = useState('')
@@ -216,16 +217,24 @@ export default function GroupChatPage() {
 
   const runAutoConversation = useCallback(async () => {
     if (!currentGroup || autoRunning) return
+
+    // 没 @ 角色 → 提示拦截
+    if (targetCardIds.length === 0) {
+      alert('请先 @ 角色，且发言顺序按照角色 @ 顺序')
+      return
+    }
+
     setAutoRunning(true)
     setAutoTurn(0)
     autoStopRef.current = false
 
-    const cardIds = [...currentGroup.card_ids]
+    const totalTurns = targetCardIds.length * rounds
+    setAutoTotal(totalTurns)
     let turnIndex = 0
 
     while (!autoStopRef.current) {
-      if (turnIndex >= MAX_AUTO_TURNS) break
-      const targetId = cardIds[turnIndex % cardIds.length]
+      if (turnIndex >= totalTurns) break
+      const targetId = targetCardIds[turnIndex % targetCardIds.length]
       turnIndex++
       setAutoTurn(turnIndex)
 
@@ -256,10 +265,12 @@ export default function GroupChatPage() {
       })
     }
 
+    // 完整演绎结束后清空 @ 列表，避免下次携带旧角色
+    setTargetCardIds([])
     autoAbortRef.current = null
     setAutoRunning(false)
     setAutoMode(false)
-  }, [currentGroup, autoRunning])
+  }, [currentGroup, autoRunning, targetCardIds, rounds])
 
   const stopAutoConversation = useCallback(() => {
     autoStopRef.current = true
@@ -803,6 +814,19 @@ export default function GroupChatPage() {
                 )}
                 {!editingName && (
                   <div className="group-header-right">
+                    {!autoMode && (
+                      <select
+                        className="group-round-select"
+                        value={rounds}
+                        onChange={(e) => setRounds(Number(e.target.value))}
+                      >
+                        <option value={1}>1轮</option>
+                        <option value={3}>3轮</option>
+                        <option value={5}>5轮</option>
+                        <option value={10}>10轮</option>
+                        <option value={20}>20轮</option>
+                      </select>
+                    )}
                     <button
                       type="button"
                       className={`chat-topbar-btn group-auto-btn-header${autoMode ? ' active' : ''}`}
@@ -1075,7 +1099,7 @@ export default function GroupChatPage() {
               <div className="private-chat-input-bar">
                 {autoRunning && (
                   <div className="group-auto-banner">
-                    <span>🎬 自动对话中… (第 {autoTurn}/{MAX_AUTO_TURNS} 轮)</span>
+                    <span>🎬 自动对话中… (第 {autoTurn}/{autoTotal} 轮)</span>
                     {generatingForName && <span className="group-auto-generating"> • {generatingForName} 生成中…</span>}
                     <button type="button" className="group-auto-banner-stop" onClick={stopAutoConversation}>
                       停止
