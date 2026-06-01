@@ -10,20 +10,20 @@ function joinLines(val) {
 
 const LIMITS = {
   identity: { max: 80 },
-  personality_traits: { max: 240, maxLines: 8, perLine: 30 },
+  personality_traits: { max: 600, maxLines: 8, perLine: 100 },
   tone: { max: 90 },
   sentence_pattern: { max: 100 },
   catchphrases: { max: 240, maxLines: 6, perLine: 40 },
   vocabulary_level: { max: 40 },
   taboo_words: { max: 120, maxLines: 6, perLine: 20 },
   values: { max: 180, maxLines: 6, perLine: 30 },
-  key_memories: { max: 640, maxLines: 8, perLine: 80 },
-  inner_tensions: { max: 300, maxLines: 5, perLine: 60 },
+  key_memories: { max: 800, maxLines: 8, perLine: 80 },
+  inner_tensions: { max: 500, maxLines: 5, perLine: 100 },
   background: { max: 300 },
   first_message: { max: 300 },
-  emotional_patterns: { max: 400, maxLines: 6, perLine: 70 },
+  emotional_patterns: { max: 550, maxLines: 6, perLine: 70 },
   decision_style: { max: 180 },
-  character_arc: { max: 300, maxLines: 5, perLine: 60 },
+  character_arc: { max: 700, maxLines: 5, perLine: 100 },
   dialogue_examples: { max: 600 },
 }
 
