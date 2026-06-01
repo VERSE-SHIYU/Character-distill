@@ -10586,6 +10586,23 @@ select.settings-input {
   animation: pulse-fade 1.5s ease-in-out infinite;
 }
 
+/* Round selector next to auto-dialogue button */
+.group-round-select {
+  height: 28px;
+  font-size: 12px;
+  padding: 0 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  cursor: pointer;
+  outline: none;
+  flex-shrink: 0;
+}
+.group-round-select:hover {
+  border-color: var(--accent);
+}
+
 /* ── Group Input Row (refactored) ── */
 .group-input-row {
   display: flex;

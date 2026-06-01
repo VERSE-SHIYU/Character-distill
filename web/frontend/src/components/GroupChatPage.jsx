@@ -814,19 +814,18 @@ export default function GroupChatPage() {
                 )}
                 {!editingName && (
                   <div className="group-header-right">
-                    {!autoMode && (
-                      <select
-                        className="group-round-select"
-                        value={rounds}
-                        onChange={(e) => setRounds(Number(e.target.value))}
-                      >
-                        <option value={1}>1轮</option>
-                        <option value={3}>3轮</option>
-                        <option value={5}>5轮</option>
-                        <option value={10}>10轮</option>
-                        <option value={20}>20轮</option>
-                      </select>
-                    )}
+                    <select
+                      className="group-round-select"
+                      value={rounds}
+                      onChange={(e) => setRounds(Number(e.target.value))}
+                      style={autoMode ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
+                    >
+                      <option value={1}>1轮</option>
+                      <option value={3}>3轮</option>
+                      <option value={5}>5轮</option>
+                      <option value={10}>10轮</option>
+                      <option value={20}>20轮</option>
+                    </select>
                     <button
                       type="button"
                       className={`chat-topbar-btn group-auto-btn-header${autoMode ? ' active' : ''}`}
