@@ -158,20 +158,82 @@ class GroupSession:
             engine = self.engines.get(card_id)
             if not engine:
                 return {"card_id": card_id, "reply": "", "speaker": "?"}
-            user_msg = (
-                f"（导演指令：请{engine.card.name}根据当前对话情境，"
-                f"自主说一句话或做出反应，推进剧情。）"
-                if auto_mode else message
-            )
-            converted = self._convert_history(card_id)
-            system_prompt = engine._ctx_engine.build(
-                converted, user_msg, engine.user_role,
-            )
-            system_prompt += self._build_persona_context()
-            response = await engine.llm.achat(
-                system_prompt,
-                [{"role": "user", "content": user_msg}],
-            )
+
+            if auto_mode:
+                # ── immersive relay ────────────────────────────
+                # Find previous character's message in history
+                prev_speaker = None
+                prev_content = None
+                for msg in reversed(self.group_history):
+                    if msg.get("role") == "assistant" and msg.get("speaker_card_id"):
+                        prev_speaker = msg.get("speaker", "")
+                        prev_content = msg.get("content", "")
+                        break
+
+                ctx_parts = []
+                current_name = engine.card.name
+
+                if prev_speaker and prev_content:
+                    ctx_parts.append(
+                        f"你正在群聊场景中。{prev_speaker}刚说：『{prev_content[:200]}』"
+                    )
+                    ctx_parts.append(
+                        f"你是{current_name}，你与{prev_speaker}的关系："
+                    )
+                    rel_attitude = None
+                    if engine.card.relationships:
+                        for rel in engine.card.relationships:
+                            tn = rel.target
+                            if prev_speaker and (tn in prev_speaker or prev_speaker in tn):
+                                rel_attitude = rel.attitude
+                                break
+                    ctx_parts[-1] += rel_attitude if rel_attitude else "（普通群聊关系）"
+                    ctx_parts.append(
+                        "基于你的性格、关系、此刻情绪自然接话——"
+                        "可回应/反驳/调侃/岔开，像真实对话推进。"
+                    )
+                else:
+                    last_msg = self.group_history[-1] if self.group_history else None
+                    if last_msg and last_msg.get("role") == "user":
+                        ctx_parts.append(
+                            f"你是{current_name}。"
+                            f"针对【{last_msg.get('content', '')[:200]}】开启对话。"
+                        )
+                    else:
+                        ctx_parts.append(
+                            f"你是{current_name}。"
+                            "你来自然开启这段对话，符合你的性格和情境。"
+                        )
+
+                ctx_parts.append(
+                    "只输出你这个角色的话和动作。"
+                    "绝不提导演/指令/系统/轮次等元信息。"
+                    "绝不复述别人已说过的话。"
+                )
+                context_msg = "\n\n".join(ctx_parts)
+
+                converted = self._convert_history(card_id)
+                system_prompt = engine._ctx_engine.build(
+                    converted, "", engine.user_role,
+                )
+                system_prompt += "\n\n" + context_msg
+                system_prompt += self._build_persona_context()
+
+                response = await engine.llm.achat(
+                    system_prompt,
+                    [{"role": "user", "content": ""}],
+                )
+            else:
+                converted = self._convert_history(card_id)
+                system_prompt = engine._ctx_engine.build(
+                    converted, message, engine.user_role,
+                )
+                system_prompt += self._build_persona_context()
+                response = await engine.llm.achat(
+                    system_prompt,
+                    [{"role": "user", "content": message}],
+                )
+
             engine._try_record_usage("chat")
             self.group_history.append({
                 "speaker": engine.card.name,

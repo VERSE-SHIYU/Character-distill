@@ -253,7 +253,6 @@ export default function GroupChatPage() {
         await loadHistory(currentGroup.id, true)
       } catch (err) {
         setGeneratingForName(null)
-        if (err.name === 'AbortError') break
         setError(err.message || '对话出错，请检查群聊配置')
         break
       }
@@ -267,7 +266,6 @@ export default function GroupChatPage() {
     }
 
     // 完整演绎结束后清空 @ 列表，避免下次携带旧角色
-    setTargetCardIds([])
     autoAbortRef.current = null
     setAutoRunning(false)
     setAutoMode(false)
