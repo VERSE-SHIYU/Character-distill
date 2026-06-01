@@ -27,15 +27,11 @@ from routers.auth import get_current_user
 
 
 def _get_distill_content(text_rec: dict) -> str:
-    """优先读取共指消解版文本，fallback到原文。
-
-    DISTILL_BYPASS_COREF=1 时跳过 coref，直接用原文（A/B 验证用）。
-    """
-    if os.getenv("DISTILL_BYPASS_COREF") == "1":
-        return text_rec.get("content") or text_rec.get("content_resolved", "")
-    resolved = text_rec.get("content_resolved", "")
-    if resolved and text_rec.get("coref_resolved"):
-        return resolved
+    """默认返回原文蒸馏，仅当 DISTILL_USE_COREF=1 时走共指消解版。"""
+    if os.getenv("DISTILL_USE_COREF") == "1":
+        resolved = text_rec.get("content_resolved", "")
+        if resolved and text_rec.get("coref_resolved"):
+            return resolved
     return text_rec["content"]
 
 
