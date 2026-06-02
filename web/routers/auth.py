@@ -21,6 +21,8 @@ from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_config, get_storage
 from storage.base import StorageBase
 from limiter import limiter
+from web.geo_guard import check_api_allowed
+from web.limiter import get_client_ip
 
 logger = logging.getLogger("charsim.auth")
 
@@ -354,12 +356,21 @@ async def get_announcement(
 
 
 @router.patch("/api-config")
+@limiter.limit("10/minute")
 async def update_api_config(
+    request: Request,
     req: ApiConfigRequest,
     user: dict[str, Any] = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update the current user's API key, base URL, and model."""
+    # Geo guard: block domestic IPs from using non-whitelisted LLM APIs
+    client_ip = get_client_ip(request)
+    allowed, reason = check_api_allowed(client_ip, req.base_url)
+    if not allowed:
+        await storage.record_geo_block(user["id"], client_ip, req.base_url, reason)
+        raise HTTPException(403, detail=reason)
+
     try:
         await storage.update_user_api_config(
             user["id"], req.api_key, req.base_url, req.model
