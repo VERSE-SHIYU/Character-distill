@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/history", tags=["history"])
@@ -34,7 +34,7 @@ async def list_sessions(
     text_id: str = Query("", description="Filter by text_id"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Paginated session list with optional keyword and character filters."""
     user_id = user["id"]
@@ -49,7 +49,7 @@ async def list_sessions(
 async def list_trash(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted sessions (trash bin)."""
     try:
@@ -64,7 +64,7 @@ async def list_trash(
 async def purge_trash(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Permanently delete all sessions in trash."""
     try:
@@ -80,7 +80,7 @@ async def purge_trash(
 async def clear_all_sessions(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Soft-delete all sessions (move to trash)."""
     try:
@@ -100,7 +100,7 @@ async def export_session(
     request: Request,
     user: dict = Depends(get_current_user),
     format: str = Query("json", description="Export format: json or txt"),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Export a session as json or txt."""
     try:
@@ -129,7 +129,7 @@ async def get_session_detail(
     session_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Get a session with its full message list."""
     session = await storage.get_session(session_id)
@@ -151,7 +151,7 @@ async def resume_session(
     _body: ResumeRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Rebuild the in-memory ChatEngine for a persisted session.
@@ -277,7 +277,7 @@ async def restore_session(
     session_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Restore a soft-deleted session from trash."""
     session = await storage.get_session(session_id)
@@ -301,7 +301,7 @@ async def delete_session(
     request: Request,
     user: dict = Depends(get_current_user),
     permanent: bool = Query(False, description="If true, hard-delete permanently"),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
     session = await storage.get_session(session_id)

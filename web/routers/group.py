@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from deps import get_storage, get_user_llm, get_sessions
 from limiter import limiter
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/group", tags=["group"])
@@ -56,7 +56,7 @@ class ReactRequest(BaseModel):
 async def _rebuild_group_session(
     group_id: str,
     user_id: str,
-    storage: SQLiteStore,
+    storage: StorageBase,
 ) -> Any | None:
     """Rebuild an in-memory GroupSession from the persisted DB record."""
     from core.schema import CharacterCard
@@ -173,7 +173,7 @@ async def create_group(
     req: CreateGroupRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict:
     """创建群聊，包含多个角色的 ChatEngine。"""
@@ -294,7 +294,7 @@ async def create_group(
 async def list_groups(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """列出用户的群聊会话。"""
     groups = await storage.list_group_sessions(user["id"])
@@ -308,7 +308,7 @@ async def send_message(
     req: SendMessageRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """导演模式下向指定角色发消息。"""
     user_id = user["id"]
@@ -370,7 +370,7 @@ async def broadcast_message(
     req: BroadcastRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """导演发一条消息，多个角色并行回复（仅记录一条导演消息）。"""
     user_id = user["id"]
@@ -436,7 +436,7 @@ async def toggle_reaction(
     req: ReactRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle a reaction emoji on a message."""
     session = await storage.get_group_session(group_id)
@@ -457,7 +457,7 @@ async def get_history(
     group_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """获取群聊历史消息。"""
     session = await storage.get_group_session(group_id)
@@ -480,7 +480,7 @@ async def rename_group(
     req: RenameGroupRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """重命名群聊。"""
     if not req.name.strip():
@@ -502,7 +502,7 @@ async def delete_group(
     group_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """软删除群聊会话（移入回收站）。"""
     session = await storage.get_group_session(group_id)
@@ -520,7 +520,7 @@ async def delete_group(
 async def list_trash_groups(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """列出已删除的群聊。"""
     groups = await storage.get_deleted_group_sessions(user["id"])
@@ -533,7 +533,7 @@ async def restore_group(
     group_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """恢复已删除的群聊。"""
     session = await storage.get_group_session(group_id)
@@ -553,7 +553,7 @@ async def permanent_delete_group(
     group_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """永久删除群聊及其所有消息。"""
     session = await storage.get_group_session(group_id)

@@ -9,7 +9,7 @@ from deps import get_memory_manager, get_storage
 from core.memory_manager import MemoryManager
 from limiter import limiter
 from routers.auth import get_current_user
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 
 router = APIRouter(prefix="/api/memory", tags=["memory"])
 
@@ -29,7 +29,7 @@ async def list_memories(
     request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """获取指定角色的全部长期记忆。"""
     if not memory_manager or not memory_manager.enabled:
@@ -49,7 +49,7 @@ async def add_memory(
     request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """手动添加一条记忆。"""
     if not memory_manager or not memory_manager.enabled:
@@ -73,7 +73,7 @@ async def update_memory(
     request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     card_id: str = Query(...),
 ):
     """更新一条记忆的内容。"""
@@ -97,7 +97,7 @@ async def delete_memory(
     request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     card_id: str = Query(...),
 ):
     """删除单条记忆。需要 card_id 校验所有权。"""
@@ -119,7 +119,7 @@ async def clear_memories(
     request: Request,
     user=Depends(get_current_user),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """清空指定角色的全部记忆。"""
     if not memory_manager or not memory_manager.enabled:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from deps import get_storage
 from limiter import limiter
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from routers.auth import get_current_user
 from pydantic import BaseModel
 
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/api/messages", tags=["messages"])
 async def get_conversations(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get conversation list for the current user."""
     conversations = await storage.get_conversations(user["id"])
@@ -39,7 +39,7 @@ async def get_conversation_messages(
     page: int = Query(1, ge=1),
     page_size: int = Query(30, ge=1, le=100),
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get messages between the current user and another user."""
     messages = await storage.get_conversation_messages(user["id"], other_id, page, page_size)
@@ -52,7 +52,7 @@ async def send_message(
     request: Request,
     body: SendMessageRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Send a direct message."""
     if not body.content.strip():
@@ -72,7 +72,7 @@ async def mark_read(
     request: Request,
     other_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Mark all messages from other_id as read."""
     count = await storage.mark_read(user["id"], other_id)
@@ -84,7 +84,7 @@ async def mark_read(
 async def unread_count(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get total unread message count."""
     count = await storage.get_unread_count(user["id"])

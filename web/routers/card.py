@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from deps import get_storage
 from limiter import limiter
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/cards", tags=["cards"])
@@ -28,7 +28,7 @@ async def get_card_avatar(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get saved avatar for a card. Returns {data: base64_string} or 404."""
     card = await storage.get_card(card_id)
@@ -49,7 +49,7 @@ async def save_card_avatar(
     body: AvatarSaveRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Save avatar image (base64) for a card."""
     card = await storage.get_card(card_id)
@@ -72,7 +72,7 @@ async def export_card(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Export a character card's full JSON as a downloadable file."""
     record = await storage.get_card(card_id)
@@ -107,7 +107,7 @@ async def export_card(
 async def list_trash(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted cards for the current user."""
     return await storage.list_deleted_cards(user["id"])
@@ -119,7 +119,7 @@ async def get_card_detail(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get card detail with author info — works for both market and non-market cards."""
     card = await storage.get_card_detail(card_id, user["id"])
@@ -134,7 +134,7 @@ async def get_card(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get a character card by ID."""
     card = await storage.get_card(card_id)
@@ -151,7 +151,7 @@ async def restore_card_route(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Restore a soft-deleted card."""
     card = await storage.get_card(card_id)
@@ -171,7 +171,7 @@ async def purge_card_route(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Permanently delete a card (irreversible)."""
     card = await storage.get_card(card_id)
@@ -191,7 +191,7 @@ async def delete_card_route(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Soft-delete a character card. Owner or admin can delete."""
     logger.debug("DELETE /api/cards/%s by user %s", card_id, user.get("id"))

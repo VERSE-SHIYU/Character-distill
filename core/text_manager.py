@@ -17,7 +17,7 @@ from core.distiller import Distiller
 from core.rag import RAGEngine
 from core.scene_indexer import SceneIndexer
 from core.schema import CharacterCard
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 
 
 class TextManager:
@@ -29,7 +29,7 @@ class TextManager:
 
     def __init__(
         self,
-        storage: SQLiteStore,
+        storage: StorageBase,
         distiller: Distiller,
         llm: LLMAdapter,
         rag_config: dict[str, Any],

@@ -19,7 +19,8 @@ from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
 from core.memory_manager import MemoryManager
 from core.text_manager import TextManager
-from storage.sqlite_store import SQLiteStore
+from storage import get_store
+from storage.base import StorageBase
 
 _CFG_PATH = _REPO_ROOT / "config.yaml"
 if not _CFG_PATH.exists():
@@ -32,7 +33,7 @@ except Exception as exc:
     print(f"[deps] Failed to read config: {exc}")
     raise
 
-_storage = SQLiteStore(str(_REPO_ROOT / _config["storage"]["path"]))
+_storage = get_store()
 _llm: LLMAdapter | None = None
 _distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
@@ -60,7 +61,7 @@ def clear_user_llm_cache(user_id: str | None = None) -> None:
         _user_llm_cache.pop(user_id, None)
 
 
-async def get_user_llm(user_id: str, storage: SQLiteStore | None = None) -> LLMAdapter | None:
+async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
     """Get or create a per-user LLMAdapter from their saved API config.
 
     Falls back to the global _llm (config.yaml / DEEPSEEK_API_KEY env) if the
@@ -97,8 +98,8 @@ def get_memory_manager() -> MemoryManager | None:
     return _memory_manager
 
 
-def get_storage() -> SQLiteStore:
-    """Return the SQLiteStore singleton."""
+def get_storage() -> StorageBase:
+    """Return the storage singleton."""
     return _storage
 
 

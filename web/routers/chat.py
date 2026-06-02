@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from deps import get_sessions, get_storage, get_text_manager
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 
@@ -37,7 +37,7 @@ def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, str]]:
 
 async def _ensure_session(
     session_id: str,
-    storage: SQLiteStore,
+    storage: StorageBase,
     sessions: dict[str, Any],
     user_id: str = "",
 ) -> dict[str, Any]:
@@ -148,7 +148,7 @@ class ResetRequest(BaseModel):
 async def _do_chat(
     session_id: str,
     message: str,
-    storage: SQLiteStore,
+    storage: StorageBase,
     sessions: dict[str, Any],
     user_role: str = "",
     hidden: bool = False,
@@ -253,7 +253,7 @@ async def _do_chat(
 async def _do_chat_stream(
     session_id: str,
     message: str,
-    storage: SQLiteStore,
+    storage: StorageBase,
     sessions: dict[str, Any],
     user_role: str = "",
     hidden: bool = False,
@@ -383,6 +383,16 @@ async def _do_chat_stream(
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
             yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+
+            # ── Post-done housekeeping (does NOT block UI unlock) ──
+            try:
+                engine = session.get("engine")
+                if engine:
+                    if full_reply.strip():
+                        await asyncio.to_thread(engine.post_stream_process, llm_msg, full_reply)
+            except Exception as hk_exc:
+                print(f"[chat] Post-stream housekeeping failed (non-fatal): {hk_exc}")
+
         except Exception as exc:
             print(f"[chat] Chat stream failed: {exc}")
             # Roll back DB: delete the user message already saved before stream started
@@ -404,7 +414,7 @@ async def _do_chat_stream(
 
 async def _do_reset(
     session_id: str,
-    storage: SQLiteStore,
+    storage: StorageBase,
     sessions: dict[str, Any],
     user_id: str = "",
 ) -> dict[str, bool]:
@@ -422,7 +432,7 @@ async def send_message(
     req: ChatRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> Union[dict[str, Any], StreamingResponse]:
     """Send a message and get a JSON reply or SSE stream."""
@@ -442,7 +452,7 @@ async def revoke_messages(
     req: RevokeRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Delete messages starting from the given DB message id.
@@ -478,7 +488,7 @@ async def get_affinity(
     session_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Return affinity scores for a session (incl. inner_voice, mood_emoji, stage)."""
@@ -527,7 +537,7 @@ async def reset_session(
     req: ResetRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Reset the in-memory chat history (keep the character card)."""
@@ -545,7 +555,7 @@ async def react_to_message(
     req: ReactRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Toggle a reaction on a chat message."""
     if not req.emoji.strip():
@@ -559,7 +569,7 @@ async def get_session_reactions(
     session_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict:
     """Return all reactions for messages in a session."""
@@ -583,7 +593,7 @@ async def legacy_chat(
     req: ChatRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
@@ -596,7 +606,7 @@ async def legacy_reset(
     req: ResetRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
 ) -> dict[str, bool]:
     """Legacy /api/reset -> same as /api/chat/reset."""

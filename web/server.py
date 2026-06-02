@@ -52,7 +52,7 @@ from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from core.log_collector import install_log_collector
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
@@ -80,9 +80,12 @@ async def _startup():
 
 async def _preload_embedding():
     """Preload SentenceTransformer model so first chat is fast (1-2s instead of 5s)."""
-    from core.embeddings import create_safe_embedding_fn
-    create_safe_embedding_fn()
-    print("[startup] Embedding model preloaded")
+    try:
+        from core.embeddings import create_safe_embedding_fn
+        create_safe_embedding_fn()
+        print("[startup] Embedding model preloaded")
+    except Exception as exc:
+        print(f"[startup] Embedding preload skipped (non-fatal): {exc}")
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
@@ -199,7 +202,7 @@ _announce_router = APIRouter(prefix="/api/announcement", tags=["announce"])
 
 @_announce_router.get("/active")
 async def public_active_announcement(
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """Get the currently active announcement (no auth required)."""
     return await storage.get_active_announcement() or {}
@@ -250,7 +253,7 @@ async def update_settings_config(
     request: Request,
     req: UpdateConfigRequest,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update LLM + voice config at runtime and persist to config.yaml."""
     try:

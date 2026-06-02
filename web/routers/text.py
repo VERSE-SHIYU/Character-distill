@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from urllib.parse import quote
 
 from deps import get_storage
+from storage.base import StorageBase
 from storage.sqlite_store import SQLiteStore
 from limiter import limiter
 from routers.auth import get_current_user
@@ -164,7 +165,7 @@ async def upload_text(
     title: str = Form(""),
     description: str = Form(""),
     text_type: str = Form("story"),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Accept a multipart file or text form field, parse format, save."""
     user_id = user["id"]
@@ -270,7 +271,7 @@ async def get_upload_task_status(
 async def list_texts(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all uploaded texts (without full content body)."""
     user_id = user["id"]
@@ -292,7 +293,7 @@ async def update_text_cover(
     request: Request,
     text_id: str,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update cover_data for a text (owner only)."""
     body = await request.json()
@@ -315,7 +316,7 @@ async def update_text_cover(
 async def get_all_reading_progress(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list:
     """Get reading progress for all texts of the current user."""
     return await storage.get_all_reading_progress(user["id"])
@@ -325,7 +326,7 @@ async def get_all_reading_progress(
 async def toggle_comment_like(
     comment_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle like on a comment."""
     return await storage.toggle_text_comment_like(comment_id, user["id"])
@@ -335,7 +336,7 @@ async def toggle_comment_like(
 async def delete_text_comment(
     comment_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete your own comment."""
     ok = await storage.delete_text_comment(comment_id, user["id"])
@@ -349,7 +350,7 @@ async def delete_text(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete a text and its cascading cards/sessions."""
     text = await storage.get_text(text_id)
@@ -372,7 +373,7 @@ async def delete_text(
 async def list_trash(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted texts for the current user."""
     try:
@@ -391,7 +392,7 @@ async def restore_text(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Restore a soft-deleted text."""
     text = await storage.get_text(text_id)
@@ -411,7 +412,7 @@ async def permanent_delete_text(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Permanently delete a text and all associated data."""
     text = await storage.get_text(text_id)
@@ -432,7 +433,7 @@ async def download_cleaned(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Download cleaned plain text for chat-type imports."""
     text_rec = await storage.get_text(text_id)
@@ -458,7 +459,7 @@ async def download_cleaned(
 async def get_text_detail(
     text_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get text metadata and comment count (no full content body)."""
     text = await storage.get_text(text_id)
@@ -479,7 +480,7 @@ async def get_text_comments(
     page: int = 1,
     page_size: int = 20,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get paginated comments for a text."""
     result = await storage.get_text_comments(text_id, page, page_size)
@@ -507,7 +508,7 @@ async def add_text_comment(
     text_id: str,
     body: CommentCreate,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Add a comment to a text."""
     if not body.content.strip():
@@ -525,7 +526,7 @@ async def read_text(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Return full text content for reading."""
     text = await storage.get_text(text_id)
@@ -549,7 +550,7 @@ async def save_progress(
     body: ProgressUpdate,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Save reading progress for a text."""
     await storage.save_reading_progress(user["id"], text_id, body.progress, body.scroll_position)
@@ -562,7 +563,7 @@ async def get_progress(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get reading progress for a text."""
     progress = await storage.get_reading_progress(user["id"], text_id)
@@ -576,7 +577,7 @@ async def update_text_visibility(
     text_id: str,
     body: VisibilityUpdate,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle a text's visibility between public and private."""
     if body.visibility not in ("public", "private"):

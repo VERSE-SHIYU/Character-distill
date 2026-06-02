@@ -21,7 +21,7 @@ from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.scene_indexer import SceneIndexer
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 
@@ -387,7 +387,7 @@ async def identify_by_text_id(
     req: IdentifyByIdRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
     user_id = user["id"]
@@ -412,7 +412,7 @@ async def distill_by_text_id(
     req: DistillByIdRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
     user_id = user["id"]
@@ -457,7 +457,7 @@ async def distill_start(
     req: DistillTaskRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller
@@ -575,7 +575,7 @@ async def distill_stream(
     req: DistillByIdRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
     user_id = user["id"]
@@ -698,7 +698,7 @@ async def reindex_rag(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Rebuild RAG indices for all in-memory sessions with character metadata.
@@ -748,7 +748,7 @@ async def update_card(
     req: UpdateCardRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     record = await storage.get_card(card_id)
     if not record:
@@ -768,7 +768,7 @@ async def generate_opening(
     req: GenerateOpeningRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     user_id = user["id"]
     from deps import get_distiller, get_user_llm
@@ -787,7 +787,7 @@ async def list_cards(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List all distilled character cards for a text."""
     user_id = user["id"]
@@ -804,7 +804,7 @@ async def list_cards(
 async def list_standalone_cards(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List standalone cards (forked from market, no text attachment)."""
     try:
@@ -819,7 +819,7 @@ async def export_card(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     format: str = Query(default="tavern"),
     first_mes: str = Query(default=""),
 ) -> Response:
@@ -861,7 +861,7 @@ async def start_session(
     req: StartSessionRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
 ) -> dict[str, Any]:
     """Create a chat session for an already-distilled card.
@@ -986,7 +986,7 @@ async def legacy_identify(
     req: IdentifyRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
     user_id = user["id"]
@@ -1003,7 +1003,7 @@ async def legacy_distill(
     req: DistillRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
     user_id = user["id"]

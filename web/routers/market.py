@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from core.schema import PRESET_TAGS
 from deps import get_storage
 from limiter import get_client_ip, limiter
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/market", tags=["market"])
@@ -91,7 +91,7 @@ async def list_tags(request: Request) -> dict:
 @limiter.limit("60/minute")
 async def featured_cards(
     request: Request,
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """Return featured (admin-pinned) cards, ordered by sort_order."""
     return await storage.get_featured_cards()
@@ -106,7 +106,7 @@ async def list_cards(
     sort: str = Query("new", regex="^(new|hot)$"),
     tag: str = Query("", description="Filter by preset tag"),
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """List public cards with pagination and sorting. Optionally filter by tag."""
     cards = await storage.list_public_cards(page, page_size, sort, tag)
@@ -127,7 +127,7 @@ async def search_cards(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Search public cards by name."""
     cards = await storage.search_public_cards(q, page, page_size)
@@ -146,7 +146,7 @@ async def global_search(
     request: Request,
     q: str = Query("", min_length=1, max_length=50),
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Search across cards, texts, and users. Max 5 results per type."""
     results = await storage.global_search(q.strip(), user["id"])
@@ -158,7 +158,7 @@ async def global_search(
 async def my_following(
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get authors the current user is following."""
     users = await storage.get_following_details(user["id"], user["id"])
@@ -172,7 +172,7 @@ async def feed(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get feed posts from followed users."""
     posts = await storage.get_feed_posts(user["id"], page, page_size)
@@ -187,7 +187,7 @@ async def get_author(
     request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get author profile and their public data."""
     author = await storage.get_user_by_id(user_id)
@@ -247,7 +247,7 @@ async def get_author_followers(
     request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get followers with details for an author."""
     followers = await storage.get_followers_details(user_id, user["id"])
@@ -260,7 +260,7 @@ async def get_author_following(
     request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get following with details for an author, respecting privacy."""
     is_self = user_id == user["id"]
@@ -280,7 +280,7 @@ async def update_privacy(
     request: Request,
     body: dict,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Update privacy settings (stats_visible, cards_visible, books_visible)."""
     kwargs = {}
@@ -312,7 +312,7 @@ async def get_author_posts(
     request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get posts for an author. Own profile sees all, others see only public."""
     posts = await storage.get_user_posts(user_id, user["id"])
@@ -328,7 +328,7 @@ async def toggle_follow_author(
     request: Request,
     user_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle follow/unfollow an author."""
     if user_id == user["id"]:
@@ -345,7 +345,7 @@ async def create_post(
     request: Request,
     body: PostRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Create a new post."""
     if not body.content.strip():
@@ -362,7 +362,7 @@ async def get_card_detail(
     request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get a single public card detail with author info."""
     card = await storage.get_market_card_detail(card_id, user["id"])
@@ -376,7 +376,7 @@ async def get_card_detail(
 async def get_book_versions(
     request: Request,
     card_id: str,
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """查同书所有 public 版本，供 @ 选择器使用。不需登录。"""
     card = await storage.get_card(card_id)
@@ -402,7 +402,7 @@ async def publish_card(
     card_id: str,
     body: PublishRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Publish a card to the market (first-time publish)."""
     card = await storage.get_card(card_id)
@@ -468,7 +468,7 @@ async def update_published_card(
     card_id: str,
     body: UpdatePublishRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Update an already-published card (with field-level diff)."""
     card = await storage.get_card(card_id)
@@ -495,7 +495,7 @@ async def get_card_versions(
     request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """List all published versions for a card."""
     versions = await storage.get_card_versions(card_id)
@@ -509,7 +509,7 @@ async def delete_card_version(
     card_id: str,
     version_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a specific version — admin only. Versions are permanent records."""
     if not user.get("is_admin"):
@@ -528,7 +528,7 @@ async def update_card_version(
     version_id: str,
     body: dict,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Update version publish_message — card author only."""
     card = await storage.get_card(card_id)
@@ -551,7 +551,7 @@ async def get_card_forks(
     request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """List public forks of a card."""
     forks = await storage.get_card_forks(card_id)
@@ -564,7 +564,7 @@ async def delete_market_card(
     request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a card from market: soft-delete + set visibility private."""
     card = await storage.get_card(card_id)
@@ -589,7 +589,7 @@ async def list_post_comments(
     request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a post."""
     comments = await storage.get_post_comments(post_id)
@@ -603,7 +603,7 @@ async def add_post_comment(
     body: CommentRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Add a comment to a post."""
     if not body.content.strip():
@@ -623,7 +623,7 @@ async def like_post(
     request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle like on a post."""
     return await storage.toggle_post_like(post_id, user["id"])
@@ -635,7 +635,7 @@ async def delete_post(
     request: Request,
     post_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a post — owner or admin."""
     if user.get("is_admin"):
@@ -656,7 +656,7 @@ async def list_comments(
     request: Request,
     card_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a card."""
     comments = await storage.get_comments(card_id)
@@ -670,7 +670,7 @@ async def add_comment(
     card_id: str,
     body: CommentRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Add a comment to a card."""
     if not body.content.strip():
@@ -686,7 +686,7 @@ async def at_reply(
     card_id: str,
     body: AtReplyRequest,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """用被@角色卡的设定生成 AI 回应，存为特殊评论。"""
     import asyncio, json as _json
@@ -758,7 +758,7 @@ async def batch_delete_comments(
     card_id: str,
     body: dict,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Batch delete comments — card author or admin only."""
     card_author_id = await storage.get_card_author_id(card_id)
@@ -780,7 +780,7 @@ async def delete_comment(
     card_id: str,
     comment_id: str,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a comment — card author/comment author/admin can delete, others get 403."""
     card_author_id = await storage.get_card_author_id(card_id)
@@ -809,7 +809,7 @@ async def report_comment(
     comment_id: str,
     body: dict,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Report a comment."""
     reason = (body.get("reason") or "").strip()
@@ -828,7 +828,7 @@ async def fork_card(
     body: ForkRequest,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Deep copy a public card into the user's own collection."""
     new_id = uuid.uuid4().hex[:12]
@@ -844,7 +844,7 @@ async def like_card(
     card_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle like on a public card."""
     card = await storage.get_card(card_id)
@@ -860,7 +860,7 @@ async def set_visibility(
     body: VisibilityUpdate,
     request: Request,
     user: dict = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Set card visibility (public/private). Only the card owner can change it."""
     card = await storage.get_card(card_id)

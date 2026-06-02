@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from routers.auth import get_current_user
 from deps import get_config, get_storage, get_memory_manager, patch_config
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from core.memory_manager import MemoryManager
 from core.log_collector import get_recent_logs
 from limiter import limiter
@@ -35,7 +35,7 @@ async def require_admin(
 async def list_users(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     users = await storage.get_all_users()
     now = time.time()
@@ -57,7 +57,7 @@ async def list_users(
 async def dashboard(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     return await storage.get_dashboard_stats()
 
@@ -68,7 +68,7 @@ async def disable_user(
     request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     await storage.set_user_disabled(user_id, True)
     return {"ok": True}
@@ -80,7 +80,7 @@ async def enable_user(
     request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     await storage.set_user_disabled(user_id, False)
     return {"ok": True}
@@ -97,7 +97,7 @@ async def reset_user_password(
     user_id: str,
     req: ResetPasswordRequest,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     pw = req.new_password
     if len(pw) < 8:
@@ -118,7 +118,7 @@ async def delete_user(
     request: Request,
     user_id: str,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, Any]:
     """Cascade-delete a user: texts, cards, sessions, messages, stats, tokens, Mem0 memories."""
@@ -160,7 +160,7 @@ async def batch_delete_users(
     request: Request,
     req: BatchDeleteRequest,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
     memory_manager: MemoryManager | None = Depends(get_memory_manager),
 ) -> dict[str, Any]:
     """Batch cascade-delete users."""
@@ -208,7 +208,7 @@ async def set_user_email(
     user_id: str,
     req: SetEmailRequest,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Set a user's email (admin, no verification needed). Empty string clears it."""
     await storage.update_user_email(user_id, req.email)
@@ -221,7 +221,7 @@ async def clear_user_email(
     request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Clear a user's email and email_verified flag."""
     await storage.update_user_email(user_id, "")
@@ -240,7 +240,7 @@ async def generate_invites(
     request: Request,
     req: GenerateInviteRequest,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     count = max(1, min(req.count, 100))
     codes = []
@@ -256,7 +256,7 @@ async def generate_invites(
 async def list_invites(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     return await storage.list_invite_codes()
 
@@ -267,7 +267,7 @@ async def delete_invite(
     request: Request,
     code: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete a single invite code."""
     try:
@@ -287,7 +287,7 @@ async def delete_invite(
 async def delete_used_invites(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete all used invite codes."""
     try:
@@ -303,7 +303,7 @@ async def delete_used_invites(
 async def admin_usage(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """Return usage summary for all users (admin only)."""
     return await storage.get_all_usage_summary()
@@ -317,7 +317,7 @@ async def admin_usage(
 async def list_reports(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List pending comment reports grouped by comment."""
     return await storage.get_comment_reports_grouped()
@@ -329,7 +329,7 @@ async def resolve_reports(
     request: Request,
     comment_id: str,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Resolve all pending reports for a comment (dismiss, keep comment)."""
     ok = await storage.resolve_all_reports(comment_id, admin_user["id"])
@@ -344,7 +344,7 @@ async def delete_reported_comment(
     request: Request,
     comment_id: str,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete a reported comment and resolve all its pending reports."""
     ok = await storage.delete_comment_and_resolve_reports(comment_id, admin_user["id"])
@@ -363,7 +363,7 @@ async def delete_reported_comment(
 async def admin_list_cards(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List all cards with user info for admin review."""
     return await storage.list_all_cards_admin()
@@ -375,7 +375,7 @@ async def admin_takedown_card(
     request: Request,
     card_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Set a public card to private (takedown)."""
     ok = await storage.takedown_card(card_id)
@@ -389,7 +389,7 @@ async def admin_takedown_card(
 async def admin_list_posts(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List all user posts for admin review."""
     return await storage.list_all_posts_admin()
@@ -401,7 +401,7 @@ async def admin_delete_post(
     request: Request,
     post_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete any user post by id."""
     ok = await storage.admin_delete_post(post_id)
@@ -421,7 +421,7 @@ async def admin_ban_user(
     user_id: str,
     req: BanUserRequest,
     admin_user: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Disable user + delete their posts + resolve reports."""
     if user_id == admin_user.get("id"):
@@ -473,7 +473,7 @@ async def admin_user_detail(
     request: Request,
     user_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get detailed user info for admin: stats, cards, sessions, usage, login history."""
     try:
@@ -508,7 +508,7 @@ async def admin_create_announcement(
     request: Request,
     req: AnnouncementCreateRequest,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Create a new announcement (deactivates previous ones)."""
     if not req.content.strip():
@@ -523,7 +523,7 @@ async def admin_delete_announcement(
     request: Request,
     announcement_id: str,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete an announcement by id."""
     ok = await storage.delete_announcement(announcement_id)
@@ -537,7 +537,7 @@ async def admin_delete_announcement(
 async def admin_list_announcements(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List all announcements."""
     return await storage.list_announcements()
@@ -553,7 +553,7 @@ async def admin_list_announcements(
 async def admin_export_users(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """Export all users as CSV."""
     from fastapi.responses import PlainTextResponse
@@ -570,7 +570,7 @@ async def admin_export_users(
 async def admin_export_usage(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ):
     """Export usage summary as CSV."""
     from fastapi.responses import PlainTextResponse
@@ -592,7 +592,7 @@ async def admin_export_usage(
 async def admin_config_changelog(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """Return recent config changelog entries."""
     return await storage.get_config_changelog(50)
@@ -651,7 +651,7 @@ async def admin_set_rate_limits(
 async def admin_review_log(
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """Return recent AI review logs."""
     return await storage.get_review_logs(50)
@@ -676,7 +676,7 @@ async def admin_add_featured(
     request: Request,
     req: AddFeaturedRequest,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Add a card to the featured list (max 10)."""
     featured = await storage.get_featured_cards()
@@ -697,7 +697,7 @@ async def admin_remove_featured(
     id: str,
     request: Request,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Remove a card from the featured list."""
     ok = await storage.remove_featured_card(id)
@@ -712,7 +712,7 @@ async def admin_reorder_featured(
     request: Request,
     req: ReorderFeaturedRequest,
     _admin: dict = Depends(require_admin),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Reorder featured cards by id array index."""
     await storage.reorder_featured_cards(req.ids)

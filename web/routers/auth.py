@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_config, get_storage
-from storage.sqlite_store import SQLiteStore
+from storage.base import StorageBase
 from limiter import limiter
 
 logger = logging.getLogger("charsim.auth")
@@ -102,7 +102,7 @@ class TokenResponse(BaseModel):
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid."""
     if credentials is None:
@@ -132,7 +132,7 @@ async def get_current_user(
 async def send_code(
     request: Request,
     req: SendCodeRequest,
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Send a verification code to an email address."""
     email = req.email.strip().lower()
@@ -161,7 +161,7 @@ async def send_code(
 
 @router.post("/register")
 @limiter.limit("3/hour")
-async def register(request: Request, req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+async def register(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
     if not username or len(username) < 2:
@@ -234,7 +234,7 @@ async def register(request: Request, req: AuthRequest, storage: SQLiteStore = De
 async def reset_password(
     request: Request,
     req: ResetPasswordRequest,
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Reset password via email verification code."""
     valid = await storage.verify_code(req.email.strip().lower(), req.code, "reset_password")
@@ -255,7 +255,7 @@ async def reset_password(
 
 @router.post("/login")
 @limiter.limit("5/minute")
-async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+async def login(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())
     if user is None:
@@ -279,7 +279,7 @@ async def login(request: Request, req: AuthRequest, storage: SQLiteStore = Depen
 
 
 @router.post("/refresh")
-async def refresh(req: RefreshRequest, storage: SQLiteStore = Depends(get_storage)) -> dict[str, Any]:
+async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
     """Exchange a refresh token for a new access_token + new refresh_token (rotation)."""
     token_hash = _hash_token(req.refresh_token)
     record = await storage.get_refresh_token(token_hash)
@@ -315,7 +315,7 @@ async def refresh(req: RefreshRequest, storage: SQLiteStore = Depends(get_storag
 @router.post("/logout")
 async def logout(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Delete all refresh tokens for the current user."""
     await storage.delete_user_refresh_tokens(user["id"])
@@ -325,7 +325,7 @@ async def logout(
 @router.get("/me")
 async def me(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Return current authenticated user with API config status."""
     resp = _user_response(user)
@@ -346,7 +346,7 @@ async def me(
 @router.get("/announcement")
 async def get_announcement(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Return the current active announcement (if any)."""
     ann = await storage.get_active_announcement()
@@ -357,7 +357,7 @@ async def get_announcement(
 async def update_api_config(
     req: ApiConfigRequest,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update the current user's API key, base URL, and model."""
     try:
@@ -374,7 +374,7 @@ async def update_api_config(
 @router.get("/usage")
 async def my_usage(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Return the current user's usage stats."""
     return await storage.get_usage_stats(user["id"])
@@ -385,7 +385,7 @@ async def my_usage(
 async def update_avatar(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     body = await request.json()
     avatar = body.get("avatar_data", "")
@@ -398,7 +398,7 @@ async def update_avatar(
 @router.get("/avatar")
 async def get_avatar(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     data = await storage.get_user_avatar(user["id"])
     return {"avatar_data": data}
@@ -409,7 +409,7 @@ async def get_avatar(
 async def update_banner(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     body = await request.json()
     banner = body.get("banner_data", "")
@@ -424,7 +424,7 @@ async def update_banner(
 @router.get("/banner")
 async def get_banner(
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     row = await storage.fetch_one("SELECT banner_data FROM users WHERE id = ?", (user["id"],))
     return {"banner_data": row["banner_data"] if row else ""}
@@ -436,7 +436,7 @@ async def change_password(
     request: Request,
     req: ChangePasswordRequest,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     if not password_hasher.verify(req.old_password, user["password_hash"]):
         raise HTTPException(400, "当前密码错误")
@@ -456,7 +456,7 @@ async def bind_email(
     request: Request,
     req: BindEmailRequest,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Bind or change email for the current user via verification code."""
     email = req.email.strip().lower()
@@ -480,7 +480,7 @@ async def bind_email(
 async def update_bio(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     body = await request.json()
     bio = (body.get("bio", "") or "").strip()[:200]
@@ -497,7 +497,7 @@ async def update_bio(
 async def get_presence_visibility(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, str]:
     """Get current user's presence visibility setting."""
     return {"presence_visibility": user.get("presence_visibility", "mutual")}
@@ -508,7 +508,7 @@ async def get_presence_visibility(
 async def update_presence_visibility(
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update presence visibility setting: 'all', 'fans', 'mutual', or 'none'."""
     body = await request.json()
@@ -527,7 +527,7 @@ async def get_user_online_status(
     request: Request,
     user_id: str,
     user: dict[str, Any] = Depends(get_current_user),
-    storage: SQLiteStore = Depends(get_storage),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Get another user's online status with privacy enforcement."""
     target = await storage.get_user_by_id(user_id)
@@ -568,7 +568,7 @@ def _create_access_token(user_id: str, username: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-async def _create_refresh_token(user_id: str, storage: SQLiteStore) -> str:
+async def _create_refresh_token(user_id: str, storage: StorageBase) -> str:
     raw = secrets.token_urlsafe(64)
     token_hash = _hash_token(raw)
     expires_at = (datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)).isoformat()
