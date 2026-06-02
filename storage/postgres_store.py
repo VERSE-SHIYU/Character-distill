@@ -44,6 +44,13 @@ class PostgresStore(StorageBase):
         self._initialized = False
         self._pool: asyncpg.Pool[asyncpg.Connection] | None = None
 
+    async def close(self) -> None:
+        """Close the connection pool."""
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            await pool.close()
+        self._initialized = False
+
     @staticmethod
     def _parse_rowcount(tag: str) -> int:
         """Parse asyncpg status tag like 'INSERT 0 1' to row count."""
@@ -906,7 +913,7 @@ class PostgresStore(StorageBase):
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     {where_sql}
-                    ORDER BY COALESCE(last_message_at, s.updated_at, s.created_at) DESC
+                    ORDER BY last_message_at DESC NULLS LAST, s.updated_at DESC, s.created_at DESC
                     LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
                     """,
                     *params, safe_page_size, offset,
