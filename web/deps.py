@@ -19,6 +19,7 @@ from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
 from core.memory_manager import MemoryManager
 from core.text_manager import TextManager
+from fastapi import HTTPException
 from storage import get_store
 from storage.base import StorageBase
 
@@ -61,11 +62,14 @@ def clear_user_llm_cache(user_id: str | None = None) -> None:
         _user_llm_cache.pop(user_id, None)
 
 
-async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
+async def get_user_llm(user_id: str, storage: StorageBase | None = None, client_ip: str | None = None) -> LLMAdapter | None:
     """Get or create a per-user LLMAdapter from their saved API config.
 
     Falls back to the global _llm (config.yaml / DEEPSEEK_API_KEY env) if the
     user has not configured their own API key.
+
+    If *client_ip* is provided, a geo-guard check is performed: domestic IPs
+    with non-whitelisted base_url are blocked (raises HTTPException 403).
     """
     if storage is None:
         storage = _storage
@@ -76,6 +80,15 @@ async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMA
     try:
         config = await storage.get_user_api_config(user_id)
         if config.get("api_key"):
+            # Geo guard: block domestic IPs from using non-whitelisted APIs
+            if client_ip is not None:
+                from web.geo_guard import check_api_allowed
+                base_url = config.get("base_url", "https://api.deepseek.com")
+                allowed, reason = check_api_allowed(client_ip, base_url)
+                if not allowed:
+                    await storage.record_geo_block(user_id, client_ip, base_url, reason)
+                    raise HTTPException(403, detail=reason)
+
             llm = LLMAdapter(
                 api_key=config["api_key"],
                 base_url=config.get("base_url", "https://api.deepseek.com"),
@@ -83,6 +96,8 @@ async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMA
             )
             _user_llm_cache[user_id] = llm
             return llm
+    except HTTPException:
+        raise
     except Exception as exc:
         print(f"[deps] Failed to create per-user LLM for {user_id}: {exc}")
 

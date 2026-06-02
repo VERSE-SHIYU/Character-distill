@@ -22,7 +22,7 @@ from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.scene_indexer import SceneIndexer
 from storage.base import StorageBase
-from limiter import limiter
+from limiter import get_client_ip, limiter
 from routers.auth import get_current_user
 
 
@@ -87,6 +87,7 @@ class DistillTaskRequest(BaseModel):
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
+    client_ip: str | None = None,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -110,6 +111,13 @@ def _run_distill_task(
         per_user_llm = None
         if api_config and api_config.get("api_key"):
             try:
+                if client_ip is not None:
+                    from web.geo_guard import check_api_allowed
+                    allowed, _ = check_api_allowed(client_ip, api_config.get("base_url", "https://api.deepseek.com"))
+                    if not allowed:
+                        print(f"[distill] Geo-blocked per-user LLM in bg task for {user_id}")
+                        raise RuntimeError("geo_blocked")
+                from adapters.llm_adapter import LLMAdapter
                 per_user_llm = LLMAdapter(
                     api_key=api_config["api_key"],
                     base_url=api_config.get("base_url", "https://api.deepseek.com"),
@@ -377,8 +385,9 @@ async def identify_by_text_id(
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -402,8 +411,9 @@ async def distill_by_text_id(
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
@@ -448,20 +458,27 @@ async def distill_start(
     """Start distillation as a background task, return task_id immediately."""
     from deps import get_distiller
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
 
     # Resolve per-user LLM config for the background thread
     api_config = await storage.get_user_api_config(user_id)
     per_user_llm = None
     if api_config and api_config.get("api_key"):
-        from adapters.llm_adapter import LLMAdapter
-        try:
-            per_user_llm = LLMAdapter(
-                api_key=api_config["api_key"],
-                base_url=api_config.get("base_url", "https://api.deepseek.com"),
-                model=api_config.get("model", "deepseek-v4-pro"),
-            )
-        except Exception:
-            pass
+        from web.geo_guard import check_api_allowed
+        base_url = api_config.get("base_url", "https://api.deepseek.com")
+        allowed, reason = check_api_allowed(_client_ip, base_url)
+        if not allowed:
+            await storage.record_geo_block(user_id, _client_ip, base_url, reason)
+        else:
+            from adapters.llm_adapter import LLMAdapter
+            try:
+                per_user_llm = LLMAdapter(
+                    api_key=api_config["api_key"],
+                    base_url=base_url,
+                    model=api_config.get("model", "deepseek-v4-pro"),
+                )
+            except Exception:
+                pass
 
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
@@ -482,7 +499,7 @@ async def distill_start(
 
     thread = threading.Thread(
         target=_run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config, _client_ip),
         daemon=True,
     )
     thread.start()
@@ -565,8 +582,9 @@ async def distill_stream(
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None or distiller is None:
@@ -694,8 +712,9 @@ async def reindex_rag(
     ``character_name`` filtering works in subsequent chat queries.
     """
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -757,8 +776,9 @@ async def generate_opening(
     storage: StorageBase = Depends(get_storage),
 ):
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -857,8 +877,9 @@ async def start_session(
     record to SQLite, and returns the card data with ``session_id``.
     """
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     text_manager = get_text_manager(llm=per_user_llm)
 
     card_rec = await storage.get_card(req.card_id)
@@ -976,8 +997,9 @@ async def legacy_identify(
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -993,8 +1015,9 @@ async def legacy_distill(
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if distiller is None or text_manager is None:

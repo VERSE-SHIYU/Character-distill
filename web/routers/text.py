@@ -18,7 +18,7 @@ from urllib.parse import quote
 from deps import get_storage
 from storage.base import StorageBase
 
-from limiter import limiter
+from limiter import get_client_ip, limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
 
@@ -28,7 +28,7 @@ _upload_tasks: dict[str, dict[str, Any]] = {}
 _upload_task_lock = threading.Lock()
 
 
-def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
+def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | None = None) -> None:
     """Background: identify characters + coref resolve, update task progress."""
     try:
         from deps import get_distiller
@@ -63,12 +63,21 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
             per_user_llm = None
             api_config = await store.get_user_api_config(user_id)
             if api_config and api_config.get("api_key"):
-                from adapters.llm_adapter import LLMAdapter
-                per_user_llm = LLMAdapter(
-                    api_key=api_config["api_key"],
-                    base_url=api_config.get("base_url", "https://api.deepseek.com"),
-                    model=api_config.get("model", "deepseek-v4-pro"),
-                )
+                try:
+                    if client_ip is not None:
+                        from web.geo_guard import check_api_allowed
+                        allowed, _ = check_api_allowed(client_ip, api_config.get("base_url", "https://api.deepseek.com"))
+                        if not allowed:
+                            print(f"[text] Geo-blocked per-user LLM in bg task for {user_id}")
+                            raise RuntimeError("geo_blocked")
+                    from adapters.llm_adapter import LLMAdapter
+                    per_user_llm = LLMAdapter(
+                        api_key=api_config["api_key"],
+                        base_url=api_config.get("base_url", "https://api.deepseek.com"),
+                        model=api_config.get("model", "deepseek-v4-pro"),
+                    )
+                except Exception as exc:
+                    print(f"[text] Per-user LLM init failed, falling back: {exc}")
 
             distiller = get_distiller(llm=per_user_llm)
             if distiller is None:
@@ -165,8 +174,9 @@ async def upload_text(
 ) -> dict[str, Any]:
     """Accept a multipart file or text form field, parse format, save."""
     user_id = user["id"]
+    _client_ip = get_client_ip(request)
     from deps import get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage)
+    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -218,7 +228,7 @@ async def upload_text(
         upload_task_id = uuid.uuid4().hex[:12]
         thread = threading.Thread(
             target=_run_upload_task,
-            args=(upload_task_id, text_id, user_id),
+            args=(upload_task_id, text_id, user_id, _client_ip),
             daemon=True,
         )
         thread.start()
