@@ -207,3 +207,15 @@ class StorageBase(ABC):
     @abstractmethod
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
+
+    @abstractmethod
+    async def update_user_banner(self, user_id: str, banner_data: str) -> None:
+        """Update user banner image data."""
+
+    @abstractmethod
+    async def get_user_banner(self, user_id: str) -> str:
+        """Get user banner image data (returns empty string if none)."""
+
+    @abstractmethod
+    async def update_user_bio(self, user_id: str, bio: str) -> None:
+        """Update user bio text."""

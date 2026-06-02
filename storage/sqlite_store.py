@@ -2527,6 +2527,45 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get user avatar failed: {exc}")
             raise
 
+    async def update_user_banner(self, user_id: str, banner_data: str) -> None:
+        """Store base64 banner for a user."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET banner_data = ? WHERE id = ?",
+                    (banner_data, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user banner failed: {exc}")
+            raise
+
+    async def get_user_banner(self, user_id: str) -> str:
+        """Get base64 banner for a user, empty string if none."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT banner_data FROM users WHERE id = ?", (user_id,),
+                )
+                row = await cursor.fetchone()
+            return row[0] if row and row[0] else ""
+        except Exception as exc:
+            print(f"[SQLiteStore] Get user banner failed: {exc}")
+            raise
+
+    async def update_user_bio(self, user_id: str, bio: str) -> None:
+        """Update a user's bio text."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET bio = ? WHERE id = ?",
+                    (bio, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user bio failed: {exc}")
+            raise
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

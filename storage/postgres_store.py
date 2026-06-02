@@ -1785,6 +1785,42 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get user avatar failed: {exc}")
             raise
 
+    async def update_user_banner(self, user_id: str, banner_data: str) -> None:
+        """Store base64 banner for a user."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET banner_data = $1 WHERE id = $2",
+                    banner_data, user_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update user banner failed: {exc}")
+            raise
+
+    async def get_user_banner(self, user_id: str) -> str:
+        """Get base64 banner for a user, empty string if none."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT banner_data FROM users WHERE id = $1", user_id,
+                )
+            return row[0] if row and row[0] else ""
+        except Exception as exc:
+            print(f"[PostgresStore] Get user banner failed: {exc}")
+            raise
+
+    async def update_user_bio(self, user_id: str, bio: str) -> None:
+        """Update a user's bio text."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET bio = $1 WHERE id = $2",
+                    bio, user_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update user bio failed: {exc}")
+            raise
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

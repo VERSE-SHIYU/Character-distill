@@ -415,9 +415,7 @@ async def update_banner(
     banner = body.get("banner_data", "")
     if len(banner) > 300_000:
         raise HTTPException(400, "封面图过大，请压缩后上传")
-    await storage.execute(
-        "UPDATE users SET banner_data = ? WHERE id = ?", (banner, user["id"])
-    )
+    await storage.update_user_banner(user["id"], banner)
     return {"ok": True}
 
 
@@ -426,8 +424,8 @@ async def get_banner(
     user: dict[str, Any] = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    row = await storage.fetch_one("SELECT banner_data FROM users WHERE id = ?", (user["id"],))
-    return {"banner_data": row["banner_data"] if row else ""}
+    banner = await storage.get_user_banner(user["id"])
+    return {"banner_data": banner}
 
 
 @router.put("/password")
@@ -484,9 +482,7 @@ async def update_bio(
 ) -> dict[str, Any]:
     body = await request.json()
     bio = (body.get("bio", "") or "").strip()[:200]
-    await storage.execute(
-        "UPDATE users SET bio = ? WHERE id = ?", (bio, user["id"])
-    )
+    await storage.update_user_bio(user["id"], bio)
     return {"ok": True, "bio": bio}
 
 
