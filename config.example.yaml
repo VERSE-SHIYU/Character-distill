@@ -13,6 +13,9 @@ rag:
   chunk_size: 500
   embedding_model: all-MiniLM-L6-v2
   top_k: 3
+# 存储后端由 .env 的 STORAGE_BACKEND 决定：
+#   STORAGE_BACKEND=postgres -> 用 DATABASE_URL（生产推荐），忽略下方 path
+#   STORAGE_BACKEND=sqlite   -> 用下方 path（本地开发 / 回退）
 storage:
   path: data/character_sim.db
   type: sqlite

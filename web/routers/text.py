@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 from deps import get_storage
 from storage.base import StorageBase
-from storage.sqlite_store import SQLiteStore
+
 from limiter import limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
