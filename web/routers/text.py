@@ -38,12 +38,8 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
 
         # Run inside a fresh event loop
         async def _do():
-            from deps import get_config
-            from pathlib import Path as _Path
-            cfg = get_config()
-            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
-            store = SQLiteStore(db_path)
-            await store._ensure_initialized()
+            from deps import get_storage
+            store = get_storage()
 
             text_rec = await store.get_text(text_id)
             if not text_rec:

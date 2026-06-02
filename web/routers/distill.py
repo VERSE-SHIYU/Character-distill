@@ -264,18 +264,11 @@ def _run_distill_task(
         # Step 4: persist via fresh store + text_manager in a new event loop.
         # Using the singleton text_manager's _storage would reuse a connection
         # created in the main event loop — unsafe across threads.  Instead,
-        # build a fresh SQLiteStore + TextManager inside ``asyncio.run()`` so
-        # aiosqlite connections are bound to the thread's own event loop.
         async def _save_card():
-            from pathlib import Path as _Path
-            from deps import get_config, get_rag_config, get_sessions
+            from deps import get_config, get_storage, get_rag_config, get_sessions
             from core.text_manager import TextManager
-            from storage.sqlite_store import SQLiteStore
 
-            cfg = get_config()
-            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
-            store = SQLiteStore(db_path)
-            await store._ensure_initialized()
+            store = get_storage()
 
             llm_for_save = per_user_llm
             if llm_for_save is None:
@@ -288,7 +281,7 @@ def _run_distill_task(
                 llm_for_save,
                 get_rag_config(),
                 get_sessions(),
-                cfg.get("llm", {}).get("summary_threshold", 50),
+                get_config().get("llm", {}).get("summary_threshold", 50),
             )
             result = await tm.save_distilled_card(text_id, card, user_id)
             # Build scene index for emotion-weighted retrieval
@@ -330,16 +323,9 @@ def _run_distill_task(
             _tasks[task_id].update({"status": "error", "message": str(exc), "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
-            from pathlib import Path as _Path
-            from deps import get_config
-            cfg = get_config()
-            db_path = str(_Path(__file__).resolve().parent.parent.parent / cfg["storage"]["path"])
-            store = SQLiteStore(db_path)
-            asyncio.run(store._ensure_initialized())
-            asyncio.run(store.execute(
-                "UPDATE cards SET deleted_at = datetime('now') WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                (text_id, user_id),
-            ))
+            from deps import get_storage
+            store = get_storage()
+            asyncio.run(store.cleanup_empty_cards(text_id, user_id))
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:

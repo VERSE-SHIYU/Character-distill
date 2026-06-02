@@ -4394,3 +4394,16 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get all reading progress failed: {exc}")
             return []
+
+    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
+        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE cards SET deleted_at = datetime('now') WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
+                    (text_id, user_id),
+                )
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Cleanup empty cards failed: {exc}")
+            return 0

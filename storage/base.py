@@ -203,3 +203,7 @@ class StorageBase(ABC):
     @abstractmethod
     async def get_session_affinity(self, session_id: str) -> dict | None:
         """Get affinity scores for a session."""
+
+    @abstractmethod
+    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
+        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
