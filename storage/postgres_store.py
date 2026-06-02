@@ -1821,6 +1821,17 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Update user bio failed: {exc}")
             raise
 
+    async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:
+        """Record a geo-blocking event for compliance audit trail."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO geo_block_log (user_id, ip, base_url, reason) VALUES ($1, $2, $3, $4)",
+                    user_id, ip, base_url, reason,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Record geo block failed: {exc}")
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

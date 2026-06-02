@@ -378,3 +378,13 @@ CREATE INDEX IF NOT EXISTS idx_cards_text_id     ON cards(text_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_card_id  ON sessions(card_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_messages_content  ON messages(content);
+
+-- ---------- geo_block_log ----------
+CREATE TABLE IF NOT EXISTS geo_block_log (
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    ip         TEXT NOT NULL DEFAULT '',
+    base_url   TEXT NOT NULL DEFAULT '',
+    reason     TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);

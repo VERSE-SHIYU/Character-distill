@@ -219,3 +219,7 @@ class StorageBase(ABC):
     @abstractmethod
     async def update_user_bio(self, user_id: str, bio: str) -> None:
         """Update user bio text."""
+
+    @abstractmethod
+    async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:
+        """Record a geo-blocking event for compliance audit trail."""

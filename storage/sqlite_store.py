@@ -646,6 +646,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Text cover migration failed: {exc}")
 
+                    # Run 064_geo_block migration (CREATE TABLE IF NOT EXISTS — idempotent)
+                    geo_block_path = migrations_dir / "064_geo_block.sql"
+                    if geo_block_path.exists():
+                        try:
+                            await conn.executescript(geo_block_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Geo block migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2565,6 +2574,18 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Update user bio failed: {exc}")
             raise
+
+    async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:
+        """Record a geo-blocking event for compliance audit trail."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO geo_block_log (user_id, ip, base_url, reason) VALUES (?, ?, ?, ?)",
+                    (user_id, ip, base_url, reason),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Record geo block failed: {exc}")
 
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
