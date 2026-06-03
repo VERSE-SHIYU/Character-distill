@@ -337,6 +337,8 @@ class ChatEngine:
             print(f"[chat_stream] WARNING: LLM returned empty response (history={len(self.history)} messages, sp_len={len(system_prompt)} chars)")
         self.history.append({"role": "assistant", "content": full_reply})
 
+    def post_stream_process(self, user_message: str, full_reply: str) -> None:
+        """Post-stream housekeeping after done event: memory + affinity. Does NOT block UI unlock."""
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
@@ -345,7 +347,6 @@ class ChatEngine:
                 ],
                 self._card_id,
             )
-
         self._evaluate_affinity(user_message, full_reply)
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:

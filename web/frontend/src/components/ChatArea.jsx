@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Mic, Book, File, Heart } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
@@ -12,6 +13,7 @@ import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import { parseCardJson } from '../utils/card'
 import MentionDropdown from './common/MentionDropdown'
+import ResizableInputArea from './common/ResizableInputArea'
 import { Calendar } from './common/ChatHistoryPanel'
 import EmojiPicker from './common/EmojiPicker'
 
@@ -1160,6 +1162,7 @@ function SummaryBubble({ content }) {
 function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage, mentionableItems, replyTo, onCancelReply }) {
   const [text, setText] = useState('')
   const taRef = useRef(null)
+  const { resize: resizeChat } = useAutoResizeTextarea(taRef)
   const [showEmoji, setShowEmoji] = useState(false)
 
   const handleMentionSelect = useCallback((item, atPos) => {
@@ -1198,7 +1201,10 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
     if (!text.trim() || disabled) return
     onSend(text)
     setText('')
-    setTimeout(() => taRef.current?.focus(), 0)
+    setTimeout(() => {
+      resizeChat()
+      taRef.current?.focus()
+    }, 0)
   }
 
   const handleKeyDown = (e) => {
@@ -1293,6 +1299,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
   const funasrReady = voiceStatus?.funasr
 
   return (
+    <ResizableInputArea>
     <div className="chat-input-bar">
       {replyTo && (
         <div className="reply-preview-bar" style={{ margin: 0, position: 'absolute', left: 0, right: 0, bottom: '100%', borderRadius: '6px 6px 0 0' }}>
@@ -1347,8 +1354,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
             if (ta) {
               ta.focus()
               ta.selectionStart = ta.selectionEnd = start + emoji.length
-              ta.style.height = 'auto'
-              ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
+              resizeChat()
             }
           })
         }} />}
@@ -1363,10 +1369,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
             const val = e.target.value
             setText(val)
             mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-            // Auto-resize
-            const ta = e.target
-            ta.style.height = 'auto'
-            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'
+            resizeChat()
           }}
           onKeyDown={(e) => {
             if (mentionHook.handleMentionKeyDown(e)) return
@@ -1393,6 +1396,7 @@ function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDurati
         发送
       </button>
     </div>
+    </ResizableInputArea>
   )
 }
 

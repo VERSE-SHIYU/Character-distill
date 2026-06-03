@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { formatChatTime } from '../utils/time'
 import { Calendar } from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
 import EmojiPicker from './common/EmojiPicker'
+import ResizableInputArea from './common/ResizableInputArea'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 
@@ -22,6 +24,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const messagesEndRef = useRef(null)
   const autoSendRef = useRef(false)
   const taRef = useRef(null)
+  const { resize: resizePM } = useAutoResizeTextarea(taRef)
   const [showEmoji, setShowEmoji] = useState(false)
   const [otherAvatar, setOtherAvatar] = useState(null)
   const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
@@ -234,6 +237,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     }
     setMessages(prev => [...prev, optimisticMsg])
     setInputText('')
+    setTimeout(resizePM, 0)
 
     if (!isOnline) return
 
@@ -379,6 +383,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           </div>
 
           {/* Input */}
+          <ResizableInputArea>
           <div className="private-chat-input-bar">
         <div className="messages-input-toolbar messages-input-toolbar-top">
           <button type="button" className="messages-toolbar-btn" title="表情" data-emoji-btn
@@ -397,10 +402,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           <textarea
             ref={taRef}
             className="messages-input"
-            rows={3}
+            rows={1}
             placeholder="输入消息…"
             value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            onChange={(e) => {
+              setInputText(e.target.value)
+              resizePM()
+            }}
             onKeyDown={handleKeyDown}
           />
         </div>
@@ -416,6 +424,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           </button>
         </div>
       </div>
+      </ResizableInputArea>
         </div>
 
         {historyOpen && (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
@@ -8,6 +9,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { useMention } from '../utils/useMention'
 import MentionDropdown from './common/MentionDropdown'
+import ResizableInputArea from './common/ResizableInputArea'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import EmojiPicker from './common/EmojiPicker'
@@ -58,13 +60,15 @@ export default function GroupChatPage() {
   const autoStopRef = useRef(false)
   const autoAbortRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
+  const [dropOpen, setDropOpen] = useState(false)
+  const dropRef = useRef(null)
   const [autoTotal, setAutoTotal] = useState(0)
   const [targetCardIds, setTargetCardIds] = useState([])
   const [generatingForName, setGeneratingForName] = useState(null)
   const [rightTab, setRightTab] = useState('history') // 'history' | 'members' | 'date'
   const [historySelectedDate, setHistorySelectedDate] = useState('')
   const [historyDateGroups, setHistoryDateGroups] = useState([])
-  const msgInputRef = useRef(null)
+  const { textareaRef: msgInputRef, resize: resizeMsg } = useAutoResizeTextarea()
   const messagesAreaRef = useRef(null)
   const [showEmoji, setShowEmoji] = useState(false)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
@@ -143,8 +147,8 @@ export default function GroupChatPage() {
     return currentGroup.card_ids
       .map((id) => resolveCard(id))
       .filter(Boolean)
-      .map((c) => ({ id: c.id, name: c.name || c.id }))
-  }, [currentGroup?.card_ids, cardCache, allCards])
+      .map((c) => ({ id: c.id, name: c.name || c.id, avatar: cardAvatars[c.id] || cardCache[c.id]?.avatar_data || null }))
+  }, [currentGroup?.card_ids, cardCache, allCards, cardAvatars])
 
   const handleMentionSelect = useCallback((item, atPos) => {
     setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))
@@ -573,6 +577,7 @@ export default function GroupChatPage() {
       // Reload history once after all replies
       await loadHistory(currentGroup.id)
       setMessageText('')
+      setTimeout(resizeMsg, 0)
       setTargetCardIds([])
       setReplyTo(null)
     } catch (err) {
@@ -687,6 +692,18 @@ export default function GroupChatPage() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [moreMenuOpen])
+
+  // Round dropdown outside-click
+  useEffect(() => {
+    if (!dropOpen) return
+    const handler = (e) => {
+      if (dropRef.current && !dropRef.current.contains(e.target)) {
+        setDropOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [dropOpen])
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth <= 768)
@@ -812,18 +829,29 @@ export default function GroupChatPage() {
                 )}
                 {!editingName && (
                   <div className="group-header-right">
-                    <select
-                      className="group-round-select"
-                      value={rounds}
-                      onChange={(e) => setRounds(Number(e.target.value))}
-                      style={autoMode ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
-                    >
-                      <option value={1}>1轮</option>
-                      <option value={3}>3轮</option>
-                      <option value={5}>5轮</option>
-                      <option value={10}>10轮</option>
-                      <option value={20}>20轮</option>
-                    </select>
+                    <div className={`group-round-dropdown${autoMode ? ' hidden' : ''}`} ref={dropRef}>
+                      <button className={`group-round-trigger${dropOpen ? ' open' : ''}`}
+                        onClick={() => setDropOpen(!dropOpen)}
+                      >
+                        <span>{rounds}轮</span>
+                        <svg className="drop-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                      {dropOpen && (
+                        <div className="group-round-menu">
+                          {[1, 3, 5, 10, 20].map(n => (
+                            <div key={n}
+                              className={`group-round-item${rounds === n ? ' active' : ''}`}
+                              onClick={() => { setRounds(n); setDropOpen(false) }}
+                            >
+                              {n}轮
+                              {rounds === n && <span className="group-round-check">✓</span>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="button"
                       className={`chat-topbar-btn group-auto-btn-header${autoMode ? ' active' : ''}`}
@@ -1115,6 +1143,7 @@ export default function GroupChatPage() {
                     </button>
                   </div>
                 )}
+                <ResizableInputArea>
                 <div className="group-input-row">
                     <div style={{ position: 'relative' }}>
                       <button type="button" data-emoji-btn className="group-input-emoji-btn" title="表情"
@@ -1147,13 +1176,14 @@ export default function GroupChatPage() {
                       <textarea
                         ref={msgInputRef}
                         className="messages-input"
-                        rows={2}
+                        rows={1}
                         placeholder="输入消息…（@指定角色）"
                         value={messageText}
                         onChange={(e) => {
                           const val = e.target.value
                           setMessageText(val)
                           mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
+                          resizeMsg()
                         }}
                         onKeyDown={(e) => {
                           if (mentionHook.handleMentionKeyDown(e)) return
@@ -1178,6 +1208,7 @@ export default function GroupChatPage() {
                       {sending ? '…' : '发送'}
                     </button>
                   </div>
+              </ResizableInputArea>
               </div>
             </div>
               {/* 右侧栏：tab 切换 — 历史记录 / 成员 */}
