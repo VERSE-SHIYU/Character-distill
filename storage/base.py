@@ -223,3 +223,7 @@ class StorageBase(ABC):
     @abstractmethod
     async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:
         """Record a geo-blocking event for compliance audit trail."""
+
+    @abstractmethod
+    async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
+        """Record user's consent to legal agreements for compliance audit trail."""

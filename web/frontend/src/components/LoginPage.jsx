@@ -26,6 +26,11 @@ export default function LoginPage() {
   const [codeSent, setCodeSent] = useState(false)
   const [countdown, setCountdown] = useState(0)
 
+  // Legal consent
+  const legalTab = useAppStore((s) => s.legalTab)
+  const setLegalTab = useAppStore((s) => s.setLegalTab)
+  const [agreed, setAgreed] = useState(false)
+
   // Forgot password
   const [forgotStep, setForgotStep] = useState('email')  // email → code → done
   const [forgotEmail, setForgotEmail] = useState('')
@@ -117,7 +122,7 @@ export default function LoginPage() {
       if (tab === 'login') {
         await login(username.trim(), password)
       } else {
-        await register(username.trim(), password, inviteCode.trim(), email.trim(), code.trim())
+        await register(username.trim(), password, inviteCode.trim(), email.trim(), code.trim(), agreed)
       }
     } catch (err) {
       setError(err.message || '操作失败')
@@ -309,12 +314,36 @@ export default function LoginPage() {
                   autoComplete="off"
                 />
               </div>
+
+              {/* Legal consent checkbox */}
+              <div className="legal-consent">
+                <label className="legal-consent-label">
+                  <input
+                    type="checkbox"
+                    checked={agreed}
+                    onChange={(e) => setAgreed(e.target.checked)}
+                  />
+                  <span>
+                    我已年满 18 周岁，并已阅读并同意
+                    <button
+                      type="button"
+                      className="legal-link-btn"
+                      onClick={(e) => { e.preventDefault(); setLegalTab('terms'); useAppStore.getState().setView('legal') }}
+                    >《用户协议》</button>
+                    <button
+                      type="button"
+                      className="legal-link-btn"
+                      onClick={(e) => { e.preventDefault(); setLegalTab('privacy'); useAppStore.getState().setView('legal') }}
+                    >《隐私政策》</button>
+                  </span>
+                </label>
+              </div>
             </>
           )}
 
           {error && <div className="login-error">{error}</div>}
 
-          <button className="login-submit" type="submit" disabled={loading || (tab === 'register' && strength.level < 3)}>
+          <button className="login-submit" type="submit" disabled={loading || (tab === 'register' && (strength.level < 3 || !agreed))}>
             {loading ? '请稍候…' : tab === 'login' ? '登录' : '注册'}
           </button>
 

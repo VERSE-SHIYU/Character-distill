@@ -388,3 +388,13 @@ CREATE TABLE IF NOT EXISTS geo_block_log (
     reason     TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ---------- user_consent ----------
+CREATE TABLE IF NOT EXISTS user_consent (
+    id              INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    user_id         TEXT NOT NULL,
+    terms_version   TEXT NOT NULL,
+    privacy_version TEXT NOT NULL,
+    ip              TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);

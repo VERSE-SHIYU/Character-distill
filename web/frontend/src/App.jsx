@@ -26,6 +26,7 @@ const TrashPage = lazy(() => import('./components/TrashPage'))
 const MarketCardDetail = lazy(() => import('./components/MarketCardDetail'))
 const FeedPage = lazy(() => import('./components/FeedPage'))
 const BookReader = lazy(() => import('./components/BookReader'))
+const LegalPage = lazy(() => import('./components/LegalPage'))
 
 const PANELS = {
   home: HomePage,
@@ -48,6 +49,7 @@ const PANELS = {
   mine: MinePage,
   reader: BookReader,
   trash: TrashPage,
+  legal: LegalPage,
 }
 
 function MainContent() {
@@ -198,7 +200,8 @@ export default function App() {
     return <div className="admin-loading">验证登录状态…</div>
   }
 
-  if (currentView === 'login') {
+  if (currentView === 'login' || (currentView === 'legal' && !isLoggedIn)) {
+    if (currentView === 'legal') return <LegalPage />
     return <LoginPage />
   }
 

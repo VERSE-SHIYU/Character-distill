@@ -1832,6 +1832,17 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Record geo block failed: {exc}")
 
+    async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
+        """Record user's consent to legal agreements for compliance audit trail."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO user_consent (user_id, terms_version, privacy_version, ip) VALUES ($1, $2, $3, $4)",
+                    user_id, terms_version, privacy_version, ip,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Record user consent failed: {exc}")
+
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
         cid = _uuid.uuid4().hex[:16]

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
 import { parseCardJson } from '../utils/card'
+import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
@@ -15,8 +16,13 @@ const useAppStore = create((set, get) => ({
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
   },
 
-  register: async (username, password, inviteCode = '', email = '', code = '') => {
-    const data = await postJSON('/api/auth/register', { username, password, invite_code: inviteCode, email, code })
+  register: async (username, password, inviteCode = '', email = '', code = '', agreed = false) => {
+    if (!agreed) throw new Error('请先同意用户协议与隐私政策')
+    const data = await postJSON('/api/auth/register', {
+      username, password, invite_code: inviteCode, email, code,
+      agreed_terms_version: TERMS_VERSION,
+      agreed_privacy_version: PRIVACY_VERSION,
+    })
     setToken(data.access_token)
     if (data.refresh_token) setRefreshToken(data.refresh_token)
     set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
@@ -105,6 +111,10 @@ const useAppStore = create((set, get) => ({
   },
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
+
+  // Legal
+  legalTab: 'terms',
+  setLegalTab: (tab) => set({ legalTab: tab }),
 
   readerTextId: null,
   setReaderTextId: (id) => set({ readerTextId: id }),

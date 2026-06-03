@@ -655,6 +655,15 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Geo block migration failed: {exc}")
 
+                    # Run 065_user_consent migration
+                    consent_path = migrations_dir / "065_user_consent.sql"
+                    if consent_path.exists():
+                        try:
+                            await conn.executescript(consent_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] User consent migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2586,6 +2595,18 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Record geo block failed: {exc}")
+
+    async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
+        """Record user's consent to legal agreements for compliance audit trail."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT INTO user_consent (user_id, terms_version, privacy_version, ip) VALUES (?, ?, ?, ?)",
+                    (user_id, terms_version, privacy_version, ip),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Record user consent failed: {exc}")
 
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid

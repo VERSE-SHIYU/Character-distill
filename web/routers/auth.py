@@ -22,6 +22,7 @@ from deps import clear_user_llm_cache, get_config, get_storage
 from storage.base import StorageBase
 from limiter import limiter
 from web.geo_guard import check_api_allowed
+from web.legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 from web.limiter import get_client_ip
 
 logger = logging.getLogger("charsim.auth")
@@ -48,6 +49,8 @@ class AuthRequest(BaseModel):
     invite_code: str = ""
     email: str = ""
     code: str = ""
+    agreed_terms_version: str = ""
+    agreed_privacy_version: str = ""
 
 
 class SendCodeRequest(BaseModel):
@@ -199,6 +202,10 @@ async def register(request: Request, req: AuthRequest, storage: StorageBase = De
     if existing:
         raise HTTPException(409, "用户名已存在")
 
+    # Server-side version check (frontend can't be trusted)
+    if req.agreed_terms_version.strip() != CURRENT_TERMS_VERSION or req.agreed_privacy_version.strip() != CURRENT_PRIVACY_VERSION:
+        raise HTTPException(400, "请先同意最新版用户协议与隐私政策")
+
     # Email verification (optional during migration period)
     email = req.email.strip().lower()
     if email:
@@ -214,6 +221,13 @@ async def register(request: Request, req: AuthRequest, storage: StorageBase = De
     user = await storage.create_user(user_id, username, password_hash, email)
     if inv:
         await storage.use_invite_code(inv, user["id"])
+
+    # Record consent
+    try:
+        client_ip = get_client_ip(request)
+        await storage.record_user_consent(user["id"], CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION, client_ip)
+    except Exception as exc:
+        print(f"[auth] Failed to record consent for {user_id}: {exc}")
 
     # First user with seed code becomes admin
     admin_seed = os.getenv("ADMIN_INVITE_CODE", "")

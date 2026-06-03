@@ -336,6 +336,14 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             </button>
             <button
               type="button"
+              className="sidebar-action-btn"
+              onClick={() => setView('legal')}
+              title="法律条款"
+            >
+              <Svg size={16}><path d="M12 2l9 4v6c0 5.55-3.84 10.74-9 12-5.16-1.26-9-6.45-9-12V6l9-4z" /><line x1="12" y1="6" x2="12" y2="12" /><line x1="9" y1="9" x2="15" y2="9" /></Svg> 条款
+            </button>
+            <button
+              type="button"
               className="sidebar-action-btn sidebar-logout-btn"
               onClick={logout}
               title="退出登录"
