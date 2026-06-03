@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import chromadb
@@ -45,7 +46,10 @@ class RAGEngine:
             print(f"初始化 SentenceTransformer embedding 失败：{exc}")
             raise
 
-        self._collection_name: str = ""
+        # 兑现上方 docstring 的承诺：每个引擎实例使用唯一 UUID 作为默认集合名，
+        # 避免调用方未显式传 collection_name 时落到空串导致 ChromaDB 校验失败
+        # (collection 名要求 3-512 字符)。
+        self._collection_name: str = f"rag_{uuid.uuid4().hex}"
         self.collection: Collection | None = None
         self.collection_name: str | None = None
 

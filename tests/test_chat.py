@@ -28,7 +28,6 @@ rag.index(test_text)
 
 engine = ChatEngine(llm, rag, card)
 for q in ["你好啊张总", "李四最近怎么样", "你还想着王芳吗"]:
-    resp, ctx = engine.chat(q)
+    resp = engine.chat(q)
     print(f"用户：{q}")
-    print(f"张三：{resp}")
-    print(f"[RAG片段：{ctx[:60]}...]\n")
+    print(f"张三：{resp}\n")
