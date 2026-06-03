@@ -201,7 +201,7 @@ export default function App() {
   }
 
   if (currentView === 'login' || (currentView === 'legal' && !isLoggedIn)) {
-    if (currentView === 'legal') return <LegalPage />
+    if (currentView === 'legal') return (<Suspense fallback={<Loading text="加载中…" />}><LegalPage /></Suspense>)
     return <LoginPage />
   }
 
