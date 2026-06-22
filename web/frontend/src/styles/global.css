@@ -22,6 +22,8 @@
   --text-primary: #2D1F3C;
   --text-secondary: rgba(45,31,60,0.55);
   --input-border: rgba(123,97,255,0.10);
+  --input-bg: rgba(255, 255, 255, 0.55);
+  --input-focus-ring: var(--accent-soft);
   --pill-bg: rgba(123,97,255,0.08);
   --pill-border: rgba(123,97,255,0.18);
   --pill-text: #7B61FF;
@@ -200,7 +202,8 @@
   --card-shadow: 0 8px 32px rgba(29,111,127,0.07), inset 0 0 0 1px rgba(255,255,255,0.5);
   --card-blur: blur(28px) saturate(200%);
 
-  --input-bg: rgba(255,255,255,0.3);
+  --input-bg: rgba(255, 255, 255, 0.42);
+  --input-focus-ring: rgba(106, 205, 198, 0.28);
   --input-radius: 14px;
 
   --scrollbar-thumb: rgba(29, 111, 127, 0.25);
@@ -4205,7 +4208,9 @@ html.theme-aurora::before {
   padding: 8px 14px;
   border: 1px solid var(--input-border);
   border-radius: 8px;
-  background: var(--bg-page);
+  background: var(--input-bg);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
   font: inherit;
   font-size: 14px;
   color: var(--text);
@@ -4218,12 +4223,12 @@ html.theme-aurora::before {
 }
 
 .chat-textarea:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--input-focus-ring);
 }
 
 .chat-textarea::placeholder {
-  color: var(--charcoal-light);
+  color: var(--text-secondary);
   font-size: 13px;
 }
 
@@ -6120,7 +6125,7 @@ select.settings-input {
 }
 
 .record-btn:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(106, 205, 198, 0.18);
 }
 
 .record-btn.recording {
