@@ -180,7 +180,7 @@ class ChatEngine:
                     last_user_msg = m.get("content", "")
                     break
             if last_user_msg:
-                memories = self._memory.search(last_user_msg, self._card_id)
+                memories = self._memory.search(last_user_msg, self._card_id, current_mood=self._mood)
                 if memories:
                     mem_block = "\n".join(f"- {m['text']}" for m in memories)
                     prompt += (
@@ -259,6 +259,7 @@ class ChatEngine:
         voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
         system_prompt = self._ctx_engine.build(
             self.history, user_message, self.user_role,
+            current_mood=self._mood,
         )
 
         if voice_mode:
@@ -307,6 +308,7 @@ class ChatEngine:
 
         system_prompt = self._ctx_engine.build(
             self.history, user_message, self.user_role,
+            current_mood=self._mood,
         )
 
         if voice_mode:

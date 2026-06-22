@@ -10,10 +10,52 @@ from pathlib import Path
 from typing import Any
 
 # ── 加权检索常量（Generative Agents 风格多信号打分）──
-RERANK_ALPHA = 0.5     # 语义相关性权重
-RERANK_BETA = 0.2      # 时间新近度权重
-RERANK_GAMMA = 0.3     # 重要性权重
+RERANK_ALPHA = 0.45    # 语义相关性权重
+RERANK_BETA  = 0.15    # 时间新近度权重
+RERANK_GAMMA = 0.25    # 重要性权重
+RERANK_DELTA = 0.15    # 情绪契合度权重
 RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
+
+# ── 情绪极性关键词（子串匹配，覆盖 LLM 丰富情绪词）──
+_POSITIVE_KEYWORDS = [
+    "开心", "喜悦", "高兴", "快乐", "幸福", "甜蜜", "心动", "期待", "好奇",
+    "温柔", "安心", "放心", "欣慰", "感激", "感动", "满足", "骄傲", "自豪",
+    "兴奋", "放松", "惬意", "释然", "喜欢", "上头", "心软",
+]
+_NEGATIVE_KEYWORDS = [
+    "烦乱", "愤怒", "暴怒", "生气", "恼火", "烦躁", "焦虑", "不安", "紧张",
+    "委屈", "吃味", "嫉妒", "失落", "伤心", "难过", "悲伤", "痛苦", "绝望",
+    "恐惧", "害怕", "防备", "警觉", "厌恶", "嫌弃", "无奈", "疲惫", "冷淡",
+    "疏离", "不屑", "心碎", "背叛", "刺痛", "又气", "心痛", "心如刀绞",
+    "自毁", "恨",
+]
+
+def _get_emotion_polarity(mood: str) -> int:
+    """返回情绪极性：1=正面, -1=负面, 0=中性/未知。
+
+    使用关键词子串匹配——LLM 产生的情绪词变化繁多（如"暴怒中混杂着被无视的刺痛"），
+    精确匹配覆盖率太低。子串匹配按正面/负面关键词命中数多数决，平局则判定为中性。
+    """
+    if not mood:
+        return 0
+    m = mood.strip()
+    pos_hits = sum(1 for kw in _POSITIVE_KEYWORDS if kw in m)
+    neg_hits = sum(1 for kw in _NEGATIVE_KEYWORDS if kw in m)
+    if pos_hits > neg_hits:
+        return 1
+    if neg_hits > pos_hits:
+        return -1
+    return 0
+
+def _emotion_match(current_mood: str | None, memory_mood: str) -> float:
+    """情绪契合度：同极性=1.0, 一正一负=0.0, 涉及中性/未知=0.5。"""
+    if current_mood is None:
+        return 0.5
+    cur_p = _get_emotion_polarity(current_mood)
+    mem_p = _get_emotion_polarity(memory_mood)
+    if cur_p == 0 or mem_p == 0:
+        return 0.5
+    return 1.0 if cur_p == mem_p else 0.0
 
 
 class MemoryManager:
@@ -85,11 +127,12 @@ class MemoryManager:
     def context_window(self) -> int:
         return self._context_window
 
-    def search(self, query: str, card_id: str) -> list[dict[str, Any]]:
+    def search(self, query: str, card_id: str, current_mood: str | None = None) -> list[dict[str, Any]]:
         """检索长期记忆，返回结构化 dict 列表（经加权重排）。
 
         每条返回: {text, relevance, importance, age_seconds}
-        加权公式: final = α·relevance_norm + β·recency + γ·importance_norm
+        加权公式: final = α·relevance_norm + β·recency + γ·importance_norm + δ·emotion_match
+        current_mood 为 None 时 emotion_match=0.5（退化，向后兼容）。
         """
         if not self.enabled:
             return []
@@ -118,6 +161,7 @@ class MemoryManager:
             meta = r.get("metadata") or {}
             importance_raw = meta.get("importance", 5) if isinstance(meta, dict) else 5
             importance = max(1, min(10, int(importance_raw)))
+            memory_mood = meta.get("mood", "") if isinstance(meta, dict) else ""
 
             created_str = r.get("created_at", "")
             age_seconds = 0.0
@@ -133,6 +177,7 @@ class MemoryManager:
                 "relevance": relevance,
                 "importance": importance,
                 "age_seconds": age_seconds,
+                "memory_mood": memory_mood,
             })
 
         if not scored:
@@ -149,19 +194,23 @@ class MemoryManager:
             age_hours = s["age_seconds"] / 3600.0
             recency = math.exp(-age_hours / RECENCY_TAU_HOURS)
             importance_norm = s["importance"] / 10.0
+            emo_match = _emotion_match(current_mood, s["memory_mood"])
             s["final"] = (
                 RERANK_ALPHA * relevance_norm
                 + RERANK_BETA * recency
                 + RERANK_GAMMA * importance_norm
+                + RERANK_DELTA * emo_match
             )
+            s["emo_match"] = emo_match
 
         scored.sort(key=lambda s: s["final"], reverse=True)
         top = scored[: self._search_top_k]
         if top:
             summary = ", ".join(
-                f"imp={m['importance']} final={m['final']:.3f}" for m in top[:3]
+                f"imp={m['importance']} emo={m['emo_match']:.1f} final={m['final']:.3f}" for m in top[:3]
             )
-            print(f"[MemoryManager] search top-{len(top)}: {summary}")
+            mood_tag = f"mood={current_mood}" if current_mood else "mood=None"
+            print(f"[MemoryManager] search top-{len(top)} ({mood_tag}): {summary}")
         return top
 
     def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None) -> None:

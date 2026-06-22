@@ -93,6 +93,7 @@ class ContextEngine:
         history: list[dict[str, Any]],
         user_message: str,
         user_role: str = "",
+        current_mood: str | None = None,
     ) -> str:
         """构建 system prompt，控制在 TOTAL_BUDGET token 内。"""
         budget = self.TOTAL_BUDGET
@@ -111,7 +112,7 @@ class ContextEngine:
             ("history", self._build_history(history), self.MAX_HISTORY),
             ("card_ext", card_ext, self.MAX_CARD_EXT),
             ("scene", self._retrieve_scenes(user_message), self.MAX_SCENE),
-            ("memory", self._retrieve_memories(user_message), self.MAX_MEMORY),
+            ("memory", self._retrieve_memories(user_message, current_mood=current_mood), self.MAX_MEMORY),
         ]
         if self.web_search_enabled:
             sources.append(("web", self._search_web(user_message), self.MAX_WEB))
@@ -315,12 +316,12 @@ class ContextEngine:
             return ""
         return "【参考原文片段（酌情使用，不要逐字复述）】\n" + "\n".join(snippets)
 
-    def _retrieve_memories(self, query: str) -> str:
-        """从 Mem0 检索长期记忆。"""
+    def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
+        """从 Mem0 检索长期记忆（含情感加权）。"""
         if not self.memory or not self.memory.enabled or not self.card_id:
             return ""
         try:
-            memories = self.memory.search(query, self.card_id)
+            memories = self.memory.search(query, self.card_id, current_mood=current_mood)
         except Exception as exc:
             print(f"[ContextEngine] memory search failed: {exc}")
             return ""
