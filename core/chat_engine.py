@@ -72,6 +72,8 @@ class ChatEngine:
         self._stage: str = ""
         self._stage_emoji: str = ""
         self._stage_upgraded: bool = False
+        # 待注入 affinity 评估的点赞信号（结构: [{emoji, msg_content}], 由外部 ingest）
+        self._pending_reaction_signals: list[dict] = []
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -403,6 +405,30 @@ class ChatEngine:
         self._stage, self._stage_emoji = _calc_stage(self._affinity)
         self._prev_stage = self._stage
 
+    def ingest_reaction_signals(self, signals: list[dict]) -> None:
+        """接收待消化的点赞信号。signals: [{emoji, msg_content}, ...]
+        单聊/群聊在触发 affinity 评估前调用。空列表则无操作。"""
+        if signals:
+            self._pending_reaction_signals.extend(signals)
+
+    def _build_reaction_appraisal(self) -> str:
+        """把待消化点赞转成 OCC 归因文本注入 affinity prompt。消费后清空。"""
+        if not self._pending_reaction_signals:
+            return ""
+        lines = []
+        for s in self._pending_reaction_signals:
+            emoji = s.get("emoji", "")
+            content = (s.get("msg_content", "") or "")[:60]
+            lines.append(f'  - 对方对你说过的「{content}」点了一个 {emoji}')
+        self._pending_reaction_signals = []  # 消费即清空，防重复
+        joined = "\n".join(lines)
+        return (
+            f"\n对方刚刚还对你的话做了这些非言语回应（点赞）：\n{joined}\n"
+            "这是对方对你的在意/认可，请按你的性格去体会：被点赞的是哪句话、"
+            "用的什么表情，会在你心里激起什么（傲娇会嘴硬但心软，"
+            "暴躁可能不屑但偷偷在意）。让它自然影响你下面的内心想法和情绪。\n\n"
+        )
+
     def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
         """异步评估好感度变化：角色第一人称内心独白 + 情绪惯性 + 关系阶段。"""
         if not self.llm:
@@ -430,7 +456,8 @@ class ChatEngine:
             f"上一刻的内心想法：{self._inner_voice}\n\n"
             f"对方刚才说：{user_message}\n"
             f"你回复了：{assistant_reply}\n\n"
-            "现在，用你自己的口吻写出你此刻真实的内心想法。\n\n"
+            + self._build_reaction_appraisal()
+            + "现在，用你自己的口吻写出你此刻真实的内心想法。\n\n"
             "要求：\n"
             "1. 用第一人称，用你的性格说话。傲娇不会直说喜欢，内向会犹豫，暴躁会骂人。\n"
             "2. 写2-3句内心独白，要有情绪的微妙层次，不要笼统的'我觉得还行'。\n"
