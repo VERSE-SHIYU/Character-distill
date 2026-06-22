@@ -43,7 +43,6 @@ export default function ResizableInputArea({ children }) {
       <div
         ref={containerRef}
         className="resize-input-area"
-        style={manualH ? { height: manualH } : undefined}
       >
         <div className="resize-handle" onMouseDown={onMouseDown} />
         {children}
