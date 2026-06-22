@@ -1,4 +1,4 @@
-import { useCallback, useContext, useRef } from 'react'
+import { useCallback, useContext, useEffect, useRef } from 'react'
 import { InputHeightContext, MIN_H, HARD_MAX } from '../components/common/ResizableInputArea'
 
 const AUTO_MAX = 160
@@ -22,6 +22,8 @@ export function useAutoResizeTextarea(externalRef) {
       ta.style.height = Math.max(target, MIN_H) + 'px'
     }
   }, [textareaRef, manualH])
+
+  useEffect(() => { resize() }, [manualH, resize])
 
   return { textareaRef, resize }
 }
