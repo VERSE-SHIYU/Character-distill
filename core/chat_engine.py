@@ -182,7 +182,7 @@ class ChatEngine:
             if last_user_msg:
                 memories = self._memory.search(last_user_msg, self._card_id)
                 if memories:
-                    mem_block = "\n".join(f"- {m}" for m in memories)
+                    mem_block = "\n".join(f"- {m['text']}" for m in memories)
                     prompt += (
                         "\n"
                         "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"

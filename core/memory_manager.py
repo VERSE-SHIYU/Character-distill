@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import math
 import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# ── 加权检索常量（Generative Agents 风格多信号打分）──
+RERANK_ALPHA = 0.5     # 语义相关性权重
+RERANK_BETA = 0.2      # 时间新近度权重
+RERANK_GAMMA = 0.3     # 重要性权重
+RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
 
 
 class MemoryManager:
@@ -77,8 +85,12 @@ class MemoryManager:
     def context_window(self) -> int:
         return self._context_window
 
-    def search(self, query: str, card_id: str) -> list[str]:
-        """检索与 query 相关的长期记忆。"""
+    def search(self, query: str, card_id: str) -> list[dict[str, Any]]:
+        """检索长期记忆，返回结构化 dict 列表（经加权重排）。
+
+        每条返回: {text, relevance, importance, age_seconds}
+        加权公式: final = α·relevance_norm + β·recency + γ·importance_norm
+        """
         if not self.enabled:
             return []
         try:
@@ -87,15 +99,70 @@ class MemoryManager:
             )
             if isinstance(results, dict):
                 results = results.get("results", [])
-            memories = []
-            for r in results:
-                text = r.get("memory", "") if isinstance(r, dict) else str(r)
-                if text.strip():
-                    memories.append(text.strip())
-            return memories
         except Exception as exc:
             print(f"[MemoryManager] Search failed: {exc}")
             return []
+
+        now = datetime.now(timezone.utc)
+        scored: list[dict[str, Any]] = []
+
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            text = r.get("memory", "").strip()
+            if not text:
+                continue
+
+            relevance = float(r.get("score", 0.5) or 0.5)
+
+            meta = r.get("metadata") or {}
+            importance_raw = meta.get("importance", 5) if isinstance(meta, dict) else 5
+            importance = max(1, min(10, int(importance_raw)))
+
+            created_str = r.get("created_at", "")
+            age_seconds = 0.0
+            if created_str:
+                try:
+                    created = datetime.fromisoformat(str(created_str).replace("Z", "+00:00"))
+                    age_seconds = (now - created).total_seconds()
+                except (ValueError, TypeError):
+                    pass
+
+            scored.append({
+                "text": text,
+                "relevance": relevance,
+                "importance": importance,
+                "age_seconds": age_seconds,
+            })
+
+        if not scored:
+            return []
+
+        # 归一化 relevance 到 0-1（Mem0 score 可能不在这个范围）
+        rels = [s["relevance"] for s in scored]
+        rel_min, rel_max = min(rels), max(rels)
+        rel_range = rel_max - rel_min if rel_max > rel_min else 1.0
+
+        # 计算 final 加权分并排序
+        for s in scored:
+            relevance_norm = (s["relevance"] - rel_min) / rel_range
+            age_hours = s["age_seconds"] / 3600.0
+            recency = math.exp(-age_hours / RECENCY_TAU_HOURS)
+            importance_norm = s["importance"] / 10.0
+            s["final"] = (
+                RERANK_ALPHA * relevance_norm
+                + RERANK_BETA * recency
+                + RERANK_GAMMA * importance_norm
+            )
+
+        scored.sort(key=lambda s: s["final"], reverse=True)
+        top = scored[: self._search_top_k]
+        if top:
+            summary = ", ".join(
+                f"imp={m['importance']} final={m['final']:.3f}" for m in top[:3]
+            )
+            print(f"[MemoryManager] search top-{len(top)}: {summary}")
+        return top
 
     def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None) -> None:
         """将对话消息写入长期记忆（后台异步执行）。metadata 写入 Mem0 存储供检索加权。"""

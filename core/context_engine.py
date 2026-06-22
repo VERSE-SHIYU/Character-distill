@@ -326,7 +326,7 @@ class ContextEngine:
             return ""
         if not memories:
             return ""
-        mem_block = "\n".join(f"- {m}" for m in memories)
+        mem_block = "\n".join(f"- {m['text']}" for m in memories)
         return (
             "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"
             f"{mem_block}\n"
