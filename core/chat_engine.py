@@ -75,6 +75,7 @@ class ChatEngine:
         # 待注入 affinity 评估的点赞信号（结构: [{emoji, msg_content}], 由外部 ingest）
         self._pending_reaction_signals: list[dict] = []
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
+        self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -437,6 +438,7 @@ class ChatEngine:
             return
         if not getattr(self, 'affinity_enabled', True):
             print(f"[Affinity] SKIP: affinity_enabled=False (session={self._session_id})")
+            self._last_importance = 5
             return
 
         print(f"[Affinity] ENTER session={self._session_id} card={getattr(self.card,'name','?')} "
@@ -494,6 +496,10 @@ class ChatEngine:
             "- 防御值下降速度 = 信任上升速度的0.6倍（信任建立慢，防御松懈更慢）\n"
             "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
             "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
+            "重要性评分规则（用于判断对话记忆的营养程度）：\n"
+            "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
+            "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
+            "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
             '  "affinity": 0-100整数,\n'
@@ -501,7 +507,8 @@ class ChatEngine:
             '  "mood": "具体情绪词（如释然/微酸/警觉/心软/嘴硬心软/又气又心疼/微微上头）",\n'
             '  "guard": 0-100整数,\n'
             '  "inner_voice": "你的第一人称内心独白2-3句",\n'
-            '  "mood_emoji": "一个最贴合此刻情绪的emoji"\n'
+            '  "mood_emoji": "一个最贴合此刻情绪的emoji",\n'
+            '  "importance": 1-10整数\n'
             "}"
         )
 
@@ -521,6 +528,7 @@ class ChatEngine:
                 data = json.loads(m.group())
                 print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
                       f"mood={data.get('mood')} guard={data.get('guard')} "
+                      f"importance={self._last_importance} "
                       f"inner_voice={str(data.get('inner_voice',''))[:80]}")
                 self._affinity = max(0, min(100, data.get("affinity", self._affinity)))
                 self._trust = max(0, min(100, data.get("trust", self._trust)))
@@ -528,6 +536,7 @@ class ChatEngine:
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
                 self._inner_voice = data.get("inner_voice", self._inner_voice)
                 self._mood_emoji = data.get("mood_emoji", self._mood_emoji)
+                self._last_importance = max(1, min(10, int(data.get("importance", 5))))
                 self._stage, self._stage_emoji = _calc_stage(self._affinity)
                 self._stage_upgraded = self._stage != old_stage
                 self._prev_stage = old_stage
@@ -565,6 +574,7 @@ class ChatEngine:
                         print(f"[ChatEngine] Affinity DB save failed (session={session_id}): {db_exc}")
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
+                self._last_importance = 5
                 import traceback
                 traceback.print_exc()
 
