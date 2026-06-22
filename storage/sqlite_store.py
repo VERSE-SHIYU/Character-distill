@@ -2074,6 +2074,28 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get reactions failed: {exc}")
             raise
 
+    async def get_reactions_after(self, session_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a single-chat session."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.id, r.emoji, m.content, r.user_id
+                       FROM message_reactions r
+                       JOIN messages m ON m.id = r.message_id
+                       WHERE m.session_id = ? AND r.id > ?
+                       ORDER BY r.id ASC""",
+                    (session_id, after_reaction_id),
+                )
+                rows = await cursor.fetchall()
+            return [
+                {"reaction_id": r["id"], "emoji": r["emoji"],
+                 "msg_content": r["content"], "user_id": r["user_id"]}
+                for r in rows
+            ]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get reactions after failed: {exc}")
+            raise
+
     async def update_group_session(self, id: str, name: str) -> None:
         try:
             async with await self._connect() as conn:

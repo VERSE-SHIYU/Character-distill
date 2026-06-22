@@ -227,3 +227,11 @@ class StorageBase(ABC):
     @abstractmethod
     async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
         """Record user's consent to legal agreements for compliance audit trail."""
+
+    @abstractmethod
+    async def get_reactions_after(self, session_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a session.
+
+        Returns list of {reaction_id, emoji, msg_content, user_id}, ordered by
+        reaction_id ascending.  Scoped to single-chat messages table.
+        """
