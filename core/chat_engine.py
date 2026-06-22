@@ -287,6 +287,8 @@ class ChatEngine:
 
         self.history.append({"role": "assistant", "content": response})
 
+        self._evaluate_affinity(user_message, response)
+
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
@@ -294,9 +296,8 @@ class ChatEngine:
                     {"role": "assistant", "content": response},
                 ],
                 self._card_id,
+                metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
             )
-
-        self._evaluate_affinity(user_message, response)
 
         return response
 
@@ -342,7 +343,8 @@ class ChatEngine:
         self.history.append({"role": "assistant", "content": full_reply})
 
     def post_stream_process(self, user_message: str, full_reply: str) -> None:
-        """Post-stream housekeeping after done event: memory + affinity. Does NOT block UI unlock."""
+        """Post-stream housekeeping after done event: affinity first, then memory with metadata. Does NOT block UI unlock."""
+        self._evaluate_affinity(user_message, full_reply)
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
@@ -350,8 +352,8 @@ class ChatEngine:
                     {"role": "assistant", "content": full_reply},
                 ],
                 self._card_id,
+                metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
             )
-        self._evaluate_affinity(user_message, full_reply)
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
@@ -526,6 +528,7 @@ class ChatEngine:
                     return
                 print(f"[Affinity] JSON match: {m.group()[:200]}")
                 data = json.loads(m.group())
+                self._last_importance = max(1, min(10, int(data.get("importance", 5))))
                 print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
                       f"mood={data.get('mood')} guard={data.get('guard')} "
                       f"importance={self._last_importance} "
@@ -536,7 +539,6 @@ class ChatEngine:
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
                 self._inner_voice = data.get("inner_voice", self._inner_voice)
                 self._mood_emoji = data.get("mood_emoji", self._mood_emoji)
-                self._last_importance = max(1, min(10, int(data.get("importance", 5))))
                 self._stage, self._stage_emoji = _calc_stage(self._affinity)
                 self._stage_upgraded = self._stage != old_stage
                 self._prev_stage = old_stage

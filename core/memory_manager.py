@@ -97,16 +97,24 @@ class MemoryManager:
             print(f"[MemoryManager] Search failed: {exc}")
             return []
 
-    def add(self, messages: list[dict[str, str]], card_id: str) -> None:
-        """将对话消息写入长期记忆（后台异步执行）。"""
+    def add(self, messages: list[dict[str, str]], card_id: str, metadata: dict | None = None) -> None:
+        """将对话消息写入长期记忆（后台异步执行）。metadata 写入 Mem0 存储供检索加权。"""
         if not self.enabled:
             return
 
+        print(f"[MemoryManager] add called: card={card_id} msg_count={len(messages)} metadata={metadata}")
+
         def _do_add():
             try:
-                self._mem.add(messages, user_id=card_id)
+                kwargs = {"user_id": card_id}
+                if metadata:
+                    kwargs["metadata"] = metadata
+                result = self._mem.add(messages, **kwargs)
+                print(f"[MemoryManager] add OK: card={card_id} result_len={len(result) if isinstance(result, list) else 'N/A'}")
             except Exception as exc:
                 print(f"[MemoryManager] Add failed: {exc}")
+                import traceback
+                traceback.print_exc()
 
         threading.Thread(target=_do_add, daemon=True).start()
 
