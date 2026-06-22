@@ -15,6 +15,7 @@ RERANK_BETA  = 0.15    # 时间新近度权重
 RERANK_GAMMA = 0.25    # 重要性权重
 RERANK_DELTA = 0.15    # 情绪契合度权重
 RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
+REFLECTION_THRESHOLD = 30  # 累计重要性达此值触发反思
 
 # ── 情绪极性关键词（子串匹配，覆盖 LLM 丰富情绪词）──
 _POSITIVE_KEYWORDS = [
@@ -247,17 +248,76 @@ class MemoryManager:
             print(f"[MemoryManager] Get all failed: {exc}")
             return []
 
-    def add_manual(self, text: str, card_id: str) -> bool:
-        """手动添加一条单文本记忆。infer=False 避免 Mem0 LLM 提炼丢弃。"""
+    def add_manual(self, text: str, card_id: str, metadata: dict | None = None) -> bool:
+        """手动添加一条单文本记忆。infer=False 避免 Mem0 LLM 提炼丢弃。
+
+        metadata 可选，用于标记反思记忆 is_reflection=True 等。
+        """
         if not self.enabled:
             return False
         try:
-            result = self._mem.add(text, user_id=card_id, infer=False)
+            kwargs = {"user_id": card_id, "infer": False}
+            if metadata:
+                kwargs["metadata"] = metadata
+            result = self._mem.add(text, **kwargs)
             print(f"[MemoryManager] manual add result: {result}")
             return True
         except Exception as exc:
             print(f"[MemoryManager] manual add failed: {exc}")
             return False
+
+    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str) -> None:
+        """把近期高重要性记忆综合成 1-2 条高阶洞察，后台写回。
+
+        recent_memories: 已过滤的非反思记忆，每项含 text/importance/mood 等。
+        llm: 复用 engine 的 LLM client（llm.chat(sp, [msg])）。
+        """
+        if not self.enabled:
+            return
+        if not recent_memories or llm is None:
+            return
+
+        def _do_reflect():
+            try:
+                mem_texts = "\n".join(
+                    f"- [{m.get('importance', '?')}分] {m['text'][:200]}"
+                    for m in recent_memories[:10]
+                )
+                prompt = (
+                    f"你是{char_name}。请以第一人称回顾以下近期的重要对话记忆，"
+                    f"提炼出 1-2 条关于「你和对方的关系变化」「你对对方的深层感受」"
+                    f"或「你自己的成长」的高阶洞察。\n\n"
+                    f"记忆列表：\n{mem_texts}\n\n"
+                    f"要求：\n"
+                    f"1. 每条洞察一句话，不要复述事实，要总结趋势或深层感悟\n"
+                    f"2. 用{char_name}的第一人称口吻\n"
+                    f"3. 只输出洞察本身，每条一行，不要编号、不要解释\n"
+                    f"4. 如果记忆不足以形成洞察，输出空行"
+                )
+                reply = llm.chat(
+                    "你是一个善于反思和内省的AI角色。",
+                    [{"role": "user", "content": prompt}],
+                )
+                print(f"[Reflection] LLM reply ({len(reply)} chars): {reply[:300]}")
+
+                insights = [
+                    line.strip() for line in reply.split("\n")
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+                for insight in insights[:2]:
+                    if len(insight) < 6:
+                        continue
+                    ok = self.add_manual(
+                        insight, card_id,
+                        metadata={"is_reflection": True, "importance": 8},
+                    )
+                    print(f"[Reflection] wrote insight (ok={ok}): {insight[:120]}")
+            except Exception as exc:
+                print(f"[Reflection] failed: {exc}")
+                import traceback
+                traceback.print_exc()
+
+        threading.Thread(target=_do_reflect, daemon=True).start()
 
     def update(self, memory_id: str, text: str) -> bool:
         """更新一条记忆的内容。"""
