@@ -74,6 +74,7 @@ class ChatEngine:
         self._stage_upgraded: bool = False
         # 待注入 affinity 评估的点赞信号（结构: [{emoji, msg_content}], 由外部 ingest）
         self._pending_reaction_signals: list[dict] = []
+        self._last_reaction_id: int = 0  # 已消化点赞游标，只增
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -441,6 +442,30 @@ class ChatEngine:
         print(f"[Affinity] ENTER session={self._session_id} card={getattr(self.card,'name','?')} "
               f"current: aff={self._affinity} trust={self._trust} mood={self._mood} guard={self._guard}")
 
+        # ── 拉取本 session 未消化的点赞，转为 affinity 信号 ──
+        storage = self._storage
+        session_id = self._session_id
+        if storage and session_id:
+            try:
+                _loop = getattr(self, '_main_loop', None)
+                if _loop is not None:
+                    new_reactions = asyncio.run_coroutine_threadsafe(
+                        storage.get_reactions_after(session_id, self._last_reaction_id),
+                        _loop,
+                    ).result(timeout=10)
+                else:
+                    new_reactions = asyncio.run(
+                        storage.get_reactions_after(session_id, self._last_reaction_id)
+                    )
+                if new_reactions:
+                    self.ingest_reaction_signals([
+                        {"emoji": r["emoji"], "msg_content": r["msg_content"]}
+                        for r in new_reactions
+                    ])
+                    self._last_reaction_id = max(r["reaction_id"] for r in new_reactions)
+            except Exception as exc:
+                print(f"[Affinity] Fetch reactions failed (non-fatal): {exc}")
+
         user_role = (self.user_role or "对方").strip()
         # 记录旧阶段用于检测阶段变化
         old_stage = self._stage
@@ -479,9 +504,6 @@ class ChatEngine:
             '  "mood_emoji": "一个最贴合此刻情绪的emoji"\n'
             "}"
         )
-
-        storage = self._storage
-        session_id = self._session_id
 
         def _do():
             try:
