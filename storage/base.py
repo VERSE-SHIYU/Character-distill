@@ -235,3 +235,12 @@ class StorageBase(ABC):
         Returns list of {reaction_id, emoji, msg_content, user_id}, ordered by
         reaction_id ascending.  Scoped to single-chat messages table.
         """
+
+    @abstractmethod
+    async def get_group_reactions_after(self, group_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a group session.
+
+        Returns list of {reaction_id, emoji, msg_content, speaker_card_id},
+        ordered by reaction_id ascending.  Scoped to group_messages table,
+        only returns reactions on assistant (character) messages.
+        """

@@ -1382,6 +1382,27 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get reactions after failed: {exc}")
             raise
 
+    async def get_group_reactions_after(self, group_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a group session."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT r.id, r.emoji, m.content, m.speaker_card_id
+                       FROM message_reactions r
+                       JOIN group_messages m ON m.id = r.message_id
+                       WHERE m.group_id = $1 AND r.id > $2 AND m.role = 'assistant'
+                       ORDER BY r.id ASC""",
+                    group_id, after_reaction_id,
+                )
+            return [
+                {"reaction_id": r["id"], "emoji": r["emoji"],
+                 "msg_content": r["content"], "speaker_card_id": r["speaker_card_id"]}
+                for r in rows
+            ]
+        except Exception as exc:
+            print(f"[PostgresStore] Get group reactions after failed: {exc}")
+            raise
+
     async def update_group_session(self, id: str, name: str) -> None:
         try:
             async with await self._connect() as conn:
