@@ -4193,7 +4193,6 @@ html.theme-aurora::before {
 .chat-textarea {
   flex: 1;
   min-height: 38px;
-  max-height: 400px;
   padding: 8px 14px;
   border: 1px solid var(--input-border);
   border-radius: 8px;
@@ -9910,7 +9909,6 @@ select.settings-input {
 .messages-input {
   flex: 1;
   min-height: 42px;
-  max-height: 400px;
   resize: none;
   font-size: 14px;
   border: none;

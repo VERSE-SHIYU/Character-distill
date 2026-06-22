@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useEffect, useRef, useState } from 'react'
 
-const MIN_H = 80
-const MAX_H = 400
+export const MIN_H = 38
+export const HARD_MAX = 400
+export const InputHeightContext = createContext(null)
 
 export default function ResizableInputArea({ children }) {
   const [manualH, setManualH] = useState(null)
@@ -21,7 +22,7 @@ export default function ResizableInputArea({ children }) {
     const onMove = (e) => {
       const d = dragRef.current
       if (!d.active) return
-      setManualH(Math.max(MIN_H, Math.min(MAX_H, d.startH + (d.startY - e.clientY))))
+      setManualH(Math.max(MIN_H, Math.min(HARD_MAX, d.startH + (d.startY - e.clientY))))
     }
     const onUp = () => {
       if (!dragRef.current.active) return
@@ -38,13 +39,15 @@ export default function ResizableInputArea({ children }) {
   }, [])
 
   return (
-    <div
-      ref={containerRef}
-      className="resize-input-area"
-      style={manualH ? { height: manualH } : undefined}
-    >
-      <div className="resize-handle" onMouseDown={onMouseDown} />
-      {children}
-    </div>
+    <InputHeightContext.Provider value={manualH}>
+      <div
+        ref={containerRef}
+        className="resize-input-area"
+        style={manualH ? { height: manualH } : undefined}
+      >
+        <div className="resize-handle" onMouseDown={onMouseDown} />
+        {children}
+      </div>
+    </InputHeightContext.Provider>
   )
 }
