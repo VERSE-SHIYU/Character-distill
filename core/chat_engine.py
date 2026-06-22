@@ -497,19 +497,23 @@ class ChatEngine:
                 print(f"[Affinity] UPDATED in-memory: aff={self._affinity} trust={self._trust} "
                       f"mood={self._mood} guard={self._guard}")
                 if storage and session_id:
-                    import sqlite3
                     try:
-                        print(f"[Affinity] Saving to DB: {session_id}")
-                        conn = sqlite3.connect(str(storage.db_path))
-                        conn.execute(
-                            "UPDATE sessions SET affinity=?, trust=?, mood=?, guard=?, affinity_reason=? WHERE id=?",
-                            (self._affinity, self._trust, self._mood, self._guard, self._affinity_reason, session_id),
-                        )
-                        conn.commit()
-                        conn.close()
-                        print(f"[Affinity] DB save OK")
+                        _loop = getattr(self, '_main_loop', None)
+                        if _loop is not None:
+                            asyncio.run_coroutine_threadsafe(
+                                storage.update_session_affinity(
+                                    session_id, self._affinity, self._trust,
+                                    self._mood, self._guard, self._affinity_reason,
+                                ),
+                                _loop,
+                            ).result(timeout=15)
+                        else:
+                            asyncio.run(storage.update_session_affinity(
+                                session_id, self._affinity, self._trust,
+                                self._mood, self._guard, self._affinity_reason,
+                            ))
                     except Exception as db_exc:
-                        print(f"[ChatEngine] Affinity DB save failed: {db_exc}")
+                        print(f"[ChatEngine] Affinity DB save failed (session={session_id}): {db_exc}")
             except Exception as exc:
                 print(f"[ChatEngine] Affinity eval failed: {exc}")
                 import traceback

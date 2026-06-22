@@ -189,6 +189,7 @@ async def _do_chat(
             engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
             engine.affinity_enabled = affinity_enabled
+            engine._main_loop = asyncio.get_running_loop()
         # Prepend quote context for LLM if replying
         llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
@@ -293,6 +294,7 @@ async def _do_chat_stream(
         engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
         engine.affinity_enabled = affinity_enabled
+        engine._main_loop = asyncio.get_running_loop()
 
     def _next_piece(stream_obj):
         """Read next stream piece with StopIteration sentinel."""
