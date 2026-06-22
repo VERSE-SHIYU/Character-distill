@@ -325,13 +325,13 @@ async def _do_chat_stream(
                 first_piece, done = await asyncio.to_thread(_next_piece, stream)
                 if not done:
                     tokens.append(first_piece)
-                    yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False, default=str)}\n\n"
                 while True:
                     piece, done = await asyncio.to_thread(_next_piece, stream)
                     if done:
                         break
                     tokens.append(piece)
-                    yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'token': piece}, ensure_ascii=False, default=str)}\n\n"
 
             full_reply = "".join(tokens)
             if not full_reply.strip():
@@ -382,7 +382,7 @@ async def _do_chat_stream(
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
-            yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
 
             # ── Post-done housekeeping (does NOT block UI unlock) ──
             try:
@@ -407,7 +407,7 @@ async def _do_chat_stream(
             if engine and engine.history and engine.history[-1].get("role") == "user":
                 engine.history.pop()
             err_payload = {"error": str(exc)}
-            yield f"data: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps(err_payload, ensure_ascii=False, default=str)}\n\n"
 
     return StreamingResponse(_event_generator(), media_type="text/event-stream")
 

@@ -289,6 +289,29 @@ async def create_group(
     }
 
 
+async def _filter_valid_card_ids(groups: list[dict], user_id: str, storage: StorageBase) -> list[dict]:
+    """Remove orphan card_ids from a list of group dicts in place. Returns the list for chaining."""
+    all_ids = set()
+    for g in groups:
+        for cid in g.get("card_ids", []):
+            all_ids.add(cid)
+    if not all_ids:
+        return groups
+
+    valid: set[str] = set()
+    for cid in all_ids:
+        try:
+            card = await storage.get_card(cid)
+            if card and card.get("user_id") == user_id:
+                valid.add(cid)
+        except Exception:
+            pass
+
+    for g in groups:
+        g["card_ids"] = [cid for cid in g.get("card_ids", []) if cid in valid]
+    return groups
+
+
 @router.get("/list")
 @limiter.limit("60/minute")
 async def list_groups(
@@ -298,7 +321,49 @@ async def list_groups(
 ) -> dict:
     """列出用户的群聊会话。"""
     groups = await storage.list_group_sessions(user["id"])
+    await _filter_valid_card_ids(groups, user["id"], storage)
     return {"groups": groups}
+
+
+@router.post("/cleanup-orphan-cards")
+@limiter.limit("10/minute")
+async def cleanup_orphan_card_ids(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Scan all groups for this user, remove card_ids that no longer exist, and persist."""
+    groups = await storage.list_group_sessions(user["id"])
+    user_id = user["id"]
+
+    # Collect + validate all unique card_ids
+    all_ids = set()
+    for g in groups:
+        for cid in g.get("card_ids", []):
+            all_ids.add(cid)
+
+    valid: set[str] = set()
+    for cid in all_ids:
+        try:
+            card = await storage.get_card(cid)
+            if card and card.get("user_id") == user_id:
+                valid.add(cid)
+        except Exception:
+            pass
+
+    stats = {"groups_checked": len(groups), "groups_cleaned": 0, "card_ids_removed": 0}
+    for g in groups:
+        original = g.get("card_ids", [])
+        cleaned = [cid for cid in original if cid in valid]
+        if len(cleaned) != len(original):
+            stats["groups_cleaned"] += 1
+            stats["card_ids_removed"] += len(original) - len(cleaned)
+            try:
+                await storage.update_group_card_ids(g["id"], cleaned)
+            except Exception as exc:
+                print(f"[Group] cleanup-orphan-cards failed for {g['id']}: {exc}")
+
+    return {"ok": True, **stats}
 
 
 @router.post("/{group_id}/send")

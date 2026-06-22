@@ -601,7 +601,7 @@ async def distill_stream(
     distiller._user_id = user_id
 
     async def _event_gen():
-        yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False, default=str)}\n\n"
 
         # ONE LLM call: resolve name (if needed) + aliases
         nonlocal char_name
@@ -613,11 +613,11 @@ async def distill_stream(
             chars = []
         if not char_name:
             if not chars:
-                yield f"data: {json.dumps({'error': '未识别到任何角色'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'error': '未识别到任何角色'}, ensure_ascii=False, default=str)}\n\n"
                 return
             char_name = chars[0].get("name", "")
             if not char_name:
-                yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False, default=str)}\n\n"
                 return
         for c in chars:
             if c.get("name") == char_name:
@@ -632,19 +632,19 @@ async def distill_stream(
                 piece, done = await asyncio.to_thread(_next_piece, stream)
             except Exception as exc:
                 print(f"[distill] Stream failed: {exc}")
-                yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False, default=str)}\n\n"
                 return
             if done:
                 break
             if isinstance(piece, dict) and piece.get("heartbeat"):
-                yield f"data: {json.dumps({'heartbeat': True})}\n\n"
+                yield f"data: {json.dumps({'heartbeat': True}, default=str)}\n\n"
                 continue
             if isinstance(piece, dict):
                 # Progress event from incremental chunk processing
-                yield f"data: {json.dumps(piece, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps(piece, ensure_ascii=False, default=str)}\n\n"
             else:
                 full += piece
-                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False)}\n\n"
+                yield f"data: {json.dumps({'token': piece}, ensure_ascii=False, default=str)}\n\n"
 
         # Step 3: Parse + validate + save
         stripped = full.strip()
@@ -661,14 +661,14 @@ async def distill_stream(
                     pass
 
         if data is None:
-            yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': '蒸馏失败：LLM 返回格式不正确'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         try:
             card = CharacterCard.model_validate(data)
         except Exception as exc:
             print(f"[distill] Card validation failed: {exc}")
-            yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # Persist card + create session (RAG built in _create_session for chat use)
@@ -676,7 +676,7 @@ async def distill_stream(
             result = await text_manager.save_distilled_card(req.text_id, card, user_id)
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
-            yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # Build scene index
@@ -692,7 +692,7 @@ async def distill_stream(
         except Exception as exc:
             print(f"[distill] Scene index failed (non-fatal): {exc}")
 
-        yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False, default=str)}\n\n"
 
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
 

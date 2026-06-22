@@ -4190,6 +4190,15 @@ html.theme-aurora::before {
   position: relative;
 }
 
+/* Outer wrapper for ChatInputBar (holds banner + reply preview +
+   the resizable bar). Must NOT grow, or the bar/textarea stretch to fill. */
+.chat-input-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
 .chat-textarea {
   flex: 1;
   min-height: 38px;

@@ -721,9 +721,39 @@ class SQLiteStore(StorageBase):
         return _ConnectionContext(conn)
 
     @staticmethod
+    def _normalize_value(val):
+        """Normalize non-JSON-serializable types to safe equivalents."""
+        from datetime import date, datetime
+        from decimal import Decimal
+        from uuid import UUID
+        if val is None:
+            return None
+        if isinstance(val, (datetime, date)):
+            return val.isoformat()
+        if isinstance(val, Decimal):
+            return float(val)
+        if isinstance(val, UUID):
+            return str(val)
+        if isinstance(val, bytes):
+            return val  # no binary in this schema; keep as-is defensively
+        return val
+
+    @staticmethod
+    def _normalize_record(rec: dict) -> dict:
+        """Normalize all values in a record dict for JSON safety."""
+        return {k: SQLiteStore._normalize_value(v) for k, v in rec.items()}
+
+    @staticmethod
     def _row_to_dict(row: Any) -> dict | None:
-        """Convert sqlite row to dict."""
-        return dict(row) if row is not None else None
+        """Convert sqlite row to dict with type normalization."""
+        if row is None:
+            return None
+        return SQLiteStore._normalize_record(dict(row))
+
+    @staticmethod
+    def _list_rows(rows) -> list[dict]:
+        """Convert a list of sqlite rows to a list of normalized dicts."""
+        return [SQLiteStore._row_to_dict(r) for r in rows]
 
     async def execute(self, sql: str, params=()) -> None:
         """Execute a single SQL statement (INSERT/UPDATE/DELETE)."""
@@ -736,7 +766,7 @@ class SQLiteStore(StorageBase):
         async with await self._connect() as conn:
             cursor = await conn.execute(sql, params)
             row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
 
     async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
         """Save or update one text record."""
@@ -828,7 +858,7 @@ class SQLiteStore(StorageBase):
                         """
                     )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List texts failed: {exc}")
             raise
@@ -888,7 +918,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get deleted texts failed: {exc}")
             raise
@@ -1005,7 +1035,7 @@ class SQLiteStore(StorageBase):
                     (card_id,),
                 )
                 row = await cursor.fetchone()
-                card = dict(row) if row else None
+                card = self._row_to_dict(row)
                 if card:
                     like_cursor = await conn.execute(
                         "SELECT 1 FROM card_likes WHERE card_id = ? AND user_id = ?",
@@ -1037,7 +1067,7 @@ class SQLiteStore(StorageBase):
                     (card_id,),
                 )
                 row = await cursor.fetchone()
-                card = dict(row) if row else None
+                card = self._row_to_dict(row)
                 if card:
                     like_cursor = await conn.execute(
                         "SELECT 1 FROM card_likes WHERE card_id = ? AND user_id = ?",
@@ -1066,7 +1096,7 @@ class SQLiteStore(StorageBase):
                         (text_id,),
                     )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List cards failed: {exc}")
             raise
@@ -1080,7 +1110,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List standalone cards failed: {exc}")
             raise
@@ -1158,7 +1188,7 @@ class SQLiteStore(StorageBase):
                     params,
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List public cards failed: {exc}")
             raise
@@ -1201,7 +1231,7 @@ class SQLiteStore(StorageBase):
                     (pattern, page_size, offset),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Search public cards failed: {exc}")
             raise
@@ -1238,7 +1268,7 @@ class SQLiteStore(StorageBase):
                        LIMIT 5""",
                     (like,),
                 )
-                cards = [dict(r) for r in await cur.fetchall()]
+                cards = self._list_rows(await cur.fetchall())
 
                 # Texts (user's own only)
                 cur = await conn.execute(
@@ -1249,7 +1279,7 @@ class SQLiteStore(StorageBase):
                        LIMIT 5""",
                     (user_id, like, like),
                 )
-                texts = [dict(r) for r in await cur.fetchall()]
+                texts = self._list_rows(await cur.fetchall())
 
                 # Users
                 cur = await conn.execute(
@@ -1260,7 +1290,7 @@ class SQLiteStore(StorageBase):
                        LIMIT 5""",
                     (like,),
                 )
-                users = [dict(r) for r in await cur.fetchall()]
+                users = self._list_rows(await cur.fetchall())
 
             return {"cards": cards, "texts": texts, "users": users}
         except Exception as exc:
@@ -1399,7 +1429,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List deleted cards failed: {exc}")
             raise
@@ -1457,7 +1487,7 @@ class SQLiteStore(StorageBase):
                     )
                 row = await cursor.fetchone()
                 if row:
-                    return dict(row)
+                    return self._row_to_dict(row)
                 return None
         except Exception as exc:
             print(f"[SQLiteStore] Get recent card session failed: {exc}")
@@ -1593,7 +1623,7 @@ class SQLiteStore(StorageBase):
                 "total": total,
                 "page": safe_page,
                 "page_size": safe_page_size,
-                "items": [dict(row) for row in rows],
+                "items": self._list_rows(rows),
             }
         except Exception as exc:
             print(f"[SQLiteStore] List sessions failed: {exc}")
@@ -1665,7 +1695,7 @@ class SQLiteStore(StorageBase):
                         """
                     )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List trash sessions failed: {exc}")
             raise
@@ -1752,7 +1782,7 @@ class SQLiteStore(StorageBase):
                     (openid,),
                 )
                 row = await cursor.fetchone()
-            return self._row_to_dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get wechat user failed: {exc}")
             raise
@@ -1825,7 +1855,7 @@ class SQLiteStore(StorageBase):
                     (session_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get messages failed: {exc}")
             raise
@@ -1865,7 +1895,7 @@ class SQLiteStore(StorageBase):
                 row = await cursor.fetchone()
             if row is None:
                 return None
-            d = dict(row)
+            d = self._row_to_dict(row)
             d["card_ids"] = json.loads(d["card_ids"])
             return d
         except Exception as exc:
@@ -1887,7 +1917,7 @@ class SQLiteStore(StorageBase):
                 rows = await cursor.fetchall()
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(row)
                 d["card_ids"] = json.loads(d["card_ids"])
                 results.append(d)
             return results
@@ -1908,7 +1938,7 @@ class SQLiteStore(StorageBase):
                 rows = await cursor.fetchall()
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(row)
                 d["card_ids"] = json.loads(d["card_ids"])
                 results.append(d)
             return results
@@ -1968,7 +1998,7 @@ class SQLiteStore(StorageBase):
                     (group_id,),
                 )
                 rows = await cursor.fetchall()
-            messages = [dict(row) for row in rows]
+            messages = self._list_rows(rows)
             # Attach reactions to each message
             msg_ids = [m["id"] for m in messages]
             if msg_ids:
@@ -2054,6 +2084,18 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update group session failed: {exc}")
+            raise
+
+    async def update_group_card_ids(self, id: str, card_ids: list[str]) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE group_sessions SET card_ids = ? WHERE id = ?",
+                    (json.dumps(card_ids), id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update group card_ids failed: {exc}")
             raise
 
     async def delete_group_session(self, id: str) -> None:
@@ -2154,7 +2196,7 @@ class SQLiteStore(StorageBase):
                     (username,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get user failed: {exc}")
             raise
@@ -2168,7 +2210,7 @@ class SQLiteStore(StorageBase):
                     (email,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get user by email failed: {exc}")
             raise
@@ -2182,7 +2224,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get user by id failed: {exc}")
             raise
@@ -2319,7 +2361,7 @@ class SQLiteStore(StorageBase):
                     "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get all users failed: {exc}")
             raise
@@ -2631,7 +2673,7 @@ class SQLiteStore(StorageBase):
                     (code,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get invite code failed: {exc}")
             raise
@@ -2657,7 +2699,7 @@ class SQLiteStore(StorageBase):
                     "SELECT id, code, created_by, used_by, used_at, created_at FROM invite_codes ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List invite codes failed: {exc}")
             raise
@@ -2708,7 +2750,7 @@ class SQLiteStore(StorageBase):
                     (token_hash,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get refresh token failed: {exc}")
             raise
@@ -2829,7 +2871,7 @@ class SQLiteStore(StorageBase):
                        ORDER BY c.created_at DESC"""
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List all cards admin failed: {exc}")
             raise
@@ -2860,7 +2902,7 @@ class SQLiteStore(StorageBase):
                        ORDER BY p.created_at DESC"""
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List all posts admin failed: {exc}")
             raise
@@ -2929,7 +2971,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 row = await cursor.fetchone()
-                result["usage"] = dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+                result["usage"] = self._row_to_dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
                 cursor = await conn.execute(
                     "SELECT created_at FROM usage_stats WHERE user_id = ? ORDER BY created_at DESC LIMIT 20",
                     (user_id,),
@@ -2959,7 +3001,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
                 cursor = await conn.execute("SELECT * FROM announcements WHERE id = ?", (aid,))
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": aid, "content": content, "is_active": 1, "align": align}
+            return self._row_to_dict(row) if row else {"id": aid, "content": content, "is_active": 1, "align": align}
         except Exception as exc:
             print(f"[SQLiteStore] Create announcement failed: {exc}")
             raise
@@ -2983,7 +3025,7 @@ class SQLiteStore(StorageBase):
                     "SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1"
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get active announcement failed: {exc}")
             raise
@@ -2995,7 +3037,7 @@ class SQLiteStore(StorageBase):
                     "SELECT * FROM announcements ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] List announcements failed: {exc}")
             raise
@@ -3056,7 +3098,7 @@ class SQLiteStore(StorageBase):
                     "SELECT * FROM config_changelog ORDER BY created_at DESC LIMIT ?", (limit,)
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get config changelog failed: {exc}")
             return []
@@ -3088,7 +3130,7 @@ class SQLiteStore(StorageBase):
                     (limit,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get review logs failed: {exc}")
             return []
@@ -3115,14 +3157,14 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 row = await cursor.fetchone()
-                total = dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+                total = self._row_to_dict(row) if row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
                 # By day
                 cursor = await conn.execute(
                     "SELECT date(created_at) AS date, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = ? GROUP BY date(created_at) ORDER BY date DESC LIMIT 30",
                     (user_id,),
                 )
-                by_day = [dict(r) for r in await cursor.fetchall()]
+                by_day = self._list_rows(await cursor.fetchall())
 
                 # By action
                 cursor = await conn.execute(
@@ -3131,7 +3173,7 @@ class SQLiteStore(StorageBase):
                 )
                 by_action = {}
                 for r in await cursor.fetchall():
-                    d = dict(r)
+                    d = self._row_to_dict(r)
                     by_action[d["action"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
 
                 # By model
@@ -3141,7 +3183,7 @@ class SQLiteStore(StorageBase):
                 )
                 by_model = {}
                 for r in await cursor.fetchall():
-                    d = dict(r)
+                    d = self._row_to_dict(r)
                     by_model[d["model"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
 
             return {"total_calls": total["calls"], "total_prompt_tokens": total["prompt_tokens"], "total_completion_tokens": total["completion_tokens"], "by_day": by_day, "by_action": by_action, "by_model": by_model}
@@ -3164,7 +3206,7 @@ class SQLiteStore(StorageBase):
                     ORDER BY last_active DESC NULLS LAST"""
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get all usage summary failed: {exc}")
             raise
@@ -3196,7 +3238,7 @@ class SQLiteStore(StorageBase):
                     (session_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get session affinity failed: {exc}")
             return None
@@ -3218,7 +3260,7 @@ class SQLiteStore(StorageBase):
                     (card_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comments failed: {exc}")
             return []
@@ -3250,7 +3292,7 @@ class SQLiteStore(StorageBase):
                     (text_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] get_public_cards_by_text_id failed: {exc}")
             return []
@@ -3301,7 +3343,7 @@ class SQLiteStore(StorageBase):
                     "SELECT * FROM card_comments WHERE id = ?", (comment_id,)
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment failed: {exc}")
             return None
@@ -3374,7 +3416,7 @@ class SQLiteStore(StorageBase):
                     (status,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment reports failed: {exc}")
             return []
@@ -3432,7 +3474,7 @@ class SQLiteStore(StorageBase):
                     (status,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment reports grouped failed: {exc}")
             return []
@@ -3496,7 +3538,7 @@ class SQLiteStore(StorageBase):
                     {"uid": user_id, "viewer": viewer_id},
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get followers details failed: {exc}")
             return []
@@ -3525,7 +3567,7 @@ class SQLiteStore(StorageBase):
                     {"uid": user_id, "viewer": viewer_id},
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get following details failed: {exc}")
             return []
@@ -3573,7 +3615,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get author cards failed: {exc}")
             return []
@@ -3596,7 +3638,7 @@ class SQLiteStore(StorageBase):
                     (post_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0, "location": location}
+            return self._row_to_dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0, "location": location}
         except Exception as exc:
             print(f"[SQLiteStore] Add post failed: {exc}")
             raise
@@ -3621,7 +3663,7 @@ class SQLiteStore(StorageBase):
                 else:
                     cursor = await conn.execute(base + " AND p.visibility = 'public' ORDER BY p.created_at DESC", (user_id,))
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get user posts failed: {exc}")
             return []
@@ -3665,7 +3707,7 @@ class SQLiteStore(StorageBase):
                     (user_id, user_id, page_size, offset),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get feed posts failed: {exc}")
             return []
@@ -3724,7 +3766,7 @@ class SQLiteStore(StorageBase):
                     (post_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get post comments failed: {exc}")
             return []
@@ -3790,7 +3832,7 @@ class SQLiteStore(StorageBase):
                        LIMIT ? OFFSET ?""",
                     (text_id, page_size, offset),
                 )
-                comments = [dict(r) for r in await cursor.fetchall()]
+                comments = self._list_rows(await cursor.fetchall())
 
                 comment_ids = [c["id"] for c in comments]
                 if comment_ids:
@@ -3802,7 +3844,7 @@ class SQLiteStore(StorageBase):
                             ORDER BY created_at ASC""",
                         comment_ids,
                     )
-                    replies = [dict(r) for r in await cursor.fetchall()]
+                    replies = self._list_rows(await cursor.fetchall())
                     replies_by_parent: dict[str, list[dict]] = {}
                     for r in replies:
                         replies_by_parent.setdefault(r["parent_id"], []).append(r)
@@ -3833,7 +3875,7 @@ class SQLiteStore(StorageBase):
                     (comment_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": comment_id, "text_id": text_id, "user_id": user_id, "username": username, "content": content, "parent_id": parent_id, "likes": 0}
+            return self._row_to_dict(row) if row else {"id": comment_id, "text_id": text_id, "user_id": user_id, "username": username, "content": content, "parent_id": parent_id, "likes": 0}
         except Exception as exc:
             print(f"[SQLiteStore] Add text comment failed: {exc}")
             raise
@@ -3927,7 +3969,7 @@ class SQLiteStore(StorageBase):
                     (msg_id,),
                 )
                 row = await cursor.fetchone()
-            return dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
+            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
         except Exception as exc:
             print(f"[SQLiteStore] Send message failed: {exc}")
             raise
@@ -3965,7 +4007,7 @@ class SQLiteStore(StorageBase):
                     (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get conversations failed: {exc}")
             return []
@@ -3984,7 +4026,7 @@ class SQLiteStore(StorageBase):
                     (user_id, other_id, other_id, user_id, page_size, offset),
                 )
                 rows = await cursor.fetchall()
-            messages = [dict(r) for r in rows]
+            messages = self._list_rows(rows)
             messages.reverse()  # chronological order
             return messages
         except Exception as exc:
@@ -4057,7 +4099,7 @@ class SQLiteStore(StorageBase):
                         (user_id,),
                     )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get author texts failed: {exc}")
             return []
@@ -4297,7 +4339,7 @@ class SQLiteStore(StorageBase):
                     (card_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get card versions failed: {exc}")
             return []
@@ -4357,7 +4399,7 @@ class SQLiteStore(StorageBase):
                     (card_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get card forks failed: {exc}")
             return []
@@ -4380,7 +4422,7 @@ class SQLiteStore(StorageBase):
                        ORDER BY fc.sort_order ASC"""
                 )
                 rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get featured cards failed: {exc}")
             return []
@@ -4471,7 +4513,7 @@ class SQLiteStore(StorageBase):
                     (user_id,),
                 )
                 rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get all reading progress failed: {exc}")
             return []

@@ -93,9 +93,39 @@ class PostgresStore(StorageBase):
         return _PoolContext(self._pool)  # type: ignore[arg-type]
 
     @staticmethod
+    def _normalize_value(val):
+        """Normalize non-JSON-serializable types to safe equivalents."""
+        from datetime import date, datetime
+        from decimal import Decimal
+        from uuid import UUID
+        if val is None:
+            return None
+        if isinstance(val, (datetime, date)):
+            return val.isoformat()
+        if isinstance(val, Decimal):
+            return float(val)
+        if isinstance(val, UUID):
+            return str(val)
+        if isinstance(val, bytes):
+            return val  # no BYTEA in this schema; keep as-is defensively
+        return val
+
+    @staticmethod
+    def _normalize_record(rec: dict) -> dict:
+        """Normalize all values in a record dict for JSON safety."""
+        return {k: PostgresStore._normalize_value(v) for k, v in rec.items()}
+
+    @staticmethod
     def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
-        """Convert asyncpg Record to dict."""
-        return dict(row) if row is not None else None
+        """Convert asyncpg Record to dict with type normalization."""
+        if row is None:
+            return None
+        return PostgresStore._normalize_record(dict(row))
+
+    @staticmethod
+    def _list_rows(rows) -> list[dict]:
+        """Convert a list of asyncpg rows to a list of normalized dicts."""
+        return [PostgresStore._row_to_dict(r) for r in rows]
 
     async def execute(self, sql: str, params=()) -> None:
         """Execute a single SQL statement (INSERT/UPDATE/DELETE)."""
@@ -106,7 +136,7 @@ class PostgresStore(StorageBase):
         """Query a single row, returns dict or None."""
         async with await self._connect() as conn:
             row = await conn.fetchrow(sql, *params)
-            return dict(row) if row else None
+            return self._row_to_dict(row)
 
     # ── Texts ────────────────────────────────────────────────────
 
@@ -195,7 +225,7 @@ class PostgresStore(StorageBase):
                         ORDER BY created_at DESC
                         """
                     )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List texts failed: {exc}")
             raise
@@ -250,7 +280,7 @@ class PostgresStore(StorageBase):
                     ORDER BY deleted_at DESC
                     """, user_id,
                 )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get deleted texts failed: {exc}")
             raise
@@ -356,7 +386,7 @@ class PostgresStore(StorageBase):
                         WHERE c.id = $1 AND c.deleted_at IS NULL""",
                     card_id,
                 )
-                card = dict(row) if row else None
+                card = self._row_to_dict(row)
                 if card:
                     like_row = await conn.fetchrow(
                         "SELECT 1 FROM card_likes WHERE card_id = $1 AND user_id = $2",
@@ -387,7 +417,7 @@ class PostgresStore(StorageBase):
                         WHERE c.id = $1 AND c.visibility = 'public' AND c.deleted_at IS NULL""",
                     card_id,
                 )
-                card = dict(row) if row else None
+                card = self._row_to_dict(row)
                 if card:
                     like_row = await conn.fetchrow(
                         "SELECT 1 FROM card_likes WHERE card_id = $1 AND user_id = $2",
@@ -415,7 +445,7 @@ class PostgresStore(StorageBase):
                         f"SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags, ({pub_sub}) AS published_id FROM cards WHERE text_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
                         text_id,
                     )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List cards failed: {exc}")
             raise
@@ -428,7 +458,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, market_description, market_tags FROM cards WHERE (text_id IS NULL OR text_id = '') AND user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC",
                     user_id,
                 )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List standalone cards failed: {exc}")
             raise
@@ -522,7 +552,7 @@ class PostgresStore(StorageBase):
                             LIMIT $1 OFFSET $2""",
                         page_size, offset,
                     )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List public cards failed: {exc}")
             raise
@@ -566,7 +596,7 @@ class PostgresStore(StorageBase):
                         LIMIT $2 OFFSET $3""",
                     pattern, page_size, offset,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Search public cards failed: {exc}")
             raise
@@ -601,8 +631,7 @@ class PostgresStore(StorageBase):
                        LIMIT 5""",
                     like,
                 )
-                cards = [dict(r) for r in cards_rows]
-
+                cards = self._list_rows(cards_rows)
                 texts_rows = await conn.fetch(
                     """SELECT id, title, filename, char_count
                        FROM texts
@@ -611,7 +640,7 @@ class PostgresStore(StorageBase):
                        LIMIT 5""",
                     user_id, like,
                 )
-                texts = [dict(r) for r in texts_rows]
+                texts = self._list_rows(texts_rows)
 
                 users_rows = await conn.fetch(
                     """SELECT id, username, avatar_data
@@ -621,7 +650,7 @@ class PostgresStore(StorageBase):
                        LIMIT 5""",
                     like,
                 )
-                users = [dict(r) for r in users_rows]
+                users = self._list_rows(users_rows)
 
             return {"cards": cards, "texts": texts, "users": users}
         except Exception as exc:
@@ -746,7 +775,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, text_id, name, card_json, created_at, visibility, forked_from, deleted_at FROM cards WHERE deleted_at IS NOT NULL AND user_id = $1 ORDER BY deleted_at DESC",
                     user_id,
                 )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List deleted cards failed: {exc}")
             raise
@@ -799,7 +828,7 @@ class PostgresStore(StorageBase):
                         """, card_id,
                     )
                 if row:
-                    return dict(row)
+                    return self._row_to_dict(row)
                 return None
         except Exception as exc:
             print(f"[PostgresStore] Get recent card session failed: {exc}")
@@ -923,7 +952,7 @@ class PostgresStore(StorageBase):
                 "total": total,
                 "page": safe_page,
                 "page_size": safe_page_size,
-                "items": [dict(row) for row in rows],
+                "items": self._list_rows(rows),
             }
         except Exception as exc:
             print(f"[PostgresStore] List sessions failed: {exc}")
@@ -991,7 +1020,7 @@ class PostgresStore(StorageBase):
                         ORDER BY s.deleted_at DESC
                         """
                     )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List trash sessions failed: {exc}")
             raise
@@ -1072,7 +1101,7 @@ class PostgresStore(StorageBase):
                     "SELECT openid, session_id, card_id, created_at FROM wechat_users WHERE openid = $1",
                     openid,
                 )
-            return self._row_to_dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get wechat user failed: {exc}")
             raise
@@ -1113,7 +1142,7 @@ class PostgresStore(StorageBase):
                         "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1",
                         session_id,
                     )
-            return dict(row) if row else {}
+            return self._row_to_dict(row) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save message failed: {exc}")
             raise
@@ -1130,7 +1159,7 @@ class PostgresStore(StorageBase):
                     ORDER BY id ASC
                     """, session_id,
                 )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get messages failed: {exc}")
             raise
@@ -1166,7 +1195,7 @@ class PostgresStore(StorageBase):
                 )
             if row is None:
                 return None
-            d = dict(row)
+            d = self._row_to_dict(row)
             d["card_ids"] = json.loads(d["card_ids"])
             return d
         except Exception as exc:
@@ -1187,7 +1216,7 @@ class PostgresStore(StorageBase):
                 )
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(row)
                 d["card_ids"] = json.loads(d["card_ids"])
                 results.append(d)
             return results
@@ -1207,7 +1236,7 @@ class PostgresStore(StorageBase):
                 )
             results = []
             for row in rows:
-                d = dict(row)
+                d = self._row_to_dict(row)
                 d["card_ids"] = json.loads(d["card_ids"])
                 results.append(d)
             return results
@@ -1263,7 +1292,7 @@ class PostgresStore(StorageBase):
                        ORDER BY id ASC""",
                     group_id,
                 )
-                messages = [dict(row) for row in rows]
+                messages = self._list_rows(rows)
                 msg_ids = [m["id"] for m in messages]
                 if msg_ids:
                     reactions_map = await self.get_reactions(msg_ids)
@@ -1341,6 +1370,17 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update group session failed: {exc}")
+            raise
+
+    async def update_group_card_ids(self, id: str, card_ids: list[str]) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE group_sessions SET card_ids = $1 WHERE id = $2",
+                    json.dumps(card_ids), id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update group card_ids failed: {exc}")
             raise
 
     async def delete_group_session(self, id: str) -> None:
@@ -1431,7 +1471,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE username = $1",
                     username,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get user failed: {exc}")
             raise
@@ -1444,7 +1484,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, username, password_hash, email, email_verified, is_admin, is_disabled, created_at FROM users WHERE email = $1 AND email != ''",
                     email,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get user by email failed: {exc}")
             raise
@@ -1457,7 +1497,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility, following_visible FROM users WHERE id = $1",
                     user_id,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get user by id failed: {exc}")
             raise
@@ -1584,7 +1624,7 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get all users failed: {exc}")
             raise
@@ -1864,7 +1904,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, code, created_by, used_by, used_at, created_at FROM invite_codes WHERE code = $1",
                     code,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get invite code failed: {exc}")
             raise
@@ -1888,7 +1928,7 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     "SELECT id, code, created_by, used_by, used_at, created_at FROM invite_codes ORDER BY created_at DESC"
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List invite codes failed: {exc}")
             raise
@@ -1935,7 +1975,7 @@ class PostgresStore(StorageBase):
                     "SELECT token_hash, user_id, expires_at, used FROM refresh_tokens WHERE token_hash = $1",
                     token_hash,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get refresh token failed: {exc}")
             raise
@@ -2024,7 +2064,7 @@ class PostgresStore(StorageBase):
                        LEFT JOIN users u ON u.id = c.user_id
                        ORDER BY c.created_at DESC"""
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List all cards admin failed: {exc}")
             raise
@@ -2053,7 +2093,7 @@ class PostgresStore(StorageBase):
                        LEFT JOIN users u ON u.id = p.user_id
                        ORDER BY p.created_at DESC"""
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List all posts admin failed: {exc}")
             raise
@@ -2103,7 +2143,7 @@ class PostgresStore(StorageBase):
                 )
                 if not row:
                     raise ValueError("用户不存在")
-                result = dict(row)
+                result = self._row_to_dict(row)
                 cards_count = await conn.fetchval(
                     "SELECT COUNT(*) FROM cards WHERE user_id = $1 AND deleted_at IS NULL", user_id,
                 )
@@ -2146,7 +2186,7 @@ class PostgresStore(StorageBase):
                         aid, content, align,
                     )
                 row = await conn.fetchrow("SELECT * FROM announcements WHERE id = $1", aid)
-            return dict(row) if row else {"id": aid, "content": content, "is_active": 1, "align": align}
+            return self._row_to_dict(row) if row else {"id": aid, "content": content, "is_active": 1, "align": align}
         except Exception as exc:
             print(f"[PostgresStore] Create announcement failed: {exc}")
             raise
@@ -2168,7 +2208,7 @@ class PostgresStore(StorageBase):
                 row = await conn.fetchrow(
                     "SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC LIMIT 1"
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get active announcement failed: {exc}")
             raise
@@ -2179,7 +2219,7 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     "SELECT * FROM announcements ORDER BY created_at DESC"
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] List announcements failed: {exc}")
             raise
@@ -2234,7 +2274,7 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     "SELECT * FROM config_changelog ORDER BY created_at DESC LIMIT $1", limit,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get config changelog failed: {exc}")
             return []
@@ -2262,7 +2302,7 @@ class PostgresStore(StorageBase):
                        ORDER BY r.created_at DESC LIMIT $1""",
                     limit,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get review logs failed: {exc}")
             return []
@@ -2286,13 +2326,13 @@ class PostgresStore(StorageBase):
                     "SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = $1",
                     user_id,
                 )
-                total = dict(total_row) if total_row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+                total = self._row_to_dict(total_row) if total_row else {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
                 by_day_rows = await conn.fetch(
                     "SELECT created_at::date AS date, COUNT(*)::int AS calls, COALESCE(SUM(prompt_tokens), 0)::bigint AS prompt_tokens, COALESCE(SUM(completion_tokens), 0)::bigint AS completion_tokens FROM usage_stats WHERE user_id = $1 GROUP BY created_at::date ORDER BY date DESC LIMIT 30",
                     user_id,
                 )
-                by_day = [dict(r) for r in by_day_rows]
+                by_day = self._list_rows(by_day_rows)
 
                 by_action_rows = await conn.fetch(
                     "SELECT action, COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens, COALESCE(SUM(completion_tokens), 0) AS completion_tokens FROM usage_stats WHERE user_id = $1 GROUP BY action",
@@ -2300,7 +2340,7 @@ class PostgresStore(StorageBase):
                 )
                 by_action = {}
                 for r in by_action_rows:
-                    d = dict(r)
+                    d = self._row_to_dict(r)
                     by_action[d["action"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
 
                 by_model_rows = await conn.fetch(
@@ -2309,7 +2349,7 @@ class PostgresStore(StorageBase):
                 )
                 by_model = {}
                 for r in by_model_rows:
-                    d = dict(r)
+                    d = self._row_to_dict(r)
                     by_model[d["model"]] = {"calls": d["calls"], "prompt_tokens": d["prompt_tokens"], "completion_tokens": d["completion_tokens"]}
 
             return {"total_calls": total["calls"], "total_prompt_tokens": total["prompt_tokens"], "total_completion_tokens": total["completion_tokens"], "by_day": by_day, "by_action": by_action, "by_model": by_model}
@@ -2331,7 +2371,7 @@ class PostgresStore(StorageBase):
                     GROUP BY u.id
                     ORDER BY last_active DESC NULLS LAST"""
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get all usage summary failed: {exc}")
             raise
@@ -2359,7 +2399,7 @@ class PostgresStore(StorageBase):
                     "SELECT affinity, trust, mood, guard, affinity_reason AS reason FROM sessions WHERE id = $1",
                     session_id,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get session affinity failed: {exc}")
             return None
@@ -2380,7 +2420,7 @@ class PostgresStore(StorageBase):
                     "WHERE c.card_id = $1 ORDER BY c.created_at ASC",
                     card_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comments failed: {exc}")
             return []
@@ -2409,7 +2449,7 @@ class PostgresStore(StorageBase):
                        ORDER BY c.created_at ASC""",
                     text_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] get_public_cards_by_text_id failed: {exc}")
             return []
@@ -2453,7 +2493,7 @@ class PostgresStore(StorageBase):
                 row = await conn.fetchrow(
                     "SELECT * FROM card_comments WHERE id = $1", comment_id,
                 )
-            return dict(row) if row else None
+            return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get comment failed: {exc}")
             return None
@@ -2519,7 +2559,7 @@ class PostgresStore(StorageBase):
                        ORDER BY report_count DESC, r.created_at ASC""",
                     status,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comment reports failed: {exc}")
             return []
@@ -2572,7 +2612,7 @@ class PostgresStore(StorageBase):
                        ORDER BY report_count DESC, first_reported_at ASC""",
                     status,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comment reports grouped failed: {exc}")
             return []
@@ -2630,7 +2670,7 @@ class PostgresStore(StorageBase):
                        FROM user_follows f JOIN users u ON u.id = f.follower_id WHERE f.following_id = $1 AND f.follower_id != f.following_id""",
                     user_id, viewer_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get followers details failed: {exc}")
             return []
@@ -2656,7 +2696,7 @@ class PostgresStore(StorageBase):
                        FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = $1""",
                     user_id, viewer_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get following details failed: {exc}")
             return []
@@ -2699,7 +2739,7 @@ class PostgresStore(StorageBase):
                        ORDER BY created_at DESC""",
                     user_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get author cards failed: {exc}")
             return []
@@ -2719,7 +2759,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, user_id, content, visibility, images, card_id, likes, created_at, location FROM user_posts WHERE id = $1",
                     post_id,
                 )
-            return dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0, "location": location}
+            return self._row_to_dict(row) if row else {"id": post_id, "user_id": user_id, "content": content, "visibility": visibility, "images": images, "card_id": card_id, "likes": 0, "location": location}
         except Exception as exc:
             print(f"[PostgresStore] Add post failed: {exc}")
             raise
@@ -2742,7 +2782,7 @@ class PostgresStore(StorageBase):
                     rows = await conn.fetch(base + " ORDER BY p.created_at DESC", user_id)
                 else:
                     rows = await conn.fetch(base + " AND p.visibility = 'public' ORDER BY p.created_at DESC", user_id)
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get user posts failed: {exc}")
             return []
@@ -2782,7 +2822,7 @@ class PostgresStore(StorageBase):
                         LIMIT $2 OFFSET $3""",
                     user_id, page_size, offset,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get feed posts failed: {exc}")
             return []
@@ -2835,7 +2875,7 @@ class PostgresStore(StorageBase):
                        ORDER BY pc.created_at DESC""",
                     post_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get post comments failed: {exc}")
             return []
@@ -2893,7 +2933,7 @@ class PostgresStore(StorageBase):
                        LIMIT $2 OFFSET $3""",
                     text_id, page_size, offset,
                 )
-                comments = [dict(r) for r in rows]
+                comments = self._list_rows(rows)
 
                 comment_ids = [c["id"] for c in comments]
                 if comment_ids:
@@ -2905,7 +2945,7 @@ class PostgresStore(StorageBase):
                             ORDER BY created_at ASC""",
                         text_id, *comment_ids,
                     )
-                    replies = [dict(r) for r in reply_rows]
+                    replies = self._list_rows(reply_rows)
                     replies_by_parent: dict[str, list[dict]] = {}
                     for r in replies:
                         replies_by_parent.setdefault(r["parent_id"], []).append(r)
@@ -2933,7 +2973,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, text_id, user_id, username, content, parent_id, likes, created_at FROM text_comments WHERE id = $1",
                     comment_id,
                 )
-            return dict(row) if row else {"id": comment_id, "text_id": text_id, "user_id": user_id, "username": username, "content": content, "parent_id": parent_id, "likes": 0}
+            return self._row_to_dict(row) if row else {"id": comment_id, "text_id": text_id, "user_id": user_id, "username": username, "content": content, "parent_id": parent_id, "likes": 0}
         except Exception as exc:
             print(f"[PostgresStore] Add text comment failed: {exc}")
             raise
@@ -3016,7 +3056,7 @@ class PostgresStore(StorageBase):
                     "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = $1",
                     msg_id,
                 )
-            return dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
+            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
         except Exception as exc:
             print(f"[PostgresStore] Send message failed: {exc}")
             raise
@@ -3052,7 +3092,7 @@ class PostgresStore(StorageBase):
                        ORDER BY last_time DESC""",
                     user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get conversations failed: {exc}")
             return []
@@ -3069,7 +3109,7 @@ class PostgresStore(StorageBase):
                        LIMIT $5 OFFSET $6""",
                     user_id, other_id, other_id, user_id, page_size, offset,
                 )
-            messages = [dict(r) for r in rows]
+            messages = self._list_rows(rows)
             messages.reverse()
             return messages
         except Exception as exc:
@@ -3134,7 +3174,7 @@ class PostgresStore(StorageBase):
                            ORDER BY created_at DESC""",
                         user_id,
                     )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get author texts failed: {exc}")
             return []
@@ -3329,7 +3369,7 @@ class PostgresStore(StorageBase):
                        FROM card_versions WHERE card_id = $1 ORDER BY version_num DESC""",
                     card_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get card versions failed: {exc}")
             return []
@@ -3383,7 +3423,7 @@ class PostgresStore(StorageBase):
                        ORDER BY c.likes DESC, c.created_at DESC""",
                     card_id,
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get card forks failed: {exc}")
             return []
@@ -3404,7 +3444,7 @@ class PostgresStore(StorageBase):
                        LEFT JOIN users u ON u.id = c.user_id
                        ORDER BY fc.sort_order ASC"""
                 )
-            return [dict(r) for r in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get featured cards failed: {exc}")
             return []
@@ -3481,7 +3521,7 @@ class PostgresStore(StorageBase):
                     "SELECT text_id, progress, scroll_position, updated_at FROM reading_progress WHERE user_id = $1 ORDER BY updated_at DESC",
                     user_id,
                 )
-            return [dict(row) for row in rows]
+            return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get all reading progress failed: {exc}")
             return []
