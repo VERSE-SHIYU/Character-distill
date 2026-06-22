@@ -130,6 +130,26 @@ async def get_current_user(
     return user
 
 
+async def get_optional_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Like get_current_user but returns empty dict for unauthenticated requests."""
+    if credentials is None:
+        return {}
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return {}
+    user_id = payload.get("sub")
+    if not user_id:
+        return {}
+    user = await storage.get_user_by_id(user_id)
+    if user is None or user.get("is_disabled"):
+        return {}
+    return user
+
+
 # ---- Routes ----
 
 @router.post("/send-code")

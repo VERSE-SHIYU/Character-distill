@@ -134,6 +134,8 @@ export default function GroupChatPage() {
       if (r.status === 'fulfilled' && r.value) {
         const cardData = parseCardJson(r.value)
         updates[missing[i]] = { ...r.value, name: cardData.name || r.value.name || '?' }
+      } else {
+        updates[missing[i]] = { _notFound: true, name: '?' }
       }
     })
     if (Object.keys(updates).length > 0) {

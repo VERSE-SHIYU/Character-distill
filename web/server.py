@@ -127,7 +127,7 @@ from starlette.requests import Request
 import time
 
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/announcement/active"}
-PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/card/")
+PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/")
 
 # Throttle last_active updates to once per 60s per user
 _last_active_ticks: dict[str, float] = {}

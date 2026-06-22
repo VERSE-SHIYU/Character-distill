@@ -1,4 +1,3 @@
-const DAY_MS = 86400000
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 
 export function formatChatTime(ts) {
@@ -13,16 +12,17 @@ export function formatChatTime(ts) {
   const pad = (n) => String(n).padStart(2, '0')
   const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
 
-  // Today
-  if (d.toDateString() === now.toDateString()) return hhmm
+  // Normalize both to start of natural day (local midnight)
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const targetStart = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const dayDiff = Math.round((todayStart - targetStart) / 86400000)
 
-  // Yesterday
-  const yesterday = new Date(now - DAY_MS)
-  if (d.toDateString() === yesterday.toDateString()) return `昨天 ${hhmm}`
+  if (dayDiff === 0) return hhmm
+  if (dayDiff === 1) return `昨天 ${hhmm}`
+  if (dayDiff === 2) return `前天 ${hhmm}`
+  if (dayDiff >= 3 && dayDiff <= 6) return `${WEEKDAYS[d.getDay()]} ${hhmm}`
 
-  // Same year → weekday + time
-  if (d.getFullYear() === now.getFullYear()) return `${WEEKDAYS[d.getDay()]} ${hhmm}`
-
-  // Different year → full date + time
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hhmm}`
+  // >= 7 natural days
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`
 }

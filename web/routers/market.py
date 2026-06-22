@@ -14,7 +14,7 @@ from core.schema import PRESET_TAGS
 from deps import get_storage
 from limiter import get_client_ip, limiter
 from storage.base import StorageBase
-from routers.auth import get_current_user
+from routers.auth import get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -361,11 +361,11 @@ async def create_post(
 async def get_card_detail(
     request: Request,
     card_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_optional_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get a single public card detail with author info."""
-    card = await storage.get_market_card_detail(card_id, user["id"])
+    card = await storage.get_market_card_detail(card_id, user.get("id", ""))
     if not card:
         raise HTTPException(404, "角色不存在或未公开")
     return card
@@ -655,7 +655,7 @@ async def delete_post(
 async def list_comments(
     request: Request,
     card_id: str,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(get_optional_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a card."""

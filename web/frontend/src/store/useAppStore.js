@@ -838,7 +838,7 @@ const useAppStore = create((set, get) => ({
         }, 120000, abort.signal)
         sessionId = result.session_id
       } catch (err) {
-        if (err.name === 'AbortError') return
+        if (err.name === 'AbortError' || err.status === 408) return
         set({ error: err.message, resumeLoading: false })
         return
       }
@@ -897,7 +897,7 @@ const useAppStore = create((set, get) => ({
         }
       }
     } catch (err) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError' || err.status === 408) return
       console.error('[store] startChat create session failed:', err)
       set({ error: err.message, sending: false })
       return
