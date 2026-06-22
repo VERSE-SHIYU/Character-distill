@@ -384,17 +384,7 @@ def serve_icons() -> FileResponse:
     return FileResponse(path)
 
 
-@app.get("/{path:path}")
-def serve_spa(path: str):
-    """SPA fallback: serve index.html for all non-API routes."""
-    if path.startswith("api/"):
-        raise HTTPException(status_code=404)
-    index_path = _STATIC_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404)
-    return FileResponse(index_path)
-
-
+# ---- Static file mounts (must be registered BEFORE the catch-all) ----
 _assets_dir = _STATIC_DIR / "assets"
 if _assets_dir.is_dir():
     app.mount(
@@ -412,6 +402,30 @@ else:
 _voice_cache_dir = _REPO_ROOT / "data" / "voice_cache"
 _voice_cache_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(_voice_cache_dir)), name="voice_audio")
+
+
+@app.get("/{path:path}")
+def serve_spa(path: str):
+    """SPA fallback: serve index.html for all non-API routes (must be last-registered route)."""
+    if path.startswith("api/"):
+        raise HTTPException(status_code=404)
+    # Serve real static files at the root level (e.g. Chinese-named files)
+    # before falling back to index.html.
+    candidate = _STATIC_DIR / path
+    try:
+        real = os.path.realpath(candidate)
+    except (OSError, ValueError):
+        real = None
+    if real is not None and os.path.isfile(real):
+        try:
+            Path(real).resolve().relative_to(_STATIC_DIR.resolve())
+            return FileResponse(real)
+        except ValueError:
+            pass  # path traversal attempt — fall through to index.html
+    index_path = _STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(index_path)
 
 
 if __name__ == "__main__":
