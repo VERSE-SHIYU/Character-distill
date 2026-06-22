@@ -22,6 +22,9 @@ router = APIRouter(prefix="/api/group", tags=["group"])
 # In-memory group sessions: group_id → GroupSession
 _group_sessions: dict[str, Any] = {}
 
+# 群聊已消化点赞游标: group_id → 最大 reaction_id
+_group_last_reaction_id: dict[str, int] = {}
+
 
 class CreateGroupRequest(BaseModel):
     name: str = ""
@@ -161,6 +164,46 @@ async def _rebuild_group_session(
         print(f"[Group] Session rebuild failed: {exc}")
 
     return group
+
+
+async def _run_group_affinity(
+    group, group_id: str, card_ids: list[str],
+    user_message: str, storage: StorageBase,
+) -> None:
+    """获取群聊未消化点赞，按 speaker_card_id 分桶，对每个角色跑 memory-only 亲和力评估。"""
+    cursor = _group_last_reaction_id.get(group_id, 0)
+    try:
+        new_reactions = await storage.get_group_reactions_after(group_id, cursor)
+    except Exception as exc:
+        print(f"[Group Affinity] Fetch reactions failed (non-fatal): {exc}")
+        return
+
+    if not new_reactions:
+        return
+
+    _group_last_reaction_id[group_id] = max(r["reaction_id"] for r in new_reactions)
+
+    # 按角色分桶
+    by_card: dict[str, list[dict]] = {}
+    for r in new_reactions:
+        cid = r.get("speaker_card_id", "")
+        if cid and cid in group.engines:
+            by_card.setdefault(cid, []).append(r)
+
+    if not by_card:
+        return
+
+    main_loop = asyncio.get_running_loop()
+    for card_id, signals in by_card.items():
+        engine = group.engines[card_id]
+        engine._storage = storage
+        engine._main_loop = main_loop
+        # 不设 _session_id —— 群聊只更新内存，不写 DB
+        engine.ingest_reaction_signals([
+            {"emoji": r["emoji"], "msg_content": r.get("msg_content", "")}
+            for r in signals
+        ])
+        await asyncio.to_thread(engine._evaluate_affinity, user_message, "")
 
 
 def _get_group_sessions() -> dict[str, Any]:
@@ -425,6 +468,11 @@ async def send_message(
     except Exception as exc:
         print(f"[group] Save messages failed (non-fatal): {exc}")
 
+    # 后台评估点赞触发的 affinity 变化（不阻塞回复）
+    asyncio.create_task(
+        _run_group_affinity(group, group_id, [req.target_card_id], req.message, storage)
+    )
+
     return {"reply": resp, "speaker": group.engines[req.target_card_id].card.name}
 
 
@@ -489,6 +537,11 @@ async def broadcast_message(
                 )
     except Exception as exc:
         print(f"[group] Save broadcast messages failed (non-fatal): {exc}")
+
+    # 后台评估点赞触发的 affinity 变化（不阻塞回复）
+    asyncio.create_task(
+        _run_group_affinity(group, group_id, req.target_card_ids, req.message, storage)
+    )
 
     return {"replies": results}
 
