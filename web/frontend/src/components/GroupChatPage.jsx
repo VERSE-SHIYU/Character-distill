@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
@@ -7,12 +6,9 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
-import { useMention } from '../utils/useMention'
-import MentionDropdown from './common/MentionDropdown'
-import ResizableInputArea from './common/ResizableInputArea'
+import ChatInputBar from './common/ChatInputBar'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
-import EmojiPicker from './common/EmojiPicker'
 import { parseCardJson } from '../utils/card'
 
 function parseCardIds(raw) {
@@ -68,9 +64,8 @@ export default function GroupChatPage() {
   const [rightTab, setRightTab] = useState('history') // 'history' | 'members' | 'date'
   const [historySelectedDate, setHistorySelectedDate] = useState('')
   const [historyDateGroups, setHistoryDateGroups] = useState([])
-  const { textareaRef: msgInputRef, resize: resizeMsg } = useAutoResizeTextarea()
   const messagesAreaRef = useRef(null)
-  const [showEmoji, setShowEmoji] = useState(false)
+  const inputBarRef = useRef(null)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
   const [filterDate, setFilterDate] = useState('')
   const [filterSpeaker, setFilterSpeaker] = useState('')
@@ -151,19 +146,6 @@ export default function GroupChatPage() {
       .filter(Boolean)
       .map((c) => ({ id: c.id, name: c.name || c.id, avatar: cardAvatars[c.id] || cardCache[c.id]?.avatar_data || null }))
   }, [currentGroup?.card_ids, cardCache, allCards, cardAvatars])
-
-  const handleMentionSelect = useCallback((item, atPos) => {
-    setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))
-    if (atPos >= 0) {
-      setMessageText((prev) => {
-        const cursorAfter = msgInputRef.current?.selectionStart ?? prev.length
-        return prev.slice(0, atPos) + '@' + item.name + ' ' + prev.slice(cursorAfter)
-      })
-    }
-    setTimeout(() => msgInputRef.current?.focus(), 0)
-  }, [])
-
-  const mentionHook = useMention(mentionableItems, { onSelect: handleMentionSelect, maxResults: 6 })
 
   // 将 allCards 同步到 cardCache，作为 API 单卡加载的补充
   useEffect(() => {
@@ -553,8 +535,9 @@ export default function GroupChatPage() {
 
   const [messageText, setMessageText] = useState('')
 
-  async function handleSend() {
-    if (!messageText.trim() || !currentGroup) return
+  async function handleSend(textArg) {
+    const content = (textArg ?? messageText).trim()
+    if (!content || !currentGroup) return
     const targets = targetCardIds.length > 0 ? targetCardIds : currentGroup.card_ids
     if (targets.length === 0) return
 
@@ -572,14 +555,13 @@ export default function GroupChatPage() {
       // Broadcast: one director message, all targets reply in parallel
       const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
         target_card_ids: [...targets],
-        message: messageText,
+        message: content,
         speaker,
         reply_to_id: replyTo?.id || null,
       })
+      void data
       // Reload history once after all replies
       await loadHistory(currentGroup.id)
-      setMessageText('')
-      setTimeout(resizeMsg, 0)
       setTargetCardIds([])
       setReplyTo(null)
     } catch (err) {
@@ -658,18 +640,6 @@ export default function GroupChatPage() {
       setCurrentGroup((prev) => ({ ...prev, _cards: cards }))
     })()
   }, [currentGroup?.id, allCards, cardCache])
-
-  // Emoji picker outside-click
-  useEffect(() => {
-    if (!showEmoji) return
-    const handler = (e) => {
-      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
-        setShowEmoji(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji])
 
   // Character info panel outside-click
   useEffect(() => {
@@ -994,7 +964,7 @@ export default function GroupChatPage() {
                                   <button type="button" className="msg-action-btn" title="引用"
                                     onClick={() => {
                                       setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) })
-                                      msgInputRef.current?.focus()
+                                      inputBarRef.current?.focus()
                                     }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                                   </button>
@@ -1072,7 +1042,7 @@ export default function GroupChatPage() {
                                       <button type="button" className="msg-action-btn" title="引用"
                                         onClick={() => {
                                           setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
-                                          msgInputRef.current?.focus()
+                                          inputBarRef.current?.focus()
                                         }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                                       </button>
@@ -1123,8 +1093,19 @@ export default function GroupChatPage() {
 
 
               {/* Input */}
-              <div className="private-chat-input-bar">
-                {autoRunning && (
+              <ChatInputBar
+                ref={inputBarRef}
+                value={messageText}
+                onChange={setMessageText}
+                onSend={handleSend}
+                disabled={sending || autoRunning}
+                sending={sending}
+                placeholder="输入消息…（@指定角色）"
+                mentionableItems={mentionableItems}
+                onMention={(item) => setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))}
+                replyTo={replyTo}
+                onCancelReply={() => setReplyTo(null)}
+                topSlot={autoRunning ? (
                   <div className="group-auto-banner">
                     <span>🎬 自动对话中… (第 {autoTurn}/{autoTotal} 轮)</span>
                     {generatingForName && <span className="group-auto-generating"> • {generatingForName} 生成中…</span>}
@@ -1132,86 +1113,8 @@ export default function GroupChatPage() {
                       停止
                     </button>
                   </div>
-                )}
-                {replyTo && (
-                  <div className="reply-preview-bar">
-                    <div className="reply-preview-info">
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                      <span className="reply-preview-label">回复 {replyTo.speaker}:</span>
-                      <span className="reply-preview-text">{replyTo.preview}</span>
-                    </div>
-                    <button type="button" className="reply-preview-close" onClick={() => setReplyTo(null)}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                    </button>
-                  </div>
-                )}
-                <ResizableInputArea>
-                <div className="group-input-row">
-                    <div style={{ position: 'relative' }}>
-                      <button type="button" data-emoji-btn className="group-input-emoji-btn" title="表情"
-                        onClick={() => setShowEmoji(!showEmoji)}>
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-                      </button>
-                      {showEmoji && (
-                        <EmojiPicker
-                        controlled
-                        onEmojiSelect={(emoji) => {
-                          setMessageText(prev => {
-                            const ta = msgInputRef.current
-                            if (ta) {
-                              const start = ta.selectionStart
-                              const newVal = prev.slice(0, start) + emoji + prev.slice(ta.selectionEnd)
-                              setTimeout(() => {
-                                ta.selectionStart = ta.selectionEnd = start + emoji.length
-                                ta.focus()
-                              }, 0)
-                              return newVal
-                            }
-                            return prev + emoji
-                          })
-                          setShowEmoji(false)
-                        }}
-                      />
-                    )}
-                    </div>
-                    <div style={{ position: 'relative', flex: 1 }}>
-                      <textarea
-                        ref={msgInputRef}
-                        className="messages-input"
-                        rows={1}
-                        placeholder="输入消息…（@指定角色）"
-                        value={messageText}
-                        onChange={(e) => {
-                          const val = e.target.value
-                          setMessageText(val)
-                          mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-                          resizeMsg()
-                        }}
-                        onKeyDown={(e) => {
-                          if (mentionHook.handleMentionKeyDown(e)) return
-                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-                        }}
-                        disabled={sending || autoRunning}
-                      />
-                      <MentionDropdown
-                        show={mentionHook.mentionActive}
-                        items={mentionHook.mentionItems}
-                        selectedIndex={mentionHook.selectedIndex}
-                        onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
-                        position={mentionHook.mentionPosition}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      className="messages-send-btn"
-                      disabled={!messageText.trim() || sending}
-                      onClick={handleSend}
-                    >
-                      {sending ? '…' : '发送'}
-                    </button>
-                  </div>
-              </ResizableInputArea>
-              </div>
+                ) : null}
+              />
             </div>
               {/* 右侧栏：tab 切换 — 历史记录 / 成员 */}
               {historyOpen && (

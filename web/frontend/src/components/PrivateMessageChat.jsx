@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { formatChatTime } from '../utils/time'
 import { Calendar } from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
-import EmojiPicker from './common/EmojiPicker'
-import ResizableInputArea from './common/ResizableInputArea'
+import ChatInputBar from './common/ChatInputBar'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 
@@ -23,9 +21,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   const messagesEndRef = useRef(null)
   const autoSendRef = useRef(false)
-  const taRef = useRef(null)
-  const { resize: resizePM } = useAutoResizeTextarea(taRef)
-  const [showEmoji, setShowEmoji] = useState(false)
   const [otherAvatar, setOtherAvatar] = useState(null)
   const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
   const [otherOnlineHidden, setOtherOnlineHidden] = useState(false)
@@ -213,31 +208,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     })
   }, [isOnline, otherUserId])
 
-  // Emoji picker outside-click
-  useEffect(() => {
-    if (!showEmoji) return
-    const handler = (e) => {
-      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
-        setShowEmoji(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji])
-
-  const handleSend = async () => {
-    if (!inputText.trim() || !otherUserId) return
+  const handleSend = async (textArg) => {
+    const content = (textArg ?? inputText).trim()
+    if (!content || !otherUserId) return
     const tempId = `temp-${Date.now()}`
     const optimisticMsg = {
       id: tempId,
       sender_id: authUser?.id,
-      content: inputText.trim(),
+      content,
       created_at: new Date().toISOString(),
       _status: isOnline ? 'sending' : 'queued',
     }
     setMessages(prev => [...prev, optimisticMsg])
-    setInputText('')
-    setTimeout(resizePM, 0)
 
     if (!isOnline) return
 
@@ -274,13 +256,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
       }
     } catch {
       setMessages(prev => prev.map(m => m.id === failedMsg.id ? { ...m, _status: 'failed' } : m))
-    }
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
     }
   }
 
@@ -383,48 +358,12 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           </div>
 
           {/* Input */}
-          <ResizableInputArea>
-          <div className="private-chat-input-bar">
-        <div className="messages-input-toolbar messages-input-toolbar-top">
-          <button type="button" className="messages-toolbar-btn" title="表情" data-emoji-btn
-            onClick={() => setShowEmoji(!showEmoji)}>
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <path d="M8 14s1.5 2 4 2 4-2 4-2"/>
-              <line x1="9" y1="9" x2="9.01" y2="9"/>
-              <line x1="15" y1="9" x2="15.01" y2="9"/>
-            </svg>
-          </button>
-        </div>
-        <div style={{ position: 'relative' }}>
-          {showEmoji && <EmojiPicker textareaRef={taRef} onEmojiSelect={() => setShowEmoji(false)} />}
-          <textarea
-            ref={taRef}
-            className="messages-input"
-            rows={1}
-            placeholder="输入消息…"
+          <ChatInputBar
             value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value)
-              resizePM()
-            }}
-            onKeyDown={handleKeyDown}
+            onChange={setInputText}
+            onSend={handleSend}
+            placeholder="输入消息…"
           />
-        </div>
-        <div className="messages-input-toolbar messages-input-toolbar-bottom">
-          <div className="messages-input-toolbar-left" />
-          <button
-            type="button"
-            className="messages-send-btn"
-            disabled={!inputText.trim()}
-            onClick={handleSend}
-          >
-            发送
-          </button>
-        </div>
-      </div>
-      </ResizableInputArea>
         </div>
 
         {historyOpen && (

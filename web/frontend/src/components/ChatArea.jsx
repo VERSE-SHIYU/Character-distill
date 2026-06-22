@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAutoResizeTextarea } from '../utils/useAutoResizeTextarea'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Mic, Book, File, Heart } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -10,12 +9,9 @@ import RoleSetupModal from './RoleSetupModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
-import { useMention } from '../utils/useMention'
 import { parseCardJson } from '../utils/card'
-import MentionDropdown from './common/MentionDropdown'
-import ResizableInputArea from './common/ResizableInputArea'
+import ChatInputBar from './common/ChatInputBar'
 import { Calendar } from './common/ChatHistoryPanel'
-import EmojiPicker from './common/EmojiPicker'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -728,13 +724,11 @@ function ChatView() {
             <div ref={bottomRef} />
           </div>
 
-          <ChatInput
+          <ChatInputBar
             onSend={handleSend}
             disabled={sending}
-            voiceStatus={voiceStatus}
-            isRecording={isRecording}
-            recordingDuration={recordingDuration}
-            sendVoiceMessage={sendVoiceMessage}
+            disabledPlaceholder="等待回复中…"
+            voice={{ status: voiceStatus, isRecording, recordingDuration, sendVoiceMessage }}
             mentionableItems={[{ id: currentCard.id, name: charName }]}
             replyTo={replyTo}
             onCancelReply={() => setReplyTo(null)}
@@ -1157,247 +1151,5 @@ function SummaryBubble({ content }) {
   )
 }
 
-// ---- Input bar ----
-
-function ChatInput({ onSend, disabled, voiceStatus, isRecording, recordingDuration, sendVoiceMessage, mentionableItems, replyTo, onCancelReply }) {
-  const [text, setText] = useState('')
-  const taRef = useRef(null)
-  const { resize: resizeChat } = useAutoResizeTextarea(taRef)
-  const [showEmoji, setShowEmoji] = useState(false)
-
-  const handleMentionSelect = useCallback((item, atPos) => {
-    if (atPos >= 0) {
-      setText((prev) => {
-        const cursorAfter = taRef.current?.selectionStart ?? prev.length
-        return prev.slice(0, atPos) + '@' + item.name + ' ' + prev.slice(cursorAfter)
-      })
-    }
-    setTimeout(() => taRef.current?.focus(), 0)
-  }, [])
-
-  const mentionHook = useMention(mentionableItems || [], {
-    onSelect: handleMentionSelect,
-    maxResults: 6,
-  })
-  const mediaRecorderRef = useRef(null)
-  const chunksRef = useRef([])
-  const timerRef = useRef(null)
-
-  const set = useAppStore.setState
-
-  // Emoji picker outside-click
-  useEffect(() => {
-    if (!showEmoji) return
-    const handler = (e) => {
-      if (!e.target.closest('.emoji-picker') && !e.target.closest('[data-emoji-btn]')) {
-        setShowEmoji(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [showEmoji])
-
-  const handleSubmit = () => {
-    if (!text.trim() || disabled) return
-    onSend(text)
-    setText('')
-    setTimeout(() => {
-      resizeChat()
-      taRef.current?.focus()
-    }, 0)
-  }
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSubmit()
-    }
-  }
-
-  // ---- Recording ----
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' })
-      mediaRecorderRef.current = mr
-      chunksRef.current = []
-
-      mr.ondataavailable = (e) => chunksRef.current.push(e.data)
-      mr.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop())
-        if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-        const dur = useAppStore.getState().recordingDuration
-        set({ isRecording: false, recordingDuration: 0 })
-        if (dur < 1) return // too short, cancel
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
-        const asrText = await sendVoiceMessage(blob)
-        if (asrText && taRef.current) {
-          setText(asrText)
-          setTimeout(() => {
-            if (taRef.current) {
-              taRef.current.style.height = 'auto'
-              taRef.current.style.height = Math.min(taRef.current.scrollHeight, 120) + 'px'
-            }
-          }, 0)
-        }
-      }
-
-      mr.start()
-      set({ isRecording: true, recordingDuration: 0 })
-      timerRef.current = setInterval(() => {
-        set((s) => ({ recordingDuration: s.recordingDuration + 1 }))
-      }, 1000)
-    } catch {
-      // Permission denied or no mic
-    }
-  }
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === 'recording') {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-      mediaRecorderRef.current.stop()
-    }
-  }
-
-  // Recording cancel
-  const cancelRecording = useCallback(() => {
-    const mr = mediaRecorderRef.current
-    if (mr && mr.state !== 'inactive') {
-      mr.ondataavailable = null
-      mr.onstop = null
-      mr.stop()
-      mr.stream?.getTracks().forEach((t) => t.stop())
-    }
-    chunksRef.current = []
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
-    set({ isRecording: false, recordingDuration: 0 })
-  }, [set])
-
-  useEffect(() => {
-    if (!isRecording) return
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') cancelRecording()
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isRecording, cancelRecording])
-
-  // Recording UI
-  if (isRecording) {
-    return (
-      <div className="chat-input-bar recording-bar">
-        <span className="recording-dot" />
-        <span className="recording-text">{`录音中 ${recordingDuration}s`}</span>
-        <button type="button" className="recording-cancel-btn" onClick={cancelRecording}>
-          取消
-        </button>
-        <span className="recording-hint">按 Esc 取消</span>
-      </div>
-    )
-  }
-
-  const funasrReady = voiceStatus?.funasr
-
-  return (
-    <ResizableInputArea>
-    <div className="chat-input-bar">
-      {replyTo && (
-        <div className="reply-preview-bar" style={{ margin: 0, position: 'absolute', left: 0, right: 0, bottom: '100%', borderRadius: '6px 6px 0 0' }}>
-          <div className="reply-preview-info">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            <span className="reply-preview-label">回复:</span>
-            <span className="reply-preview-text">{replyTo.preview}</span>
-          </div>
-          <button type="button" className="reply-preview-close" onClick={onCancelReply}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-      )}
-      {funasrReady ? (
-        <button
-          type="button"
-          className="record-btn"
-          onMouseDown={startRecording}
-          onMouseUp={stopRecording}
-          onMouseLeave={stopRecording}
-          onTouchStart={startRecording}
-          onTouchEnd={stopRecording}
-          title="按住录音"
-        >
-          <Mic size={16} />
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="chat-input-voice-btn"
-          title="需要配置语音识别服务"
-          disabled
-        >
-          {'\u{1F399}'}
-        </button>
-      )}
-
-      <button type="button" data-emoji-btn className="record-btn" title="表情"
-        onClick={() => setShowEmoji(!showEmoji)}
-        style={{ fontSize: 18, lineHeight: 1 }}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
-      </button>
-
-      <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
-        {showEmoji && <EmojiPicker textareaRef={taRef} controlled={true} onEmojiSelect={(emoji) => {
-          const ta = taRef.current
-          const start = ta?.selectionStart ?? text.length
-          const newText = text.slice(0, start) + emoji + text.slice(ta?.selectionEnd ?? start)
-          setText(newText)
-          setShowEmoji(false)
-          requestAnimationFrame(() => {
-            if (ta) {
-              ta.focus()
-              ta.selectionStart = ta.selectionEnd = start + emoji.length
-              resizeChat()
-            }
-          })
-        }} />}
-        <div style={{ overflow: 'hidden', borderRadius: 'inherit' }}>
-        <textarea
-          ref={taRef}
-          className="chat-textarea"
-          rows={1}
-          placeholder={disabled ? '等待回复中…' : '输入消息…'}
-          value={text}
-          onChange={(e) => {
-            const val = e.target.value
-            setText(val)
-            mentionHook.handleMentionInput(val, e.target.selectionStart, e.target)
-            resizeChat()
-          }}
-          onKeyDown={(e) => {
-            if (mentionHook.handleMentionKeyDown(e)) return
-            handleKeyDown(e)
-          }}
-          disabled={disabled}
-        />
-        </div>
-        <MentionDropdown
-          show={mentionHook.mentionActive}
-          items={mentionHook.mentionItems}
-          selectedIndex={mentionHook.selectedIndex}
-          onSelect={(item) => handleMentionSelect(item, mentionHook.mentionAtPos)}
-          position={mentionHook.mentionPosition}
-        />
-      </div>
-
-      <button
-        type="button"
-        className="chat-send-btn"
-        disabled={disabled || !text.trim()}
-        onClick={handleSubmit}
-      >
-        发送
-      </button>
-    </div>
-    </ResizableInputArea>
-  )
-}
 
 
