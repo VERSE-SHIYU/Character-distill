@@ -12,7 +12,10 @@ export default function ResizableInputArea({ children }) {
   const onMouseDown = useCallback((e) => {
     const el = containerRef.current
     if (!el) return
-    dragRef.current = { active: true, startY: e.clientY, startH: el.offsetHeight }
+    // 基准取 textarea 当前实际高度，而非容器高度（容器含 handle+padding，会错位）
+    const ta = el.querySelector('textarea')
+    const startH = ta ? ta.offsetHeight : el.offsetHeight
+    dragRef.current = { active: true, startY: e.clientY, startH }
     document.body.style.userSelect = 'none'
     document.body.style.cursor = 'ns-resize'
     e.preventDefault()
@@ -22,7 +25,9 @@ export default function ResizableInputArea({ children }) {
     const onMove = (e) => {
       const d = dragRef.current
       if (!d.active) return
-      setManualH(Math.max(MIN_H, Math.min(HARD_MAX, d.startH + (d.startY - e.clientY))))
+      // 向上拖（startY - clientY 为正）增高
+      const next = Math.max(MIN_H, Math.min(HARD_MAX, d.startH + (d.startY - e.clientY)))
+      setManualH(next)
     }
     const onUp = () => {
       if (!dragRef.current.active) return
@@ -40,10 +45,7 @@ export default function ResizableInputArea({ children }) {
 
   return (
     <InputHeightContext.Provider value={manualH}>
-      <div
-        ref={containerRef}
-        className="resize-input-area"
-      >
+      <div ref={containerRef} className="resize-input-area">
         <div className="resize-handle" onMouseDown={onMouseDown} />
         {children}
       </div>

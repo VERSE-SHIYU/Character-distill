@@ -14,12 +14,18 @@ export function useAutoResizeTextarea(externalRef) {
     ta.style.height = 'auto'
     ta.style.overflowY = 'hidden'
     const scrollH = ta.scrollHeight
-    const target = Math.min(Math.max(scrollH, manualH ?? 0), HARD_MAX)
-    if (scrollH > AUTO_MAX && !manualH) {
+    if (manualH) {
+      // 手动拖拽优先：高度严格等于 manualH，内容超出则内部滚动
+      const h = Math.max(MIN_H, Math.min(manualH, HARD_MAX))
+      ta.style.height = h + 'px'
+      if (scrollH > h) ta.style.overflowY = 'auto'
+    } else if (scrollH > AUTO_MAX) {
+      // 无手动高、内容超自动上限：停在 AUTO_MAX 并滚动
       ta.style.height = AUTO_MAX + 'px'
       ta.style.overflowY = 'auto'
     } else {
-      ta.style.height = Math.max(target, MIN_H) + 'px'
+      // 无手动高、内容未超限：随内容
+      ta.style.height = Math.max(scrollH, MIN_H) + 'px'
     }
   }, [textareaRef, manualH])
 
