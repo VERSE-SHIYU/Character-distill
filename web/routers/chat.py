@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import traceback
 from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -395,8 +396,10 @@ async def _do_chat_stream(
 
         except Exception as exc:
             print(f"[chat] Chat stream failed: {exc}")
-            # Roll back DB: delete the user message already saved before stream started
-            if user_msg_id is not None:
+            print(f"[chat] Traceback:\n{traceback.format_exc()}")
+            # Only roll back when NOTHING was produced — if any token streamed out,
+            # the user already saw partial content; keep their message + partial reply.
+            if user_msg_id is not None and not tokens:
                 try:
                     await storage.delete_messages_after(session_id, user_msg_id)
                 except Exception as rollback_exc:
