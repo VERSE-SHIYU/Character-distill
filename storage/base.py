@@ -52,7 +52,7 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def list_sessions(
-        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = ""
+        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:
         """List sessions with filters and pagination."""
 

@@ -436,5 +436,5 @@ def serve_spa(path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    print("Server starting: http://localhost:7861")
-    uvicorn.run(app, host="0.0.0.0", port=7861)
+    print("Server starting: http://localhost:7860")
+    uvicorn.run(app, host="0.0.0.0", port=7860)

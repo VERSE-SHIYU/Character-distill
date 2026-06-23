@@ -1538,7 +1538,7 @@ class SQLiteStore(StorageBase):
             raise
 
     async def list_sessions(
-        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = ""
+        self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)
@@ -1556,6 +1556,9 @@ class SQLiteStore(StorageBase):
         if text_id:
             where_clauses.append("c.text_id = ?")
             params.append(text_id)
+        if card_id:
+            where_clauses.append("s.card_id = ?")
+            params.append(card_id)
         if keyword:
             where_clauses.append(
                 """
@@ -1593,6 +1596,11 @@ class SQLiteStore(StorageBase):
                         s.avatar_data,
                         s.created_at,
                         s.updated_at,
+                        s.affinity,
+                        s.trust,
+                        s.mood,
+                        s.guard,
+                        s.affinity_reason,
                         c.text_id,
                         c.name AS character_name,
                         (

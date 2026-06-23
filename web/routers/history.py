@@ -32,6 +32,7 @@ async def list_sessions(
     keyword: str = Query("", description="Search keyword in messages"),
     character: str = Query("", description="Filter by character name"),
     text_id: str = Query("", description="Filter by text_id"),
+    card_id: str = Query("", description="Filter by card_id"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     storage: StorageBase = Depends(get_storage),
@@ -39,7 +40,7 @@ async def list_sessions(
     """Paginated session list with optional keyword and character filters."""
     user_id = user["id"]
     try:
-        return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id)
+        return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id, card_id)
     except Exception as exc:
         print(f"[history] List sessions failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc

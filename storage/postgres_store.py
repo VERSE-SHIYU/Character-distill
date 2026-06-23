@@ -873,7 +873,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get session failed: {exc}")
             raise
 
-    async def list_sessions(self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "") -> dict:
+    async def list_sessions(self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = "") -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)
         safe_page_size = max(page_size, 1)
@@ -889,6 +889,9 @@ class PostgresStore(StorageBase):
         if text_id:
             where_clauses.append(f"c.text_id = ${len(params) + 1}")
             params.append(text_id)
+        if card_id:
+            where_clauses.append(f"s.card_id = ${len(params) + 1}")
+            params.append(card_id)
         if keyword:
             where_clauses.append(
                 f"""
@@ -923,6 +926,11 @@ class PostgresStore(StorageBase):
                         s.avatar_data,
                         s.created_at,
                         s.updated_at,
+                        s.affinity,
+                        s.trust,
+                        s.mood,
+                        s.guard,
+                        s.affinity_reason,
                         c.text_id,
                         c.name AS character_name,
                         (
