@@ -205,6 +205,16 @@ class StorageBase(ABC):
         """Get affinity scores for a session."""
 
     @abstractmethod
+    async def update_group_affinity(
+        self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
+    ) -> None:
+        """Upsert affinity scores for a (group, card) pair."""
+
+    @abstractmethod
+    async def get_group_affinity(self, group_id: str, card_id: str) -> dict | None:
+        """Get affinity scores for a (group, card) pair."""
+
+    @abstractmethod
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
 

@@ -664,6 +664,15 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] User consent migration failed: {exc}")
 
+                    # Run 066_group_affinity migration (CREATE TABLE IF NOT EXISTS — idempotent)
+                    ga_path = migrations_dir / "066_group_affinity.sql"
+                    if ga_path.exists():
+                        try:
+                            await conn.executescript(ga_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Group affinity migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3293,6 +3302,41 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get session affinity failed: {exc}")
+            return None
+
+    async def update_group_affinity(
+        self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
+    ) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO group_affinity (group_id, card_id, affinity, trust, mood, guard, affinity_reason)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(group_id, card_id) DO UPDATE SET
+                           affinity = excluded.affinity,
+                           trust = excluded.trust,
+                           mood = excluded.mood,
+                           guard = excluded.guard,
+                           affinity_reason = excluded.affinity_reason""",
+                    (group_id, card_id, affinity, trust, mood, guard, reason),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update group affinity failed: {exc}")
+
+    async def get_group_affinity(self, group_id: str, card_id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT affinity, trust, mood, guard, affinity_reason AS reason
+                       FROM group_affinity
+                       WHERE group_id = ? AND card_id = ?""",
+                    (group_id, card_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get group affinity failed: {exc}")
             return None
 
     # ── Comments ──

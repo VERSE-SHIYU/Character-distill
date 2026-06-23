@@ -2454,6 +2454,39 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get session affinity failed: {exc}")
             return None
 
+    async def update_group_affinity(
+        self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
+    ) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO group_affinity (group_id, card_id, affinity, trust, mood, guard, affinity_reason)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)
+                       ON CONFLICT (group_id, card_id) DO UPDATE SET
+                           affinity = EXCLUDED.affinity,
+                           trust = EXCLUDED.trust,
+                           mood = EXCLUDED.mood,
+                           guard = EXCLUDED.guard,
+                           affinity_reason = EXCLUDED.affinity_reason""",
+                    group_id, card_id, affinity, trust, mood, guard, reason,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update group affinity failed: {exc}")
+
+    async def get_group_affinity(self, group_id: str, card_id: str) -> dict | None:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    """SELECT affinity, trust, mood, guard, affinity_reason AS reason
+                       FROM group_affinity
+                       WHERE group_id = $1 AND card_id = $2""",
+                    group_id, card_id,
+                )
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[PostgresStore] Get group affinity failed: {exc}")
+            return None
+
     # ── Comments ──
 
     async def get_comments(self, card_id: str) -> list[dict]:
