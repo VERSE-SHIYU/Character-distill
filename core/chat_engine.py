@@ -59,6 +59,7 @@ class ChatEngine:
         self._storage = None
         self._user_id: str = ""
         self._session_id: str = ""
+        self._group_id: str = ""       # 群聊上下文：群 ID（空串=单聊或无上下文）
         self.history: list[dict[str, Any]] = []
         # 四维好感度
         self._affinity: int = 50
@@ -510,7 +511,7 @@ class ChatEngine:
             self._last_importance = 5
             return
 
-        print(f"[Affinity] ENTER session={self._session_id} card={getattr(self.card,'name','?')} "
+        print(f"[Affinity] ENTER session={self._session_id} group={self._group_id} card={getattr(self.card,'name','?')} "
               f"current: aff={self._affinity} trust={self._trust} mood={self._mood} guard={self._guard}")
 
         # ── 拉取本 session 未消化的点赞，转为 affinity 信号 ──
@@ -658,7 +659,27 @@ class ChatEngine:
                 self._affinity_reason = json.dumps(extended, ensure_ascii=False)
                 print(f"[Affinity] UPDATED in-memory: aff={self._affinity} trust={self._trust} "
                       f"mood={self._mood} guard={self._guard}")
-                if storage and session_id:
+                if storage and self._group_id:
+                    # 群聊：写 group_affinity 表，key=(group_id, card_id)
+                    try:
+                        _loop = getattr(self, '_main_loop', None)
+                        if _loop is not None:
+                            asyncio.run_coroutine_threadsafe(
+                                storage.update_group_affinity(
+                                    self._group_id, self._card_id, self._affinity, self._trust,
+                                    self._mood, self._guard, self._affinity_reason,
+                                ),
+                                _loop,
+                            ).result(timeout=15)
+                        else:
+                            asyncio.run(storage.update_group_affinity(
+                                self._group_id, self._card_id, self._affinity, self._trust,
+                                self._mood, self._guard, self._affinity_reason,
+                            ))
+                    except Exception as db_exc:
+                        print(f"[ChatEngine] Affinity DB save failed (group={self._group_id} card={self._card_id}): {db_exc}")
+                elif storage and session_id:
+                    # 单聊：写 sessions 表（原逻辑不变）
                     try:
                         _loop = getattr(self, '_main_loop', None)
                         if _loop is not None:

@@ -146,6 +146,7 @@ async def _rebuild_group_session(
         user_persona_card_id=persona_card_id,
         user_persona_name=persona_name,
         user_persona_desc=session.get("user_persona_desc", ""),
+        storage=storage,
     )
     _group_sessions[group_id] = group
 
@@ -327,6 +328,7 @@ async def create_group(
         user_persona_card_id=persona_card_id,
         user_persona_name=persona_name.strip() if persona_name else "",
         user_persona_desc=persona_desc.strip(),
+        storage=storage,
     )
     _group_sessions[group_id] = group
 

@@ -24,9 +24,11 @@ class GroupSession:
         user_persona_card_id: str = "",
         user_persona_name: str = "",
         user_persona_desc: str = "",
+        storage = None,
     ) -> None:
         self.id = id
         self.engines = engines  # card_id → ChatEngine
+        self._storage = storage
         self.group_history: list[dict[str, Any]] = []
         self.lock = asyncio.Lock()
         self.user_persona_type = user_persona_type
@@ -110,6 +112,18 @@ class GroupSession:
 
         speaker = self.speaker_name
 
+        # 设置主线程事件循环引用，供 _evaluate_affinity 写 DB 时使用
+        engine._main_loop = asyncio.get_running_loop()
+
+        # 恢复群聊好感
+        if self._storage:
+            try:
+                prev = await self._storage.get_group_affinity(self.id, target_card_id)
+                if prev:
+                    engine.load_affinity(prev)
+            except Exception as exc:
+                print(f"[GroupSession] Load group affinity failed (card={target_card_id}): {exc}")
+
         # 记录用户消息到群聊历史
         self.group_history.append({
             "speaker": speaker,
@@ -141,6 +155,17 @@ class GroupSession:
             "speaker_card_id": target_card_id,
         })
 
+        # ── 后台评估好感 ──
+        if self._storage and self.id:
+            engine._storage = self._storage
+            engine._group_id = self.id
+            try:
+                asyncio.create_task(
+                    asyncio.to_thread(engine._evaluate_affinity, message, response)
+                )
+            except Exception as exc:
+                print(f"[GroupSession] Schedule affinity eval failed (card={target_card_id}): {exc}")
+
         return response
 
     async def broadcast(
@@ -159,6 +184,26 @@ class GroupSession:
                 "content": message,
                 "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
             })
+
+        # ── 设置主线程事件循环引用 + 恢复群聊好感（从 group_affinity 表） ──
+        _main_loop = asyncio.get_running_loop()
+        if self._storage:
+            for cid in target_card_ids:
+                eng = self.engines.get(cid)
+                if not eng:
+                    continue
+                eng._main_loop = _main_loop
+                try:
+                    prev = await self._storage.get_group_affinity(self.id, cid)
+                    if prev:
+                        eng.load_affinity(prev)
+                except Exception as exc:
+                    print(f"[GroupSession] Load group affinity failed (card={cid}): {exc}")
+        else:
+            for cid in target_card_ids:
+                eng = self.engines.get(cid)
+                if eng:
+                    eng._main_loop = _main_loop
 
         async def _reply(card_id: str) -> dict:
             engine = self.engines.get(card_id)
@@ -247,6 +292,18 @@ class GroupSession:
                 "content": response,
                 "speaker_card_id": card_id,
             })
+
+            # ── 后台评估好感（不阻塞 broadcast 返回） ──
+            if not auto_mode and self._storage and self.id:
+                engine._storage = self._storage
+                engine._group_id = self.id
+                try:
+                    asyncio.create_task(
+                        asyncio.to_thread(engine._evaluate_affinity, message, response)
+                    )
+                except Exception as exc:
+                    print(f"[GroupSession] Schedule affinity eval failed (card={card_id}): {exc}")
+
             return {"card_id": card_id, "reply": response, "speaker": engine.card.name}
 
         return await asyncio.gather(*[_reply(cid) for cid in target_card_ids])
