@@ -6267,6 +6267,10 @@ select.settings-input {
 .modal-card {
   width: 420px;
   max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 28px 28px 24px;
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(24px) saturate(180%);
@@ -6288,6 +6292,15 @@ select.settings-input {
   color: var(--charcoal);
   margin-bottom: 6px;
   letter-spacing: -0.02em;
+  flex-shrink: 0;
+}
+
+.modal-body {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0 -28px;
+  padding: 0 28px;
 }
 
 .modal-file-hint {
@@ -6574,6 +6587,7 @@ select.settings-input {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 4px;
+  flex-shrink: 0;
 }
 
 .modal-cancel-btn {

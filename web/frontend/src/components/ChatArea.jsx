@@ -1066,6 +1066,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
             {reactions.map((r, ri) => (
               <button key={ri} type="button"
                 className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                title={[...new Set(r.users || [])].map(uid => uid === authUser?.id ? '你' : uid?.startsWith?.('char:') ? uid.slice(5) : '其他用户').join('、')}
                 onClick={() => onReact?.(r.emoji)}>
                 {r.emoji} {r.count}
               </button>

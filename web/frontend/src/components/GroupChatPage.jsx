@@ -636,6 +636,15 @@ export default function GroupChatPage() {
     return resolveCard(cardId)?.name || '?'
   }
 
+  function reactionUsersLabel(users) {
+    if (!users || users.length === 0) return ''
+    return [...new Set(users)].map(uid => {
+      if (uid === authUser?.id) return '你'
+      if (uid?.startsWith?.('char:')) return resolveCard(uid.slice(5))?.name || '角色' // 未来角色点赞
+      return '其他用户'
+    }).join('、')
+  }
+
   // Load card avatars from cardCache whenever cache is populated
   useEffect(() => {
     const ids = new Set()
@@ -1027,6 +1036,7 @@ export default function GroupChatPage() {
                                     {reactions.map((r, ri) => (
                                       <button key={ri} type="button"
                                         className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                                        title={reactionUsersLabel(r.users)}
                                         onClick={() => reactToMessage(m.id, r.emoji)}>
                                         {r.emoji} {r.count}
                                       </button>
@@ -1108,6 +1118,7 @@ export default function GroupChatPage() {
                                       {reactions.map((r, ri) => (
                                         <button key={ri} type="button"
                                           className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                                          title={reactionUsersLabel(r.users)}
                                           onClick={() => reactToMessage(m.id, r.emoji)}>
                                           {r.emoji} {r.count}
                                         </button>
