@@ -7232,6 +7232,9 @@ select.settings-input {
 .login-card {
   width: 100%;
   max-width: 380px;
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: var(--card-radius);
