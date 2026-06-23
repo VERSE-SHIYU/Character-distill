@@ -422,16 +422,19 @@ class ChatEngine:
     def load_affinity(self, data: dict[str, Any]) -> None:
         if not data:
             return
-        # If DB still holds the hardcoded defaults, this session was never
-        # evaluated — recompute from the current card's relationship settings
-        # in case the card has been updated (e.g. "stranger" → "friend").
-        is_default = (
-            data.get("affinity") == 50
-            and data.get("trust") == 30
-            and data.get("mood") == "平静"
-            and data.get("guard") == 70
-        )
-        if is_default and self.card and self.user_role:
+        # If the affinity_reason is NOT a JSON with inner_voice, this session
+        # was never evaluated — recompute from the current card's relationship
+        # settings in case the card has been updated (e.g. "stranger" → "friend").
+        # A real evaluation always writes inner_voice into the JSON reason.
+        _raw_reason = data.get("reason", "") or ""
+        _evaluated = False
+        try:
+            _p = json.loads(_raw_reason)
+            if isinstance(_p, dict) and _p.get("inner_voice"):
+                _evaluated = True
+        except (json.JSONDecodeError, TypeError):
+            _evaluated = False
+        if (not _evaluated) and self.card and self.user_role:
             try:
                 init = self._compute_initial_affinity(self.card, self.user_role)
                 self._affinity = max(0, min(100, init.get("affinity", 50)))
