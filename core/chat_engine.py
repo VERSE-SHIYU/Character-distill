@@ -542,6 +542,40 @@ class ChatEngine:
         old_stage = self._stage
         _values = getattr(self.card, 'values', []) or []
         _tensions = getattr(self.card, 'inner_tensions', []) or []
+        psyche = self.card.psyche
+
+        # ── 个性化基线规则 vs 通用回退 ──
+        has_custom_psyche = (
+            psyche.affinity_baseline != 50
+            or psyche.volatility != "适中"
+            or psyche.grudge_inertia != "一般"
+            or bool(psyche.triggers)
+            or bool(psyche.soft_spots)
+        )
+        if has_custom_psyche:
+            baseline_rules = (
+                f"情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
+                f"- 你的关系基线大约在 {psyche.affinity_baseline}（满分100）——当前好感围绕这条基线波动，不会无限攀升，也很难长期大幅低于它；连续多轮真心相待，基线才会慢慢台阶式上移\n"
+                f"- 你的情绪波动幅度是【{psyche.volatility}】的（剧烈=容易大起大落，平稳=情感很稳不会轻易起伏）\n"
+                f"- 你消化负面情绪的方式是【{psyche.grudge_inertia}】（记仇=好感掉了很难回升，大度=很快回到基线不记仇）\n"
+            )
+            if psyche.triggers:
+                baseline_rules += f"- 以下是你的雷点，被触碰会明显掉好感/防御飙升：{', '.join(psyche.triggers)}\n"
+            if psyche.soft_spots:
+                baseline_rules += f"- 以下是你的软肋，被戳中会让你心软、好感回升更快：{', '.join(psyche.soft_spots)}\n"
+            baseline_rules += (
+                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
+                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
+            )
+        else:
+            baseline_rules = (
+                "情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
+                "- 你心里有一条\"关系基线\"，代表你对 ta 长期、稳定的态度，不等于此刻的一时情绪\n"
+                "- 当前好感是围绕这条基线的波动：开心时高于基线，闹别扭时低于基线\n"
+                "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
+                "- 连续多轮真心相待，会让基线本身慢慢上移（关系真正变深），而不是因为一次拌嘴就退回原点\n"
+                "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
+            )
 
         prompt = (
             f"你现在就是{self.card.name}本人。\n"
@@ -565,13 +599,8 @@ class ChatEngine:
             "- 防御值下降速度 = 信任上升速度的0.6倍（信任建立慢，防御松懈更慢）\n"
             "- 情绪有惯性：愤怒→道歉→不是立刻开心，而是'不甘+犹豫'的过渡态\n"
             "- 连续3轮正面互动才能触发阶段性好感跃升\n\n"
-            "情绪基线规则（依据Kuppens情感动力学—情感围绕个性化基线波动）：\n"
-            "- 你心里有一条\"关系基线\"，代表你对 ta 长期、稳定的态度，不等于此刻的一时情绪\n"
-            "- 当前好感是围绕这条基线的波动：开心时高于基线，闹别扭时低于基线\n"
-            "- 好感很难长时间大幅低于基线——除非对方严重背叛或伤害你，普通拌嘴过后会自然回到基线附近\n"
-            "- 连续多轮真心相待，会让基线本身慢慢上移（关系真正变深），而不是因为一次拌嘴就退回原点\n"
-            "- 基线上移要慢、要台阶式；一旦上移，不会因小摩擦轻易回落\n\n"
-            "重要性评分规则（用于判断对话记忆的营养程度）：\n"
+            + baseline_rules
+            + "重要性评分规则（用于判断对话记忆的营养程度）：\n"
             "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
             "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
             "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
