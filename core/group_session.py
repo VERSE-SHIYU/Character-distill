@@ -63,7 +63,9 @@ class GroupSession:
             desc = self.user_persona_desc or "一个新加入的人"
             return (
                 f"\n\n[重要] 当前与你对话的是「{name}」，{desc}。"
-                f"这是你此前不认识的新人物，请以初次接触的态度回应，不要把ta当成你认识的其他角色。"
+                f"请根据你与{name}在本次对话中已建立的关系来回应——"
+                f"若是第一次见面就以初识态度，若已经聊过则自然延续你们的熟悉程度，不要每次都当陌生人重新打量。"
+                f"不要把ta当成你认识的其他既有角色。"
             )
         return "\n\n[当前与你对话的是导演/旁白者]"
 
@@ -85,7 +87,11 @@ class GroupSession:
                 name = msg.get("speaker", "未知")
                 messages.append({"role": "user", "content": f"[{name}说:] {content}"})
             else:
-                messages.append({"role": "user", "content": content})
+                sp = msg.get("speaker", "")
+                if sp and self.user_persona_type == "stranger" and sp == self.user_persona_name:
+                    messages.append({"role": "user", "content": f"[{sp}说:] {content}"})
+                else:
+                    messages.append({"role": "user", "content": content})
 
         # Token truncation: drop oldest messages until under MAX_HISTORY_TOKENS
         while messages:

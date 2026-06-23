@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { formatChatTime } from '../utils/time'
@@ -19,6 +20,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [hasMore, setHasMore] = useState(true)
   const [isOnline, setIsOnline] = useState(navigator.onLine)
 
+  const listRef = useRef(null)
   const messagesEndRef = useRef(null)
   const autoSendRef = useRef(false)
   const [otherAvatar, setOtherAvatar] = useState(null)
@@ -165,9 +167,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   }, [otherUserId, loadMessages, markRead])
 
   // Auto-scroll to bottom on new messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages.length])
+  const { handleScroll } = useAutoScroll(listRef, messagesEndRef, [messages])
 
   // Network status
   useEffect(() => {
@@ -305,7 +305,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
       )}
 
           {/* Messages */}
-          <div className="private-chat-body">
+          <div className="private-chat-body" ref={listRef} onScroll={handleScroll}>
             {hasMore && (
               <div className="messages-load-more">
                 <button type="button" className="btn-ghost fs-12" onClick={handleLoadMore} disabled={loading}>

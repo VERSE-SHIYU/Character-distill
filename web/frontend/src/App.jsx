@@ -5,6 +5,7 @@ import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
 import DistillTaskBar from './components/DistillTaskBar'
+import ArchiveListModal from './components/ArchiveListModal'
 import Loading from './components/common/Loading'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -246,6 +247,7 @@ export default function App() {
         <MainContent />
       </main>
       <DistillTaskBar />
+      <ArchiveListModal />
     </div>
   )
 }

@@ -806,6 +806,11 @@ const useAppStore = create((set, get) => ({
   // AbortController for in-flight start_session requests
   _chatAbort: null,
 
+  // Archive list modal (multi-save slot selection)
+  archiveModalOpen: false,
+  archiveList: [],
+  pendingCard: null,
+
   selectCard: async (card) => {
     const state = get()
     get().setPreviousView(get().currentView)
@@ -865,6 +870,23 @@ const useAppStore = create((set, get) => ({
     if (state._chatAbort) state._chatAbort.abort()
 
     const data = parseCardJson(card)
+    const cardId = card.id || card.card_id
+
+    // Check for existing archives before entering chat
+    try {
+      const archiveRes = await fetchWithTimeout(`/api/history/list?card_id=${encodeURIComponent(cardId)}&page_size=50`)
+      const archiveData = await archiveRes.json()
+      if (archiveData.total > 0) {
+        set({
+          archiveModalOpen: true,
+          archiveList: archiveData.items,
+          pendingCard: card,
+        })
+        return
+      }
+    } catch (err) {
+      console.warn('[store] Failed to fetch archives, falling through to new session:', err)
+    }
 
     // Optimistic UI: switch to chat view immediately
     const abort = new AbortController()
@@ -880,7 +902,6 @@ const useAppStore = create((set, get) => ({
     let sessionId = card.session_id || null
     try {
       if (!sessionId) {
-        const cardId = card.id || card.card_id
         if (!cardId) {
           set({ error: '缺少角色信息，无法创建会话', sending: false })
           return
@@ -917,6 +938,82 @@ const useAppStore = create((set, get) => ({
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
     })
+  },
+
+  enterArchive: async (session) => {
+    const { pendingCard } = get()
+    if (!pendingCard) return
+    const card = pendingCard
+    const data = parseCardJson(card)
+
+    set({
+      archiveModalOpen: false,
+      archiveList: [],
+      pendingCard: null,
+      currentCard: { ...card, session_id: session.id },
+      sessionId: session.id,
+      currentView: 'chat',
+      sending: false,
+      messages: session.last_message
+        ? [{ role: 'char', content: session.last_message }]
+        : data.first_message
+          ? [{ role: 'char', content: data.first_message }]
+          : [],
+      userAvatar: null,
+      error: null,
+    })
+  },
+
+  createNewArchive: async () => {
+    const { pendingCard } = get()
+    if (!pendingCard) return
+    const card = pendingCard
+    const cardId = card.id || card.card_id
+    const data = parseCardJson(card)
+
+    if (!cardId) {
+      set({ error: '缺少角色信息，无法创建会话', archiveModalOpen: false, pendingCard: null })
+      return
+    }
+
+    set({
+      archiveModalOpen: false,
+      archiveList: [],
+      pendingCard: null,
+      currentCard: card,
+      currentView: 'chat',
+      sending: true,
+      messages: [],
+      userAvatar: null,
+    })
+
+    try {
+      const result = await postJSON('/api/distill/start_session', {
+        text_id: card.text_id || '',
+        card_id: cardId,
+        user_role: get().userRole,
+      })
+      const sessionId = result.session_id
+      if (result.first_message) {
+        data.first_message = result.first_message
+      }
+      const textTitle = card.text_id
+        ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
+        : get().currentTextTitle
+
+      set({
+        currentCard: { ...card, session_id: sessionId },
+        sessionId,
+        sending: false,
+        messages: data.first_message
+          ? [{ role: 'char', content: data.first_message }]
+          : [],
+        currentTextTitle: textTitle || get().currentTextTitle,
+      })
+    } catch (err) {
+      console.error('[store] createNewArchive failed:', err)
+      set({ error: err.message, sending: false })
+    }
   },
 
   sendMessage: async (message) => {

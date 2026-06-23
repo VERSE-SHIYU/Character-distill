@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON } from '../api/client'
 import Avatar from './common/Avatar'
@@ -65,6 +66,7 @@ export default function GroupChatPage() {
   const [historySelectedDate, setHistorySelectedDate] = useState('')
   const [historyDateGroups, setHistoryDateGroups] = useState([])
   const messagesAreaRef = useRef(null)
+  const bottomRef = useRef(null)
   const inputBarRef = useRef(null)
   const [deleteGroupId, setDeleteGroupId] = useState(null)
   const [filterDate, setFilterDate] = useState('')
@@ -146,6 +148,16 @@ export default function GroupChatPage() {
       .filter(Boolean)
       .map((c) => ({ id: c.id, name: c.name || c.id, avatar: cardAvatars[c.id] || cardCache[c.id]?.avatar_data || null }))
   }, [currentGroup?.card_ids, cardCache, allCards, cardAvatars])
+
+  const replyingNames = useMemo(() => {
+    const ids = targetCardIds.length > 0 ? targetCardIds : (currentGroup?.card_ids || [])
+    return ids
+      .filter(id => !(currentGroup?.user_persona_type === 'character' && id === currentGroup?.user_persona_card_id))
+      .map(id => resolveCard(id)?.name)
+      .filter(Boolean)
+  }, [targetCardIds, currentGroup?.card_ids, currentGroup?.user_persona_type, currentGroup?.user_persona_card_id, cardCache])
+
+  const { handleScroll } = useAutoScroll(messagesAreaRef, bottomRef, [messages])
 
   // 将 allCards 同步到 cardCache，作为 API 单卡加载的补充
   useEffect(() => {
@@ -568,6 +580,14 @@ export default function GroupChatPage() {
         ? currentGroup.user_persona_name
         : null
     const speaker = personaSpeaker || userRole || authUser?.username || '我'
+    setMessages(prev => [...prev, {
+      id: `optimistic-${Date.now()}`,
+      role: 'user',
+      speaker,
+      content,
+      created_at: new Date().toISOString(),
+    }])
+    setMessageText('')
     try {
       // Broadcast: one director message, all targets reply in parallel
       const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
@@ -939,7 +959,7 @@ export default function GroupChatPage() {
 
               {/* Messages */}
               <div className="private-chat-body">
-                <div className="group-chat-messages-area" ref={messagesAreaRef}>
+                <div className="group-chat-messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
                   {systemMessage && (
                     <div className="messages-time-divider">{systemMessage}</div>
                   )}
@@ -1103,7 +1123,8 @@ export default function GroupChatPage() {
                       </div>
                     )
                   })}
-                  {sending && <Loading text="加载中…" />}
+                  {sending && <Loading text={replyingNames.length > 0 ? `${replyingNames.join('、')} 正在输入…` : '角色正在输入…'} />}
+                  <div ref={bottomRef} />
                 </div>
               </div>
 

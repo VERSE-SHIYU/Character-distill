@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
@@ -194,7 +195,6 @@ function ChatView() {
   const listRef = useRef(null)
   const bottomRef = useRef(null)
   const cancelStreamRef = useRef(null)
-  const userScrolledUp = useRef(false)
 
   // ---- Avatar ----
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
@@ -341,22 +341,8 @@ function ChatView() {
     [],
   )
 
-  // Smart auto-scroll: only scroll down if user is already near bottom
-  useEffect(() => {
-    const el = listRef.current
-    if (!el) return
-    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    if (!userScrolledUp.current || isNearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [messages])
-
-  const handleScroll = useCallback(() => {
-    const el = listRef.current
-    if (!el) return
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-    userScrolledUp.current = dist > 80
-  }, [])
+  // Smart auto-scroll
+  const { handleScroll } = useAutoScroll(listRef, bottomRef, [messages])
 
   const loadMemories = useCallback(async () => {
     if (!cardId) return
