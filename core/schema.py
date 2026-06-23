@@ -28,6 +28,23 @@ class ChatSession(BaseModel):
     affinity_score: int = 50  # 好感度 0-100，默认 50 中立
 
 
+class PsycheProfile(BaseModel):
+    """心理画像：大五人格 + 情感动力学参数，作为 set-point 基线和角色推理的统一数据源。"""
+    # 大五人格（1-5 离散档，依据 PsyPlay arXiv:2502.03821）
+    openness: int = 3
+    conscientiousness: int = 3
+    extraversion: int = 3
+    agreeableness: int = 3
+    neuroticism: int = 3
+    # 情感动力学（依据 Kuppens 情感动力学 — baseline/variability/inertia）
+    affinity_baseline: int = 50      # 关系基线起点 0-100
+    volatility: str = "适中"          # 波动幅度: 平稳/适中/剧烈
+    grudge_inertia: str = "一般"      # 负面消化速度: 大度/一般/记仇
+    # 推理锚点
+    triggers: list[str] = []         # 雷点：碰了就炸的具体点
+    soft_spots: list[str] = []       # 软肋：戳中会心软的点
+
+
 class CharacterCard(BaseModel):
     """角色卡——蒸馏引擎的唯一输出格式"""
     name: str
@@ -45,3 +62,4 @@ class CharacterCard(BaseModel):
     decision_style: str = ""            # 决策风格：冲动型/谨慎型/情感驱动/逻辑驱动
     character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
+    psyche: PsycheProfile = PsycheProfile()
