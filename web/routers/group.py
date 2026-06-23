@@ -129,10 +129,11 @@ async def _rebuild_group_session(
         )
         engines[card_id] = engine
 
-    if len(engines) < 2:
-        if persona_type == "character":
-            raise HTTPException(400, "该群聊扮演角色后AI角色不足2个，无法进入。请编辑群聊增加角色或取消扮演设置")
-        return None
+    # Verify AI count by persona mode
+    if persona_type == "director" and len(engines) < 2:
+        raise HTTPException(400, "导演模式需要至少2个AI角色")
+    if len(engines) < 1:
+        raise HTTPException(400, "至少需要1个AI角色陪你对话")
 
     # Resolve persona name for character type
     persona_name = session.get("user_persona_name", "")
@@ -226,11 +227,9 @@ async def create_group(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     if not req.card_ids:
-        raise HTTPException(400, "请至少选择两个角色")
-    if len(req.card_ids) < 2:
-        raise HTTPException(400, "群聊至少需要两个角色")
+        raise HTTPException(400, "请至少选择角色")
 
-    # Validate persona
+    # Validate persona (must do before AI count check — mode-dependent)
     persona_type = req.user_persona_type
     persona_card_id = req.user_persona_card_id
     persona_name = req.user_persona_name
@@ -241,6 +240,15 @@ async def create_group(
         raise HTTPException(400, "扮演角色必须在已选角色中")
     if persona_type == "stranger" and not persona_name.strip():
         raise HTTPException(400, "路人身份需要填写名字")
+
+    # AI count check by persona mode
+    ai_card_ids = [cid for cid in req.card_ids if persona_type != "character" or cid != persona_card_id]
+    if persona_type == "director":
+        if len(ai_card_ids) < 2:
+            raise HTTPException(400, "导演模式需要至少2个AI角色")
+    else:
+        if len(ai_card_ids) < 1:
+            raise HTTPException(400, "至少需要1个AI角色陪你对话")
 
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
@@ -300,9 +308,13 @@ async def create_group(
         engines[card_id] = engine
         card_infos.append({"card_id": card_id, "name": card.name})
 
-    # After removing played character, must still have ≥2 AI members
-    if len(engines) < 2:
-        raise HTTPException(400, "扮演角色后群聊至少还需要两个AI角色")
+    # After removing played character, verify AI count by persona mode
+    if persona_type == "director":
+        if len(engines) < 2:
+            raise HTTPException(400, "导演模式需要至少2个AI角色")
+    else:
+        if len(engines) < 1:
+            raise HTTPException(400, "至少需要1个AI角色陪你对话")
 
     if persona_type == "character":
         persona_name = persona_name or played_card_name

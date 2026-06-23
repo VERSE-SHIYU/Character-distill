@@ -358,9 +358,14 @@ export default function GroupChatPage() {
     if (group.user_persona_type === 'character' && group.user_persona_card_id) {
       cardIds = cardIds.filter(id => id !== group.user_persona_card_id)
     }
-    // Upfront check: playing a character can leave too few AI members
-    if (cardIds.length < 2) {
-      setError('该群聊扮演角色后AI角色不足2个，无法进入。请编辑群聊增加角色或取消扮演设置')
+    // AI count check by persona mode
+    const aiCount = cardIds.length
+    if (group.user_persona_type === 'director' && aiCount < 2) {
+      setError('导演模式需要至少2个AI角色')
+      return
+    }
+    if (aiCount < 1) {
+      setError('至少需要1个AI角色陪你对话')
       return
     }
     setCurrentGroup({ ...group, card_ids: cardIds })
@@ -486,6 +491,18 @@ export default function GroupChatPage() {
   async function handleCreate() {
     if (selectedCardIds.length < 2) {
       setError('请至少选择两个角色')
+      return
+    }
+    // AI count check by persona mode
+    const aiCardCount = personaType === 'character' && personaCardId
+      ? selectedCardIds.filter(id => id !== personaCardId).length
+      : selectedCardIds.length
+    if (personaType === 'director' && aiCardCount < 2) {
+      setError('导演模式需要至少2个AI角色')
+      return
+    }
+    if (aiCardCount < 1) {
+      setError('至少需要1个AI角色陪你对话')
       return
     }
     setSending(true)
