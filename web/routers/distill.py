@@ -925,33 +925,6 @@ async def start_session(
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
-    # Load history from the most recent old session so the character remembers
-    # previous conversations. Mem0 provides long-term memory, but short-term
-    # context (the last ~30 messages) must come from engine.history.
-    try:
-        recent = await storage.get_recent_card_session(req.card_id, exclude_id=session_id)
-        if recent:
-            old_messages = await storage.get_messages(recent["id"])
-            engine = sessions[session_id].get("engine")
-            if engine and old_messages:
-                for m in old_messages:
-                    if m["role"] not in ("user", "char"):
-                        continue
-                    role = "assistant" if m["role"] == "char" else m["role"]
-                    eng_role = "user" if role == "user" else "assistant"
-                    engine.history.append({"role": eng_role, "content": m["content"]})
-                print(f"[start_session] Loaded {len(old_messages)} history messages from session {recent['id']}")
-                # Restore affinity from the recent session
-                try:
-                    affinity_data = await storage.get_session_affinity(recent["id"])
-                    if affinity_data:
-                        engine.load_affinity(affinity_data)
-                        print(f"[start_session] Restored affinity from session {recent['id']}")
-                except Exception as aff_exc:
-                    print(f"[start_session] Restore affinity failed (non-fatal): {aff_exc}")
-    except Exception as exc:
-        print(f"[start_session] Load history failed (non-fatal): {exc}")
-
     # ── Generate dynamic opening line ────────────────────────
     generated_opening = ""
     if per_user_llm is not None and card.first_message:
