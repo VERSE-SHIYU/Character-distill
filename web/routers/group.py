@@ -265,6 +265,9 @@ async def create_group(
         try:
             card = CharacterCard.model_validate_json(card_rec["card_json"])
         except Exception as exc:
+            import traceback
+            print(f"[GroupCreate ERROR] card_id={card_id} model_validate_json: {exc}")
+            traceback.print_exc()
             raise HTTPException(500, "操作失败，请稍后重试") from exc
 
         # Track played character name
@@ -283,6 +286,9 @@ async def create_group(
             try:
                 rag.load_existing(f"text_{text_id}")
             except Exception:
+                import traceback
+                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} RAG load_existing failed, falling back to index")
+                traceback.print_exc()
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag
 
@@ -325,10 +331,10 @@ async def create_group(
         "group_id": group_id,
         "name": req.name or "群聊",
         "characters": card_infos,
-        user_persona_type: persona_type,
-        user_persona_card_id: persona_card_id,
-        user_persona_name: persona_name.strip() if persona_name else "",
-        user_persona_desc: persona_desc.strip(),
+        "user_persona_type": persona_type,
+        "user_persona_card_id": persona_card_id,
+        "user_persona_name": persona_name.strip() if persona_name else "",
+        "user_persona_desc": persona_desc.strip(),
     }
 
 
