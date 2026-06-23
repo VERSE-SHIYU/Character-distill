@@ -422,10 +422,10 @@ class ChatEngine:
     def load_affinity(self, data: dict[str, Any]) -> None:
         if not data:
             return
-        # If the affinity_reason is NOT a JSON with inner_voice, this session
-        # was never evaluated — recompute from the current card's relationship
-        # settings in case the card has been updated (e.g. "stranger" → "friend").
-        # A real evaluation always writes inner_voice into the JSON reason.
+        # Determine whether this session was genuinely evaluated before.
+        # Two signals (either is sufficient):
+        #   1. affinity_reason is a JSON with inner_voice (post-fix eval writes this)
+        #   2. numeric values differ from hardcoded defaults (old data with plain-text reason)
         _raw_reason = data.get("reason", "") or ""
         _evaluated = False
         try:
@@ -433,7 +433,17 @@ class ChatEngine:
             if isinstance(_p, dict) and _p.get("inner_voice"):
                 _evaluated = True
         except (json.JSONDecodeError, TypeError):
-            _evaluated = False
+            pass
+        if not _evaluated:
+            # Fallback: non-default values imply a prior evaluation (old data compat)
+            _is_default = (
+                data.get("affinity") == 50
+                and data.get("trust") == 30
+                and data.get("mood") == "平静"
+                and data.get("guard") == 70
+            )
+            if not _is_default:
+                _evaluated = True
         if (not _evaluated) and self.card and self.user_role:
             try:
                 init = self._compute_initial_affinity(self.card, self.user_role)
