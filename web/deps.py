@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -156,6 +157,11 @@ def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[
 def get_sessions() -> dict[str, dict[str, Any]]:
     """Return the in-memory session store."""
     return _sessions
+
+
+def touch_session(session: dict) -> None:
+    """Update the last_active timestamp on a session dict."""
+    session["last_active"] = time.time()
 
 
 def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
