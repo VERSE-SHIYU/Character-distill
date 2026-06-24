@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage, get_text_manager
+from deps import get_sessions, get_storage, get_text_manager, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
@@ -49,6 +49,7 @@ async def _ensure_session(
         # SECURITY: verify session ownership even on memory hit
         if session.get("user_id") and session["user_id"] != user_id:
             raise HTTPException(403, "无权访问此会话")
+        touch_session(session)
         return session
 
     # Server restarted — rebuild from DB
@@ -124,6 +125,7 @@ async def _ensure_session(
     sessions[session_id].setdefault("lock", asyncio.Lock())
 
     print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
+    touch_session(sessions[session_id])
     return sessions[session_id]
 
 
@@ -172,6 +174,7 @@ async def _do_chat(
 ) -> dict[str, Any]:
     """Core chat logic: call engine, dual-write to storage."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
+    touch_session(session)
 
     msg = message.strip()
     if not msg:
@@ -280,6 +283,7 @@ async def _do_chat_stream(
 ):
     """Core streaming chat logic with SSE output."""
     session = await _ensure_session(session_id, storage, sessions, user_id)
+    touch_session(session)
 
     msg = message.strip()
     if not msg:
