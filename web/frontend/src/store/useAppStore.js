@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
 import { parseCardJson } from '../utils/card'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
+import { checkRepeat } from '../utils/repeatGuard'
 
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
@@ -1061,6 +1062,13 @@ const useAppStore = create((set, get) => ({
   sendMessageStream: (message, reply_to_id = null, reply_to_preview = '') => {
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return () => {}
+
+    // ★ 重复消息拦截
+    const { blocked, message: blockMsg } = checkRepeat(message, messages)
+    if (blocked) {
+      set({ error: blockMsg })
+      return () => {}
+    }
 
     const userMsg = { role: 'user', content: message, reply_to_id, reply_to_preview }
     const charMsg = { role: 'char', content: '' }

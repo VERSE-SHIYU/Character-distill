@@ -7,6 +7,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
+import { checkRepeat } from '../utils/repeatGuard'
 import ChatInputBar from './common/ChatInputBar'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
@@ -591,6 +592,13 @@ export default function GroupChatPage() {
     if (!content || !currentGroup) return
     const targets = targetCardIds.length > 0 ? targetCardIds : currentGroup.card_ids
     if (targets.length === 0) return
+
+    // ★ 重复消息拦截
+    const { blocked, message: blockMsg } = checkRepeat(content, messages)
+    if (blocked) {
+      setError(blockMsg)
+      return
+    }
 
     if (autoRunning) stopAutoConversation()
 
