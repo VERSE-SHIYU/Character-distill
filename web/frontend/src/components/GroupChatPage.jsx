@@ -1030,6 +1030,9 @@ export default function GroupChatPage() {
                           return (
                         <div className={`messages-row${isUser ? ' mine' : ' other'}`}>
                           {isUser ? (
+                            currentGroup?.user_persona_type === 'director' ? (
+                              <div className="narration-note">{m.content}</div>
+                            ) : (
                             <>
                               <div className="messages-bubble mine group-msg-bubble">
                                 {personaSpeaker && (
@@ -1077,6 +1080,7 @@ export default function GroupChatPage() {
                               </div>
                               <Avatar name={personaSpeaker || authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
+                          )
                           ) : m.role === 'silent' ? (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' }}>
                               <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
@@ -1185,8 +1189,8 @@ export default function GroupChatPage() {
                 onSend={handleSend}
                 disabled={sending || autoRunning}
                 sending={sending}
-                placeholder="输入消息…（@指定角色）"
-                mentionableItems={mentionableItems}
+                placeholder={currentGroup?.user_persona_type === 'director' ? '描述此刻发生了什么…（例：窗外下起了雨）' : '输入消息…（@指定角色）'}
+                mentionableItems={currentGroup?.user_persona_type === 'director' ? [] : mentionableItems}
                 onMention={(item) => setTargetCardIds((prev) => (prev.includes(item.id) ? prev : [...prev, item.id]))}
                 replyTo={replyTo}
                 onCancelReply={() => setReplyTo(null)}
