@@ -3217,12 +3217,12 @@ class SQLiteStore(StorageBase):
 
     # ---- Usage stats ----
 
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "") -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, action, prompt_tokens, completion_tokens, model),
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated) VALUES (?, ?, ?, ?, ?, ?)",
+                    (user_id, action, prompt_tokens, completion_tokens, model, int(is_estimated)),
                 )
                 await conn.commit()
         except Exception as exc:
