@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 import uuid
 from typing import Any
@@ -544,17 +545,26 @@ async def broadcast_message(
     user_speaker = req.speaker or group.speaker_name
     user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
+    user_msg_id = None
     try:
         if not req.auto_mode:
-            await storage.save_group_message(
+            user_msg_id = await storage.save_group_message(
                 group_id, user_speaker, "user", req.message, user_speaker_card_id,
                 reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
             )
         for r in results:
-            if r["reply"]:
-                await storage.save_group_message(
-                    group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
-                )
+            if not r["reply"]:
+                continue
+            # [REACT:x] → attach reaction to user message instead of saving as message
+            m = re.fullmatch(r'\s*\[REACT:(.+?)\]\s*', r["reply"])
+            if m:
+                if not req.auto_mode and user_msg_id is not None:
+                    await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
+                # auto_mode: discard silently (no user message to attach to)
+                continue
+            await storage.save_group_message(
+                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+            )
     except Exception as exc:
         print(f"[group] Save broadcast messages failed (non-fatal): {exc}")
 

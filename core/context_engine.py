@@ -248,6 +248,8 @@ class ContextEngine:
         anchor_budget = int(self.MAX_HISTORY * 0.2)
         anchors: list[dict[str, Any]] = []
         for m in reversed(history):
+            if m.get("role") == "assistant":
+                continue  # 不把角色自己的回复钉为锚点,避免自我复读强化
             if _detect_emotion(m.get("content", "")) != "平静":
                 anchors.append(m)
                 if len(anchors) >= 2:
