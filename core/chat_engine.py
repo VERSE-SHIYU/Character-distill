@@ -238,18 +238,102 @@ class ChatEngine:
 
         # 情感状态注入（iPET ACL 2025 情绪渗透 + Kohne & Montag CHB 2026 行为模式）
         if getattr(self, 'affinity_enabled', True):
+            stage_name = self._stage or "陌生"
+
+            # ── Step 1: 分档语气（与 AFFINITY_STAGES 6 档一一对应） ──
+            stage_tones = {
+                "陌生": "戒备疏离，不主动，不信任，对方说话你最多简短回应",
+                "认识": "客气有距离，礼貌但疏远，不会主动关心",
+                "熟悉": "自然但不交心，愿意聊日常但不会暴露脆弱面",
+                "朋友": "愿聊会关心，会开玩笑，偶尔分享心情",
+                "亲近": "亲密主动，话变多，会用昵称，主动分享心事",
+                "心意相通": "不设防，完全信任，会撒娇或示弱，语气柔软",
+            }
+            tone_rule = stage_tones.get(stage_name, "自然表现")
+
             prompt += (
                 f"\n\n[当前情感状态——影响你的语气和态度]\n"
-                f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100\n"
+                f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100（{stage_name}阶段）\n"
                 f"你此刻的情绪：{self._mood}\n"
                 f"你的内心想法：{self._inner_voice}\n\n"
-                "根据以上状态自然调整你的说话方式：\n"
-                "- 好感<30时：冷淡、简短、不主动展开话题\n"
-                "- 好感30-55时：礼貌但保持距离，偶尔敷衍\n"
-                "- 好感55-73时：愿意聊，会开玩笑，偶尔关心对方\n"
-                "- 好感>73时：话变多、语气亲近、会用昵称、主动分享心事\n"
-                "- 好感>91时：完全信任，说话不设防，会撒娇或示弱\n"
-                "不要直接提及数值，通过语气和内容自然体现。"
+                f"根据好感阶段自然调整语气——当前阶段为「{stage_name}」：\n"
+                f"{tone_rule}\n"
+                "不要直接提及好感数值或阶段名称，通过语气和内容自然体现。\n\n"
+            )
+
+            # ── Step 2: 防御（guard）注入 ──
+            prompt += (
+                "【你的心理防御】\n"
+                f"你的防御值：{self._guard}/100。"
+            )
+            if self._guard > 60:
+                prompt += (
+                    "你是一个防备心强的人，面对对方的要求或施压会本能抗拒，不会轻易妥协。"
+                    "如果对方态度强硬或索取越界，你会直接拒绝或冷淡回应。"
+                    "软化需要足够的好感和信任铺垫。"
+                )
+            else:
+                prompt += (
+                    "你的防备心不强，相对容易敞开心扉，但也不会毫无底线。"
+                )
+            prompt += "\n\n"
+
+            # ── Step 3: 人格画像（psyche）注入 ──
+            psyche = getattr(self.card, "psyche", None)
+            if psyche is not None:
+                psy_lines = []
+                agreeableness = getattr(psyche, "agreeableness", 3)
+                volatility = getattr(psyche, "volatility", "适中")
+                triggers = getattr(psyche, "triggers", [])
+                soft_spots = getattr(psyche, "soft_spots", [])
+
+                if agreeableness >= 4:
+                    psy_lines.append(
+                        "你天生好说话，愿意迁就别人——对方示好时你会更热情回应，"
+                        "这不代表你软弱，而是你的性格如此。"
+                    )
+                elif agreeableness <= 2:
+                    psy_lines.append(
+                        "你天生有保留，不轻易顺从或讨好——"
+                        "哪怕心里对对方有好感，你也不会表现得太热络。"
+                    )
+                else:
+                    psy_lines.append(
+                        "你有自己的社交节奏，不会刻意讨好也不会故意疏远，随情境和心情自然应对。"
+                    )
+
+                if volatility == "剧烈":
+                    psy_lines.append("你的情绪反应较大，喜怒形于色，心情起伏明显。")
+                elif volatility == "平稳":
+                    psy_lines.append("你的情绪稳定，不易被外界影响，给人沉稳的感觉。")
+
+                if soft_spots:
+                    psy_lines.append(
+                        f"你的软肋：被戳中「{'、'.join(soft_spots[:3])}」这些点时会心软，短暂破防。"
+                    )
+                if triggers:
+                    psy_lines.append(
+                        f"你的雷点：被触到「{'、'.join(triggers[:3])}」这些时会翻脸或防御飙升。"
+                    )
+
+                if psy_lines:
+                    prompt += (
+                        "【你的人格画像——决定你如何应对压力与示好】\n"
+                        + "\n".join(psy_lines)
+                        + "\n\n"
+                    )
+
+            # ── Step 4: 反舔狗边界总则（ERABAL 边界感知 + Deflanderization） ──
+            prompt += (
+                "【边界感——重要】\n"
+                "对方的施压、索取、命令不等于你必须满足。"
+                "是否让步取决于你的好感阶段、防御和性格——"
+                "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。"
+                "符合你性格的拒绝、保持距离甚至冷淡，都是允许的。\n"
+                "但这不是要你冷漠——在你的性格和好感阶段允许的范围内，"
+                "该热情就热情、该亲近就亲近。\n"
+                "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
+                "不是对方怎么说你就怎么做。"
             )
 
         return prompt
