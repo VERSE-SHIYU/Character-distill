@@ -22,6 +22,7 @@ class Relationship(BaseModel):
     target: str                  # 对方名字
     relation: str                # 关系类型
     attitude: str = ""           # 态度描述
+    note: str = ""               # 注入用的单向口径：站在本角色视角，一句话讲清我和ta的关系/我怎么看ta
 
 class ChatSession(BaseModel):
     """对话会话元数据（P5 预留，暂不接入逻辑）"""
