@@ -293,10 +293,18 @@ def _run_distill_task(
                     get_sessions(),
                     get_config().get("llm", {}).get("summary_threshold", 50),
                 )
-                result = await tm.save_distilled_card(text_id, card, user_id)
+                _ek = (api_config or {}).get("embedding_key", "")
+                _er = (api_config or {}).get("embedding_region", "")
+                result = await tm.save_distilled_card(
+                    text_id, card, user_id,
+                    embedding_key=_ek, embedding_region=_er,
+                )
                 # Build scene index for emotion-weighted retrieval
                 try:
-                    rag = tm._get_or_build_rag(text_id, content, [])
+                    rag = tm._get_or_build_rag(
+                        text_id, content, [],
+                        embedding_key=_ek, embedding_region=_er,
+                    )
                     if rag.collection:
                         card_id = result.get("card_id", "")
                         scene_count = SceneIndexer().index_scenes(
@@ -431,16 +439,25 @@ async def distill_by_text_id(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
+    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
+    _api_config = await storage.get_user_api_config(user_id)
+    _ek = (_api_config or {}).get("embedding_key", "")
+    _er = (_api_config or {}).get("embedding_region", "")
+
     content = _get_distill_content(text_rec)
     char_name = await _resolve_character_name(content, req.character_name, distiller)
 
     try:
         result = await text_manager.get_or_distill(
-            req.text_id, char_name, force=req.force, user_id=user_id
+            req.text_id, char_name, force=req.force, user_id=user_id,
+            embedding_key=_ek, embedding_region=_er,
         )
         # Build scene index on first distill (non-cached)
         try:
-            rag = text_manager._get_or_build_rag(req.text_id, content, [])
+            rag = text_manager._get_or_build_rag(
+                req.text_id, content, [],
+                embedding_key=_ek, embedding_region=_er,
+            )
             if rag.collection:
                 card_id = result.get("card_id", "")
                 SceneIndexer().index_scenes(
@@ -598,6 +615,12 @@ async def distill_stream(
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None or distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+
+    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
+    _api_config = await storage.get_user_api_config(user_id)
+    _ek = (_api_config or {}).get("embedding_key", "")
+    _er = (_api_config or {}).get("embedding_region", "")
+
     text_rec = await storage.get_text(req.text_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
@@ -682,7 +705,10 @@ async def distill_stream(
 
         # Persist card + create session (RAG built in _create_session for chat use)
         try:
-            result = await text_manager.save_distilled_card(req.text_id, card, user_id)
+            result = await text_manager.save_distilled_card(
+                req.text_id, card, user_id,
+                embedding_key=_ek, embedding_region=_er,
+            )
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False, default=str)}\n\n"
@@ -1013,6 +1039,12 @@ async def legacy_distill(
     text_manager = get_text_manager(llm=per_user_llm)
     if distiller is None or text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+
+    # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
+    _api_config = await storage.get_user_api_config(user_id)
+    _ek = (_api_config or {}).get("embedding_key", "")
+    _er = (_api_config or {}).get("embedding_region", "")
+
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text cannot be empty")
@@ -1026,7 +1058,10 @@ async def legacy_distill(
     char_name = await _resolve_character_name(text, req.character_name, distiller)
 
     try:
-        return await text_manager.get_or_distill(text_id, char_name, user_id=user_id)
+        return await text_manager.get_or_distill(
+            text_id, char_name, user_id=user_id,
+            embedding_key=_ek, embedding_region=_er,
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:

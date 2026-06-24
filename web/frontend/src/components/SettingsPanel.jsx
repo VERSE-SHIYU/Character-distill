@@ -313,6 +313,7 @@ export default function SettingsPanel() {
               setTestingEmbedding(true)
               setTestResult(null)
               setTestMsg('')
+              let succeeded = false
               try {
                 const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
                 const res = await fetchWithTimeout('/api/auth/test-embedding', {
@@ -322,8 +323,9 @@ export default function SettingsPanel() {
                 })
                 const data = await res.json()
                 if (data.ok) {
+                  succeeded = true
                   setTestResult('ok')
-                  setTestMsg('✓ 连接正常')
+                  setTestMsg('✓ 连接正常 — 请点击上方「保存 RAG 配置」以持久化配置')
                 } else {
                   setTestResult('error')
                   setTestMsg('✗ ' + (data.error || '未知错误'))
@@ -333,7 +335,10 @@ export default function SettingsPanel() {
                 setTestMsg('✗ ' + (err.message || '网络错误'))
               } finally {
                 setTestingEmbedding(false)
-                setTimeout(() => { setTestResult(null); setTestMsg('') }, 5000)
+                // 成功消息不自动清除，提示用户点保存；错误消息5秒后清除
+                if (!succeeded) {
+                  setTimeout(() => { setTestResult(null); setTestMsg('') }, 5000)
+                }
               }
             }}
           >

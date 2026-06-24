@@ -1853,8 +1853,9 @@ class PostgresStore(StorageBase):
                 set_parts.append(f"embedding_key = ${len(params) + 1}")
                 params.append(enc_emb)
 
-            set_parts.append(f"embedding_region = ${len(params) + 1}")
-            params.append(embedding_region)
+            if embedding_region:
+                set_parts.append(f"embedding_region = ${len(params) + 1}")
+                params.append(embedding_region)
 
             if not set_parts:
                 return

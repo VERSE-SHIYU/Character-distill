@@ -89,7 +89,7 @@ class ApiConfigRequest(BaseModel):
     base_url: str = ""
     model: str = ""
     embedding_key: str = ""
-    embedding_region: str = "cn"
+    embedding_region: str = ""
 
 
 class EmbeddingTestRequest(BaseModel):

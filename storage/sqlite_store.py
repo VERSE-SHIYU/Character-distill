@@ -2639,8 +2639,9 @@ class SQLiteStore(StorageBase):
                 set_parts.append("embedding_key = ?")
                 params.append(enc_emb)
 
-            set_parts.append("embedding_region = ?")
-            params.append(embedding_region)
+            if embedding_region:
+                set_parts.append("embedding_region = ?")
+                params.append(embedding_region)
 
             if not set_parts:
                 return

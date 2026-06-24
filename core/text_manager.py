@@ -327,8 +327,13 @@ class TextManager:
 
     async def get_or_distill(
         self, text_id: str, character_name: str, force: bool = False, user_id: str = "",
+        embedding_key: str = "", embedding_region: str = "",
     ) -> dict[str, Any]:
-        """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill."""
+        """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill.
+
+        Pass embedding_key/embedding_region from the user's saved API config
+        so RAGEngine can initialize DashScope embedding.
+        """
         text_rec = await self._storage.get_text(text_id)
         if not text_rec:
             raise ValueError("Text not found")
@@ -402,10 +407,14 @@ class TextManager:
 
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards)
+            rag = self._get_or_build_rag(
+                text_id, content, all_characters,
+                embedding_key=embedding_key, embedding_region=embedding_region,
+            )
             session_id = await asyncio.to_thread(
-                self._create_session, content, card, all_characters,
-                self._get_or_build_rag(text_id, content, all_characters),
+                self._create_session, content, card, all_characters, rag,
                 card_id, user_id,
+                embedding_key=embedding_key, embedding_region=embedding_region,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -425,6 +434,7 @@ class TextManager:
 
     async def save_distilled_card(
         self, text_id: str, card: CharacterCard, user_id: str = "",
+        embedding_key: str = "", embedding_region: str = "",
     ) -> dict[str, Any]:
         """Persist a freshly distilled card and create its chat session."""
         card_id = uuid.uuid4().hex[:12]
@@ -438,14 +448,20 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = await self._build_all_characters(text_id, existing_cards)
 
+        rag = self._get_or_build_rag(
+            text_id, content, all_chars,
+            embedding_key=embedding_key, embedding_region=embedding_region,
+        )
         session_id = await asyncio.to_thread(
-            self._create_session, content, card, all_chars,
-            self._get_or_build_rag(text_id, content, all_chars),
+            self._create_session, content, card, all_chars, rag,
             actual_card_id, user_id,
         )
 
         # 升级 RAG：将 chunk 检索替换为场景检索（异步、非阻塞）
-        rag_engine = self._get_or_build_rag(text_id, content, all_chars)
+        rag_engine = self._get_or_build_rag(
+            text_id, content, all_chars,
+            embedding_key=embedding_key, embedding_region=embedding_region,
+        )
         try:
             n = await asyncio.to_thread(
                 SceneIndexer().index_scenes,
