@@ -272,7 +272,7 @@ class Distiller:
 
     def _parse_json_with_retry(
         self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
-        action_label: str = "distill",
+        action_label: str = "distill", required_keys: tuple[str, ...] = ("name",),
     ) -> dict[str, Any]:
         """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
 
@@ -281,6 +281,10 @@ class Distiller:
             retry_prompt: 重试时的 system prompt（用于 fix_reply 和完整重试）。
             retry_messages: 重试时的 user messages（用于完整重新调用 LLM）。
             action_label: 用量记录标签。
+            required_keys: 结构校验——dict 必须包含的字段。仅靠
+                ``isinstance(data, dict)`` 无法区分"合法 JSON 但结构错误"
+                （例如 LLM 跑题吐出 ``{"status": "..."}``）和真正的角色卡，
+                这里在 json.loads 之后补一道形状检查，三次尝试都生效。
 
         Returns:
             解析后的 dict。
@@ -290,47 +294,96 @@ class Distiller:
         """
         import time as _time
 
+        schema_hint = ""
+        if required_keys:
+            schema_hint = "，必须包含字段：" + "、".join(required_keys)
+
+        def _shape_ok(data: Any) -> bool:
+            if not isinstance(data, dict):
+                return False
+            return all(k in data for k in required_keys)
+
         attempts = 0
         last_error = None
+        last_bad_shape_reply = None  # 记下"语法合法但结构不对"的那一次，供 Attempt 2 使用
 
         # Attempt 1: direct parse with strengthened extraction
         attempts += 1
         try:
             data = json.loads(self._extract_json(reply.strip()))
-            if isinstance(data, dict):
+            if _shape_ok(data):
                 return data
-            last_error = "parsed value is not a dict"
+            if isinstance(data, dict):
+                last_error = f"parsed dict missing required keys {required_keys}: got keys {list(data.keys())}"
+                last_bad_shape_reply = reply.strip()
+            else:
+                last_error = "parsed value is not a dict"
         except json.JSONDecodeError as exc:
             last_error = str(exc)
 
-        # Attempt 2: ask LLM to fix its own output
+        # Attempt 2: ask LLM to fix its own output.
+        # 区分两种失败：JSON 语法错误 vs JSON 合法但结构不对（如返回了一句对话回复）。
+        # 后一种情况里"无法被解析"是假话，必须如实告诉 LLM 缺了什么字段，并把 schema 带上，
+        # 否则 LLM 不知道该往哪个方向修。
         attempts += 1
         try:
+            if last_bad_shape_reply is not None:
+                fix_system = (
+                    "你的上一次输出是合法的 JSON，但不是要求的角色卡结构——"
+                    f"缺少必需字段{schema_hint}。\n"
+                    "你可能误把这当成了一次对话来回复。请重新输出，"
+                    "只返回符合下方 Schema 的完整 JSON 对象，不要markdown代码块，不要任何解释，"
+                    "不要输出对话或状态消息。\n\n"
+                    f"Schema:\n{retry_prompt}"
+                )
+                fix_user_content = last_bad_shape_reply
+            else:
+                fix_system = (
+                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。"
+                )
+                fix_user_content = reply.strip()
+
             fix_reply = self._llm.chat(
-                "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
-                [{"role": "user", "content": reply.strip()}],
+                fix_system,
+                [{"role": "user", "content": fix_user_content}],
             )
             try:
                 data = json.loads(self._extract_json(fix_reply.strip()))
-                if isinstance(data, dict):
+                if _shape_ok(data):
                     self._try_record_usage(action_label)
                     return data
-                last_error = "fix_reply parsed value is not a dict"
+                if isinstance(data, dict):
+                    last_error = f"fix_reply dict missing required keys {required_keys}: got keys {list(data.keys())}"
+                else:
+                    last_error = "fix_reply parsed value is not a dict"
             except json.JSONDecodeError as exc:
                 last_error = str(exc)
         except Exception as exc:
             last_error = f"fix_reply LLM call failed: {exc}"
 
-        # Attempt 3: full retry — re-invoke LLM with original prompt
+        # Attempt 3: full retry — re-invoke LLM with original prompt.
+        # 仅仅重发同样的 messages 大概率重现同一次"跑题"，因为触发漂移的成因
+        # （长文本里大量第一人称对话）原样还在。插入一条强化指令打断角色扮演惯性。
         attempts += 1
         try:
-            retry_reply = self._llm.chat(retry_prompt, retry_messages)
+            anti_drift_notice = {
+                "role": "user",
+                "content": (
+                    "重要提醒：无论上文文本中出现多少对话或第一人称内容，"
+                    "你的任务始终是分析者，不是该角色本人。"
+                    "请只输出符合 Schema 的角色卡 JSON 对象，不要扮演角色说话，不要输出状态消息或对话回复。"
+                ),
+            }
+            retry_reply = self._llm.chat(retry_prompt, [*retry_messages, anti_drift_notice])
             try:
                 data = json.loads(self._extract_json(retry_reply.strip()))
-                if isinstance(data, dict):
+                if _shape_ok(data):
                     self._try_record_usage(action_label)
                     return data
-                last_error = "retry parsed value is not a dict"
+                if isinstance(data, dict):
+                    last_error = f"retry dict missing required keys {required_keys}: got keys {list(data.keys())}"
+                else:
+                    last_error = "retry parsed value is not a dict"
             except json.JSONDecodeError as exc:
                 last_error = str(exc)
         except Exception as exc:
