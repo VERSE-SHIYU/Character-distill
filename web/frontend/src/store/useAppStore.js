@@ -1217,6 +1217,7 @@ const useAppStore = create((set, get) => ({
         content: m.content,
         id: m.id,
         timestamp: m.created_at,
+        retracted: m.retracted || false,
       }))
       set({
         sessionId: session.id || sessionId,

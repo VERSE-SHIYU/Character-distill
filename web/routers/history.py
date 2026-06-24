@@ -263,7 +263,8 @@ async def resume_session(
 
     # 10. Return session detail + messages (same shape as GET)
     frontend_messages = [
-        {"role": m["role"], "content": m["content"], "id": m["id"], "created_at": m["created_at"]}
+        {"role": m["role"], "content": m["content"], "id": m["id"], "created_at": m["created_at"],
+         "retracted": m.get("retracted", False)}
         for m in db_messages
     ]
 

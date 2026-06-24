@@ -200,6 +200,15 @@ async def _do_chat(
         print(f"[chat] Chat failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
+    # Determine retraction before persisting
+    engine = session.get("engine")
+    retracted = False
+    if engine and random.random() < 0.2:
+        try:
+            retracted = await asyncio.to_thread(engine._should_retract, resp)
+        except Exception:
+            retracted = False
+
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
     char_msg_id = None
@@ -207,7 +216,7 @@ async def _do_chat(
         if not hidden:
             user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
             user_msg_id = user_rec["id"]
-        char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500])
+        char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500], retracted=retracted)
         char_msg_id = char_rec["id"]
         ids_to_add = [user_msg_id, char_msg_id]
 
@@ -233,13 +242,6 @@ async def _do_chat(
     except Exception as exc:
         print(f"[chat] Dual-write messages failed (non-fatal): {exc}")
 
-    engine = session.get("engine")
-    retracted = False
-    if engine and random.random() < 0.2:
-        try:
-            retracted = await asyncio.to_thread(engine._should_retract, resp)
-        except Exception:
-            retracted = False
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
@@ -341,8 +343,17 @@ async def _do_chat_stream(
                 print(f"[chat] WARNING: LLM returned empty response (history={len(engine.history) if engine else 0})")
             rag_context = getattr(session["engine"], "_last_rag_context", "") or ""
 
+            # Determine retraction before persisting
+            engine = session.get("engine")
+            retracted = False
+            if engine and random.random() < 0.2:
+                try:
+                    retracted = await asyncio.to_thread(engine._should_retract, full_reply)
+                except Exception:
+                    retracted = False
+
             try:
-                char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500])
+                char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500], retracted=retracted)
                 char_msg_id = char_rec["id"]
             except Exception as exc:
                 print(f"[chat] Save assistant message failed (non-fatal): {exc}")
@@ -351,7 +362,6 @@ async def _do_chat_stream(
             if msg_ids:
                 session.setdefault("message_ids", []).extend(msg_ids)
 
-            engine = session.get("engine")
             if engine and engine.last_summary:
                 existing_summaries = [
                     m for m in await storage.get_messages(session_id)
@@ -367,13 +377,6 @@ async def _do_chat_stream(
                         session.setdefault("message_ids", []).append(sum_rec["id"])
                     except Exception as exc:
                         print(f"[chat] Save summary failed (non-fatal): {exc}")
-
-            retracted = False
-            if engine and random.random() < 0.2:
-                try:
-                    retracted = await asyncio.to_thread(engine._should_retract, full_reply)
-                except Exception:
-                    retracted = False
 
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
