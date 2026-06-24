@@ -270,49 +270,45 @@ def _run_distill_task(
         # Step 4: persist via the main event loop (run_coroutine_threadsafe)
         # so the asyncpg pool stays on its home loop.
         async def _save_card():
-            from storage import get_store
             from deps import get_config, get_rag_config, get_sessions
             from core.text_manager import TextManager
 
-            store = get_store()
-            try:
-                llm_for_save = per_user_llm
-                if llm_for_save is None:
-                    from deps import get_llm
-                    llm_for_save = get_llm()
+            store = get_storage()
+            llm_for_save = per_user_llm
+            if llm_for_save is None:
+                from deps import get_llm
+                llm_for_save = get_llm()
 
-                tm = TextManager(
-                    store,
-                    get_distiller(llm=llm_for_save),
-                    llm_for_save,
-                    get_rag_config(),
-                    get_sessions(),
-                    get_config().get("llm", {}).get("summary_threshold", 50),
-                )
-                _ek = (api_config or {}).get("embedding_key", "")
-                _er = (api_config or {}).get("embedding_region", "")
-                result = await tm.save_distilled_card(
-                    text_id, card, user_id,
+            tm = TextManager(
+                store,
+                get_distiller(llm=llm_for_save),
+                llm_for_save,
+                get_rag_config(),
+                get_sessions(),
+                get_config().get("llm", {}).get("summary_threshold", 50),
+            )
+            _ek = (api_config or {}).get("embedding_key", "")
+            _er = (api_config or {}).get("embedding_region", "")
+            result = await tm.save_distilled_card(
+                text_id, card, user_id,
+                embedding_key=_ek, embedding_region=_er,
+            )
+            # Build scene index for emotion-weighted retrieval
+            try:
+                rag = tm._get_or_build_rag(
+                    text_id, content, [],
                     embedding_key=_ek, embedding_region=_er,
                 )
-                # Build scene index for emotion-weighted retrieval
-                try:
-                    rag = tm._get_or_build_rag(
-                        text_id, content, [],
-                        embedding_key=_ek, embedding_region=_er,
+                if rag.collection:
+                    card_id = result.get("card_id", "")
+                    scene_count = SceneIndexer().index_scenes(
+                        content, rag, card.name,
+                        collection_name=f"scenes_{card_id}",
                     )
-                    if rag.collection:
-                        card_id = result.get("card_id", "")
-                        scene_count = SceneIndexer().index_scenes(
-                            content, rag, card.name,
-                            collection_name=f"scenes_{card_id}",
-                        )
-                        print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
-                except Exception as exc:
-                    print(f"[distill] Scene index failed (non-fatal): {exc}")
-                return result
-            finally:
-                await store.close()
+                    print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
+            except Exception as exc:
+                print(f"[distill] Scene index failed (non-fatal): {exc}")
+            return result
 
         with _task_lock:
             _tasks[task_id].update({
