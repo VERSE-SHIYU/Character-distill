@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -211,20 +212,138 @@ class Distiller:
 
     @staticmethod
     def _extract_json(text: str) -> str:
-        """剥掉 markdown 代码块，提取最外层完整 JSON 对象（嵌套安全）。"""
+        """剥掉 markdown 围栏、前后解释文字、修尾随逗号，提取完整 JSON 对象。
+
+        处理 LLM 常见脏输出：````json` 围栏、JSON 前后的自然语言解释、
+        尾随逗号（trailing comma）、以及嵌套大括号场景。
+        """
         t = text.strip()
-        # 剥 markdown code fence (```json ... ```)
+
+        # 1. 剥 markdown code fence —— 支持 ```json ... ``` 和 ``` ... ```
         if t.startswith("```"):
-            parts = t.split("```", 2)
-            if len(parts) >= 2:
+            # 找到第二个 ``` 作为 fence 结束
+            parts = t.split("```")
+            # parts[0] = "" (opening fence), parts[1] = maybe "json\n...", parts[2..] = rest
+            if len(parts) >= 3:
+                # 取第一个 fence 和第二个 fence 之间的内容
                 t = parts[1]
-            if t.startswith("json"):
-                t = t[4:]
+                if t.startswith("json"):
+                    t = t[4:]
+                t = t.strip()
+            elif len(parts) == 2:
+                # 只有开头 fence 没有结尾 (````... 开头但没有闭合)
+                t = parts[1].strip()
+
+        # 2. 提取从第一个 { 到最后一个 } 的内容（嵌套安全：计数括号）
         start = t.find("{")
         end = t.rfind("}")
         if start != -1 and end > start:
-            return t[start:end + 1]
-        return text
+            candidate = t[start:end + 1]
+            # 验证大括号配对（处理 JSON 内嵌字符串花括号的场景）
+            depth = 0
+            in_string = False
+            escaped = False
+            for ch in candidate:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    continue
+                if ch == '"':
+                    in_string = not in_string
+                elif not in_string:
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+            if depth == 0:
+                t = candidate
+            else:
+                # 括号不成对，回退到简单 rfind
+                t = candidate
+
+        # 3. 去尾随逗号：},] 和 ,] ， ]
+        t = re.sub(r",\s*([}\]])", r"\1", t)
+
+        return t
+
+    # ── JSON parse with retry ─────────────────────────────────────────
+
+    def _parse_json_with_retry(
+        self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
+        action_label: str = "distill",
+    ) -> dict[str, Any]:
+        """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
+
+        Args:
+            reply: LLM 原始返回文本。
+            retry_prompt: 重试时的 system prompt（用于 fix_reply 和完整重试）。
+            retry_messages: 重试时的 user messages（用于完整重新调用 LLM）。
+            action_label: 用量记录标签。
+
+        Returns:
+            解析后的 dict。
+
+        Raises:
+            ValueError: 所有尝试均失败时抛出，附带可读消息和原始输出摘要。
+        """
+        import time as _time
+
+        attempts = 0
+        last_error = None
+
+        # Attempt 1: direct parse with strengthened extraction
+        attempts += 1
+        try:
+            data = json.loads(self._extract_json(reply.strip()))
+            if isinstance(data, dict):
+                return data
+            last_error = "parsed value is not a dict"
+        except json.JSONDecodeError as exc:
+            last_error = str(exc)
+
+        # Attempt 2: ask LLM to fix its own output
+        attempts += 1
+        try:
+            fix_reply = self._llm.chat(
+                "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
+                [{"role": "user", "content": reply.strip()}],
+            )
+            try:
+                data = json.loads(self._extract_json(fix_reply.strip()))
+                if isinstance(data, dict):
+                    self._try_record_usage(action_label)
+                    return data
+                last_error = "fix_reply parsed value is not a dict"
+            except json.JSONDecodeError as exc:
+                last_error = str(exc)
+        except Exception as exc:
+            last_error = f"fix_reply LLM call failed: {exc}"
+
+        # Attempt 3: full retry — re-invoke LLM with original prompt
+        attempts += 1
+        try:
+            retry_reply = self._llm.chat(retry_prompt, retry_messages)
+            try:
+                data = json.loads(self._extract_json(retry_reply.strip()))
+                if isinstance(data, dict):
+                    self._try_record_usage(action_label)
+                    return data
+                last_error = "retry parsed value is not a dict"
+            except json.JSONDecodeError as exc:
+                last_error = str(exc)
+        except Exception as exc:
+            last_error = f"full retry LLM call failed: {exc}"
+
+        # All attempts exhausted — log raw output and raise readable error
+        raw_preview = reply.strip()[:500]
+        print(
+            f"[distiller] {action_label} JSON parse failed after {attempts} attempts.\n"
+            f"  last_error: {last_error}\n"
+            f"  raw_preview (first 500 chars): {raw_preview}"
+        )
+        raise ValueError("蒸馏失败：LLM 输出格式异常，请重试") from None
 
     # ── public entry points (unchanged) ────────────────────────────────
 
@@ -242,7 +361,7 @@ class Distiller:
 
         def _parse_list(raw: str) -> list[dict[str, Any]]:
             try:
-                parsed = json.loads(raw.strip())
+                parsed = json.loads(Distiller._extract_json(raw))
             except json.JSONDecodeError as exc:
                 print(f"解析角色识别 JSON 失败：{exc}")
                 raise
@@ -485,23 +604,10 @@ class Distiller:
             print(f"调用 LLM 进行角色蒸馏失败：{exc}")
             raise
 
-        stripped = reply.strip()
-        data: Any | None = None
-        try:
-            data = json.loads(self._extract_json(stripped))
-        except json.JSONDecodeError:
-            pass
-
-        if data is None:
-            try:
-                fix_reply = self._llm.chat(
-                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
-                    [{"role": "user", "content": stripped}],
-                )
-                data = json.loads(self._extract_json(fix_reply.strip()))
-            except Exception:
-                raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
-
+        data = self._parse_json_with_retry(
+            reply, system_prompt, user_messages,
+            action_label="distill",
+        )
         try:
             return CharacterCard.model_validate(data)
         except ValidationError as exc:
@@ -585,23 +691,10 @@ class Distiller:
 
         self._try_record_usage("distill_longcontext")
 
-        stripped = reply.strip()
-        data: Any | None = None
-        try:
-            data = json.loads(self._extract_json(stripped))
-        except json.JSONDecodeError:
-            pass
-
-        if data is None:
-            try:
-                fix_reply = self._llm.chat(
-                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
-                    [{"role": "user", "content": stripped}],
-                )
-                data = json.loads(self._extract_json(fix_reply.strip()))
-            except Exception:
-                raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
-
+        data = self._parse_json_with_retry(
+            reply, system_prompt, [{"role": "user", "content": user_content}],
+            action_label="distill_longcontext",
+        )
         try:
             return CharacterCard.model_validate(data)
         except ValidationError as exc:
@@ -953,23 +1046,18 @@ class Distiller:
 
         self._try_record_usage("distill_format")
 
-        stripped = reply.strip()
-        data: Any | None = None
-        try:
-            data = json.loads(self._extract_json(stripped))
-        except json.JSONDecodeError:
-            pass
-
-        if data is None:
-            try:
-                fix_reply = self._llm.chat(
-                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。",
-                    [{"role": "user", "content": stripped}],
-                )
-                data = json.loads(self._extract_json(fix_reply.strip()))
-            except Exception:
-                raise ValueError("蒸馏失败：LLM 返回格式不正确") from None
-
+        data = self._parse_json_with_retry(
+            reply, system_prompt,
+            [{"role": "user", "content":
+                f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
+                f"特别注意：\n"
+                f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
+                f"- dialogue_examples 必须是原文对话，不要改写\n"
+                f"- personality_traits 每条必须附带具体场景证据\n\n"
+                f"{profile_draft}"
+            }],
+            action_label="distill_format",
+        )
         try:
             card = CharacterCard.model_validate(data)
         except ValidationError as exc:
