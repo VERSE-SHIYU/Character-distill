@@ -86,8 +86,8 @@ class UserResponse(BaseModel):
 
 class ApiConfigRequest(BaseModel):
     api_key: str = ""
-    base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-v4-pro"
+    base_url: str = ""
+    model: str = ""
     embedding_key: str = ""
     embedding_region: str = "cn"
 

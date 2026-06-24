@@ -289,9 +289,6 @@ export default function SettingsPanel() {
               try {
                 const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
                 await updateApiConfig({
-                  base_url: '',
-                  model: '',
-                  api_key: '',
                   embedding_key: sentKey,
                   embedding_region: embeddingRegion,
                 })

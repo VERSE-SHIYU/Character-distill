@@ -2614,35 +2614,42 @@ class SQLiteStore(StorageBase):
     async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
         """Update a user's API config. api_key and embedding_key are encrypted before storage.
 
-        Only updates keys when a non-empty value is provided, so a blank
-        field in the request does not overwrite an existing encrypted key.
+        Empty fields are never written, so a blank field in the request does not
+        overwrite an existing value (applies to api_key, base_url, model, and embedding_key).
         """
         try:
+            set_parts = []
+            params = []
+
+            if api_key:
+                encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                set_parts.append("api_key = ?")
+                params.append(encrypted)
+
+            if base_url:
+                set_parts.append("base_url = ?")
+                params.append(base_url)
+
+            if model:
+                set_parts.append("model = ?")
+                params.append(model)
+
+            if embedding_key:
+                enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                set_parts.append("embedding_key = ?")
+                params.append(enc_emb)
+
+            set_parts.append("embedding_region = ?")
+            params.append(embedding_region)
+
+            if not set_parts:
+                return
+
+            params.append(user_id)
+            sql = "UPDATE users SET " + ", ".join(set_parts) + " WHERE id = ?"
+
             async with await self._connect() as conn:
-                if api_key:
-                    encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
-                    if embedding_key:
-                        enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                        await conn.execute(
-                            "UPDATE users SET api_key = ?, base_url = ?, model = ?, embedding_key = ?, embedding_region = ? WHERE id = ?",
-                            (encrypted, base_url, model, enc_emb, embedding_region, user_id),
-                        )
-                    else:
-                        await conn.execute(
-                            "UPDATE users SET api_key = ?, base_url = ?, model = ?, embedding_region = ? WHERE id = ?",
-                            (encrypted, base_url, model, embedding_region, user_id),
-                        )
-                elif embedding_key:
-                    enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                    await conn.execute(
-                        "UPDATE users SET base_url = ?, model = ?, embedding_key = ?, embedding_region = ? WHERE id = ?",
-                        (base_url, model, enc_emb, embedding_region, user_id),
-                    )
-                else:
-                    await conn.execute(
-                        "UPDATE users SET base_url = ?, model = ?, embedding_region = ? WHERE id = ?",
-                        (base_url, model, embedding_region, user_id),
-                    )
+                await conn.execute(sql, tuple(params))
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user API config failed: {exc}")

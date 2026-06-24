@@ -1828,35 +1828,42 @@ class PostgresStore(StorageBase):
     async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
         """Update a user's API config. api_key and embedding_key are encrypted before storage.
 
-        Empty keys are not written, so a blank field in the request does not
-        overwrite an existing encrypted key (same logic for both api_key and embedding_key).
+        Empty fields are never written, so a blank field in the request does not
+        overwrite an existing value (applies to api_key, base_url, model, and embedding_key).
         """
         try:
+            set_parts = []
+            params = []
+
+            if api_key:
+                encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                set_parts.append(f"api_key = ${len(params) + 1}")
+                params.append(encrypted)
+
+            if base_url:
+                set_parts.append(f"base_url = ${len(params) + 1}")
+                params.append(base_url)
+
+            if model:
+                set_parts.append(f"model = ${len(params) + 1}")
+                params.append(model)
+
+            if embedding_key:
+                enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                set_parts.append(f"embedding_key = ${len(params) + 1}")
+                params.append(enc_emb)
+
+            set_parts.append(f"embedding_region = ${len(params) + 1}")
+            params.append(embedding_region)
+
+            if not set_parts:
+                return
+
+            params.append(user_id)
+            sql = "UPDATE users SET " + ", ".join(set_parts) + f" WHERE id = ${len(params)}"
+
             async with await self._connect() as conn:
-                if api_key:
-                    encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
-                    if embedding_key:
-                        enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                        await conn.execute(
-                            "UPDATE users SET api_key = $1, base_url = $2, model = $3, embedding_key = $4, embedding_region = $5 WHERE id = $6",
-                            encrypted, base_url, model, enc_emb, embedding_region, user_id,
-                        )
-                    else:
-                        await conn.execute(
-                            "UPDATE users SET api_key = $1, base_url = $2, model = $3, embedding_region = $4 WHERE id = $5",
-                            encrypted, base_url, model, embedding_region, user_id,
-                        )
-                elif embedding_key:
-                    enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                    await conn.execute(
-                        "UPDATE users SET base_url = $1, model = $2, embedding_key = $3, embedding_region = $4 WHERE id = $5",
-                        base_url, model, enc_emb, embedding_region, user_id,
-                    )
-                else:
-                    await conn.execute(
-                        "UPDATE users SET base_url = $1, model = $2, embedding_region = $3 WHERE id = $4",
-                        base_url, model, embedding_region, user_id,
-                    )
+                await conn.execute(sql, *params)
         except Exception as exc:
             print(f"[PostgresStore] Update user API config failed: {exc}")
             raise

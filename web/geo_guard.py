@@ -170,7 +170,7 @@ def check_api_allowed(client_ip: str | None, base_url: str) -> Tuple[bool, str]:
         (False, reason) if blocked — reason is a user-facing Chinese message.
     """
     if not base_url:
-        return False, "API 地址不能为空"
+        return True, ""
 
     # Step 1: is the base_url in the domestic whitelist?
     if is_whitelisted_base_url(base_url):
