@@ -208,7 +208,22 @@ class GroupSession:
                 if eng:
                     eng._main_loop = _main_loop
 
-        async def _reply(card_id: str) -> dict:
+        # ── 选出本轮"必须正常说话"的角色，避免全员敷衍/表情/沉默冷场 ──
+        all_card_ids = list(self.engines.keys())
+        if not auto_mode:
+            if len(target_card_ids) < len(all_card_ids):
+                # @ 点名 → 第一个被 @ 的角色必须正常说话
+                must_speak_card_id = target_card_ids[0] if target_card_ids else None
+            else:
+                # 全体广播 → 好感最高的角色必须正常说话
+                must_speak_card_id = max(
+                    target_card_ids,
+                    key=lambda cid: self.engines[cid]._affinity if cid in self.engines else 0,
+                )
+        else:
+            must_speak_card_id = None
+
+        async def _reply(card_id: str, must_speak: bool = False) -> dict:
             engine = self.engines.get(card_id)
             if not engine:
                 return {"card_id": card_id, "reply": "", "speaker": "?"}
@@ -283,16 +298,22 @@ class GroupSession:
                     converted, message, engine.user_role,
                 )
                 system_prompt += self._build_persona_context()
-                system_prompt += (
-                    "\n\n[如何回应——像真人一样有分寸]\n"
-                    "你不必每次都认真长篇回复。根据你的性格和此刻的心情,你可以选择:\n"
-                    "1. 认真回应——当对方的话值得你正经对待时。\n"
-                    "2. 冷淡敷衍——甩一句简短冷话('哦。''随便你''关你什么事'),嘴硬或不想深聊时,这往往比长篇更像你。\n"
-                    "3. 只用一个表情代替说话——当一个表情就够表达你的态度时,严格输出 [REACT:表情] 这一种格式(整条回复就只有这个,不要再加别的字)。\n"
-                    "   表情要符合你的性格:嘴硬的人可能用 👍 敷衍(不肯说软话),温柔的人用 ❤️ 含蓄表态,暴躁的人用 🔥 或 😮。可选:👍 ❤️ 😂 😮 😢 🔥\n"
-                    "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
-                    "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
-                )
+                if must_speak:
+                    system_prompt += (
+                        "\n\n[本轮请正常回应]\n"
+                        "对方在等你的回应,这一轮请正常说话,不要用表情或[SILENT]敷衍。"
+                    )
+                else:
+                    system_prompt += (
+                        "\n\n[如何回应——像真人一样有分寸]\n"
+                        "你不必每次都认真长篇回复。根据你的性格和此刻的心情,你可以选择:\n"
+                        "1. 认真回应——当对方的话值得你正经对待时。\n"
+                        "2. 冷淡敷衍——甩一句简短冷话('哦。''随便你''关你什么事'),嘴硬或不想深聊时,这往往比长篇更像你。\n"
+                        "3. 只用一个表情代替说话——当一个表情就够表达你的态度时,严格输出 [REACT:表情] 这一种格式(整条回复就只有这个,不要再加别的字)。\n"
+                        "   表情要符合你的性格:嘴硬的人可能用 👍 敷衍(不肯说软话),温柔的人用 ❤️ 含蓄表态,暴躁的人用 🔥 或 😮。可选:👍 ❤️ 😂 😮 😢 🔥\n"
+                        "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
+                        "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
+                    )
                 response = await engine.llm.achat(
                     system_prompt,
                     [{"role": "user", "content": message}],
@@ -324,4 +345,4 @@ class GroupSession:
 
             return {"card_id": card_id, "reply": response, "speaker": engine.card.name}
 
-        return await asyncio.gather(*[_reply(cid) for cid in target_card_ids])
+        return await asyncio.gather(*[_reply(cid, must_speak=(cid == must_speak_card_id)) for cid in target_card_ids])
