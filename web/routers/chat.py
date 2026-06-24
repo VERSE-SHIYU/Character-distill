@@ -207,7 +207,9 @@ async def _do_chat(
         llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
         print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
         async with session["lock"]:
+            import time as _t; _t0 = _t.time()
             resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
+            print(f"[perf] _do_chat total took {_t.time()-_t0:.2f}s")
             rag_ctx = getattr(engine, '_last_rag_context', '') or ''
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")

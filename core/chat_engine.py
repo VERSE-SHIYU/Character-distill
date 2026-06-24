@@ -401,10 +401,12 @@ class ChatEngine:
         if storage and session_id:
             try:
                 from deps import run_on_main_loop
+                import time as _t; _t0 = _t.time()
                 new_reactions = run_on_main_loop(
                     storage.get_reactions_after(session_id, self._last_reaction_id),
                     timeout=10,
                 )
+                print(f"[perf] affinity_reactions took {_t.time()-_t0:.2f}s")
                 if new_reactions:
                     self.ingest_reaction_signals([
                         {"emoji": r["emoji"], "msg_content": r["msg_content"]}
@@ -574,6 +576,7 @@ class ChatEngine:
                     # 群聊：写 group_affinity 表，key=(group_id, card_id)
                     try:
                         from deps import run_on_main_loop
+                        import time as _t; _t0 = _t.time()
                         run_on_main_loop(
                             storage.update_group_affinity(
                                 self._group_id, self._card_id, self._affinity, self._trust,
@@ -581,12 +584,14 @@ class ChatEngine:
                             ),
                             timeout=15,
                         )
+                        print(f"[perf] affinity_group took {_t.time()-_t0:.2f}s")
                     except Exception as db_exc:
                         print(f"[ChatEngine] Affinity DB save failed (group={self._group_id} card={self._card_id}): {db_exc}")
                 elif storage and session_id:
                     # 单聊：写 sessions 表（原逻辑不变）
                     try:
                         from deps import run_on_main_loop
+                        import time as _t; _t0 = _t.time()
                         run_on_main_loop(
                             storage.update_session_affinity(
                                 session_id, self._affinity, self._trust,
@@ -594,6 +599,7 @@ class ChatEngine:
                             ),
                             timeout=15,
                         )
+                        print(f"[perf] affinity_session took {_t.time()-_t0:.2f}s")
                     except Exception as db_exc:
                         print(f"[ChatEngine] Affinity DB save failed (session={session_id}): {db_exc}")
             except Exception as exc:
@@ -800,10 +806,12 @@ class ChatEngine:
         if not is_first_message and self._storage and self._session_id:
             try:
                 from deps import run_on_main_loop
+                import time as _t; _t0 = _t.time()
                 session_data = run_on_main_loop(
                     self._storage.get_session(self._session_id),
                     timeout=5,
                 )
+                print(f"[perf] time_awareness took {_t.time()-_t0:.2f}s")
                 if session_data:
                     updated_at = session_data.get("updated_at")
                     if isinstance(updated_at, str):
