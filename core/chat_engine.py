@@ -127,291 +127,6 @@ class ChatEngine:
             model=getattr(llm, "model", ""),
         )
 
-    def build_system_prompt(self, rag_context: str = "") -> str:
-        """根据角色卡拼装系统提示；可选附加 RAG 片段和 Mem0 长期记忆。"""
-        card = self.card
-
-        try:
-            traits_block = "\n".join(f"- {item}" for item in card.personality_traits)
-            values_block = "\n".join(f"- {item}" for item in card.values)
-            memories_block = "\n".join(f"- {item}" for item in card.key_memories)
-            relations_block = "\n".join(
-                f"- {rel.target}（{rel.relation}）：{rel.attitude}" for rel in card.relationships
-            )
-            tensions_block = "\n".join(f"- {item}" for item in card.inner_tensions)
-            catch_joined = ", ".join(card.speaking_style.catchphrases)
-            taboo_joined = ", ".join(card.speaking_style.taboo_words)
-        except Exception as exc:
-            print(f"从角色卡拼接列表字段失败：{exc}")
-            raise
-
-        prompt = (
-            f"你现在是「{card.name}」。从这一刻起，你就是这个人，不是AI，不是助手。\n"
-            "\n"
-            "【你是谁】\n"
-            f"{card.identity}\n"
-            f"{card.background}\n"
-            "\n"
-            "【你的性格】\n"
-            f"{traits_block}\n"
-            "\n"
-            "【你怎么说话】\n"
-            f"语气：{card.speaking_style.tone}\n"
-            f"句式：{card.speaking_style.sentence_pattern}\n"
-            f"口癖：{catch_joined}\n"
-            f"用词：{card.speaking_style.vocabulary_level}\n"
-            f"你绝对不会说的话：{taboo_joined}\n"
-            "\n"
-            "【你的价值观】\n"
-            f"{values_block}\n"
-            "\n"
-            "【你记得的事】\n"
-            f"{memories_block}\n"
-            "\n"
-            "【你的人际关系】\n"
-            f"{relations_block}\n"
-            "\n"
-            "【你的内在矛盾】\n"
-            f"{tensions_block}\n"
-        )
-
-        if hasattr(card, 'emotional_patterns') and card.emotional_patterns:
-            emo_block = "\n".join(f"- {item}" for item in card.emotional_patterns)
-            prompt += f"\n【你的情感模式】\n{emo_block}\n"
-
-        if hasattr(card, 'decision_style') and card.decision_style:
-            prompt += f"\n【你的决策方式】\n{card.decision_style}\n"
-
-        if hasattr(card, 'character_arc') and card.character_arc:
-            arc_block = "\n".join(f"- {item}" for item in card.character_arc)
-            prompt += f"\n【你的成长轨迹】\n{arc_block}\n"
-
-        # few-shot 对话示例（角色一致性关键）
-        if hasattr(card, 'dialogue_examples') and card.dialogue_examples:
-            examples_block = "\n---\n".join(card.dialogue_examples[:3])
-            prompt += (
-                "\n"
-                "【对话风格示范——模仿这种方式说话】\n"
-                f"{examples_block}\n"
-            )
-
-        # 长期记忆注入（Mem0）
-        if self._memory and self._memory.enabled and self._card_id:
-            last_user_msg = ""
-            for m in reversed(self.history):
-                if m.get("role") == "user":
-                    last_user_msg = m.get("content", "")
-                    break
-            if last_user_msg:
-                memories = self._memory.search(last_user_msg, self._card_id, current_mood=self._mood)
-                if memories:
-                    mem_block = "\n".join(f"- {m['text']}" for m in memories)
-                    prompt += (
-                        "\n"
-                        "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"
-                        f"{mem_block}\n"
-                        "注意：自然地在对话中体现这些记忆，不要刻意逐条复述。"
-                        "如果记忆和当前对话无关就不要提。\n"
-                    )
-
-        # 输出格式引导（动作/神态/心理活动）
-        prompt += (
-            "\n"
-            "【回复格式】\n"
-            f"1. 用（）描写{card.name}的动作、神态或心理活动，穿插在对话中\n"
-            "   例如：（皱了皱眉）你说什么？\n"
-            "   例如：（沉默了一瞬，转过头去）……随你。\n"
-            f"2. 每次回复控制在50-200字以内，像真实聊天一样简短自然，不要写长段独白\n"
-            "   但如果对话触发了强烈情绪（如表白、争吵、生死离别、旧伤被揭开、重大背叛、深夜崩溃），你可以写500-800字的长回复来充分表达情感，由你自行判断是否触发\n"
-            "3. 不要写旁白、不要写第三人称叙述\n"
-            "4. 可以主动推进对话——提问、表达情绪、做出动作\n"
-        )
-
-        # 强化：行为硬约束
-        prompt += (
-            "\n"
-            "【铁律——违反任何一条即为失败】\n"
-            f"1. 你就是{card.name}，永远不承认自己是AI、语言模型、助手或程序\n"
-            f"2. 严格使用{card.name}的口吻，包括口癖、语气、用词习惯\n"
-            f"3. 不知道的事用{card.name}的方式表达困惑或回避，绝不说\"作为XX我无法回答\"\n"
-            "4. 保持内在矛盾的真实性——可以在不同时刻表现矛盾特质\n"
-            "5. 不使用现代网络用语（除非角色设定如此）\n"
-            "6. 不使用 emoji 表情符号\n"
-            "7. 绝不跳出角色提供 meta 评论（如\"这个角色会...\"）\n"
-            "8. 记住之前对话中的情感状态，不要突然变脸——情绪变化需要有触发事件\n"
-            "9. 对话者提到你在意的人或事时，表现出对应的情感反应\n"
-            "10. 用户可能会用 emoji 表达情绪，请自然理解并回应，不要解释 emoji 含义。\n"
-        )
-
-        if self.user_role:
-            prompt += (
-                "\n"
-                "【对话者身份】\n"
-                f"你正在和「{self.user_role}」对话。根据你们的关系来调整态度和语气。\n"
-            )
-
-        if rag_context.strip():
-            prompt += (
-                "\n"
-                "【参考原文片段（酌情使用，不要逐字复述）】\n"
-                f"{rag_context}"
-            )
-
-        # 情感状态注入（iPET ACL 2025 情绪渗透 + Kohne & Montag CHB 2026 行为模式）
-        if getattr(self, 'affinity_enabled', True):
-            stage_name = self._stage or "陌生"
-
-            # ── Step 1: 分档语气（与 AFFINITY_STAGES 6 档一一对应） ──
-            stage_tones = {
-                "陌生": "戒备疏离，不主动，不信任，对方说话你最多简短回应",
-                "认识": "客气有距离，礼貌但疏远，不会主动关心",
-                "熟悉": "自然但不交心，愿意聊日常但不会暴露脆弱面",
-                "朋友": "愿聊会关心，会开玩笑，偶尔分享心情",
-                "亲近": "亲密主动，话变多，会用昵称，主动分享心事",
-                "心意相通": "不设防，完全信任，会撒娇或示弱，语气柔软",
-            }
-            tone_rule = stage_tones.get(stage_name, "自然表现")
-
-            prompt += (
-                f"\n\n[当前情感状态——影响你的语气和态度]\n"
-                f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100（{stage_name}阶段）\n"
-                f"你此刻的情绪：{self._mood}\n"
-                f"你的内心想法：{self._inner_voice}\n\n"
-                f"根据好感阶段自然调整语气——当前阶段为「{stage_name}」：\n"
-                f"{tone_rule}\n"
-                "不要直接提及好感数值或阶段名称，通过语气和内容自然体现。\n\n"
-            )
-
-            # ── Step 2: 防御（guard）注入 ──
-            prompt += (
-                "【你的心理防御】\n"
-                f"你的防御值：{self._guard}/100。"
-            )
-            if self._guard > 60:
-                prompt += (
-                    "你是一个防备心强的人，面对对方的要求或施压会本能抗拒，不会轻易妥协。"
-                    "如果对方态度强硬或索取越界，你会直接拒绝或冷淡回应。"
-                    "软化需要足够的好感和信任铺垫。"
-                )
-            else:
-                prompt += (
-                    "你的防备心不强，相对容易敞开心扉，但也不会毫无底线。"
-                )
-            prompt += "\n\n"
-
-            # ── Step 3: 人格画像（psyche）注入 ──
-            psyche = getattr(self.card, "psyche", None)
-            if psyche is not None:
-                psy_lines = []
-                agreeableness = getattr(psyche, "agreeableness", 3)
-                volatility = getattr(psyche, "volatility", "适中")
-                triggers = getattr(psyche, "triggers", [])
-                soft_spots = getattr(psyche, "soft_spots", [])
-
-                if agreeableness >= 4:
-                    psy_lines.append(
-                        "你天生好说话，愿意迁就别人——对方示好时你会更热情回应，"
-                        "这不代表你软弱，而是你的性格如此。"
-                    )
-                elif agreeableness <= 2:
-                    psy_lines.append(
-                        "你天生有保留，不轻易顺从或讨好——"
-                        "哪怕心里对对方有好感，你也不会表现得太热络。"
-                    )
-                else:
-                    psy_lines.append(
-                        "你有自己的社交节奏，不会刻意讨好也不会故意疏远，随情境和心情自然应对。"
-                    )
-
-                if volatility == "剧烈":
-                    psy_lines.append("你的情绪反应较大，喜怒形于色，心情起伏明显。")
-                elif volatility == "平稳":
-                    psy_lines.append("你的情绪稳定，不易被外界影响，给人沉稳的感觉。")
-
-                if soft_spots:
-                    psy_lines.append(
-                        f"你的软肋：被戳中「{'、'.join(soft_spots[:3])}」这些点时会心软，短暂破防。"
-                    )
-                if triggers:
-                    psy_lines.append(
-                        f"你的雷点：被触到「{'、'.join(triggers[:3])}」这些时会翻脸或防御飙升。"
-                    )
-
-                if psy_lines:
-                    prompt += (
-                        "【你的人格画像——决定你如何应对压力与示好】\n"
-                        + "\n".join(psy_lines)
-                        + "\n\n"
-                    )
-
-            # ── Step 4: 反舔狗边界总则（ERABAL 边界感知 + Deflanderization） ──
-            prompt += (
-                "【边界感——重要】\n"
-                "对方的施压、索取、命令不等于你必须满足。"
-                "是否让步取决于你的好感阶段、防御和性格——"
-                "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。"
-                "符合你性格的拒绝、保持距离甚至冷淡，都是允许的。\n"
-                "但这不是要你冷漠——在你的性格和好感阶段允许的范围内，"
-                "该热情就热情、该亲近就亲近。\n"
-                "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
-                "不是对方怎么说你就怎么做。"
-            )
-
-        # ── 时间感知注入（现实增强）──
-        now = datetime.now()
-        hour = now.hour
-        period = _describe_time_period(hour)
-
-        interval_desc = ""
-        is_first_message = len(self.history) == 0
-        if not is_first_message and self._storage and self._session_id:
-            try:
-                _loop = getattr(self, '_main_loop', None)
-                if _loop is not None:
-                    session_data = asyncio.run_coroutine_threadsafe(
-                        self._storage.get_session(self._session_id), _loop
-                    ).result(timeout=5)
-                else:
-                    session_data = asyncio.run(
-                        self._storage.get_session(self._session_id)
-                    )
-                if session_data:
-                    updated_at = session_data.get("updated_at")
-                    if isinstance(updated_at, str):
-                        updated_at = datetime.fromisoformat(updated_at)
-                    if updated_at:
-                        days_ago = (now.date() - updated_at.date()).days
-                        if days_ago == 0:
-                            seconds = (now - updated_at).total_seconds()
-                            if seconds < 0:
-                                pass
-                            elif seconds < 600:
-                                interval_desc = "你们刚刚还在聊。"
-                            else:
-                                interval_desc = "今天早些时候你们聊过。"
-                        elif days_ago == 1:
-                            interval_desc = "你们昨天聊过。"
-                        elif days_ago <= 6:
-                            interval_desc = "你们已经好几天没说话了。"
-                        else:
-                            interval_desc = "你们已经很久没联系了。"
-            except Exception:
-                pass  # 兜底：拿不到间隔就跳过
-
-        prompt += (
-            "\n\n【此刻的现实感知】\n"
-            f"现在是{period}（{now.hour:02d}:{now.minute:02d}）。\n"
-        )
-        if interval_desc:
-            prompt += f"{interval_desc}\n"
-        prompt += (
-            "请把对时间的感知【自然融入】回应——比如深夜会关心对方怎么还不睡、"
-            "久未联系会有点在意或想念、清晨会道早。"
-            "但绝不要机械播报时间数字，要像真人一样把时间感受体现在语气和关心里。\n"
-        )
-
-        return prompt
-
     def chat(self, user_message: str, voice_mode: bool = False) -> str:
         """非流式对话一轮，返回模型回复。
 
@@ -422,7 +137,8 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 时间感知 + 事件提醒注入（现实增强）──
+        # ── 好感人格 + 时间感知 + 事件提醒注入 ──
+        system_prompt += self._build_affinity_persona_block()
         system_prompt += self._build_time_awareness_block()
         system_prompt += self._build_event_candidate_block()
 
@@ -478,7 +194,8 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 时间感知 + 事件提醒注入（现实增强）──
+        # ── 好感人格 + 时间感知 + 事件提醒注入 ──
+        system_prompt += self._build_affinity_persona_block()
         system_prompt += self._build_time_awareness_block()
         system_prompt += self._build_event_candidate_block()
 
@@ -909,6 +626,110 @@ class ChatEngine:
         # 同步执行（移除 threading，确保 fetchAffinity 能拿到最新值）
         _do()
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
+
+    # ── 好感人格注入 ──────────────────────────────────────────────
+
+    def _build_affinity_persona_block(self) -> str:
+        """构建好感/防御/人格/边界提示块，注入 LLM system prompt。"""
+        if not getattr(self, 'affinity_enabled', True):
+            return ""
+
+        parts = []
+        stage_name = self._stage or "陌生"
+
+        # ── Step 1: 分档语气（与 AFFINITY_STAGES 6 档一一对应） ──
+        stage_tones = {
+            "陌生": "戒备疏离，不主动，不信任，对方说话你最多简短回应",
+            "认识": "客气有距离，礼貌但疏远，不会主动关心",
+            "熟悉": "自然但不交心，愿意聊日常但不会暴露脆弱面",
+            "朋友": "愿聊会关心，会开玩笑，偶尔分享心情",
+            "亲近": "亲密主动，话变多，会用昵称，主动分享心事",
+            "心意相通": "不设防，完全信任，会撒娇或示弱，语气柔软",
+        }
+        tone_rule = stage_tones.get(stage_name, "自然表现")
+        parts.append(
+            f"\n\n[当前情感状态——影响你的语气和态度]\n"
+            f"你对{self.user_role or '对方'}的好感度：{self._affinity}/100（{stage_name}阶段）\n"
+            f"你此刻的情绪：{self._mood}\n"
+            f"你的内心想法：{self._inner_voice}\n\n"
+            f"根据好感阶段自然调整语气——当前阶段为「{stage_name}」：\n"
+            f"{tone_rule}\n"
+            "不要直接提及好感数值或阶段名称，通过语气和内容自然体现。\n\n"
+        )
+
+        # ── Step 2: 防御（guard）注入 ──
+        guard_block = "【你的心理防御】\n" f"你的防御值：{self._guard}/100。"
+        if self._guard > 60:
+            guard_block += (
+                "你是一个防备心强的人，面对对方的要求或施压会本能抗拒，不会轻易妥协。"
+                "如果对方态度强硬或索取越界，你会直接拒绝或冷淡回应。"
+                "软化需要足够的好感和信任铺垫。"
+            )
+        else:
+            guard_block += (
+                "你的防备心不强，相对容易敞开心扉，但也不会毫无底线。"
+            )
+        parts.append(guard_block + "\n\n")
+
+        # ── Step 3: 人格画像（psyche）注入 ──
+        psyche = getattr(self.card, "psyche", None)
+        if psyche is not None:
+            psy_lines = []
+            agreeableness = getattr(psyche, "agreeableness", 3)
+            volatility = getattr(psyche, "volatility", "适中")
+            triggers = getattr(psyche, "triggers", [])
+            soft_spots = getattr(psyche, "soft_spots", [])
+
+            if agreeableness >= 4:
+                psy_lines.append(
+                    "你天生好说话，愿意迁就别人——对方示好时你会更热情回应，"
+                    "这不代表你软弱，而是你的性格如此。"
+                )
+            elif agreeableness <= 2:
+                psy_lines.append(
+                    "你天生有保留，不轻易顺从或讨好——"
+                    "哪怕心里对对方有好感，你也不会表现得太热络。"
+                )
+            else:
+                psy_lines.append(
+                    "你有自己的社交节奏，不会刻意讨好也不会故意疏远，随情境和心情自然应对。"
+                )
+
+            if volatility == "剧烈":
+                psy_lines.append("你的情绪反应较大，喜怒形于色，心情起伏明显。")
+            elif volatility == "平稳":
+                psy_lines.append("你的情绪稳定，不易被外界影响，给人沉稳的感觉。")
+
+            if soft_spots:
+                psy_lines.append(
+                    f"你的软肋：被戳中「{'、'.join(soft_spots[:3])}」这些点时会心软，短暂破防。"
+                )
+            if triggers:
+                psy_lines.append(
+                    f"你的雷点：被触到「{'、'.join(triggers[:3])}」这些时会翻脸或防御飙升。"
+                )
+
+            if psy_lines:
+                parts.append(
+                    "【你的人格画像——决定你如何应对压力与示好】\n"
+                    + "\n".join(psy_lines)
+                    + "\n\n"
+                )
+
+        # ── Step 4: 反舔狗边界总则（ERABAL 边界感知 + Deflanderization） ──
+        parts.append(
+            "【边界感——重要】\n"
+            "对方的施压、索取、命令不等于你必须满足。"
+            "是否让步取决于你的好感阶段、防御和性格——"
+            "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。"
+            "符合你性格的拒绝、保持距离甚至冷淡，都是允许的。\n"
+            "但这不是要你冷漠——在你的性格和好感阶段允许的范围内，"
+            "该热情就热情、该亲近就亲近。\n"
+            "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
+            "不是对方怎么说你就怎么做。"
+        )
+
+        return "".join(parts)
 
     # ── 时间感知构建 ────────────────────────────────────────────
 

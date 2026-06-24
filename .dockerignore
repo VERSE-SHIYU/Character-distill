@@ -15,4 +15,11 @@ web/frontend/dist
 content/
 *.mp3
 .claude/
+services/
+distill_body_tmp.json
+tmp_*.json
+card_*.json
+prod.env
+test_*.py
+*.md
 
