@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import uuid
 from datetime import datetime
 from collections.abc import Generator
 from typing import Any
@@ -96,6 +97,8 @@ class ChatEngine:
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
         self._reflection_importance_acc: int = 0  # 累计重要性，达阈值触发反思
+        self._asked_event_ids: set[str] = set()  # 已问过的事件 ID（会话级）
+        self._injected_event_id: str = ""  # 本轮注入的事件 ID（响应后标记为已问）
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -419,6 +422,10 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
+        # ── 时间感知 + 事件提醒注入（现实增强）──
+        system_prompt += self._build_time_awareness_block()
+        system_prompt += self._build_event_candidate_block()
+
         if voice_mode:
             system_prompt += (
                 "\n\n【语音模式——重要】\n"
@@ -446,6 +453,7 @@ class ChatEngine:
         self.history.append({"role": "assistant", "content": response})
 
         self._evaluate_affinity(user_message, response)
+        self._mark_event_asked()
 
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
@@ -469,6 +477,10 @@ class ChatEngine:
             self.history, user_message, self.user_role,
             current_mood=self._mood,
         )
+
+        # ── 时间感知 + 事件提醒注入（现实增强）──
+        system_prompt += self._build_time_awareness_block()
+        system_prompt += self._build_event_candidate_block()
 
         if voice_mode:
             system_prompt += (
@@ -506,6 +518,7 @@ class ChatEngine:
     def post_stream_process(self, user_message: str, full_reply: str) -> None:
         """Post-stream housekeeping after done event: affinity first, then memory with metadata. Does NOT block UI unlock."""
         self._evaluate_affinity(user_message, full_reply)
+        self._mark_event_asked()
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
@@ -760,6 +773,16 @@ class ChatEngine:
             "- 情感强度高/关系转折/承诺/冲突/揭露秘密/告白/决裂：8-10分\n"
             "- 日常寒暄/打招呼/无关痛痒：1-3分\n"
             "- 普通对话/闲聊/一般信息交换：4-6分\n\n"
+            "时间事件抽取规则：如果对方刚才提到了一件「未来的、具体的、值得以后关心的事」"
+            "（如面试/考试/手术/见人/搬家/旅行/重要会议），"
+            "请在 time_event 字段中如实记录。日常琐碎（吃了顿饭、今天好累）填 null。\n"
+            "正例：对方说\"我明天下午有个面试\" → "
+            '{"event":"面试","when_text":"明天下午","due_at":"2026-06-25T15:00"}\n'
+            "正例：对方说\"下周搬家\" → "
+            '{"event":"搬家","when_text":"下周","due_at":"2026-06-30"}\n'
+            "反例：对方说\"今天吃了火锅\" → null\n"
+            "反例：对方说\"今天好累\" → null\n"
+            "due_at 尽量归一化成 ISO 时间，模糊时间给粗略日期即可。\n\n"
             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
             '  "affinity": 0-100整数,\n'
@@ -768,7 +791,8 @@ class ChatEngine:
             '  "guard": 0-100整数,\n'
             '  "inner_voice": "你的第一人称内心独白2-3句",\n'
             '  "mood_emoji": "一个最贴合此刻情绪的emoji",\n'
-            '  "importance": 1-10整数\n'
+            '  "importance": 1-10整数,\n'
+            '  "time_event": null 或 {"event":"事件名","when_text":"用户原话描述","due_at":"ISO时间"}\n'
             "}"
         )
 
@@ -786,6 +810,30 @@ class ChatEngine:
                     return
                 print(f"[Affinity] JSON match: {m.group()[:200]}")
                 data = json.loads(m.group())
+
+                # ── 时间事件抽取 ──
+                time_event = data.get("time_event")
+                if time_event and isinstance(time_event, dict) and self._memory and self._memory.enabled and self._card_id:
+                    try:
+                        evt = time_event.get("event", "")
+                        when_text = time_event.get("when_text", "")
+                        due_at = time_event.get("due_at", "")
+                        event_id = uuid.uuid4().hex[:16]
+                        self._memory.add_manual(
+                            f"对方提到「{evt}」（{when_text}），大约在{due_at}。",
+                            self._card_id,
+                            metadata={
+                                "type": "time_event",
+                                "event_id": event_id,
+                                "event": evt,
+                                "when_text": when_text,
+                                "due_at": due_at,
+                            },
+                        )
+                        print(f"[ChatEngine] Saved time_event: {evt} at {due_at} (id={event_id})")
+                    except Exception as exc:
+                        print(f"[ChatEngine] Save time_event failed: {exc}")
+
                 self._last_importance = max(1, min(10, int(data.get("importance", 5))))
                 print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
                       f"mood={data.get('mood')} guard={data.get('guard')} "
@@ -861,6 +909,146 @@ class ChatEngine:
         # 同步执行（移除 threading，确保 fetchAffinity 能拿到最新值）
         _do()
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
+
+    # ── 时间感知构建 ────────────────────────────────────────────
+
+    def _build_time_awareness_block(self) -> str:
+        """构建「当前时间+时段+距上次对话间隔」提示片段。"""
+        now = datetime.now()
+        period = _describe_time_period(now.hour)
+
+        interval_desc = ""
+        is_first_message = len(self.history) == 0
+        if not is_first_message and self._storage and self._session_id:
+            try:
+                _loop = getattr(self, '_main_loop', None)
+                if _loop is not None:
+                    session_data = asyncio.run_coroutine_threadsafe(
+                        self._storage.get_session(self._session_id), _loop
+                    ).result(timeout=5)
+                else:
+                    session_data = asyncio.run(
+                        self._storage.get_session(self._session_id)
+                    )
+                if session_data:
+                    updated_at = session_data.get("updated_at")
+                    if isinstance(updated_at, str):
+                        updated_at = datetime.fromisoformat(updated_at)
+                    if updated_at:
+                        days_ago = (now.date() - updated_at.date()).days
+                        if days_ago == 0:
+                            seconds = (now - updated_at).total_seconds()
+                            if seconds < 0:
+                                pass
+                            elif seconds < 600:
+                                interval_desc = "你们刚刚还在聊。"
+                            else:
+                                interval_desc = "今天早些时候你们聊过。"
+                        elif days_ago == 1:
+                            interval_desc = "你们昨天聊过。"
+                        elif days_ago <= 6:
+                            interval_desc = "你们已经好几天没说话了。"
+                        else:
+                            interval_desc = "你们已经很久没联系了。"
+            except Exception:
+                pass  # 兜底：拿不到间隔就跳过
+
+        block = (
+            "\n\n【此刻的现实感知】\n"
+            f"现在是{period}（{now.hour:02d}:{now.minute:02d}）。\n"
+        )
+        if interval_desc:
+            block += f"{interval_desc}\n"
+        block += (
+            "请把对时间的感知【自然融入】回应——比如深夜会关心对方怎么还不睡、"
+            "久未联系会有点在意或想念、清晨会道早。"
+            "但绝不要机械播报时间数字，要像真人一样把时间感受体现在语气和关心里。\n"
+        )
+        return block
+
+    # ── 事件级时间感知 ──────────────────────────────────────────
+
+    def _get_due_event(self) -> dict | None:
+        """扫描记忆，返回第一个到期的未问时间事件（最接近当前时刻的）。"""
+        if not self._memory or not self._memory.enabled or not self._card_id:
+            return None
+        try:
+            memories = self._memory.get_all(self._card_id)
+            if not memories:
+                return None
+
+            asked_ids = set()
+            for m in memories:
+                meta = m.get("metadata") or {}
+                if isinstance(meta, dict) and meta.get("type") == "time_event_asked":
+                    asked_ids.add(meta.get("event_id", ""))
+
+            now = datetime.now()
+            best = None
+            for m in memories:
+                meta = m.get("metadata") or {}
+                if not isinstance(meta, dict):
+                    continue
+                if meta.get("type") != "time_event":
+                    continue
+                eid = meta.get("event_id", "")
+                if not eid or eid in asked_ids or eid in self._asked_event_ids:
+                    continue
+                due_at_str = meta.get("due_at", "")
+                if not due_at_str:
+                    continue
+                try:
+                    due_at = datetime.fromisoformat(due_at_str)
+                except (ValueError, TypeError):
+                    continue
+                if due_at > now:
+                    continue
+                if best is None or due_at > best["due_at"]:
+                    best = {
+                        "event": meta.get("event", ""),
+                        "when_text": meta.get("when_text", ""),
+                        "event_id": eid,
+                        "due_at": due_at,
+                    }
+            return best
+        except Exception as exc:
+            print(f"[ChatEngine] _get_due_event failed: {exc}")
+            return None
+
+    def _build_event_candidate_block(self) -> str:
+        """如果记忆中有到期的未问事件，返回可选关心提示片段。"""
+        pending = self._get_due_event()
+        if not pending:
+            self._injected_event_id = ""
+            return ""
+        self._injected_event_id = pending["event_id"]
+        return (
+            "\n\n【你或许记着的一件事】\n"
+            f"对方之前提到「{pending['event']}」，时间大约在「{pending['when_text']}」，"
+            f"现在应该已经发生/到时间了。\n"
+            "如果这轮气氛自然，你可以像真人一样【关心地】问起——但要符合你的性格："
+            "含蓄的人就旁敲侧击，热情的人就直接问。"
+            "绝不要机械复述细节，要带着在意去问。"
+            "如果这轮在吵架/对方情绪差/话题不搭，就先不提。\n"
+        )
+
+    def _mark_event_asked(self) -> None:
+        """将本轮已注入的事件标记为已问（持久化标记）。"""
+        eid = self._injected_event_id
+        if not eid:
+            return
+        self._injected_event_id = ""
+        self._asked_event_ids.add(eid)
+        if self._memory and self._memory.enabled and self._card_id:
+            try:
+                self._memory.add_manual(
+                    "",
+                    self._card_id,
+                    metadata={"type": "time_event_asked", "event_id": eid},
+                )
+                print(f"[ChatEngine] Marked event {eid} as asked")
+            except Exception as exc:
+                print(f"[ChatEngine] Mark event asked failed: {exc}")
 
     def _compute_initial_affinity(
         self,
