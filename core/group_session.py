@@ -140,8 +140,12 @@ class GroupSession:
         system_prompt = engine._ctx_engine.build(
             converted, message, engine.user_role,
         )
-        # Inject user persona context
+        # Inject user persona context + affinity persona + cognitive + time blocks
         system_prompt += self._build_persona_context()
+        system_prompt += engine._build_affinity_persona_block()
+        system_prompt += engine._build_cognitive_block()
+        system_prompt += engine._build_time_awareness_block()
+        system_prompt += engine._build_event_candidate_block()
 
         # 直接调用 LLM，不走 engine.chat() 以免污染单聊历史
         response = await engine.llm.achat(
@@ -287,6 +291,10 @@ class GroupSession:
                 )
                 system_prompt += "\n\n" + context_msg
                 system_prompt += self._build_persona_context()
+                system_prompt += engine._build_affinity_persona_block()
+                system_prompt += engine._build_cognitive_block()
+                system_prompt += engine._build_time_awareness_block()
+                system_prompt += engine._build_event_candidate_block()
 
                 response = await engine.llm.achat(
                     system_prompt,
@@ -298,6 +306,10 @@ class GroupSession:
                     converted, message, engine.user_role,
                 )
                 system_prompt += self._build_persona_context()
+                system_prompt += engine._build_affinity_persona_block()
+                system_prompt += engine._build_cognitive_block()
+                system_prompt += engine._build_time_awareness_block()
+                system_prompt += engine._build_event_candidate_block()
                 if must_speak:
                     system_prompt += (
                         "\n\n[本轮请正常回应]\n"

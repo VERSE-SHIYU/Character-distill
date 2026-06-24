@@ -137,8 +137,9 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 好感人格 + 时间感知 + 事件提醒注入 ──
+        # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
         system_prompt += self._build_affinity_persona_block()
+        system_prompt += self._build_cognitive_block()
         system_prompt += self._build_time_awareness_block()
         system_prompt += self._build_event_candidate_block()
 
@@ -194,8 +195,9 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 好感人格 + 时间感知 + 事件提醒注入 ──
+        # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
         system_prompt += self._build_affinity_persona_block()
+        system_prompt += self._build_cognitive_block()
         system_prompt += self._build_time_awareness_block()
         system_prompt += self._build_event_candidate_block()
 
@@ -730,6 +732,26 @@ class ChatEngine:
         )
 
         return "".join(parts)
+
+    def _build_cognitive_block(self) -> str:
+        """构建认知/语言约束提示块。
+
+        压制 LLM 通用博士腔：确保角色按自己的文化程度和知识边界说话。
+        存量卡（cognitive 全默认）跳过注入。
+        """
+        cog = self.card.cognitive
+        if not cog or not cog.knowledge_scope:
+            return ""
+        return (
+            "\n\n【你的认知与表达】\n"
+            f"你的文化程度：{cog.education_level}。"
+            f"你的知识范围：{cog.knowledge_scope}"
+            "——超出这个范围的事你不知道，不要不懂装懂。\n"
+            f"你的说话方式：{cog.speech_style}，"
+            f"用词{cog.vocabulary_level}。\n"
+            "严格按这个水平说话：不要使用超出你身份的成语、典故、专业术语或现代知识。"
+            "宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n"
+        )
 
     # ── 时间感知构建 ────────────────────────────────────────────
 

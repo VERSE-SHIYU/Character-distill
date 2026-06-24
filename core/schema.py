@@ -28,6 +28,20 @@ class ChatSession(BaseModel):
     affinity_score: int = 50  # 好感度 0-100，默认 50 中立
 
 
+class CognitiveProfile(BaseModel):
+    """认知/语言画像：压制 LLM 通用博士腔，确保角色说话合身份。
+
+    education_level — 文化程度，如 文盲/识字不多/普通/受过良好教育/学者
+    knowledge_scope — 知识边界（时代/阶层/见识决定知道什么不知道什么）
+    speech_style — 说话腔调（用词雅俗、长短句、成语/专业词、口头禅、方言感）
+    vocabulary_level — 用词层次: 粗白/日常/文雅/书面
+    """
+    education_level: str = "普通"
+    knowledge_scope: str = ""
+    speech_style: str = ""
+    vocabulary_level: str = "日常"
+
+
 class PsycheProfile(BaseModel):
     """心理画像：大五人格 + 情感动力学参数，作为 set-point 基线和角色推理的统一数据源。"""
     # 大五人格（1-5 离散档，依据 PsyPlay arXiv:2502.03821）
@@ -63,3 +77,4 @@ class CharacterCard(BaseModel):
     character_arc: list[str] = []       # 角色弧线：故事中经历的成长变化阶段，每阶段一句话
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
     psyche: PsycheProfile = PsycheProfile()
+    cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
