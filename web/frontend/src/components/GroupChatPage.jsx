@@ -43,6 +43,7 @@ export default function GroupChatPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [currentGroup, setCurrentGroup] = useState(null)
+  const [groupAffinities, setGroupAffinities] = useState({})
   const [messages, setMessages] = useState([])
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
@@ -281,6 +282,13 @@ export default function GroupChatPage() {
     loadGroups()
   }, [loadGroups])
 
+  // Fetch affinities when switching to members tab
+  useEffect(() => {
+    if (rightTab === 'members' && currentGroup?.id) {
+      fetchAffinities(currentGroup.id)
+    }
+  }, [rightTab, currentGroup?.id])
+
   // 预加载所有文本的角色卡到 allCards，作为 cardCache 的备份数据源
   useEffect(() => {
     if (!texts || texts.length === 0) return
@@ -329,6 +337,19 @@ export default function GroupChatPage() {
       setError(err.message)
     } finally {
       if (!skipLoading) setLoading(false)
+    }
+  }
+
+  async function fetchAffinities(groupId) {
+    if (!groupId) return
+    try {
+      const res = await fetchWithTimeout(`/api/group/${groupId}/affinities`)
+      const data = await res.json()
+      const map = {}
+      ;(data || []).forEach(item => { map[item.card_id] = item })
+      setGroupAffinities(map)
+    } catch (err) {
+      // non-critical; fail silently
     }
   }
 
@@ -382,6 +403,7 @@ export default function GroupChatPage() {
     }
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
+    fetchAffinities(group.id)
     ensureCardsLoaded(cardIds)
     const personaName = (group.user_persona_type === 'character' || group.user_persona_type === 'stranger')
       ? (group.user_persona_name || '角色')
@@ -599,6 +621,7 @@ export default function GroupChatPage() {
       void data
       // Reload history once after all replies
       await loadHistory(currentGroup.id)
+      fetchAffinities(currentGroup.id)
       setTargetCardIds([])
       setReplyTo(null)
     } catch (err) {
@@ -1319,6 +1342,11 @@ export default function GroupChatPage() {
                                 <div className="group-member-info">
                                   <span className="group-member-name">{card?.name || '?'}</span>
                                   {identity && <span className="group-member-identity">{identity}</span>}
+                                  {groupAffinities[cardId] && (
+                                    <span className="group-member-affinity">
+                                      {groupAffinities[cardId].stage_emoji} {groupAffinities[cardId].stage_name} · {groupAffinities[cardId].affinity}
+                                    </span>
+                                  )}
                                 </div>
                                 <button
                                   type="button"

@@ -6,6 +6,7 @@ llm:
   base_url: https://api.deepseek.com
   max_tokens: 4096
   model: deepseek-v4-pro
+  presence_penalty: 0.3  # 防重复，温和不磨平口头禅
   summary_threshold: 100
   temperature: 0.7
 rag:

@@ -10968,6 +10968,7 @@ select.settings-input {
 .group-member-item { display: flex; align-items: center; gap: 8px; }
 .group-member-name { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .group-member-identity { display: block; font-size: 11px; color: var(--text-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-member-affinity { display: block; font-size: 11px; color: var(--text-dim); margin-top: 1px; }
 
 /* History panel inside right sidebar */
 .group-right-panel .chat-history-panel {

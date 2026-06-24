@@ -54,6 +54,7 @@ class LLMAdapter:
         self._model = model or str(llm_cfg.get("model", "deepseek-v4-pro"))
         self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
         self._max_tokens = max_tokens if max_tokens is not None else int(llm_cfg.get("max_tokens", 4096))
+        self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
         self.last_usage: dict | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
@@ -93,6 +94,7 @@ class LLMAdapter:
                     messages=payload,
                     temperature=self._temperature,
                     max_tokens=self._max_tokens,
+                    presence_penalty=self._presence_penalty,
                     extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices
@@ -131,6 +133,7 @@ class LLMAdapter:
                     messages=payload,
                     temperature=self._temperature,
                     max_tokens=self._max_tokens,
+                    presence_penalty=self._presence_penalty,
                 )
                 choices = completion.choices
                 if not choices:
@@ -162,6 +165,7 @@ class LLMAdapter:
                 messages=payload,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
+                presence_penalty=self._presence_penalty,
                 stream=True,
                 stream_options={"include_usage": True},
                 extra_body={"enable_thinking": False},
