@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime
 from collections.abc import Generator
 from typing import Any
 
@@ -31,6 +32,23 @@ def _calc_stage(affinity: int) -> tuple[str, str]:
         if lo <= affinity < hi:
             return name, emoji
     return "陌生", "🫥"
+
+
+def _describe_time_period(hour: int) -> str:
+    """将小时（0-23）映射为中文时段名。"""
+    if 5 <= hour < 8:
+        return "清晨"
+    if 8 <= hour < 11:
+        return "上午"
+    if 11 <= hour < 13:
+        return "中午"
+    if 13 <= hour < 17:
+        return "下午"
+    if 17 <= hour < 19:
+        return "傍晚"
+    if 19 <= hour < 23:
+        return "夜晚"
+    return "深夜"  # 23 <= hour or hour < 5
 
 
 class ChatEngine:
@@ -335,6 +353,59 @@ class ChatEngine:
                 "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
                 "不是对方怎么说你就怎么做。"
             )
+
+        # ── 时间感知注入（现实增强）──
+        now = datetime.now()
+        hour = now.hour
+        period = _describe_time_period(hour)
+
+        interval_desc = ""
+        is_first_message = len(self.history) == 0
+        if not is_first_message and self._storage and self._session_id:
+            try:
+                _loop = getattr(self, '_main_loop', None)
+                if _loop is not None:
+                    session_data = asyncio.run_coroutine_threadsafe(
+                        self._storage.get_session(self._session_id), _loop
+                    ).result(timeout=5)
+                else:
+                    session_data = asyncio.run(
+                        self._storage.get_session(self._session_id)
+                    )
+                if session_data:
+                    updated_at = session_data.get("updated_at")
+                    if isinstance(updated_at, str):
+                        updated_at = datetime.fromisoformat(updated_at)
+                    if updated_at:
+                        days_ago = (now.date() - updated_at.date()).days
+                        if days_ago == 0:
+                            seconds = (now - updated_at).total_seconds()
+                            if seconds < 0:
+                                pass
+                            elif seconds < 600:
+                                interval_desc = "你们刚刚还在聊。"
+                            else:
+                                interval_desc = "今天早些时候你们聊过。"
+                        elif days_ago == 1:
+                            interval_desc = "你们昨天聊过。"
+                        elif days_ago <= 6:
+                            interval_desc = "你们已经好几天没说话了。"
+                        else:
+                            interval_desc = "你们已经很久没联系了。"
+            except Exception:
+                pass  # 兜底：拿不到间隔就跳过
+
+        prompt += (
+            "\n\n【此刻的现实感知】\n"
+            f"现在是{period}（{now.hour:02d}:{now.minute:02d}）。\n"
+        )
+        if interval_desc:
+            prompt += f"{interval_desc}\n"
+        prompt += (
+            "请把对时间的感知【自然融入】回应——比如深夜会关心对方怎么还不睡、"
+            "久未联系会有点在意或想念、清晨会道早。"
+            "但绝不要机械播报时间数字，要像真人一样把时间感受体现在语气和关心里。\n"
+        )
 
         return prompt
 
