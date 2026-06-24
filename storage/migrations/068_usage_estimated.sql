@@ -1,0 +1,1 @@
+ALTER TABLE usage_stats ADD COLUMN is_estimated INTEGER DEFAULT 0;
