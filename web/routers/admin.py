@@ -720,6 +720,22 @@ async def admin_reorder_featured(
 
 
 # ============================================================
+# Usage quality (estimated vs. exact token stats)
+# ============================================================
+
+
+@router.get("/usage/quality")
+@limiter.limit("30/minute")
+async def admin_usage_quality(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Return today's usage quality: total records, estimated count, ratio."""
+    return await storage.get_usage_quality_stats()
+
+
+# ============================================================
 # Session stats (memory-cache diagnostics, read-only)
 # ============================================================
 

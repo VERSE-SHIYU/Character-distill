@@ -3291,6 +3291,24 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get all usage summary failed: {exc}")
             raise
 
+    async def get_usage_quality_stats(self) -> dict:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM usage_stats WHERE DATE(created_at) = DATE('now')"
+                )
+                row = await cursor.fetchone()
+                total_n = row[0] if row else 0
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM usage_stats WHERE DATE(created_at) = DATE('now') AND is_estimated = 1"
+                )
+                row = await cursor.fetchone()
+                est_n = row[0] if row else 0
+            return {"total": total_n, "estimated": est_n, "estimated_ratio": round(est_n / total_n, 4) if total_n > 0 else 0.0}
+        except Exception as exc:
+            print(f"[SQLiteStore] Get usage quality stats failed: {exc}")
+            raise
+
     # ---- Affinity ----
 
     async def update_session_affinity(

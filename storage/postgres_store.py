@@ -2448,6 +2448,22 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get all usage summary failed: {exc}")
             raise
 
+    async def get_usage_quality_stats(self) -> dict:
+        try:
+            async with await self._connect() as conn:
+                total = await conn.fetchval(
+                    "SELECT COUNT(*) FROM usage_stats WHERE created_at >= CURRENT_DATE"
+                )
+                estimated = await conn.fetchval(
+                    "SELECT COUNT(*) FROM usage_stats WHERE created_at >= CURRENT_DATE AND is_estimated = TRUE"
+                )
+            total_n = total or 0
+            est_n = estimated or 0
+            return {"total": total_n, "estimated": est_n, "estimated_ratio": round(est_n / total_n, 4) if total_n > 0 else 0.0}
+        except Exception as exc:
+            print(f"[PostgresStore] Get usage quality stats failed: {exc}")
+            raise
+
     # ---- Affinity ----
 
     async def update_session_affinity(self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = "") -> None:

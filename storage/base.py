@@ -197,6 +197,10 @@ class StorageBase(ABC):
         """Get usage summary for all users (admin)."""
 
     @abstractmethod
+    async def get_usage_quality_stats(self) -> dict:
+        """Get today's usage quality stats: total, estimated count, ratio."""
+
+    @abstractmethod
     async def update_session_affinity(
         self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:
