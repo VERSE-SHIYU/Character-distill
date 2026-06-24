@@ -747,10 +747,54 @@ class ChatEngine:
             "宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n"
         )
 
+    def _build_relationship_block(self) -> str:
+        """扫描近期对话，命中角色关系时注入单向口径（按需、省 token）。
+
+        读 self.history（当前 user_message 尚未入 history，扫描上一轮的内容）。
+        防单字误伤：target 长度 < 2 跳过。
+        无命中 → 返回 ""。
+        """
+        rels = self.card.relationships
+        if not rels:
+            return ""
+
+        recent = self.history[-6:]  # 最多 3 轮（每轮 user+assistant 各 1 条）
+        if not recent:
+            return ""
+
+        text = " ".join(m.get("content", "") for m in recent if m.get("content"))
+        if not text:
+            return ""
+
+        matched = []
+        for rel in rels:
+            target = (rel.target or "").strip()
+            if len(target) < 2:
+                continue
+            if target not in text:
+                continue
+            note = (rel.note or "").strip()
+            line = (
+                f"对{target}：{note}"
+                if note else
+                f"对{target}：{rel.relation}，{rel.attitude}"
+            )
+            matched.append(line)
+
+        if not matched:
+            return ""
+
+        top = matched[:3]
+        return (
+            "\n\n【你和提及之人的关系（你的视角，固定立场）】\n"
+            + "\n".join(f"- {ln}" for ln in top)
+            + "\n按这个固定立场回应：别把熟人说成陌生人、别改口、别说出你不该知道的对方心思（你只知道自己怎么看对方）。\n"
+        )
+
     def _build_all_enhancements(self) -> str:
         """按固定顺序拼接全部 prompt 增强块。
 
-        统一入口：治舔狗/认知画像/时间感知/事件提醒。
+        统一入口：治舔狗/认知画像/时间感知/事件提醒/关系口径。
         新增增强块时在此加一行，5 个调用点自动全生效。
         """
         return (
@@ -758,6 +802,7 @@ class ChatEngine:
             + self._build_cognitive_block()
             + self._build_time_awareness_block()
             + self._build_event_candidate_block()
+            + self._build_relationship_block()
         )
 
     # ── 时间感知构建 ────────────────────────────────────────────
