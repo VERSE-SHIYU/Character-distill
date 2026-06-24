@@ -22,6 +22,9 @@ export default function SettingsPanel() {
   const [embeddingKey, setEmbeddingKey] = useState('')
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false)
   const [savingEmbedding, setSavingEmbedding] = useState(false)
+  const [testingEmbedding, setTestingEmbedding] = useState(false)
+  const [testResult, setTestResult] = useState(null)
+  const [testMsg, setTestMsg] = useState('')
   const [summaryThreshold, setSummaryThreshold] = useState(50)
 
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
@@ -275,33 +278,81 @@ export default function SettingsPanel() {
           {embeddingRegion === 'cn' && '（中国内地用户注册后有免费额度）'}
         </p>
 
-        <button
-          type="button"
-          className="btn-primary"
-          disabled={savingEmbedding}
-          onClick={async () => {
-            setSavingEmbedding(true)
-            try {
-              const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
-              await updateApiConfig({
-                base_url: '',
-                model: '',
-                api_key: '',
-                embedding_key: sentKey,
-                embedding_region: embeddingRegion,
-              })
-              const hasKey = Boolean(sentKey || hasEmbeddingKey)
-              setEmbeddingKey(hasKey ? MASKED_KEY : '')
-              setHasEmbeddingKey(hasKey)
-            } catch (err) {
-              setError(err.message)
-            } finally {
-              setSavingEmbedding(false)
-            }
-          }}
-        >
-          {savingEmbedding ? '保存中…' : '保存 RAG 配置'}
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={savingEmbedding}
+            onClick={async () => {
+              setSavingEmbedding(true)
+              setError(null)
+              try {
+                const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
+                await updateApiConfig({
+                  base_url: '',
+                  model: '',
+                  api_key: '',
+                  embedding_key: sentKey,
+                  embedding_region: embeddingRegion,
+                })
+                const hasKey = Boolean(sentKey || hasEmbeddingKey)
+                setEmbeddingKey(hasKey ? MASKED_KEY : '')
+                setHasEmbeddingKey(hasKey)
+              } catch (err) {
+                setError(err.message)
+              } finally {
+                setSavingEmbedding(false)
+              }
+            }}
+          >
+            {savingEmbedding ? '保存中…' : '保存 RAG 配置'}
+          </button>
+
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={testingEmbedding}
+            onClick={async () => {
+              setTestingEmbedding(true)
+              setTestResult(null)
+              setTestMsg('')
+              try {
+                const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
+                const res = await fetchWithTimeout('/api/auth/test-embedding', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ embedding_key: sentKey, embedding_region: embeddingRegion }),
+                })
+                const data = await res.json()
+                if (data.ok) {
+                  setTestResult('ok')
+                  setTestMsg('✓ 连接正常')
+                } else {
+                  setTestResult('error')
+                  setTestMsg('✗ ' + (data.error || '未知错误'))
+                }
+              } catch (err) {
+                setTestResult('error')
+                setTestMsg('✗ ' + (err.message || '网络错误'))
+              } finally {
+                setTestingEmbedding(false)
+                setTimeout(() => { setTestResult(null); setTestMsg('') }, 5000)
+              }
+            }}
+          >
+            {testingEmbedding ? '测试中…' : '测试连接'}
+          </button>
+        </div>
+
+        {testResult && (
+          <p className="settings-hint" style={{
+            color: testResult === 'ok' ? '#22c55e' : '#ef4444',
+            fontWeight: 600,
+            marginTop: 8,
+          }}>
+            {testMsg}
+          </p>
+        )}
       </section>
 
       <section className="settings-section">

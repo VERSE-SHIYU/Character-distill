@@ -92,6 +92,11 @@ class ApiConfigRequest(BaseModel):
     embedding_region: str = "cn"
 
 
+class EmbeddingTestRequest(BaseModel):
+    embedding_key: str = ""
+    embedding_region: str = "cn"
+
+
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str
@@ -419,6 +424,37 @@ async def update_api_config(
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
+
+
+@router.post("/test-embedding")
+@limiter.limit("5/minute")
+async def test_embedding(
+    request: Request,
+    req: EmbeddingTestRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Test DashScope embedding connectivity with the user's key and region."""
+    key = req.embedding_key.strip()
+    region = req.embedding_region.strip() or "cn"
+
+    if not key:
+        try:
+            config = await storage.get_user_api_config(user["id"])
+            key = config.get("embedding_key", "")
+        except Exception:
+            pass
+
+    if not key:
+        return {"ok": False, "error": "未提供 API Key，请先填写并保存"}
+
+    try:
+        from core.embeddings import DashScopeEmbedding
+        emb = DashScopeEmbedding(api_key=key, region=region)
+        emb(["测试"])
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @router.get("/usage")
