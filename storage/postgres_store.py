@@ -72,7 +72,7 @@ class PostgresStore(StorageBase):
                 self._pool = await asyncpg.create_pool(
                     self.dsn,
                     min_size=2,
-                    max_size=10,
+                    max_size=30,
                 )
                 # Run migrations
                 migrations_dir = Path(__file__).with_name("migrations_pg")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 # 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
@@ -83,6 +84,8 @@ app.state.limiter = limiter
 @app.on_event("startup")
 async def _startup():
     install_log_collector()
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
     await _preload_embedding()
     asyncio.create_task(_session_cleanup_loop())
 
