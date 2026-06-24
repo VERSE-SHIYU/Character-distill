@@ -338,12 +338,8 @@ def _run_distill_task(
         # Clean up half-done cards (empty card_json)
         try:
             async def _cleanup():
-                from storage import get_store
-                store = get_store()
-                try:
-                    await store.cleanup_empty_cards(text_id, user_id)
-                finally:
-                    await store.close()
+                store = get_storage()
+                await store.cleanup_empty_cards(text_id, user_id)
             run_on_main_loop(_cleanup())
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
