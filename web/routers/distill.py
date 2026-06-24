@@ -92,11 +92,12 @@ def _run_distill_task(
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
     All I/O that requires an event loop (text read, card save) is performed
-    via ``asyncio.run()`` which creates a fresh loop per call — safe across
-    threads since each thread owns its own loop.
-
-    If *api_config* is provided (api_key, base_url, model), a per-user LLM
-    is created so distillation uses the user's own API key, not the global fallback.
+    via ``asyncio.run()`` which creates a fresh temporary loop per call.
+    Because asyncpg pools are bound to the event loop that created them,
+    the temporary loop MUST use its own independent store instance (created
+    via ``get_store()`` inside the coroutine), never the main service's
+    global singleton.  Sharing a pool across loops causes "Task pending"
+    errors in asyncpg.
     """
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
@@ -269,42 +270,45 @@ def _run_distill_task(
         except Exception as exc:
             print(f"[distill] Auto-tagging failed (silent): {exc}")
 
-        # Step 4: persist via fresh store + text_manager in a new event loop.
-        # Using the singleton text_manager's _storage would reuse a connection
-        # created in the main event loop — unsafe across threads.  Instead,
+        # Step 4: persist via a fresh, independent store whose asyncpg pool
+        # is created inside this asyncio.run() temporary loop and destroyed
+        # with it — never shares the main event loop's pool singleton.
         async def _save_card():
-            from deps import get_config, get_storage, get_rag_config, get_sessions
+            from storage import get_store
+            from deps import get_config, get_rag_config, get_sessions
             from core.text_manager import TextManager
 
-            store = get_storage()
-
-            llm_for_save = per_user_llm
-            if llm_for_save is None:
-                from deps import get_llm
-                llm_for_save = get_llm()
-
-            tm = TextManager(
-                store,
-                get_distiller(llm=llm_for_save),
-                llm_for_save,
-                get_rag_config(),
-                get_sessions(),
-                get_config().get("llm", {}).get("summary_threshold", 50),
-            )
-            result = await tm.save_distilled_card(text_id, card, user_id)
-            # Build scene index for emotion-weighted retrieval
+            store = get_store()
             try:
-                rag = tm._get_or_build_rag(text_id, content, [])
-                if rag.collection:
-                    card_id = result.get("card_id", "")
-                    scene_count = SceneIndexer().index_scenes(
-                        content, rag, card.name,
-                        collection_name=f"scenes_{card_id}",
-                    )
-                    print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
-            except Exception as exc:
-                print(f"[distill] Scene index failed (non-fatal): {exc}")
-            return result
+                llm_for_save = per_user_llm
+                if llm_for_save is None:
+                    from deps import get_llm
+                    llm_for_save = get_llm()
+
+                tm = TextManager(
+                    store,
+                    get_distiller(llm=llm_for_save),
+                    llm_for_save,
+                    get_rag_config(),
+                    get_sessions(),
+                    get_config().get("llm", {}).get("summary_threshold", 50),
+                )
+                result = await tm.save_distilled_card(text_id, card, user_id)
+                # Build scene index for emotion-weighted retrieval
+                try:
+                    rag = tm._get_or_build_rag(text_id, content, [])
+                    if rag.collection:
+                        card_id = result.get("card_id", "")
+                        scene_count = SceneIndexer().index_scenes(
+                            content, rag, card.name,
+                            collection_name=f"scenes_{card_id}",
+                        )
+                        print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
+                except Exception as exc:
+                    print(f"[distill] Scene index failed (non-fatal): {exc}")
+                return result
+            finally:
+                await store.close()
 
         with _task_lock:
             _tasks[task_id].update({
@@ -326,14 +330,19 @@ def _run_distill_task(
             })
 
     except Exception as exc:
-        print(f"[distill] Background task {task_id} failed: {exc}")
+        import traceback
+        print(f"[distill] Background task {task_id} failed: {exc}\n{traceback.format_exc()}")
+        readable = str(exc).split("\n")[0].strip() or type(exc).__name__
         with _task_lock:
-            _tasks[task_id].update({"status": "error", "message": str(exc), "text_id": text_id, "character": char_name})
+            _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：{readable}", "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
-            from deps import get_storage
-            store = get_storage()
-            asyncio.run(store.cleanup_empty_cards(text_id, user_id))
+            from storage import get_store
+            store = get_store()
+            try:
+                asyncio.run(store.cleanup_empty_cards(text_id, user_id))
+            finally:
+                asyncio.run(store.close())
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
