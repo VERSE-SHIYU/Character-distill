@@ -29,7 +29,7 @@ def create_safe_embedding_fn(
     """Create a DashScope embedding function. Requires api_key to be configured."""
     if not api_key:
         raise RuntimeError("未配置向量检索 API Key，请在设置页填写阿里云百炼 API Key")
-    cache_key = f"dashscope:{region}"
+    cache_key = f"dashscope:{region}:{api_key[:8]}"
     if cache_key not in _cache:
         _cache[cache_key] = DashScopeEmbedding(api_key, region)
     return _cache[cache_key]
