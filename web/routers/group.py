@@ -563,6 +563,15 @@ async def broadcast_message(
                     await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
                 # auto_mode: discard silently (no user message to attach to)
                 continue
+            # [SILENT] → save as role='silent' (visible to user, filtered from LLM context)
+            s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
+            if s:
+                if not req.auto_mode:
+                    await storage.save_group_message(
+                        group_id, r["speaker"], "silent", "", r["card_id"],
+                    )
+                # auto_mode: discard silently
+                continue
             await storage.save_group_message(
                 group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
             )

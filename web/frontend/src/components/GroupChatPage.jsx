@@ -1069,6 +1069,11 @@ export default function GroupChatPage() {
                               </div>
                               <Avatar name={personaSpeaker || authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
+                          ) : m.role === 'silent' ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' }}>
+                              <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                              <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
+                            </div>
                           ) : (
                             <>
                               <Avatar name={m.speaker || '?'} size={40} src={cardAvatars[m.card_id || m.speaker_card_id]} />

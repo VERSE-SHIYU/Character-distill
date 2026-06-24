@@ -80,6 +80,9 @@ class GroupSession:
         """
         messages = []
         for msg in self.group_history:
+            # role='silent' 只给用户看，不进 LLM 上下文
+            if msg.get("role") == "silent":
+                continue
             speaker_card_id = msg.get("speaker_card_id", "")
             content = msg.get("content", "")
 
@@ -287,6 +290,7 @@ class GroupSession:
                     "2. 冷淡敷衍——甩一句简短冷话('哦。''随便你''关你什么事'),嘴硬或不想深聊时,这往往比长篇更像你。\n"
                     "3. 只用一个表情代替说话——当一个表情就够表达你的态度时,严格输出 [REACT:表情] 这一种格式(整条回复就只有这个,不要再加别的字)。\n"
                     "   表情要符合你的性格:嘴硬的人可能用 👍 敷衍(不肯说软话),温柔的人用 ❤️ 含蓄表态,暴躁的人用 🔥 或 😮。可选:👍 ❤️ 😂 😮 😢 🔥\n"
+                    "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
                     "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
                 )
                 response = await engine.llm.achat(
@@ -295,15 +299,20 @@ class GroupSession:
                 )
 
             engine._try_record_usage("chat")
+
+            # [SILENT] → 以 role='silent' 入历史，不进 LLM 上下文，不评好感
+            import re as _re
+            is_silent = bool(_re.fullmatch(r'\s*\[SILENT\]\s*', response))
+            role = "silent" if is_silent else "assistant"
             self.group_history.append({
                 "speaker": engine.card.name,
-                "role": "assistant",
+                "role": role,
                 "content": response,
                 "speaker_card_id": card_id,
             })
 
             # ── 后台评估好感（不阻塞 broadcast 返回） ──
-            if not auto_mode and self._storage and self.id:
+            if not auto_mode and not is_silent and self._storage and self.id:
                 engine._storage = self._storage
                 engine._group_id = self.id
                 try:
