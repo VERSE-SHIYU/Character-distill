@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
 from routers.auth import get_current_user
-from deps import get_config, get_storage, get_memory_manager, patch_config
+from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
 from core.memory_manager import MemoryManager
 from core.log_collector import get_recent_logs
@@ -717,3 +717,26 @@ async def admin_reorder_featured(
     """Reorder featured cards by id array index."""
     await storage.reorder_featured_cards(req.ids)
     return {"ok": True}
+
+
+# ============================================================
+# Session stats (memory-cache diagnostics, read-only)
+# ============================================================
+
+
+@router.get("/sessions/stats")
+@limiter.limit("30/minute")
+async def admin_session_stats(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+) -> dict[str, Any]:
+    """Return in-memory session cache statistics."""
+    sessions = get_sessions()
+    if not sessions:
+        return {"count": 0, "oldest_active": None, "newest_active": None}
+    timestamps = [s.get("last_active") for s in sessions.values() if s.get("last_active")]
+    return {
+        "count": len(sessions),
+        "oldest_active": min(timestamps) if timestamps else None,
+        "newest_active": max(timestamps) if timestamps else None,
+    }
