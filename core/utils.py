@@ -26,20 +26,23 @@ def try_record_usage(
         source: Source name for error messages (e.g. ``"ChatEngine"``, ``"Distiller"``).
     """
     if not storage or not user_id:
+        print(f"[{source}] usage not recorded: storage/user_id missing (user={user_id}, action={action})")
         return
     if usage is None:
         usage = llm.last_usage
     if not usage:
+        print(f"[{source}] usage not recorded: no usage data (user={user_id}, action={action})")
         return
     model = getattr(llm, "_model", "") or ""
     pt = usage.get("prompt_tokens", 0)
     ct = usage.get("completion_tokens", 0)
+    is_est = bool(usage.get("estimated", False))
 
     def _do() -> None:
         try:
             loop = asyncio.new_event_loop()
             loop.run_until_complete(
-                storage.record_usage(user_id, action, pt, ct, model)
+                storage.record_usage(user_id, action, pt, ct, model, is_estimated=is_est)
             )
             loop.close()
         except Exception as exc:
