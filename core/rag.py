@@ -41,9 +41,13 @@ class RAGEngine:
             raise
 
         try:
-            self._embedding_function = create_safe_embedding_fn(self._embedding_model)
+            self._embedding_function = create_safe_embedding_fn(
+                self._embedding_model,
+                api_key=config.get("embedding_key", ""),
+                region=config.get("embedding_region", "cn"),
+            )
         except Exception as exc:
-            print(f"初始化 SentenceTransformer embedding 失败：{exc}")
+            print(f"初始化 embedding 失败：{exc}")
             raise
 
         # 兑现上方 docstring 的承诺：每个引擎实例使用唯一 UUID 作为默认集合名，

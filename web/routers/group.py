@@ -81,6 +81,15 @@ async def _rebuild_group_session(
         return None
 
     rag_config = get_rag_config()
+    # Inject per-user embedding config
+    try:
+        user_cfg = await storage.get_user_api_config(user_id)
+        if user_cfg.get("embedding_key"):
+            rag_config["embedding_key"] = user_cfg["embedding_key"]
+            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+    except Exception:
+        pass
+
     memory_manager = get_memory_manager()
 
     persona_type = session.get("user_persona_type", "director")
@@ -259,6 +268,15 @@ async def create_group(
     from deps import get_rag_config, get_memory_manager
 
     rag_config = get_rag_config()
+    # Inject per-user embedding config
+    try:
+        user_cfg = await storage.get_user_api_config(user_id)
+        if user_cfg.get("embedding_key"):
+            rag_config["embedding_key"] = user_cfg["embedding_key"]
+            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+    except Exception:
+        pass
+
     memory_manager = get_memory_manager()
 
     engines: dict[str, ChatEngine] = {}

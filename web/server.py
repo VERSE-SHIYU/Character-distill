@@ -85,13 +85,8 @@ async def _startup():
 
 
 async def _preload_embedding():
-    """Preload SentenceTransformer model so first chat is fast (1-2s instead of 5s)."""
-    try:
-        from core.embeddings import create_safe_embedding_fn
-        create_safe_embedding_fn()
-        print("[startup] Embedding model preloaded")
-    except Exception as exc:
-        print(f"[startup] Embedding preload skipped (non-fatal): {exc}")
+    """Embedding is now API-based (DashScope), no local model to preload."""
+    print("[startup] Embedding: DashScope API mode (on-demand, no preload needed)")
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

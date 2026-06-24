@@ -88,6 +88,8 @@ class ApiConfigRequest(BaseModel):
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-v4-pro"
+    embedding_key: str = ""
+    embedding_region: str = "cn"
 
 
 class ChangePasswordRequest(BaseModel):
@@ -369,6 +371,8 @@ async def me(
     resp["has_api_key"] = bool(config.get("api_key"))
     resp["base_url"] = config.get("base_url", "https://api.deepseek.com")
     resp["model"] = config.get("model", "deepseek-v4-pro")
+    resp["has_embedding_key"] = bool(config.get("embedding_key"))
+    resp["embedding_region"] = config.get("embedding_region", "cn")
     resp["avatar_data"] = await storage.get_user_avatar(user["id"])
     resp["email"] = await storage.get_user_email(user["id"])
     resp["email_verified"] = bool(user.get("email_verified", False))
@@ -407,7 +411,8 @@ async def update_api_config(
 
     try:
         await storage.update_user_api_config(
-            user["id"], req.api_key, req.base_url, req.model
+            user["id"], req.api_key, req.base_url, req.model,
+            req.embedding_key, req.embedding_region,
         )
         clear_user_llm_cache(user["id"])
         return {"ok": True}

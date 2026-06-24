@@ -130,11 +130,11 @@ class StorageBase(ABC):
 
     @abstractmethod
     async def get_user_api_config(self, user_id: str) -> dict:
-        """Get a user's API config (api_key decrypted, base_url, model)."""
+        """Get a user's API config (api_key decrypted, base_url, model, embedding_key, embedding_region)."""
 
     @abstractmethod
-    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str) -> None:
-        """Update a user's API config. api_key is encrypted before storage."""
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
+        """Update a user's API config. api_key and embedding_key are encrypted before storage."""
 
     @abstractmethod
     async def delete_user(self, user_id: str) -> dict:

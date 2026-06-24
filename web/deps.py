@@ -143,9 +143,14 @@ def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
     return _distiller
 
 
-def get_rag_config() -> dict[str, Any]:
-    """Return RAG configuration dict."""
-    return dict(_rag_config)
+def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[str, Any]:
+    """Return RAG configuration dict with optional embedding overrides."""
+    cfg = dict(_rag_config)
+    if embedding_key:
+        cfg["embedding_key"] = embedding_key
+    if embedding_region:
+        cfg["embedding_region"] = embedding_region
+    return cfg
 
 
 def get_sessions() -> dict[str, dict[str, Any]]:

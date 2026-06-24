@@ -900,9 +900,18 @@ async def start_session(
             content = _get_distill_content(text_rec)
             existing_cards = await storage.list_cards(req.text_id, user_id)
             all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
-            rag = text_manager._get_or_build_rag(req.text_id, content, all_characters)
+            emb_key = ""
+            emb_region = ""
+            try:
+                user_cfg = await storage.get_user_api_config(user_id)
+                if user_cfg.get("embedding_key"):
+                    emb_key = user_cfg["embedding_key"]
+                    emb_region = user_cfg.get("embedding_region", "cn")
+            except Exception:
+                pass
+            rag = text_manager._get_or_build_rag(req.text_id, content, all_characters, emb_key, emb_region)
             session_id = await asyncio.to_thread(
-                text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id
+                text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id, emb_key, emb_region
             )
         else:
             # 独立卡片模式：不加载原文，不构建 RAG，直接创建 ChatEngine

@@ -482,19 +482,26 @@ class TextManager:
         text_id: str,
         text: str,
         all_characters: list[dict[str, Any]] | None = None,
+        embedding_key: str = "",
+        embedding_region: str = "",
     ) -> RAGEngine:
         """返回文本级 RAG 缓存，不存在则构建并缓存。(sync)"""
-        cached = self._text_rag_cache.get(text_id)
+        cache_key = f"{text_id}:{embedding_key}"
+        cached = self._text_rag_cache.get(cache_key)
         if cached is not None:
             return cached
         col_name = f"text_{text_id}"
-        rag = RAGEngine(self._rag_config)
+        rag_config = dict(self._rag_config)
+        if embedding_key:
+            rag_config["embedding_key"] = embedding_key
+            rag_config["embedding_region"] = embedding_region
+        rag = RAGEngine(rag_config)
         # Try loading existing persistent index first (survives restart)
         if rag.load_existing(col_name):
-            self._text_rag_cache[text_id] = rag
+            self._text_rag_cache[cache_key] = rag
             return rag
         rag.index(text, collection_name=col_name, all_characters=all_characters)
-        self._text_rag_cache[text_id] = rag
+        self._text_rag_cache[cache_key] = rag
         return rag
 
     async def _build_all_characters(self, text_id: str, existing_cards: list[dict]) -> list[dict[str, Any]]:
@@ -519,10 +526,16 @@ class TextManager:
         rag: RAGEngine | None = None,
         card_id: str = "",
         user_id: str = "",
+        embedding_key: str = "",
+        embedding_region: str = "",
     ) -> str:
         """Build RAG + ChatEngine in memory and return session_id. (sync)"""
         if rag is None:
-            rag = RAGEngine(self._rag_config)
+            rag_config = dict(self._rag_config)
+            if embedding_key:
+                rag_config["embedding_key"] = embedding_key
+                rag_config["embedding_region"] = embedding_region
+            rag = RAGEngine(rag_config)
             rag.index(text, all_characters=all_characters)
         from deps import get_memory_manager
         engine = ChatEngine(

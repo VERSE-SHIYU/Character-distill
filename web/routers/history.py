@@ -196,10 +196,21 @@ async def resume_session(
         {"name": c["name"], "aliases": []} for c in existing_cards
     ]
 
-    # 4. Rebuild RAG + ChatEngine via _create_session (with timeout)
+    # 4. Fetch embedding config for this user
+    emb_key = ""
+    emb_region = ""
+    try:
+        user_cfg = await storage.get_user_api_config(user_id)
+        if user_cfg.get("embedding_key"):
+            emb_key = user_cfg["embedding_key"]
+            emb_region = user_cfg.get("embedding_region", "cn")
+    except Exception:
+        pass
+
+    # 5. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:
         rag = text_manager._get_or_build_rag(
-            card_rec["text_id"], text_rec["content"], all_characters
+            card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
         )
         new_session_id = await asyncio.wait_for(
             asyncio.to_thread(
@@ -210,6 +221,8 @@ async def resume_session(
                 rag,
                 card_rec["id"],
                 user_id,
+                emb_key,
+                emb_region,
             ),
             timeout=120.0,
         )
@@ -219,7 +232,7 @@ async def resume_session(
         print(f"[history] Rebuild engine for {session_id} failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
-    # 5. Steal the engine into the original session_id
+    # 6. Steal the engine into the original session_id
     if new_session_id != session_id:
         sessions[session_id] = sessions.pop(new_session_id, {})
     engine = sessions[session_id].get("engine")

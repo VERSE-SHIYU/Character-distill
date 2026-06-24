@@ -2560,50 +2560,68 @@ class SQLiteStore(StorageBase):
         return Fernet(key)
 
     async def get_user_api_config(self, user_id: str) -> dict:
-        """Get a user's API config. api_key is returned decrypted."""
+        """Get a user's API config. api_key and embedding_key are returned decrypted."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT api_key, base_url, model FROM users WHERE id = ?",
+                    "SELECT api_key, base_url, model, embedding_key, embedding_region FROM users WHERE id = ?",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
             if not row:
-                return {"api_key": "", "base_url": "", "model": ""}
-            encrypted = row[0] or ""
-            api_key = ""
-            if encrypted:
+                return {"api_key": "", "base_url": "", "model": "", "embedding_key": "", "embedding_region": "cn"}
+
+            def _decrypt(val: str) -> str:
+                if not val:
+                    return ""
                 try:
-                    api_key = self._get_fernet().decrypt(encrypted.encode()).decode()
+                    return self._get_fernet().decrypt(val.encode()).decode()
                 except Exception as exc:
-                    print(f"[SQLiteStore] API key decrypt failed: {exc}")
+                    print(f"[SQLiteStore] decrypt failed: {exc}")
+                    return ""
+
             return {
-                "api_key": api_key,
+                "api_key": _decrypt(row[0] or ""),
                 "base_url": row[1] or "https://api.deepseek.com",
                 "model": row[2] or "deepseek-v4-pro",
+                "embedding_key": _decrypt(row[3] or ""),
+                "embedding_region": row[4] or "cn",
             }
         except Exception as exc:
             print(f"[SQLiteStore] Get user API config failed: {exc}")
             raise
 
-    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str) -> None:
-        """Update a user's API config. api_key is encrypted before storage.
+    async def update_user_api_config(self, user_id: str, api_key: str, base_url: str, model: str, embedding_key: str = "", embedding_region: str = "cn") -> None:
+        """Update a user's API config. api_key and embedding_key are encrypted before storage.
 
-        Only updates api_key when a non-empty value is provided, so a blank
-        api_key in the request does not overwrite an existing encrypted key.
+        Only updates keys when a non-empty value is provided, so a blank
+        field in the request does not overwrite an existing encrypted key.
         """
         try:
             async with await self._connect() as conn:
                 if api_key:
                     encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                    if embedding_key:
+                        enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                        await conn.execute(
+                            "UPDATE users SET api_key = ?, base_url = ?, model = ?, embedding_key = ?, embedding_region = ? WHERE id = ?",
+                            (encrypted, base_url, model, enc_emb, embedding_region, user_id),
+                        )
+                    else:
+                        await conn.execute(
+                            "UPDATE users SET api_key = ?, base_url = ?, model = ?, embedding_region = ? WHERE id = ?",
+                            (encrypted, base_url, model, embedding_region, user_id),
+                        )
+                elif embedding_key:
+                    enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
                     await conn.execute(
-                        "UPDATE users SET api_key = ?, base_url = ?, model = ? WHERE id = ?",
-                        (encrypted, base_url, model, user_id),
+                        "UPDATE users SET base_url = ?, model = ?, embedding_key = ?, embedding_region = ? WHERE id = ?",
+                        (base_url, model, enc_emb, embedding_region, user_id),
                     )
                 else:
                     await conn.execute(
-                        "UPDATE users SET base_url = ?, model = ? WHERE id = ?",
-                        (base_url, model, user_id),
+                        "UPDATE users SET base_url = ?, model = ?, embedding_region = ? WHERE id = ?",
+                        (base_url, model, embedding_region, user_id),
                     )
                 await conn.commit()
         except Exception as exc:

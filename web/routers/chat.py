@@ -79,9 +79,19 @@ async def _ensure_session(
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards)
 
-    rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters)
+    emb_key = ""
+    emb_region = ""
+    try:
+        user_cfg = await storage.get_user_api_config(user_id)
+        if user_cfg.get("embedding_key"):
+            emb_key = user_cfg["embedding_key"]
+            emb_region = user_cfg.get("embedding_region", "cn")
+    except Exception:
+        pass
+
+    rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region)
     new_id = await asyncio.to_thread(
-        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id
+        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id, emb_key, emb_region
     )
 
     # Steal engine into the original session_id

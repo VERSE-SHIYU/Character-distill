@@ -17,6 +17,11 @@ export default function SettingsPanel() {
   const [showApiKey, setShowApiKey] = useState(false)
   const [saving, setSaving] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
+  const [hasEmbeddingKey, setHasEmbeddingKey] = useState(false)
+  const [embeddingRegion, setEmbeddingRegion] = useState('cn')
+  const [embeddingKey, setEmbeddingKey] = useState('')
+  const [showEmbeddingKey, setShowEmbeddingKey] = useState(false)
+  const [savingEmbedding, setSavingEmbedding] = useState(false)
   const [summaryThreshold, setSummaryThreshold] = useState(50)
 
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
@@ -51,6 +56,9 @@ export default function SettingsPanel() {
             model: savedModel || 'deepseek-v4-pro',
             api_key: meData.has_api_key ? MASKED_KEY : '',
           })
+          setHasEmbeddingKey(meData.has_embedding_key || false)
+          setEmbeddingRegion(meData.embedding_region || 'cn')
+          setEmbeddingKey(meData.has_embedding_key ? MASKED_KEY : '')
           useAppStore.setState({ apiConfigured: meData.has_api_key })
         }
       } catch (err) {
@@ -213,6 +221,87 @@ export default function SettingsPanel() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-section-title">向量检索（RAG）配置</h2>
+        <p className="settings-hint">
+          用于角色记忆的语义检索，每个用户独立配置，费用由用户自己承担。
+        </p>
+
+        <div className="provider-selector">
+          <button
+            type="button"
+            className={`provider-card${embeddingRegion === 'cn' ? ' active' : ''}`}
+            onClick={() => setEmbeddingRegion('cn')}
+          >
+            <div className="provider-card-title">中国内地 <span className="provider-card-badge">有免费额度</span></div>
+            <div className="provider-card-desc">dashscope.aliyuncs.com</div>
+          </button>
+          <button
+            type="button"
+            className={`provider-card${embeddingRegion === 'intl' ? ' active' : ''}`}
+            onClick={() => setEmbeddingRegion('intl')}
+          >
+            <div className="provider-card-title">国际（新加坡）</div>
+            <div className="provider-card-desc">dashscope-intl.aliyuncs.com · 按量计费</div>
+          </button>
+        </div>
+
+        <label className="settings-field">
+          <span className="settings-label">阿里云百炼 API Key</span>
+          <div className="settings-api-key-row">
+            <input
+              type={showEmbeddingKey ? 'text' : 'password'}
+              className="settings-input"
+              placeholder={hasEmbeddingKey ? '已配置，留空不修改' : '输入百炼 API Key（sk-xxx）'}
+              value={embeddingKey}
+              onChange={(e) => setEmbeddingKey(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn-ghost settings-show-key-btn"
+              onClick={() => setShowEmbeddingKey(v => !v)}
+            >
+              {showEmbeddingKey ? '隐藏' : '显示'}
+            </button>
+          </div>
+        </label>
+
+        <p className="settings-hint">
+          🔗 <a href="https://bailian.aliyun.com" target="_blank" rel="noopener noreferrer" className="settings-link">
+            前往阿里云百炼注册并获取 API Key
+          </a>
+          {embeddingRegion === 'cn' && '（中国内地用户注册后有免费额度）'}
+        </p>
+
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={savingEmbedding}
+          onClick={async () => {
+            setSavingEmbedding(true)
+            try {
+              const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
+              await updateApiConfig({
+                base_url: '',
+                model: '',
+                api_key: '',
+                embedding_key: sentKey,
+                embedding_region: embeddingRegion,
+              })
+              const hasKey = Boolean(sentKey || hasEmbeddingKey)
+              setEmbeddingKey(hasKey ? MASKED_KEY : '')
+              setHasEmbeddingKey(hasKey)
+            } catch (err) {
+              setError(err.message)
+            } finally {
+              setSavingEmbedding(false)
+            }
+          }}
+        >
+          {savingEmbedding ? '保存中…' : '保存 RAG 配置'}
+        </button>
       </section>
 
       <section className="settings-section">
