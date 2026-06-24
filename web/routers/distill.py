@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage
+from deps import get_sessions, get_storage, run_on_main_loop
 from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
@@ -91,13 +91,10 @@ def _run_distill_task(
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
-    All I/O that requires an event loop (text read, card save) is performed
-    via ``asyncio.run()`` which creates a fresh temporary loop per call.
-    Because asyncpg pools are bound to the event loop that created them,
-    the temporary loop MUST use its own independent store instance (created
-    via ``get_store()`` inside the coroutine), never the main service's
-    global singleton.  Sharing a pool across loops causes "Task pending"
-    errors in asyncpg.
+    All DB I/O is dispatched back to the main event loop via
+    ``run_on_main_loop()``, which uses ``run_coroutine_threadsafe`` so the
+    asyncpg pool is only ever touched from the loop that created it.
+    LLM calls (slow, network-heavy) stay on this background thread.
     """
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
@@ -270,9 +267,8 @@ def _run_distill_task(
         except Exception as exc:
             print(f"[distill] Auto-tagging failed (silent): {exc}")
 
-        # Step 4: persist via a fresh, independent store whose asyncpg pool
-        # is created inside this asyncio.run() temporary loop and destroyed
-        # with it — never shares the main event loop's pool singleton.
+        # Step 4: persist via the main event loop (run_coroutine_threadsafe)
+        # so the asyncpg pool stays on its home loop.
         async def _save_card():
             from storage import get_store
             from deps import get_config, get_rag_config, get_sessions
@@ -325,7 +321,7 @@ def _run_distill_task(
                 "message": "正在保存角色卡…",
             })
 
-        result = asyncio.run(_save_card())
+        result = run_on_main_loop(_save_card())
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         with _task_lock:
@@ -345,12 +341,14 @@ def _run_distill_task(
             _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：{readable}", "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
-            from storage import get_store
-            store = get_store()
-            try:
-                asyncio.run(store.cleanup_empty_cards(text_id, user_id))
-            finally:
-                asyncio.run(store.close())
+            async def _cleanup():
+                from storage import get_store
+                store = get_store()
+                try:
+                    await store.cleanup_empty_cards(text_id, user_id)
+                finally:
+                    await store.close()
+            run_on_main_loop(_cleanup())
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:

@@ -22,8 +22,6 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import core.fix_meta_tensor  # noqa: E402  必须最先执行
-
 _WEB_DIR = Path(__file__).resolve().parent
 if str(_WEB_DIR) not in sys.path:
     sys.path.insert(0, str(_WEB_DIR))
@@ -86,6 +84,8 @@ async def _startup():
     install_log_collector()
     loop = asyncio.get_running_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
+    from deps import set_main_loop
+    set_main_loop(loop)
     await _preload_embedding()
     asyncio.create_task(_session_cleanup_loop())
 

@@ -400,16 +400,11 @@ class ChatEngine:
         session_id = self._session_id
         if storage and session_id:
             try:
-                _loop = getattr(self, '_main_loop', None)
-                if _loop is not None:
-                    new_reactions = asyncio.run_coroutine_threadsafe(
-                        storage.get_reactions_after(session_id, self._last_reaction_id),
-                        _loop,
-                    ).result(timeout=10)
-                else:
-                    new_reactions = asyncio.run(
-                        storage.get_reactions_after(session_id, self._last_reaction_id)
-                    )
+                from deps import run_on_main_loop
+                new_reactions = run_on_main_loop(
+                    storage.get_reactions_after(session_id, self._last_reaction_id),
+                    timeout=10,
+                )
                 if new_reactions:
                     self.ingest_reaction_signals([
                         {"emoji": r["emoji"], "msg_content": r["msg_content"]}
@@ -578,39 +573,27 @@ class ChatEngine:
                 if storage and self._group_id:
                     # 群聊：写 group_affinity 表，key=(group_id, card_id)
                     try:
-                        _loop = getattr(self, '_main_loop', None)
-                        if _loop is not None:
-                            asyncio.run_coroutine_threadsafe(
-                                storage.update_group_affinity(
-                                    self._group_id, self._card_id, self._affinity, self._trust,
-                                    self._mood, self._guard, self._affinity_reason,
-                                ),
-                                _loop,
-                            ).result(timeout=15)
-                        else:
-                            asyncio.run(storage.update_group_affinity(
+                        from deps import run_on_main_loop
+                        run_on_main_loop(
+                            storage.update_group_affinity(
                                 self._group_id, self._card_id, self._affinity, self._trust,
                                 self._mood, self._guard, self._affinity_reason,
-                            ))
+                            ),
+                            timeout=15,
+                        )
                     except Exception as db_exc:
                         print(f"[ChatEngine] Affinity DB save failed (group={self._group_id} card={self._card_id}): {db_exc}")
                 elif storage and session_id:
                     # 单聊：写 sessions 表（原逻辑不变）
                     try:
-                        _loop = getattr(self, '_main_loop', None)
-                        if _loop is not None:
-                            asyncio.run_coroutine_threadsafe(
-                                storage.update_session_affinity(
-                                    session_id, self._affinity, self._trust,
-                                    self._mood, self._guard, self._affinity_reason,
-                                ),
-                                _loop,
-                            ).result(timeout=15)
-                        else:
-                            asyncio.run(storage.update_session_affinity(
+                        from deps import run_on_main_loop
+                        run_on_main_loop(
+                            storage.update_session_affinity(
                                 session_id, self._affinity, self._trust,
                                 self._mood, self._guard, self._affinity_reason,
-                            ))
+                            ),
+                            timeout=15,
+                        )
                     except Exception as db_exc:
                         print(f"[ChatEngine] Affinity DB save failed (session={session_id}): {db_exc}")
             except Exception as exc:
@@ -816,15 +799,11 @@ class ChatEngine:
         is_first_message = len(self.history) == 0
         if not is_first_message and self._storage and self._session_id:
             try:
-                _loop = getattr(self, '_main_loop', None)
-                if _loop is not None:
-                    session_data = asyncio.run_coroutine_threadsafe(
-                        self._storage.get_session(self._session_id), _loop
-                    ).result(timeout=5)
-                else:
-                    session_data = asyncio.run(
-                        self._storage.get_session(self._session_id)
-                    )
+                from deps import run_on_main_loop
+                session_data = run_on_main_loop(
+                    self._storage.get_session(self._session_id),
+                    timeout=5,
+                )
                 if session_data:
                     updated_at = session_data.get("updated_at")
                     if isinstance(updated_at, str):

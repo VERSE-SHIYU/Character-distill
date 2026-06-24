@@ -38,6 +38,7 @@ except Exception as exc:
     raise
 
 _storage = get_store()
+_main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
 _distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
@@ -119,6 +120,39 @@ def get_memory_manager() -> MemoryManager | None:
 def get_storage() -> StorageBase:
     """Return the storage singleton."""
     return _storage
+
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Capture the main event loop so background threads can schedule DB work on it."""
+    global _main_loop
+    _main_loop = loop
+
+
+def get_main_loop() -> asyncio.AbstractEventLoop | None:
+    """Return the captured main event loop, or None if not yet set."""
+    return _main_loop
+
+
+def run_on_main_loop(coro, timeout=600):
+    """Submit a coroutine to the main event loop and block until it completes.
+
+    All DB I/O from background threads MUST go through this function so that
+    the asyncpg pool is only ever touched from the main event loop.
+    ``run_coroutine_threadsafe`` schedules the coroutine on the main loop and
+    ``future.result()`` blocks the calling thread until it finishes — keeping
+    the original serial semantics intact.
+
+    Falls back to ``asyncio.run()`` if the main loop reference has not been
+    captured (should never happen in normal operation, but prevents a hard
+    crash if startup order changes).
+    """
+    loop = get_main_loop()
+    if loop is None:
+        import warnings
+        warnings.warn("[deps] Main loop not captured, falling back to asyncio.run()")
+        return asyncio.run(coro)
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return fut.result(timeout=timeout)
 
 
 def get_llm() -> LLMAdapter | None:

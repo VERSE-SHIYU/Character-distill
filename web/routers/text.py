@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from urllib.parse import quote
 
-from deps import get_storage
+from deps import get_storage, run_on_main_loop
 from storage.base import StorageBase
 
 from limiter import get_client_ip, limiter
@@ -36,7 +36,8 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
         with _upload_task_lock:
             _upload_tasks[task_id] = {"status": "parsing", "progress_pct": 5, "message": "解析文件中…", "text_id": text_id}
 
-        # Run inside a fresh event loop
+        # Run on the main event loop (run_coroutine_threadsafe) so the
+        # global asyncpg pool stays on its home loop.
         async def _do():
             from deps import get_storage
             store = get_storage()
@@ -129,7 +130,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
             with _upload_task_lock:
                 _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成", "text_id": text_id})
 
-        asyncio.run(_do())
+        run_on_main_loop(_do())
     except Exception as exc:
         print(f"[text] Upload task {task_id} failed: {exc}")
         with _upload_task_lock:
