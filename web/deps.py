@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -162,6 +164,33 @@ def get_sessions() -> dict[str, dict[str, Any]]:
 def touch_session(session: dict) -> None:
     """Update the last_active timestamp on a session dict."""
     session["last_active"] = time.time()
+
+
+_SESSION_IDLE_TTL = int(os.getenv("SESSION_IDLE_TTL_SECONDS", "3600"))
+
+
+async def _session_cleanup_loop() -> None:
+    """Periodically evict idle sessions from the in-memory cache.
+
+    Only removes from memory — never touches the database.
+    Sessions with an active lock (mid-generation) are skipped.
+    """
+    while True:
+        await asyncio.sleep(300)
+        sessions = get_sessions()
+        ttl = _SESSION_IDLE_TTL
+        now = time.time()
+        evicted = 0
+        for sid, sess in list(sessions.items()):
+            if now - sess.get("last_active", now) <= ttl:
+                continue
+            lk = sess.get("lock")
+            if lk is not None and lk.locked():
+                continue
+            sessions.pop(sid, None)
+            evicted += 1
+        if evicted:
+            print(f"[session_cleanup] evicted={evicted} remaining={len(sessions)}")
 
 
 def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
