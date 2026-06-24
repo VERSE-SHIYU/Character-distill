@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 # 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
 import os
@@ -57,7 +59,7 @@ from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_SECRET, JWT_ALGORITHM
 from routers.admin import require_admin, router as admin_router
-from deps import get_config, get_storage, reset_llm_and_dependents
+from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
 
@@ -82,6 +84,7 @@ app.state.limiter = limiter
 async def _startup():
     install_log_collector()
     await _preload_embedding()
+    asyncio.create_task(_session_cleanup_loop())
 
 
 async def _preload_embedding():
