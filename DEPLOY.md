@@ -188,6 +188,6 @@ docker compose -f docker-compose.prod.yml restart app
 ## 附：与旧架构的差异（迁移注意）
 
 - **数据库**：SQLite → PostgreSQL（自建容器，用户 <200 足够）。
-- **存储切换**：由 `.env` 的 `STORAGE_BACKEND` 控制，可回退 sqlite。
+- **存储切换**：由 `.env` 的 `STORAGE_BACKEND` 控制，**必须显式设置**。未设或设错时服务会 fail-fast 拒绝启动（有意设计，防止静默写错库）。
 - **架构图修正**：旧文档写"国内用户→新加坡"有误；实为境内→深圳、境外→新加坡。
 - **备份**：sqlite `.backup` → `pg_dump`；按地域分别上传 OSS / COS，互不跨境。
