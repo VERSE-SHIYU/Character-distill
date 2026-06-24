@@ -138,10 +138,7 @@ class ChatEngine:
         )
 
         # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
-        system_prompt += self._build_affinity_persona_block()
-        system_prompt += self._build_cognitive_block()
-        system_prompt += self._build_time_awareness_block()
-        system_prompt += self._build_event_candidate_block()
+        system_prompt += self._build_all_enhancements()
 
         if voice_mode:
             system_prompt += (
@@ -196,10 +193,7 @@ class ChatEngine:
         )
 
         # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
-        system_prompt += self._build_affinity_persona_block()
-        system_prompt += self._build_cognitive_block()
-        system_prompt += self._build_time_awareness_block()
-        system_prompt += self._build_event_candidate_block()
+        system_prompt += self._build_all_enhancements()
 
         if voice_mode:
             system_prompt += (
@@ -751,6 +745,19 @@ class ChatEngine:
             f"用词{cog.vocabulary_level}。\n"
             "严格按这个水平说话：不要使用超出你身份的成语、典故、专业术语或现代知识。"
             "宁可说得朴实简单，也绝不要露出不属于这个角色的学识或词汇。\n"
+        )
+
+    def _build_all_enhancements(self) -> str:
+        """按固定顺序拼接全部 prompt 增强块。
+
+        统一入口：治舔狗/认知画像/时间感知/事件提醒。
+        新增增强块时在此加一行，5 个调用点自动全生效。
+        """
+        return (
+            self._build_affinity_persona_block()
+            + self._build_cognitive_block()
+            + self._build_time_awareness_block()
+            + self._build_event_candidate_block()
         )
 
     # ── 时间感知构建 ────────────────────────────────────────────
