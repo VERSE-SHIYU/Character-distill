@@ -673,6 +673,26 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Group affinity migration failed: {exc}")
 
+                    # Run 067_embedding_config migration (ALTER TABLE may fail if column exists)
+                    ec_path = migrations_dir / "067_embedding_config.sql"
+                    if ec_path.exists():
+                        try:
+                            await conn.executescript(ec_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Embedding config migration failed: {exc}")
+
+                    # Run 068_usage_estimated migration (ALTER TABLE may fail if column exists)
+                    ue_path = migrations_dir / "068_usage_estimated.sql"
+                    if ue_path.exists():
+                        try:
+                            await conn.executescript(ue_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Usage estimated migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
