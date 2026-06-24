@@ -159,6 +159,8 @@ class LLMAdapter:
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]]) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
         payload = self._build_messages(system_prompt, messages)
+        prompt_chars = sum(len(m.get("content", "")) for m in payload)
+        self.last_usage = None  # 切断上一轮污染
         try:
             stream = self._client.chat.completions.create(
                 model=self._model,
@@ -173,12 +175,14 @@ class LLMAdapter:
         except Exception as exc:
             print(f"调用 DeepSeek Chat API 失败（流式）：{exc}")
             raise
+        completion_chars = 0
         try:
             for chunk in stream:
                 if chunk.usage:
                     self.last_usage = {
                         "prompt_tokens": chunk.usage.prompt_tokens or 0,
                         "completion_tokens": chunk.usage.completion_tokens or 0,
+                        "estimated": False,
                     }
                     continue
                 choices = chunk.choices
@@ -187,7 +191,16 @@ class LLMAdapter:
                 delta = choices[0].delta
                 piece = delta.content
                 if piece:
+                    completion_chars += len(piece)
                     yield piece
+            # 厂商全程未回 usage chunk → 字符估算兜底
+            if self.last_usage is None:
+                self.last_usage = {
+                    "prompt_tokens": int(prompt_chars / 1.5),
+                    "completion_tokens": int(completion_chars / 1.5),
+                    "estimated": True,
+                }
+                print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
