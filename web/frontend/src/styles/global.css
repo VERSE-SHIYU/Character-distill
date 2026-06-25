@@ -11517,15 +11517,19 @@ select.settings-input {
 /* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
   max-width: 70%;
-  background: color-mix(in srgb, var(--primary) 8%, var(--glass-bg));
-  border: 1px solid color-mix(in srgb, var(--primary) 15%, var(--glass-border));
-  border-radius: 16px;
+  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
+  border-left: 3px solid var(--primary);
+  border-radius: 4px 16px 16px 4px;
   overflow: visible;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  box-shadow: 0 3px 14px rgba(0,0,0,0.08);
   transition: box-shadow 0.25s;
 }
-.group-chat-bubble:hover {
-  box-shadow: 0 4px 20px rgba(0,0,0,0.09);
+[data-theme="dark"] .group-chat-bubble {
+  background: color-mix(in srgb, var(--primary) 16%, var(--glass-bg));
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--glass-border));
+  border-left: 3px solid var(--primary);
+  box-shadow: 0 3px 14px rgba(0,0,0,0.25);
 }
 
 .group-chat-bubble-header {
@@ -11535,17 +11539,16 @@ select.settings-input {
   padding: 10px 16px 2px;
 }
 .group-chat-bubble-speaker {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--primary);
+  font-size: 13px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--primary) 45%, var(--text));
   cursor: pointer;
-  transition: opacity .15s;
-  padding-left: 10px;
-  border-left: 3px solid color-mix(in srgb, var(--primary) 50%, transparent);
+  transition: opacity .15s, color .15s;
   line-height: 1.3;
 }
 .group-chat-bubble-speaker:hover {
-  opacity: .7;
+  opacity: 1;
+  color: var(--text);
   text-decoration: underline;
 }
 .group-chat-bubble-body {
@@ -11581,6 +11584,9 @@ select.settings-input {
 }
 .group-chat-name-row--mine {
   justify-content: flex-end;
+}
+.group-chat-name-row--mine .group-chat-bubble-speaker {
+  text-align: right;
 }
 .group-chat-msg-col .group-chat-bubble {
   max-width: 100%;
@@ -11908,8 +11914,12 @@ select.settings-input {
 }
 .group-chat-page .messages-row.mine .messages-bubble.mine {
   margin-right: 6px;
-  background: color-mix(in srgb, var(--primary) 85%, white);
+  background: color-mix(in srgb, var(--primary) 92%, #555);
   color: #fff;
+}
+.group-chat-page .messages-row.mine .messages-bubble.mine .messages-msg-text,
+.group-chat-page .messages-row.mine .messages-bubble.mine .msg-time {
+  color: rgba(255,255,255,0.95);
 }
 
 /* Group create card selection */
