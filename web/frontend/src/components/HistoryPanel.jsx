@@ -19,6 +19,45 @@ function parseCardIds(raw) {
 
 const PAGE_SIZE = 20
 
+/* ── Confirm action definitions (single source of truth) ── */
+const CONFIRM_ACTION_DEFS = {
+  deleteSession: {
+    title: '删除会话',
+    message: '确定删除该会话？将移入回收站。',
+    confirmText: '删除',
+  },
+  purgeSession: {
+    title: '彻底删除',
+    message: '确定彻底删除该会话？此操作不可恢复。',
+    confirmText: '彻底删除',
+  },
+  deleteGroup: {
+    title: '删除群聊',
+    message: '确定删除该群聊？将移入回收站，可后续恢复。',
+    confirmText: '删除',
+  },
+  deleteText: {
+    title: '删除书籍',
+    message: '确定删除该书籍？将移入回收站。',
+    confirmText: '删除',
+  },
+  clearAll: {
+    title: '移入回收站',
+    message: '确定将所有历史记录移入回收站？',
+    confirmText: '确认',
+  },
+  purgeTrash: {
+    title: '清空回收站',
+    message: '确定清空回收站？所有记录将被彻底删除，不可恢复。',
+    confirmText: '清空',
+  },
+  batchDelete: {
+    title: '批量删除',
+    message: '', // dynamic, provided at call site
+    confirmText: '删除',
+  },
+}
+
 function useDebouncedValue(value, delayMs) {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -87,13 +126,30 @@ export default function HistoryPanel({ initialTrash = false }) {
   const [groupDetailLoading, setGroupDetailLoading] = useState(false)
   const [textItems, setTextItems] = useState([])
   const [textsLoading, setTextsLoading] = useState(false)
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
-  const [deleteTextId, setDeleteTextId] = useState(null)
-  const [deleteGroupId, setDeleteGroupId] = useState(null)
-  const [purgeConfirmId, setPurgeConfirmId] = useState(null)
-  const [clearAllConfirm, setClearAllConfirm] = useState(false)
-  const [purgeTrashConfirm, setPurgeTrashConfirm] = useState(false)
-  const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
+  const [pendingAction, setPendingAction] = useState(null)
+  const requestConfirm = (actionType, { message, run } = {}) => {
+    const def = CONFIRM_ACTION_DEFS[actionType]
+    if (!def) return
+    console.log('[HistoryPanel] requestConfirm ->', def.title)
+    setPendingAction({
+      title: def.title,
+      message: message ?? def.message,
+      confirmText: def.confirmText,
+      danger: true,
+      run,
+    })
+  }
+  const runPendingAction = async () => {
+    if (!pendingAction) return
+    const action = pendingAction
+    setPendingAction(null)
+    try {
+      await action.run()
+    } catch (err) {
+      console.error('[HistoryPanel] pending action failed:', err)
+      setError(err?.message || '操作失败')
+    }
+  }
   const pageRef = useRef(1)
   const listRef = useRef(null)
   const abortRef = useRef(false)
@@ -408,7 +464,6 @@ export default function HistoryPanel({ initialTrash = false }) {
   }
 
   const handleDeleteText = async (textId) => {
-    setDeleteTextId(null)
     try {
       await fetchWithTimeout(`/api/text/${textId}`, { method: 'DELETE' })
       setTextItems((prev) => prev.filter((t) => t.id !== textId))
@@ -432,7 +487,10 @@ export default function HistoryPanel({ initialTrash = false }) {
         cardAvatars={cardAvatars}
         onBack={() => setDetail(null)}
         onContinue={() => handleContinue(detail.session.id)}
-        onDelete={() => trashMode ? setPurgeConfirmId(detail.session.id) : setDeleteConfirmId(detail.session.id)}
+        onDelete={() => requestConfirm(
+          trashMode ? 'purgeSession' : 'deleteSession',
+          { run: () => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id) },
+        )}
         onRestore={() => handleRestore(detail.session.id)}
         onExport={(fmt) => downloadExport(detail.session.id, fmt)}
       />
@@ -446,7 +504,7 @@ export default function HistoryPanel({ initialTrash = false }) {
         loading={groupDetailLoading}
         onBack={() => setGroupDetail(null)}
         onResume={() => handleResumeGroup(groupDetail.id)}
-        onDelete={() => setDeleteGroupId(groupDetail.id)}
+        onDelete={() => requestConfirm('deleteGroup', { run: () => handleDeleteGroup(groupDetail.id) })}
       />
     )
   }
@@ -538,7 +596,10 @@ export default function HistoryPanel({ initialTrash = false }) {
               <button
                 type="button"
                 className="btn-ghost-danger"
-                onClick={() => setBatchDeleteConfirm(true)}
+                onClick={() => requestConfirm('batchDelete', {
+                  message: `确定将选中的 ${selectedIds.size} 条会话移入回收站？`,
+                  run: () => handleBatchDelete(),
+                })}
               >
                 <Trash2 size={14} />移入回收站 ({selectedIds.size})
               </button>
@@ -547,7 +608,7 @@ export default function HistoryPanel({ initialTrash = false }) {
               <button
                 type="button"
                 className="btn-ghost-danger"
-                onClick={() => setClearAllConfirm(true)}
+                onClick={() => requestConfirm('clearAll', { run: () => handleClearAll() })}
               >
                 <Trash2 size={14} />移入回收站
               </button>
@@ -559,7 +620,7 @@ export default function HistoryPanel({ initialTrash = false }) {
           <button
             type="button"
             className="btn-ghost-danger"
-            onClick={() => setPurgeTrashConfirm(true)}
+            onClick={() => requestConfirm('purgeTrash', { run: () => handlePurgeTrash() })}
           >
             <Trash2 size={14} /> 清空回收站
           </button>
@@ -623,7 +684,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                               className="history-swipe-delete"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                setPurgeConfirmId(it.id)
+                                requestConfirm('purgeSession', { run: () => handlePurge(it.id) })
                               }}
                             >
                               彻底删除
@@ -635,7 +696,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                             className="history-swipe-delete"
                             onClick={(e) => {
                               e.stopPropagation()
-                              setDeleteConfirmId(it.id)
+                              requestConfirm('deleteSession', { run: () => handleDelete(it.id) })
                             }}
                           >
                             移入回收站
@@ -709,7 +770,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                         className="history-swipe-delete"
                         onClick={(e) => {
                           e.stopPropagation()
-                          setDeleteGroupId(g.id)
+                          requestConfirm('deleteGroup', { run: () => handleDeleteGroup(g.id) })
                         }}
                       >
                         删除
@@ -765,7 +826,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                           className="history-swipe-delete"
                           onClick={(e) => {
                             e.stopPropagation()
-                            setDeleteTextId(t.id)
+                            requestConfirm('deleteText', { run: () => handleDeleteText(t.id) })
                           }}
                         >
                           删除
@@ -808,92 +869,13 @@ export default function HistoryPanel({ initialTrash = false }) {
       )}
 
       <ConfirmModal
-        isOpen={!!deleteConfirmId}
-        title="删除会话"
-        message="确定删除该会话？将移入回收站。"
-        confirmText="删除"
-        onConfirm={async () => {
-          const id = deleteConfirmId
-          setDeleteConfirmId(null)
-          await handleDelete(id)
-        }}
-        onCancel={() => setDeleteConfirmId(null)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={!!deleteGroupId}
-        title="删除群聊"
-        message="确定删除该群聊？将移入回收站，可后续恢复。"
-        confirmText="删除"
-        onConfirm={async () => {
-          const id = deleteGroupId
-          setDeleteGroupId(null)
-          await handleDeleteGroup(id)
-        }}
-        onCancel={() => setDeleteGroupId(null)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={!!purgeConfirmId}
-        title="彻底删除"
-        message="确定彻底删除该会话？此操作不可恢复。"
-        confirmText="彻底删除"
-        onConfirm={async () => {
-          const id = purgeConfirmId
-          setPurgeConfirmId(null)
-          await handlePurge(id)
-        }}
-        onCancel={() => setPurgeConfirmId(null)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={clearAllConfirm}
-        title="移入回收站"
-        message="确定将所有历史记录移入回收站？"
-        confirmText="确认"
-        onConfirm={async () => {
-          setClearAllConfirm(false)
-          await handleClearAll()
-        }}
-        onCancel={() => setClearAllConfirm(false)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={purgeTrashConfirm}
-        title="清空回收站"
-        message="确定清空回收站？所有记录将被彻底删除，不可恢复。"
-        confirmText="清空"
-        onConfirm={async () => {
-          setPurgeTrashConfirm(false)
-          await handlePurgeTrash()
-        }}
-        onCancel={() => setPurgeTrashConfirm(false)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={batchDeleteConfirm}
-        title="批量删除"
-        message={`确定将选中的 ${selectedIds.size} 条会话移入回收站？`}
-        confirmText="删除"
-        onConfirm={async () => {
-          setBatchDeleteConfirm(false)
-          await handleBatchDelete()
-        }}
-        onCancel={() => setBatchDeleteConfirm(false)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={!!deleteTextId}
-        title="删除书籍"
-        message="确定删除该书籍？将移入回收站。"
-        confirmText="删除"
-        onConfirm={async () => {
-          const id = deleteTextId
-          setDeleteTextId(null)
-          await handleDeleteText(id)
-        }}
-        onCancel={() => setDeleteTextId(null)}
-        danger
+        isOpen={!!pendingAction}
+        title={pendingAction?.title || ''}
+        message={pendingAction?.message || ''}
+        confirmText={pendingAction?.confirmText || '确认'}
+        onConfirm={runPendingAction}
+        onCancel={() => setPendingAction(null)}
+        danger={pendingAction?.danger ?? true}
       />
     </div>
   )
