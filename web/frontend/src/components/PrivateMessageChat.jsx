@@ -5,6 +5,7 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { formatChatTime } from '../utils/time'
 import { Calendar } from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
+import ChatBubble from './common/ChatBubble'
 import ChatInputBar from './common/ChatInputBar'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
@@ -324,32 +325,29 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                     <div className="messages-time-divider">{formatChatTime(msg.created_at)}</div>
                   )}
                   <div className={`messages-row${isMe ? ' mine' : ' other'}`} data-msg-id={msg.id}>
-                    {!isMe && (
-                      <Avatar name={otherUsername || '?'} src={otherAvatar} size={52} />
-                    )}
-                    <div className={`messages-bubble${isMe ? ' mine' : ' other'}`}>
+                    <ChatBubble
+                      side={isMe ? 'right' : 'left'}
+                      avatar={
+                        <Avatar
+                          name={isMe ? (authUser?.username || '?') : (otherUsername || '?')}
+                          src={isMe ? userAvatar : otherAvatar}
+                          size={52}
+                        />
+                      }
+                      time={msg.created_at ? formatChatTime(msg.created_at) : undefined}
+                      status={isMe && msg._status ? (
+                        msg._status === 'failed' ? (
+                          <button type="button" className="messages-status failed"
+                            onClick={() => handleResend(msg)} title="发送失败，点击重试">⚠</button>
+                        ) : msg._status === 'sending' ? (
+                          <span className="messages-status sending" title="发送中">⏳</span>
+                        ) : (
+                          <span className="messages-status queued" title="等待网络恢复">📶</span>
+                        )
+                      ) : undefined}
+                    >
                       <span className="messages-msg-text">{msg.content}</span>
-                      {msg.created_at && (
-                        <div className={`msg-time ${isMe ? 'msg-time-user' : ''}`}>{formatChatTime(msg.created_at)}</div>
-                      )}
-                    </div>
-                    {isMe && msg._status === 'queued' && (
-                      <span className="messages-status queued" title="等待网络恢复">📶</span>
-                    )}
-                    {isMe && msg._status === 'sending' && (
-                      <span className="messages-status sending" title="发送中">⏳</span>
-                    )}
-                    {isMe && msg._status === 'failed' && (
-                      <button
-                        type="button"
-                        className="messages-status failed"
-                        onClick={() => handleResend(msg)}
-                        title="发送失败，点击重试"
-                      >
-                        ⚠
-                      </button>
-                    )}
-                    {isMe && <Avatar name={authUser?.username || '?'} src={userAvatar} size={52} />}
+                    </ChatBubble>
                   </div>
                 </React.Fragment>
               )
