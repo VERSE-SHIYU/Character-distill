@@ -19,13 +19,15 @@ export default function ChatArea() {
   const sessionId = useAppStore((s) => s.sessionId)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
   const currentView = useAppStore((s) => s.currentView)
+  const previousViewContext = useAppStore((s) => s.previousViewContext)
   const setView = useAppStore((s) => s.setView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
 
-  // Auto-recover: only create session when user is actually on the chat view
+  // Auto-recover: only create session when user is actually on the chat view.
+  // Skip if a chatSnapshot is pending (restored by restoreChatSnapshot on return).
   useEffect(() => {
-    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading) {
+    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !previousViewContext?.chatSnapshot) {
       startChat(currentCard)
     }
   }, [currentView, currentCard?.id, sessionId])
