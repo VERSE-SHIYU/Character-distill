@@ -11527,6 +11527,7 @@ select.settings-input {
 
 /* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
+  position: relative;
   max-width: 70%;
   background: #fff;
   border: 1px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
@@ -11535,10 +11536,30 @@ select.settings-input {
   box-shadow: 0 3px 14px rgba(0,0,0,0.08);
   transition: box-shadow 0.25s;
 }
+/* Rounded tail: rotated square + clip-path, background:inherit avoids tint mismatch */
+.group-chat-bubble::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 16px;
+  width: 14px;
+  height: 14px;
+  background: inherit;
+  border-left: 1px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
+  border-bottom-left-radius: 4px;
+  transform: rotate(45deg);
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+  pointer-events: none;
+}
 [data-theme="dark"] .group-chat-bubble {
   background: color-mix(in srgb, var(--primary) 14%, #1f1d29);
   border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--glass-border));
   box-shadow: 0 3px 14px rgba(0,0,0,0.25);
+}
+[data-theme="dark"] .group-chat-bubble::before {
+  border-left-color: color-mix(in srgb, var(--primary) 28%, var(--glass-border));
+  border-bottom-color: color-mix(in srgb, var(--primary) 28%, var(--glass-border));
 }
 [data-theme="dark"] .group-chat-bubble-body {
   color: rgba(255, 255, 255, 0.92);
@@ -11551,7 +11572,7 @@ select.settings-input {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 16px 2px;
+  padding: 7px 14px 0;
 }
 .group-chat-bubble-speaker {
   font-size: 13px;
@@ -11567,15 +11588,15 @@ select.settings-input {
   text-decoration: underline;
 }
 .group-chat-bubble-body {
-  padding: 2px 16px 10px;
+  padding: 2px 14px 4px;
   font-size: 14px;
-  line-height: 1.65;
+  line-height: 1.5;
   word-break: break-word;
   color: var(--text);
   white-space: pre-wrap;
 }
 .group-chat-bubble-time {
-  padding: 0 12px 8px;
+  padding: 0 14px 6px;
   font-size: 11px;
   color: var(--text-dim);
   opacity: 0.65;
