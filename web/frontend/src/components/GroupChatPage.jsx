@@ -1048,7 +1048,7 @@ export default function GroupChatPage() {
                             ) : (
                             <ChatBubble
                               side="right"
-                              avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={48} src={userAvatar} />}
+                              avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={72} src={userAvatar} />}
                               name={personaSpeaker || undefined}
                               time={m.created_at ? formatChatTime(m.created_at) : undefined}
                             >
@@ -1097,7 +1097,7 @@ export default function GroupChatPage() {
                             <>
                               <ChatBubble
                                 side="left"
-                                avatar={<Avatar name={m.speaker || '?'} size={48} src={cardAvatars[m.card_id || m.speaker_card_id]} />}
+                                avatar={<Avatar name={m.speaker || '?'} size={72} src={cardAvatars[m.card_id || m.speaker_card_id]} />}
                                 name={m.speaker || '?'}
                                 onNameClick={() => {
                                   const cardId = m.card_id || m.speaker_card_id

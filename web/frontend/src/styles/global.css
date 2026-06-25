@@ -11584,7 +11584,7 @@ select.settings-input {
   height: 16px;
   background: var(--cbubble-border);
   clip-path: polygon(100% 0, 0 50%, 100% 100%);
-  border-radius: 0 0 0 3px;
+  border-radius: 2px 0 0 4px;
   pointer-events: none;
 }
 .cbubble--left::after {
@@ -11598,7 +11598,7 @@ select.settings-input {
   height: 14px;
   background: var(--cbubble-bg);
   clip-path: polygon(100% 0, 0 50%, 100% 100%);
-  border-radius: 0 0 0 4px;
+  border-radius: 2px 0 0 4px;
   pointer-events: none;
 }
 
@@ -11624,7 +11624,7 @@ select.settings-input {
   height: 14px;
   background: var(--cbubble-bg);
   clip-path: polygon(0 0, 100% 50%, 0 100%);
-  border-radius: 0 4px 0 0;
+  border-radius: 0 2px 4px 0;
   pointer-events: none;
 }
 
