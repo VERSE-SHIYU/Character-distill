@@ -623,7 +623,7 @@ const useAppStore = create((set, get) => ({
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
               t.id === taskId
-                ? { ...t, ...payload, progress_pct: payload.progress_pct || 0 }
+                ? { ...t, ...payload, progress_pct: Math.max(t.progress_pct ?? 0, payload.progress_pct ?? t.progress_pct ?? 0) }
                 : t,
             ),
           }))
