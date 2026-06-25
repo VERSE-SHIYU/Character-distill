@@ -16307,3 +16307,18 @@ select.settings-input {
   margin: 0;
 }
 
+/* ── Message reaction bar positioning (via data-side) ── */
+.msg-reactions-bar {
+  position: absolute;
+  bottom: -32px;
+  z-index: 10;
+}
+.msg-reactions-bar[data-side="left"] {
+  right: 0;
+  left: auto;
+}
+.msg-reactions-bar[data-side="right"] {
+  left: 0;
+  right: auto;
+}
+

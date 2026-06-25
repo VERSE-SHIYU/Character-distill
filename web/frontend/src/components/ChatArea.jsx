@@ -13,6 +13,7 @@ import { formatChatTime } from '../utils/time'
 import { parseCardJson } from '../utils/card'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
+import MessageReactions from './common/MessageReactions'
 import { Calendar } from './common/ChatHistoryPanel'
 
 export default function ChatArea() {
@@ -1015,8 +1016,6 @@ function ChatView() {
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
   const [hovered, setHovered] = useState(false)
   const [showRetracted, setShowRetracted] = useState(false)
-  const QUICK_EMOJIS = ['👍','❤️','😂','😮','😢','🔥']
-
   const userInitial = (userRole || '我').charAt(0)
 
   const userAvatarNode = (
@@ -1075,33 +1074,14 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           </div>
         )}
 
-        {/* Reactions */}
-        {reactions.length > 0 && (
-          <div className="msg-reactions">
-            {reactions.map((r, ri) => (
-              <button key={ri} type="button"
-                className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
-                title={[...new Set(r.users || [])].map(uid => uid === authUser?.id ? '你' : uid?.startsWith?.('char:') ? uid.slice(5) : '其他用户').join('、')}
-                onClick={() => onReact?.(r.emoji)}>
-                {r.emoji} {r.count}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Hover action bar */}
-        {hovered && onReact && onReply && (
-          <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -32, right: 0, zIndex: 10 }}>
-            <button type="button" className="msg-action-btn" title="引用回复"
-              onClick={onReply}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            </button>
-            {QUICK_EMOJIS.map(e => (
-              <button key={e} type="button" className="msg-quick-reaction-btn"
-                onClick={() => onReact(e)}>{e}</button>
-            ))}
-          </div>
-        )}
+        <MessageReactions
+          side={isUser ? 'right' : 'left'}
+          reactions={reactions}
+          showQuickBar={hovered}
+          onReact={onReact}
+          onReply={onReply}
+          authUserId={authUser?.id}
+        />
       </ChatBubble>
       {isUser && onRevoke && isLastUserMsg && (
         <button
