@@ -11563,6 +11563,33 @@ select.settings-input {
   opacity: 0.65;
 }
 
+/* ── Name above bubble (near avatar) ── */
+.group-chat-msg-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 70%;
+  min-width: 0;
+}
+.group-chat-msg-col--mine {
+  align-items: flex-end;
+}
+.group-chat-name-row {
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
+.group-chat-name-row--mine {
+  justify-content: flex-end;
+}
+.group-chat-msg-col .group-chat-bubble {
+  max-width: 100%;
+}
+.group-msg-bubble-actions--other {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Target selector chips (also used in create modal) */
 .group-chat-layout .group-target-chip {
   padding: 5px 12px;

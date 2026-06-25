@@ -879,7 +879,7 @@ export default function GroupChatPage() {
                   />
                 ) : (
                   <div className="group-header-left">
-                    <span className="private-chat-title">{currentGroup.name || '群聊'}</span>
+                    <span className="private-chat-title" style={{ cursor: 'pointer' }} title="点击修改群名" onClick={startEditing}>{currentGroup.name || '群聊'}</span>
                     <div className="group-avatar-stack">
                       {currentGroup.card_ids?.slice(0, 5).map(id => (
                         <Avatar key={id} name={resolveCard(id)?.name || '?'} size={22} src={cardAvatars[id]} />
@@ -1046,12 +1046,13 @@ export default function GroupChatPage() {
                               <div className="narration-note">{m.content}</div>
                             ) : (
                             <>
-                              <div className="messages-bubble mine group-msg-bubble">
+                              <div className="group-chat-msg-col group-chat-msg-col--mine">
                                 {personaSpeaker && (
-                                  <div className="group-chat-bubble-header group-chat-bubble-header--right">
+                                  <div className="group-chat-name-row group-chat-name-row--mine">
                                     <span className="group-chat-bubble-speaker">{personaSpeaker}</span>
                                   </div>
                                 )}
+                                <div className="messages-bubble mine group-msg-bubble">
                                 <div className="group-msg-bubble-actions">
                                   <button type="button" className="msg-action-btn" title="引用"
                                     onClick={() => {
@@ -1090,6 +1091,7 @@ export default function GroupChatPage() {
                                   </div>
                                 )}
                               </div>
+                              </div>
                               <Avatar name={personaSpeaker || authUser?.username || '我'} size={40} src={userAvatar} />
                             </>
                           )
@@ -1101,56 +1103,56 @@ export default function GroupChatPage() {
                           ) : (
                             <>
                               <Avatar name={m.speaker || '?'} size={40} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                              <div>
+                              <div className="group-chat-msg-col">
+                                <div className="group-chat-name-row">
+                                  <span className="group-chat-bubble-speaker" style={{ cursor: 'pointer' }} onClick={() => {
+                                    const cardId = m.card_id || m.speaker_card_id
+                                    let cardData = cardId ? resolveCard(cardId) : null
+                                    // Fallback: search by speaker name across all sources
+                                    if (!cardData && m.speaker) {
+                                      const name = m.speaker.toLowerCase()
+                                      cardData = allCards.find(c => (c.name || '').toLowerCase() === name)
+                                        || Object.values(cardCache).find(c => (c.name || '').toLowerCase() === name)
+                                        || currentGroup?._cards?.find(c => (c.name || '').toLowerCase() === name)
+                                        || null
+                                    }
+                                    const fallbackId = cardData?.id || cardData?.card_id || cardId
+                                    if (cardData) {
+                                      const parsed = parseCardJson(cardData)
+                                      setSelectedCharCardInfo({
+                                        cardId: fallbackId,
+                                        name: parsed.name || cardData.name || m.speaker || '?',
+                                        identity: parsed.identity || '',
+                                        personality_traits: parsed.personality_traits || [],
+                                        avatar_data: cardData.avatar_data || cardAvatars[fallbackId],
+                                        rawCard: cardData,
+                                      })
+                                    } else {
+                                      setSelectedCharCardInfo({
+                                        cardId: null,
+                                        name: m.speaker || '?',
+                                        identity: '',
+                                        personality_traits: [],
+                                        avatar_data: null,
+                                        rawCard: null,
+                                      })
+                                    }
+                                  }}>{m.speaker || '?'}</span>
+                                </div>
                                 <div className="group-chat-bubble">
-                                  <div className="group-chat-bubble-header">
-                                    <span className="group-chat-bubble-speaker" style={{ cursor: 'pointer' }} onClick={() => {
-                                      const cardId = m.card_id || m.speaker_card_id
-                                      let cardData = cardId ? resolveCard(cardId) : null
-                                      // Fallback: search by speaker name across all sources
-                                      if (!cardData && m.speaker) {
-                                        const name = m.speaker.toLowerCase()
-                                        cardData = allCards.find(c => (c.name || '').toLowerCase() === name)
-                                          || Object.values(cardCache).find(c => (c.name || '').toLowerCase() === name)
-                                          || currentGroup?._cards?.find(c => (c.name || '').toLowerCase() === name)
-                                          || null
-                                      }
-                                      const fallbackId = cardData?.id || cardData?.card_id || cardId
-                                      if (cardData) {
-                                        const parsed = parseCardJson(cardData)
-                                        setSelectedCharCardInfo({
-                                          cardId: fallbackId,
-                                          name: parsed.name || cardData.name || m.speaker || '?',
-                                          identity: parsed.identity || '',
-                                          personality_traits: parsed.personality_traits || [],
-                                          avatar_data: cardData.avatar_data || cardAvatars[fallbackId],
-                                          rawCard: cardData,
-                                        })
-                                      } else {
-                                        setSelectedCharCardInfo({
-                                          cardId: null,
-                                          name: m.speaker || '?',
-                                          identity: '',
-                                          personality_traits: [],
-                                          avatar_data: null,
-                                          rawCard: null,
-                                        })
-                                      }
-                                    }}>{m.speaker || '?'}</span>
-                                    <div className="group-msg-bubble-actions">
-                                      <button type="button" className="msg-action-btn" title="引用"
-                                        onClick={() => {
-                                          setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
-                                          inputBarRef.current?.focus()
-                                        }}>
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                                      </button>
-                                      <div className="msg-quick-reactions">
-                                        {QUICK_EMOJIS.map(e => (
-                                          <button key={e} type="button" className="msg-quick-reaction-btn"
-                                            onClick={() => reactToMessage(m.id, e)}>{e}</button>
-                                        ))}
-                                      </div>
+                                  <div className="group-msg-bubble-actions group-msg-bubble-actions--other">
+                                    <button type="button" className="msg-action-btn" title="引用"
+                                      onClick={() => {
+                                        setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
+                                        inputBarRef.current?.focus()
+                                      }}>
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                    </button>
+                                    <div className="msg-quick-reactions">
+                                      {QUICK_EMOJIS.map(e => (
+                                        <button key={e} type="button" className="msg-quick-reaction-btn"
+                                          onClick={() => reactToMessage(m.id, e)}>{e}</button>
+                                      ))}
                                     </div>
                                   </div>
                                   <div className="group-chat-bubble-body">
