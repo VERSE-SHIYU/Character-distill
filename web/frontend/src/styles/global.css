@@ -11527,54 +11527,18 @@ select.settings-input {
 
 /* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
-  position: relative;
   max-width: 70%;
   background: #fff;
   border: 1px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
-  border-left: 3px solid var(--primary);
-  border-radius: 4px 16px 16px 4px;
+  border-radius: 16px;
   overflow: visible;
   box-shadow: 0 3px 14px rgba(0,0,0,0.08);
   transition: box-shadow 0.25s;
 }
-/* Tail: two-layer triangle for continuous border into the tip */
-.group-chat-bubble::before {
-  content: '';
-  position: absolute;
-  left: -11px;
-  top: 16px;
-  z-index: 0;
-  width: 0;
-  height: 0;
-  border-right: 11px solid color-mix(in srgb, var(--primary) 35%, #e2e2e8);
-  border-top: 9px solid transparent;
-  border-bottom: 9px solid transparent;
-  pointer-events: none;
-}
-.group-chat-bubble::after {
-  content: '';
-  position: absolute;
-  left: -10px;
-  top: 16px;
-  z-index: 1;
-  width: 0;
-  height: 0;
-  border-right: 10px solid #fff;
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  pointer-events: none;
-}
 [data-theme="dark"] .group-chat-bubble {
-  background: color-mix(in srgb, var(--primary) 16%, var(--glass-bg));
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--glass-border));
-  border-left: 3px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 14%, #1f1d29);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--glass-border));
   box-shadow: 0 3px 14px rgba(0,0,0,0.25);
-}
-[data-theme="dark"] .group-chat-bubble::before {
-  border-right-color: color-mix(in srgb, var(--primary) 30%, var(--glass-border));
-}
-[data-theme="dark"] .group-chat-bubble::after {
-  border-right-color: color-mix(in srgb, var(--primary) 16%, var(--glass-bg));
 }
 [data-theme="dark"] .group-chat-bubble-body {
   color: rgba(255, 255, 255, 0.92);
@@ -11976,21 +11940,6 @@ select.settings-input {
 .group-chat-page .messages-row.mine .messages-bubble.mine .msg-time {
   color: rgba(255,255,255,0.95);
 }
-/* User bubble right tail (pointing toward avatar) */
-.group-chat-page .messages-row.mine .messages-bubble.mine::after {
-  content: '';
-  position: absolute;
-  right: -10px;
-  top: 16px;
-  z-index: 1;
-  width: 0;
-  height: 0;
-  border-left: 10px solid color-mix(in srgb, var(--primary) 92%, #555);
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  pointer-events: none;
-}
-
 /* Group create card selection */
 .group-create-card-list {
   max-height: 300px;
