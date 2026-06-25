@@ -1092,7 +1092,7 @@ export default function GroupChatPage() {
                                 )}
                               </div>
                               </div>
-                              <Avatar name={personaSpeaker || authUser?.username || '我'} size={40} src={userAvatar} />
+                              <Avatar name={personaSpeaker || authUser?.username || '我'} size={48} src={userAvatar} />
                             </>
                           )
                           ) : m.role === 'silent' ? (
@@ -1102,7 +1102,7 @@ export default function GroupChatPage() {
                             </div>
                           ) : (
                             <>
-                              <Avatar name={m.speaker || '?'} size={40} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                              <Avatar name={m.speaker || '?'} size={48} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                               <div className="group-chat-msg-col">
                                 <div className="group-chat-name-row">
                                   <span className="group-chat-bubble-speaker" style={{ cursor: 'pointer' }} onClick={() => {

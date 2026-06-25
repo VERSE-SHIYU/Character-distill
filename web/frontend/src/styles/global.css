@@ -11602,9 +11602,9 @@ select.settings-input {
   text-decoration: underline;
 }
 .group-chat-bubble-body {
-  padding: 2px 14px 4px;
+  padding: 1px 14px 3px;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.45;
   word-break: break-word;
   color: var(--text);
   white-space: pre-wrap;
@@ -11965,6 +11965,7 @@ select.settings-input {
 /* ── Group Chat: mine bubble adjustments for actions ── */
 .group-chat-page .messages-row {
   gap: 12px;
+  align-items: flex-start;
 }
 .group-chat-page .messages-row.mine .messages-bubble.mine {
   margin-right: 6px;
