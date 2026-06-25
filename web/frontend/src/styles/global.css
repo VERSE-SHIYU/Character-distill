@@ -11513,6 +11513,16 @@ select.settings-input {
 .cbubble-row--right {
   flex-direction: row-reverse;
 }
+/* 左气泡（有名字行）：头像下移对齐气泡顶 */
+.cbubble-row--left > *:first-child {
+  margin-top: 22px;
+  align-self: flex-start;
+}
+/* 右气泡（无名字行）：头像保持顶部对齐 */
+.cbubble-row--right > *:first-child {
+  margin-top: 0;
+  align-self: flex-start;
+}
 
 .cbubble-col {
   display: flex;
@@ -11540,6 +11550,7 @@ select.settings-input {
 /* ── Core bubble ── */
 .cbubble {
   position: relative;
+  width: fit-content;
   max-width: 100%;
   padding: 9px 13px;
   font-size: 14px;
@@ -11587,7 +11598,7 @@ select.settings-input {
   height: 14px;
   background: var(--cbubble-bg);
   clip-path: polygon(100% 0, 0 50%, 100% 100%);
-  border-radius: 0 0 0 2px;
+  border-radius: 0 0 0 4px;
   pointer-events: none;
 }
 
@@ -11613,7 +11624,7 @@ select.settings-input {
   height: 14px;
   background: var(--cbubble-bg);
   clip-path: polygon(0 0, 100% 50%, 0 100%);
-  border-radius: 0 2px 0 0;
+  border-radius: 0 4px 0 0;
   pointer-events: none;
 }
 
