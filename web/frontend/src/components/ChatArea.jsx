@@ -1081,7 +1081,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
         {/* Hover action bar */}
         {hovered && onReact && onReply && (
-          <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -18, right: 0, zIndex: 10 }}>
+          <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -32, right: 0, zIndex: 10 }}>
             <button type="button" className="msg-action-btn" title="引用回复"
               onClick={onReply}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>

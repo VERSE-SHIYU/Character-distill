@@ -1050,7 +1050,6 @@ export default function GroupChatPage() {
                               side="right"
                               avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={72} src={userAvatar} />}
                               name={personaSpeaker || undefined}
-                              time={m.created_at ? formatChatTime(m.created_at) : undefined}
                             >
                               <div className="group-msg-bubble-actions">
                                 <button type="button" className="msg-action-btn" title="引用"
@@ -1060,13 +1059,13 @@ export default function GroupChatPage() {
                                   }}>
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
                                 </button>
-                                <div className="msg-quick-reactions">
+                              </div>
+                                <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -32, right: 0, zIndex: 10 }}>
                                   {QUICK_EMOJIS.map(e => (
                                     <button key={e} type="button" className="msg-quick-reaction-btn"
                                       onClick={() => reactToMessage(m.id, e)}>{e}</button>
                                   ))}
                                 </div>
-                              </div>
                               {m.reply_to_id && m.reply_to_preview && (
                                 <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
                                   <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
@@ -1132,7 +1131,6 @@ export default function GroupChatPage() {
                                     })
                                   }
                                 }}
-                                time={m.created_at ? formatChatTime(m.created_at) : undefined}
                               >
                                 <div className="group-msg-bubble-actions group-msg-bubble-actions--other">
                                   <button type="button" className="msg-action-btn" title="引用"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
+import ChatBubble from './common/ChatBubble'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
@@ -641,7 +642,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                       <button
                         type="button"
                         className="history-item"
-                        onClick={() => selectMode ? toggleSelect(it.id) : openDetail(it.id)}
+                        onClick={() => selectMode ? toggleSelect(it.id) : (trashMode ? openDetail(it.id) : handleContinue(it.id))}
                       >
                         <Avatar name={it.character_name || '?'} size={40} src={cardAvatars[it.card_id]} />
                         <div className="history-item-body">
@@ -714,7 +715,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                     <button
                       type="button"
                       className="history-item"
-                      onClick={() => openGroupDetail(g)}
+                      onClick={() => trashMode ? openGroupDetail(g) : handleResumeGroup(g.id)}
                       style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
                     >
                       <div className="history-item-body">
@@ -1041,21 +1042,20 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
             const isUser = msg.role === 'user'
             const userInitial = (session.user_role || '我').charAt(0)
             return (
-              <div
+              <ChatBubble
                 key={msg.id ?? i}
-                className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'} history-readonly-msg`}
+                className="history-readonly-msg"
+                side={isUser ? 'right' : 'left'}
+                name={isUser ? undefined : charName}
+                avatar={
+                  isUser
+                    ? <div className="user-avatar-circle">{userInitial}</div>
+                    : <Avatar name={charName} size={70} src={cardAvatars?.[session.card_id]} />
+                }
+                time={msg.created_at ? formatChatTime(msg.created_at) : undefined}
               >
-                {!isUser ? (
-                  <div className="chat-msg-avatar">
-                    <Avatar name={charName} size={70} src={cardAvatars?.[session.card_id]} />
-                  </div>
-                ) : (
-                  <div className="user-avatar-circle">{userInitial}</div>
-                )}
-                <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
-                  <span className="chat-bubble-text">{msg.content}</span>
-                </div>
-              </div>
+                <span className="chat-bubble-text">{msg.content}</span>
+              </ChatBubble>
             )
           })}
         </div>
