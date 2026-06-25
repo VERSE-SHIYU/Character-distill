@@ -132,6 +132,7 @@ function ChatView() {
 
   const [resetConfirm, setResetConfirm] = useState(false)
   const [retractConfirm, setRetractConfirm] = useState(false)
+  const [memoryClearConfirm, setMemoryClearConfirm] = useState(false)
   const [showMemoryPanel, setShowMemoryPanel] = useState(false)
   const [memories, setMemories] = useState([])
   const [memoriesLoading, setMemoriesLoading] = useState(false)
@@ -875,6 +876,19 @@ function ChatView() {
         onCancel={() => setRetractConfirm(false)}
         danger
       />
+      <ConfirmModal
+        isOpen={memoryClearConfirm}
+        title="清空记忆"
+        message="确定清空该角色的全部记忆？此操作不可恢复。"
+        confirmText="清空"
+        onConfirm={async () => {
+          setMemoryClearConfirm(false)
+          await fetchWithTimeout(`/api/memory/clear/${cardId}`, { method: 'DELETE' })
+          setMemories([])
+        }}
+        onCancel={() => setMemoryClearConfirm(false)}
+        danger
+      />
 
       {/* Memory panel */}
       {showMemoryPanel && (
@@ -975,11 +989,7 @@ function ChatView() {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={async () => {
-                    if (!confirm('确定清空该角色的全部记忆？')) return
-                    await fetchWithTimeout(`/api/memory/clear/${cardId}`, { method: 'DELETE' })
-                    setMemories([])
-                  }}
+                  onClick={() => setMemoryClearConfirm(true)}
                 >清空全部记忆</button>
               </div>
             )}

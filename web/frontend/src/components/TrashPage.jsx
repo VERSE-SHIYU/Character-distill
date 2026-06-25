@@ -370,9 +370,9 @@ export default function TrashPage() {
 
       <ConfirmModal
         isOpen={!!purgeId}
-        title="彻底删除"
-        message="确定彻底删除该角色卡？此操作不可恢复。"
-        confirmText="彻底删除"
+        title="永久删除"
+        message="⚠️ 此操作不可恢复！该角色卡及其所有关联数据（对话、记忆、版本）将被永久清除，无法找回。"
+        confirmText="永久删除"
         onConfirm={handlePurge}
         onCancel={() => setPurgeId(null)}
         danger
@@ -389,9 +389,9 @@ export default function TrashPage() {
 
       <ConfirmModal
         isOpen={!!purgeGroupId}
-        title="彻底删除"
-        message="确定彻底删除该群聊及其所有消息？此操作不可恢复。"
-        confirmText="彻底删除"
+        title="永久删除"
+        message="⚠️ 此操作不可恢复！该群聊及其所有消息将被永久清除，无法找回。"
+        confirmText="永久删除"
         onConfirm={handlePurgeGroup}
         onCancel={() => setPurgeGroupId(null)}
         danger
@@ -408,9 +408,9 @@ export default function TrashPage() {
 
       <ConfirmModal
         isOpen={!!purgeTextId}
-        title="彻底删除"
-        message="确定彻底删除该书籍及其所有内容？此操作不可恢复。"
-        confirmText="彻底删除"
+        title="永久删除"
+        message="⚠️ 此操作不可恢复！该书籍及其所有内容将被永久清除，无法找回。"
+        confirmText="永久删除"
         onConfirm={handlePurgeText}
         onCancel={() => setPurgeTextId(null)}
         danger

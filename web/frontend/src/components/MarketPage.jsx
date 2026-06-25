@@ -5,6 +5,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
 import ErrorBox from './common/ErrorBox'
+import ConfirmModal from './common/ConfirmModal'
 import { Heart, Book } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 
@@ -30,6 +31,7 @@ export default function MarketPage() {
   const [forkingId, setForkingId] = useState(null)
   const [forkCard, setForkCard] = useState(null)
   const [commentCardId, setCommentCardId] = useState(null)
+  const [deletePostId, setDeletePostId] = useState(null)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [commentText, setCommentText] = useState('')
@@ -100,14 +102,8 @@ export default function MarketPage() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
-  const handleDeletePost = async (postId) => {
-    if (!confirm('确定删除该角色？')) return
-    try {
-      await fetchWithTimeout(`/api/market/posts/${postId}`, { method: 'DELETE' })
-      setCards((prev) => prev.filter((c) => c.id !== postId))
-    } catch (err) {
-      console.error('[Market] Delete failed:', err)
-    }
+  const handleDeletePost = (postId) => {
+    setDeletePostId(postId)
   }
 
   const handleLike = async (cardId) => {
@@ -391,6 +387,24 @@ export default function MarketPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!deletePostId}
+        title="删除动态"
+        message="确定删除该动态？"
+        confirmText="删除"
+        onConfirm={async () => {
+          const id = deletePostId
+          setDeletePostId(null)
+          try {
+            await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE' })
+            setCards((prev) => prev.filter((c) => c.id !== id))
+          } catch (err) {
+            console.error('[Market] Delete failed:', err)
+          }
+        }}
+        onCancel={() => setDeletePostId(null)}
+      />
     </div>
   )
 }

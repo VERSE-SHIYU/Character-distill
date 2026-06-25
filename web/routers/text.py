@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from urllib.parse import quote
 
+from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, run_on_main_loop
 from storage.base import StorageBase
 
@@ -359,17 +360,8 @@ async def delete_text(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
-    """Delete a text and its cascading cards/sessions."""
-    text = await storage.get_text(text_id)
-    if not text:
-        raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权删除此文本")
-    try:
-        ok = await storage.delete_text(text_id)
-    except Exception as exc:
-        print(f"[text] Delete text failed: {exc}")
-        raise HTTPException(500, "删除文本失败，请稍后重试") from exc
+    """Soft-delete a text (move to trash)."""
+    ok = await soft_delete("text", text_id, user, storage)
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}
@@ -402,12 +394,7 @@ async def restore_text(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Restore a soft-deleted text."""
-    text = await storage.get_text(text_id)
-    if not text:
-        raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权恢复此文本")
-    ok = await storage.restore_text(text_id)
+    ok = await restore("text", text_id, user, storage)
     if not ok:
         raise HTTPException(400, "文本未处于删除状态")
     return {"ok": True}
@@ -422,14 +409,7 @@ async def permanent_delete_text(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Permanently delete a text and all associated data."""
-    text = await storage.get_text(text_id)
-    if not text:
-        raise HTTPException(404, "Text not found")
-    if text.get("deleted_at", "") == "":
-        raise HTTPException(400, "请先移入回收站再永久删除")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权删除此文本")
-    ok = await storage.hard_delete_text(text_id)
+    ok = await hard_delete("text", text_id, user, storage)
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}

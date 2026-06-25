@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions
 from limiter import limiter
 from storage.base import StorageBase
@@ -712,12 +713,7 @@ async def delete_group(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """软删除群聊会话（移入回收站）。"""
-    session = await storage.get_group_session(group_id)
-    if not session:
-        raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
-    await storage.delete_group_session(group_id)
+    await soft_delete("group", group_id, user, storage)
     _group_sessions.pop(group_id, None)
     return {"ok": True}
 
@@ -743,14 +739,7 @@ async def restore_group(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """恢复已删除的群聊。"""
-    session = await storage.get_group_session(group_id)
-    if not session:
-        raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
-    if not session.get("deleted_at"):
-        raise HTTPException(400, "群聊未被删除")
-    await storage.restore_group_session(group_id)
+    await restore("group", group_id, user, storage)
     return {"ok": True}
 
 
@@ -763,11 +752,6 @@ async def permanent_delete_group(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """永久删除群聊及其所有消息。"""
-    session = await storage.get_group_session(group_id)
-    if not session:
-        raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
-    await storage.hard_delete_group_session(group_id)
+    await hard_delete("group", group_id, user, storage)
     _group_sessions.pop(group_id, None)
     return {"ok": True}

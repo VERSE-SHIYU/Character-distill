@@ -27,9 +27,9 @@ const CONFIRM_ACTION_DEFS = {
     confirmText: '删除',
   },
   purgeSession: {
-    title: '彻底删除',
-    message: '确定彻底删除该会话？此操作不可恢复。',
-    confirmText: '彻底删除',
+    title: '永久删除',
+    message: '⚠️ 此操作不可恢复！该会话及其所有消息将被永久清除，无法找回。',
+    confirmText: '永久删除',
   },
   deleteGroup: {
     title: '删除群聊',
@@ -48,7 +48,7 @@ const CONFIRM_ACTION_DEFS = {
   },
   purgeTrash: {
     title: '清空回收站',
-    message: '确定清空回收站？所有记录将被彻底删除，不可恢复。',
+    message: '⚠️ 确定清空回收站？所有记录将被永久清除，不可恢复。',
     confirmText: '清空',
   },
   batchDelete: {

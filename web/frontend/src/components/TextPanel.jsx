@@ -473,6 +473,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
   const [menuOpen, setMenuOpen] = useState(null)
   const [editCard, setEditCard] = useState(null)
   const [expandedGroups, setExpandedGroups] = useState({})
+  const [deleteTarget, setDeleteTarget] = useState(null)
   const menuRef = useRef(null)
 
   // Close menu on outside click
@@ -652,18 +653,9 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                         }}>
                           发布到市场
                         </button>
-                        <button type="button" className="danger" onClick={async () => {
+                        <button type="button" className="danger" onClick={() => {
                           setMenuOpen(null)
-                          if (!confirm(`确定删除「${name}」？`)) return
-                          try {
-                            await fetchWithTimeout(`/api/cards/${c.id}`, {
-                              method: 'DELETE',
-                              headers: { ...getAuthHeaders() },
-                            })
-                            setAllCards((prev) => prev.filter((x) => x.id !== c.id))
-                          } catch (err) {
-                            console.error('Delete card failed:', err)
-                          }
+                          setDeleteTarget(c.id)
                         }}>
                           删除
                         </button>
@@ -722,18 +714,9 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                                 }}>
                                   发布到市场
                                 </button>
-                                <button type="button" className="danger" onClick={async () => {
+                                <button type="button" className="danger" onClick={() => {
                                   setMenuOpen(null)
-                                  if (!confirm(`确定删除「${name}」？`)) return
-                                  try {
-                                    await fetchWithTimeout(`/api/cards/${vc.id}`, {
-                                      method: 'DELETE',
-                                      headers: { ...getAuthHeaders() },
-                                    })
-                                    setAllCards((prev) => prev.filter((x) => x.id !== vc.id))
-                                  } catch (err) {
-                                    console.error('Delete card failed:', err)
-                                  }
+                                  setDeleteTarget(vc.id)
                                 }}>
                                   删除
                                 </button>
@@ -778,6 +761,27 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
           onClose={() => setEditCard(null)}
         />
       )}
+
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        title="移入回收站"
+        message={`确定删除该角色卡？将移入回收站，可在回收站中恢复。`}
+        confirmText="移入回收站"
+        onConfirm={async () => {
+          const id = deleteTarget
+          setDeleteTarget(null)
+          try {
+            await fetchWithTimeout(`/api/cards/${id}`, {
+              method: 'DELETE',
+              headers: { ...getAuthHeaders() },
+            })
+            setAllCards((prev) => prev.filter((x) => x.id !== id))
+          } catch (err) {
+            console.error('Delete card failed:', err)
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

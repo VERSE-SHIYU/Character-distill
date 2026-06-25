@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
+from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard
 from storage.base import StorageBase
@@ -295,13 +296,10 @@ async def restore_session(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Restore a soft-deleted session from trash."""
-    session = await storage.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此会话")
     try:
-        ok = await storage.restore_session(session_id)
+        ok = await restore("session", session_id, user, storage)
+    except HTTPException:
+        raise
     except Exception as exc:
         print(f"[history] Restore session failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
@@ -319,18 +317,39 @@ async def delete_session(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
-    session = await storage.get_session(session_id)
-    if not session:
-        raise HTTPException(404, "Session not found")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此会话")
     try:
         if permanent:
-            ok = await storage.hard_delete_session(session_id)
+            ok = await hard_delete("session", session_id, user, storage)
         else:
-            ok = await storage.delete_session(session_id)
+            ok = await soft_delete("session", session_id, user, storage)
+    except HTTPException:
+        raise
     except Exception as exc:
         print(f"[history] Delete session failed: {exc}")
+        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    if not ok:
+        raise HTTPException(404, "Session not found")
+    return {"ok": True}
+
+
+@router.delete("/{session_id}/permanent")
+async def permanent_delete_session(
+    session_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, bool]:
+    """Permanently delete a session (irreversible).
+
+    Note: `DELETE /{session_id}?permanent=true` remains as a deprecated alias
+    for backward compatibility.
+    """
+    try:
+        ok = await hard_delete("session", session_id, user, storage)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[history] Hard delete session failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
     if not ok:
         raise HTTPException(404, "Session not found")

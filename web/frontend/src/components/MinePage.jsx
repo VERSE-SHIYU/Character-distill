@@ -7,6 +7,7 @@ import { SkeletonCard } from './common/Skeleton'
 import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
+import ConfirmModal from './common/ConfirmModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
@@ -15,6 +16,7 @@ import { getCoverGradient } from './BookReader'
 /* ── MineCardMenu ── */
 function MineCardMenu({ card, onRefresh }) {
   const [open, setOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState(null)
 
   const handleTogglePublic = async (e) => {
     e.stopPropagation()
@@ -33,14 +35,20 @@ function MineCardMenu({ card, onRefresh }) {
     e.stopPropagation()
     const cardData = parseCardJson(card)
     const name = cardData.name || card.name || '?'
-    if (!confirm(`确定删除角色「${name}」？`)) return
+    setDeleteTarget(name)
+  }
+
+  const handleConfirmDelete = async () => {
+    setDeleteTarget(null)
     try {
-      await fetchWithTimeout(`/api/distill/card/${card.id}`, {
+      await fetchWithTimeout(`/api/cards/${card.id}`, {
         method: 'DELETE',
         headers: getAuthHeaders(),
       })
       onRefresh()
-    } catch {}
+    } catch (err) {
+      console.error('[MinePage] Delete failed:', err)
+    }
     setOpen(false)
   }
 
@@ -73,6 +81,15 @@ function MineCardMenu({ card, onRefresh }) {
           </div>
         </>
       )}
+    </div>
+      <ConfirmModal
+        isOpen={!!deleteTarget}
+        title="移入回收站"
+        message={`确定删除「${deleteTarget || ''}」？将移入回收站，可在回收站中恢复。`}
+        confirmText="移入回收站"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }
@@ -128,6 +145,7 @@ export default function MinePage() {
   const [followersCount, setFollowersCount] = useState(0)
   const [followingCount, setFollowingCount] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [deletePostId, setDeletePostId] = useState(null)
 
   // Posts state
   const [posts, setPosts] = useState([])
@@ -948,11 +966,7 @@ export default function MinePage() {
                       setPosts(data.posts || [])
                     }}
                     onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
-                    onDelete={async (id) => {
-                      if (!confirm('确定删除这条动态？')) return
-                      await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
-                      setPosts(prev => prev.filter(p => p.id !== id))
-                    }}
+                    onDelete={(id) => setDeletePostId(id)}
                     showDelete={isMe}
                   />
                 ))}
@@ -1076,6 +1090,19 @@ export default function MinePage() {
         file={avatarCropFile}
         onConfirm={handleAvatarCropConfirm}
         onCancel={handleAvatarCropCancel}
+      />
+      <ConfirmModal
+        isOpen={!!deletePostId}
+        title="删除动态"
+        message="确定删除这条动态？"
+        confirmText="删除"
+        onConfirm={async () => {
+          const id = deletePostId
+          setDeletePostId(null)
+          await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
+          setPosts(prev => prev.filter(p => p.id !== id))
+        }}
+        onCancel={() => setDeletePostId(null)}
       />
     </div>
   )

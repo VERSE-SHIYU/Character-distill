@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage
 from limiter import limiter
 from storage.base import StorageBase
@@ -154,17 +155,28 @@ async def restore_card_route(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Restore a soft-deleted card."""
-    card = await storage.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
-    ok = await storage.restore_card(card_id)
+    ok = await restore("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "恢复失败")
     return {"ok": True}
 
 
+@router.delete("/{card_id}/permanent")
+@limiter.limit("30/minute")
+async def permanent_delete_card(
+    card_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Permanently delete a card (irreversible)."""
+    ok = await hard_delete("card", card_id, user, storage)
+    if not ok:
+        raise HTTPException(500, "彻底删除失败")
+    return {"ok": True}
+
+
+# Deprecated: use DELETE /{card_id}/permanent instead. Kept for backward compatibility.
 @router.delete("/{card_id}/purge")
 @limiter.limit("30/minute")
 async def purge_card_route(
@@ -173,13 +185,8 @@ async def purge_card_route(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Permanently delete a card (irreversible)."""
-    card = await storage.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
-    ok = await storage.purge_card(card_id)
+    """Permanently delete a card (irreversible). [Deprecated: use /permanent]"""
+    ok = await hard_delete("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "彻底删除失败")
     return {"ok": True}
@@ -193,14 +200,9 @@ async def delete_card_route(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Soft-delete a character card. Owner or admin can delete."""
+    """Soft-delete a character card (move to trash). Owner or admin can delete."""
     logger.debug("DELETE /api/cards/%s by user %s", card_id, user.get("id"))
-    card = await storage.get_card(card_id)
-    if not card:
-        raise HTTPException(404, "Card not found")
-    if not user.get("is_admin") and card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权删除此角色卡")
-    ok = await storage.delete_card(card_id)
+    ok = await soft_delete("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "删除失败")
     return {"ok": True}

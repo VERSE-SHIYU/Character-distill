@@ -671,9 +671,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
       <ConfirmModal
         isOpen={!!purgeConfirmTarget}
-        title="彻底删除"
-        message="确定彻底删除？此操作不可恢复。"
-        confirmText="彻底删除"
+        title="永久删除"
+        message="⚠️ 此操作不可恢复！该角色卡及其所有关联数据将被永久清除，无法找回。"
+        confirmText="永久删除"
         onConfirm={async () => {
           const id = purgeConfirmTarget
           try {
@@ -694,7 +694,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       <ConfirmModal
         isOpen={purgeAllConfirm}
         title="清空回收站"
-        message="确定清空回收站？所有角色将被彻底删除，不可恢复。"
+        message="⚠️ 确定清空回收站？所有角色将被永久清除，不可恢复。"
         confirmText="清空"
         onConfirm={async () => {
           setPurgeAllConfirm(false)
