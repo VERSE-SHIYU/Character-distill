@@ -11657,6 +11657,31 @@ select.settings-input {
   text-align: right;
 }
 
+/* ── ChatArea overrides ── */
+.chat-area .cbubble {
+  font-size: var(--chat-font-size);
+}
+/* Character bubble — white card, dark text */
+.chat-area .cbubble--left {
+  --cbubble-bg: #fff;
+  --cbubble-border: rgba(0,0,0,0.08);
+  --cbubble-color: #1a1a1a;
+}
+[data-theme="dark"] .chat-area .cbubble--left {
+  --cbubble-bg: rgba(56,56,66,0.95);
+  --cbubble-border: rgba(90,80,100,0.35);
+  --cbubble-color: #e8e8ec;
+}
+/* User bubble — theme-tinted bg, reading text */
+.chat-area .cbubble--right {
+  --cbubble-bg: var(--bubble-user-bg, #e8e0ff);
+  --cbubble-border: transparent;
+  --cbubble-color: #1a1a1a;
+}
+[data-theme="dark"] .chat-area .cbubble--right {
+  --cbubble-color: #e8e8ec;
+}
+
 /* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
   position: relative;

@@ -12,6 +12,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { parseCardJson } from '../utils/card'
 import ChatInputBar from './common/ChatInputBar'
+import ChatBubble from './common/ChatBubble'
 import { Calendar } from './common/ChatHistoryPanel'
 
 export default function ChatArea() {
@@ -1008,22 +1009,27 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   const userInitial = (userRole || '我').charAt(0)
 
+  const userAvatarNode = (
+    <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>
+      {!userAvatarUrl && userInitial}
+    </div>
+  )
+
   return (
     <div
       className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {!isUser ? (
-        <div className="chat-msg-avatar">
-          <Avatar name={charName} src={avatarUrl} size={68} />
-        </div>
-      ) : (
-        <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>
-          {!userAvatarUrl && userInitial}
-        </div>
-      )}
-      <div className={`chat-bubble ${isUser ? 'chat-bubble-user' : 'chat-bubble-char'}`}>
+      <ChatBubble
+        side={isUser ? 'right' : 'left'}
+        avatar={
+          !isUser
+            ? <Avatar name={charName} src={avatarUrl} size={68} />
+            : userAvatarNode
+        }
+        time={timestamp ? formatChatTime(timestamp) : undefined}
+      >
         {/* Reply quote */}
         {replyToId && replyToPreview && (
           <div className="msg-reply-quote" onClick={() => onScrollToMessage?.(replyToId)}>
@@ -1058,9 +1064,6 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
             <span className="voice-duration">{''}</span>
           </div>
         )}
-        {timestamp && (
-          <div className={`msg-time ${isUser ? 'msg-time-user' : ''}`}>{formatChatTime(timestamp)}</div>
-        )}
 
         {/* Reactions */}
         {reactions.length > 0 && (
@@ -1089,7 +1092,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
             ))}
           </div>
         )}
-      </div>
+      </ChatBubble>
       {isUser && onRevoke && isLastUserMsg && (
         <button
           type="button"
