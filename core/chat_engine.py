@@ -18,24 +18,7 @@ from core.utils import try_record_usage
 from core.event_service import EventService
 from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
-
-
-# IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
-AFFINITY_STAGES = [
-    (0, 18, "陌生", "🫥"),      # IOS 1-2, Bogardus 6-7
-    (18, 36, "认识", "🙂"),     # IOS 3-4, Bogardus 4-5
-    (36, 55, "熟悉", "😊"),     # IOS 5-6, Bogardus 3
-    (55, 73, "朋友", "😄"),     # IOS 7-8, Bogardus 2
-    (73, 91, "亲近", "🥰"),     # IOS 9-10, Bogardus 1-2
-    (91, 101, "心意相通", "💕"), # IOS 11, Bogardus 1
-]
-
-
-def _calc_stage(affinity: int) -> tuple[str, str]:
-    for lo, hi, name, emoji in AFFINITY_STAGES:
-        if lo <= affinity < hi:
-            return name, emoji
-    return "陌生", "🫥"
+from core.affinity_service import AffinityService, calc_stage
 
 
 def _describe_time_period(hour: int) -> str:
@@ -83,18 +66,8 @@ class ChatEngine:
         self._session_id: str = ""
         self._group_id: str = ""       # 群聊上下文：群 ID（空串=单聊或无上下文）
         self.history: list[dict[str, Any]] = []
-        # 四维好感度
-        self._affinity: int = 50
-        self._trust: int = 30
-        self._mood: str = "平静"
-        self._guard: int = 70
-        self._affinity_reason: str = ""
-        self._inner_voice: str = ""
-        self._mood_emoji: str = "😊"
-        self._prev_stage: str = ""
-        self._stage: str = ""
-        self._stage_emoji: str = ""
-        self._stage_upgraded: bool = False
+        # 四维好感度（通过 AffinityService 托管，@property 透明转发）
+        self._affinity_service = AffinityService()
         self._reaction_service = ReactionService()
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
@@ -112,7 +85,7 @@ class ChatEngine:
                 self._affinity_reason = init_data.get("reason", "")
                 self._inner_voice = init_data.get("inner_voice", "")
                 self._mood_emoji = init_data.get("mood_emoji", "😊")
-                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._stage, self._stage_emoji = calc_stage(self._affinity)
                 self._prev_stage = self._stage
             except Exception as exc:
                 print(f"[ChatEngine] Initial affinity calc failed, using defaults: {exc}")
@@ -127,6 +100,84 @@ class ChatEngine:
             llm=llm,
             model=getattr(llm, "model", ""),
         )
+
+    # ── 11个情感字段透明转发（@property） ──────────────────────
+    @property
+    def _affinity(self) -> int:
+        return self._affinity_service.affinity
+    @_affinity.setter
+    def _affinity(self, v: int) -> None:
+        self._affinity_service.affinity = v
+
+    @property
+    def _trust(self) -> int:
+        return self._affinity_service.trust
+    @_trust.setter
+    def _trust(self, v: int) -> None:
+        self._affinity_service.trust = v
+
+    @property
+    def _mood(self) -> str:
+        return self._affinity_service.mood
+    @_mood.setter
+    def _mood(self, v: str) -> None:
+        self._affinity_service.mood = v
+
+    @property
+    def _guard(self) -> int:
+        return self._affinity_service.guard
+    @_guard.setter
+    def _guard(self, v: int) -> None:
+        self._affinity_service.guard = v
+
+    @property
+    def _affinity_reason(self) -> str:
+        return self._affinity_service.affinity_reason
+    @_affinity_reason.setter
+    def _affinity_reason(self, v: str) -> None:
+        self._affinity_service.affinity_reason = v
+
+    @property
+    def _inner_voice(self) -> str:
+        return self._affinity_service.inner_voice
+    @_inner_voice.setter
+    def _inner_voice(self, v: str) -> None:
+        self._affinity_service.inner_voice = v
+
+    @property
+    def _mood_emoji(self) -> str:
+        return self._affinity_service.mood_emoji
+    @_mood_emoji.setter
+    def _mood_emoji(self, v: str) -> None:
+        self._affinity_service.mood_emoji = v
+
+    @property
+    def _prev_stage(self) -> str:
+        return self._affinity_service.prev_stage
+    @_prev_stage.setter
+    def _prev_stage(self, v: str) -> None:
+        self._affinity_service.prev_stage = v
+
+    @property
+    def _stage(self) -> str:
+        return self._affinity_service.stage
+    @_stage.setter
+    def _stage(self, v: str) -> None:
+        self._affinity_service.stage = v
+
+    @property
+    def _stage_emoji(self) -> str:
+        return self._affinity_service.stage_emoji
+    @_stage_emoji.setter
+    def _stage_emoji(self, v: str) -> None:
+        self._affinity_service.stage_emoji = v
+
+    @property
+    def _stage_upgraded(self) -> bool:
+        return self._affinity_service.stage_upgraded
+    @_stage_upgraded.setter
+    def _stage_upgraded(self, v: bool) -> None:
+        self._affinity_service.stage_upgraded = v
 
     def chat(self, user_message: str, voice_mode: bool = False) -> str:
         """非流式对话一轮，返回模型回复。
@@ -290,27 +341,12 @@ class ChatEngine:
                 self._affinity_reason = init.get("reason", "")
                 self._inner_voice = init.get("inner_voice", "")
                 self._mood_emoji = init.get("mood_emoji", "😊")
-                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._stage, self._stage_emoji = calc_stage(self._affinity)
                 self._prev_stage = self._stage
                 return
             except Exception:
                 pass
-        self._affinity = data.get("affinity", 50)
-        self._trust = data.get("trust", 30)
-        self._mood = data.get("mood", "平静")
-        self._guard = data.get("guard", 70)
-        self._affinity_reason = data.get("reason", "")
-        # 尝试 JSON 解析扩展数据（兼容旧格式纯文本 reason）
-        _reason = self._affinity_reason or ""
-        try:
-            _parsed = json.loads(_reason)
-            self._inner_voice = _parsed.get("inner_voice", "")
-            self._mood_emoji = _parsed.get("mood_emoji", "😊")
-        except (json.JSONDecodeError, TypeError):
-            self._inner_voice = _reason
-            self._mood_emoji = "😊"
-        self._stage, self._stage_emoji = _calc_stage(self._affinity)
-        self._prev_stage = self._stage
+        self._affinity_service.load(data)
 
     def ingest_reaction_signals(self, signals: list[dict]) -> None:
         """对外接口：转发给 ReactionService（保持群聊等外部调用不破）。"""
@@ -489,7 +525,7 @@ class ChatEngine:
                 self._guard = max(0, min(100, data.get("guard", self._guard)))
                 self._inner_voice = data.get("inner_voice", self._inner_voice)
                 self._mood_emoji = data.get("mood_emoji", self._mood_emoji)
-                self._stage, self._stage_emoji = _calc_stage(self._affinity)
+                self._stage, self._stage_emoji = calc_stage(self._affinity)
                 self._stage_upgraded = self._stage != old_stage
                 self._prev_stage = old_stage
                 # 阶段升级时在内心独白末尾追加祝贺
@@ -879,17 +915,7 @@ class ChatEngine:
         }
 
     def get_affinity(self) -> dict[str, Any]:
-        return {
-            "affinity": self._affinity,
-            "trust": self._trust,
-            "mood": self._mood,
-            "guard": self._guard,
-            "reason": self._affinity_reason,
-            "inner_voice": self._inner_voice,
-            "mood_emoji": self._mood_emoji,
-            "stage": self._stage,
-            "stage_emoji": self._stage_emoji,
-        }
+        return self._affinity_service.get()
 
     def reset(self) -> None:
         """清空对话历史。"""
