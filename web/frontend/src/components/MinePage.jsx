@@ -81,7 +81,6 @@ function MineCardMenu({ card, onRefresh }) {
           </div>
         </>
       )}
-    </div>
       <ConfirmModal
         isOpen={!!deleteTarget}
         title="移入回收站"
