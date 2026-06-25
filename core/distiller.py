@@ -234,34 +234,52 @@ class Distiller:
                 # 只有开头 fence 没有结尾 (````... 开头但没有闭合)
                 t = parts[1].strip()
 
-        # 2. 提取从第一个 { 到最后一个 } 的内容（嵌套安全：计数括号）
-        start = t.find("{")
-        end = t.rfind("}")
-        if start != -1 and end > start:
-            candidate = t[start:end + 1]
-            # 验证大括号配对（处理 JSON 内嵌字符串花括号的场景）
-            depth = 0
-            in_string = False
-            escaped = False
-            for ch in candidate:
-                if escaped:
-                    escaped = False
-                    continue
-                if ch == "\\":
-                    escaped = True
-                    continue
-                if ch == '"':
-                    in_string = not in_string
-                elif not in_string:
-                    if ch == "{":
-                        depth += 1
-                    elif ch == "}":
-                        depth -= 1
-            if depth == 0:
-                t = candidate
-            else:
-                # 括号不成对，回退到简单 rfind
-                t = candidate
+        # 2. 提取 JSON —— 同时支持对象 {} 和数组 []
+        #    取第一个有效的 { 或 [ 作为起点，对应闭合符的最后一个作为终点
+        brace_pos = t.find("{")
+        bracket_pos = t.find("[")
+        first_brace = brace_pos if brace_pos != -1 else float("inf")
+        first_bracket = bracket_pos if bracket_pos != -1 else float("inf")
+
+        if first_brace == float("inf") and first_bracket == float("inf"):
+            return t  # 没有任何 JSON 结构
+
+        is_array = first_bracket < first_brace
+        if is_array:
+            open_ch, close_ch = "[", "]"
+            start = bracket_pos
+            end = t.rfind("]")
+        else:
+            open_ch, close_ch = "{", "}"
+            start = brace_pos
+            end = t.rfind("}")
+
+        if end <= start:
+            return t
+
+        candidate = t[start:end + 1]
+
+        # 括号配对校验（跳过字符串内容）
+        depth = 0
+        in_string = False
+        escaped = False
+        for ch in candidate:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+            elif not in_string:
+                if ch == open_ch:
+                    depth += 1
+                elif ch == close_ch:
+                    depth -= 1
+        if depth == 0:
+            t = candidate
+        # 括号不成对时保留 candidate（尽力而为）
 
         # 3. 去尾随逗号：},] 和 ,] ， ]
         t = re.sub(r",\s*([}\]])", r"\1", t)
