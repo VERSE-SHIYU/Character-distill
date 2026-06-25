@@ -540,7 +540,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                 className="btn-ghost-danger"
                 onClick={() => setBatchDeleteConfirm(true)}
               >
-                <Trash2 size={14} /> 移入回收站 ({selectedIds.size})
+                <Trash2 size={14} />移入回收站 ({selectedIds.size})
               </button>
             )}
             {!selectMode && items.length > 0 && (
@@ -549,7 +549,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                 className="btn-ghost-danger"
                 onClick={() => setClearAllConfirm(true)}
               >
-                <Trash2 size={14} /> 移入回收站
+                <Trash2 size={14} />移入回收站
               </button>
             )}
           </>
@@ -918,9 +918,8 @@ function GroupHistoryDetail({ detail, loading, onBack, onResume, onDelete }) {
             type="button"
             className="history-action-sm history-action-danger"
             onClick={onDelete}
-            style={{ marginLeft: 8 }}
           >
-            <Trash2 size={14} /> 删除群聊
+            <Trash2 size={14} />删除群聊
           </button>
         </div>
       </div>
@@ -991,7 +990,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 className="history-action-sm history-action-danger"
                 onClick={onDelete}
               >
-                <Trash2 size={14} /> 移入回收站
+                <Trash2 size={14} />移入回收站
               </button>
             </>
           )}
@@ -1005,7 +1004,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 className="history-action-sm history-action-danger"
                 onClick={onDelete}
               >
-                <Trash2 size={14} /> 彻底删除
+                <Trash2 size={14} />彻底删除
               </button>
             </>
           )}

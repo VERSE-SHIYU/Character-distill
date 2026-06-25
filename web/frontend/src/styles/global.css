@@ -4699,14 +4699,14 @@ html.theme-aurora::before {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 34px;
+  height: 32px;
   padding: 0 16px 0 12px;
   border: none;
   border-radius: 20px;
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
@@ -4736,28 +4736,37 @@ html.theme-aurora::before {
 }
 
 .history-action-sm {
-  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   border-radius: var(--btn-radius);
   cursor: pointer;
-  font: inherit;
+  font-family: inherit;
 }
 
 .history-action-sm.btn-primary {
-  height: 34px;
+  height: 32px;
   padding: 0 14px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .history-action-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--input-border);
   background: rgba(255, 255, 255, 0.5);
   color: var(--text-sec);
 }
 
 .history-action-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-dim);
