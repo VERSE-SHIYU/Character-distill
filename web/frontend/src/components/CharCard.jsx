@@ -26,15 +26,14 @@ export default function CharCard() {
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
 
   const goBack = useCallback(() => {
-    if (previousView === 'chat') {
-      const restored = useAppStore.getState().restoreChatSnapshot()
-      if (!restored) { setView('chat'); clearPreviousView() }
-    } else if (previousView === 'groupChat' && previousViewContext?.groupId) {
+    if (useAppStore.getState().restoreChatSnapshot()) return
+    if (previousView === 'groupChat' && previousViewContext?.groupId) {
       setResumeGroupId(previousViewContext.groupId)
       setView('groupChat')
       clearPreviousView()
     } else {
-      setView('text')
+      setView(previousView || 'text')
+      clearPreviousView()
     }
   }, [previousView, previousViewContext, setView, setResumeGroupId, clearPreviousView])
 

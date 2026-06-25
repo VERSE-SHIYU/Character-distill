@@ -61,16 +61,18 @@ const useAppStore = create((set, get) => ({
   currentView: localStorage.getItem('nav_view') || 'home',
   previousView: null,        // for returning after viewCard etc.
   previousViewContext: null, // e.g. { groupId } for groupChat
+  chatSnapshot: null,         // { sessionId, messages, currentCard } — independent of navigation
   setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
   clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
   restoreChatSnapshot: () => {
-    const snap = get().previousViewContext?.chatSnapshot
-    if (snap && snap.sessionId) {
+    const snap = get().chatSnapshot
+    if (snap?.sessionId) {
       set({
         currentView: 'chat',
         sessionId: snap.sessionId,
         messages: snap.messages,
         currentCard: snap.currentCard,
+        chatSnapshot: null,
         previousView: null,
         previousViewContext: null,
       })
@@ -112,6 +114,7 @@ const useAppStore = create((set, get) => ({
   },
 
   goBack: () => {
+    if (get().chatSnapshot?.sessionId) { get().restoreChatSnapshot(); return }
     const { previousView, previousViewContext } = get()
     if (previousView) {
       const restore = { currentView: previousView, previousView: null, previousViewContext: null }
@@ -573,15 +576,16 @@ const useAppStore = create((set, get) => ({
   },
 
   openCharacterList: (textId) => {
-    const { sessionId, messages, currentCard } = get()
-    const chatSnapshot = sessionId ? { sessionId, messages, currentCard } : null
-    set({ previousView: 'chat', previousViewContext: { chatSnapshot } })
+    const { sessionId, messages, currentCard, currentView } = get()
     const text = get().texts.find((t) => t.id === textId)
     set({
       currentTextId: textId,
       currentView: 'character',
       currentTextTitle: text?.title || text?.filename || '',
       identifiedChars: [],
+      ...(sessionId
+        ? { chatSnapshot: { sessionId, messages, currentCard }, previousView: currentView }
+        : {}),
     })
     get().loadCards(textId)
   },

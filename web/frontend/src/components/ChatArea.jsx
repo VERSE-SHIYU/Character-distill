@@ -19,18 +19,17 @@ export default function ChatArea() {
   const sessionId = useAppStore((s) => s.sessionId)
   const resumeLoading = useAppStore((s) => s.resumeLoading)
   const currentView = useAppStore((s) => s.currentView)
-  const previousViewContext = useAppStore((s) => s.previousViewContext)
+  const chatSnapshot = useAppStore((s) => s.chatSnapshot)
   const setView = useAppStore((s) => s.setView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
 
-  // Auto-recover: only create session when user is actually on the chat view.
-  // Skip if a chatSnapshot is pending (restored by restoreChatSnapshot on return).
+  // Auto-recover: only create session when user is on chat view and no snapshot restore is pending
   useEffect(() => {
-    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !previousViewContext?.chatSnapshot) {
+    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !chatSnapshot) {
       startChat(currentCard)
     }
-  }, [currentView, currentCard?.id, sessionId])
+  }, [currentView, currentCard?.id, sessionId, resumeLoading, chatSnapshot])
 
   if (!currentCard || !sessionId) {
     if (resumeLoading) {
@@ -111,7 +110,6 @@ function ChatView() {
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
   const authUser = useAppStore((s) => s.authUser)
   const selectText = useAppStore((s) => s.selectText)
-  const setPreviousView = useAppStore((s) => s.setPreviousView)
   const openCharacterList = useAppStore((s) => s.openCharacterList)
 
   const cardData = parseCardJson(currentCard)
@@ -569,7 +567,7 @@ function ChatView() {
           </button>
           <button type="button" className="chat-more-item" onClick={() => {
             const tid = currentCard?.text_id || currentTextId
-            if (tid) { setPreviousView('chat'); openCharacterList(tid) }
+            if (tid) { openCharacterList(tid) }
             else { setView('character') }
             setShowMore(false)
           }}>
