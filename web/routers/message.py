@@ -16,6 +16,10 @@ class SendMessageRequest(BaseModel):
     content: str
 
 
+class ReactRequest(BaseModel):
+    emoji: str
+
+
 router = APIRouter(prefix="/api/messages", tags=["messages"])
 
 
@@ -89,3 +93,39 @@ async def unread_count(
     """Get total unread message count."""
     count = await storage.get_unread_count(user["id"])
     return {"count": count}
+
+
+@router.post("/{message_id}/react")
+@limiter.limit("60/minute")
+async def react_to_dm(
+    message_id: str,
+    req: ReactRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Toggle a reaction on a direct message."""
+    if not req.emoji.strip():
+        raise HTTPException(400, "Emoji cannot be empty")
+
+    msg = await storage.get_dm_message(message_id)
+    if not msg:
+        raise HTTPException(404, "消息不存在")
+    if msg["sender_id"] != user["id"] and msg["receiver_id"] != user["id"]:
+        raise HTTPException(403, "无权操作此消息")
+
+    added = await storage.toggle_dm_reaction(message_id, user["id"], req.emoji)
+    return {"ok": True, "added": added}
+
+
+@router.get("/with/{other_id}/reactions")
+@limiter.limit("60/minute")
+async def get_dm_reactions(
+    other_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Return all reactions for messages in the conversation."""
+    reactions = await storage.get_dm_reactions(user["id"], other_id)
+    return {"reactions": reactions}

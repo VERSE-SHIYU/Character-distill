@@ -1411,6 +1411,78 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get group reactions after failed: {exc}")
             raise
 
+    async def toggle_dm_reaction(self, message_id: str, user_id: str, emoji: str) -> bool:
+        """Toggle a DM reaction. Returns True if added, False if removed."""
+        try:
+            async with await self._connect() as conn:
+                existing = await conn.fetchrow(
+                    "SELECT id FROM dm_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3",
+                    message_id, user_id, emoji,
+                )
+                if existing:
+                    await conn.execute(
+                        "DELETE FROM dm_reactions WHERE id = $1",
+                        existing[0],
+                    )
+                    return False
+                else:
+                    await conn.execute(
+                        """INSERT INTO dm_reactions (message_id, user_id, emoji)
+                           VALUES ($1, $2, $3)""",
+                        message_id, user_id, emoji,
+                    )
+                    return True
+        except Exception as exc:
+            print(f"[PostgresStore] Toggle DM reaction failed: {exc}")
+            raise
+
+    async def get_dm_message(self, message_id: str) -> dict | None:
+        """Return a single direct message by id."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = $1",
+                    message_id,
+                )
+            return self._row_to_dict(row) if row else None
+        except Exception as exc:
+            print(f"[PostgresStore] Get DM message failed: {exc}")
+            return None
+
+    async def get_dm_reactions(self, user_id: str, other_id: str) -> dict:
+        """Return reactions for messages in the conversation between user_id and other_id.
+        Returns { message_id: [{emoji, count, users:[user_id...]}] }
+        """
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT r.message_id, r.emoji, r.user_id
+                       FROM dm_reactions r
+                       JOIN direct_messages dm ON dm.id = r.message_id
+                       WHERE (dm.sender_id = $1 AND dm.receiver_id = $2)
+                          OR (dm.sender_id = $3 AND dm.receiver_id = $4)
+                       ORDER BY r.id ASC""",
+                    user_id, other_id, other_id, user_id,
+                )
+            result: dict[str, dict[str, dict]] = {}
+            for row in rows:
+                mid = row["message_id"]
+                emoji = row["emoji"]
+                uid = row["user_id"]
+                if mid not in result:
+                    result[mid] = {}
+                if emoji not in result[mid]:
+                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
+                result[mid][emoji]["count"] += 1
+                result[mid][emoji]["users"].append(uid)
+            return {
+                mid: list(emoji_map.values())
+                for mid, emoji_map in result.items()
+            }
+        except Exception as exc:
+            print(f"[PostgresStore] Get DM reactions failed: {exc}")
+            raise
+
     async def update_group_session(self, id: str, name: str) -> None:
         try:
             async with await self._connect() as conn:

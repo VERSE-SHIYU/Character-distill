@@ -693,6 +693,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Usage estimated migration failed: {exc}")
 
+                    # Run 069_dm_reactions migration (CREATE TABLE IF NOT EXISTS)
+                    dmr_path = migrations_dir / "069_dm_reactions.sql"
+                    if dmr_path.exists():
+                        try:
+                            await conn.executescript(dmr_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] DM reactions migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -1553,7 +1562,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, c.text_id, c.name AS character_name
+                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
                     FROM sessions s
                     JOIN cards c ON s.card_id = c.id
                     WHERE s.id = ?
@@ -2154,6 +2163,83 @@ class SQLiteStore(StorageBase):
             ]
         except Exception as exc:
             print(f"[SQLiteStore] Get group reactions after failed: {exc}")
+            raise
+
+    async def toggle_dm_reaction(self, message_id: str, user_id: str, emoji: str) -> bool:
+        """Toggle a DM reaction. Returns True if added, False if removed."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+                    (message_id, user_id, emoji),
+                )
+                existing = await cursor.fetchone()
+                if existing:
+                    await conn.execute(
+                        "DELETE FROM dm_reactions WHERE id = ?",
+                        (existing["id"],),
+                    )
+                    await conn.commit()
+                    return False
+                else:
+                    await conn.execute(
+                        """INSERT INTO dm_reactions (message_id, user_id, emoji)
+                           VALUES (?, ?, ?)""",
+                        (message_id, user_id, emoji),
+                    )
+                    await conn.commit()
+                    return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Toggle DM reaction failed: {exc}")
+            raise
+
+    async def get_dm_message(self, message_id: str) -> dict | None:
+        """Return a single direct message by id."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = ?",
+                    (message_id,),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get DM message failed: {exc}")
+            return None
+
+    async def get_dm_reactions(self, user_id: str, other_id: str) -> dict:
+        """Return reactions for messages in the conversation between user_id and other_id.
+        Returns { message_id: [{emoji, count, users:[user_id...]}] }
+        """
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.message_id, r.emoji, r.user_id
+                       FROM dm_reactions r
+                       JOIN direct_messages dm ON dm.id = r.message_id
+                       WHERE (dm.sender_id = ? AND dm.receiver_id = ?)
+                          OR (dm.sender_id = ? AND dm.receiver_id = ?)
+                       ORDER BY r.id ASC""",
+                    (user_id, other_id, other_id, user_id),
+                )
+                rows = await cursor.fetchall()
+            result: dict[str, dict[str, dict]] = {}
+            for row in rows:
+                mid = row["message_id"]
+                emoji = row["emoji"]
+                uid = row["user_id"]
+                if mid not in result:
+                    result[mid] = {}
+                if emoji not in result[mid]:
+                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
+                result[mid][emoji]["count"] += 1
+                result[mid][emoji]["users"].append(uid)
+            return {
+                mid: list(emoji_map.values())
+                for mid, emoji_map in result.items()
+            }
+        except Exception as exc:
+            print(f"[SQLiteStore] Get DM reactions failed: {exc}")
             raise
 
     async def update_group_session(self, id: str, name: str) -> None:
