@@ -21,6 +21,8 @@ export default function ChatArea() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
   const selectText = useAppStore((s) => s.selectText)
+  const setPreviousView = useAppStore((s) => s.setPreviousView)
+  const openCharacterList = useAppStore((s) => s.openCharacterList)
   const startChat = useAppStore((s) => s.startChat)
 
   // Auto-recover: only create session when user is actually on the chat view
@@ -565,7 +567,7 @@ function ChatView() {
           </button>
           <button type="button" className="chat-more-item" onClick={() => {
             const tid = currentCard?.text_id || currentTextId
-            if (tid) { selectText(tid) }
+            if (tid) { setPreviousView('chat'); openCharacterList(tid) }
             else { setView('character') }
             setShowMore(false)
           }}>

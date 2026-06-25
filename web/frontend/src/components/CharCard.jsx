@@ -26,7 +26,10 @@ export default function CharCard() {
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
 
   const goBack = useCallback(() => {
-    if (previousView === 'groupChat' && previousViewContext?.groupId) {
+    if (previousView === 'chat') {
+      setView('chat')
+      clearPreviousView()
+    } else if (previousView === 'groupChat' && previousViewContext?.groupId) {
       setResumeGroupId(previousViewContext.groupId)
       setView('groupChat')
       clearPreviousView()

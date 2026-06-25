@@ -557,6 +557,17 @@ const useAppStore = create((set, get) => ({
     get().loadCards(textId)
   },
 
+  openCharacterList: (textId) => {
+    const text = get().texts.find((t) => t.id === textId)
+    set({
+      currentTextId: textId,
+      currentView: 'character',
+      currentTextTitle: text?.title || text?.filename || '',
+      identifiedChars: [],
+    })
+    get().loadCards(textId)
+  },
+
   loadCards: async (textId) => {
     if (!textId) return
     try {
