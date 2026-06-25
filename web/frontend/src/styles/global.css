@@ -11582,7 +11582,7 @@ select.settings-input {
   color: var(--cbubble-color);
   border-radius: 4px 16px 16px 16px;
 }
-/* Left tail — two-layer (border outline + fill) */
+/* Left tail — two-layer (border outline + fill), clip-path with rounded tip */
 .cbubble--left::before {
   content: "";
   position: absolute;
@@ -11590,11 +11590,11 @@ select.settings-input {
   top: 50%;
   transform: translateY(-50%);
   z-index: 0;
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-right: 7px solid var(--cbubble-border);
+  width: 11px;
+  height: 16px;
+  background: var(--cbubble-border);
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+  border-radius: 0 0 0 3px;
   pointer-events: none;
 }
 .cbubble--left::after {
@@ -11604,11 +11604,11 @@ select.settings-input {
   top: 50%;
   transform: translateY(-50%);
   z-index: 1;
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-right: 7px solid var(--cbubble-bg);
+  width: 10px;
+  height: 14px;
+  background: var(--cbubble-bg);
+  clip-path: polygon(100% 0, 0 50%, 100% 100%);
+  border-radius: 0 0 0 2px;
   pointer-events: none;
 }
 
@@ -11622,7 +11622,7 @@ select.settings-input {
   color: var(--cbubble-color);
   border-radius: 16px 4px 16px 16px;
 }
-/* Right tail — single fill layer (no border on right bubbles) */
+/* Right tail — single fill layer, clip-path with rounded tip */
 .cbubble--right::after {
   content: "";
   position: absolute;
@@ -11630,11 +11630,11 @@ select.settings-input {
   top: 50%;
   transform: translateY(-50%);
   z-index: 1;
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 6px solid var(--cbubble-bg);
+  width: 10px;
+  height: 14px;
+  background: var(--cbubble-bg);
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  border-radius: 0 2px 0 0;
   pointer-events: none;
 }
 
