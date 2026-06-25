@@ -15,6 +15,7 @@ from core.context_engine import ContextEngine
 from core.rag import RAGEngine
 from core.schema import CharacterCard
 from core.utils import try_record_usage
+from core.event_service import EventService
 
 
 # IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
@@ -97,8 +98,7 @@ class ChatEngine:
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
         self._reflection_importance_acc: int = 0  # 累计重要性，达阈值触发反思
-        self._asked_event_ids: set[str] = set()  # 已问过的事件 ID（会话级）
-        self._injected_event_id: str = ""  # 本轮注入的事件 ID（响应后标记为已问）
+        self._event_service = EventService(self._memory, self._card_id)
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -167,7 +167,7 @@ class ChatEngine:
         self.history.append({"role": "assistant", "content": response})
 
         self._evaluate_affinity(user_message, response)
-        self._mark_event_asked()
+        self._event_service.mark_asked()
 
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
@@ -231,7 +231,7 @@ class ChatEngine:
     def post_stream_process(self, user_message: str, full_reply: str) -> None:
         """Post-stream housekeeping after done event: affinity first, then memory with metadata. Does NOT block UI unlock."""
         self._evaluate_affinity(user_message, full_reply)
-        self._mark_event_asked()
+        self._event_service.mark_asked()
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
@@ -790,7 +790,7 @@ class ChatEngine:
             self._build_affinity_persona_block()
             + self._build_cognitive_block()
             + self._build_time_awareness_block()
-            + self._build_event_candidate_block()
+            + self._event_service.build_candidate_block()
             + self._build_relationship_block()
         )
 
@@ -847,90 +847,6 @@ class ChatEngine:
             "但绝不要机械播报时间数字，要像真人一样把时间感受体现在语气和关心里。\n"
         )
         return block
-
-    # ── 事件级时间感知 ──────────────────────────────────────────
-
-    def _get_due_event(self) -> dict | None:
-        """扫描记忆，返回第一个到期的未问时间事件（最接近当前时刻的）。"""
-        if not self._memory or not self._memory.enabled or not self._card_id:
-            return None
-        try:
-            memories = self._memory.get_all(self._card_id)
-            if not memories:
-                return None
-
-            asked_ids = set()
-            for m in memories:
-                meta = m.get("metadata") or {}
-                if isinstance(meta, dict) and meta.get("type") == "time_event_asked":
-                    asked_ids.add(meta.get("event_id", ""))
-
-            now = datetime.now()
-            best = None
-            for m in memories:
-                meta = m.get("metadata") or {}
-                if not isinstance(meta, dict):
-                    continue
-                if meta.get("type") != "time_event":
-                    continue
-                eid = meta.get("event_id", "")
-                if not eid or eid in asked_ids or eid in self._asked_event_ids:
-                    continue
-                due_at_str = meta.get("due_at", "")
-                if not due_at_str:
-                    continue
-                try:
-                    due_at = datetime.fromisoformat(due_at_str)
-                except (ValueError, TypeError):
-                    continue
-                if due_at > now:
-                    continue
-                if best is None or due_at > best["due_at"]:
-                    best = {
-                        "event": meta.get("event", ""),
-                        "when_text": meta.get("when_text", ""),
-                        "event_id": eid,
-                        "due_at": due_at,
-                    }
-            return best
-        except Exception as exc:
-            print(f"[ChatEngine] _get_due_event failed: {exc}")
-            return None
-
-    def _build_event_candidate_block(self) -> str:
-        """如果记忆中有到期的未问事件，返回可选关心提示片段。"""
-        pending = self._get_due_event()
-        if not pending:
-            self._injected_event_id = ""
-            return ""
-        self._injected_event_id = pending["event_id"]
-        return (
-            "\n\n【你或许记着的一件事】\n"
-            f"对方之前提到「{pending['event']}」，时间大约在「{pending['when_text']}」，"
-            f"现在应该已经发生/到时间了。\n"
-            "如果这轮气氛自然，你可以像真人一样【关心地】问起——但要符合你的性格："
-            "含蓄的人就旁敲侧击，热情的人就直接问。"
-            "绝不要机械复述细节，要带着在意去问。"
-            "如果这轮在吵架/对方情绪差/话题不搭，就先不提。\n"
-        )
-
-    def _mark_event_asked(self) -> None:
-        """将本轮已注入的事件标记为已问（持久化标记）。"""
-        eid = self._injected_event_id
-        if not eid:
-            return
-        self._injected_event_id = ""
-        self._asked_event_ids.add(eid)
-        if self._memory and self._memory.enabled and self._card_id:
-            try:
-                self._memory.add_manual(
-                    "",
-                    self._card_id,
-                    metadata={"type": "time_event_asked", "event_id": eid},
-                )
-                print(f"[ChatEngine] Marked event {eid} as asked")
-            except Exception as exc:
-                print(f"[ChatEngine] Mark event asked failed: {exc}")
 
     def _compute_initial_affinity(
         self,
