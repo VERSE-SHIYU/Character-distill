@@ -10,6 +10,7 @@ import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
+import MessageReactions from './common/MessageReactions'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
@@ -1027,7 +1028,6 @@ export default function GroupChatPage() {
                     const showTime = i === 0 || (m.created_at && messages[i-1]?.created_at
                       && (new Date(m.created_at) - new Date(messages[i-1].created_at)) > 5 * 60 * 1000)
                     const reactions = m.reactions || []
-                    const QUICK_EMOJIS = ['👍','❤️','😂','😮','😢','🔥']
                     return (
                       <div key={m.id || i} data-msg-id={m.id}>
                         {showTime && (
@@ -1051,21 +1051,6 @@ export default function GroupChatPage() {
                               avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={72} src={userAvatar} />}
                               name={personaSpeaker || undefined}
                             >
-                              <div className="group-msg-bubble-actions">
-                                <button type="button" className="msg-action-btn" title="引用"
-                                  onClick={() => {
-                                    setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) })
-                                    inputBarRef.current?.focus()
-                                  }}>
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                                </button>
-                              </div>
-                                <div className="msg-quick-reactions" style={{ position: 'absolute', bottom: -32, right: 0, zIndex: 10 }}>
-                                  {QUICK_EMOJIS.map(e => (
-                                    <button key={e} type="button" className="msg-quick-reaction-btn"
-                                      onClick={() => reactToMessage(m.id, e)}>{e}</button>
-                                  ))}
-                                </div>
                               {m.reply_to_id && m.reply_to_preview && (
                                 <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
                                   <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
@@ -1073,18 +1058,15 @@ export default function GroupChatPage() {
                                 </div>
                               )}
                               <span className="messages-msg-text">{m.content}</span>
-                              {reactions.length > 0 && (
-                                <div className="msg-reactions">
-                                  {reactions.map((r, ri) => (
-                                    <button key={ri} type="button"
-                                      className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
-                                      title={reactionUsersLabel(r.users)}
-                                      onClick={() => reactToMessage(m.id, r.emoji)}>
-                                      {r.emoji} {r.count}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
+                              <MessageReactions
+                                side="right"
+                                reactions={reactions}
+                                showQuickBar={true}
+                                onReact={(emoji) => reactToMessage(m.id, emoji)}
+                                onReply={() => { setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                authUserId={authUser?.id}
+                                renderUserLabel={reactionUsersLabel}
+                              />
                             </ChatBubble>
                           )
                           ) : m.role === 'silent' ? (
@@ -1132,21 +1114,6 @@ export default function GroupChatPage() {
                                   }
                                 }}
                               >
-                                <div className="group-msg-bubble-actions group-msg-bubble-actions--other">
-                                  <button type="button" className="msg-action-btn" title="引用"
-                                    onClick={() => {
-                                      setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
-                                      inputBarRef.current?.focus()
-                                    }}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                                  </button>
-                                  <div className="msg-quick-reactions">
-                                    {QUICK_EMOJIS.map(e => (
-                                      <button key={e} type="button" className="msg-quick-reaction-btn"
-                                        onClick={() => reactToMessage(m.id, e)}>{e}</button>
-                                    ))}
-                                  </div>
-                                </div>
                                 {m.reply_to_id && m.reply_to_preview && (
                                   <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
                                     <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
@@ -1154,18 +1121,15 @@ export default function GroupChatPage() {
                                   </div>
                                 )}
                                 <span className="messages-msg-text">{m.content}</span>
-                                {reactions.length > 0 && (
-                                  <div className="msg-reactions" style={{ padding: '0 12px 6px' }}>
-                                    {reactions.map((r, ri) => (
-                                      <button key={ri} type="button"
-                                        className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
-                                        title={reactionUsersLabel(r.users)}
-                                        onClick={() => reactToMessage(m.id, r.emoji)}>
-                                        {r.emoji} {r.count}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
+                                <MessageReactions
+                                  side="left"
+                                  reactions={reactions}
+                                  showQuickBar={true}
+                                  onReact={(emoji) => reactToMessage(m.id, emoji)}
+                                  onReply={() => { setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                  authUserId={authUser?.id}
+                                  renderUserLabel={reactionUsersLabel}
+                                />
                               </ChatBubble>
                             </>
                           )}
