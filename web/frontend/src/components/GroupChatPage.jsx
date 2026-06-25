@@ -11,6 +11,7 @@ import { checkRepeat } from '../utils/repeatGuard'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
+import ReplyQuote from './common/ReplyQuote'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
@@ -1051,12 +1052,7 @@ export default function GroupChatPage() {
                               avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={72} src={userAvatar} />}
                               name={personaSpeaker || undefined}
                             >
-                              {m.reply_to_id && m.reply_to_preview && (
-                                <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
-                                  <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
-                                  <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
-                                </div>
-                              )}
+                              <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                               <span className="messages-msg-text">{m.content}</span>
                               <MessageReactions
                                 side="right"
@@ -1114,12 +1110,7 @@ export default function GroupChatPage() {
                                   }
                                 }}
                               >
-                                {m.reply_to_id && m.reply_to_preview && (
-                                  <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
-                                    <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
-                                    <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
-                                  </div>
-                                )}
+                                <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                                 <span className="messages-msg-text">{m.content}</span>
                                 <MessageReactions
                                   side="left"

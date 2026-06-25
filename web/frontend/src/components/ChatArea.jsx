@@ -14,6 +14,7 @@ import { parseCardJson } from '../utils/card'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
+import ReplyQuote from './common/ReplyQuote'
 import { Calendar } from './common/ChatHistoryPanel'
 
 export default function ChatArea() {
@@ -1040,12 +1041,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         time={timestamp ? formatChatTime(timestamp) : undefined}
       >
         {/* Reply quote */}
-        {replyToId && replyToPreview && (
-          <div className="msg-reply-quote" onClick={() => onScrollToMessage?.(replyToId)}>
-            <div className="msg-reply-quote-speaker">{replyToPreview.split(':')[0]}</div>
-            <div className="msg-reply-quote-text">{replyToPreview.split(':').slice(1).join(':')}</div>
-          </div>
-        )}
+        <ReplyQuote preview={replyToPreview} messageId={replyToId} onScrollTo={onScrollToMessage} />
 
         {!isUser && retracted ? (
           <span className="chat-bubble-text">
