@@ -718,7 +718,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                     <button
                       type="button"
                       className="history-item"
-                      onClick={() => openGroupDetail(g)}
+                      onClick={() => handleResumeGroup(g.id)}
                       style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
                     >
                       <div className="history-item-body">
@@ -1053,7 +1053,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 name={isUser ? undefined : charName}
                 avatar={
                   isUser
-                    ? <div className="user-avatar-circle">{userInitial}</div>
+                    ? <div className="user-avatar-circle" style={session.avatar_data ? { backgroundImage: `url(${session.avatar_data})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}>{!session.avatar_data && userInitial}</div>
                     : <Avatar name={charName} size={68} src={cardAvatars?.[session.card_id]} />
                 }
                 time={msg.created_at ? formatChatTime(msg.created_at) : undefined}

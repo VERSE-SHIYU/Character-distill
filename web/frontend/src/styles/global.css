@@ -4699,7 +4699,8 @@ html.theme-aurora::before {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 7px 16px 7px 12px;
+  height: 34px;
+  padding: 0 16px 0 12px;
   border: none;
   border-radius: 20px;
   background: var(--accent-soft);
