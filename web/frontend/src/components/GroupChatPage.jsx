@@ -58,6 +58,7 @@ export default function GroupChatPage() {
   const [autoRunning, setAutoRunning] = useState(false)
   const autoStopRef = useRef(false)
   const autoAbortRef = useRef(null)
+  const currentGroupRef = useRef(null)
   const [autoTurn, setAutoTurn] = useState(0)
   const [dropOpen, setDropOpen] = useState(false)
   const dropRef = useRef(null)
@@ -280,6 +281,10 @@ export default function GroupChatPage() {
   }, [])
 
   useEffect(() => {
+    currentGroupRef.current = currentGroup?.id
+  }, [currentGroup?.id])
+
+  useEffect(() => {
     loadGroups()
   }, [loadGroups])
 
@@ -333,8 +338,10 @@ export default function GroupChatPage() {
     try {
       const res = await fetchWithTimeout(`/api/group/${groupId}/history`)
       const data = await res.json()
+      if (currentGroupRef.current !== groupId) return
       setMessages(data.messages || [])
     } catch (err) {
+      if (currentGroupRef.current !== groupId) return
       setError(err.message)
     } finally {
       if (!skipLoading) setLoading(false)
@@ -346,6 +353,7 @@ export default function GroupChatPage() {
     try {
       const res = await fetchWithTimeout(`/api/group/${groupId}/affinities`)
       const data = await res.json()
+      if (currentGroupRef.current !== groupId) return
       const map = {}
       ;(data || []).forEach(item => { map[item.card_id] = item })
       setGroupAffinities(map)
@@ -402,6 +410,7 @@ export default function GroupChatPage() {
       setError('至少需要1个AI角色陪你对话')
       return
     }
+    autoAbortRef.current?.abort()
     setCurrentGroup({ ...group, card_ids: cardIds })
     loadHistory(group.id)
     fetchAffinities(group.id)
@@ -602,6 +611,7 @@ export default function GroupChatPage() {
 
     if (autoRunning) stopAutoConversation()
 
+    const sendGroupId = currentGroup.id
     setSending(true)
     setError(null)
     const personaSpeaker = (currentGroup?.user_persona_type === 'character' && currentGroup?.user_persona_name)
@@ -627,15 +637,17 @@ export default function GroupChatPage() {
         reply_to_id: replyTo?.id || null,
       })
       void data
+      if (currentGroupRef.current !== sendGroupId) return
       // Reload history once after all replies
       await loadHistory(currentGroup.id)
       fetchAffinities(currentGroup.id)
       setTargetCardIds([])
       setReplyTo(null)
     } catch (err) {
+      if (currentGroupRef.current !== sendGroupId) return
       setError(err.message)
     } finally {
-      setSending(false)
+      if (currentGroupRef.current === sendGroupId) setSending(false)
     }
   }
 

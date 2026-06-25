@@ -562,6 +562,7 @@ const useAppStore = create((set, get) => ({
   },
 
   selectText: (textId) => {
+    get()._chatStreamCancel?.()
     const text = get().texts.find((t) => t.id === textId)
     set({
       currentTextId: textId,
@@ -830,6 +831,7 @@ const useAppStore = create((set, get) => ({
   },
 
   viewCard: (card) => {
+    get()._chatStreamCancel?.()
     set({
       currentCard: card,
       currentView: 'character',
@@ -839,6 +841,7 @@ const useAppStore = create((set, get) => ({
 
   // AbortController for in-flight start_session requests
   _chatAbort: null,
+  _chatStreamCancel: null,  // cancel fn for in-flight SSE stream
 
   // Archive list modal (multi-save slot selection)
   archiveModalOpen: false,
@@ -854,8 +857,9 @@ const useAppStore = create((set, get) => ({
       return
     }
 
-    // Cancel previous in-flight request
+    // Cancel previous in-flight request + stream
     if (state._chatAbort) state._chatAbort.abort()
+    get()._chatStreamCancel?.()
 
     const abort = new AbortController()
     set({
@@ -900,8 +904,9 @@ const useAppStore = create((set, get) => ({
       return
     }
 
-    // Cancel previous in-flight request
+    // Cancel previous in-flight request + stream
     if (state._chatAbort) state._chatAbort.abort()
+    get()._chatStreamCancel?.()
 
     const data = parseCardJson(card)
     const cardId = card.id || card.card_id
@@ -1103,6 +1108,7 @@ const useAppStore = create((set, get) => ({
       return () => {}
     }
 
+    const streamSessionId = sessionId  // lock stream to this session
     const userMsg = { role: 'user', content: message, reply_to_id, reply_to_preview }
     const charMsg = { role: 'char', content: '' }
     set({ messages: [...messages, userMsg, charMsg], sending: true, error: null })
@@ -1112,10 +1118,11 @@ const useAppStore = create((set, get) => ({
     const body = { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
-    return streamSSE(
+    const cancel = streamSSE(
       '/api/chat/send',
       body,
       (token) => {
+        if (get().sessionId !== streamSessionId) return
         fullReply += token
         set((s) => {
           const msgs = [...s.messages]
@@ -1125,6 +1132,7 @@ const useAppStore = create((set, get) => ({
         })
       },
       async (payload) => {
+        if (get().sessionId !== streamSessionId) return
         set((s) => {
           const msgs = [...s.messages]
           if (payload.user_msg_id && msgs.length >= 2) {
@@ -1151,10 +1159,14 @@ const useAppStore = create((set, get) => ({
         get().fetchAffinity()
       },
       (err) => {
+        if (get().sessionId !== streamSessionId) return
         console.error('[store] stream failed:', err)
         set({ sending: false, error: err.message })
       },
     )
+
+    set({ _chatStreamCancel: cancel })
+    return cancel
   },
 
   revokeCooldown: false,
@@ -1197,16 +1209,18 @@ const useAppStore = create((set, get) => ({
     const { sessionId, voiceEnabled } = get()
     if (!sessionId) return () => {}
 
+    const streamSessionId = sessionId  // lock stream to this session
     const hiddenMsg = '[系统提示：对方刚刚撤回了一条消息]'
     const charMsg = { role: 'char', content: '' }
     set((s) => ({ messages: [...s.messages, charMsg], sending: true }))
 
     let fullReply = ''
 
-    return streamSSE(
+    const cancel = streamSSE(
       '/api/chat/send',
       { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().userRole },
       (token) => {
+        if (get().sessionId !== streamSessionId) return
         fullReply += token
         set((s) => {
           const msgs = [...s.messages]
@@ -1216,6 +1230,7 @@ const useAppStore = create((set, get) => ({
         })
       },
       (payload) => {
+        if (get().sessionId !== streamSessionId) return
         set((s) => {
           const msgs = [...s.messages]
           if (payload.char_msg_id) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id }
@@ -1226,10 +1241,14 @@ const useAppStore = create((set, get) => ({
         }
       },
       (err) => {
+        if (get().sessionId !== streamSessionId) return
         console.error('[store] revoke notice failed:', err)
         set({ sending: false, error: err.message })
       },
     )
+
+    set({ _chatStreamCancel: cancel })
+    return cancel
   },
 
   resetChat: async () => {

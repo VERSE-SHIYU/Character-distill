@@ -202,6 +202,7 @@ export default function MessagesPage() {
               <div className="messages-empty-chat">选择一个会话</div>
             ) : (
               <PrivateMessageChat
+                key={activeOtherId}
                 otherUserId={activeOtherId}
                 otherUsername={activeUsername}
               />
