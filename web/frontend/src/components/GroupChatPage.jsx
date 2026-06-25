@@ -9,6 +9,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
 import ChatInputBar from './common/ChatInputBar'
+import ChatBubble from './common/ChatBubble'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
@@ -1045,18 +1046,98 @@ export default function GroupChatPage() {
                             currentGroup?.user_persona_type === 'director' ? (
                               <div className="narration-note">{m.content}</div>
                             ) : (
+                            <ChatBubble
+                              side="right"
+                              avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={48} src={userAvatar} />}
+                              name={personaSpeaker || undefined}
+                              time={m.created_at ? formatChatTime(m.created_at) : undefined}
+                            >
+                              <div className="group-msg-bubble-actions">
+                                <button type="button" className="msg-action-btn" title="引用"
+                                  onClick={() => {
+                                    setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) })
+                                    inputBarRef.current?.focus()
+                                  }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                                </button>
+                                <div className="msg-quick-reactions">
+                                  {QUICK_EMOJIS.map(e => (
+                                    <button key={e} type="button" className="msg-quick-reaction-btn"
+                                      onClick={() => reactToMessage(m.id, e)}>{e}</button>
+                                  ))}
+                                </div>
+                              </div>
+                              {m.reply_to_id && m.reply_to_preview && (
+                                <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
+                                  <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
+                                  <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
+                                </div>
+                              )}
+                              <span className="messages-msg-text">{m.content}</span>
+                              {reactions.length > 0 && (
+                                <div className="msg-reactions">
+                                  {reactions.map((r, ri) => (
+                                    <button key={ri} type="button"
+                                      className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
+                                      title={reactionUsersLabel(r.users)}
+                                      onClick={() => reactToMessage(m.id, r.emoji)}>
+                                      {r.emoji} {r.count}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </ChatBubble>
+                          )
+                          ) : m.role === 'silent' ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' }}>
+                              <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                              <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
+                            </div>
+                          ) : (
                             <>
-                              <div className="group-chat-msg-col group-chat-msg-col--mine">
-                                {personaSpeaker && (
-                                  <div className="group-chat-name-row group-chat-name-row--mine">
-                                    <span className="group-chat-bubble-speaker">{personaSpeaker}</span>
-                                  </div>
-                                )}
-                                <div className="messages-bubble mine group-msg-bubble">
-                                <div className="group-msg-bubble-actions">
+                              <ChatBubble
+                                side="left"
+                                avatar={<Avatar name={m.speaker || '?'} size={48} src={cardAvatars[m.card_id || m.speaker_card_id]} />}
+                                name={m.speaker || '?'}
+                                onNameClick={() => {
+                                  const cardId = m.card_id || m.speaker_card_id
+                                  let cardData = cardId ? resolveCard(cardId) : null
+                                  // Fallback: search by speaker name across all sources
+                                  if (!cardData && m.speaker) {
+                                    const name = m.speaker.toLowerCase()
+                                    cardData = allCards.find(c => (c.name || '').toLowerCase() === name)
+                                      || Object.values(cardCache).find(c => (c.name || '').toLowerCase() === name)
+                                      || currentGroup?._cards?.find(c => (c.name || '').toLowerCase() === name)
+                                      || null
+                                  }
+                                  const fallbackId = cardData?.id || cardData?.card_id || cardId
+                                  if (cardData) {
+                                    const parsed = parseCardJson(cardData)
+                                    setSelectedCharCardInfo({
+                                      cardId: fallbackId,
+                                      name: parsed.name || cardData.name || m.speaker || '?',
+                                      identity: parsed.identity || '',
+                                      personality_traits: parsed.personality_traits || [],
+                                      avatar_data: cardData.avatar_data || cardAvatars[fallbackId],
+                                      rawCard: cardData,
+                                    })
+                                  } else {
+                                    setSelectedCharCardInfo({
+                                      cardId: null,
+                                      name: m.speaker || '?',
+                                      identity: '',
+                                      personality_traits: [],
+                                      avatar_data: null,
+                                      rawCard: null,
+                                    })
+                                  }
+                                }}
+                                time={m.created_at ? formatChatTime(m.created_at) : undefined}
+                              >
+                                <div className="group-msg-bubble-actions group-msg-bubble-actions--other">
                                   <button type="button" className="msg-action-btn" title="引用"
                                     onClick={() => {
-                                      setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) })
+                                      setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
                                       inputBarRef.current?.focus()
                                     }}>
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -1075,11 +1156,8 @@ export default function GroupChatPage() {
                                   </div>
                                 )}
                                 <span className="messages-msg-text">{m.content}</span>
-                                {m.created_at && (
-                                  <div className="msg-time msg-time-user">{formatChatTime(m.created_at)}</div>
-                                )}
                                 {reactions.length > 0 && (
-                                  <div className="msg-reactions">
+                                  <div className="msg-reactions" style={{ padding: '0 12px 6px' }}>
                                     {reactions.map((r, ri) => (
                                       <button key={ri} type="button"
                                         className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
@@ -1090,97 +1168,7 @@ export default function GroupChatPage() {
                                     ))}
                                   </div>
                                 )}
-                              </div>
-                              </div>
-                              <Avatar name={personaSpeaker || authUser?.username || '我'} size={48} src={userAvatar} />
-                            </>
-                          )
-                          ) : m.role === 'silent' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' }}>
-                              <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                              <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
-                            </div>
-                          ) : (
-                            <>
-                              <Avatar name={m.speaker || '?'} size={48} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                              <div className="group-chat-msg-col">
-                                <div className="group-chat-name-row">
-                                  <span className="group-chat-bubble-speaker" style={{ cursor: 'pointer' }} onClick={() => {
-                                    const cardId = m.card_id || m.speaker_card_id
-                                    let cardData = cardId ? resolveCard(cardId) : null
-                                    // Fallback: search by speaker name across all sources
-                                    if (!cardData && m.speaker) {
-                                      const name = m.speaker.toLowerCase()
-                                      cardData = allCards.find(c => (c.name || '').toLowerCase() === name)
-                                        || Object.values(cardCache).find(c => (c.name || '').toLowerCase() === name)
-                                        || currentGroup?._cards?.find(c => (c.name || '').toLowerCase() === name)
-                                        || null
-                                    }
-                                    const fallbackId = cardData?.id || cardData?.card_id || cardId
-                                    if (cardData) {
-                                      const parsed = parseCardJson(cardData)
-                                      setSelectedCharCardInfo({
-                                        cardId: fallbackId,
-                                        name: parsed.name || cardData.name || m.speaker || '?',
-                                        identity: parsed.identity || '',
-                                        personality_traits: parsed.personality_traits || [],
-                                        avatar_data: cardData.avatar_data || cardAvatars[fallbackId],
-                                        rawCard: cardData,
-                                      })
-                                    } else {
-                                      setSelectedCharCardInfo({
-                                        cardId: null,
-                                        name: m.speaker || '?',
-                                        identity: '',
-                                        personality_traits: [],
-                                        avatar_data: null,
-                                        rawCard: null,
-                                      })
-                                    }
-                                  }}>{m.speaker || '?'}</span>
-                                </div>
-                                <div className="group-chat-bubble">
-                                  <div className="group-msg-bubble-actions group-msg-bubble-actions--other">
-                                    <button type="button" className="msg-action-btn" title="引用"
-                                      onClick={() => {
-                                        setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) })
-                                        inputBarRef.current?.focus()
-                                      }}>
-                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-                                    </button>
-                                    <div className="msg-quick-reactions">
-                                      {QUICK_EMOJIS.map(e => (
-                                        <button key={e} type="button" className="msg-quick-reaction-btn"
-                                          onClick={() => reactToMessage(m.id, e)}>{e}</button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <div className="group-chat-bubble-body">
-                                    {m.reply_to_id && m.reply_to_preview && (
-                                      <div className="msg-reply-quote" onClick={() => scrollToMessage(m.reply_to_id)}>
-                                        <div className="msg-reply-quote-speaker">{m.reply_to_preview.split(':')[0]}</div>
-                                        <div className="msg-reply-quote-text">{m.reply_to_preview.split(':').slice(1).join(':')}</div>
-                                      </div>
-                                    )}
-                                    <span className="messages-msg-text">{m.content}</span>
-                                  </div>
-                                  {m.created_at && (
-                                    <div className="group-chat-bubble-time">{formatChatTime(m.created_at)}</div>
-                                  )}
-                                  {reactions.length > 0 && (
-                                    <div className="msg-reactions" style={{ padding: '0 12px 6px' }}>
-                                      {reactions.map((r, ri) => (
-                                        <button key={ri} type="button"
-                                          className={`msg-reaction-badge${r.users?.includes(authUser?.id || '') ? ' mine' : ''}`}
-                                          title={reactionUsersLabel(r.users)}
-                                          onClick={() => reactToMessage(m.id, r.emoji)}>
-                                          {r.emoji} {r.count}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
+                              </ChatBubble>
                             </>
                           )}
                         </div>

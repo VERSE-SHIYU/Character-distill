@@ -11682,6 +11682,38 @@ select.settings-input {
   --cbubble-color: #e8e8ec;
 }
 
+/* ── GroupChatPage overrides ── */
+/* Character bubble — white card with primary-tinted border */
+.group-chat-page .cbubble--left {
+  --cbubble-bg: #fff;
+  --cbubble-border: color-mix(in srgb, var(--primary) 35%, #e2e2e8);
+  --cbubble-color: var(--text);
+}
+[data-theme="dark"] .group-chat-page .cbubble--left {
+  --cbubble-bg: color-mix(in srgb, var(--primary) 14%, #1f1d29);
+  --cbubble-border: color-mix(in srgb, var(--primary) 28%, var(--glass-border));
+  --cbubble-color: rgba(255,255,255,0.92);
+}
+[data-theme="dark"] .group-chat-page .cbubble-name {
+  color: color-mix(in srgb, var(--primary) 70%, #fff);
+}
+/* Hover actions inside group chat bubbles */
+.group-chat-page .cbubble:hover .group-msg-bubble-actions {
+  opacity: 1;
+}
+/* User bubble actions: absolute top-right */
+.group-chat-page .cbubble--right .group-msg-bubble-actions {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 2;
+}
+/* Character bubble actions: flex end-aligned */
+.group-chat-page .cbubble--left .group-msg-bubble-actions--other {
+  display: flex;
+  justify-content: flex-end;
+}
+
 /* Group chat character bubble — theme-tinted */
 .group-chat-bubble {
   position: relative;
