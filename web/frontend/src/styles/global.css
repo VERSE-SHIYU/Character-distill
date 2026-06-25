@@ -4883,9 +4883,9 @@ html.theme-aurora::before {
   min-height: 0;
   overflow-y: auto;
   padding: 8px 4px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+}
+.history-readonly-chat .chat-messages {
+  padding-bottom: 16px;
 }
 
 .history-readonly-msg {

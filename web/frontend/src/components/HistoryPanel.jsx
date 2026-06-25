@@ -1030,7 +1030,8 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
       {loading ? (
         <Loading text="加载中…" />
       ) : (
-        <div className="history-readonly-messages">
+        <div className="chat-area history-readonly-chat">
+          <div className="chat-messages">
           {messages.map((msg, i) => {
             if (msg.role === 'summary') {
               return (
@@ -1053,7 +1054,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 avatar={
                   isUser
                     ? <div className="user-avatar-circle">{userInitial}</div>
-                    : <Avatar name={charName} size={70} src={cardAvatars?.[session.card_id]} />
+                    : <Avatar name={charName} size={68} src={cardAvatars?.[session.card_id]} />
                 }
                 time={msg.created_at ? formatChatTime(msg.created_at) : undefined}
               >
@@ -1061,6 +1062,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
               </ChatBubble>
             )
           })}
+          </div>
         </div>
       )}
     </div>
