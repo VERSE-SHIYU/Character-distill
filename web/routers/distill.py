@@ -437,20 +437,30 @@ async def distill_by_text_id(
             req.text_id, char_name, force=req.force, user_id=user_id,
             embedding_key=_ek, embedding_region=_er,
         )
-        # Build scene index on first distill (non-cached)
-        try:
-            rag = text_manager._get_or_build_rag(
-                req.text_id, content, [],
-                embedding_key=_ek, embedding_region=_er,
-            )
-            if rag.collection:
-                card_id = result.get("card_id", "")
-                SceneIndexer().index_scenes(
-                    content, rag, char_name,
-                    collection_name=f"scenes_{card_id}",
+        # 场景索引：后台 fire-and-forget，带超时，失败不阻塞响应
+        async def _bg_scene_index():
+            try:
+                rag = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        text_manager._get_or_build_rag,
+                        req.text_id, content, [],
+                        embedding_key=_ek, embedding_region=_er,
+                    ),
+                    timeout=120,
                 )
-        except Exception as exc:
-            print(f"[distill] Scene index failed (non-fatal): {exc}")
+                if rag.collection:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            SceneIndexer().index_scenes,
+                            content, rag, char_name,
+                            collection_name=f"scenes_{result.get('card_id','')}",
+                        ),
+                        timeout=180,
+                    )
+            except Exception as exc:
+                print(f"[distill] Scene index failed/timeout (non-fatal): {exc}")
+
+        asyncio.create_task(_bg_scene_index())
         return result
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -698,19 +708,6 @@ async def distill_stream(
             print(f"[distill] Save card failed: {exc}")
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False, default=str)}\n\n"
             return
-
-        # Build scene index
-        try:
-            rag = text_manager._get_or_build_rag(req.text_id, content, [])
-            if rag.collection:
-                card_id = result.get("card_id", "")
-                scene_count = SceneIndexer().index_scenes(
-                    content, rag, char_name,
-                    collection_name=f"scenes_{card_id}",
-                )
-                print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
-        except Exception as exc:
-            print(f"[distill] Scene index failed (non-fatal): {exc}")
 
         yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False, default=str)}\n\n"
 

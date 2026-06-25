@@ -407,10 +407,18 @@ class TextManager:
 
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards)
-            rag = self._get_or_build_rag(
-                text_id, content, all_characters,
-                embedding_key=embedding_key, embedding_region=embedding_region,
-            )
+            try:
+                rag = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._get_or_build_rag,
+                        text_id, content, all_characters,
+                        embedding_key=embedding_key, embedding_region=embedding_region,
+                    ),
+                    timeout=60,
+                )
+            except Exception as exc:
+                print(f"[TextManager] RAG build failed/timeout (degraded): {exc}")
+                rag = None
             session_id = await asyncio.to_thread(
                 self._create_session, content, card, all_characters, rag,
                 card_id, user_id,
