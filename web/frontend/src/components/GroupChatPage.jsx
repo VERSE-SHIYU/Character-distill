@@ -344,7 +344,7 @@ export default function GroupChatPage() {
       if (currentGroupRef.current !== groupId) return
       setError(err.message)
     } finally {
-      if (!skipLoading) setLoading(false)
+      if (!skipLoading && currentGroupRef.current === groupId) setLoading(false)
     }
   }
 
@@ -639,8 +639,8 @@ export default function GroupChatPage() {
       void data
       if (currentGroupRef.current !== sendGroupId) return
       // Reload history once after all replies
-      await loadHistory(currentGroup.id)
-      fetchAffinities(currentGroup.id)
+      await loadHistory(sendGroupId)
+      fetchAffinities(sendGroupId)
       setTargetCardIds([])
       setReplyTo(null)
     } catch (err) {
