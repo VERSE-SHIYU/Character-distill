@@ -209,7 +209,7 @@ async def resume_session(
 
     # 5. Rebuild RAG + ChatEngine via _create_session (with timeout)
     try:
-        rag = text_manager._get_or_build_rag(
+        rag = text_manager._indexing_service.get_rag_for_session(
             card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
         )
         new_session_id = await asyncio.wait_for(

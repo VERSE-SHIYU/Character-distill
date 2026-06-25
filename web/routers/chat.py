@@ -90,9 +90,11 @@ async def _ensure_session(
     except Exception:
         pass
 
-    rag = text_manager._get_or_build_rag(card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region)
+    rag = text_manager._indexing_service.get_rag_for_session(
+        card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
+    )
     new_id = await asyncio.to_thread(
-        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id, emb_key, emb_region
+        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id,
     )
 
     # Steal engine into the original session_id
