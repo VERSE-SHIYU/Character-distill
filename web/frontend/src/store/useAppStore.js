@@ -63,6 +63,21 @@ const useAppStore = create((set, get) => ({
   previousViewContext: null, // e.g. { groupId } for groupChat
   setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
   clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
+  restoreChatSnapshot: () => {
+    const snap = get().previousViewContext?.chatSnapshot
+    if (snap && snap.sessionId) {
+      set({
+        currentView: 'chat',
+        sessionId: snap.sessionId,
+        messages: snap.messages,
+        currentCard: snap.currentCard,
+        previousView: null,
+        previousViewContext: null,
+      })
+      return true
+    }
+    return false
+  },
   authorUserId: null,
   setAuthorUserId: (userId) => {
     set({ authorUserId: userId })
@@ -558,6 +573,9 @@ const useAppStore = create((set, get) => ({
   },
 
   openCharacterList: (textId) => {
+    const { sessionId, messages, currentCard } = get()
+    const chatSnapshot = sessionId ? { sessionId, messages, currentCard } : null
+    set({ previousView: 'chat', previousViewContext: { chatSnapshot } })
     const text = get().texts.find((t) => t.id === textId)
     set({
       currentTextId: textId,
