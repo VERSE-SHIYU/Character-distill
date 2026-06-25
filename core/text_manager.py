@@ -448,37 +448,54 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = await self._build_all_characters(text_id, existing_cards)
 
-        rag = self._get_or_build_rag(
-            text_id, content, all_chars,
-            embedding_key=embedding_key, embedding_region=embedding_region,
-        )
+        # 核心路径：RAG构建加超时，失败降级为None，绝不挂死
+        try:
+            rag = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._get_or_build_rag,
+                    text_id, content, all_chars,
+                    embedding_key=embedding_key, embedding_region=embedding_region,
+                ),
+                timeout=60,
+            )
+        except Exception as exc:
+            print(f"[TextManager] RAG build failed/timeout (degraded): {exc}")
+            rag = None
+
         session_id = await asyncio.to_thread(
             self._create_session, content, card, all_chars, rag,
             actual_card_id, user_id,
         )
-
-        # 升级 RAG：将 chunk 检索替换为场景检索（异步、非阻塞）
-        rag_engine = self._get_or_build_rag(
-            text_id, content, all_chars,
-            embedding_key=embedding_key, embedding_region=embedding_region,
-        )
-        try:
-            n = await asyncio.to_thread(
-                SceneIndexer().index_scenes,
-                content,
-                rag_engine,
-                card.name,
-                collection_name=f"scenes_{actual_card_id}",
-            )
-            print(f"[TextManager] SceneIndexer indexed {n} scenes for '{card.name}'")
-        except Exception as exc:
-            print(f"[TextManager] SceneIndexer failed (non-fatal): {exc}")
-
         await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
 
         result = card.model_dump()
         result["session_id"] = session_id
         result["card_id"] = actual_card_id
+
+        # 场景索引：后台 fire-and-forget，带超时，失败/慢不影响完成
+        async def _build_scene_index():
+            try:
+                rag_engine = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._get_or_build_rag,
+                        text_id, content, all_chars,
+                        embedding_key=embedding_key, embedding_region=embedding_region,
+                    ),
+                    timeout=120,
+                )
+                n = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        SceneIndexer().index_scenes,
+                        content, rag_engine, card.name,
+                        collection_name=f"scenes_{actual_card_id}",
+                    ),
+                    timeout=180,
+                )
+                print(f"[TextManager] SceneIndexer indexed {n} scenes")
+            except Exception as exc:
+                print(f"[TextManager] SceneIndexer failed/timeout (non-fatal): {exc}")
+
+        asyncio.create_task(_build_scene_index())
         return result
 
     async def switch_character(

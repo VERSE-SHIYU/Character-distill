@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid as _uuid
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 from urllib.parse import quote
@@ -293,21 +294,6 @@ def _run_distill_task(
                 text_id, card, user_id,
                 embedding_key=_ek, embedding_region=_er,
             )
-            # Build scene index for emotion-weighted retrieval
-            try:
-                rag = tm._get_or_build_rag(
-                    text_id, content, [],
-                    embedding_key=_ek, embedding_region=_er,
-                )
-                if rag.collection:
-                    card_id = result.get("card_id", "")
-                    scene_count = SceneIndexer().index_scenes(
-                        content, rag, card.name,
-                        collection_name=f"scenes_{card_id}",
-                    )
-                    print(f"[distill] Scene index: {scene_count} scenes for card {card_id}")
-            except Exception as exc:
-                print(f"[distill] Scene index failed (non-fatal): {exc}")
             return result
 
         with _task_lock:
@@ -317,7 +303,16 @@ def _run_distill_task(
                 "message": "正在保存角色卡…",
             })
 
-        result = run_on_main_loop(_save_card())
+        try:
+            result = run_on_main_loop(_save_card(), timeout=120)
+        except FutureTimeoutError:
+            with _task_lock:
+                _tasks[task_id].update({
+                    "status": "error",
+                    "message": "保存超时：角色卡写入耗时过长，请重试",
+                    "character": name, "text_id": text_id,
+                })
+            return
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         with _task_lock:
