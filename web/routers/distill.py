@@ -884,6 +884,18 @@ async def export_card(
             },
         )
 
+    if format == "raw":
+        safe_name = quote(f"{card.name}.json")
+        return Response(
+            content=record["card_json"],
+            media_type="application/json; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f"attachment; filename*=UTF-8''{safe_name}"
+                ),
+            },
+        )
+
     raise HTTPException(400, f"Unsupported export format: {format}")
 
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import useAppStore from '../store/useAppStore'
-import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { fetchWithTimeout, getAuthHeaders, exportCard } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
@@ -64,6 +64,11 @@ function MineCardMenu({ card, onRefresh }) {
               useAppStore.getState().setView('marketCardDetail')
               setOpen(false)
             }}>编辑</button>
+            <button type="button" onClick={(e) => {
+              e.stopPropagation()
+              setOpen(false)
+              exportCard(card.id, 'raw').catch(err => alert('导出失败：' + err.message))
+            }}>下载</button>
             <button type="button" className="mine-card-menu-danger" onClick={handleDelete}>删除</button>
           </div>
         </>

@@ -337,6 +337,30 @@ export function updateApiConfig(body) {
   }).then(r => r.json())
 }
 
+export async function exportCard(cardId, format = 'raw') {
+  const res = await fetch(`/api/distill/cards/${cardId}/export?format=${format}`, {
+    headers: getAuthHeaders(),
+  })
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`
+    try { const b = await res.json(); if (b.detail) detail = b.detail } catch {}
+    throw new Error(detail)
+  }
+  // Get filename from Content-Disposition or fallback
+  const cd = res.headers.get('Content-Disposition') || ''
+  const match = cd.match(/filename\*?=UTF-8''(.+?)(?:;|$)/) || cd.match(/filename=(.+?)(?:;|$)/)
+  const filename = match ? decodeURIComponent(match[1]) : `${cardId}.json`
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 export function globalSearch(q) {
   return fetchWithTimeout(`/api/market/global-search?q=${encodeURIComponent(q)}`)
     .then(r => r.json())
