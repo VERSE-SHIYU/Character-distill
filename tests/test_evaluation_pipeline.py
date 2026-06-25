@@ -13,8 +13,9 @@ import pytest
 # 这里注入一个 fake deps 模块避免触发 web/deps.py 的模块级副作用。
 if "deps" not in sys.modules:
     _fake_deps = types.ModuleType("deps")
-    async def _fake_run_on_main_loop(coro, timeout=600):
-        return await coro
+    def _fake_run_on_main_loop(coro, timeout=600):
+        coro.close()
+        return None
     _fake_deps.run_on_main_loop = _fake_run_on_main_loop
     sys.modules["deps"] = _fake_deps
 
