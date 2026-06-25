@@ -735,7 +735,7 @@ export default function GroupChatPage() {
   useEffect(() => {
     if (!selectedCharCardInfo) return
     const handler = (e) => {
-      if (!e.target.closest('.group-char-info-panel') && !e.target.closest('.group-chat-bubble-speaker')) {
+      if (!e.target.closest('.group-char-info-panel') && !e.target.closest('.cbubble-name')) {
         setSelectedCharCardInfo(null)
       }
     }
