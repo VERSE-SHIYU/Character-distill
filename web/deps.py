@@ -20,6 +20,7 @@ load_dotenv(_REPO_ROOT / ".env")
 import yaml
 from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
+from core.indexing_service import IndexingService
 from core.memory_manager import MemoryManager
 from core.text_manager import TextManager
 from fastapi import HTTPException
@@ -49,6 +50,7 @@ _summary_threshold: int = _config.get("llm", {}).get("summary_threshold", 50)
 _sessions: dict[str, dict[str, Any]] = {}
 
 _text_manager: TextManager | None = None
+_indexing_service: IndexingService | None = None
 
 _memory_config: dict[str, Any] = _config.get("memory", {})
 _memory_manager: MemoryManager | None = None
@@ -227,17 +229,28 @@ async def _session_cleanup_loop() -> None:
             print(f"[session_cleanup] evicted={evicted} remaining={len(sessions)}")
 
 
+def get_indexing_service() -> IndexingService | None:
+    """Return the IndexingService singleton."""
+    global _indexing_service
+    if _indexing_service is None:
+        _indexing_service = IndexingService(_storage, _rag_config)
+    return _indexing_service
+
+
 def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
     """Return the TextManager singleton (lazy-init), or a per-user instance if llm is given."""
+    indexing_svc = get_indexing_service()
     if llm is not None:
-        return TextManager(_storage, Distiller(llm), llm, _rag_config, _sessions, _summary_threshold)
+        return TextManager(_storage, Distiller(llm), llm, _rag_config, _sessions, _summary_threshold,
+                           indexing_service=indexing_svc)
     global _text_manager
     if _text_manager is None:
         distiller = get_distiller()
         fallback = get_llm()
         if distiller is None or fallback is None:
             return None
-        _text_manager = TextManager(_storage, distiller, fallback, _rag_config, _sessions, _summary_threshold)
+        _text_manager = TextManager(_storage, distiller, fallback, _rag_config, _sessions, _summary_threshold,
+                                    indexing_service=indexing_svc)
     return _text_manager
 
 
@@ -267,15 +280,18 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
 
 
 def reset_llm_and_dependents() -> None:
-    """Hot-reload: recreate LLM, Distiller, TextManager, and MemoryManager singletons after config.yaml changes."""
-    global _llm, _distiller, _text_manager, _summary_threshold, _config, _rag_config, _memory_config, _memory_manager
+    """Hot-reload: recreate LLM, Distiller, TextManager, IndexingService, and MemoryManager."""
+    global _llm, _distiller, _text_manager, _indexing_service
+    global _summary_threshold, _config, _rag_config, _memory_config, _memory_manager
     _llm = LLMAdapter()
     _distiller = Distiller(_llm)
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
     _rag_config = _config["rag"]
     _summary_threshold = _config.get("llm", {}).get("summary_threshold", 50)
-    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold)
+    _indexing_service = IndexingService(_storage, _rag_config)
+    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold,
+                                indexing_service=_indexing_service)
     _memory_config = _config.get("memory", {})
     _memory_manager = MemoryManager(_memory_config)
 

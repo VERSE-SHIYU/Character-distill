@@ -17,11 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_sessions, get_storage, run_on_main_loop
+from deps import get_indexing_service, get_sessions, get_storage, run_on_main_loop
 from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
-from core.scene_indexer import SceneIndexer
 from storage.base import StorageBase
 from limiter import get_client_ip, limiter
 from routers.auth import get_current_user
@@ -437,30 +436,13 @@ async def distill_by_text_id(
             req.text_id, char_name, force=req.force, user_id=user_id,
             embedding_key=_ek, embedding_region=_er,
         )
-        # 场景索引：后台 fire-and-forget，带超时，失败不阻塞响应
-        async def _bg_scene_index():
-            try:
-                rag = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        text_manager._get_or_build_rag,
-                        req.text_id, content, [],
-                        embedding_key=_ek, embedding_region=_er,
-                    ),
-                    timeout=120,
-                )
-                if rag.collection:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(
-                            SceneIndexer().index_scenes,
-                            content, rag, char_name,
-                            collection_name=f"scenes_{result.get('card_id','')}",
-                        ),
-                        timeout=180,
-                    )
-            except Exception as exc:
-                print(f"[distill] Scene index failed/timeout (non-fatal): {exc}")
-
-        asyncio.create_task(_bg_scene_index())
+        # Fire-and-forget scene index via isolated service
+        indexing_service = get_indexing_service()
+        if indexing_service:
+            indexing_service.schedule_scene_index(
+                req.text_id, result.get("card_id", ""), content, char_name,
+                all_characters=[], embedding_key=_ek, embedding_region=_er,
+            )
         return result
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -938,10 +920,16 @@ async def start_session(
                     emb_region = user_cfg.get("embedding_region", "cn")
             except Exception:
                 pass
-            rag = text_manager._get_or_build_rag(req.text_id, content, all_characters, emb_key, emb_region)
             session_id = await asyncio.to_thread(
-                text_manager._create_session, content, card, all_characters, rag, req.card_id, user_id, emb_key, emb_region
+                text_manager._create_session, content, card, all_characters, None, req.card_id, user_id,
             )
+            # Fire-and-forget scene index via isolated service
+            indexing_service = get_indexing_service()
+            if indexing_service:
+                indexing_service.schedule_scene_index(
+                    req.text_id, req.card_id, content, card.name, all_characters,
+                    embedding_key=emb_key, embedding_region=emb_region,
+                )
         else:
             # 独立卡片模式：不加载原文，不构建 RAG，直接创建 ChatEngine
             from core.chat_engine import ChatEngine

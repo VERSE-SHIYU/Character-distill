@@ -14,8 +14,6 @@ from adapters.llm_adapter import LLMAdapter
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
-from core.rag import RAGEngine
-from core.scene_indexer import SceneIndexer
 from core.schema import CharacterCard
 from storage.base import StorageBase
 
@@ -35,6 +33,7 @@ class TextManager:
         rag_config: dict[str, Any],
         sessions: dict[str, dict[str, Any]],
         summary_threshold: int = 50,
+        indexing_service=None,
     ) -> None:
         self._storage = storage
         self._distiller = distiller
@@ -42,7 +41,7 @@ class TextManager:
         self._rag_config = rag_config
         self._sessions = sessions
         self._summary_threshold = summary_threshold
-        self._text_rag_cache: dict[str, RAGEngine] = {}
+        self._indexing_service = indexing_service
 
     @staticmethod
     def _parse_wechat_json(data: dict) -> str:
@@ -407,22 +406,9 @@ class TextManager:
 
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards)
-            try:
-                rag = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._get_or_build_rag,
-                        text_id, content, all_characters,
-                        embedding_key=embedding_key, embedding_region=embedding_region,
-                    ),
-                    timeout=60,
-                )
-            except Exception as exc:
-                print(f"[TextManager] RAG build failed/timeout (degraded): {exc}")
-                rag = None
             session_id = await asyncio.to_thread(
-                self._create_session, content, card, all_characters, rag,
+                self._create_session, content, card, all_characters, None,
                 card_id, user_id,
-                embedding_key=embedding_key, embedding_region=embedding_region,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -432,6 +418,13 @@ class TextManager:
             await self._storage.save_session(session_id, card_id, "", "", user_id)
         except Exception as exc:
             print(f"[TextManager] Persist session failed (non-fatal): {exc}")
+
+        # Fire-and-forget scene index (non-blocking, degraded silently)
+        if self._indexing_service:
+            self._indexing_service.schedule_scene_index(
+                text_id, card_id, content, card.name, all_characters,
+                embedding_key=embedding_key, embedding_region=embedding_region,
+            )
 
         result = card.model_dump()
         result["session_id"] = session_id
@@ -456,22 +449,8 @@ class TextManager:
         existing_cards = await self._storage.list_cards(text_id, user_id)
         all_chars = await self._build_all_characters(text_id, existing_cards)
 
-        # 核心路径：RAG构建加超时，失败降级为None，绝不挂死
-        try:
-            rag = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self._get_or_build_rag,
-                    text_id, content, all_chars,
-                    embedding_key=embedding_key, embedding_region=embedding_region,
-                ),
-                timeout=60,
-            )
-        except Exception as exc:
-            print(f"[TextManager] RAG build failed/timeout (degraded): {exc}")
-            rag = None
-
         session_id = await asyncio.to_thread(
-            self._create_session, content, card, all_chars, rag,
+            self._create_session, content, card, all_chars, None,
             actual_card_id, user_id,
         )
         await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
@@ -480,30 +459,12 @@ class TextManager:
         result["session_id"] = session_id
         result["card_id"] = actual_card_id
 
-        # 场景索引：后台 fire-and-forget，带超时，失败/慢不影响完成
-        async def _build_scene_index():
-            try:
-                rag_engine = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._get_or_build_rag,
-                        text_id, content, all_chars,
-                        embedding_key=embedding_key, embedding_region=embedding_region,
-                    ),
-                    timeout=120,
-                )
-                n = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        SceneIndexer().index_scenes,
-                        content, rag_engine, card.name,
-                        collection_name=f"scenes_{actual_card_id}",
-                    ),
-                    timeout=180,
-                )
-                print(f"[TextManager] SceneIndexer indexed {n} scenes")
-            except Exception as exc:
-                print(f"[TextManager] SceneIndexer failed/timeout (non-fatal): {exc}")
-
-        asyncio.create_task(_build_scene_index())
+        # Fire-and-forget scene index (non-blocking, degraded silently)
+        if self._indexing_service:
+            self._indexing_service.schedule_scene_index(
+                text_id, actual_card_id, content, card.name, all_chars,
+                embedding_key=embedding_key, embedding_region=embedding_region,
+            )
         return result
 
     async def switch_character(
@@ -517,33 +478,6 @@ class TextManager:
         return await self.get_or_distill(text_id, character_name, user_id=user_id)
 
     # ---- Internal helpers ----
-
-    def _get_or_build_rag(
-        self,
-        text_id: str,
-        text: str,
-        all_characters: list[dict[str, Any]] | None = None,
-        embedding_key: str = "",
-        embedding_region: str = "",
-    ) -> RAGEngine:
-        """返回文本级 RAG 缓存，不存在则构建并缓存。(sync)"""
-        cache_key = f"{text_id}:{embedding_key}"
-        cached = self._text_rag_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        col_name = f"text_{text_id}"
-        rag_config = dict(self._rag_config)
-        if embedding_key:
-            rag_config["embedding_key"] = embedding_key
-            rag_config["embedding_region"] = embedding_region
-        rag = RAGEngine(rag_config)
-        # Try loading existing persistent index first (survives restart)
-        if rag.load_existing(col_name):
-            self._text_rag_cache[cache_key] = rag
-            return rag
-        rag.index(text, collection_name=col_name, all_characters=all_characters)
-        self._text_rag_cache[cache_key] = rag
-        return rag
 
     async def _build_all_characters(self, text_id: str, existing_cards: list[dict]) -> list[dict[str, Any]]:
         """Build all_characters list with aliases merged from cached identify results."""
@@ -564,20 +498,13 @@ class TextManager:
         text: str,
         card: CharacterCard,
         all_characters: list[dict[str, Any]] | None = None,
-        rag: RAGEngine | None = None,
+        rag: Any = None,
         card_id: str = "",
         user_id: str = "",
         embedding_key: str = "",
         embedding_region: str = "",
     ) -> str:
-        """Build RAG + ChatEngine in memory and return session_id. (sync)"""
-        if rag is None:
-            rag_config = dict(self._rag_config)
-            if embedding_key:
-                rag_config["embedding_key"] = embedding_key
-                rag_config["embedding_region"] = embedding_region
-            rag = RAGEngine(rag_config)
-            rag.index(text, all_characters=all_characters)
+        """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)"""
         from deps import get_memory_manager
         engine = ChatEngine(
             self._llm, rag, card,

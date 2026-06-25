@@ -299,6 +299,8 @@ class ContextEngine:
 
     def _retrieve_scenes(self, query: str) -> str:
         """从 RAG 检索相关场景片段（情感加权）。"""
+        if self.rag is None:
+            return ""
         try:
             char_name = self.card.name
             current_emotion = _detect_emotion(query)
