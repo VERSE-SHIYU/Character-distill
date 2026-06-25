@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 from datetime import datetime
 from collections.abc import Generator
@@ -401,12 +400,11 @@ class ChatEngine:
                     [{"role": "user", "content": prompt}],
                 )
                 print(f"[Affinity] LLM reply ({len(reply)} chars): {reply[:300]}")
-                m = re.search(r'\{.*\}', reply, re.DOTALL)
-                if not m:
+                data = self._affinity_service.parse_evaluation_reply(reply)
+                if data is None:
                     print(f"[Affinity] FAIL: no JSON object found in LLM reply")
                     return
-                print(f"[Affinity] JSON match: {m.group()[:200]}")
-                data = json.loads(m.group())
+                print(f"[Affinity] JSON match: {str(data)[:200]}")
 
                 # ── 时间事件抽取 ──
                 time_event = data.get("time_event")
@@ -431,32 +429,11 @@ class ChatEngine:
                     except Exception as exc:
                         print(f"[ChatEngine] Save time_event failed: {exc}")
 
-                self._last_importance = max(1, min(10, int(data.get("importance", 5))))
+                self._last_importance = self._affinity_service.apply_evaluation(data, old_stage)
                 print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
                       f"mood={data.get('mood')} guard={data.get('guard')} "
                       f"importance={self._last_importance} "
                       f"inner_voice={str(data.get('inner_voice',''))[:80]}")
-                self._affinity = max(0, min(100, data.get("affinity", self._affinity)))
-                self._trust = max(0, min(100, data.get("trust", self._trust)))
-                self._mood = data.get("mood", self._mood)
-                self._guard = max(0, min(100, data.get("guard", self._guard)))
-                self._inner_voice = data.get("inner_voice", self._inner_voice)
-                self._mood_emoji = data.get("mood_emoji", self._mood_emoji)
-                self._stage, self._stage_emoji = calc_stage(self._affinity)
-                self._stage_upgraded = self._stage != old_stage
-                self._prev_stage = old_stage
-                # 阶段升级时在内心独白末尾追加祝贺
-                if self._stage_upgraded:
-                    self._inner_voice += f"\n（我们的关系似乎更近了…现在是「{self._stage}」阶段）"
-                # 扩展数据序列化存入 affinity_reason
-                extended = {
-                    "inner_voice": self._inner_voice,
-                    "mood_emoji": self._mood_emoji,
-                    "mood_word": self._mood,
-                    "stage": self._stage,
-                    "stage_emoji": self._stage_emoji,
-                }
-                self._affinity_reason = json.dumps(extended, ensure_ascii=False)
                 print(f"[Affinity] UPDATED in-memory: aff={self._affinity} trust={self._trust} "
                       f"mood={self._mood} guard={self._guard}")
                 if storage and self._group_id:

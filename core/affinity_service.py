@@ -179,3 +179,36 @@ class AffinityService:
             "}"
         )
         return prompt
+
+    def parse_evaluation_reply(self, reply: str) -> dict | None:
+        """从LLM原始回复提取并解析JSON。无JSON返回None；坏JSON让json.loads抛出(由调用方try/except兜底)。"""
+        import re as _re, json as _json
+        m = _re.search(r'\{.*\}', reply, _re.DOTALL)
+        if not m:
+            return None
+        return _json.loads(m.group())
+
+    def apply_evaluation(self, data: dict, old_stage: str) -> int:
+        """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。"""
+        import json as _json
+        importance = max(1, min(10, int(data.get("importance", 5))))
+        self.affinity = max(0, min(100, data.get("affinity", self.affinity)))
+        self.trust = max(0, min(100, data.get("trust", self.trust)))
+        self.mood = data.get("mood", self.mood)
+        self.guard = max(0, min(100, data.get("guard", self.guard)))
+        self.inner_voice = data.get("inner_voice", self.inner_voice)
+        self.mood_emoji = data.get("mood_emoji", self.mood_emoji)
+        self.stage, self.stage_emoji = calc_stage(self.affinity)
+        self.stage_upgraded = self.stage != old_stage
+        self.prev_stage = old_stage
+        if self.stage_upgraded:
+            self.inner_voice += f"\n（我们的关系似乎更近了…现在是「{self.stage}」阶段）"
+        extended = {
+            "inner_voice": self.inner_voice,
+            "mood_emoji": self.mood_emoji,
+            "mood_word": self.mood,
+            "stage": self.stage,
+            "stage_emoji": self.stage_emoji,
+        }
+        self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
+        return importance
