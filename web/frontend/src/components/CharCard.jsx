@@ -27,8 +27,8 @@ export default function CharCard() {
 
   const goBack = useCallback(() => {
     if (previousView === 'chat') {
-      setView('chat')
-      clearPreviousView()
+      const restored = useAppStore.getState().restoreChatSnapshot()
+      if (!restored) { setView('chat'); clearPreviousView() }
     } else if (previousView === 'groupChat' && previousViewContext?.groupId) {
       setResumeGroupId(previousViewContext.groupId)
       setView('groupChat')
