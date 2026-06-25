@@ -37,10 +37,14 @@ class IndexingService:
         embedding_region: str = "",
     ) -> RAGEngine:
         """Return cached text-level RAG, or build + cache. (sync)"""
+        import time
         cache_key = f"{text_id}:{embedding_key}"
         cached = self._text_rag_cache.get(cache_key)
         if cached is not None:
+            print(f"[RAG] cache HIT {cache_key}")
             return cached
+        print(f"[RAG] cache MISS {cache_key}, building...")
+        _t = time.time()
         col_name = f"text_{text_id}"
         rag_config = dict(self._rag_config)
         if embedding_key:
@@ -49,9 +53,11 @@ class IndexingService:
         rag = RAGEngine(rag_config)
         if rag.load_existing(col_name):
             self._text_rag_cache[cache_key] = rag
+            print(f"[RAG] loaded existing in {time.time()-_t:.1f}s")
             return rag
         rag.index(text, collection_name=col_name, all_characters=all_characters)
         self._text_rag_cache[cache_key] = rag
+        print(f"[RAG] built in {time.time()-_t:.1f}s")
         return rag
 
     def get_rag_for_session(

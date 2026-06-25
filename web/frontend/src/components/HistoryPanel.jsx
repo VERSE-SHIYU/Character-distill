@@ -645,7 +645,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                       <button
                         type="button"
                         className="history-item"
-                        onClick={() => selectMode ? toggleSelect(it.id) : (trashMode ? openDetail(it.id) : handleContinue(it.id))}
+                        onClick={() => selectMode ? toggleSelect(it.id) : openDetail(it.id)}
                       >
                         <Avatar name={it.character_name || '?'} size={40} src={cardAvatars[it.card_id]} />
                         <div className="history-item-body">
@@ -718,7 +718,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                     <button
                       type="button"
                       className="history-item"
-                      onClick={() => trashMode ? openGroupDetail(g) : handleResumeGroup(g.id)}
+                      onClick={() => openGroupDetail(g)}
                       style={{ width: '100%', textAlign: 'left', padding: '14px 16px' }}
                     >
                       <div className="history-item-body">
