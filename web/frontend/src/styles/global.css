@@ -11542,6 +11542,12 @@ select.settings-input {
   border-left: 3px solid var(--primary);
   box-shadow: 0 3px 14px rgba(0,0,0,0.25);
 }
+[data-theme="dark"] .group-chat-bubble-body {
+  color: rgba(255, 255, 255, 0.92);
+}
+[data-theme="dark"] .group-chat-bubble-speaker {
+  color: color-mix(in srgb, var(--primary) 70%, #fff);
+}
 
 .group-chat-bubble-header {
   display: flex;
@@ -11587,6 +11593,10 @@ select.settings-input {
 }
 .group-chat-msg-col--mine {
   align-items: flex-end;
+}
+.group-chat-msg-col--mine .messages-bubble.mine {
+  width: fit-content;
+  max-width: 100%;
 }
 .group-chat-name-row {
   display: flex;
