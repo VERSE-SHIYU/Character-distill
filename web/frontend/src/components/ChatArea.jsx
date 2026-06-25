@@ -1015,7 +1015,6 @@ function ChatView() {
 // ---- Message bubble ----
 
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
-  const [hovered, setHovered] = useState(false)
   const [showRetracted, setShowRetracted] = useState(false)
   const userInitial = (userRole || '我').charAt(0)
 
@@ -1028,8 +1027,6 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   return (
     <div
       className={`chat-msg ${isUser ? 'chat-msg-user' : 'chat-msg-char'}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
     >
       <ChatBubble
         side={isUser ? 'right' : 'left'}
@@ -1073,7 +1070,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         <MessageReactions
           side={isUser ? 'right' : 'left'}
           reactions={reactions}
-          showQuickBar={hovered}
+          showQuickBar={true}
           onReact={onReact}
           onReply={onReply}
           authUserId={authUser?.id}

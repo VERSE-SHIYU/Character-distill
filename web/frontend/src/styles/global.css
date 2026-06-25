@@ -11679,6 +11679,17 @@ select.settings-input {
 [data-theme="dark"] .group-chat-page .cbubble-name {
   color: color-mix(in srgb, var(--primary) 70%, #fff);
 }
+
+/* ── Midnight theme overrides ── */
+.theme-midnight .cbubble--left {
+  --cbubble-bg: rgba(40,35,45,0.92);
+  --cbubble-border: rgba(120,105,135,0.4);
+  --cbubble-color: #ece8f0;
+}
+.theme-midnight .cbubble--right {
+  --cbubble-bg: color-mix(in srgb, var(--accent) 60%, #3a3240);
+  --cbubble-color: #fff;
+}
 /* Target selector chips (also used in create modal) */
 .group-chat-layout .group-target-chip {
   padding: 5px 12px;
@@ -11880,6 +11891,21 @@ select.settings-input {
 .msg-reaction-badge.mine {
   background: rgba(var(--accent-rgb), 0.12);
   border-color: rgba(var(--accent-rgb), 0.3);
+}
+
+/* ── Midnight: reaction bar/badge transparency ── */
+.theme-midnight .msg-quick-reactions {
+  background: rgba(20, 16, 24, 0.72);
+  border-color: rgba(200, 170, 185, 0.10);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.theme-midnight .msg-reaction-badge {
+  background: rgba(20, 16, 24, 0.55);
+  border-color: rgba(200, 170, 185, 0.12);
+}
+.theme-midnight .msg-reaction-badge.mine {
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.35);
 }
 
 /* ── Group Chat: Reply ── */
@@ -16262,11 +16288,20 @@ select.settings-input {
   margin: 0;
 }
 
-/* ── Message reaction bar positioning (via data-side) ── */
+/* ── Message reaction bar (hover reveal via .cbubble:hover) ── */
 .msg-reactions-bar {
   position: absolute;
   bottom: -32px;
   z-index: 10;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
+  pointer-events: none;
+}
+.cbubble:hover .msg-reactions-bar {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 .msg-reactions-bar[data-side="left"] {
   right: 0;
