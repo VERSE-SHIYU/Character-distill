@@ -17,6 +17,7 @@ from core.schema import CharacterCard
 from core.utils import try_record_usage
 from core.event_service import EventService
 from core.reaction_service import ReactionService
+from core.reflection_service import ReflectionService
 
 
 # IOS₁₁ (Scientific Reports 2024) 11级亲密度 → Bogardus 7级社会距离映射
@@ -97,7 +98,7 @@ class ChatEngine:
         self._reaction_service = ReactionService()
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
-        self._reflection_importance_acc: int = 0  # 累计重要性，达阈值触发反思
+        self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
@@ -179,7 +180,7 @@ class ChatEngine:
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
             )
 
-        self._maybe_reflect()
+        self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
 
         return response
 
@@ -242,54 +243,7 @@ class ChatEngine:
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
             )
 
-        self._maybe_reflect()
-
-    def _maybe_reflect(self) -> None:
-        """累计重要性达阈值时触发反思，综合高重要性原始记忆为高阶洞察。"""
-        from core.memory_manager import REFLECTION_THRESHOLD
-
-        self._reflection_importance_acc += self._last_importance
-        if self._reflection_importance_acc < REFLECTION_THRESHOLD:
-            return
-        if not self._memory or not self._memory.enabled or not self._card_id:
-            return
-        if not self.llm:
-            return
-
-        print(f"[Reflection] Triggered: acc={self._reflection_importance_acc} >= {REFLECTION_THRESHOLD}")
-        self._reflection_importance_acc = 0
-
-        try:
-            all_memories = self._memory.get_all(self._card_id)
-        except Exception as exc:
-            print(f"[Reflection] get_all failed: {exc}")
-            return
-
-        # 过滤：排除已有反思记忆，只要原始记忆
-        raw = []
-        for m in all_memories:
-            if not isinstance(m, dict):
-                continue
-            meta = m.get("metadata") or {}
-            if isinstance(meta, dict) and meta.get("is_reflection"):
-                continue
-            text = m.get("memory", "").strip()
-            if not text:
-                continue
-            imp = meta.get("importance", 5) if isinstance(meta, dict) else 5
-            raw.append({"text": text, "importance": int(imp), "mood": meta.get("mood", "") if isinstance(meta, dict) else ""})
-
-        # 按 importance 降序取 top-10
-        raw.sort(key=lambda x: x["importance"], reverse=True)
-        recent = raw[:10]
-
-        if not recent:
-            print("[Reflection] No raw memories to reflect on.")
-            return
-
-        print(f"[Reflection] {len(raw)} raw memories, top-10 importance range: "
-              f"{recent[-1]['importance']}-{recent[0]['importance']}")
-        self._memory.reflect(self._card_id, self.llm, recent, self.card.name)
+        self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
