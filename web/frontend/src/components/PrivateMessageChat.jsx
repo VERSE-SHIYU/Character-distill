@@ -6,6 +6,7 @@ import { formatChatTime } from '../utils/time'
 import { Calendar } from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
 import ChatBubble from './common/ChatBubble'
+import MessageReactions from './common/MessageReactions'
 import ChatInputBar from './common/ChatInputBar'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
@@ -28,6 +29,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
   const [otherOnlineHidden, setOtherOnlineHidden] = useState(false)
   const [otherLastActive, setOtherLastActive] = useState('')
+  const [reactions, setReactions] = useState({})
 
   // ── Sidebar history splitter ──
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -71,6 +73,30 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     } finally {
       setLoading(false)
     }
+  }, [otherUserId])
+
+  // Fetch reactions for the current conversation
+  const fetchReactions = useCallback(async () => {
+    if (!otherUserId) return
+    try {
+      const res = await fetchWithTimeout(`/api/messages/with/${otherUserId}/reactions`)
+      const d = await res.json()
+      setReactions(d.reactions || {})
+    } catch {}
+  }, [otherUserId])
+
+  // React to a DM
+  const handleReact = useCallback(async (messageId, emoji) => {
+    try {
+      await fetchWithTimeout(`/api/messages/${messageId}/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({ emoji }),
+      })
+      const res = await fetchWithTimeout(`/api/messages/with/${otherUserId}/reactions`)
+      const d = await res.json()
+      setReactions(d.reactions || {})
+    } catch {}
   }, [otherUserId])
 
   // Mark messages as read
@@ -140,6 +166,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   useEffect(() => {
     if (!otherUserId) return
     loadMessages()
+    fetchReactions()
     markRead()
     fetchWithTimeout(`/api/market/author/${otherUserId}`)
       .then(r => r.json())
@@ -162,10 +189,11 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     if (!otherUserId) return
     const timer = setInterval(() => {
       loadMessages(1)
+      fetchReactions()
       markRead()
     }, POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [otherUserId, loadMessages, markRead])
+  }, [otherUserId, loadMessages, fetchReactions, markRead])
 
   // Auto-scroll to bottom on new messages
   const { handleScroll } = useAutoScroll(listRef, messagesEndRef, [messages])
@@ -347,6 +375,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       ) : undefined}
                     >
                       <span className="messages-msg-text">{msg.content}</span>
+                      <MessageReactions
+                        side={isMe ? 'right' : 'left'}
+                        reactions={reactions[msg.id] || []}
+                        showQuickBar={true}
+                        onReact={(emoji) => handleReact(msg.id, emoji)}
+                        authUserId={authUser?.id}
+                      />
                     </ChatBubble>
                   </div>
                 </React.Fragment>

@@ -11679,43 +11679,6 @@ select.settings-input {
 [data-theme="dark"] .group-chat-page .cbubble-name {
   color: color-mix(in srgb, var(--primary) 70%, #fff);
 }
-/* Hover actions inside group chat bubbles */
-.group-chat-page .cbubble:hover .group-msg-bubble-actions {
-  opacity: 1;
-}
-/* User bubble actions: absolute top-right */
-.group-chat-page .cbubble--right .group-msg-bubble-actions {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 2;
-}
-.group-chat-page .cbubble--left .group-msg-bubble-actions--other {
-  position: absolute;
-  bottom: -14px;
-  right: 0;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-  padding: 2px 5px;
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-}
-.group-chat-page .cbubble--left .group-msg-bubble-actions--other .msg-quick-reactions {
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-}
-.group-chat-page .cbubble--left .group-msg-bubble-actions--other .msg-action-btn {
-  border: none;
-  background: transparent;
-}
-
 /* Target selector chips (also used in create modal) */
 .group-chat-layout .group-target-chip {
   padding: 5px 12px;
@@ -11816,14 +11779,6 @@ select.settings-input {
   .group-chat-layout .group-members-panel { display: none; }
 }
 
-/* ── Group Chat: Reactions ── */
-.group-msg-bubble-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity 0.15s;
-}
 /* ── Director Mode: Narration Note (world-building sticky note) ── */
 .narration-note {
   max-width: 70%;
