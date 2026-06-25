@@ -218,21 +218,7 @@ class ChatEngine:
 
         self.history.append({"role": "assistant", "content": response})
 
-        self._evaluate_affinity(user_message, response)
-        self._event_service.mark_asked()
-
-        if self._memory and self._memory.enabled and self._card_id:
-            self._memory.add(
-                [
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": response},
-                ],
-                self._card_id,
-                metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
-            )
-
-        self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
-
+        self._post_turn(user_message, response)
         return response
 
     def chat_stream(self, user_message: str, voice_mode: bool = False) -> Generator[str, None, None]:
@@ -282,18 +268,21 @@ class ChatEngine:
 
     def post_stream_process(self, user_message: str, full_reply: str) -> None:
         """Post-stream housekeeping after done event: affinity first, then memory with metadata. Does NOT block UI unlock."""
-        self._evaluate_affinity(user_message, full_reply)
+        self._post_turn(user_message, full_reply)
+
+    def _post_turn(self, user_message: str, reply: str) -> None:
+        """后处理四步：好感评估 → 事件标记 → 记忆入库 → 反思触发。"""
+        self._evaluate_affinity(user_message, reply)
         self._event_service.mark_asked()
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
                 [
                     {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": full_reply},
+                    {"role": "assistant", "content": reply},
                 ],
                 self._card_id,
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
             )
-
         self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
