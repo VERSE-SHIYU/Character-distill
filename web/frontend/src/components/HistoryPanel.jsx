@@ -270,7 +270,10 @@ export default function HistoryPanel({ initialTrash = false }) {
   const handleContinue = async (sessionId) => {
     try {
       await resumeSession(sessionId)
-    } catch { /* store sets error */ }
+    } catch (err) {
+      console.error('[HistoryPanel] handleContinue failed:', err)
+      setError(err?.message || '进入对话失败，请重试')
+    }
   }
 
   const handleClearAll = async () => {
