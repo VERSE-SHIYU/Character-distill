@@ -76,16 +76,17 @@ class LLMAdapter:
         """组装包含系统提示的对话消息列表。"""
         return [{"role": "system", "content": system_prompt}, *messages]
 
-    async def achat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
+    async def achat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
         """异步非流式对话，返回完整文本回复。最多重试3次。"""
-        result, usage = await self.async_chat(system_prompt, messages)
+        result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens)
         if usage:
             self.last_usage = usage
         return result
 
-    def chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> str:
+    def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
         """非流式对话，返回完整文本回复。最多重试3次。"""
         payload = self._build_messages(system_prompt, messages)
+        _mt = max_tokens if max_tokens is not None else self._max_tokens
         last_error = None
         for attempt in range(3):
             try:
@@ -93,7 +94,7 @@ class LLMAdapter:
                     model=self._model,
                     messages=payload,
                     temperature=self._temperature,
-                    max_tokens=self._max_tokens,
+                    max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
                     extra_body={"enable_thinking": False},
                 )
@@ -117,7 +118,7 @@ class LLMAdapter:
                     print(f"[LLMAdapter] All 3 attempts failed: {exc}")
         raise RuntimeError(f"LLM API failed after 3 attempts: {last_error}")
 
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]]) -> tuple[str, dict | None]:
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
@@ -125,6 +126,7 @@ class LLMAdapter:
         aggregating usage across concurrent calls instead of relying on the
         shared ``last_usage`` attribute.  """
         payload = self._build_messages(system_prompt, messages)
+        _mt = max_tokens if max_tokens is not None else self._max_tokens
         last_error = None
         for attempt in range(3):
             try:
@@ -132,7 +134,7 @@ class LLMAdapter:
                     model=self._model,
                     messages=payload,
                     temperature=self._temperature,
-                    max_tokens=self._max_tokens,
+                    max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
                 )
                 choices = completion.choices
@@ -156,9 +158,10 @@ class LLMAdapter:
                     print(f"[LLMAdapter async] All 3 attempts failed: {exc}")
         raise RuntimeError(f"Async LLM failed after 3 attempts: {last_error}")
 
-    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]]) -> Generator[str, None, None]:
+    def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
         payload = self._build_messages(system_prompt, messages)
+        _mt = max_tokens if max_tokens is not None else self._max_tokens
         prompt_chars = sum(len(m.get("content", "")) for m in payload)
         self.last_usage = None  # 切断上一轮污染
         try:
@@ -166,7 +169,7 @@ class LLMAdapter:
                 model=self._model,
                 messages=payload,
                 temperature=self._temperature,
-                max_tokens=self._max_tokens,
+                max_tokens=_mt,
                 presence_penalty=self._presence_penalty,
                 stream=True,
                 stream_options={"include_usage": True},

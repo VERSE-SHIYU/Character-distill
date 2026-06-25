@@ -80,6 +80,15 @@ vim .env
 - `ALLOWED_ORIGINS=https://bookecho-shiyu.cn,https://www.bookecho-shiyu.cn`
 - `RESEND_API_KEY`、`ADMIN_INVITE_CODE`、`FERNET_KEY`
 
+可选项（有默认值，通常无需改动）：
+
+- `RESEND_FROM_EMAIL`：发件人邮箱，默认 `noreply@resend.dev`，有自有域名后替换。
+- `SESSION_IDLE_TTL_SECONDS`：会话空闲超时秒数，默认 3600（1 小时）。后台每 5 分钟清理一次过期会话（持有活跃锁的不清）。
+- `DASHSCOPE_API_KEY`：阿里云百炼 API Key。用户可在 Web 设置页自行填写，无需服务端统一配置。
+- `FFMPEG_PATH`：ffmpeg 路径，默认走系统 PATH（音视频音轨提取需要）。
+- `BLOCKLIST_PATH`：内容审核敏感词黑名单文件路径，不设用内置默认。
+- 审核阈值 `TRUST_THRESHOLD` / `BLOCK_THRESHOLD` / `MAX_TOKEN_LENGTH` 及各级关键词列表，均可用环境变量覆盖内置默认（详见 `.env.example`）。
+
 > 两台机器的 `JWT_SECRET`、`FERNET_KEY` 可各自独立；数据库密码各自设置。
 
 ## 4. SSL 证书（两台都装同一套）
@@ -104,7 +113,13 @@ docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f app
 ```
 
-首次启动时 app 会自动执行 `storage/migrations_pg/001_init.sql` 建表（幂等，可重复运行）。
+首次启动时 app 会自动执行 `storage/migrations_pg/` 下所有 `.sql` 文件建表/加列（幂等，可重复运行）。
+其中 `001_init.sql` 是合并后的完整 schema（已并入 SQLite 端 001~068 全部增量，含用户/角色/会话、
+群聊、角色市场与社区、私信、审核日志、地域拦截、用户同意等全部表），`002`/`003` 为后续增量
+（embedding 配置列、usage_stats.is_estimated 列）。
+
+> 服务启动时会将 asyncio 默认线程池扩到 200 workers（`chat_pool` 前缀），以支撑高并发流式生成。
+> DB 连接池 max_size=30（asyncpg），足够当前规模。
 
 ## 6. 安全组规则（两台都配）
 
@@ -172,6 +187,16 @@ docker compose -f docker-compose.prod.yml logs -f app
 docker compose -f docker-compose.prod.yml exec fail2ban fail2ban-client status
 ```
 
+**Admin 观测接口**（需 admin 权限，上线头两天重点盯）：
+
+```bash
+# 会话缓存健康度 — count 稳定不持续上涨 = 无内存泄漏
+curl -H "Authorization: Bearer <admin-token>" https://bookecho-shiyu.cn/api/admin/sessions/stats
+
+# Token 用量质量 — estimated_ratio 偏高说明厂商 usage 回传有问题
+curl -H "Authorization: Bearer <admin-token>" https://bookecho-shiyu.cn/api/admin/usage/quality
+```
+
 ## 12. 应急恢复（PostgreSQL）
 
 ```bash
@@ -191,3 +216,8 @@ docker compose -f docker-compose.prod.yml restart app
 - **存储切换**：由 `.env` 的 `STORAGE_BACKEND` 控制，**必须显式设置**。未设或设错时服务会 fail-fast 拒绝启动（有意设计，防止静默写错库）。
 - **架构图修正**：旧文档写"国内用户→新加坡"有误；实为境内→深圳、境外→新加坡。
 - **备份**：sqlite `.backup` → `pg_dump`；按地域分别上传 OSS / COS，互不跨境。
+- **Embedding**：本地 SentenceTransformer（all-MiniLM）已替换为阿里云百炼 DashScope text-embedding-v4 API。每个用户在 Web 设置页自行填写自己的百炼 API Key（中国内地有免费额度），费用用户自担。不再需要 GPU / torch 依赖。
+- **会话缓存**：内存中的 chat session 有 TTL 清理（默认闲置 1 小时清除，持有活跃锁的会话不清理），防止内存泄漏。
+- **Token 用量**：新增 `is_estimated` 字段区分厂商精确回传和字符估算；当厂商不返回 usage chunk 时自动用 chars/1.5 兜底估算。Admin 可通过 `/api/admin/usage/quality` 观测估算占比。
+- **蒸馏 JSON 容错**：蒸馏的 LLM JSON 解析有三层容错（extract 清理 → LLM 自我修复 → 完整重试），偶发坏 JSON 不再直接报错，会在日志记录原始输出并提示用户重试。
+- **蒸馏跨循环隔离**：蒸馏后台线程用独立 asyncpg pool（用完即焚），不再复用主服务 pool 单例，消除 "Task pending" 跨循环错误。

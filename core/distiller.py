@@ -92,6 +92,7 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     MAP_CONCURRENCY = 30
+    CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
 
     def __init__(
         self,
@@ -288,6 +289,17 @@ class Distiller:
 
     # ── JSON parse with retry ─────────────────────────────────────────
 
+    @staticmethod
+    def _looks_truncated(text: str) -> bool:
+        """检测 JSON 文本是否被截断（结尾不完整）。"""
+        t = text.strip()
+        if not t:
+            return False
+        if t[-1] not in ("}", "]", '"'):
+            return True
+        # 括号不成对 = 结构未闭合
+        return t.count("{") != t.count("}") or t.count("[") != t.count("]")
+
     def _parse_json_with_retry(
         self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
         action_label: str = "distill", required_keys: tuple[str, ...] = ("name",),
@@ -324,11 +336,13 @@ class Distiller:
         attempts = 0
         last_error = None
         last_bad_shape_reply = None  # 记下"语法合法但结构不对"的那一次，供 Attempt 2 使用
+        truncated: bool = False  # Attempt 1 是否检测到截断
 
         # Attempt 1: direct parse with strengthened extraction
         attempts += 1
         try:
-            data = json.loads(self._extract_json(reply.strip()))
+            _extracted = self._extract_json(reply.strip())
+            data = json.loads(_extracted)
             if _shape_ok(data):
                 return data
             if isinstance(data, dict):
@@ -337,7 +351,11 @@ class Distiller:
             else:
                 last_error = "parsed value is not a dict"
         except json.JSONDecodeError as exc:
-            last_error = str(exc)
+            if Distiller._looks_truncated(_extracted):
+                truncated = True
+                last_error = f"JSON 被截断（max_tokens 可能不足）：{exc}"
+            else:
+                last_error = str(exc)
 
         # Attempt 2: ask LLM to fix its own output.
         # 区分两种失败：JSON 语法错误 vs JSON 合法但结构不对（如返回了一句对话回复）。
@@ -356,9 +374,16 @@ class Distiller:
                 )
                 fix_user_content = last_bad_shape_reply
             else:
-                fix_system = (
-                    "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。"
-                )
+                if truncated:
+                    fix_system = (
+                        "你的上一次输出因长度超限被截断，JSON 不完整。"
+                        "请精简输出——合并重复描述、缩短长篇背景、保留核心人设和原文台词即可。"
+                        "只输出合法 JSON 对象，不要 markdown 代码块，不要任何解释。"
+                    )
+                else:
+                    fix_system = (
+                        "你的上一次输出无法被解析为JSON。请只输出合法JSON对象，不要markdown代码块，不要任何解释。"
+                    )
                 fix_user_content = reply.strip()
 
             fix_reply = self._llm.chat(
@@ -414,6 +439,11 @@ class Distiller:
             f"  last_error: {last_error}\n"
             f"  raw_preview (first 500 chars): {raw_preview}"
         )
+        if truncated:
+            raise ValueError(
+                "蒸馏失败：角色卡内容超长被截断（max_tokens 不足）。"
+                "请提高生成角色卡调用的 max_tokens 上限，或精简角色卡内容。"
+            ) from None
         raise ValueError("蒸馏失败：LLM 输出格式异常，请重试") from None
 
     # ── public entry points (unchanged) ────────────────────────────────
@@ -670,7 +700,7 @@ class Distiller:
         ]
 
         try:
-            reply = self._llm.chat(system_prompt, user_messages)
+            reply = self._llm.chat(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
         except Exception as exc:
             print(f"调用 LLM 进行角色蒸馏失败：{exc}")
             raise
@@ -704,7 +734,7 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        yield from self._llm.chat_stream(system_prompt, user_messages)
+        yield from self._llm.chat_stream(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
 
     def generate_opening(self, card_json: dict, user_role: str) -> str:
         """Generate context-aware opening based on character card + user role."""
@@ -755,7 +785,7 @@ class Distiller:
         )
 
         try:
-            reply = self._llm.chat(system_prompt, [{"role": "user", "content": user_content}])
+            reply = self._llm.chat(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS)
         except Exception as exc:
             print(f"调用 LLM 进行整本蒸馏失败：{exc}")
             raise
@@ -790,7 +820,7 @@ class Distiller:
 
         yield {"status": "formatting"}
         tc = 0
-        for token in self._llm.chat_stream(system_prompt, [{"role": "user", "content": user_content}]):
+        for token in self._llm.chat_stream(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS):
             if token == "\x00THINKING\x00":
                 continue
             yield token
@@ -1110,6 +1140,7 @@ class Distiller:
                     f"- personality_traits 每条必须附带具体场景证据\n\n"
                     f"{profile_draft}"
                 }],
+                max_tokens=self.CARD_MAX_TOKENS,
             )
         except Exception as exc:
             print(f"调用 LLM 进行最终格式化失败：{exc}")
@@ -1367,5 +1398,6 @@ class Distiller:
             [{"role": "user", "content":
                 f"以下是关于「{character_name}」的完整分析档案，严格按 JSON 格式输出角色卡：\n\n{profile_draft}"
             }],
+            max_tokens=self.CARD_MAX_TOKENS,
         )
         self._try_record_usage("distill_format")

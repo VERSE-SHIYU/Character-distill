@@ -30,11 +30,20 @@
 - **语音输入**：FunASR 语音识别，按住录音发送消息
 - **会话垃圾桶**：软删除 + 还原，支持彻底清除
 - **会话导出**：JSON / TXT 两种格式导出完整对话记录
+- **群聊模式**：多角色同处一个群会话，支持单角色回复、全员广播、群内好感度、消息表态、群垃圾桶
+- **角色市场**：角色卡公开发布、版本管理、Fork 派生、点赞、收藏、标签与全局搜索、精选位
+- **社区动态**：作者主页、关注/粉丝、动态帖子（Feed）、帖子/角色评论与点赞、@回复、举报
+- **私信系统**：用户间一对一私信，会话列表、未读计数、已读回执
+- **手动长期记忆**：除 Mem0 自动记忆外，支持对角色记忆条目手动增删改查
+- **内容审核**：关键词分级过滤（危机/严重/中度/轻度）+ 预处理 + 决策引擎 + 人工复审日志
+- **地域合规分流**：按请求 IP 区分境内/境外（XdbSearchIP 离线 IP 库），配合双地域分库存储
+- **邮箱验证**：Resend 邮件服务，注册/重置密码需邮箱验证码
+- **用户同意与隐私**：注册同意记录、资料可见性、隐私字段、版本化的隐私政策/服务条款
 - **三套精炼主题**：奶油抹茶（暖杏）、蓝色海盐（蓝绿潮汐）、樱花薰衣草（淡雅粉紫），侧边栏和设置面板一键切换，刷新保持
 - **PWA 支持**：manifest + Service Worker，可安装到桌面
 - **面包屑导航**：侧边栏实时显示当前位置路径
 - **文件缓存**：TTS 合成结果 MD5 缓存，命中 0.01s（110x 加速）
-- **SQLite 持久化**：角色卡、对话历史、文本库、音色引用、用户数据全持久化
+- **双后端持久化**：生产 PostgreSQL（asyncpg）/ 本地 SQLite（aiosqlite），由 `STORAGE_BACKEND` 切换；角色卡、对话历史、文本库、音色引用、用户/社区数据全持久化
 
 ## 快速开始
 
@@ -51,8 +60,8 @@ cp .env.example .env
 #   DEEPSEEK_API_KEY=your_key
 #   ALLOWED_ORIGINS=https://yourdomain.cn
 
-# 启动（OpenResty + FastAPI + Fail2Ban + GoAccess）
-docker compose -f docker-compose.prod.yml up -d
+# 启动（OpenResty + FastAPI + PostgreSQL + Fail2Ban + GoAccess）
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 详细部署流程见 [DEPLOY.md](DEPLOY.md)。
@@ -99,41 +108,57 @@ Character-distill/
 ├── adapters/
 │   └── llm_adapter.py          # DeepSeek API 封装（OpenAI 兼容格式）
 ├── core/
-│   ├── fix_meta_tensor.py      # 全局 meta tensor 防御（三层守卫）
-│   ├── embeddings.py           # 安全 embedding 模型工厂（唯一入口）
+│   ├── embeddings.py           # 安全 embedding 工厂（现固定走 DashScope API）
 │   ├── schema.py               # CharacterCard Pydantic 模型
 │   ├── distiller.py            # 角色蒸馏引擎（含角色感知段落抽取）
 │   ├── rag.py                  # 原文向量检索（ChromaDB + 情感加权 + 角色标记过滤）
 │   ├── scene_indexer.py        # 场景级向量索引（小说/聊天记录双格式）
 │   ├── context_engine.py       # 上下文构建（情感锚点历史 + 网络搜索增强）
 │   ├── chat_engine.py          # 对话引擎（system prompt + RAG + 长期记忆 + 撤回判断）
+│   ├── chat_preprocessor.py    # 对话输入预处理
+│   ├── group_session.py        # 群聊会话引擎（多角色 + 广播 + 群好感度）
 │   ├── memory_manager.py       # Mem0 长期记忆管理
+│   ├── email_service.py        # Resend 邮件验证码服务
+│   ├── log_collector.py        # 运行日志采集
+│   ├── moderation/             # 内容审核（关键词过滤/预处理/决策引擎/复审）
 │   ├── export.py               # SillyTavern v2 JSON 导出
+│   ├── utils.py                # 通用工具
 │   └── text_manager.py         # 文本/会话生命周期管理
 ├── speech/
 │   ├── tts_engine.py           # TTS 抽象接口
 │   ├── edge_tts_client.py      # Edge TTS 客户端（MD5 文件缓存）
 │   ├── voice_clone.py          # GPT-SoVITS 音色克隆客户端
 │   ├── funasr_client.py        # FunASR WebSocket 客户端
+│   ├── funasr_server.py        # FunASR 本地服务封装
 │   └── asr_client.py           # ASR 抽象接口
 ├── storage/
 │   ├── base.py                 # 存储抽象层
-│   ├── sqlite_store.py         # SQLite 实现
-│   └── migrations/             # 数据库迁移（001~022）
+│   ├── __init__.py             # get_store() 工厂（按 STORAGE_BACKEND 切换）
+│   ├── sqlite_store.py         # SQLite 实现（aiosqlite）
+│   ├── postgres_store.py       # PostgreSQL 实现（asyncpg）
+│   ├── migrations/             # SQLite 迁移（001~068）
+│   └── migrations_pg/          # PostgreSQL 迁移（001~003）
 ├── web/
 │   ├── server.py               # FastAPI 入口（JWT 中间件 + WAF + 限流）
-│   ├── deps.py                 # 依赖注入（单例 + 用户 LLM 缓存）
+│   ├── app.py                  # 应用装配
+│   ├── deps.py                 # 依赖注入（单例 + 用户 LLM 缓存 + 会话 TTL 清理）
 │   ├── security.py             # 安全响应头中间件
 │   ├── limiter.py              # slowapi 限流配置
+│   ├── geo_guard.py            # 境内/境外 IP 识别与拦截（XdbSearchIP）
+│   ├── legal_versions.py       # 隐私政策/服务条款版本管理
 │   ├── routers/
-│   │   ├── auth.py             # 认证 API（注册/登录/刷新/头像/密码）
-│   │   ├── admin.py            # 管理员 API（用户管理/邀请码/用量统计）
+│   │   ├── auth.py             # 认证 API（注册/登录/刷新/头像/密码/邮箱验证）
+│   │   ├── admin.py            # 管理员 API（用户管理/邀请码/用量统计/全局配置）
 │   │   ├── chat.py             # 对话 API（含流式 SSE + 撤回 + 好感度）
 │   │   ├── distill.py          # 蒸馏 API（后台任务 + 流式 + 场景索引）
 │   │   ├── history.py          # 历史管理 API（垃圾桶/恢复/导出）
 │   │   ├── text.py             # 文本上传 API
 │   │   ├── card.py             # 角色卡头像 API
 │   │   ├── voice.py            # 音色库 + 音色克隆 + ASR API
+│   │   ├── group.py            # 群聊 API（创建/发送/广播/好感度/垃圾桶）
+│   │   ├── market.py           # 角色市场 + 社区 API（发布/Fork/评论/关注/动态）
+│   │   ├── message.py          # 用户私信 API（会话/未读/已读）
+│   │   ├── memory.py           # 长期记忆手动管理 API
 │   │   ├── wechat.py           # 微信接入 API（占位）
 │   │   └── wechat_utils.py     # 微信加解密工具
 │   └── frontend/
@@ -178,7 +203,8 @@ Character-distill/
 │   ├── test_connection.py
 │   └── test_integration.py
 ├── data/                       # 运行时数据（自动创建）
-│   ├── character_sim.db        # SQLite 数据库
+│   ├── charsim.db              # SQLite 数据库（sqlite 后端，默认 DB_PATH）
+│   ├── chroma_db/              # ChromaDB 向量库
 │   ├── voice_cache/            # TTS/克隆缓存
 │   ├── voice_library/          # 自定义音色库
 │   └── ref_audio/              # 参考音频
@@ -211,7 +237,7 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
     │
     ├─→ core/rag.py             ← 分块 + 角色标记 + 情感加权 → ChromaDB 向量索引
     │       │
-    │       └─→ core/embeddings.py  ← 安全 SentenceTransformer 工厂（CPU 锁定）
+    │       └─→ core/embeddings.py  ← DashScope text-embedding-v4 API（唯一入口）
     │
     ├─→ core/context_engine.py  ← 情感锚点历史 + 网络搜索增强 → 上下文构建
     │
@@ -247,18 +273,18 @@ FastAPI（JWT 中间件 + CORS + slowapi 限流 + 全局异常处理）
     ├─→ AuthMiddleware        ← Bearer Token 验证，所有 /api/* 请求强制认证
     ├─→ Depends(get_current_user)  ← 路由层第二道锁，防中间件被绕过
     ├─→ 资源所有权校验        ← 每个资源操作均验证 user_id 归属
-    └─→ SQLite               ← 数据完全隔离，用户只能访问自己的数据
+    ├─→ 内容审核              ← 关键词分级过滤 + 决策引擎 + 人工复审
+    ├─→ 地域合规分流          ← 境内/境外 IP 识别（XdbSearchIP），双地域分库
+    └─→ 数据库(PostgreSQL/SQLite) ← 数据完全隔离，用户只能访问自己的数据
 
 Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 ```
 
-## Meta Tensor 防御
+## Embedding 方案
 
-项目使用三层防御策略解决 PyTorch `meta` device 问题（accelerate 在 CPU 环境将模型路由到 meta 设备导致的 "Cannot copy out of meta tensor" 错误）：
-
-1. **Layer 1** — `core/fix_meta_tensor.py`：进程级 env vars + `torch.set_default_device("cpu")` + `nn.Module.to` monkey-patch，在 `server.py` 最早的 import 处执行
-2. **Layer 2** — `distiller.py` / `text_manager.py` 方法级守卫：在每个可能触发模型加载的方法入口重新设置 env vars 和 torch 默认设备
-3. **Layer 3** — `embeddings.py` 调用点防御：`SentenceTransformer` 加载前强化 env vars，加载后检测 meta device 并 `to_empty` 回退
+向量检索 embedding 已统一改用**阿里云百炼 DashScope text-embedding-v4 API**（`core/embeddings.py` 为唯一入口），
+不再依赖本地 SentenceTransformer / PyTorch 模型，因此也不再需要 GPU、torch 依赖或历史上的 meta tensor 防御逻辑。
+每个用户在 Web 设置页填写自己的 `DASHSCOPE_API_KEY`（中国内地有免费额度），费用用户自担。
 
 ## API 接口
 
@@ -362,6 +388,65 @@ Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 |------|------|------|
 | `/api/cards/{card_id}/avatar` | GET / PUT | 获取/保存角色卡头像（base64） |
 
+### 群聊（`/api/group`）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/group/create` | POST | 创建多角色群会话 |
+| `/api/group/list` | GET | 群会话列表 |
+| `/api/group/{group_id}/send` | POST | 群内向指定角色发消息（SSE） |
+| `/api/group/{group_id}/broadcast` | POST | 全员广播，多角色依次回复 |
+| `/api/group/{group_id}/affinities` | GET | 群内各角色好感度 |
+| `/api/group/{group_id}/message/{message_id}/react` | POST | 消息表态 |
+| `/api/group/{group_id}/history` | GET | 群聊历史 |
+| `/api/group/{group_id}/rename` | PATCH | 重命名群 |
+| `/api/group/{group_id}` | DELETE | 删除群（软删除） |
+| `/api/group/trash` / `/{group_id}/restore` / `/{group_id}/permanent` | GET/POST/DELETE | 群垃圾桶/还原/彻底删除 |
+
+### 角色市场与社区（`/api/market`）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/market/list` `/search` `/global-search` `/feed` `/featured` `/tags` | GET | 角色/动态浏览、搜索、精选、标签 |
+| `/api/market/{card_id}/publish` | POST / PUT | 发布/更新发布角色卡 |
+| `/api/market/{card_id}/versions` | GET | 角色卡版本列表 |
+| `/api/market/{card_id}/fork` | POST | Fork 派生角色卡 |
+| `/api/market/{card_id}/like` | POST | 点赞角色卡 |
+| `/api/market/{card_id}/visibility` | PATCH | 修改可见性 |
+| `/api/market/{card_id}/comments` | GET / POST | 角色卡评论 |
+| `/api/market/author/{user_id}` | GET | 作者主页 |
+| `/api/market/author/{user_id}/follow` | POST | 关注/取关作者 |
+| `/api/market/author/{user_id}/followers` `/following` | GET | 粉丝/关注列表 |
+| `/api/market/author/posts` | POST | 发布动态帖子 |
+| `/api/market/post/{post_id}/comments` `/like` | GET/POST | 帖子评论/点赞 |
+
+### 私信（`/api/messages`）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/messages/conversations` | GET | 私信会话列表 |
+| `/api/messages/with/{other_id}` | GET | 与某用户的私信记录 |
+| `/api/messages/send` | POST | 发送私信 |
+| `/api/messages/read/{other_id}` | POST | 标记已读 |
+| `/api/messages/unread-count` | GET | 未读总数 |
+
+### 长期记忆（`/api/memory`）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/memory/list/{card_id}` | GET | 角色记忆列表 |
+| `/api/memory/add/{card_id}` | POST | 新增记忆条目 |
+| `/api/memory/update/{memory_id}` | PUT | 修改记忆 |
+| `/api/memory/delete/{memory_id}` | DELETE | 删除记忆 |
+| `/api/memory/clear/{card_id}` | DELETE | 清空角色记忆 |
+
+### 公告（公开）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/announcement/active` | GET | 当前生效公告（无需认证） |
+| `/api/health` | GET | 健康检查 |
+
 ## 配置说明
 
 `config.yaml` 关键配置：
@@ -378,15 +463,17 @@ rag:
   chunk_size: 500
   chunk_overlap: 50
   top_k: 3
-  embedding_model: "all-MiniLM-L6-v2"
+  # embedding_model 已废弃（改为固定使用阿里云百炼 text-embedding-v4）
 
 distill:
   chunk_size: 5000         # 蒸馏分块大小
   max_profile_len: 8000    # 单角色档案上限
 
 storage:
+  # 实际后端由 .env 的 STORAGE_BACKEND 决定（postgres / sqlite）；
+  # sqlite 文件路径由 .env 的 DB_PATH 决定，默认 data/charsim.db。
   type: sqlite
-  path: data/character_sim.db
+  path: data/charsim.db
 
 voice:
   enabled: false           # GPT-SoVITS 音色克隆开关
@@ -449,16 +536,19 @@ memory:
 | 组件 | 技术 |
 |------|------|
 | LLM | DeepSeek V4 Pro（OpenAI 兼容 API） |
-| 向量检索 | sentence-transformers + ChromaDB |
+| 向量检索 | DashScope text-embedding-v4 + ChromaDB |
 | 长期记忆 | Mem0（本地模式） |
 | 后端 | FastAPI + Uvicorn |
 | 认证 | JWT（PyJWT）+ Argon2 密码哈希（pwdlib） |
 | 反向代理 | OpenResty（Nginx + Lua WAF） |
 | 前端 | React 18 + Vite + Zustand |
-| 持久化 | SQLite（aiosqlite） |
+| 持久化 | PostgreSQL（asyncpg，生产）/ SQLite（aiosqlite，本地） |
 | 数据校验 | Pydantic V2 |
 | TTS | Microsoft Edge TTS + GPT-SoVITS |
 | ASR | FunASR（WebSocket） |
+| 邮件 | Resend（注册/重置邮箱验证码） |
+| 地域识别 | XdbSearchIP（离线 IP2Region 库） |
+| 内容审核 | 关键词分级过滤 + 预处理 + 决策引擎 + 人工复审 |
 | 容器化 | Docker + Docker Compose |
 | 入侵防御 | Fail2Ban + OpenResty CC 限流 |
 | 设计 | 毛玻璃 glassmorphism，三套主题 |
@@ -498,7 +588,15 @@ memory:
 - [x] PWA 可安装
 - [x] Meta tensor 三层防御
 - [x] 嵌入模型单例 + ChromaDB 持久化（冷启动 15s → 1-2s）
-- [ ] 多角色同时蒸馏 + 群聊模式
+- [x] DashScope text-embedding-v4 API（去除本地 torch / GPU 依赖）
+- [x] PostgreSQL 后端（asyncpg）+ 双地域分库部署
+- [x] 邮箱验证码（Resend）+ 用户同意/隐私字段
+- [x] 内容审核系统（关键词分级 + 决策引擎 + 人工复审）
+- [x] 地域合规分流（境内/境外 IP 识别）
+- [x] 群聊模式（多角色 + 广播 + 群好感度）
+- [x] 角色市场 + 社区（发布/Fork/评论/关注/动态/私信）
+- [x] 手动长期记忆管理
+- [ ] 多角色同时蒸馏
 - [ ] 微信公众号接入
 
 ## License

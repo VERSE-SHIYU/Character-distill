@@ -8354,6 +8354,14 @@ select.settings-input {
   text-overflow: ellipsis;
 }
 
+.distill-task-pct {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.8em;
+  text-align: right;
+}
 
 .distill-task-bar-track {
   flex-shrink: 0;

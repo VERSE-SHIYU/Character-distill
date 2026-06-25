@@ -12,24 +12,22 @@ from core.embeddings import create_safe_embedding_fn
 
 
 class RAGEngine:
-    """使用 Ephemeral Chroma 客户端与 SentenceTransformer 嵌入的检索引擎。"""
+    """使用 ChromaDB 与阿里云百炼 text-embedding-v4 的 RAG 检索引擎。"""
 
     def __init__(self, config: dict[str, Any]) -> None:
         """从配置字典初始化客户端、嵌入函数与集合占位字段。
 
-        Note: ChromaDB 的 EphemeralClient 并非纯内存实现——它默认向
-        ``./chroma`` 写入数据且多实例间共享同一持久化目录。
+        Note: ChromaDB 的 PersistenClient 默认向 ``./chroma`` 写入数据。
         为避免集合名冲突导致跨 session 的集合引用失效，每个引擎
         实例使用唯一的 UUID 作为集合名。
 
         Args:
-            config: 需包含 chunk_size、chunk_overlap、top_k、embedding_model。
+            config: 需包含 chunk_size、chunk_overlap、top_k。
         """
         try:
             self._chunk_size: int = int(config["chunk_size"])
             self._chunk_overlap: int = int(config["chunk_overlap"])
             self._top_k: int = int(config["top_k"])
-            self._embedding_model: str = str(config["embedding_model"])
         except (KeyError, TypeError, ValueError) as exc:
             print(f"读取 RAG 配置字段失败：{exc}")
             raise
@@ -42,7 +40,6 @@ class RAGEngine:
 
         try:
             self._embedding_function = create_safe_embedding_fn(
-                self._embedding_model,
                 api_key=config.get("embedding_key", ""),
                 region=config.get("embedding_region", "cn"),
             )

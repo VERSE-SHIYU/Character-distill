@@ -13,7 +13,7 @@ RUN npm run build
 # ============================================================
 FROM python:3.12-slim
 
-# 系统依赖（sentence-transformers 编译需要）
+# 系统依赖（部分 Python 包编译需要，如 argon2-cffi）
 RUN apt-get update && \
     apt-get install -y --no-install-recommends build-essential && \
     rm -rf /var/lib/apt/lists/*

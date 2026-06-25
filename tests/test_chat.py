@@ -23,7 +23,7 @@ llm = LLMAdapter()
 card = Distiller(llm).distill(test_text, "张三")
 print(f"角色：{card.name} — {card.identity}\n")
 
-rag = RAGEngine({"chunk_size": 200, "chunk_overlap": 30, "top_k": 2, "embedding_model": "all-MiniLM-L6-v2"})
+rag = RAGEngine({"chunk_size": 200, "chunk_overlap": 30, "top_k": 2})
 rag.index(test_text)
 
 engine = ChatEngine(llm, rag, card)
