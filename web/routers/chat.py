@@ -542,8 +542,8 @@ async def get_affinity(
             except (json.JSONDecodeError, TypeError):
                 extended = {"inner_voice": reason, "mood_emoji": "😊"}
         # Calculate stage
-        from core.chat_engine import _calc_stage
-        stage_name, stage_emoji = _calc_stage(aff)
+        from core.chat_engine import calc_stage
+        stage_name, stage_emoji = calc_stage(aff)
         return {
             "affinity": aff,
             "trust": data.get("trust", 30),

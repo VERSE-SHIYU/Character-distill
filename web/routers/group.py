@@ -17,7 +17,7 @@ from deps import get_storage, get_user_llm, get_sessions
 from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
-from core.chat_engine import _calc_stage
+from core.chat_engine import calc_stage
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
@@ -624,7 +624,7 @@ async def list_group_affinities(
     for cid in card_ids:
         row = await storage.get_group_affinity(group_id, cid)
         affinity = row["affinity"] if row else 50
-        stage_name, stage_emoji = _calc_stage(affinity)
+        stage_name, stage_emoji = calc_stage(affinity)
         result.append({
             "card_id": cid,
             "affinity": affinity,
