@@ -51,6 +51,9 @@ services:
       - ./data:/app/data
     env_file:
       - .env
+    environment:
+      # 容器内必须用 compose 服务名 postgres，不能是 localhost
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
       postgres:
         condition: service_healthy
