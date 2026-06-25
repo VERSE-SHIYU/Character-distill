@@ -18,7 +18,7 @@ export default function Avatar({ name = '?', src = null, size = 40, className = 
       style={{
         width: size,
         height: size,
-        borderRadius: '16px',
+        borderRadius: '12px',
         background: src ? 'transparent' : bg,
         display: 'flex',
         alignItems: 'center',
@@ -48,7 +48,7 @@ export default function Avatar({ name = '?', src = null, size = 40, className = 
         width: '100%',
         height: '100%',
         position: 'absolute',
-        borderRadius: '16px',
+        borderRadius: '12px',
         background: bg,
       }}>
         {letter}
