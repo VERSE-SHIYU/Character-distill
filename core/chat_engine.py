@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 from datetime import datetime
 from collections.abc import Generator
 from typing import Any
@@ -18,6 +17,7 @@ from core.event_service import EventService
 from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
 from core.affinity_service import AffinityService, calc_stage
+from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 
 
 def _describe_time_period(hour: int) -> str:
@@ -72,6 +72,7 @@ class ChatEngine:
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
         self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
+        self._pipeline = EvaluationPipeline()
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -352,7 +353,7 @@ class ChatEngine:
         self._reaction_service.ingest(signals)
 
     def _evaluate_affinity(self, user_message: str, assistant_reply: str) -> None:
-        """异步评估好感度变化：角色第一人称内心独白 + 情绪惯性 + 关系阶段。"""
+        """好感评估：组装 EvalContext → EvaluationPipeline.run() → 回写 _last_importance。"""
         if not self.llm:
             print(f"[Affinity] SKIP: self.llm is None (session={self._session_id})")
             return
@@ -386,94 +387,36 @@ class ChatEngine:
                 print(f"[Affinity] Fetch reactions failed (non-fatal): {exc}")
 
         user_role = (self.user_role or "对方").strip()
-        # 记录旧阶段用于检测阶段变化
         old_stage = self._stage
         reaction_appraisal = self._reaction_service.build_appraisal()
-        prompt = self._affinity_service.build_evaluation_prompt(
-            self.card, user_message, assistant_reply, user_role, reaction_appraisal)
 
-        def _do():
-            try:
-                print(f"[Affinity] Calling LLM...")
-                reply = self.llm.chat(
-                    "你是精确的JSON输出器，只输出JSON。",
-                    [{"role": "user", "content": prompt}],
-                )
-                print(f"[Affinity] LLM reply ({len(reply)} chars): {reply[:300]}")
-                data = self._affinity_service.parse_evaluation_reply(reply)
-                if data is None:
-                    print(f"[Affinity] FAIL: no JSON object found in LLM reply")
-                    return
-                print(f"[Affinity] JSON match: {str(data)[:200]}")
+        # ── 组装 EvalContext → pipeline.run() ──
+        ctx = EvalContext(
+            card=self.card,
+            user_message=user_message,
+            assistant_reply=assistant_reply,
+            user_role=user_role,
+            old_stage=old_stage,
+            session_id=self._session_id,
+            group_id=self._group_id,
+            card_id=self._card_id,
+            storage=self._storage,
+            memory=self._memory,
+            affinity_service=self._affinity_service,
+            reaction_service=self._reaction_service,
+            llm=self.llm,
+            reaction_appraisal=reaction_appraisal,
+        )
+        result = self._pipeline.run(ctx)
+        self._last_importance = result.importance
 
-                # ── 时间事件抽取 ──
-                time_event = data.get("time_event")
-                if time_event and isinstance(time_event, dict) and self._memory and self._memory.enabled and self._card_id:
-                    try:
-                        evt = time_event.get("event", "")
-                        when_text = time_event.get("when_text", "")
-                        due_at = time_event.get("due_at", "")
-                        event_id = uuid.uuid4().hex[:16]
-                        self._memory.add_manual(
-                            f"对方提到「{evt}」（{when_text}），大约在{due_at}。",
-                            self._card_id,
-                            metadata={
-                                "type": "time_event",
-                                "event_id": event_id,
-                                "event": evt,
-                                "when_text": when_text,
-                                "due_at": due_at,
-                            },
-                        )
-                        print(f"[ChatEngine] Saved time_event: {evt} at {due_at} (id={event_id})")
-                    except Exception as exc:
-                        print(f"[ChatEngine] Save time_event failed: {exc}")
+        if result.applied:
+            print(f"[Affinity] PARSED: affinity={ctx.affinity_service.affinity} "
+                  f"trust={ctx.affinity_service.trust} mood={ctx.affinity_service.mood} "
+                  f"guard={ctx.affinity_service.guard} importance={result.importance}")
+        else:
+            print(f"[Affinity] SKIP: pipeline returned applied=False (importance={result.importance})")
 
-                self._last_importance = self._affinity_service.apply_evaluation(data, old_stage)
-                print(f"[Affinity] PARSED: affinity={data.get('affinity')} trust={data.get('trust')} "
-                      f"mood={data.get('mood')} guard={data.get('guard')} "
-                      f"importance={self._last_importance} "
-                      f"inner_voice={str(data.get('inner_voice',''))[:80]}")
-                print(f"[Affinity] UPDATED in-memory: aff={self._affinity} trust={self._trust} "
-                      f"mood={self._mood} guard={self._guard}")
-                if storage and self._group_id:
-                    # 群聊：写 group_affinity 表，key=(group_id, card_id)
-                    try:
-                        from deps import run_on_main_loop
-                        import time as _t; _t0 = _t.time()
-                        run_on_main_loop(
-                            storage.update_group_affinity(
-                                self._group_id, self._card_id, self._affinity, self._trust,
-                                self._mood, self._guard, self._affinity_reason,
-                            ),
-                            timeout=15,
-                        )
-                        print(f"[perf] affinity_group took {_t.time()-_t0:.2f}s")
-                    except Exception as db_exc:
-                        print(f"[ChatEngine] Affinity DB save failed (group={self._group_id} card={self._card_id}): {db_exc}")
-                elif storage and session_id:
-                    # 单聊：写 sessions 表（原逻辑不变）
-                    try:
-                        from deps import run_on_main_loop
-                        import time as _t; _t0 = _t.time()
-                        run_on_main_loop(
-                            storage.update_session_affinity(
-                                session_id, self._affinity, self._trust,
-                                self._mood, self._guard, self._affinity_reason,
-                            ),
-                            timeout=15,
-                        )
-                        print(f"[perf] affinity_session took {_t.time()-_t0:.2f}s")
-                    except Exception as db_exc:
-                        print(f"[ChatEngine] Affinity DB save failed (session={session_id}): {db_exc}")
-            except Exception as exc:
-                print(f"[ChatEngine] Affinity eval failed: {exc}")
-                self._last_importance = 5
-                import traceback
-                traceback.print_exc()
-
-        # 同步执行（移除 threading，确保 fetchAffinity 能拿到最新值）
-        _do()
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
 
     # ── 好感人格注入 ──────────────────────────────────────────────
