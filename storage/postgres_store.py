@@ -1574,10 +1574,15 @@ class PostgresStore(StorageBase):
         """Create a new user. Raises on duplicate username."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "INSERT INTO users (id, username, password_hash, email, email_verified) VALUES ($1, $2, $3, $4, $5)",
-                    id, username, password_hash, email, 1 if email else 0,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "INSERT INTO users (id, username, email, email_verified) VALUES ($1, $2, $3, $4)",
+                        id, username, email, 1 if email else 0,
+                    )
+                    await conn.execute(
+                        "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
+                        id, password_hash,
+                    )
                 return await self.get_user_by_username(username) or {}
         except asyncpg.IntegrityConstraintViolationError as exc:
             raise ValueError("用户名已存在") from exc
@@ -1590,7 +1595,11 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE username = $1",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.is_admin, u.is_disabled, u.created_at
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.username = $1""",
                     username,
                 )
             return self._row_to_dict(row)
@@ -1603,7 +1612,12 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, username, password_hash, email, email_verified, is_admin, is_disabled, created_at FROM users WHERE email = $1 AND email != ''",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.email, u.email_verified,
+                              u.is_admin, u.is_disabled, u.created_at
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.email = $1 AND u.email != ''""",
                     email,
                 )
             return self._row_to_dict(row)
@@ -1616,7 +1630,14 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility, following_visible FROM users WHERE id = $1",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.is_admin, u.is_disabled, u.created_at,
+                              u.avatar_data, u.banner_data,
+                              u.profile_stats_visible, u.cards_visible, u.books_visible,
+                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.id = $1""",
                     user_id,
                 )
             return self._row_to_dict(row)
@@ -1845,7 +1866,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 tag = await conn.execute(
-                    "UPDATE users SET password_hash = $1 WHERE id = $2",
+                    "UPDATE user_secrets SET password_hash = $1 WHERE user_id = $2",
                     password_hash, user_id,
                 )
                 return self._parse_rowcount(tag) > 0
@@ -1874,7 +1895,11 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT api_key, base_url, model, embedding_key, embedding_region FROM users WHERE id = $1",
+                    """SELECT s.api_key, s.base_url, s.model,
+                              u.embedding_key, u.embedding_region
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.id = $1""",
                     user_id,
                 )
             if not row:
@@ -1905,41 +1930,52 @@ class PostgresStore(StorageBase):
 
         Empty fields are never written, so a blank field in the request does not
         overwrite an existing value (applies to api_key, base_url, model, and embedding_key).
+
+        Secrets (api_key, base_url, model) go to user_secrets;
+        embedding config (embedding_key, embedding_region) stays on users.
         """
         try:
-            set_parts = []
-            params = []
+            # ---- user_secrets: api_key, base_url, model ----
+            secret_parts = []
+            secret_params = []
 
             if api_key:
                 encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
-                set_parts.append(f"api_key = ${len(params) + 1}")
-                params.append(encrypted)
+                secret_parts.append(f"api_key = ${len(secret_params) + 1}")
+                secret_params.append(encrypted)
 
             if base_url:
-                set_parts.append(f"base_url = ${len(params) + 1}")
-                params.append(base_url)
+                secret_parts.append(f"base_url = ${len(secret_params) + 1}")
+                secret_params.append(base_url)
 
             if model:
-                set_parts.append(f"model = ${len(params) + 1}")
-                params.append(model)
+                secret_parts.append(f"model = ${len(secret_params) + 1}")
+                secret_params.append(model)
+
+            if secret_parts:
+                secret_params.append(user_id)
+                sql = "UPDATE user_secrets SET " + ", ".join(secret_parts) + f" WHERE user_id = ${len(secret_params)}"
+                async with await self._connect() as conn:
+                    await conn.execute(sql, *secret_params)
+
+            # ---- users: embedding_key, embedding_region ----
+            user_parts = []
+            user_params = []
 
             if embedding_key:
                 enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                set_parts.append(f"embedding_key = ${len(params) + 1}")
-                params.append(enc_emb)
+                user_parts.append(f"embedding_key = ${len(user_params) + 1}")
+                user_params.append(enc_emb)
 
             if embedding_region:
-                set_parts.append(f"embedding_region = ${len(params) + 1}")
-                params.append(embedding_region)
+                user_parts.append(f"embedding_region = ${len(user_params) + 1}")
+                user_params.append(embedding_region)
 
-            if not set_parts:
-                return
-
-            params.append(user_id)
-            sql = "UPDATE users SET " + ", ".join(set_parts) + f" WHERE id = ${len(params)}"
-
-            async with await self._connect() as conn:
-                await conn.execute(sql, *params)
+            if user_parts:
+                user_params.append(user_id)
+                sql = "UPDATE users SET " + ", ".join(user_parts) + f" WHERE id = ${len(user_params)}"
+                async with await self._connect() as conn:
+                    await conn.execute(sql, *user_params)
         except Exception as exc:
             print(f"[PostgresStore] Update user API config failed: {exc}")
             raise
@@ -1961,7 +1997,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET password_hash = $1 WHERE id = $2",
+                    "UPDATE user_secrets SET password_hash = $1 WHERE user_id = $2",
                     password_hash, user_id,
                 )
         except Exception as exc:
@@ -2195,6 +2231,9 @@ class PostgresStore(StorageBase):
                         user_id,
                     )
                     counts["invite_codes"] = self._parse_rowcount(tag)
+                    # Delete user_secrets (FK cascade should handle this, but explicit for safety)
+                    await conn.execute("DELETE FROM user_secrets WHERE user_id = $1", user_id)
+                    counts["user_secrets"] = 1
                     tag = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
                     if self._parse_rowcount(tag) == 0:
                         raise ValueError("用户不存在")

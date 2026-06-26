@@ -702,6 +702,66 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] DM reactions migration failed: {exc}")
 
+                    # Run 070_data_residency migration (ALTER TABLE + CREATE TABLE + INSERT)
+                    residency_path = migrations_dir / "070_data_residency.sql"
+                    if residency_path.exists():
+                        try:
+                            await conn.executescript(residency_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Data residency migration failed: {exc}")
+
+                    # Data residency: remove password_hash/api_key/base_url/model from users
+                    # SQLite table-recreate approach for portability (< 3.35.0 compat)
+                    try:
+                        cursor = await conn.execute("PRAGMA table_info(users)")
+                        all_cols = [row[1] for row in await cursor.fetchall()]
+                        if "password_hash" in all_cols:
+                            # Build the column list dynamically — some optional columns
+                            # (embedding_key, embedding_region) may not exist on fresh DBs
+                            # because migration 067 uses IF NOT EXISTS (SQLite syntax error).
+                            keep_cols = [c for c in all_cols
+                                         if c not in ("password_hash", "api_key", "base_url", "model")]
+                            col_defs = {
+                                "id": "TEXT PRIMARY KEY",
+                                "username": "TEXT NOT NULL UNIQUE",
+                                "is_admin": "INTEGER DEFAULT 0",
+                                "is_disabled": "INTEGER DEFAULT 0",
+                                "avatar_data": "TEXT DEFAULT ''",
+                                "banner_data": "TEXT DEFAULT ''",
+                                "bio": "TEXT DEFAULT ''",
+                                "email": "TEXT DEFAULT ''",
+                                "email_verified": "INTEGER DEFAULT 0",
+                                "profile_stats_visible": "INTEGER DEFAULT 1",
+                                "cards_visible": "INTEGER NOT NULL DEFAULT 1",
+                                "books_visible": "INTEGER NOT NULL DEFAULT 1",
+                                "following_visible": "INTEGER NOT NULL DEFAULT 1",
+                                "presence_visibility": "TEXT NOT NULL DEFAULT 'mutual'",
+                                "last_login_at": "TEXT DEFAULT ''",
+                                "last_active_at": "TEXT DEFAULT ''",
+                                "embedding_key": "TEXT DEFAULT ''",
+                                "embedding_region": "TEXT DEFAULT 'cn'",
+                                "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
+                                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                            }
+                            col_list = ", ".join(keep_cols)
+                            create_defs = ", ".join(
+                                f"{c} {col_defs.get(c, 'TEXT DEFAULT \"\"')}"
+                                for c in keep_cols
+                            )
+                            await conn.executescript(f"""
+                                PRAGMA defer_foreign_keys = ON;
+                                CREATE TABLE users_mig ({create_defs});
+                                INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
+                                DROP TABLE users;
+                                ALTER TABLE users_mig RENAME TO users;
+                            """)
+                            await conn.commit()
+                    except Exception as exc:
+                        if "no such column" not in str(exc).lower():
+                            print(f"[SQLiteStore] Data residency column removal: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -2344,8 +2404,12 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO users (id, username, password_hash, email, email_verified) VALUES (?, ?, ?, ?, ?)",
-                    (id, username, password_hash, email, 1 if email else 0),
+                    "INSERT INTO users (id, username, email, email_verified) VALUES (?, ?, ?, ?)",
+                    (id, username, email, 1 if email else 0),
+                )
+                await conn.execute(
+                    "INSERT INTO user_secrets (user_id, password_hash) VALUES (?, ?)",
+                    (id, password_hash),
                 )
                 await conn.commit()
                 return await self.get_user_by_username(username) or {}
@@ -2360,7 +2424,11 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at FROM users WHERE username = ?",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.is_admin, u.is_disabled, u.created_at
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.username = ?""",
                     (username,),
                 )
                 row = await cursor.fetchone()
@@ -2374,7 +2442,12 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, email, email_verified, is_admin, is_disabled, created_at FROM users WHERE email = ? AND email != ''",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.email, u.email_verified,
+                              u.is_admin, u.is_disabled, u.created_at
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.email = ? AND u.email != ''""",
                     (email,),
                 )
                 row = await cursor.fetchone()
@@ -2388,7 +2461,14 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, password_hash, is_admin, is_disabled, created_at, avatar_data, banner_data, profile_stats_visible, cards_visible, books_visible, bio, last_active_at, presence_visibility, following_visible FROM users WHERE id = ?",
+                    """SELECT u.id, u.username, s.password_hash,
+                              u.is_admin, u.is_disabled, u.created_at,
+                              u.avatar_data, u.banner_data,
+                              u.profile_stats_visible, u.cards_visible, u.books_visible,
+                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.id = ?""",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -2643,7 +2723,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    "UPDATE user_secrets SET password_hash = ? WHERE user_id = ?",
                     (password_hash, user_id),
                 )
                 await conn.commit()
@@ -2673,7 +2753,11 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT api_key, base_url, model, embedding_key, embedding_region FROM users WHERE id = ?",
+                    """SELECT s.api_key, s.base_url, s.model,
+                              u.embedding_key, u.embedding_region
+                       FROM users u
+                       LEFT JOIN user_secrets s ON s.user_id = u.id
+                       WHERE u.id = ?""",
                     (user_id,),
                 )
                 row = await cursor.fetchone()
@@ -2705,42 +2789,55 @@ class SQLiteStore(StorageBase):
 
         Empty fields are never written, so a blank field in the request does not
         overwrite an existing value (applies to api_key, base_url, model, and embedding_key).
+
+        Secrets (api_key, base_url, model) go to user_secrets;
+        embedding config (embedding_key, embedding_region) stays on users.
         """
         try:
-            set_parts = []
-            params = []
+            # ---- user_secrets: api_key, base_url, model ----
+            secret_parts = []
+            secret_params = []
 
             if api_key:
                 encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
-                set_parts.append("api_key = ?")
-                params.append(encrypted)
+                secret_parts.append("api_key = ?")
+                secret_params.append(encrypted)
 
             if base_url:
-                set_parts.append("base_url = ?")
-                params.append(base_url)
+                secret_parts.append("base_url = ?")
+                secret_params.append(base_url)
 
             if model:
-                set_parts.append("model = ?")
-                params.append(model)
+                secret_parts.append("model = ?")
+                secret_params.append(model)
+
+            if secret_parts:
+                secret_params.append(user_id)
+                sql = "UPDATE user_secrets SET " + ", ".join(secret_parts) + " WHERE user_id = ?"
+                async with await self._connect() as conn:
+                    await conn.execute(sql, tuple(secret_params))
+                    await conn.commit()
+
+            # ---- users: embedding_key, embedding_region ----
+            user_parts = []
+            user_params = []
 
             if embedding_key:
                 enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
-                set_parts.append("embedding_key = ?")
-                params.append(enc_emb)
+                user_parts.append("embedding_key = ?")
+                user_params.append(enc_emb)
 
             if embedding_region:
-                set_parts.append("embedding_region = ?")
-                params.append(embedding_region)
+                user_parts.append("embedding_region = ?")
+                user_params.append(embedding_region)
 
-            if not set_parts:
-                return
+            if user_parts:
+                user_params.append(user_id)
+                sql = "UPDATE users SET " + ", ".join(user_parts) + " WHERE id = ?"
+                async with await self._connect() as conn:
+                    await conn.execute(sql, tuple(user_params))
+                    await conn.commit()
 
-            params.append(user_id)
-            sql = "UPDATE users SET " + ", ".join(set_parts) + " WHERE id = ?"
-
-            async with await self._connect() as conn:
-                await conn.execute(sql, tuple(params))
-                await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user API config failed: {exc}")
             raise
@@ -2763,7 +2860,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET password_hash = ? WHERE id = ?",
+                    "UPDATE user_secrets SET password_hash = ? WHERE user_id = ?",
                     (password_hash, user_id),
                 )
                 await conn.commit()
@@ -3038,7 +3135,13 @@ class SQLiteStore(StorageBase):
                 )
                 counts["invite_codes"] = cursor.rowcount
 
-                # 8. Delete the user
+                # 8. Delete user_secrets
+                await conn.execute(
+                    "DELETE FROM user_secrets WHERE user_id = ?", (user_id,)
+                )
+                counts["user_secrets"] = 1
+
+                # 9. Delete the user
                 cursor = await conn.execute(
                     "DELETE FROM users WHERE id = ?", (user_id,)
                 )
