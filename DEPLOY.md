@@ -55,14 +55,51 @@ openssl rand -hex 32
 
 > 不再需要 sqlite3：生产用 PostgreSQL（由 docker-compose 的 postgres 容器提供）。
 
-## 2. 前端构建
+## 2. 前端构建（⚠️ 2G 内存机器必读）
 
+**重要：不要在 2G 内存的服务器上直接 `npm run build`** —— node 构建吃内存，2G 机器极易 OOM 导致构建失败。请在【本地电脑】或【CI】构建好，把产物传到服务器。
+
+**方式 A：本地构建（推荐）**
+在你自己的电脑上：
 ```bash
-cd web/frontend && npm install && npm run build
+bash scripts/build_frontend.sh
+# 等价于：cd web/frontend && npm ci && npm run build
+```
+构建产物在 `web/frontend/dist/`。然后传到服务器（二选一）：
+```bash
+# A1. 用 git（dist 已构建好，提交上去）
+git add web/frontend/dist && git commit -m "build: frontend dist" && git push
+# 服务器：git pull
+
+# A2. 或直接 rsync 传产物
+rsync -avz web/frontend/dist/ ubuntu@<服务器IP>:/path/Character-distill/web/frontend/dist/
+```
+
+**方式 B：服务器上构建（仅当机器 ≥4G 内存）**
+```bash
+cd web/frontend && npm ci && npm run build
 ls web/frontend/dist/index.html   # 确认已生成
 ```
 
-> Docker 部署时 `up -d --build` 会自动执行此步。
+**服务器镜像构建用 slim Dockerfile（不在容器内 build 前端）：**
+已提供 `Dockerfile.slim`，它直接使用本地传上来的 `dist`，不跑 node 构建。
+在 `docker-compose.prod.yml` 的 `app` 服务下，把 `build: .` 改为：
+```yaml
+    build:
+      context: .
+      dockerfile: Dockerfile.slim
+```
+若 `dist` 缺失，slim 镜像会在构建时明确报错提示先构建前端（不会起一个没有前端的空服务）。
+
+### 前置：确认 swap（2G 机器保命配置）
+```bash
+free -h   # 看 Swap 行；若为 0B 则按下面配 2G swap
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h   # 确认 Swap 变为 2.0Gi
+```
+
 
 ## 3. 环境变量
 
