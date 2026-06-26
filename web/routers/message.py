@@ -165,6 +165,42 @@ async def react_to_dm(
     return {"ok": True, "added": added}
 
 
+@router.post("/{message_id}/retract")
+@limiter.limit("30/minute")
+async def retract_dm_message(
+    message_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Retract a direct message (sender only). Only enqueues cross-border
+    propagation if sender and receiver are in different regions."""
+    msg = await storage.get_dm_message(message_id)
+    if not msg:
+        raise HTTPException(404, "消息不存在")
+    if msg["sender_id"] != user["id"]:
+        raise HTTPException(403, "只能撤回自己发送的消息")
+
+    # Mark retracted locally
+    try:
+        await storage.retract_dm_message(message_id)
+    except Exception as exc:
+        print(f"[message] Retract DM failed: {exc}")
+        raise HTTPException(500, "撤回失败")
+
+    # Enqueue cross-border propagation if applicable
+    try:
+        receiver = await storage.get_user_by_id(msg["receiver_id"])
+        sender_region = user.get("home_region", "")
+        receiver_region = receiver.get("home_region", "") if receiver else ""
+        if sender_region and receiver_region and sender_region != receiver_region:
+            await storage.enqueue_delete_propagation("dm_retract", message_id)
+    except Exception as exc:
+        print(f"[message] Enqueue dm_retract propagation failed (non-fatal): {exc}")
+
+    return {"ok": True}
+
+
 @router.get("/with/{other_id}/reactions")
 @limiter.limit("60/minute")
 async def get_dm_reactions(
