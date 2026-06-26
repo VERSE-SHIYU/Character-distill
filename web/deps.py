@@ -38,7 +38,7 @@ except Exception as exc:
     print(f"[deps] Failed to read config: {exc}")
     raise
 
-_storage = get_store()
+_storage: StorageBase | None = None
 _main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
 _distiller: Distiller | None = None
@@ -78,7 +78,7 @@ async def get_user_llm(user_id: str, storage: StorageBase | None = None, client_
     with non-whitelisted base_url are blocked (raises HTTPException 403).
     """
     if storage is None:
-        storage = _storage
+        storage = get_storage()
     cached = _user_llm_cache.get(user_id)
     if cached is not None:
         return cached
@@ -120,7 +120,10 @@ def get_memory_manager() -> MemoryManager | None:
 
 
 def get_storage() -> StorageBase:
-    """Return the storage singleton."""
+    """Return the storage singleton (lazy-init)."""
+    global _storage
+    if _storage is None:
+        _storage = get_store()
     return _storage
 
 
@@ -233,7 +236,7 @@ def get_indexing_service() -> IndexingService | None:
     """Return the IndexingService singleton."""
     global _indexing_service
     if _indexing_service is None:
-        _indexing_service = IndexingService(_storage, _rag_config)
+        _indexing_service = IndexingService(get_storage(), _rag_config)
     return _indexing_service
 
 
@@ -241,7 +244,7 @@ def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
     """Return the TextManager singleton (lazy-init), or a per-user instance if llm is given."""
     indexing_svc = get_indexing_service()
     if llm is not None:
-        return TextManager(_storage, Distiller(llm), llm, _rag_config, _sessions, _summary_threshold,
+        return TextManager(get_storage(), Distiller(llm), llm, _rag_config, _sessions, _summary_threshold,
                            indexing_service=indexing_svc)
     global _text_manager
     if _text_manager is None:
@@ -249,7 +252,7 @@ def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
         fallback = get_llm()
         if distiller is None or fallback is None:
             return None
-        _text_manager = TextManager(_storage, distiller, fallback, _rag_config, _sessions, _summary_threshold,
+        _text_manager = TextManager(get_storage(), distiller, fallback, _rag_config, _sessions, _summary_threshold,
                                     indexing_service=indexing_svc)
     return _text_manager
 
@@ -289,8 +292,8 @@ def reset_llm_and_dependents() -> None:
         _config = yaml.safe_load(_f)
     _rag_config = _config["rag"]
     _summary_threshold = _config.get("llm", {}).get("summary_threshold", 50)
-    _indexing_service = IndexingService(_storage, _rag_config)
-    _text_manager = TextManager(_storage, _distiller, _llm, _rag_config, _sessions, _summary_threshold,
+    _indexing_service = IndexingService(get_storage(), _rag_config)
+    _text_manager = TextManager(get_storage(), _distiller, _llm, _rag_config, _sessions, _summary_threshold,
                                 indexing_service=_indexing_service)
     _memory_config = _config.get("memory", {})
     _memory_manager = MemoryManager(_memory_config)
