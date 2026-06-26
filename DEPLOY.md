@@ -143,12 +143,24 @@ chmod 600 /etc/ssl/private/privkey.pem
 ## 5. 启动
 
 ```bash
+# 5.1 初始化持久化目录权限（必做，否则 app 容器内 appuser(uid 1000) 无权写入导致崩溃重启）
+# data/ 是 bind mount，镜像内的 chown 不生效，必须在宿主机赋权给 uid 1000
+mkdir -p data/uploads data/voice_cache data/chroma_db
+sudo chown -R 1000:1000 data/
+
+# 5.2 启动
 docker compose -f docker-compose.prod.yml up -d --build
 
 # 确认 postgres 健康、app 已连上
 docker compose -f docker-compose.prod.yml ps
 docker compose -f docker-compose.prod.yml logs -f app
 ```
+
+> **为什么要 5.1**：app 容器以非 root 的 `appuser`(uid 1000) 运行（安全要求）。
+> `./data` 是 bind mount，容器内看到的是宿主机目录的权限。若宿主机 `data/` 归 root，
+> appuser 无法创建/写入 `uploads` 等子目录，app 会反复 `Restarting (1)`。
+> 此步骤把宿主机 data 目录归属改为 uid 1000，与容器内 appuser 对齐。
+> （nginx 的 `waf.log` 已在 `nginx/Dockerfile` 中 `touch` 创建，无需手动处理。）
 
 首次启动时 app 会自动执行 `storage/migrations_pg/` 下所有 `.sql` 文件建表/加列（幂等，可重复运行）。
 其中 `001_init.sql` 是合并后的完整 schema（已并入 SQLite 端 001~068 全部增量，含用户/角色/会话、

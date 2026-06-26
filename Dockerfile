@@ -31,7 +31,7 @@ COPY . .
 COPY --from=frontend /build/dist /app/web/frontend/dist
 
 # 创建持久化目录
-RUN mkdir -p /app/data /app/data/voice_cache /app/data/chroma_db
+RUN mkdir -p /app/data /app/data/voice_cache /app/data/chroma_db /app/data/uploads
 
 # 非 root 用户运行（安全）
 RUN useradd -m -s /bin/bash appuser && chown -R appuser:appuser /app
