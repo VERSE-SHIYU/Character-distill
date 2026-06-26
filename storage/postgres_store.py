@@ -1862,7 +1862,10 @@ class PostgresStore(StorageBase):
         from hashlib import sha256
         key = os.getenv("FERNET_KEY")
         if not key:
-            raw = os.getenv("JWT_SECRET", "character-distill-dev-secret-key-change-in-prod").encode()
+            secret = os.getenv("JWT_SECRET")
+            if not secret:
+                raise RuntimeError("FERNET_KEY 或 JWT_SECRET 必须设置才能加解密 API key，拒绝使用不安全默认值")
+            raw = secret.encode()
             key = base64.urlsafe_b64encode(sha256(raw).digest())
         return Fernet(key)
 
