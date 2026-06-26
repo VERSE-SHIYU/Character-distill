@@ -39,6 +39,11 @@ def get_jwt_secret() -> str:
             "JWT_SECRET 未设置或使用了默认值！"
             "请在 .env 中设置: JWT_SECRET=$(openssl rand -hex 32)"
         )
+    if len(secret) < 32:
+        raise RuntimeError(
+            f"JWT_SECRET 长度不足 32 字符（当前 {len(secret)}）。"
+            "请用 openssl rand -hex 32 生成"
+        )
     return secret
 
 

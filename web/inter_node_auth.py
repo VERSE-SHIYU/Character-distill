@@ -27,13 +27,26 @@ _MAX_AGE_MS = 30_000  # 30 s clock skew tolerance
 
 
 def get_inter_node_secret() -> str:
-    """Read INTER_NODE_SECRET from env. Raises RuntimeError if unset."""
+    """Read INTER_NODE_SECRET from env. Raises RuntimeError if unset or < 32 chars."""
     secret = os.getenv(_INTER_NODE_SECRET_ENV)
     if not secret:
         raise RuntimeError(
             f"{_INTER_NODE_SECRET_ENV} 未设置，跨节点同步不可用"
         )
+    if len(secret) < 32:
+        raise RuntimeError(
+            f"{_INTER_NODE_SECRET_ENV} 长度不足 32 字符（当前 {len(secret)}）。"
+            "请用 openssl rand -hex 32 生成"
+        )
     return secret
+
+
+def validate_inter_node_secret() -> None:
+    """Validate INTER_NODE_SECRET strength if configured. Skip if unset (single-node compat)."""
+    secret = os.getenv(_INTER_NODE_SECRET_ENV)
+    if not secret:
+        return
+    get_inter_node_secret()  # raises RuntimeError if < 32 chars
 
 
 def _sign(payload: dict, timestamp: int) -> str:

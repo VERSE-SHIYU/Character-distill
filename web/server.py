@@ -59,6 +59,7 @@ from routers.inter_node import router as inter_node_router
 from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_ALGORITHM, get_jwt_secret, validate_jwt_secret
+from inter_node_auth import validate_inter_node_secret
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
@@ -80,6 +81,7 @@ else:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     validate_jwt_secret()
+    validate_inter_node_secret()
     install_log_collector()
     loop = asyncio.get_running_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))

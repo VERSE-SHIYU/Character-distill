@@ -78,6 +78,8 @@ services:
 
   nginx:
     image: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx:latest
+    environment:
+      - PEER_NODE_IP=${PEER_NODE_IP}
     ports:
       - "80:80"
       - "443:443"

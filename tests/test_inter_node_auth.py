@@ -19,17 +19,18 @@ import pytest
 from inter_node_auth import (
     create_auth_header,
     get_inter_node_secret,
+    validate_inter_node_secret,
     verify_auth_header,
 )
 
 
 @pytest.fixture(autouse=True)
 def _set_secret(monkeypatch):
-    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret")
+    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-abcdef123456")
 
 
 def test_get_secret():
-    assert get_inter_node_secret() == "test-inter-node-secret"
+    assert get_inter_node_secret() == "test-inter-node-secret-abcdef123456"
 
 
 def test_get_secret_missing(monkeypatch):
@@ -79,7 +80,7 @@ def test_tampered_signature():
 
 
 def test_expired_timestamp():
-    secret = "test-inter-node-secret"
+    secret = "test-inter-node-secret-abcdef123456"
     payload = {"user_id": "u123"}
     old_ts = int(time.time() * 1000) - 60_000  # 60 s ago (past the 30 s window)
     msg = f"{old_ts}:{json.dumps(payload, separators=(',', ':'), sort_keys=True)}"
@@ -89,6 +90,44 @@ def test_expired_timestamp():
     valid, reason = verify_auth_header(auth, payload)
     assert not valid
     assert "过期" in reason
+
+
+# ---- Secret strength validation ----
+
+
+def test_get_secret_too_short(monkeypatch):
+    monkeypatch.setenv("INTER_NODE_SECRET", "short-secret")
+    with pytest.raises(RuntimeError, match="不足 32"):
+        get_inter_node_secret()
+
+
+def test_get_secret_strong_enough(monkeypatch):
+    strong = "a" * 32
+    monkeypatch.setenv("INTER_NODE_SECRET", strong)
+    assert get_inter_node_secret() == strong
+
+
+def test_get_secret_strong_enough_33_chars(monkeypatch):
+    strong = "b" * 33
+    monkeypatch.setenv("INTER_NODE_SECRET", strong)
+    assert get_inter_node_secret() == strong
+
+
+def test_validate_unset_skips(monkeypatch):
+    """Single-node: no INTER_NODE_SECRET → validate passes silently."""
+    monkeypatch.delenv("INTER_NODE_SECRET", raising=False)
+    validate_inter_node_secret()  # must not raise
+
+
+def test_validate_weak_raises(monkeypatch):
+    monkeypatch.setenv("INTER_NODE_SECRET", "weak")
+    with pytest.raises(RuntimeError, match="不足 32"):
+        validate_inter_node_secret()
+
+
+def test_validate_strong_passes(monkeypatch):
+    monkeypatch.setenv("INTER_NODE_SECRET", "c" * 32)
+    validate_inter_node_secret()  # must not raise
 
 
 def test_round_trip_serialization():
