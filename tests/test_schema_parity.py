@@ -29,7 +29,7 @@ _SKIP_WORDS = frozenset({
 # Type keywords that signal a real column definition vs a constraint clause.
 _COL_TYPE_RE = re.compile(
     r"^\s*(\w+)\s+"
-    r"(INTEGER|TEXT|BOOLEAN|SMALLINT|TIMESTAMP(?:TZ)?|DOUBLE\s+PRECISION|REAL|BLOB)",
+    r"(INTEGER|TEXT|BOOLEAN|SMALLINT|BIGINT|SERIAL|BIGSERIAL|TIMESTAMP(?:TZ)?|DOUBLE\s+PRECISION|REAL|BLOB)",
     re.IGNORECASE | re.MULTILINE,
 )
 

@@ -195,6 +195,10 @@ async def batch_delete_users(
             if memory_manager and memory_manager.enabled:
                 for cid in card_ids:
                     memory_manager.delete_all(cid)
+            try:
+                await storage.enqueue_delete_propagation("user_purge", user_id)
+            except Exception as exc:
+                print(f"[admin] Batch enqueue user_purge for {user_id} failed (non-fatal): {exc}")
             await storage.delete_user(user_id)
             deleted += 1
         except Exception as exc:
