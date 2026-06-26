@@ -84,6 +84,20 @@ class DistillTaskRequest(BaseModel):
     force: bool = False
 
 
+def cancel_distill_tasks_by_text_id(text_id: str) -> int:
+    """Cancel all in-flight distill tasks matching the given text_id.
+
+    Returns the number of tasks cancelled.
+    """
+    count = 0
+    with _task_lock:
+        for tid, task in list(_tasks.items()):
+            if task.get("text_id") == text_id and task.get("status") not in ("done", "error"):
+                task.update({"status": "error", "message": "文本已删除，任务已取消"})
+                count += 1
+    return count
+
+
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,

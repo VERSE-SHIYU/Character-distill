@@ -1077,25 +1077,91 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Restore text failed: {exc}")
             raise
 
-    async def hard_delete_text(self, id: str) -> bool:
-        """Permanently delete a text and all associated data."""
+    async def detach_text_cards(self, id: str) -> int:
+        """Detach all cards from a text by setting text_id to ''."""
         try:
             async with await self._connect() as conn:
-                # Delete reading progress
-                await conn.execute("DELETE FROM reading_progress WHERE text_id = ?", (id,))
-                # Delete sessions associated with cards of this text
-                await conn.execute(
-                    "DELETE FROM sessions WHERE card_id IN (SELECT id FROM cards WHERE text_id = ?)",
+                cursor = await conn.execute(
+                    "UPDATE cards SET text_id = '' WHERE text_id = ?",
                     (id,),
                 )
-                # Delete cards
-                await conn.execute("DELETE FROM cards WHERE text_id = ?", (id,))
+                await conn.commit()
+                return cursor.rowcount
+        except Exception as exc:
+            print(f"[SQLiteStore] Detach text cards failed: {exc}")
+            raise
+
+    async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Permanently delete a text.
+
+        keep_cards=True: detach cards (text_id→'') so cards+sessions survive.
+        keep_cards=False (default): cascade-delete cards and their sessions.
+        When keep_cards=False, public cards get delete-propagation enqueued.
+        """
+        try:
+            async with await self._connect() as conn:
+                if keep_cards:
+                    # Detach cards from the text so CASCADE doesn't hit them
+                    await conn.execute(
+                        "UPDATE cards SET text_id = '' WHERE text_id = ?",
+                        (id,),
+                    )
+                else:
+                    # Enqueue delete propagation for public cards
+                    cursor = await conn.execute(
+                        "SELECT id FROM cards WHERE text_id = ? AND visibility = 'public' AND deleted_at IS NULL",
+                        (id,),
+                    )
+                    public_ids = [row[0] for row in (await cursor.fetchall())]
+                    for cid in public_ids:
+                        await conn.execute(
+                            "INSERT OR IGNORE INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES (?, ?, ?)",
+                            ("card_delete", cid, ""),
+                        )
+                    # Cascade-delete sessions, then cards
+                    await conn.execute(
+                        "DELETE FROM sessions WHERE card_id IN (SELECT id FROM cards WHERE text_id = ?)",
+                        (id,),
+                    )
+                    await conn.execute("DELETE FROM cards WHERE text_id = ?", (id,))
+                # Delete reading progress
+                await conn.execute("DELETE FROM reading_progress WHERE text_id = ?", (id,))
                 # Delete the text itself
                 cursor = await conn.execute("DELETE FROM texts WHERE id = ?", (id,))
                 await conn.commit()
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Hard delete text failed: {exc}")
+            raise
+
+    async def get_text_deletion_impact(self, text_id: str, user_id: str) -> dict:
+        """Count cards, sessions, and messages affected by text deletion."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM cards WHERE text_id = ? AND deleted_at IS NULL",
+                    (text_id,),
+                )
+                row = await cursor.fetchone()
+                card_count = row[0] if row else 0
+
+                cursor = await conn.execute(
+                    "SELECT COUNT(DISTINCT s.id) FROM sessions s JOIN cards c ON s.card_id = c.id WHERE c.text_id = ? AND s.deleted_at IS NULL",
+                    (text_id,),
+                )
+                row = await cursor.fetchone()
+                session_count = row[0] if row else 0
+
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM messages m WHERE m.session_id IN (SELECT s.id FROM sessions s JOIN cards c ON s.card_id = c.id WHERE c.text_id = ?)",
+                    (text_id,),
+                )
+                row = await cursor.fetchone()
+                message_count = row[0] if row else 0
+
+            return {"card_count": card_count, "session_count": session_count, "message_count": message_count}
+        except Exception as exc:
+            print(f"[SQLiteStore] Get text deletion impact failed: {exc}")
             raise
 
     async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:

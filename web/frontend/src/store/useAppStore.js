@@ -547,9 +547,9 @@ const useAppStore = create((set, get) => ({
     })
   },
 
-  deleteText: async (textId) => {
+  deleteText: async (textId, keep_cards = false) => {
     try {
-      await fetchWithTimeout(`/api/text/${textId}`, { method: 'DELETE' })
+      await fetchWithTimeout(`/api/text/${textId}?keep_cards=${keep_cards}`, { method: 'DELETE' })
       set((s) => ({
         texts: s.texts.filter((t) => t.id !== textId),
         currentTextId: s.currentTextId === textId ? null : s.currentTextId,

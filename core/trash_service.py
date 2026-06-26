@@ -106,11 +106,15 @@ async def restore(entity_type: str, entity_id: str, user: dict, storage: Any) ->
     return True if result is None else bool(result)
 
 
-async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any) -> bool:
+async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any, keep_cards: bool = False) -> bool:
     """Permanently delete an entity (irreversible).
 
     Validates that the entity exists, the user owns it, and it has already
     been soft-deleted (deleted_at is set).
+
+    keep_cards is only meaningful for "text" type: when True, cards are
+    detached (text_id→NULL) instead of cascade-deleted, so they and their
+    chat sessions survive the text deletion.
 
     Returns True on success, raises HTTPException on failure.
     """
@@ -131,5 +135,8 @@ async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any
     if method is None:
         raise HTTPException(500, f"Storage missing method: {config['hard']}")
 
-    result = await method(entity_id)
+    if entity_type == "text":
+        result = await method(entity_id, keep_cards=keep_cards)
+    else:
+        result = await method(entity_id)
     return True if result is None else bool(result)

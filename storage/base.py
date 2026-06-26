@@ -25,6 +25,23 @@ class StorageBase(ABC):
         """Delete a text record by ID."""
 
     @abstractmethod
+    async def detach_text_cards(self, id: str) -> int:
+        """Detach all cards from a text by setting text_id to ''.
+
+        Returns the number of cards detached. Cards become standalone
+        characters with their chat sessions intact.
+        """
+
+    @abstractmethod
+    async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Permanently delete a text.
+
+        When keep_cards=True, cards are detached (text_id → '') so they and
+        their chat sessions survive the text deletion. When False (default),
+        cards and their sessions are cascade-deleted.
+        """
+
+    @abstractmethod
     async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:
         """Save a character card and return the stored record."""
 
@@ -292,3 +309,11 @@ class StorageBase(ABC):
     @abstractmethod
     async def retract_dm_message(self, message_id: str) -> None:
         """Set retracted=1 on a direct message. Idempotent: no-op if already retracted or not found."""
+
+    @abstractmethod
+    async def get_text_deletion_impact(self, text_id: str, user_id: str) -> dict:
+        """Count cards, sessions, and messages that would be affected by deleting a text.
+
+        Returns {"card_count": int, "session_count": int, "message_count": int}.
+        Cards with shared sessions are counted once.
+        """

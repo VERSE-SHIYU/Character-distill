@@ -297,17 +297,55 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Restore text failed: {exc}")
             raise
 
-    async def hard_delete_text(self, id: str) -> bool:
-        """Permanently delete a text and all associated data."""
+    async def detach_text_cards(self, id: str) -> int:
+        """Detach all cards from a text by setting text_id to ''."""
+        try:
+            async with await self._connect() as conn:
+                tag = await conn.execute(
+                    "UPDATE cards SET text_id = '' WHERE text_id = $1",
+                    id,
+                )
+                return tag.rowcount
+        except Exception as exc:
+            print(f"[PostgresStore] Detach text cards failed: {exc}")
+            raise
+
+    async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Permanently delete a text.
+
+        keep_cards=True: detach cards (text_id→'') so cards+sessions survive.
+        keep_cards=False (default): cascade-delete cards and their sessions.
+        When keep_cards=False, public cards get delete-propagation enqueued.
+        """
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
+                    if keep_cards:
+                        # Detach cards from the text so CASCADE doesn't hit them
+                        await conn.execute(
+                            "UPDATE cards SET text_id = '' WHERE text_id = $1",
+                            id,
+                        )
+                    else:
+                        # Enqueue delete propagation for public cards
+                        rows = await conn.fetch(
+                            "SELECT id FROM cards WHERE text_id = $1 AND visibility = 'public' AND deleted_at IS NULL",
+                            id,
+                        )
+                        for row in rows:
+                            await conn.execute(
+                                "INSERT INTO cross_border_delete_outbox (op_type, target_id, payload) VALUES ($1, $2, $3) ON CONFLICT (op_type, target_id) DO NOTHING",
+                                "card_delete", row[0], "",
+                            )
+                        # Cascade-delete sessions, then cards
+                        await conn.execute(
+                            "DELETE FROM sessions WHERE card_id IN (SELECT id FROM cards WHERE text_id = $1)",
+                            id,
+                        )
+                        await conn.execute("DELETE FROM cards WHERE text_id = $1", id)
+                    # Delete reading progress
                     await conn.execute("DELETE FROM reading_progress WHERE text_id = $1", id)
-                    await conn.execute(
-                        "DELETE FROM sessions WHERE card_id IN (SELECT id FROM cards WHERE text_id = $1)",
-                        id,
-                    )
-                    await conn.execute("DELETE FROM cards WHERE text_id = $1", id)
+                    # Delete the text itself
                     tag = await conn.execute("DELETE FROM texts WHERE id = $1", id)
                 return self._parse_rowcount(tag) > 0
         except Exception as exc:

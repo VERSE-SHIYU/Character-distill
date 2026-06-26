@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from urllib.parse import quote
 
@@ -27,6 +27,26 @@ from pydantic import BaseModel
 # ── Upload task store (background identify + coref with progress) ─────
 _upload_tasks: dict[str, dict[str, Any]] = {}
 _upload_task_lock = threading.Lock()
+
+
+def cancel_upload_tasks_by_text_id(text_id: str) -> int:
+    """Cancel all in-flight upload tasks matching the given text_id.
+
+    Returns the number of tasks cancelled.
+    """
+    count = 0
+    with _upload_task_lock:
+        for tid, task in list(_upload_tasks.items()):
+            if task.get("text_id") == text_id and task.get("status") not in ("done", "error"):
+                task.update({"status": "error", "message": "文本已删除，任务已取消"})
+                count += 1
+    return count
+
+
+def _check_upload_cancelled(task_id: str) -> bool:
+    """Return True if the upload task has been cancelled (status set to error)."""
+    with _upload_task_lock:
+        return _upload_tasks.get(task_id, {}).get("status") == "error"
 
 
 def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | None = None) -> None:
@@ -51,6 +71,10 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
 
             content = text_rec.get("content", "")
             text_type = text_rec.get("text_type", "story")
+
+            # Check cancellation before proceeding
+            if _check_upload_cancelled(task_id):
+                return
 
             # Only story/classic need coref
             if text_type not in ("story", "classic"):
@@ -87,6 +111,9 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
                     _upload_tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
                 return
 
+            if _check_upload_cancelled(task_id):
+                return
+
             try:
                 chars = await asyncio.to_thread(distiller.identify_characters, content)
             except Exception as exc:
@@ -115,15 +142,24 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
                         "total": total,
                         "message": f"预处理文本 {current}/{total}",
                     })
+                # Check cancellation during long-running coref
+                if _check_upload_cancelled(task_id):
+                    raise InterruptedError("cancelled")
 
             try:
                 resolved = await asyncio.to_thread(
                     distiller.coref_resolve, content, chars,
                     progress_callback=_on_progress,
                 )
+            except InterruptedError:
+                # Task was cancelled mid-coref, skip saving
+                return
             except Exception as exc:
                 print(f"[text] Upload coref failed {text_id}: {exc}")
                 resolved = ""
+
+            if _check_upload_cancelled(task_id):
+                return
 
             if resolved:
                 await store.update_text_resolved(text_id, resolved)
@@ -353,14 +389,43 @@ async def delete_text_comment(
     return {"ok": True}
 
 
+@router.get("/{text_id}/deletion-impact")
+async def get_text_deletion_impact(
+    text_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Get impact stats before deleting a text (cards, sessions, messages)."""
+    text = await storage.get_text(text_id)
+    if not text:
+        raise HTTPException(404, "Text not found")
+    if text.get("user_id") != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "无权查看此文本")
+    return await storage.get_text_deletion_impact(text_id, user["id"])
+
+
 @router.delete("/{text_id}")
 async def delete_text(
     text_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    keep_cards: bool = Query(False, description="保留角色卡（置 text_id=NULL 使之独立存活）"),
 ) -> dict[str, bool]:
-    """Soft-delete a text (move to trash)."""
+    """Soft-delete a text (move to trash).
+
+    keep_cards=True detaches cards from the text so they survive as standalone
+    characters; the text goes to trash but cards+sessions remain accessible.
+    """
+    # Cancel in-flight background tasks for this text
+    from routers.distill import cancel_distill_tasks_by_text_id
+    cancel_upload_tasks_by_text_id(text_id)
+    cancel_distill_tasks_by_text_id(text_id)
+
+    if keep_cards:
+        await storage.detach_text_cards(text_id)
+
     ok = await soft_delete("text", text_id, user, storage)
     if not ok:
         raise HTTPException(404, "Text not found")
@@ -407,9 +472,19 @@ async def permanent_delete_text(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
+    keep_cards: bool = Query(False, description="保留角色卡（置 text_id=NULL 使之独立存活）"),
 ) -> dict:
-    """Permanently delete a text and all associated data."""
-    ok = await hard_delete("text", text_id, user, storage)
+    """Permanently delete a text and all associated data.
+
+    keep_cards=True detaches cards (text_id→NULL) so they and their chat
+    sessions survive as standalone characters.
+    """
+    # Cancel in-flight background tasks for this text
+    from routers.distill import cancel_distill_tasks_by_text_id
+    cancel_upload_tasks_by_text_id(text_id)
+    cancel_distill_tasks_by_text_id(text_id)
+
+    ok = await hard_delete("text", text_id, user, storage, keep_cards=keep_cards)
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}

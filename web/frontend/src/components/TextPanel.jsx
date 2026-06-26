@@ -95,6 +95,8 @@ export default function TextPanel() {
   const [localError, setLocalError] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
+  const [deleteImpact, setDeleteImpact] = useState(null)
+  const [keepCards, setKeepCards] = useState(false)
   const [expandedId, setExpandedId] = useState(null)
   const [cardCounts, setCardCounts] = useState({})
 
@@ -176,15 +178,29 @@ export default function TextPanel() {
   const onDelete = async (e, id) => {
     e.stopPropagation()
     setDeleteConfirmId(id)
+    setKeepCards(false)
+    // Fetch impact stats
+    try {
+      const res = await fetchWithTimeout(`/api/text/${id}/deletion-impact`)
+      if (res.ok) {
+        const data = await res.json()
+        setDeleteImpact(data)
+      } else {
+        setDeleteImpact(null)
+      }
+    } catch {
+      setDeleteImpact(null)
+    }
   }
 
   const handleConfirmDelete = async () => {
     const id = deleteConfirmId
     setDeleteConfirmId(null)
+    setDeleteImpact(null)
     setDeletingId(id)
     setLocalError(null)
     try {
-      await deleteText(id)
+      await deleteText(id, keepCards)
     } catch (err) {
       setLocalError(err.message || '删除失败')
     } finally {
@@ -438,15 +454,54 @@ export default function TextPanel() {
         </div>
       )}
 
-      <ConfirmModal
-        isOpen={!!deleteConfirmId}
-        title="删除文本"
-        message="确定删除该文本？关联角色卡与会话将一并删除。"
-        confirmText="删除"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setDeleteConfirmId(null)}
-        danger
-      />
+      {/* Delete confirmation modal with impact stats + keep_cards option */}
+      {deleteConfirmId && (
+        <div className="modal-overlay" onClick={() => { setDeleteConfirmId(null); setDeleteImpact(null) }}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <h2 className="modal-title" style={{ color: 'var(--danger)' }}>删除文本</h2>
+
+            {deleteImpact ? (
+              <p className="modal-message">
+                该操作将影响 <strong>{deleteImpact.card_count}</strong> 个角色卡、
+                <strong>{deleteImpact.session_count}</strong> 段对话、
+                共 <strong>{deleteImpact.message_count}</strong> 条消息。
+              </p>
+            ) : (
+              <p className="modal-message">正在获取影响范围…</p>
+            )}
+
+            <label className="modal-checkbox" style={{
+              display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0',
+              cursor: 'pointer', fontSize: 14,
+            }}>
+              <input
+                type="checkbox"
+                checked={keepCards}
+                onChange={(e) => setKeepCards(e.target.checked)}
+              />
+              保留角色卡与对话（角色将脱离本书独立存在）
+            </label>
+
+            <div className="modal-actions" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => { setDeleteConfirmId(null); setDeleteImpact(null) }}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}
+                onClick={handleConfirmDelete}
+              >
+                删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
         </>
       ) : (
         <CharacterManagement

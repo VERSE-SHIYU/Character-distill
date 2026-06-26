@@ -831,3 +831,165 @@ class TestDeletePropagationAtomicity:
         pairs = {(r["op_type"], r["target_id"]) for r in rows}
         assert ("card_delete", card_id) in pairs
         assert ("user_purge", uid) in pairs
+
+
+# ── Text Deletion Impact & keep_cards ─────────────────────────────────
+
+
+class TestTextDeletionImpact:
+    """get_text_deletion_impact returns accurate card/session/message counts."""
+
+    async def test_no_cards(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        impact = await store.get_text_deletion_impact(text_id, "")
+        assert impact == {"card_count": 0, "session_count": 0, "message_count": 0}
+
+    async def test_with_cards_no_sessions(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        impact = await store.get_text_deletion_impact(text_id, "")
+        assert impact["card_count"] == 1
+        assert impact["session_count"] == 0
+        assert impact["message_count"] == 0
+
+    async def test_with_sessions_and_messages(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        sid = f"s_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.save_session(sid, cid, "user", "", user_id="test")
+        mid = await store.save_message(sid, "user", "hello", "")
+        impact = await store.get_text_deletion_impact(text_id, "")
+        assert impact["card_count"] == 1
+        assert impact["session_count"] == 1
+        assert impact["message_count"] == 1
+
+
+class TestTextHardDeleteKeepCards:
+    """hard_delete_text(keep_cards=True) detaches cards; keep_cards=False cascade-deletes."""
+
+    async def test_keep_cards_true_cards_survive(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        sid = f"s_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.save_session(sid, cid, "user", "", user_id="test")
+        await store.save_message(sid, "user", "hello", "")
+
+        ok = await store.hard_delete_text(text_id, keep_cards=True)
+        assert ok is True
+        # Text is gone
+        assert await store.get_text(text_id) is None
+        # Card survives with text_id=NULL
+        card = await store.get_card(cid)
+        assert card is not None
+        assert card["text_id"] == ''
+        # Session survives
+        session = await store.get_session(sid)
+        assert session is not None
+        # Messages survive
+        msgs = await store.get_messages(sid)
+        assert len(msgs) == 1
+
+    async def test_keep_cards_false_cascade_delete(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        sid = f"s_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.save_session(sid, cid, "user", "", user_id="test")
+        await store.save_message(sid, "user", "hello", "")
+
+        ok = await store.hard_delete_text(text_id, keep_cards=False)
+        assert ok is True
+        # Text is gone
+        assert await store.get_text(text_id) is None
+        # Card is gone
+        assert await store.get_card(cid) is None
+        # Session is gone
+        assert await store.get_session(sid) is None
+
+    async def test_detach_text_cards(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+
+        count = await store.detach_text_cards(text_id)
+        assert count == 1
+        card = await store.get_card(cid)
+        assert card is not None
+        assert card["text_id"] == ''
+        # Text still exists
+        assert await store.get_text(text_id) is not None
+
+    async def test_keep_cards_public_cards_get_delete_outbox(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.update_card_visibility(cid, "public")
+
+        await store.hard_delete_text(text_id, keep_cards=False)
+        # Card should be in delete outbox
+        rows = await store.get_pending_delete_propagations()
+        assert any(r["op_type"] == "card_delete" and r["target_id"] == cid for r in rows)
+
+    async def test_keep_cards_true_public_cards_no_outbox(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.update_card_visibility(cid, "public")
+
+        await store.hard_delete_text(text_id, keep_cards=True)
+        # No delete outbox entry since card was kept
+        rows = await store.get_pending_delete_propagations()
+        assert not any(r["op_type"] == "card_delete" and r["target_id"] == cid for r in rows)
+
+
+class TestStandaloneCardListing:
+    """Cards with text_id=NULL must still appear in list_standalone_cards."""
+
+    async def test_standalone_card_shows_in_list(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}', user_id="user_sa")
+        # Detach the card
+        await store.detach_text_cards(text_id)
+        standalone = await store.list_standalone_cards("user_sa")
+        ids = {c["id"] for c in standalone}
+        assert cid in ids, "Detached card must appear in standalone listing"
+
+    async def test_standalone_card_visible_in_character_tab(self, store, text_id):
+        """Simulate the full flow: create text, distill card, delete text with keep_cards."""
+        await store.save_text(text_id, "src.txt", "source", user_id="user_sb")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}', user_id="user_sb")
+        sid = f"s_{uuid.uuid4().hex}"
+        await store.save_session(sid, cid, "user", "", user_id="user_sb")
+
+        # Delete text with keep_cards=True
+        await store.hard_delete_text(text_id, keep_cards=True)
+
+        # Card should be standalone now and visible
+        standalone = await store.list_standalone_cards("user_sb")
+        ids = {c["id"] for c in standalone}
+        assert cid in ids, "Card must appear as standalone after keep_cards delete"
+
+        # Card can still be fetched by ID
+        card = await store.get_card(cid)
+        assert card is not None
+        assert card["text_id"] == ''
+
+        # Session still accessible
+        session = await store.get_session(sid)
+        assert session is not None
+
+    async def test_standalone_card_excluded_from_text_cards(self, store, text_id):
+        """Detached card should NOT appear in list_cards(text_id)."""
+        await store.save_text(text_id, "src.txt", "source", user_id="user_sc")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}', user_id="user_sc")
+        await store.detach_text_cards(text_id)
+
+        cards = await store.list_cards(text_id, "user_sc")
+        ids = {c["id"] for c in cards}
+        assert cid not in ids, "Detached card must NOT appear in list_cards by text_id"

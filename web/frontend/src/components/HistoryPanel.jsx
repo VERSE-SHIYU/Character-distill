@@ -477,39 +477,31 @@ export default function HistoryPanel({ initialTrash = false }) {
     setView('groupChat')
   }
 
-  if (detail) {
-    return (
-      <HistoryDetail
-        data={detail}
-        loading={detailLoading}
-        resumeLoading={resumeLoading}
-        trashMode={trashMode}
-        cardAvatars={cardAvatars}
-        onBack={() => setDetail(null)}
-        onContinue={() => handleContinue(detail.session.id)}
-        onDelete={() => requestConfirm(
-          trashMode ? 'purgeSession' : 'deleteSession',
-          { run: () => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id) },
-        )}
-        onRestore={() => handleRestore(detail.session.id)}
-        onExport={(fmt) => downloadExport(detail.session.id, fmt)}
-      />
-    )
-  }
-
-  if (groupDetail) {
-    return (
-      <GroupHistoryDetail
-        detail={groupDetail}
-        loading={groupDetailLoading}
-        onBack={() => setGroupDetail(null)}
-        onResume={() => handleResumeGroup(groupDetail.id)}
-        onDelete={() => requestConfirm('deleteGroup', { run: () => handleDeleteGroup(groupDetail.id) })}
-      />
-    )
-  }
-
-  return (
+  const bodyContent = detail ? (
+    <HistoryDetail
+      data={detail}
+      loading={detailLoading}
+      resumeLoading={resumeLoading}
+      trashMode={trashMode}
+      cardAvatars={cardAvatars}
+      onBack={() => setDetail(null)}
+      onContinue={() => handleContinue(detail.session.id)}
+      onDelete={() => requestConfirm(
+        trashMode ? 'purgeSession' : 'deleteSession',
+        { run: () => trashMode ? handlePurge(detail.session.id) : handleDelete(detail.session.id) },
+      )}
+      onRestore={() => handleRestore(detail.session.id)}
+      onExport={(fmt) => downloadExport(detail.session.id, fmt)}
+    />
+  ) : groupDetail ? (
+    <GroupHistoryDetail
+      detail={groupDetail}
+      loading={groupDetailLoading}
+      onBack={() => setGroupDetail(null)}
+      onResume={() => handleResumeGroup(groupDetail.id)}
+      onDelete={() => requestConfirm('deleteGroup', { run: () => handleDeleteGroup(groupDetail.id) })}
+    />
+  ) : (
     <div className="history-panel panel">
       <header className="panel-header">
         <h1 className="panel-title">历史记录</h1>
@@ -867,7 +859,13 @@ export default function HistoryPanel({ initialTrash = false }) {
           )}
         </>
       )}
+    </div>
+  )
 
+  return (
+    <>
+      {bodyContent}
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <ConfirmModal
         isOpen={!!pendingAction}
         title={pendingAction?.title || ''}
@@ -877,7 +875,7 @@ export default function HistoryPanel({ initialTrash = false }) {
         onCancel={() => setPendingAction(null)}
         danger={pendingAction?.danger ?? true}
       />
-    </div>
+    </>
   )
 }
 
