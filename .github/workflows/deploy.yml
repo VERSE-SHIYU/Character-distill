@@ -13,6 +13,20 @@ jobs:
   # ── 关卡1：测试必须通过，否则不构建、不部署 ──────────────────────
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: charsim
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: charsim
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +41,9 @@ jobs:
           pip install --no-cache-dir pytest pytest-asyncio
 
       - name: Run security & unit tests
+        env:
+          STORAGE_BACKEND: postgres
+          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
         run: pytest tests/ -v --tb=short
 
   # ── 关卡2：构建并推送镜像（test 通过后才执行） ──────────────────
