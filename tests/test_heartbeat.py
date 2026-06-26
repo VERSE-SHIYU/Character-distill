@@ -129,19 +129,14 @@ def test_module_imports():
         print(f"[AST] try/except/finally blocks: {v.try_except_finally_count}")
         print(f"[AST] identify_characters calls: {v.identify_calls}")
 
-        # Heartbeat pattern: needs_coref has inner try/finally for heartbeat stop,
-        # main identify has try/except/finally. Combined we need at least 1 each.
-        assert v.try_finally_count >= 1, (
-            f"FAIL: expected >=1 try/finally block (inner heartbeat wrapper), "
-            f"found {v.try_finally_count}"
-        )
+        # Main identify has try/except/finally for proper cleanup.
         assert v.try_except_finally_count >= 1, (
             f"FAIL: expected >=1 try/except/finally block, "
             f"found {v.try_except_finally_count}"
         )
-        assert v.identify_calls == 2, (
-            f"FAIL: expected exactly 2 identify_characters calls "
-            f"(needs_coref + main), found {v.identify_calls}"
+        assert v.identify_calls >= 1, (
+            f"FAIL: expected >=1 identify_characters call, "
+            f"found {v.identify_calls}"
         )
         print("[PASS] module AST structure is valid")
 

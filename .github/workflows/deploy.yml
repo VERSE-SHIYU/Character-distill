@@ -5,13 +5,34 @@ on:
     branches: [main]
 
 env:
+  REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
   APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
   NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
-  build-and-deploy:
+  # ── 关卡1：测试必须通过，否则不构建、不部署 ──────────────────────
+  test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --no-cache-dir -r requirements.txt
+          pip install --no-cache-dir pytest pytest-asyncio
+
+      - name: Run security & unit tests
+        run: pytest tests/ -v --tb=short
+
+  # ── 关卡2：构建并推送镜像（test 通过后才执行） ──────────────────
+  build:
+    needs: test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +42,7 @@ jobs:
       - name: Login to Aliyun ACR
         uses: docker/login-action@v3
         with:
-          registry: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
+          registry: ${{ env.REGISTRY }}
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
@@ -47,16 +68,60 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Deploy to server
+  # ── 关卡3：部署 + 健康检查 + 失败自动回滚 ──────────────────────
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server with health check and rollback
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            set -e
             cd /opt/character-distill
-            echo "${{ secrets.ACR_PASSWORD }}" | docker login crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com \
+
+            # 记录当前正在运行的镜像 sha（用于回滚）
+            PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
+            echo "上一个版本: ${PREV_SHA:-无（首次部署）}"
+
+            # 登录 ACR 并拉取新镜像
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.REGISTRY }} \
               -u "${{ secrets.ACR_USERNAME }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull
+
+            # 部署新版本
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # 健康检查：最多等 60 秒，让新版本起来
+            echo "等待服务健康检查..."
+            HEALTHY=0
+            for i in $(seq 1 12); do
+              sleep 5
+              if curl -sf http://localhost:7860/api/health > /dev/null 2>&1; then
+                echo "✅ 健康检查通过（第 ${i} 次尝试）"
+                HEALTHY=1
+                break
+              fi
+              echo "  第 ${i}/12 次检查未通过，继续等待..."
+            done
+
+            # 健康检查失败 → 自动回滚到上一个 sha
+            if [ "$HEALTHY" -ne 1 ]; then
+              echo "❌ 健康检查失败，开始回滚..."
+              if [ -n "$PREV_SHA" ]; then
+                docker pull ${{ env.APP_IMAGE }}:${PREV_SHA}
+                docker tag ${{ env.APP_IMAGE }}:${PREV_SHA} ${{ env.APP_IMAGE }}:latest
+                docker compose -f docker-compose.prod.yml up -d
+                echo "已回滚到 ${PREV_SHA}"
+              else
+                echo "无上一版本可回滚（首次部署失败），保留现场供排查"
+              fi
+              exit 1
+            fi
+
+            # 成功，清理悬空镜像（保留 tagged 的历史版本供回滚）
             docker image prune -f
+            echo "✅ 部署成功"

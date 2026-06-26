@@ -72,129 +72,136 @@ def register_user(ts):
         return None, None, None
 
 
-# ── Step 1: Register test users ──
-print("=" * 60)
-print("Create test users & follow relationship via HTTP API")
-print("=" * 60)
+def main():
+    global PASS, FAIL
 
-ts = str(int(time.time()))
+    # ── Step 1: Register test users ──
+    print("=" * 60)
+    print("Create test users & follow relationship via HTTP API")
+    print("=" * 60)
 
-uid_a, uname_a, token_a = register_user(ts)
-uid_b, uname_b, token_b = register_user(ts)
+    ts = str(int(time.time()))
 
-if not token_a or not token_b:
+    uid_a, uname_a, token_a = register_user(ts)
+    uid_b, uname_b, token_b = register_user(ts)
+
+    if not token_a or not token_b:
+        print()
+        print("SKIP: Cannot register test users without invite code or open registration.")
+        print("Set ADMIN_INVITE_CODE in .env or set registration.mode=open in config.yaml")
+        sys.exit(0 if not FAIL else 1)
+
+    # User A follows User B via API
     print()
-    print("SKIP: Cannot register test users without invite code or open registration.")
-    print("Set ADMIN_INVITE_CODE in .env or set registration.mode=open in config.yaml")
-    sys.exit(0 if not FAIL else 1)
-
-# User A follows User B via API
-print()
-print("A follows B via POST /api/author/{uid_b}/follow")
-r = req("POST", f"/api/author/{uid_b}/follow", token=token_a)
-check(f"User A follows B", r.get("ok") or r.get("following") or True,
-      f"got: {r}")
-
-# ── Step 2: Login test + /api/auth/me following_visible ──
-print()
-print("=" * 60)
-print("Login + /api/auth/me following_visible")
-print("=" * 60)
-
-# Login as A
-r = req("POST", "/api/auth/login", {"username": uname_a, "password": "TestPass1234"})
-token_a2 = r.get("access_token", "")
-check(f"Login {uname_a}", bool(token_a2), f"got: {r}")
-
-if token_a2:
-    me = req("GET", "/api/auth/me", token=token_a2)
-    check("GET /api/auth/me includes following_visible",
-          me.get("following_visible") is not None,
-          f"keys: {list(me.keys())}")
-    print(f"  following_visible = {me.get('following_visible')}")
-
-# ── Step 3: Test following privacy ──
-print()
-print("=" * 60)
-print("Following list privacy")
-print("=" * 60)
-
-if token_a2:
-    # Step A: Default should be visible
-    r = req("GET", f"/api/market/author/{uid_a}/following", token=token_a2)
-    check("Default: following list visible when following_visible=1",
-          r.get("locked") is False,
+    print("A follows B via POST /api/author/{uid_b}/follow")
+    r = req("POST", f"/api/author/{uid_b}/follow", token=token_a)
+    check(f"User A follows B", r.get("ok") or r.get("following") or True,
           f"got: {r}")
 
-    # Step B: Set following_visible = False via PATCH
-    r = req("PATCH", "/api/market/author/visibility",
-            {"following_visible": False}, token=token_a2)
-    check("PATCH following_visible=False succeeds",
-          r.get("following_visible") is False or r.get("ok"),
-          f"got: {r}")
+    # ── Step 2: Login test + /api/auth/me following_visible ──
+    print()
+    print("=" * 60)
+    print("Login + /api/auth/me following_visible")
+    print("=" * 60)
 
-    # Step C: Verify via /api/auth/me
-    me2 = req("GET", "/api/auth/me", token=token_a2)
-    check("GET /api/auth/me reflects following_visible=False",
-          me2.get("following_visible") is False,
-          f"got: {me2.get('following_visible')}")
+    # Login as A
+    r = req("POST", "/api/auth/login", {"username": uname_a, "password": "TestPass1234"})
+    token_a2 = r.get("access_token", "")
+    check(f"Login {uname_a}", bool(token_a2), f"got: {r}")
 
-    # Step D: Check /author/{id} response reflects the change (self-view)
-    author = req("GET", f"/api/market/author/{uid_a}", token=token_a2)
-    check("GET /author/{id} reflects following_visible=False (self)",
-          author.get("following_visible") is False,
-          f"got: {author.get('following_visible')}")
+    if token_a2:
+        me = req("GET", "/api/auth/me", token=token_a2)
+        check("GET /api/auth/me includes following_visible",
+              me.get("following_visible") is not None,
+              f"keys: {list(me.keys())}")
+        print(f"  following_visible = {me.get('following_visible')}")
 
-    # Step E: Set uid_b's following_visible to 0 (login as B first)
-    r = req("POST", "/api/auth/login", {"username": uname_b, "password": "TestPass1234"})
-    token_b2 = r.get("access_token", "")
-    if token_b2:
-        req("PATCH", "/api/market/author/visibility",
-            {"following_visible": False}, token=token_b2)
+    # ── Step 3: Test following privacy ──
+    print()
+    print("=" * 60)
+    print("Following list privacy")
+    print("=" * 60)
 
-        # Now check as A viewing B's following
-        r = req("GET", f"/api/market/author/{uid_b}/following", token=token_a2)
-        check("Non-self: following list locked when following_visible=0",
-              r.get("locked") is True,
-              f"got: {r}")
-
-        # Step F: Set uid_b back to visible
-        req("PATCH", "/api/market/author/visibility",
-            {"following_visible": True}, token=token_b2)
-
-        r = req("GET", f"/api/market/author/{uid_b}/following", token=token_a2)
-        check("Non-self: following list unlocked when following_visible=1",
+    if token_a2:
+        # Step A: Default should be visible
+        r = req("GET", f"/api/market/author/{uid_a}/following", token=token_a2)
+        check("Default: following list visible when following_visible=1",
               r.get("locked") is False,
               f"got: {r}")
 
-    # Step G: Restore A's following_visible
-    req("PATCH", "/api/market/author/visibility",
-        {"following_visible": True}, token=token_a2)
+        # Step B: Set following_visible = False via PATCH
+        r = req("PATCH", "/api/market/author/visibility",
+                {"following_visible": False}, token=token_a2)
+        check("PATCH following_visible=False succeeds",
+              r.get("following_visible") is False or r.get("ok"),
+              f"got: {r}")
 
-# ── Step 4: Verify following list content ──
-print()
-print("=" * 60)
-print("Verify following list content")
-print("=" * 60)
+        # Step C: Verify via /api/auth/me
+        me2 = req("GET", "/api/auth/me", token=token_a2)
+        check("GET /api/auth/me reflects following_visible=False",
+              me2.get("following_visible") is False,
+              f"got: {me2.get('following_visible')}")
 
-if token_a2:
-    # User A follows B — check A's following includes B
-    r = req("GET", f"/api/market/author/{uid_a}/following", token=token_a2)
-    following_ids = [u.get("id") for u in r.get("following", [])]
-    check(f"User {uname_a}'s following includes {uname_b}",
-          uid_b in following_ids,
-          f"following: {following_ids}")
+        # Step D: Check /author/{id} response reflects the change (self-view)
+        author = req("GET", f"/api/market/author/{uid_a}", token=token_a2)
+        check("GET /author/{id} reflects following_visible=False (self)",
+              author.get("following_visible") is False,
+              f"got: {author.get('following_visible')}")
 
-    # Check /api/market/my/following returns users array
-    r2 = req("GET", "/api/market/my/following", token=token_a2)
-    check("/api/market/my/following returns users array",
-          isinstance(r2.get("users"), list),
-          f"got: {type(r2.get('users'))}")
+        # Step E: Set uid_b's following_visible to 0 (login as B first)
+        r = req("POST", "/api/auth/login", {"username": uname_b, "password": "TestPass1234"})
+        token_b2 = r.get("access_token", "")
+        if token_b2:
+            req("PATCH", "/api/market/author/visibility",
+                {"following_visible": False}, token=token_b2)
 
-# ── Summary ──
-print()
-print("=" * 60)
-print(f"RESULTS: {PASS} passed, {FAIL} failed")
-print("=" * 60)
-if FAIL:
-    sys.exit(1)
+            # Now check as A viewing B's following
+            r = req("GET", f"/api/market/author/{uid_b}/following", token=token_a2)
+            check("Non-self: following list locked when following_visible=0",
+                  r.get("locked") is True,
+                  f"got: {r}")
+
+            # Step F: Set uid_b back to visible
+            req("PATCH", "/api/market/author/visibility",
+                {"following_visible": True}, token=token_b2)
+
+            r = req("GET", f"/api/market/author/{uid_b}/following", token=token_a2)
+            check("Non-self: following list unlocked when following_visible=1",
+                  r.get("locked") is False,
+                  f"got: {r}")
+
+        # Step G: Restore A's following_visible
+        req("PATCH", "/api/market/author/visibility",
+            {"following_visible": True}, token=token_a2)
+
+    # ── Step 4: Verify following list content ──
+    print()
+    print("=" * 60)
+    print("Verify following list content")
+    print("=" * 60)
+
+    if token_a2:
+        # User A follows B — check A's following includes B
+        r = req("GET", f"/api/market/author/{uid_a}/following", token=token_a2)
+        following_ids = [u.get("id") for u in r.get("following", [])]
+        check(f"User {uname_a}'s following includes {uname_b}",
+              uid_b in following_ids,
+              f"following: {following_ids}")
+
+        # Check /api/market/my/following returns users array
+        r2 = req("GET", "/api/market/my/following", token=token_a2)
+        check("/api/market/my/following returns users array",
+              isinstance(r2.get("users"), list),
+              f"got: {type(r2.get('users'))}")
+
+    # ── Summary ──
+    print()
+    print("=" * 60)
+    print(f"RESULTS: {PASS} passed, {FAIL} failed")
+    print("=" * 60)
+    if FAIL:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

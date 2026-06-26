@@ -19,15 +19,21 @@ test_text = """
 张三的前妻王芳两年前离开了他。他从不提这件事，但办公室抽屉里还放着结婚照。
 """
 
-llm = LLMAdapter()
-card = Distiller(llm).distill(test_text, "张三")
-print(f"角色：{card.name} — {card.identity}\n")
 
-rag = RAGEngine({"chunk_size": 200, "chunk_overlap": 30, "top_k": 2})
-rag.index(test_text)
+def main():
+    llm = LLMAdapter()
+    card = Distiller(llm).distill(test_text, "张三")
+    print(f"角色：{card.name} — {card.identity}\n")
 
-engine = ChatEngine(llm, rag, card)
-for q in ["你好啊张总", "李四最近怎么样", "你还想着王芳吗"]:
-    resp = engine.chat(q)
-    print(f"用户：{q}")
-    print(f"张三：{resp}\n")
+    rag = RAGEngine({"chunk_size": 200, "chunk_overlap": 30, "top_k": 2})
+    rag.index(test_text)
+
+    engine = ChatEngine(llm, rag, card)
+    for q in ["你好啊张总", "李四最近怎么样", "你还想着王芳吗"]:
+        resp = engine.chat(q)
+        print(f"用户：{q}")
+        print(f"张三：{resp}\n")
+
+
+if __name__ == "__main__":
+    main()
