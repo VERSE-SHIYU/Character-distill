@@ -613,6 +613,37 @@ class TestCardCrossBorderSync:
         assert card["name"] == "isolated"
         assert card["origin_region"] == "us"
 
+    async def test_search_public_cards_with_remote(self, store, text_id):
+        """Remote cards with origin_created_at in search should not 500.
+
+        Regression guard for the UNION type mismatch: remote_cards.origin_created_at
+        is TEXT while cards.created_at is TIMESTAMPTZ — the COALESCE cast must
+        match across both branches of the UNION.
+        """
+        # Insert a local card so search finds something
+        cid_local = f"c_srch_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(cid_local, text_id, "AliceRemote", '{"name": "alice"}')
+        await store.execute(
+            "UPDATE cards SET visibility = 'public', cross_border_synced = 0 WHERE id = ?",
+            (cid_local,),
+        )
+
+        # Insert a remote card with origin_created_at (TEXT column)
+        cid_remote = f"remote_srch_{uuid.uuid4().hex}"
+        await store.upsert_remote_card(
+            card_id=cid_remote, origin_region="sg", user_id="foreign_user",
+            name="AliceRemote", card_json='{"name": "alice"}',
+            avatar_data="", market_description="desc", market_tags="tag",
+            origin_created_at="2026-06-26",
+        )
+
+        # Search should return both without type error
+        results = await store.search_public_cards("Alice", page=1, page_size=20)
+        ids = [r["id"] for r in results]
+        assert cid_local in ids, "Local card should appear in search results"
+        assert cid_remote in ids, "Remote card should appear in search results"
+
 
 # ── Delete propagation atomicity ──────────────────────────────────────────────
 

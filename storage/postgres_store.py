@@ -662,7 +662,7 @@ class PostgresStore(StorageBase):
 
                           SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
                                  '' AS forked_from, 0 AS likes,
-                                 COALESCE(rc.origin_created_at, '') AS created_at,
+                                 COALESCE(rc.origin_created_at::timestamptz, NULL::timestamptz) AS created_at,
                                  rc.market_description, rc.market_tags,
                                  '' AS author_name, '' AS author_avatar, '' AS text_title,
                                  0 AS comment_count, 1 AS is_remote, rc.origin_region
