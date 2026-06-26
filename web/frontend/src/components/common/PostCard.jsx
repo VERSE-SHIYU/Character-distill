@@ -4,6 +4,7 @@ import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
 import { Heart, MessageSquare, Trash2 } from './Icon'
 import { parseCardJson } from '../../utils/card'
+import { formatRelativeTime } from '../../utils/time'
 
 /* ── Expandable text ── */
 function ExpandableText({ text, maxLines = 6 }) {
@@ -59,43 +60,6 @@ function ImageGrid({ images, onImageClick }) {
       ))}
     </div>
   )
-}
-
-/* ── Time formatting ── */
-function fmtTime(iso) {
-  if (!iso) return ''
-  try {
-    // 后端返回 "2026-05-25 08:00:46" (UTC, 无时区标记)
-    // 统一加 Z 后缀当 UTC 解析
-    let s = iso
-    if (!s.includes('T')) s = s.replace(' ', 'T')
-    if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
-    const date = new Date(s)
-    if (isNaN(date.getTime())) return ''
-
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000) // 秒
-
-    if (diff < 60) return '刚刚'
-    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
-    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-    const dayDiff = Math.floor((today - target) / 86400000)
-
-    if (dayDiff === 1) return `昨天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    if (dayDiff < 7) {
-      const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-      return `星期${weekdays[date.getDay()]} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    }
-    if (date.getFullYear() === now.getFullYear()) {
-      return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
-    }
-    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-  } catch {
-    return ''
-  }
 }
 
 /* ── PostCard ── */
@@ -163,7 +127,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
             <span className="post-card-author-name">{post.author_name || '匿名'}</span>
           </button>
           {post.visibility === 'private' && <span className="post-card-private">{'\u{1F512}'} 私密</span>}
-          <span className="post-card-time">{fmtTime(post.created_at)}</span>
+          <span className="post-card-time">{formatRelativeTime(post.created_at)}</span>
         </div>
       )}
 
@@ -253,7 +217,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                       {c.username}
                     </button>
                     {c.ip_location && <span className="post-card-comment-ip">IP属地: {c.ip_location}</span>}
-                    <span className="post-card-comment-time">{c.created_at ? fmtTime(c.created_at) : ''}</span>
+                    <span className="post-card-comment-time">{c.created_at ? formatRelativeTime(c.created_at) : ''}</span>
                   </div>
                   <p className="post-card-comment-text">{c.content}</p>
                 </div>

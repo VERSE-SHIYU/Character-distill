@@ -6,6 +6,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { Heart } from './common/Icon'
+import { formatRelativeTime } from '../utils/time'
 
 export default function TextDetailPage() {
   const setView = useAppStore((s) => s.setView)
@@ -330,7 +331,7 @@ function CommentItem({
         <div className="market-card-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             <span style={{ fontWeight: 600, fontSize: 13 }}>{comment.username}</span>
-            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmtTime(comment.created_at)}</span>
+            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(comment.created_at)}</span>
           </div>
           <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 6 }}>
             {comment.content}
@@ -403,7 +404,7 @@ function CommentItem({
                 <div className="market-card-body">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                     <span style={{ fontWeight: 600, fontSize: 12 }}>{reply.username}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{fmtTime(reply.created_at)}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(reply.created_at)}</span>
                   </div>
                   <p style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
                     {reply.content}
@@ -446,34 +447,6 @@ function CommentItem({
       )}
     </div>
   )
-}
-
-function fmtTime(iso) {
-  if (!iso) return ''
-  try {
-    let s = iso
-    if (!s.includes('T')) s = s.replace(' ', 'T')
-    if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
-    const date = new Date(s)
-    if (isNaN(date.getTime())) return ''
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000)
-    if (diff < 60) return '刚刚'
-    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
-    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-    const dayDiff = Math.floor((today - target) / 86400000)
-    if (dayDiff === 1) return `昨天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    if (dayDiff < 7) {
-      const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-      return `星期${weekdays[date.getDay()]} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    }
-    if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
-    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-  } catch {
-    return ''
-  }
 }
 
 function fmtDate(iso) {

@@ -5,34 +5,7 @@ import Avatar from './common/Avatar'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
 import { SkeletonCard } from './common/Skeleton'
-
-function fmtTime(iso) {
-  if (!iso) return ''
-  try {
-    let s = iso
-    if (!s.includes('T')) s = s.replace(' ', 'T')
-    if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
-    const date = new Date(s)
-    if (isNaN(date.getTime())) return ''
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000)
-    if (diff < 60) return '刚刚'
-    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
-    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-    const dayDiff = Math.floor((today - target) / 86400000)
-    if (dayDiff === 1) return `昨天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    if (dayDiff < 7) {
-      const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-      return `星期${weekdays[date.getDay()]} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    }
-    if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
-    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-  } catch {
-    return ''
-  }
-}
+import { formatRelativeTime } from '../utils/time'
 
 function previewText(text, max = 60) {
   if (!text) return ''
@@ -328,7 +301,7 @@ export default function HomePage() {
                               {s.character_name}
                               {sourceTitle && <span className="home-recent-source"> · {sourceTitle.length > 8 ? sourceTitle.slice(0, 8) + '…' : sourceTitle}</span>}
                             </span>
-                            <span className="home-recent-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                            <span className="home-recent-time">{formatRelativeTime(s.last_message_at || s.updated_at)}</span>
                           </div>
                           <span className="home-recent-preview">{previewText(s.last_message) || '点击继续对话'}</span>
                         </div>

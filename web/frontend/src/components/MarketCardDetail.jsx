@@ -9,34 +9,7 @@ import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
 import EmojiPicker from './common/EmojiPicker'
-
-function fmtTime(iso) {
-  if (!iso) return ''
-  try {
-    let s = iso
-    if (!s.includes('T')) s = s.replace(' ', 'T')
-    if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
-    const date = new Date(s)
-    if (isNaN(date.getTime())) return ''
-    const now = new Date()
-    const diff = Math.floor((now - date) / 1000)
-    if (diff < 60) return '刚刚'
-    if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
-    if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
-    const dayDiff = Math.floor((today - target) / 86400000)
-    if (dayDiff === 1) return `昨天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    if (dayDiff < 7) {
-      const weekdays = ['日', '一', '二', '三', '四', '五', '六']
-      return `星期${weekdays[date.getDay()]} ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`
-    }
-    if (date.getFullYear() === now.getFullYear()) return date.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })
-    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-  } catch {
-    return ''
-  }
-}
+import { formatRelativeTime } from '../utils/time'
 
 export default function MarketCardDetail() {
   const setView = useAppStore((s) => s.setView)
@@ -820,7 +793,7 @@ export default function MarketCardDetail() {
                       <div className="market-detail-comment-body">
                         <div className="market-detail-comment-head">
                           <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>{c.username}</button>
-                          <span className="market-detail-comment-time">{fmtTime(c.created_at)}</span>
+                          <span className="market-detail-comment-time">{formatRelativeTime(c.created_at)}</span>
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>
                         <div className="market-detail-comment-actions">
@@ -852,7 +825,7 @@ export default function MarketCardDetail() {
                         <div className="version-num">v{v.version_num}</div>
                         <div className="version-info">
                           <p className="version-message">{v.publish_message || '无说明'}</p>
-                          <span className="version-time">{fmtTime(v.created_at)}</span>
+                          <span className="version-time">{formatRelativeTime(v.created_at)}</span>
                         </div>
                         {(card.user_id === authUser?.id || authUser?.is_admin) && (
                           <div className="version-actions">
