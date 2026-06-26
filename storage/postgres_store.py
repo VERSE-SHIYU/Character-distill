@@ -314,6 +314,33 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Hard delete text failed: {exc}")
             raise
 
+    async def get_text_deletion_impact(self, text_id: str, user_id: str) -> dict:
+        """Count cards, sessions, and messages affected by text deletion."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) FROM cards WHERE text_id = $1 AND deleted_at IS NULL",
+                    text_id,
+                )
+                card_count = row[0] if row else 0
+
+                row = await conn.fetchrow(
+                    "SELECT COUNT(DISTINCT s.id) FROM sessions s JOIN cards c ON s.card_id = c.id WHERE c.text_id = $1 AND s.deleted_at IS NULL",
+                    text_id,
+                )
+                session_count = row[0] if row else 0
+
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) FROM messages m WHERE m.session_id IN (SELECT s.id FROM sessions s JOIN cards c ON s.card_id = c.id WHERE c.text_id = $1)",
+                    text_id,
+                )
+                message_count = row[0] if row else 0
+
+            return {"card_count": card_count, "session_count": session_count, "message_count": message_count}
+        except Exception as exc:
+            print(f"[PostgresStore] Get text deletion impact failed: {exc}")
+            raise
+
     async def save_card(self, id: str, text_id: str, name: str, card_json: str, user_id: str = "") -> dict:
         """Save or update one card record. Upsert by text_id+name+user_id to avoid duplicates."""
         try:
@@ -3938,8 +3965,8 @@ class PostgresStore(StorageBase):
                                           visibility, forked_from, likes, voice_ref_json,
                                           market_description, market_tags, publish_message)
                        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, 'public', $7, 0, $8, $9, $10, $11)""",
-                    fork_id, src[0], src[1], src[2], src[4] or "", user_id, card_id,
-                    src[5] or "", description, tags, message,
+                    fork_id, src["text_id"], src["name"], src["card_json"], src["avatar_data"] or "", user_id, card_id,
+                    src["voice_ref_json"] or "", description, tags, message,
                 )
                 await conn.execute(
                     """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
