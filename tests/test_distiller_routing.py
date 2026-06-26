@@ -37,7 +37,7 @@ class TestRouting:
             return ("分析结果", None)
         mock_llm.async_chat = fake_async
 
-        self.distiller = Distiller(llm=mock_llm, config_path="config.yaml")
+        self.distiller = Distiller(llm=mock_llm, config_path=None)
         self.distiller._longctx_threshold = 150000
 
     # ── distill_incremental (sync) ────────────────────────────────────
