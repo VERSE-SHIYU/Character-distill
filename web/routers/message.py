@@ -109,13 +109,24 @@ async def send_message(
             try:
                 from inter_node_auth import create_auth_header
 
-                headers = create_auth_header(msg)
+                # Build an explicit string-typed payload for signing + wire transfer.
+                # Using the raw msg dict is unsafe: datetime fields get serialized to
+                # strings by httpx.json() but are seen as datetime objects by json.dumps
+                # inside _sign(), producing mismatched HMAC signatures.
+                payload = {
+                    "id": msg["id"],
+                    "sender_id": msg["sender_id"],
+                    "receiver_id": msg["receiver_id"],
+                    "content": msg["content"],
+                    "created_at": str(msg["created_at"]),
+                }
+                headers = create_auth_header(payload)
                 import httpx
 
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.post(
                         f"{peer_url}/api/inter-node/dm/receive",
-                        json=msg,
+                        json=payload,
                         headers=headers,
                     )
                     if resp.status_code == 200:
