@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from deps import get_storage
@@ -14,6 +16,10 @@ from pydantic import BaseModel
 class SendMessageRequest(BaseModel):
     receiver_id: str
     content: str
+
+
+class ConsentRequest(BaseModel):
+    target_region: str
 
 
 class ReactRequest(BaseModel):
@@ -58,7 +64,14 @@ async def send_message(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Send a direct message."""
+    """Send a direct message.
+
+    Cross-border flow: if sender and receiver are in different regions,
+    checks for explicit consent (409 if missing), saves locally with
+    cross_border_synced=0, then forwards to the peer node via HMAC-signed
+    request. If the peer is unreachable the message stays locally with
+    synced=0 (not lost).
+    """
     if not body.content.strip():
         raise HTTPException(400, "消息不能为空")
     if body.receiver_id == user["id"]:
@@ -66,6 +79,54 @@ async def send_message(
     receiver = await storage.get_user_by_id(body.receiver_id)
     if not receiver:
         raise HTTPException(404, "用户不存在")
+
+    sender_region = user.get("home_region", "")
+    receiver_region = receiver.get("home_region", "")
+
+    # Cross-border DM
+    if sender_region and receiver_region and sender_region != receiver_region:
+        has_consent = await storage.has_cross_border_consent(
+            user["id"], receiver_region, "direct_message",
+        )
+        if not has_consent:
+            raise HTTPException(
+                409,
+                detail={
+                    "need_consent": True,
+                    "target_region": receiver_region,
+                    "receiver_username": receiver.get("username", ""),
+                },
+            )
+
+        # Save locally first (pending sync)
+        msg = await storage.send_message(
+            user["id"], body.receiver_id, body.content.strip(), cross_border_synced=0,
+        )
+
+        # Forward to peer node
+        peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+        if peer_url:
+            try:
+                from inter_node_auth import create_auth_header
+
+                headers = create_auth_header(msg)
+                import httpx
+
+                async with httpx.AsyncClient(timeout=10) as client:
+                    resp = await client.post(
+                        f"{peer_url}/api/inter-node/dm/receive",
+                        json=msg,
+                        headers=headers,
+                    )
+                    if resp.status_code == 200:
+                        await storage.mark_message_synced(msg["id"])
+            except Exception as exc:
+                # Already saved locally with synced=0 — don't lose the message
+                print(f"[message] Cross-border forward failed for {msg['id']}: {exc}")
+
+        return {"message": msg}
+
+    # Same region: normal flow
     msg = await storage.send_message(user["id"], body.receiver_id, body.content.strip())
     return {"message": msg}
 
@@ -129,3 +190,33 @@ async def get_dm_reactions(
     """Return all reactions for messages in the conversation."""
     reactions = await storage.get_dm_reactions(user["id"], other_id)
     return {"reactions": reactions}
+
+
+@router.post("/consent")
+@limiter.limit("30/minute")
+async def grant_consent(
+    request: Request,
+    body: ConsentRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Grant cross-border consent for DMs to target_region."""
+    if not body.target_region.strip():
+        raise HTTPException(400, "target_region 不能为空")
+    await storage.grant_cross_border_consent(user["id"], body.target_region.strip(), "direct_message")
+    return {"ok": True, "target_region": body.target_region.strip(), "scope": "direct_message"}
+
+
+@router.delete("/consent")
+@limiter.limit("30/minute")
+async def revoke_consent(
+    request: Request,
+    body: ConsentRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Revoke cross-border consent for DMs to target_region."""
+    if not body.target_region.strip():
+        raise HTTPException(400, "target_region 不能为空")
+    await storage.revoke_cross_border_consent(user["id"], body.target_region.strip(), "direct_message")
+    return {"ok": True, "target_region": body.target_region.strip(), "scope": "direct_message"}

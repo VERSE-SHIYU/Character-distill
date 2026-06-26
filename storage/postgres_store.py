@@ -1634,7 +1634,8 @@ class PostgresStore(StorageBase):
                               u.is_admin, u.is_disabled, u.created_at,
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
-                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible
+                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible,
+                              u.home_region
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.id = $1""",
@@ -3286,22 +3287,78 @@ class PostgresStore(StorageBase):
 
     # ── Direct Messages ──
 
-    async def send_message(self, sender_id: str, receiver_id: str, content: str) -> dict:
+    async def send_message(self, sender_id: str, receiver_id: str, content: str, cross_border_synced: int = 1) -> dict:
+        """Send a direct message. Returns the created message dict.
+
+        cross_border_synced: 1 (default, same-region or successfully forwarded),
+                             0 (cross-border, awaiting peer delivery).
+        """
         import uuid
         msg_id = uuid.uuid4().hex[:12]
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO direct_messages (id, sender_id, receiver_id, content) VALUES ($1, $2, $3, $4)",
-                    msg_id, sender_id, receiver_id, content,
+                    "INSERT INTO direct_messages (id, sender_id, receiver_id, content, cross_border_synced) VALUES ($1, $2, $3, $4, $5)",
+                    msg_id, sender_id, receiver_id, content, cross_border_synced,
                 )
                 row = await conn.fetchrow(
-                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = $1",
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at, cross_border_synced FROM direct_messages WHERE id = $1",
                     msg_id,
                 )
-            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
+            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0, "cross_border_synced": cross_border_synced}
         except Exception as exc:
             print(f"[PostgresStore] Send message failed: {exc}")
+            raise
+
+    async def mark_message_synced(self, message_id: str) -> None:
+        """Mark a cross-border DM as successfully forwarded to peer node."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE direct_messages SET cross_border_synced = 1 WHERE id = $1",
+                    message_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Mark message synced failed: {exc}")
+            raise
+
+    async def has_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> bool:
+        """Check if user has granted cross-border consent for (target_region, scope)."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT 1 FROM cross_border_consent WHERE user_id = $1 AND target_region = $2 AND scope = $3",
+                    user_id, target_region, scope,
+                )
+            return row is not None
+        except Exception as exc:
+            print(f"[PostgresStore] Has cross-border consent failed: {exc}")
+            raise
+
+    async def grant_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> None:
+        """Record user consent to send data to target_region for scope."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO cross_border_consent (user_id, target_region, scope)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (user_id, target_region, scope) DO NOTHING""",
+                    user_id, target_region, scope,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Grant cross-border consent failed: {exc}")
+            raise
+
+    async def revoke_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> None:
+        """Revoke user consent for cross-border data transfer."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "DELETE FROM cross_border_consent WHERE user_id = $1 AND target_region = $2 AND scope = $3",
+                    user_id, target_region, scope,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Revoke cross-border consent failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:

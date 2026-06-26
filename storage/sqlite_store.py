@@ -712,6 +712,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Data residency migration failed: {exc}")
 
+                    # Run 071_cross_border_consent migration (CREATE TABLE IF NOT EXISTS + ALTER TABLE)
+                    cb_path = migrations_dir / "071_cross_border_consent.sql"
+                    if cb_path.exists():
+                        try:
+                            await conn.executescript(cb_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Cross-border consent migration failed: {exc}")
+
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
                     try:
@@ -2465,7 +2475,8 @@ class SQLiteStore(StorageBase):
                               u.is_admin, u.is_disabled, u.created_at,
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
-                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible
+                              u.bio, u.last_active_at, u.presence_visibility, u.following_visible,
+                              u.home_region
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.id = ?""",
@@ -4306,25 +4317,82 @@ class SQLiteStore(StorageBase):
 
     # ── Direct Messages ──
 
-    async def send_message(self, sender_id: str, receiver_id: str, content: str) -> dict:
-        """Send a direct message. Returns the created message dict."""
+    async def send_message(self, sender_id: str, receiver_id: str, content: str, cross_border_synced: int = 1) -> dict:
+        """Send a direct message. Returns the created message dict.
+
+        cross_border_synced: 1 (default, same-region or successfully forwarded),
+                             0 (cross-border, awaiting peer delivery).
+        """
         import uuid
         msg_id = uuid.uuid4().hex[:12]
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO direct_messages (id, sender_id, receiver_id, content) VALUES (?, ?, ?, ?)",
-                    (msg_id, sender_id, receiver_id, content),
+                    "INSERT INTO direct_messages (id, sender_id, receiver_id, content, cross_border_synced) VALUES (?, ?, ?, ?, ?)",
+                    (msg_id, sender_id, receiver_id, content, cross_border_synced),
                 )
                 await conn.commit()
                 cursor = await conn.execute(
-                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = ?",
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at, cross_border_synced FROM direct_messages WHERE id = ?",
                     (msg_id,),
                 )
                 row = await cursor.fetchone()
-            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0}
+            return self._row_to_dict(row) if row else {"id": msg_id, "sender_id": sender_id, "receiver_id": receiver_id, "content": content, "is_read": 0, "cross_border_synced": cross_border_synced}
         except Exception as exc:
             print(f"[SQLiteStore] Send message failed: {exc}")
+            raise
+
+    async def mark_message_synced(self, message_id: str) -> None:
+        """Mark a cross-border DM as successfully forwarded to peer node."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE direct_messages SET cross_border_synced = 1 WHERE id = ?",
+                    (message_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark message synced failed: {exc}")
+            raise
+
+    async def has_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> bool:
+        """Check if user has granted cross-border consent for (target_region, scope)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT 1 FROM cross_border_consent WHERE user_id = ? AND target_region = ? AND scope = ?",
+                    (user_id, target_region, scope),
+                )
+                row = await cursor.fetchone()
+            return row is not None
+        except Exception as exc:
+            print(f"[SQLiteStore] Has cross-border consent failed: {exc}")
+            raise
+
+    async def grant_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> None:
+        """Record user consent to send data to target_region for scope."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO cross_border_consent (user_id, target_region, scope) VALUES (?, ?, ?)",
+                    (user_id, target_region, scope),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Grant cross-border consent failed: {exc}")
+            raise
+
+    async def revoke_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> None:
+        """Revoke user consent for cross-border data transfer."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "DELETE FROM cross_border_consent WHERE user_id = ? AND target_region = ? AND scope = ?",
+                    (user_id, target_region, scope),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Revoke cross-border consent failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:
