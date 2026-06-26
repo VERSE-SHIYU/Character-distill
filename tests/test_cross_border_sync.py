@@ -107,7 +107,6 @@ async def test_forward_dm_to_peer_connection_error(monkeypatch):
 CARD_FIXTURE = {
     "id": "card001",
     "user_id": "author_x",
-    "text_id": "text_99",
     "name": "Test Card",
     "card_json": '{"title":"hello"}',
     "avatar_data": "data:image/png;base64,abc",
@@ -130,6 +129,7 @@ async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
 
     storage = MagicMock()
+    storage.get_user_by_id = AsyncMock(return_value={"home_region": "sg"})
     mock_post = AsyncMock(return_value=MockResponse(status_code))
     mock_client = MagicMock()
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -144,11 +144,14 @@ async def test_forward_card_to_peer(monkeypatch, status_code, expected_marked):
     mock_post.assert_awaited_once()
     call_kwargs = mock_post.call_args[1]
     assert "api/inter-node/card/receive" in str(mock_post.call_args[0][0])
-    # All fields from CARD_FIXTURE must be in the POST JSON
-    for key in ("id", "user_id", "text_id", "name", "card_json",
-                "avatar_data", "visibility", "market_description",
-                "market_tags"):
-        assert call_kwargs["json"][key] == CARD_FIXTURE[key]
+    # Payload must have all expected fields; text_id removed, origin_region added
+    assert call_kwargs["json"]["id"] == CARD_FIXTURE["id"]
+    assert call_kwargs["json"]["user_id"] == CARD_FIXTURE["user_id"]
+    assert call_kwargs["json"]["origin_region"] == "sg"
+    assert call_kwargs["json"]["name"] == CARD_FIXTURE["name"]
+    assert call_kwargs["json"]["card_json"] == CARD_FIXTURE["card_json"]
+    assert call_kwargs["json"]["visibility"] == CARD_FIXTURE["visibility"]
+    assert "text_id" not in call_kwargs["json"]
     assert "Authorization" in call_kwargs["headers"]
     assert call_kwargs["headers"]["Authorization"].startswith("HMAC-SHA256")
 

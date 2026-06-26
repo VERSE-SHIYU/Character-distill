@@ -563,28 +563,52 @@ class TestCardCrossBorderSync:
         unsynced = await store.get_unsynced_cross_border_cards(limit=3)
         assert len(unsynced) == 3
 
-    async def test_create_remote_card(self, store, text_id):
+    async def test_upsert_remote_card_insert(self, store, text_id):
+        """Insert a remote card with no texts FK — should succeed."""
         cid = f"remote_{uuid.uuid4().hex}"
-        await store.save_text(text_id, "src.txt", "source")
-        await store.create_remote_card(
-            card_id=cid, text_id=text_id, name="remote", card_json='{"name": "remote"}',
-            created_at="2026-06-26", avatar_data="", user_id="remote_user",
-            forked_from="", market_description="desc", market_tags="tag",
+        await store.upsert_remote_card(
+            card_id=cid, origin_region="sg", user_id="remote_user",
+            name="remote", card_json='{"name": "remote"}',
+            avatar_data="", market_description="desc", market_tags="tag",
+            origin_created_at="2026-06-26",
         )
-        card = await store.get_card(cid)
+        card = await store.get_remote_card(cid)
         assert card is not None
         assert card["name"] == "remote"
-        assert card["visibility"] == "public"
+        assert card["origin_region"] == "sg"
 
-    async def test_update_remote_card(self, store, text_id):
+    async def test_upsert_remote_card_update(self, store, text_id):
+        """Update an existing remote card — should change fields, not duplicate."""
         cid = f"remote_upd_{uuid.uuid4().hex}"
-        await store.save_text(text_id, "src.txt", "source")
-        await store.create_remote_card(
-            card_id=cid, text_id=text_id, name="v1", card_json='{"name": "v1"}',
-            created_at="2026-06-26", avatar_data="", user_id="remote_user",
-            forked_from="", market_description="desc", market_tags="tag",
+        await store.upsert_remote_card(
+            card_id=cid, origin_region="sg", user_id="remote_user",
+            name="v1", card_json='{"name": "v1"}',
+            avatar_data="", market_description="desc", market_tags="tag",
+            origin_created_at="2026-06-26",
         )
-        await store.update_remote_card(cid, "v2", '{"name": "v2"}', "", "desc2", "tag2")
-        card = await store.get_card(cid)
+        await store.upsert_remote_card(
+            card_id=cid, origin_region="sg", user_id="remote_user",
+            name="v2", card_json='{"name": "v2"}',
+            avatar_data="", market_description="desc2", market_tags="tag2",
+            origin_created_at="2026-06-26",
+        )
+        card = await store.get_remote_card(cid)
         assert card is not None
         assert card["name"] == "v2"
+        assert card["market_description"] == "desc2"
+
+    async def test_upsert_remote_card_isolated(self, store):
+        """Remote card succeeds in an isolated DB with no texts/users rows."""
+        cid = f"remote_iso_{uuid.uuid4().hex}"
+        # No save_text() call — this would fail if upsert_remote_card
+        # depended on any FK; remote_cards must be self-contained.
+        await store.upsert_remote_card(
+            card_id=cid, origin_region="us", user_id="foreign_user",
+            name="isolated", card_json='{"name": "isolated"}',
+            avatar_data="", market_description="", market_tags="",
+            origin_created_at="",
+        )
+        card = await store.get_remote_card(cid)
+        assert card is not None
+        assert card["name"] == "isolated"
+        assert card["origin_region"] == "us"

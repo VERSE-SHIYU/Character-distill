@@ -732,6 +732,12 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Card sync migration failed: {exc}")
 
+                    # Run 073_remote_cards migration (CREATE TABLE IF NOT EXISTS remote_cards)
+                    remote_cards_path = migrations_dir / "073_remote_cards.sql"
+                    if remote_cards_path.exists():
+                        await conn.executescript(remote_cards_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
                     try:
@@ -1167,7 +1173,7 @@ class SQLiteStore(StorageBase):
             return None
 
     async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
-        """Get a single public card with author info and like status."""
+        """Get a single public card detail with author info. Falls back to remote_cards."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -1192,7 +1198,24 @@ class SQLiteStore(StorageBase):
                         (card_id, user_id),
                     )
                     card["liked_by_me"] = await like_cursor.fetchone() is not None
-            return card
+                    card["is_remote"] = False
+                    card["origin_region"] = ""
+                    return card
+
+            # Fallback: check remote_cards
+            remote = await self.get_remote_card(card_id)
+            if remote:
+                remote["is_remote"] = True
+                remote["liked_by_me"] = False
+                remote["author_name"] = ""
+                remote["author_avatar"] = ""
+                remote["text_title"] = ""
+                remote["comment_count"] = 0
+                remote["forked_from"] = ""
+                remote["likes"] = 0
+                remote["publish_message"] = ""
+                remote["created_at"] = remote.get("origin_created_at", "")
+            return remote
         except Exception as exc:
             print(f"[SQLiteStore] Get market card detail failed: {exc}")
             return None
@@ -1281,26 +1304,54 @@ class SQLiteStore(StorageBase):
     # ── Market / public card methods ──────────────────────────
 
     async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new", tag: str = "") -> list[dict]:
-        """List public cards with pagination and sorting (hot=likes, new=created_at)."""
+        """List public cards with pagination and sorting (hot=likes, new=created_at).
+
+        UNION local cards + remote_cards.  Remote cards get is_remote=1 and
+        origin_region; they have 0 likes, 0 comments, and no author/text FK joins.
+        """
         try:
-            order = "c.likes DESC, c.created_at DESC" if sort == "hot" else "c.created_at DESC"
+            order = "likes DESC, created_at DESC" if sort == "hot" else "created_at DESC"
             offset = (page - 1) * page_size
-            tag_clause = " AND c.market_tags LIKE ?" if tag else ""
-            params: list[Any] = [f"%{tag}%"] if tag else []
-            params.extend([page_size, offset])
+            if tag:
+                like_pattern = f"%{tag}%"
+                params: list[Any] = [like_pattern, like_pattern, page_size, offset]
+                tag_clause = " AND c.market_tags LIKE ?"
+                remote_tag_clause = " AND rc.market_tags LIKE ?"
+            else:
+                params = [page_size, offset]
+                tag_clause = ""
+                remote_tag_clause = ""
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
-                              c.forked_from, c.likes, c.created_at,
-                              c.market_description, c.market_tags,
-                              COALESCE(u.username, '') AS author_name,
-                              COALESCE(u.avatar_data, '') AS author_avatar,
-                              COALESCE(t.title, '') AS text_title,
-                              (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
-                        FROM cards c
-                        LEFT JOIN users u ON u.id = c.user_id
-                        LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public' AND c.deleted_at IS NULL{tag_clause}
+                    f"""SELECT id, name, card_json, user_id, avatar_data,
+                              forked_from, likes, created_at,
+                              market_description, market_tags,
+                              author_name, author_avatar, text_title,
+                              comment_count, is_remote, origin_region
+                        FROM (
+                          SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                                 c.forked_from, c.likes, c.created_at,
+                                 c.market_description, c.market_tags,
+                                 COALESCE(u.username, '') AS author_name,
+                                 COALESCE(u.avatar_data, '') AS author_avatar,
+                                 COALESCE(t.title, '') AS text_title,
+                                 (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                                 0 AS is_remote, '' AS origin_region
+                          FROM cards c
+                          LEFT JOIN users u ON u.id = c.user_id
+                          LEFT JOIN texts t ON t.id = c.text_id
+                          WHERE c.visibility = 'public' AND c.deleted_at IS NULL{tag_clause}
+
+                          UNION ALL
+
+                          SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
+                                 '' AS forked_from, 0 AS likes, COALESCE(rc.origin_created_at, '') AS created_at,
+                                 rc.market_description, rc.market_tags,
+                                 '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                 0 AS comment_count, 1 AS is_remote, rc.origin_region
+                          FROM remote_cards rc
+                          WHERE 1=1{remote_tag_clause}
+                        ) combined
                         ORDER BY {order}
                         LIMIT ? OFFSET ?""",
                     params,
@@ -1312,15 +1363,29 @@ class SQLiteStore(StorageBase):
             raise
 
     async def list_public_cards_total(self, tag: str = "") -> int:
-        """Return total count of public cards (for pagination)."""
+        """Return total count of public cards + remote_cards (for pagination)."""
         try:
             tag_clause = " AND market_tags LIKE ?" if tag else ""
             params: list[Any] = [f"%{tag}%"] if tag else []
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    f"SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL{tag_clause}",
-                    params,
-                )
+                # Include remote_cards in the count
+                if tag:
+                    cursor = await conn.execute(
+                        f"""SELECT COUNT(*) FROM (
+                          SELECT id FROM cards WHERE visibility = 'public' AND deleted_at IS NULL{tag_clause}
+                          UNION ALL
+                          SELECT id FROM remote_cards WHERE market_tags LIKE ?
+                        )""",
+                        [f"%{tag}%", f"%{tag}%"],
+                    )
+                else:
+                    cursor = await conn.execute(
+                        """SELECT COUNT(*) FROM (
+                          SELECT id FROM cards WHERE visibility = 'public' AND deleted_at IS NULL
+                          UNION ALL
+                          SELECT id FROM remote_cards
+                        )""",
+                    )
                 row = await cursor.fetchone()
             return row[0] if row else 0
         except Exception as exc:
@@ -1328,25 +1393,44 @@ class SQLiteStore(StorageBase):
             return 0
 
     async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
-        """Search public cards by name match (case-insensitive)."""
+        """Search public cards by name match (case-insensitive). Also searches remote_cards."""
         try:
             offset = (page - 1) * page_size
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
-                              c.forked_from, c.likes, c.created_at,
-                              c.market_description, c.market_tags,
-                              COALESCE(u.username, '') AS author_name,
-                              COALESCE(u.avatar_data, '') AS author_avatar,
-                              COALESCE(t.title, '') AS text_title
-                        FROM cards c
-                        LEFT JOIN users u ON u.id = c.user_id
-                        LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public' AND c.name LIKE ? AND c.deleted_at IS NULL
-                        ORDER BY c.likes DESC, c.created_at DESC
+                    """SELECT id, name, card_json, user_id, avatar_data,
+                              forked_from, likes, created_at,
+                              market_description, market_tags,
+                              author_name, author_avatar, text_title,
+                              comment_count, is_remote, origin_region
+                        FROM (
+                          SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                                 c.forked_from, c.likes, c.created_at,
+                                 c.market_description, c.market_tags,
+                                 COALESCE(u.username, '') AS author_name,
+                                 COALESCE(u.avatar_data, '') AS author_avatar,
+                                 COALESCE(t.title, '') AS text_title,
+                                 (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                                 0 AS is_remote, '' AS origin_region
+                          FROM cards c
+                          LEFT JOIN users u ON u.id = c.user_id
+                          LEFT JOIN texts t ON t.id = c.text_id
+                          WHERE c.visibility = 'public' AND c.name LIKE ? AND c.deleted_at IS NULL
+
+                          UNION ALL
+
+                          SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
+                                 '' AS forked_from, 0 AS likes, COALESCE(rc.origin_created_at, '') AS created_at,
+                                 rc.market_description, rc.market_tags,
+                                 '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                 0 AS comment_count, 1 AS is_remote, rc.origin_region
+                          FROM remote_cards rc
+                          WHERE rc.name LIKE ?
+                        ) combined
+                        ORDER BY likes DESC, created_at DESC
                         LIMIT ? OFFSET ?""",
-                    (pattern, page_size, offset),
+                    (pattern, pattern, page_size, offset),
                 )
                 rows = await cursor.fetchall()
             return self._list_rows(rows)
@@ -1355,13 +1439,17 @@ class SQLiteStore(StorageBase):
             raise
 
     async def search_public_cards_total(self, keyword: str) -> int:
-        """Return total count of matching public cards."""
+        """Return total count of matching public cards + remote_cards."""
         try:
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND name LIKE ? AND deleted_at IS NULL",
-                    (pattern,),
+                    """SELECT COUNT(*) FROM (
+                      SELECT id FROM cards WHERE visibility = 'public' AND name LIKE ? AND deleted_at IS NULL
+                      UNION ALL
+                      SELECT id FROM remote_cards WHERE name LIKE ?
+                    )""",
+                    (pattern, pattern),
                 )
                 row = await cursor.fetchone()
             return row[0] if row else 0
@@ -1374,17 +1462,25 @@ class SQLiteStore(StorageBase):
         like = f"%{keyword}%"
         try:
             async with await self._connect() as conn:
-                # Cards (public only)
+                # Cards (public local + remote)
                 cur = await conn.execute(
-                    """SELECT c.id, c.name, c.card_json, c.avatar_data,
-                              COALESCE(u.username, '') AS author_name
-                       FROM cards c
-                       LEFT JOIN users u ON u.id = c.user_id
-                       WHERE c.visibility = 'public' AND c.deleted_at IS NULL
-                         AND c.name LIKE ?
-                       ORDER BY c.likes DESC
-                       LIMIT 5""",
-                    (like,),
+                    """SELECT id, name, card_json, avatar_data, author_name
+                        FROM (
+                          SELECT c.id, c.name, c.card_json, c.avatar_data,
+                                 COALESCE(u.username, '') AS author_name
+                          FROM cards c
+                          LEFT JOIN users u ON u.id = c.user_id
+                          WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                            AND c.name LIKE ?
+                          ORDER BY c.likes DESC
+                          LIMIT 5
+                          UNION ALL
+                          SELECT id, name, card_json, avatar_data, '' AS author_name
+                          FROM remote_cards
+                          WHERE name LIKE ?
+                          LIMIT 5
+                        ) combined LIMIT 5""",
+                    (like, like),
                 )
                 cards = self._list_rows(await cur.fetchall())
 
@@ -4470,40 +4566,50 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Mark card unsynced failed: {exc}")
             raise
 
-    async def update_remote_card(self, card_id: str, name: str, card_json: str, avatar_data: str,
-                                 market_description: str, market_tags: str) -> None:
-        """Update a received remote card replica in-place."""
+    async def get_remote_card(self, card_id: str) -> dict | None:
+        """Get a remote card by ID."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    """UPDATE cards SET name = ?, card_json = ?, avatar_data = ?,
-                              market_description = ?, market_tags = ?,
-                              cross_border_synced = 1
-                       WHERE id = ?""",
-                    (name, card_json, avatar_data, market_description, market_tags, card_id),
+                cursor = await conn.execute(
+                    "SELECT * FROM remote_cards WHERE id = ?",
+                    (card_id,),
                 )
-                await conn.commit()
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
         except Exception as exc:
-            print(f"[SQLiteStore] Update remote card failed: {exc}")
-            raise
+            print(f"[SQLiteStore] Get remote card failed: {exc}")
+            return None
 
-    async def create_remote_card(self, card_id: str, text_id: str, name: str, card_json: str,
-                                 created_at: str, avatar_data: str, user_id: str,
-                                 forked_from: str, market_description: str, market_tags: str) -> None:
-        """Insert a received remote card as a read-only replica."""
+    async def upsert_remote_card(self, card_id: str, origin_region: str, user_id: str,
+                                  name: str, card_json: str, avatar_data: str,
+                                  market_description: str, market_tags: str,
+                                  origin_created_at: str) -> None:
+        """Insert or update a remote card replica. No FK dependencies."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data,
-                                          user_id, visibility, forked_from, likes,
-                                          market_description, market_tags, cross_border_synced)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, 1)""",
-                    (card_id, text_id, name, card_json, created_at, avatar_data,
-                     user_id, forked_from, market_description, market_tags),
+                existing = await conn.execute(
+                    "SELECT 1 FROM remote_cards WHERE id = ?", (card_id,),
                 )
+                if await existing.fetchone():
+                    await conn.execute(
+                        """UPDATE remote_cards SET name = ?, card_json = ?, avatar_data = ?,
+                                  market_description = ?, market_tags = ?,
+                                  synced_at = CURRENT_TIMESTAMP
+                           WHERE id = ?""",
+                        (name, card_json, avatar_data, market_description, market_tags, card_id),
+                    )
+                else:
+                    await conn.execute(
+                        """INSERT INTO remote_cards
+                           (id, origin_region, user_id, name, card_json, avatar_data,
+                            market_description, market_tags, origin_created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (card_id, origin_region, user_id, name, card_json,
+                         avatar_data, market_description, market_tags, origin_created_at),
+                    )
                 await conn.commit()
         except Exception as exc:
-            print(f"[SQLiteStore] Create remote card failed: {exc}")
+            print(f"[SQLiteStore] Upsert remote card failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:

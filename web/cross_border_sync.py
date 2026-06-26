@@ -64,10 +64,19 @@ async def forward_card_to_peer(card: dict, storage: StorageBase) -> bool:
 
     from inter_node_auth import create_auth_header
 
+    # origin_region = sender's home_region
+    origin_region = ""
+    try:
+        owner = await storage.get_user_by_id(card.get("user_id", ""))
+        if owner:
+            origin_region = owner.get("home_region", "")
+    except Exception:
+        pass
+
     payload = {
         "id": card["id"],
         "user_id": card.get("user_id", ""),
-        "text_id": card.get("text_id", ""),
+        "origin_region": origin_region,
         "name": card.get("name", ""),
         "card_json": card.get("card_json", "{}"),
         "avatar_data": card.get("avatar_data", ""),

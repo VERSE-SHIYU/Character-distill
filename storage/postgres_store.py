@@ -399,7 +399,7 @@ class PostgresStore(StorageBase):
             return None
 
     async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
-        """Get a single public card with author info and like status."""
+        """Get a single public card detail with author info. Falls back to remote_cards."""
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -423,7 +423,24 @@ class PostgresStore(StorageBase):
                         card_id, user_id,
                     )
                     card["liked_by_me"] = like_row is not None
-            return card
+                    card["is_remote"] = False
+                    card["origin_region"] = ""
+                    return card
+
+            # Fallback: check remote_cards
+            remote = await self.get_remote_card(card_id)
+            if remote:
+                remote["is_remote"] = True
+                remote["liked_by_me"] = False
+                remote["author_name"] = ""
+                remote["author_avatar"] = ""
+                remote["text_title"] = ""
+                remote["comment_count"] = 0
+                remote["forked_from"] = ""
+                remote["likes"] = 0
+                remote["publish_message"] = ""
+                remote["created_at"] = remote.get("origin_created_at", "")
+            return remote
         except Exception as exc:
             print(f"[PostgresStore] Get market card detail failed: {exc}")
             return None
@@ -506,47 +523,80 @@ class PostgresStore(StorageBase):
     # ── Market / public card methods ──────────────────────────
 
     async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new", tag: str = "") -> list[dict]:
-        """List public cards with pagination and sorting (hot=likes, new=created_at)."""
+        """List public cards UNION remote_cards with pagination and sorting."""
         try:
-            order = "c.likes DESC, c.created_at DESC" if sort == "hot" else "c.created_at DESC"
+            order = "likes DESC, created_at DESC" if sort == "hot" else "created_at DESC"
             offset = (page - 1) * page_size
-            tag_clause = " AND c.market_tags LIKE $3" if tag else ""
-            params: list[Any] = []
-            if tag:
-                params = [f"%{tag}%", page_size, offset]
-            else:
-                params = [page_size, offset]
             async with await self._connect() as conn:
                 if tag:
+                    like_pat = f"%{tag}%"
                     rows = await conn.fetch(
-                        f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
-                                  c.forked_from, c.likes, c.created_at,
-                                  c.market_description, c.market_tags,
-                                  COALESCE(u.username, '') AS author_name,
-                                  COALESCE(u.avatar_data, '') AS author_avatar,
-                                  COALESCE(t.title, '') AS text_title,
-                                  (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
-                            FROM cards c
-                            LEFT JOIN users u ON u.id = c.user_id
-                            LEFT JOIN texts t ON t.id = c.text_id
-                            WHERE c.visibility = 'public' AND c.deleted_at IS NULL AND c.market_tags LIKE $3
+                        f"""SELECT id, name, card_json, user_id, avatar_data,
+                                  forked_from, likes, created_at,
+                                  market_description, market_tags,
+                                  author_name, author_avatar, text_title,
+                                  comment_count, is_remote, origin_region
+                            FROM (
+                              SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                                     c.forked_from, c.likes, c.created_at,
+                                     c.market_description, c.market_tags,
+                                     COALESCE(u.username, '') AS author_name,
+                                     COALESCE(u.avatar_data, '') AS author_avatar,
+                                     COALESCE(t.title, '') AS text_title,
+                                     (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                                     0 AS is_remote, '' AS origin_region
+                              FROM cards c
+                              LEFT JOIN users u ON u.id = c.user_id
+                              LEFT JOIN texts t ON t.id = c.text_id
+                              WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                                AND c.market_tags LIKE $1
+
+                              UNION ALL
+
+                              SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
+                                     '' AS forked_from, 0 AS likes,
+                                     COALESCE(rc.origin_created_at, '') AS created_at,
+                                     rc.market_description, rc.market_tags,
+                                     '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                     0 AS comment_count, 1 AS is_remote, rc.origin_region
+                              FROM remote_cards rc
+                              WHERE rc.market_tags LIKE $2
+                            ) combined
                             ORDER BY {order}
-                            LIMIT $1 OFFSET $2""",
-                        f"%{tag}%", page_size, offset,
+                            LIMIT $3 OFFSET $4""",
+                        like_pat, like_pat, page_size, offset,
                     )
                 else:
                     rows = await conn.fetch(
-                        f"""SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
-                                  c.forked_from, c.likes, c.created_at,
-                                  c.market_description, c.market_tags,
-                                  COALESCE(u.username, '') AS author_name,
-                                  COALESCE(u.avatar_data, '') AS author_avatar,
-                                  COALESCE(t.title, '') AS text_title,
-                                  (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count
-                            FROM cards c
-                            LEFT JOIN users u ON u.id = c.user_id
-                            LEFT JOIN texts t ON t.id = c.text_id
-                            WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                        f"""SELECT id, name, card_json, user_id, avatar_data,
+                                  forked_from, likes, created_at,
+                                  market_description, market_tags,
+                                  author_name, author_avatar, text_title,
+                                  comment_count, is_remote, origin_region
+                            FROM (
+                              SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                                     c.forked_from, c.likes, c.created_at,
+                                     c.market_description, c.market_tags,
+                                     COALESCE(u.username, '') AS author_name,
+                                     COALESCE(u.avatar_data, '') AS author_avatar,
+                                     COALESCE(t.title, '') AS text_title,
+                                     (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                                     0 AS is_remote, '' AS origin_region
+                              FROM cards c
+                              LEFT JOIN users u ON u.id = c.user_id
+                              LEFT JOIN texts t ON t.id = c.text_id
+                              WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+
+                              UNION ALL
+
+                              SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
+                                     '' AS forked_from, 0 AS likes,
+                                     COALESCE(rc.origin_created_at, '') AS created_at,
+                                     rc.market_description, rc.market_tags,
+                                     '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                     0 AS comment_count, 1 AS is_remote, rc.origin_region
+                              FROM remote_cards rc
+                            ) combined
                             ORDER BY {order}
                             LIMIT $1 OFFSET $2""",
                         page_size, offset,
@@ -557,17 +607,25 @@ class PostgresStore(StorageBase):
             raise
 
     async def list_public_cards_total(self, tag: str = "") -> int:
-        """Return total count of public cards (for pagination)."""
+        """Return total count of public cards + remote_cards (for pagination)."""
         try:
             async with await self._connect() as conn:
                 if tag:
                     row = await conn.fetchrow(
-                        "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL AND market_tags LIKE $1",
-                        f"%{tag}%",
+                        """SELECT COUNT(*) FROM (
+                          SELECT id FROM cards WHERE visibility = 'public' AND deleted_at IS NULL AND market_tags LIKE $1
+                          UNION ALL
+                          SELECT id FROM remote_cards WHERE market_tags LIKE $2
+                        )""",
+                        f"%{tag}%", f"%{tag}%",
                     )
                 else:
                     row = await conn.fetchrow(
-                        "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND deleted_at IS NULL"
+                        """SELECT COUNT(*) FROM (
+                          SELECT id FROM cards WHERE visibility = 'public' AND deleted_at IS NULL
+                          UNION ALL
+                          SELECT id FROM remote_cards
+                        )""",
                     )
             return row[0] if row else 0
         except Exception as exc:
@@ -575,25 +633,45 @@ class PostgresStore(StorageBase):
             return 0
 
     async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
-        """Search public cards by name match (case-insensitive)."""
+        """Search public cards UNION remote_cards by name match."""
         try:
             offset = (page - 1) * page_size
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
-                              c.forked_from, c.likes, c.created_at,
-                              c.market_description, c.market_tags,
-                              COALESCE(u.username, '') AS author_name,
-                              COALESCE(u.avatar_data, '') AS author_avatar,
-                              COALESCE(t.title, '') AS text_title
-                        FROM cards c
-                        LEFT JOIN users u ON u.id = c.user_id
-                        LEFT JOIN texts t ON t.id = c.text_id
-                        WHERE c.visibility = 'public' AND c.name LIKE $1 AND c.deleted_at IS NULL
-                        ORDER BY c.likes DESC, c.created_at DESC
-                        LIMIT $2 OFFSET $3""",
-                    pattern, page_size, offset,
+                    """SELECT id, name, card_json, user_id, avatar_data,
+                              forked_from, likes, created_at,
+                              market_description, market_tags,
+                              author_name, author_avatar, text_title,
+                              comment_count, is_remote, origin_region
+                        FROM (
+                          SELECT c.id, c.name, c.card_json, c.user_id, c.avatar_data,
+                                 c.forked_from, c.likes, c.created_at,
+                                 c.market_description, c.market_tags,
+                                 COALESCE(u.username, '') AS author_name,
+                                 COALESCE(u.avatar_data, '') AS author_avatar,
+                                 COALESCE(t.title, '') AS text_title,
+                                 (SELECT COUNT(*) FROM card_comments cc WHERE cc.card_id = c.id) AS comment_count,
+                                 0 AS is_remote, '' AS origin_region
+                          FROM cards c
+                          LEFT JOIN users u ON u.id = c.user_id
+                          LEFT JOIN texts t ON t.id = c.text_id
+                          WHERE c.visibility = 'public' AND c.name LIKE $1 AND c.deleted_at IS NULL
+
+                          UNION ALL
+
+                          SELECT rc.id, rc.name, rc.card_json, rc.user_id, rc.avatar_data,
+                                 '' AS forked_from, 0 AS likes,
+                                 COALESCE(rc.origin_created_at, '') AS created_at,
+                                 rc.market_description, rc.market_tags,
+                                 '' AS author_name, '' AS author_avatar, '' AS text_title,
+                                 0 AS comment_count, 1 AS is_remote, rc.origin_region
+                          FROM remote_cards rc
+                          WHERE rc.name LIKE $2
+                        ) combined
+                        ORDER BY likes DESC, created_at DESC
+                        LIMIT $3 OFFSET $4""",
+                    pattern, pattern, page_size, offset,
                 )
             return self._list_rows(rows)
         except Exception as exc:
@@ -601,13 +679,17 @@ class PostgresStore(StorageBase):
             raise
 
     async def search_public_cards_total(self, keyword: str) -> int:
-        """Return total count of matching public cards."""
+        """Return total count of matching public cards + remote_cards."""
         try:
             pattern = f"%{keyword}%"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT COUNT(*) FROM cards WHERE visibility = 'public' AND name LIKE $1 AND deleted_at IS NULL",
-                    pattern,
+                    """SELECT COUNT(*) FROM (
+                      SELECT id FROM cards WHERE visibility = 'public' AND name LIKE $1 AND deleted_at IS NULL
+                      UNION ALL
+                      SELECT id FROM remote_cards WHERE name LIKE $2
+                    )""",
+                    pattern, pattern,
                 )
             return row[0] if row else 0
         except Exception as exc:
@@ -619,18 +701,26 @@ class PostgresStore(StorageBase):
         like = f"%{keyword}%"
         try:
             async with await self._connect() as conn:
-                cards_rows = await conn.fetch(
-                    """SELECT c.id, c.name, c.card_json, c.avatar_data,
-                              COALESCE(u.username, '') AS author_name
-                       FROM cards c
-                       LEFT JOIN users u ON u.id = c.user_id
-                       WHERE c.visibility = 'public' AND c.deleted_at IS NULL
-                         AND c.name LIKE $1
-                       ORDER BY c.likes DESC
-                       LIMIT 5""",
-                    like,
+                cards_local = await conn.fetch(
+                    """SELECT id, name, card_json, avatar_data, author_name
+                        FROM (
+                          SELECT c.id, c.name, c.card_json, c.avatar_data,
+                                 COALESCE(u.username, '') AS author_name
+                          FROM cards c
+                          LEFT JOIN users u ON u.id = c.user_id
+                          WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                            AND c.name LIKE $1
+                          ORDER BY c.likes DESC
+                          LIMIT 5
+                          UNION ALL
+                          SELECT id, name, card_json, avatar_data, '' AS author_name
+                          FROM remote_cards
+                          WHERE name LIKE $2
+                          LIMIT 5
+                        ) combined LIMIT 5""",
+                    like, like,
                 )
-                cards = self._list_rows(cards_rows)
+                cards = self._list_rows(cards_local)
                 texts_rows = await conn.fetch(
                     """SELECT id, title, filename, char_count
                        FROM texts
@@ -3422,38 +3512,48 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Mark card unsynced failed: {exc}")
             raise
 
-    async def update_remote_card(self, card_id: str, name: str, card_json: str, avatar_data: str,
-                                 market_description: str, market_tags: str) -> None:
-        """Update a received remote card replica in-place."""
+    async def get_remote_card(self, card_id: str) -> dict | None:
+        """Get a remote card by ID."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    """UPDATE cards SET name = $1, card_json = $2, avatar_data = $3,
-                              market_description = $4, market_tags = $5,
-                              cross_border_synced = 1
-                       WHERE id = $6""",
-                    name, card_json, avatar_data, market_description, market_tags, card_id,
+                row = await conn.fetchrow(
+                    "SELECT * FROM remote_cards WHERE id = $1",
+                    card_id,
                 )
+            return self._row_to_dict(row)
         except Exception as exc:
-            print(f"[PostgresStore] Update remote card failed: {exc}")
-            raise
+            print(f"[PostgresStore] Get remote card failed: {exc}")
+            return None
 
-    async def create_remote_card(self, card_id: str, text_id: str, name: str, card_json: str,
-                                 created_at: str, avatar_data: str, user_id: str,
-                                 forked_from: str, market_description: str, market_tags: str) -> None:
-        """Insert a received remote card as a read-only replica."""
+    async def upsert_remote_card(self, card_id: str, origin_region: str, user_id: str,
+                                  name: str, card_json: str, avatar_data: str,
+                                  market_description: str, market_tags: str,
+                                  origin_created_at: str) -> None:
+        """Insert or update a remote card replica. No FK dependencies."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data,
-                                          user_id, visibility, forked_from, likes,
-                                          market_description, market_tags, cross_border_synced)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, 'public', $8, 0, $9, $10, 1)""",
-                    card_id, text_id, name, card_json, created_at, avatar_data,
-                    user_id, forked_from, market_description, market_tags,
+                existing = await conn.fetchrow(
+                    "SELECT 1 FROM remote_cards WHERE id = $1", card_id,
                 )
+                if existing:
+                    await conn.execute(
+                        """UPDATE remote_cards SET name = $1, card_json = $2, avatar_data = $3,
+                                  market_description = $4, market_tags = $5,
+                                  synced_at = CURRENT_TIMESTAMP
+                           WHERE id = $6""",
+                        name, card_json, avatar_data, market_description, market_tags, card_id,
+                    )
+                else:
+                    await conn.execute(
+                        """INSERT INTO remote_cards
+                           (id, origin_region, user_id, name, card_json, avatar_data,
+                            market_description, market_tags, origin_created_at)
+                           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                        card_id, origin_region, user_id, name, card_json,
+                        avatar_data, market_description, market_tags, origin_created_at,
+                    )
         except Exception as exc:
-            print(f"[PostgresStore] Create remote card failed: {exc}")
+            print(f"[PostgresStore] Upsert remote card failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:

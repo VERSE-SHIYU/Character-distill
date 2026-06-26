@@ -61,7 +61,8 @@ async def receive_card(
     """Receive a public card replica from a peer node.
 
     Authenticated via HMAC-SHA256, NOT JWT.
-    Upserts the card (INSERT if new, UPDATE if existing) as a read-only copy.
+    Upserts into remote_cards (INSERT if new, UPDATE if existing) as a
+    read-only copy with no FK dependencies on local texts/users.
     """
     body = await request.json()
     card = body if isinstance(body, dict) else {}
@@ -71,40 +72,24 @@ async def receive_card(
     if not valid:
         raise HTTPException(401, f"Unauthorized: {reason}")
 
-    required = ("id", "user_id", "name", "card_json", "visibility")
+    required = ("id", "user_id", "name", "card_json", "visibility", "origin_region")
     missing = [f for f in required if not card.get(f)]
     if missing:
         raise HTTPException(400, f"Missing required fields: {', '.join(missing)}")
 
-    # Check if card already exists → UPDATE replica; otherwise INSERT
-    existing = await storage.get_card(card["id"])
-    if existing:
-        try:
-            await storage.update_remote_card(
-                card["id"],
-                card.get("name", ""),
-                card.get("card_json", "{}"),
-                card.get("avatar_data", ""),
-                card.get("market_description", ""),
-                card.get("market_tags", ""),
-            )
-        except Exception as exc:
-            raise HTTPException(500, f"Failed to update received card: {exc}")
-    else:
-        try:
-            await storage.create_remote_card(
-                card_id=card["id"],
-                text_id=card.get("text_id", card["id"]),
-                name=card.get("name", ""),
-                card_json=card.get("card_json", "{}"),
-                created_at=card.get("created_at", ""),
-                avatar_data=card.get("avatar_data", ""),
-                user_id=card["user_id"],
-                forked_from=card.get("id", ""),
-                market_description=card.get("market_description", ""),
-                market_tags=card.get("market_tags", ""),
-            )
-        except Exception as exc:
-            raise HTTPException(500, f"Failed to store received card: {exc}")
+    try:
+        await storage.upsert_remote_card(
+            card_id=card["id"],
+            origin_region=card["origin_region"],
+            user_id=card["user_id"],
+            name=card.get("name", ""),
+            card_json=card.get("card_json", "{}"),
+            avatar_data=card.get("avatar_data", ""),
+            market_description=card.get("market_description", ""),
+            market_tags=card.get("market_tags", ""),
+            origin_created_at=card.get("created_at", ""),
+        )
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to upsert received card: {exc}")
 
     return {"ok": True, "card_id": card["id"]}
