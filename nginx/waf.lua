@@ -27,11 +27,21 @@ end
 -- 2. SQL注入检测 (URI + query args)
 local uri = ngx.var.uri:lower()
 local args = (ngx.var.query_string or ""):lower()
+-- 收紧规则：移除误杀风险高的 "select%s+.*from"（正常含 from 参数会被误封）
+-- 和裸 "../"（已由下方独立的路径遍历规则更精确处理）
 local sqli_patterns = {
-    "union%s+select", "select%s+.*from", "insert%s+into", "drop%s+table",
-    "exec%s+", "information_schema", "or%s+1%s*=%s*1", "'%s*or%s+'",
-    "../", "etc/passwd", "cmd.exe", "/bin/bash",
+    "union%s+select", "insert%s+into%s+", "drop%s+table%s+",
+    "information_schema", "or%s+1%s*=%s*1", "'%s*or%s+'%s*=",
+    "etc/passwd", "cmd%.exe", "/bin/bash",
 }
+
+-- 路径遍历：用更精确的模式（连续的 ../ 或编码形式），避免误杀正常路径
+local traversal_patterns = { "%.%./%.%.", "%.%.%%2f", "%%2e%%2e/" }
+for _, p in ipairs(traversal_patterns) do
+    if ngx.re.find(uri, p, "jo") or ngx.re.find(args, p, "jo") then
+        return deny("TRAVERSAL", ngx.var.request_uri)
+    end
+end
 for _, p in ipairs(sqli_patterns) do
     if ngx.re.find(uri, p, "jo") or ngx.re.find(args, p, "jo") then
         return deny("SQLI", ngx.var.request_uri)

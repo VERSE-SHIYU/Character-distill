@@ -1,9 +1,21 @@
 # ============================================================
-# 生产环境编排: OpenResty (HTTPS + WAF) + FastAPI + PostgreSQL + Fail2Ban + GoAccess
-# 启动: docker compose -f docker-compose.prod.yml up -d
+# 生产环境编排（精简版 · 适配 2G 内存瘦客户端）
+# 架构：OpenResty(HTTPS+WAF+CC) + FastAPI(app) + PostgreSQL + Fail2Ban
 #
-# 单地域单库设计：本文件在【深圳】和【新加坡】两台机器上各跑一份，
-# 各自连各自本机的 postgres 容器，两库互不连接、互不同步（合规：分库存储）。
+# 设计前提（与实际一致）：
+#   - Embedding / 大模型 / 蒸馏 全部走外部 API，本机不跑 AI 模型
+#   - 语音用 edge-tts（云端），本机无 torch / GPT-SoVITS 重包
+#   - 因此本机是"转发 + 存储"的轻量后端，2G 内存足够
+#   - 已在宿主机配置 2G swap 作为内存兜底
+#   - 第一版单机部署（深圳主机），新加坡暂不启用
+#
+# 相比旧版改动：
+#   1. 砍掉 goaccess（监控锦上添花，用户量上来再加）
+#   2. 全部容器加 mem_limit（防单容器吃爆 2G 拖垮数据库）
+#   3. postgres 加 OOM 保护 + 调小 shared_buffers 适配小内存
+#   4. 前端构建建议放本地/CI，不在 2G 机器上 npm build（见 DEPLOY.md）
+#
+# 启动：docker compose -f docker-compose.prod.yml up -d
 # ============================================================
 
 services:
@@ -14,6 +26,14 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
       LANG: C.UTF-8
+    # 小内存调优：限制 shared_buffers 和连接数，避免 PG 自身撑爆内存限制
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c max_connections=50
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
     volumes:
       - pg_data:/var/lib/postgresql/data
     # 仅本机暴露，绝不对公网开放 5432
@@ -24,6 +44,34 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # 数据库最该被保护：降低被 OOM Killer 选中的概率
+    oom_score_adj: -500
+    mem_limit: 512m
+    mem_reservation: 256m
+    restart: unless-stopped
+    networks:
+      - prod
+
+  app:
+    build: .
+    # 仅本机暴露，外网只能经 nginx 进来
+    ports:
+      - "127.0.0.1:7860:7860"
+    volumes:
+      # ./data 用于 chromadb 向量库、voice_cache 等非关系数据，必须持久化
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      # 容器内连库必须用 compose 服务名 postgres，不能写 localhost
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # app 比数据库更适合被先杀（杀了能自动重启，数据库不能）
+    oom_score_adj: 300
+    mem_limit: 768m
+    mem_reservation: 384m
     restart: unless-stopped
     networks:
       - prod
@@ -38,25 +86,8 @@ services:
       - nginx_logs:/var/log/openresty
     depends_on:
       - app
-    restart: unless-stopped
-    networks:
-      - prod
-
-  app:
-    build: .
-    ports:
-      - "127.0.0.1:7860:7860"   # 仅本地暴露
-    volumes:
-      # PostgreSQL 只接管关系型数据；./data 仍用于 chromadb 向量库、voice_cache 等非关系数据，必须保留。
-      - ./data:/app/data
-    env_file:
-      - .env
-    environment:
-      # 容器内必须用 compose 服务名 postgres，不能是 localhost
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-    depends_on:
-      postgres:
-        condition: service_healthy
+    mem_limit: 128m
+    mem_reservation: 64m
     restart: unless-stopped
     networks:
       - prod
@@ -70,20 +101,15 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    mem_limit: 96m
+    mem_reservation: 48m
     restart: unless-stopped
     networks:
       - prod
 
-  goaccess:
-    image: allinurl/goaccess:latest
-    volumes:
-      - nginx_logs:/var/log/openresty:ro
-    ports:
-      - "127.0.0.1:7890:7890"
-    command: --real-time-html -f /var/log/openresty/access.log -o /var/log/openresty/report.html --log-format=COMBINED
-    restart: unless-stopped
-    networks:
-      - prod
+# 内存账（2G 机器）：
+#   postgres 512m + app 768m + nginx 128m + fail2ban 96m ≈ 1.5G
+#   宿主系统 ~400m，剩余靠 2G swap 兜底，安全。
 
 networks:
   prod:
