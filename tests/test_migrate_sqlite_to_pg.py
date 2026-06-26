@@ -163,6 +163,15 @@ def make_test_sqlite() -> str:
         ("test_user_3", "user3", "hash3", "key3", ts),
     )
 
+    # 第 4 个用户：带微秒的 ISO 8601 T 格式时间戳,测试 _parse_timestamp 兼容性
+    conn.execute(
+        """INSERT INTO users (id, username, password_hash, api_key, cards_visible,
+                              books_visible, following_visible, presence_visibility, created_at)
+           VALUES (?, ?, ?, ?, 1, 1, 1, 'friends', ?)""",
+        ("test_user_4", "user4", "hash4", "key4",
+         "2026-06-15T12:30:45.123456"),
+    )
+
     conn.commit()
     conn.close()
     return db_path
@@ -180,30 +189,36 @@ async def apply_pg_migrations(pg: asyncpg.Connection) -> None:
 
 
 async def clean_pg_tables(pg: asyncpg.Connection) -> None:
-    """清空迁移目标表以便重复测试."""
+    """清空迁移目标表以便重复测试。按 FK 依赖逆序删除。"""
     tables = [
-        "user_secrets", "users", "cards", "texts",
+        "user_secrets", "usage_stats", "refresh_tokens", "reading_progress",
+        "group_messages", "group_sessions", "group_affinity",
+        "direct_messages", "messages", "sessions",
+        "post_likes", "post_comments", "user_posts",
+        "card_comment_reports", "card_comment_likes", "text_comment_likes",
+        "text_comments", "card_versions", "card_comments", "card_likes",
+        "cards", "texts", "users",
     ]
     for t in tables:
         try:
             await pg.execute(f"DELETE FROM {t}")
         except asyncpg.UndefinedTableError:
-            pass  # table doesn't exist yet — skip
+            pass
 
 
 async def verify_migration(pg: asyncpg.Connection) -> None:
     """验证迁移结果."""
     errors = []
 
-    # 1. PG users 应该有 3 行
+    # 1. PG users 应该有 4 行
     user_count = await pg.fetchval("SELECT COUNT(*) FROM users")
-    if user_count != 3:
-        errors.append(f"users count: expected 3, got {user_count}")
+    if user_count != 4:
+        errors.append(f"users count: expected 4, got {user_count}")
 
-    # 2. PG user_secrets 应该有 3 行
+    # 2. PG user_secrets 应该有 4 行
     secrets_count = await pg.fetchval("SELECT COUNT(*) FROM user_secrets")
-    if secrets_count != 3:
-        errors.append(f"user_secrets count: expected 3, got {secrets_count}")
+    if secrets_count != 4:
+        errors.append(f"user_secrets count: expected 4, got {secrets_count}")
 
     # 3. pg_user 的 password_hash 必须可在 user_secrets 查到
     pw_hash = await pg.fetchval(
@@ -240,6 +255,18 @@ async def verify_migration(pg: asyncpg.Connection) -> None:
     )
     if region != "cn-shenzhen":
         errors.append(f"home_region: expected 'cn-shenzhen', got {region!r}")
+
+    # 8. 微秒 ISO 8601 时间戳(带 T)正确解析
+    ts = await pg.fetchval(
+        "SELECT created_at FROM users WHERE id = 'test_user_4'",
+    )
+    if ts is None:
+        errors.append("test_user_4 created_at is None — timestamp parse failed")
+    elif ts.year != 2026 or ts.month != 6 or ts.day != 15:
+        errors.append(f"test_user_4 created_at wrong date: {ts}")
+    # 微秒精度保留
+    if ts is not None and ts.microsecond != 123456:
+        errors.append(f"test_user_4 created_at microsecond lost: {ts.microsecond} != 123456")
 
     if errors:
         print("FAILED assertions:")

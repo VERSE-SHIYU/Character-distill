@@ -94,6 +94,16 @@ async def get_pg_columns(pg: asyncpg.Connection, table: str) -> list[str]:
     return [r["column_name"] for r in rows]
 
 
+async def get_pg_bool_cols(pg: asyncpg.Connection, table: str) -> set[str]:
+    """Return set of boolean column names for a PG table."""
+    rows = await pg.fetch(
+        """SELECT column_name FROM information_schema.columns
+           WHERE table_name = $1 AND data_type = 'boolean'""",
+        table,
+    )
+    return {r["column_name"] for r in rows}
+
+
 def probe_sqlite_schema(conn: sqlite3.Connection) -> bool:
     """Return True if SQLite users has password_hash (old schema, needs split)."""
     cols = get_sqlite_columns(conn, "users")
@@ -104,7 +114,7 @@ def probe_sqlite_schema(conn: sqlite3.Connection) -> bool:
 
 # SQLite 时间戳字符串 → PG TIMESTAMPTZ 可接受的格式
 TIMESTAMP_COLS: dict[str, set[str]] = {
-    "users": {"created_at", "last_login_at", "last_active_at"},
+    "users": {"created_at"},  # last_login_at / last_active_at 是 text 不是 timestamptz
     "texts": {"created_at"},
     "cards": {"created_at"},
     "sessions": {"created_at", "updated_at"},
@@ -136,27 +146,66 @@ TIMESTAMP_COLS: dict[str, set[str]] = {
 }
 
 
-def _parse_timestamp(val: str | None) -> datetime | None:
-    """Convert SQLite timestamp string to datetime object for asyncpg compatibility."""
+def _parse_timestamp(val):
+    """SQLite 时间戳字符串 -> datetime,供 asyncpg 写 TIMESTAMP 列。
+
+    依次尝试常见格式;unix 秒单独处理;全部失败则原样返回 + warning,
+    绝不静默丢成 None。
+    """
     if val is None or val == "":
         return None
+    if isinstance(val, datetime):
+        return val
+    s = str(val).strip()
+
+    # 1) ISO 8601(覆盖带 T、带微秒、带时区),fromisoformat 最宽容
     try:
-        return datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
     except ValueError:
-        return None
+        pass
+
+    # 2) 显式枚举几种 SQLite 常见格式
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+
+    # 3) 纯数字 = unix epoch 秒
+    if s.isdigit():
+        try:
+            return datetime.fromtimestamp(int(s))
+        except (ValueError, OSError):
+            pass
+
+    # 4) 全部失败:不静默丢,打 warning 并原样交给 asyncpg(让它显式报错而非吞掉)
+    print(f"  [WARN] 无法解析时间戳 {val!r},原样保留(可能需人工核查)")
+    return val
 
 
 def normalize_row(
     row: dict, table: str, pg_columns: set[str],
+    bool_cols: set[str] | None = None,
 ) -> dict:
     """Filter row dict to only PG columns and convert timestamp types."""
+    if bool_cols is None:
+        bool_cols = set()
     result = {}
     for col, val in row.items():
         if col not in pg_columns:
             continue
-        # 字符串布尔 → SMALLINT
-        if isinstance(val, str) and val.lower() in ("true", "false"):
-            val = 1 if val.lower() == "true" else 0
+        # 字符串/整数布尔 → Python bool (asyncpg 需要 bool,不能是 int)
+        if col in bool_cols:
+            if isinstance(val, str):
+                val = val.lower() in ("true", "1", "yes")
+            elif isinstance(val, int):
+                val = bool(val)
         # 时间戳转换
         ts_cols = TIMESTAMP_COLS.get(table, set())
         if col in ts_cols and isinstance(val, str):
@@ -189,7 +238,8 @@ def build_insert_sql(
     col_names = ", ".join(columns)
     override = " OVERRIDING SYSTEM VALUE" if identity else ""
     conflict = f"ON CONFLICT ({conflict_col}) DO NOTHING" if conflict_col else "ON CONFLICT DO NOTHING"
-    return f"INSERT{override} INTO {table} ({col_names}) VALUES ({placeholders}) {conflict}"
+    # OVERRIDING 必须放在列名之后、VALUES 之前(PG 16 不支持放在表名与列名之间)
+    return f"INSERT INTO {table} ({col_names}){override} VALUES ({placeholders}) {conflict}"
 
 
 async def migrate_table(
@@ -220,13 +270,15 @@ async def migrate_table(
         result["errors"] = len(sqlite_rows)
         return result
 
+    bool_cols = await get_pg_bool_cols(pg, pg_table) if not dry_run else set()
+
     if not dry_run:
         insert_sql = build_insert_sql(
             pg_table, common_cols, identity=identity, conflict_col=pk_col,
         )
 
     for row in sqlite_rows:
-        normalized = normalize_row(row, pg_table, pg_columns)
+        normalized = normalize_row(row, pg_table, pg_columns, bool_cols=bool_cols)
         values = [normalized.get(c) for c in common_cols]
 
         if dry_run:
@@ -234,13 +286,14 @@ async def migrate_table(
             continue
 
         try:
-            tag = await pg.execute(insert_sql, *values)
-            # asyncpg 的 command tag 格式: "INSERT 0 N" — N 是影响行数
-            affected = int(tag.split()[-1]) if tag else 0
-            if affected > 0:
-                result["migrated"] += 1
-            else:
-                result["skipped"] += 1
+            async with pg.transaction():
+                tag = await pg.execute(insert_sql, *values)
+                # asyncpg 的 command tag 格式: "INSERT 0 N" — N 是影响行数
+                affected = int(tag.split()[-1]) if tag else 0
+                if affected > 0:
+                    result["migrated"] += 1
+                else:
+                    result["skipped"] += 1
         except Exception as exc:
             result["errors"] += 1
             id_val = row.get(pk_col, "<unknown>") if pk_col else "<composite>"
@@ -273,6 +326,7 @@ async def migrate_users(
     """
     pg_users_cols = set(await get_pg_columns(pg, "users"))
     pg_secrets_cols = set(await get_pg_columns(pg, "user_secrets"))
+    bool_cols = await get_pg_bool_cols(pg, "users")
 
     users_result = {"migrated": 0, "skipped": 0, "errors": 0, "error_rows": []}
     secrets_result = {"migrated": 0, "skipped": 0, "errors": 0, "error_rows": []}
@@ -294,7 +348,7 @@ async def migrate_users(
 
     for row in sqlite_users:
         # users 行
-        user_row = normalize_row(row, "users", pg_users_cols)
+        user_row = normalize_row(row, "users", pg_users_cols, bool_cols=bool_cols)
         user_row.pop("password_hash", None)
         user_row.pop("api_key", None)
         user_row.pop("base_url", None)
@@ -312,23 +366,20 @@ async def migrate_users(
             continue
 
         try:
-            tag = await pg.execute(user_insert, *user_vals)
-            affected = int(tag.split()[-1]) if tag else 0
-            if affected > 0:
-                users_result["migrated"] += 1
-            else:
-                users_result["skipped"] += 1
-        except Exception as exc:
-            users_result["errors"] += 1
-            users_result["error_rows"].append(f"  [users] {row['id']}: {exc}")
+            async with pg.transaction():
+                tag = await pg.execute(user_insert, *user_vals)
+                affected = int(tag.split()[-1]) if tag else 0
+                if affected > 0:
+                    users_result["migrated"] += 1
+                else:
+                    users_result["skipped"] += 1
 
-        try:
-            tag = await pg.execute(secrets_insert, *secret_vals)
-            affected = int(tag.split()[-1]) if tag else 0
-            if affected > 0:
-                secrets_result["migrated"] += 1
-            else:
-                secrets_result["skipped"] += 1
+                tag = await pg.execute(secrets_insert, *secret_vals)
+                affected = int(tag.split()[-1]) if tag else 0
+                if affected > 0:
+                    secrets_result["migrated"] += 1
+                else:
+                    secrets_result["skipped"] += 1
         except Exception as exc:
             secrets_result["errors"] += 1
             secrets_result["error_rows"].append(f"  [user_secrets] {row['id']}: {exc}")
@@ -447,12 +498,11 @@ async def run_migration(
             totals["migrated"] += len(sqlite_rows)
             continue
 
-        # 每表独立事务
-        async with pg.transaction():
-            result = await migrate_table(
-                pg, sqlite_rows, sqlite_table, pg_table, pk_col,
-                identity=identity, pg_columns=pg_cols, dry_run=False,
-            )
+        # 逐行独立事务（坏行不阻断好行）
+        result = await migrate_table(
+            pg, sqlite_rows, sqlite_table, pg_table, pk_col,
+            identity=identity, pg_columns=pg_cols, dry_run=False,
+        )
 
         print_result(f"  {sqlite_table} → {pg_table}", result)
         for k in totals:
