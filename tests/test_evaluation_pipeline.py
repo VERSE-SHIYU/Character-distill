@@ -4,20 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-import types
 from typing import Any
 
 import pytest
-
-# Pipeline 的 _persist_affinity 内部做了 `from deps import run_on_main_loop`，
-# 这里注入一个 fake deps 模块避免触发 web/deps.py 的模块级副作用。
-if "deps" not in sys.modules:
-    _fake_deps = types.ModuleType("deps")
-    def _fake_run_on_main_loop(coro, timeout=600):
-        coro.close()
-        return None
-    _fake_deps.run_on_main_loop = _fake_run_on_main_loop
-    sys.modules["deps"] = _fake_deps
 
 from core.affinity_service import AffinityService, calc_stage
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext, EvalResult
@@ -173,7 +162,8 @@ class TestParseEvaluationReply:
 class TestEvaluationPipeline:
     """EvaluationPipeline 三层隔离回归。"""
 
-    def test_full_success(self):
+    def test_full_success(self, monkeypatch):
+        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
         """正常流程：CORE 层执行 → side-effect 层执行 → 结果正确。"""
         memory = FakeMemory()
         storage = FakeStorage()
@@ -221,8 +211,9 @@ class TestEvaluationPipeline:
         assert memory.added == []     # 时间事件未持久化
         assert storage.captured is None  # 好感未持久化
 
-    def test_time_event_side_effect_failure_still_applies_core(self):
+    def test_time_event_side_effect_failure_still_applies_core(self, monkeypatch):
         """守门员：时间事件存库爆炸 → CORE 状态仍然落定。"""
+        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
             '{"affinity":72,"trust":55,"mood":"开心","guard":28,'
             '"inner_voice":"不错","mood_emoji":"😊","importance":8,'
@@ -254,8 +245,9 @@ class TestEvaluationPipeline:
         assert len(memory.added) == 0  # 果然没写进去（raise_on_add_manual）
 
     @pytest.mark.asyncio
-    async def test_affinity_persist_side_effect_failure_still_applies_core(self):
+    async def test_affinity_persist_side_effect_failure_still_applies_core(self, monkeypatch):
         """守门员：好感存库爆炸 → CORE 状态仍然落定。"""
+        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm = FakeLLM()
         svc = AffinityService()
         storage = FakeStorage(raise_on_update=True)

@@ -29,12 +29,21 @@ logger = logging.getLogger("charsim.auth")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-JWT_SECRET = os.getenv("JWT_SECRET")
-if not JWT_SECRET or JWT_SECRET == "character-distill-dev-secret-key-change-in-prod":
-    raise RuntimeError(
-        "JWT_SECRET 未设置或使用了默认值！"
-        "请在 .env 中设置: JWT_SECRET=$(openssl rand -hex 32)"
-    )
+_DEFAULT_INSECURE_JWT_SECRET = "character-distill-dev-secret-key-change-in-prod"
+
+
+def get_jwt_secret() -> str:
+    secret = os.getenv("JWT_SECRET")
+    if not secret or secret == _DEFAULT_INSECURE_JWT_SECRET:
+        raise RuntimeError(
+            "JWT_SECRET 未设置或使用了默认值！"
+            "请在 .env 中设置: JWT_SECRET=$(openssl rand -hex 32)"
+        )
+    return secret
+
+
+def validate_jwt_secret() -> None:
+    get_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30
@@ -120,7 +129,7 @@ async def get_current_user(
     if credentials is None:
         raise HTTPException(401, "请先登录")
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token 已过期")
     except jwt.InvalidTokenError:
@@ -145,7 +154,7 @@ async def get_optional_user(
     if credentials is None:
         return {}
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         return {}
     user_id = payload.get("sub")
@@ -647,7 +656,7 @@ def _create_access_token(user_id: str, username: str) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 async def _create_refresh_token(user_id: str, storage: StorageBase) -> str:

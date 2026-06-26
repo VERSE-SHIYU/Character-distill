@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 
 # 在所有会触发模型加载的 import 之前，先执行全局 meta-tensor 防御。
 # 此模块设置环境变量、torch 默认设备，并修补 nn.Module.to。
@@ -54,9 +55,10 @@ from routers.card import router as card_router
 from routers.market import router as market_router
 from routers.group import router as group_router
 from routers.message import router as message_router
+from routers.inter_node import router as inter_node_router
 from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
-from routers.auth import JWT_SECRET, JWT_ALGORITHM
+from routers.auth import JWT_ALGORITHM, get_jwt_secret, validate_jwt_secret
 from routers.admin import require_admin, router as admin_router
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from storage.base import StorageBase
@@ -74,20 +76,27 @@ else:
         "or `npm run dev` for Vite dev server."
     )
 
-app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None)
-
-app.state.limiter = limiter
-
-
-@app.on_event("startup")
-async def _startup():
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    validate_jwt_secret()
     install_log_collector()
     loop = asyncio.get_running_loop()
     loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
     from deps import set_main_loop
     set_main_loop(loop)
     await _preload_embedding()
-    asyncio.create_task(_session_cleanup_loop())
+    cleanup_task = asyncio.create_task(_session_cleanup_loop())
+    yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
+
+app.state.limiter = limiter
 
 
 async def _preload_embedding():
@@ -134,7 +143,7 @@ from starlette.requests import Request
 import time
 
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/announcement/active"}
-PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/")
+PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/", "/api/inter-node/")
 
 # Throttle last_active updates to once per 60s per user
 _last_active_ticks: dict[str, float] = {}
@@ -164,7 +173,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse({"detail": "请先登录"}, status_code=401)
 
         try:
-            payload = _jwt_lib.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            payload = _jwt_lib.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
         except _jwt_lib.ExpiredSignatureError:
             return JSONResponse({"detail": "Token 已过期，请重新登录"}, status_code=401)
         except _jwt_lib.InvalidTokenError:
@@ -200,6 +209,7 @@ app.include_router(card_router)
 app.include_router(market_router)
 app.include_router(group_router)
 app.include_router(message_router)
+app.include_router(inter_node_router)
 app.include_router(memory_router)
 
 
