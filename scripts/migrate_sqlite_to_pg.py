@@ -136,16 +136,14 @@ TIMESTAMP_COLS: dict[str, set[str]] = {
 }
 
 
-def _parse_timestamp(val: str | None) -> str | None:
-    """Convert SQLite timestamp string to PG-compatible format or None."""
+def _parse_timestamp(val: str | None) -> datetime | None:
+    """Convert SQLite timestamp string to datetime object for asyncpg compatibility."""
     if val is None or val == "":
         return None
-    # SQLite 格式: "2026-05-20 06:36:56" → PG 接受
     try:
-        dt = datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
-        return dt.isoformat()
+        return datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
     except ValueError:
-        return val  # 原样传递，让 PG 决定
+        return None
 
 
 def normalize_row(
@@ -170,8 +168,11 @@ def normalize_row(
 # ── 核心迁移 ──────────────────────────────────────────────────────────────────
 
 def read_sqlite_table(conn: sqlite3.Connection, table: str) -> list[dict]:
-    """Read all rows from a SQLite table as dicts."""
-    cursor = conn.execute(f"SELECT * FROM {table}")
+    """Read all rows from a SQLite table as dicts. Returns [] if table doesn't exist."""
+    try:
+        cursor = conn.execute(f"SELECT * FROM {table}")
+    except sqlite3.OperationalError:
+        return []
     cols = [d[0] for d in cursor.description]
     rows = cursor.fetchall()
     return [dict(zip(cols, row)) for row in rows]
@@ -234,7 +235,9 @@ async def migrate_table(
 
         try:
             tag = await pg.execute(insert_sql, *values)
-            if tag and "0" not in tag:
+            # asyncpg 的 command tag 格式: "INSERT 0 N" — N 是影响行数
+            affected = int(tag.split()[-1]) if tag else 0
+            if affected > 0:
                 result["migrated"] += 1
             else:
                 result["skipped"] += 1
@@ -287,9 +290,7 @@ async def migrate_users(
 
     if not dry_run:
         user_insert = build_insert_sql("users", user_cols, conflict_col="id")
-        secrets_insert = f"""INSERT INTO user_secrets ({", ".join(secrets_cols)})
-                             VALUES (${'$, $'.join(str(i+1) for i in range(len(secrets_cols)))})
-                             ON CONFLICT (user_id) DO NOTHING"""
+        secrets_insert = build_insert_sql("user_secrets", secrets_cols, conflict_col="user_id")
 
     for row in sqlite_users:
         # users 行
@@ -312,7 +313,8 @@ async def migrate_users(
 
         try:
             tag = await pg.execute(user_insert, *user_vals)
-            if tag and "0" not in tag:
+            affected = int(tag.split()[-1]) if tag else 0
+            if affected > 0:
                 users_result["migrated"] += 1
             else:
                 users_result["skipped"] += 1
@@ -322,7 +324,8 @@ async def migrate_users(
 
         try:
             tag = await pg.execute(secrets_insert, *secret_vals)
-            if tag and "0" not in tag:
+            affected = int(tag.split()[-1]) if tag else 0
+            if affected > 0:
                 secrets_result["migrated"] += 1
             else:
                 secrets_result["skipped"] += 1
@@ -361,7 +364,7 @@ async def _dry_run_sqlite_only(sqlite_conn: sqlite3.Connection) -> int:
         if sqlite_table is None:
             continue
         rows = read_sqlite_table(sqlite_conn, sqlite_table)
-        indicator = "→" if rows else " "
+        indicator = ">" if rows else " "
         print(f"  {sqlite_table:25s} {indicator} {pg_table:25s} {len(rows):>6} rows")
         total += len(rows)
     print(f"\n  总计: {total} rows across {sum(1 for t, _, _ in TABLE_ORDER if t)} tables")
@@ -462,12 +465,12 @@ async def run_migration(
     print_header(f"迁移汇总{note}")
     print(f"  总计: {totals['migrated']} migrated, {totals['skipped']} skipped, {totals['errors']} errors")
     if dry_run:
-        print(f"  ⚠  DRY-RUN 模式 — 未写入任何数据。确认行数后去掉 --dry-run 执行真迁移。")
+        print(f"  !! DRY-RUN 模式 — 未写入任何数据。确认行数后去掉 --dry-run 执行真迁移。")
     if failed_tables:
         print(f"  !! 失败表: {', '.join(failed_tables)}")
         print(f"  请检查上面 ERRORS 标记的详细原因")
     elif not dry_run:
-        print(f"  所有表迁移完成 ✓")
+        print(f"  所有表迁移完成 (OK)")
 
     await pg.close()
     sqlite_conn.close()
