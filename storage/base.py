@@ -36,7 +36,7 @@ class StorageBase(ABC):
     async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
         """Permanently delete a text.
 
-        When keep_cards=True, cards are detached (text_id → '') so they and
+        When keep_cards=True, cards are detached (text_id → NULL) so they and
         their chat sessions survive the text deletion. When False (default),
         cards and their sessions are cascade-deleted.
         """

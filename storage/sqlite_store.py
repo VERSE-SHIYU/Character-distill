@@ -754,6 +754,8 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] DM retracted migration failed: {exc}")
 
+                    # Migration 076 is handled inline as part of the operation — no SQL file needed.
+
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
                     try:
@@ -1081,10 +1083,13 @@ class SQLiteStore(StorageBase):
         """Detach all cards from a text by setting text_id to ''."""
         try:
             async with await self._connect() as conn:
+                # Temporarily disable FK checks: '' won't reference texts.id
+                await conn.execute("PRAGMA foreign_keys = OFF")
                 cursor = await conn.execute(
                     "UPDATE cards SET text_id = '' WHERE text_id = ?",
                     (id,),
                 )
+                await conn.execute("PRAGMA foreign_keys = ON")
                 await conn.commit()
                 return cursor.rowcount
         except Exception as exc:
@@ -1094,7 +1099,7 @@ class SQLiteStore(StorageBase):
     async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
         """Permanently delete a text.
 
-        keep_cards=True: detach cards (text_id→'') so cards+sessions survive.
+        keep_cards=True: detach cards (text_id→NULL) so cards+sessions survive.
         keep_cards=False (default): cascade-delete cards and their sessions.
         When keep_cards=False, public cards get delete-propagation enqueued.
         """
@@ -1102,10 +1107,12 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 if keep_cards:
                     # Detach cards from the text so CASCADE doesn't hit them
+                    await conn.execute("PRAGMA foreign_keys = OFF")
                     await conn.execute(
                         "UPDATE cards SET text_id = '' WHERE text_id = ?",
                         (id,),
                     )
+                    await conn.execute("PRAGMA foreign_keys = ON")
                 else:
                     # Enqueue delete propagation for public cards
                     cursor = await conn.execute(

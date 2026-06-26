@@ -298,11 +298,11 @@ class PostgresStore(StorageBase):
             raise
 
     async def detach_text_cards(self, id: str) -> int:
-        """Detach all cards from a text by setting text_id to ''."""
+        """Detach all cards from a text by setting text_id to NULL."""
         try:
             async with await self._connect() as conn:
                 tag = await conn.execute(
-                    "UPDATE cards SET text_id = '' WHERE text_id = $1",
+                    "UPDATE cards SET text_id = NULL WHERE text_id = $1",
                     id,
                 )
                 return tag.rowcount
@@ -313,7 +313,7 @@ class PostgresStore(StorageBase):
     async def hard_delete_text(self, id: str, keep_cards: bool = False) -> bool:
         """Permanently delete a text.
 
-        keep_cards=True: detach cards (text_id→'') so cards+sessions survive.
+        keep_cards=True: detach cards (text_id→NULL) so cards+sessions survive.
         keep_cards=False (default): cascade-delete cards and their sessions.
         When keep_cards=False, public cards get delete-propagation enqueued.
         """
@@ -323,7 +323,7 @@ class PostgresStore(StorageBase):
                     if keep_cards:
                         # Detach cards from the text so CASCADE doesn't hit them
                         await conn.execute(
-                            "UPDATE cards SET text_id = '' WHERE text_id = $1",
+                            "UPDATE cards SET text_id = NULL WHERE text_id = $1",
                             id,
                         )
                     else:
