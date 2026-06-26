@@ -2,9 +2,6 @@
 from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
 
-llm = LLMAdapter()
-d = Distiller(llm)
-
 test_text = """
 张三是个沉默寡言的人，但每次提到女儿小雨就会变得滔滔不绝。
 他在公司是出了名的冷面总监，开会时从不给人留面子，说话像刀子一样。
@@ -15,11 +12,20 @@ test_text = """
 张三的前妻王芳两年前离开了他。他从不提这件事，但办公室抽屉里还放着结婚照。
 """
 
-# 测试角色识别
-chars = d.identify_characters(test_text)
-print("识别到的角色：", chars)
 
-# 测试蒸馏
-card = d.distill(test_text, "张三")
-print("\n角色卡：")
-print(card.model_dump_json(indent=2, ensure_ascii=False))
+def main():
+    llm = LLMAdapter()
+    d = Distiller(llm)
+
+    # 测试角色识别
+    chars = d.identify_characters(test_text)
+    print("识别到的角色：", chars)
+
+    # 测试蒸馏
+    card = d.distill(test_text, "张三")
+    print("\n角色卡：")
+    print(card.model_dump_json(indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()

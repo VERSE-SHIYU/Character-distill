@@ -9,13 +9,7 @@ Run: pytest tests/test_security_authz.py -v
 
 from __future__ import annotations
 
-import sys
 import uuid
-from pathlib import Path
-
-_WEB_DIR = str(Path(__file__).resolve().parent.parent / "web")
-if _WEB_DIR not in sys.path:
-    sys.path.insert(0, _WEB_DIR)
 
 import pytest
 from fastapi import FastAPI, Request
