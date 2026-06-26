@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import ConfirmModal from './common/ConfirmModal'
+import Modal from './common/Modal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
 import { formatChatTime } from '../utils/time'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -592,94 +593,88 @@ function UsersTab() {
 
       {/* Set email modal */}
       {emailTarget && (
-        <div className="modal-overlay" onClick={() => setEmailTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">设置邮箱 — {emailTarget.username}</h3>
-            <div className="modal-body">
-              <label className="login-field" style={{ margin: 0 }}>
-                <span>邮箱地址</span>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="user@example.com"
-                  autoFocus
-                  onKeyDown={(e) => e.key === 'Enter' && handleSetEmail()}
-                />
-              </label>
-              {emailError && <div className="login-error" style={{ marginTop: 8 }}>{emailError}</div>}
-              {emailOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{emailOk}</div>}
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setEmailTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={handleSetEmail} disabled={emailSetting}>
-                {emailSetting ? '保存中…' : '保存'}
-              </button>
-            </div>
+        <Modal isOpen={true} onClose={() => setEmailTarget(null)} maxWidth={380} closeOnOverlay={true}>
+          <h3 className="modal-title">设置邮箱 — {emailTarget.username}</h3>
+          <div className="modal-body">
+            <label className="login-field" style={{ margin: 0 }}>
+              <span>邮箱地址</span>
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => setNewEmail(e.target.value)}
+                placeholder="user@example.com"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && handleSetEmail()}
+              />
+            </label>
+            {emailError && <div className="login-error" style={{ marginTop: 8 }}>{emailError}</div>}
+            {emailOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{emailOk}</div>}
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => setEmailTarget(null)}>取消</button>
+            <button className="btn-primary" onClick={handleSetEmail} disabled={emailSetting}>
+              {emailSetting ? '保存中…' : '保存'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Reset password modal */}
       {resetTarget && (
-        <div className="modal-overlay" onClick={() => setResetTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">重置密码 — {resetTarget.username}</h3>
-            <div className="modal-body">
-              <label className="login-field" style={{ margin: 0 }}>
-                <span>新密码</span>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="至少 6 个字符"
-                  autoFocus
-                  onKeyDown={(e) => e.key === 'Enter' && handleReset()}
-                />
-              </label>
-              {resetError && <div className="login-error" style={{ marginTop: 8 }}>{resetError}</div>}
-              {resetOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{resetOk}</div>}
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setResetTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={handleReset} disabled={resetting}>
-                {resetting ? '重置中…' : '确认重置'}
-              </button>
-            </div>
+        <Modal isOpen={true} onClose={() => setResetTarget(null)} maxWidth={380} closeOnOverlay={true}>
+          <h3 className="modal-title">重置密码 — {resetTarget.username}</h3>
+          <div className="modal-body">
+            <label className="login-field" style={{ margin: 0 }}>
+              <span>新密码</span>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="至少 6 个字符"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && handleReset()}
+              />
+            </label>
+            {resetError && <div className="login-error" style={{ marginTop: 8 }}>{resetError}</div>}
+            {resetOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{resetOk}</div>}
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => setResetTarget(null)}>取消</button>
+            <button className="btn-primary" onClick={handleReset} disabled={resetting}>
+              {resetting ? '重置中…' : '确认重置'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Delete user confirmation modal */}
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => { if (!deleting) { setDeleteTarget(null); setConfirmName('') } }}>
-          <div className="modal-card" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">删除用户 — {deleteTarget.username}</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.6 }}>
-                删除用户将清除其所有数据（文本、角色卡、对话、记忆），不可恢复。
-              </p>
-              <p style={{ fontSize: 13, margin: '0 0 8px' }}>
-                请输入用户名 <strong>{deleteTarget.username}</strong> 确认删除：
-              </p>
-              <input
-                className="login-input"
-                value={confirmName}
-                onChange={(e) => setConfirmName(e.target.value)}
-                placeholder={deleteTarget.username}
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && confirmName === deleteTarget.username && !deleting && handleDelete()}
-              />
-              {deleteError && <div className="login-error" style={{ marginTop: 8 }}>{deleteError}</div>}
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setDeleteTarget(null); setConfirmName('') }} disabled={deleting}>取消</button>
-              <button className="btn-danger" onClick={handleDelete} disabled={deleting || confirmName !== deleteTarget.username}>
-                {deleting ? '删除中…' : '确认删除'}
-              </button>
-            </div>
+        <Modal isOpen={true} onClose={() => { if (!deleting) { setDeleteTarget(null); setConfirmName('') } }} maxWidth={420} closeOnOverlay={!deleting}>
+          <h3 className="modal-title">删除用户 — {deleteTarget.username}</h3>
+          <div className="modal-body">
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.6 }}>
+              删除用户将清除其所有数据（文本、角色卡、对话、记忆），不可恢复。
+            </p>
+            <p style={{ fontSize: 13, margin: '0 0 8px' }}>
+              请输入用户名 <strong>{deleteTarget.username}</strong> 确认删除：
+            </p>
+            <input
+              className="login-input"
+              value={confirmName}
+              onChange={(e) => setConfirmName(e.target.value)}
+              placeholder={deleteTarget.username}
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && confirmName === deleteTarget.username && !deleting && handleDelete()}
+            />
+            {deleteError && <div className="login-error" style={{ marginTop: 8 }}>{deleteError}</div>}
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => { setDeleteTarget(null); setConfirmName('') }} disabled={deleting}>取消</button>
+            <button className="btn-danger" onClick={handleDelete} disabled={deleting || confirmName !== deleteTarget.username}>
+              {deleting ? '删除中…' : '确认删除'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       {/* Batch delete result feedback */}
@@ -692,43 +687,41 @@ function UsersTab() {
 
       {/* Batch delete modal — enhanced confirmation */}
       {batchDeleteConfirm && (
-        <div className="modal-overlay" onClick={() => { if (!batchDeleting) { setBatchDeleteConfirm(false); setBatchConfirmText('') } }}>
-          <div className="modal-card" style={{ maxWidth: 440 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">批量删除用户</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 12 }}>
-                此操作不可恢复！
-              </p>
-              <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
-                将删除以下 {selectedUsers.size} 个用户及其<strong>所有数据</strong>（角色卡、书籍、对话记录、记忆）：
-              </p>
-              <div style={{ maxHeight: 120, overflow: 'auto', marginBottom: 12, padding: 8, backgroundColor: 'var(--pill-bg)', borderRadius: 6, fontSize: 13 }}>
-                {[...selectedUsers].map((uid) => {
-                  const u = users.find((x) => x.id === uid)
-                  return <div key={uid} style={{ padding: '2px 0' }}>{u?.username || uid} {u?.is_admin ? '(管理员)' : ''}</div>
-                })}
-              </div>
-              <label className="login-field" style={{ margin: 0 }}>
-                <span>请输入 <strong>删除</strong> 确认操作</span>
-                <input
-                  type="text"
-                  value={batchConfirmText}
-                  onChange={(e) => setBatchConfirmText(e.target.value)}
-                  placeholder="删除"
-                  disabled={batchDeleting}
-                  onKeyDown={(e) => e.key === 'Enter' && batchConfirmText === '删除' && !batchDeleting && handleBatchDelete()}
-                  autoFocus
-                />
-              </label>
+        <Modal isOpen={true} onClose={() => { if (!batchDeleting) { setBatchDeleteConfirm(false); setBatchConfirmText('') } }} maxWidth={440} closeOnOverlay={!batchDeleting}>
+          <h3 className="modal-title">批量删除用户</h3>
+          <div className="modal-body">
+            <p style={{ fontSize: 13, color: 'var(--danger)', fontWeight: 600, marginBottom: 12 }}>
+              此操作不可恢复！
+            </p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8 }}>
+              将删除以下 {selectedUsers.size} 个用户及其<strong>所有数据</strong>（角色卡、书籍、对话记录、记忆）：
+            </p>
+            <div style={{ maxHeight: 120, overflow: 'auto', marginBottom: 12, padding: 8, backgroundColor: 'var(--pill-bg)', borderRadius: 6, fontSize: 13 }}>
+              {[...selectedUsers].map((uid) => {
+                const u = users.find((x) => x.id === uid)
+                return <div key={uid} style={{ padding: '2px 0' }}>{u?.username || uid} {u?.is_admin ? '(管理员)' : ''}</div>
+              })}
             </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => { setBatchDeleteConfirm(false); setBatchConfirmText('') }} disabled={batchDeleting}>取消</button>
-              <button className="btn-danger" onClick={handleBatchDelete} disabled={batchDeleting || batchConfirmText !== '删除'}>
-                {batchDeleting ? '删除中…' : `删除 ${selectedUsers.size} 个用户`}
-              </button>
-            </div>
+            <label className="login-field" style={{ margin: 0 }}>
+              <span>请输入 <strong>删除</strong> 确认操作</span>
+              <input
+                type="text"
+                value={batchConfirmText}
+                onChange={(e) => setBatchConfirmText(e.target.value)}
+                placeholder="删除"
+                disabled={batchDeleting}
+                onKeyDown={(e) => e.key === 'Enter' && batchConfirmText === '删除' && !batchDeleting && handleBatchDelete()}
+                autoFocus
+              />
+            </label>
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => { setBatchDeleteConfirm(false); setBatchConfirmText('') }} disabled={batchDeleting}>取消</button>
+            <button className="btn-danger" onClick={handleBatchDelete} disabled={batchDeleting || batchConfirmText !== '删除'}>
+              {batchDeleting ? '删除中…' : `删除 ${selectedUsers.size} 个用户`}
+            </button>
+          </div>
+        </Modal>
       )}
 
       <ConfirmModal
@@ -770,9 +763,8 @@ function UsersTab() {
 
       {/* User Detail Modal */}
       {detailTarget && (
-        <div className="modal-overlay" onClick={() => { setDetailTarget(null); setDetailData(null); setDetailError('') }}>
-          <div className="modal-card" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">用户详情 — {detailTarget.username}</h3>
+        <Modal isOpen={true} onClose={() => { setDetailTarget(null); setDetailData(null); setDetailError('') }} maxWidth={520} closeOnOverlay={true}>
+          <h3 className="modal-title">用户详情 — {detailTarget.username}</h3>
             <div className="modal-body">
               {detailLoading ? (
                 <div className="admin-loading">加载中…</div>
@@ -859,8 +851,7 @@ function UsersTab() {
             <div className="modal-actions">
               <button className="btn-ghost" onClick={() => { setDetailTarget(null); setDetailData(null); setDetailError('') }}>关闭</button>
             </div>
-          </div>
-        </div>
+        </Modal>
       )}
     </div>
   )
@@ -1024,24 +1015,22 @@ function InvitesTab() {
 
       {/* Delete confirmation modal */}
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">确定删除此邀请码？</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', wordBreak: 'break-all', margin: 0 }}>
-                <code style={{ fontSize: 13, background: 'rgba(0,0,0,0.04)', padding: '3px 8px', borderRadius: 4 }}>
-                  {deleteTarget}
-                </code>
-              </p>
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={handleDelete} disabled={deleting}>
-                {deleting ? '删除中…' : '确认删除'}
-              </button>
-            </div>
+        <Modal isOpen={true} onClose={() => setDeleteTarget(null)} maxWidth={380} closeOnOverlay={true}>
+          <h3 className="modal-title">确定删除此邀请码？</h3>
+          <div className="modal-body">
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', wordBreak: 'break-all', margin: 0 }}>
+              <code style={{ fontSize: 13, background: 'rgba(0,0,0,0.04)', padding: '3px 8px', borderRadius: 4 }}>
+                {deleteTarget}
+              </code>
+            </p>
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
+            <button className="btn-primary" onClick={handleDelete} disabled={deleting}>
+              {deleting ? '删除中…' : '确认删除'}
+            </button>
+          </div>
+        </Modal>
       )}
 
       <ConfirmModal
@@ -1764,18 +1753,16 @@ function AnnouncementsTab() {
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">确定删除此公告？</h3>
-            <div className="modal-body">
-              <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>删除后无法恢复。</p>
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="btn-primary" onClick={handleDelete}>确认删除</button>
-            </div>
+        <Modal isOpen={true} onClose={() => setDeleteTarget(null)} maxWidth={380} closeOnOverlay={true}>
+          <h3 className="modal-title">确定删除此公告？</h3>
+          <div className="modal-body">
+            <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>删除后无法恢复。</p>
           </div>
-        </div>
+          <div className="modal-actions">
+            <button className="btn-ghost" onClick={() => setDeleteTarget(null)}>取消</button>
+            <button className="btn-primary" onClick={handleDelete}>确认删除</button>
+          </div>
+        </Modal>
       )}
     </div>
   )
