@@ -7,11 +7,14 @@ set -e
 # 未设置 PEER_NODE_IP 时移除占位行（单节点部署兼容）。
 # ============================================================
 if [ -n "$PEER_NODE_IP" ]; then
-    # 双节点：将对端 IP 注入 allow 指令
-    sed -i "s/PEER_NODE_IP_PLACEHOLDER/allow $PEER_NODE_IP;  # 对端节点公网IP/" /etc/nginx/nginx.conf
+    # 双节点：替换占位符为实际 IP（conf 行已有 allow 前缀）
+    sed -i "s/PEER_NODE_IP_PLACEHOLDER/$PEER_NODE_IP/" /etc/nginx/nginx.conf
 else
     # 单节点：没有对端，删除占位行（仅 127.0.0.1 允许，外部访问全 403）
     sed -i "/PEER_NODE_IP_PLACEHOLDER/d" /etc/nginx/nginx.conf
 fi
+
+# 启动前语法自检：allow allow <IP> 这类错误被 fail-fast 抓出
+openresty -t || { echo "[entrypoint] nginx 配置校验失败，拒绝启动"; exit 1; }
 
 exec openresty -g "daemon off;"
