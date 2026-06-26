@@ -120,7 +120,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       if (tab === 'login') {
-        await login(username.trim(), password)
+        await login(username.trim(), password.trim())
       } else {
         await register(username.trim(), password, inviteCode.trim(), email.trim(), code.trim(), agreed)
       }
