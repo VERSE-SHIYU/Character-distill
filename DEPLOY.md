@@ -54,6 +54,7 @@ openssl rand -hex 32
 ```
 
 > 不再需要 sqlite3：生产用 PostgreSQL（由 docker-compose 的 postgres 容器提供）。
+> SQLite schema 与 PG schema 由 `tests/test_schema_parity.py` 锁定一致性，SQLite 仅限测试夹具用。
 
 ## 2. 前端构建（⚠️ 2G 内存机器必读）
 
@@ -261,7 +262,7 @@ docker compose -f docker-compose.prod.yml restart app
 
 ## 附：与旧架构的差异（迁移注意）
 
-- **数据库**：SQLite → PostgreSQL（自建容器，用户 <200 足够）。
+- **数据库**：SQLite → PostgreSQL（自建容器，用户 <200 足够）。SQLite 降级为测试夹具，由 `tests/test_schema_parity.py` 锁定两份 schema 一致性。
 - **存储切换**：由 `.env` 的 `STORAGE_BACKEND` 控制，**必须显式设置**。未设或设错时服务会 fail-fast 拒绝启动（有意设计，防止静默写错库）。
 - **架构图修正**：旧文档写"国内用户→新加坡"有误；实为境内→深圳、境外→新加坡。
 - **备份**：sqlite `.backup` → `pg_dump`；按地域分别上传 OSS / COS，互不跨境。

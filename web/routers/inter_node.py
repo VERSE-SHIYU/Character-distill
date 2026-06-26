@@ -93,3 +93,93 @@ async def receive_card(
         raise HTTPException(500, f"Failed to upsert received card: {exc}")
 
     return {"ok": True, "card_id": card["id"]}
+
+
+@router.post("/card/delete")
+async def receive_card_delete(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive a card-delete propagation from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: deleting an already-deleted (or never-synced) card returns 200.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    card_id = str(payload.get("target_id", ""))
+    if not card_id:
+        raise HTTPException(400, "Missing target_id")
+
+    try:
+        await storage.delete_remote_card(card_id)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to delete remote card: {exc}")
+
+    return {"ok": True, "target_id": card_id}
+
+
+@router.post("/dm/retract")
+async def receive_dm_retract(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive a DM retract propagation from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: retracting an already-retracted (or missing) message returns 200.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    message_id = str(payload.get("target_id", ""))
+    if not message_id:
+        raise HTTPException(400, "Missing target_id")
+
+    try:
+        await storage.retract_dm_message(message_id)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to retract DM: {exc}")
+
+    return {"ok": True, "target_id": message_id}
+
+
+@router.post("/user/purge")
+async def receive_user_purge(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive a user-purge propagation from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: purging an already-purged (or never-synced) user returns 200.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    user_id = str(payload.get("target_id", ""))
+    if not user_id:
+        raise HTTPException(400, "Missing target_id")
+
+    try:
+        counts = await storage.purge_remote_user_data(user_id)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to purge user data: {exc}")
+
+    return {"ok": True, "target_id": user_id, "deleted": counts}

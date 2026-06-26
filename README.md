@@ -43,7 +43,7 @@
 - **PWA 支持**：manifest + Service Worker，可安装到桌面
 - **面包屑导航**：侧边栏实时显示当前位置路径
 - **文件缓存**：TTS 合成结果 MD5 缓存，命中 0.01s（110x 加速）
-- **双后端持久化**：生产 PostgreSQL（asyncpg）/ 本地 SQLite（aiosqlite），由 `STORAGE_BACKEND` 切换；角色卡、对话历史、文本库、音色引用、用户/社区数据全持久化
+- **持久化**：**PostgreSQL 是唯一生产后端**（asyncpg），`storage/migrations_pg/` 为准入 schema。SQLite（aiosqlite）仅用于本地单元测试，由 `STORAGE_BACKEND` 切换；角色卡、对话历史、文本库、音色引用、用户/社区数据全持久化。两份 schema 由 `tests/test_schema_parity.py` 锁定一致性
 
 ## 快速开始
 
@@ -136,8 +136,8 @@ Character-distill/
 │   ├── __init__.py             # get_store() 工厂（按 STORAGE_BACKEND 切换）
 │   ├── sqlite_store.py         # SQLite 实现（aiosqlite）
 │   ├── postgres_store.py       # PostgreSQL 实现（asyncpg）
-│   ├── migrations/             # SQLite 迁移（001~068）
-│   └── migrations_pg/          # PostgreSQL 迁移（001~003）
+│   ├── migrations/             # SQLite 迁移（001~073，测试夹具）
+│   └── migrations_pg/          # PostgreSQL 迁移（001~008，生产准出 schema）
 ├── web/
 │   ├── server.py               # FastAPI 入口（JWT 中间件 + WAF + 限流）
 │   ├── app.py                  # 应用装配
@@ -470,6 +470,7 @@ distill:
   max_profile_len: 8000    # 单角色档案上限
 
 storage:
+  # 生产必须使用 postgres。sqlite 仅限本地开发测试。
   # 实际后端由 .env 的 STORAGE_BACKEND 决定（postgres / sqlite）；
   # sqlite 文件路径由 .env 的 DB_PATH 决定，默认 data/charsim.db。
   type: sqlite
@@ -542,7 +543,7 @@ memory:
 | 认证 | JWT（PyJWT）+ Argon2 密码哈希（pwdlib） |
 | 反向代理 | OpenResty（Nginx + Lua WAF） |
 | 前端 | React 18 + Vite + Zustand |
-| 持久化 | PostgreSQL（asyncpg，生产）/ SQLite（aiosqlite，本地） |
+| 持久化 | PostgreSQL（asyncpg，**唯一生产后端**）/ SQLite（aiosqlite，**仅测试夹具**） |
 | 数据校验 | Pydantic V2 |
 | TTS | Microsoft Edge TTS + GPT-SoVITS |
 | ASR | FunASR（WebSocket） |

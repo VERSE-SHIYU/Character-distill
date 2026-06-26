@@ -260,3 +260,35 @@ class StorageBase(ABC):
         ordered by reaction_id ascending.  Scoped to group_messages table,
         only returns reactions on assistant (character) messages.
         """
+
+    # ── Delete propagation outbox ─────────────────────────
+
+    @abstractmethod
+    async def enqueue_delete_propagation(self, op_type: str, target_id: str, payload: str = "") -> None:
+        """Idempotent enqueue of a delete propagation intent for cross-border sync.
+
+        op_type: 'card_delete' | 'dm_retract' | 'user_purge'
+        Idempotent: same (op_type, target_id) pair is silently ignored.
+        """
+
+    @abstractmethod
+    async def get_pending_delete_propagations(self, limit: int = 100) -> list[dict]:
+        """Return unsynced (synced=0) delete propagations, oldest first."""
+
+    @abstractmethod
+    async def mark_delete_propagated(self, id: int) -> None:
+        """Mark a delete propagation outbox row as synced (synced=1)."""
+
+    @abstractmethod
+    async def delete_remote_card(self, card_id: str) -> None:
+        """Delete a remote card replica by ID. Idempotent: no-op if not found."""
+
+    @abstractmethod
+    async def purge_remote_user_data(self, user_id: str) -> dict:
+        """Delete all remote card replicas + DM copies for a user.
+        Returns dict with deleted counts for auditing.
+        """
+
+    @abstractmethod
+    async def retract_dm_message(self, message_id: str) -> None:
+        """Set retracted=1 on a direct message. Idempotent: no-op if already retracted or not found."""

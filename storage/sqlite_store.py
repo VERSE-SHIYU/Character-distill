@@ -738,6 +738,22 @@ class SQLiteStore(StorageBase):
                         await conn.executescript(remote_cards_path.read_text(encoding="utf-8"))
                         await conn.commit()
 
+                    # Run 074_delete_outbox migration (CREATE TABLE IF NOT EXISTS)
+                    delete_outbox_path = migrations_dir / "074_delete_outbox.sql"
+                    if delete_outbox_path.exists():
+                        await conn.executescript(delete_outbox_path.read_text(encoding="utf-8"))
+                        await conn.commit()
+
+                    # Run 075_dm_retracted migration (ALTER TABLE may fail if column exists)
+                    dm_retracted_path = migrations_dir / "075_dm_retracted.sql"
+                    if dm_retracted_path.exists():
+                        try:
+                            await conn.executescript(dm_retracted_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] DM retracted migration failed: {exc}")
+
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
                     try:
@@ -4610,6 +4626,99 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Upsert remote card failed: {exc}")
+            raise
+
+    # ── Delete propagation outbox ─────────────────────────
+
+    async def enqueue_delete_propagation(self, op_type: str, target_id: str, payload: str = "") -> None:
+        """Idempotent enqueue of a delete propagation intent.
+
+        INSERT OR IGNORE ensures the same (op_type, target_id) pair is not duplicated.
+        """
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                       (op_type, target_id, payload) VALUES (?, ?, ?)""",
+                    (op_type, target_id, payload),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Enqueue delete propagation failed: {exc}")
+            raise
+
+    async def get_pending_delete_propagations(self, limit: int = 100) -> list[dict]:
+        """Return unsynced delete propagations, oldest first."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, op_type, target_id, payload, created_at
+                       FROM cross_border_delete_outbox
+                       WHERE synced = 0
+                       ORDER BY created_at ASC
+                       LIMIT ?""",
+                    (limit,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get pending delete propagations failed: {exc}")
+            raise
+
+    async def mark_delete_propagated(self, id: int) -> None:
+        """Mark a delete propagation outbox row as synced."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cross_border_delete_outbox SET synced = 1 WHERE id = ?",
+                    (id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark delete propagated failed: {exc}")
+            raise
+
+    async def delete_remote_card(self, card_id: str) -> None:
+        """Delete a remote card replica by ID. Idempotent: no-op if not found."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM remote_cards WHERE id = ?", (card_id,))
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Delete remote card failed: {exc}")
+            raise
+
+    async def purge_remote_user_data(self, user_id: str) -> dict:
+        """Delete all remote card replicas + DM copies for a user."""
+        counts = {}
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "DELETE FROM remote_cards WHERE user_id = ?", (user_id,),
+                )
+                counts["remote_cards"] = cursor.rowcount
+                cursor = await conn.execute(
+                    "DELETE FROM direct_messages WHERE sender_id = ? OR receiver_id = ?",
+                    (user_id, user_id),
+                )
+                counts["direct_messages"] = cursor.rowcount
+                await conn.commit()
+            return counts
+        except Exception as exc:
+            print(f"[SQLiteStore] Purge remote user data failed: {exc}")
+            raise
+
+    async def retract_dm_message(self, message_id: str) -> None:
+        """Set retracted=1 on a direct message. Idempotent: no-op if not found."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE direct_messages SET retracted = 1 WHERE id = ?",
+                    (message_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Retract DM message failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:

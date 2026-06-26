@@ -3556,6 +3556,94 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Upsert remote card failed: {exc}")
             raise
 
+    # ── Delete propagation outbox ─────────────────────────
+
+    async def enqueue_delete_propagation(self, op_type: str, target_id: str, payload: str = "") -> None:
+        """Idempotent enqueue of a delete propagation intent.
+
+        ON CONFLICT DO NOTHING ensures the same (op_type, target_id) pair is not duplicated.
+        """
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (op_type, target_id) DO NOTHING""",
+                    op_type, target_id, payload,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Enqueue delete propagation failed: {exc}")
+            raise
+
+    async def get_pending_delete_propagations(self, limit: int = 100) -> list[dict]:
+        """Return unsynced delete propagations, oldest first."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT id, op_type, target_id, payload, created_at
+                       FROM cross_border_delete_outbox
+                       WHERE synced = 0
+                       ORDER BY created_at ASC
+                       LIMIT $1""",
+                    limit,
+                )
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[PostgresStore] Get pending delete propagations failed: {exc}")
+            raise
+
+    async def mark_delete_propagated(self, id: int) -> None:
+        """Mark a delete propagation outbox row as synced."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cross_border_delete_outbox SET synced = 1 WHERE id = $1",
+                    id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Mark delete propagated failed: {exc}")
+            raise
+
+    async def delete_remote_card(self, card_id: str) -> None:
+        """Delete a remote card replica by ID. Idempotent: no-op if not found."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute("DELETE FROM remote_cards WHERE id = $1", card_id)
+        except Exception as exc:
+            print(f"[PostgresStore] Delete remote card failed: {exc}")
+            raise
+
+    async def purge_remote_user_data(self, user_id: str) -> dict:
+        """Delete all remote card replicas + DM copies for a user."""
+        counts = {}
+        try:
+            async with await self._connect() as conn:
+                result = await conn.execute(
+                    "DELETE FROM remote_cards WHERE user_id = $1", user_id,
+                )
+                counts["remote_cards"] = result
+                result = await conn.execute(
+                    "DELETE FROM direct_messages WHERE sender_id = $1 OR receiver_id = $1",
+                    user_id,
+                )
+                counts["direct_messages"] = result
+            return counts
+        except Exception as exc:
+            print(f"[PostgresStore] Purge remote user data failed: {exc}")
+            raise
+
+    async def retract_dm_message(self, message_id: str) -> None:
+        """Set retracted=1 on a direct message. Idempotent: no-op if not found."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE direct_messages SET retracted = 1 WHERE id = $1",
+                    message_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Retract DM message failed: {exc}")
+            raise
+
     async def get_conversations(self, user_id: str) -> list[dict]:
         try:
             async with await self._connect() as conn:
