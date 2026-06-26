@@ -161,16 +161,6 @@ async def restore_card_route(
     return {"ok": True}
 
 
-async def _maybe_enqueue_card_delete(card_id: str, storage: StorageBase) -> None:
-    """Check if card is public; if so, enqueue cross-border delete propagation."""
-    try:
-        card = await storage.get_card(card_id)
-        if card and card.get("visibility") == "public":
-            await storage.enqueue_delete_propagation("card_delete", card_id)
-    except Exception as exc:
-        print(f"[card] Enqueue card delete propagation failed (non-fatal): {exc}")
-
-
 @router.delete("/{card_id}/permanent")
 @limiter.limit("30/minute")
 async def permanent_delete_card(
@@ -180,7 +170,6 @@ async def permanent_delete_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Permanently delete a card (irreversible)."""
-    await _maybe_enqueue_card_delete(card_id, storage)
     ok = await hard_delete("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "彻底删除失败")
@@ -197,7 +186,6 @@ async def purge_card_route(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Permanently delete a card (irreversible). [Deprecated: use /permanent]"""
-    await _maybe_enqueue_card_delete(card_id, storage)
     ok = await hard_delete("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "彻底删除失败")
@@ -214,7 +202,6 @@ async def delete_card_route(
 ) -> dict:
     """Soft-delete a character card (move to trash). Owner or admin can delete."""
     logger.debug("DELETE /api/cards/%s by user %s", card_id, user.get("id"))
-    await _maybe_enqueue_card_delete(card_id, storage)
     ok = await soft_delete("card", card_id, user, storage)
     if not ok:
         raise HTTPException(500, "删除失败")

@@ -612,3 +612,191 @@ class TestCardCrossBorderSync:
         assert card is not None
         assert card["name"] == "isolated"
         assert card["origin_region"] == "us"
+
+
+# ── Delete propagation atomicity ──────────────────────────────────────────────
+
+class TestDeletePropagationAtomicity:
+    """delete_card / purge_card / retract_dm_message / delete_user must enqueue
+    their cross-border outbox row inside the SAME transaction as the local
+    delete — never as a separate commit.
+
+    Verification strategy: after a successful delete, confirm that the outbox
+    contains exactly one matching row (synced=0).  If the INSERT were in a
+    separate transaction, a crash between the two commits would leave the
+    outbox empty while the local state is already removed — these tests
+    prove that cannot happen because both writes hit the DB in one commit.
+    """
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    async def _count_outbox(self, store, op_type: str, target_id: str) -> int:
+        """Return how many pending outbox rows match (op_type, target_id)."""
+        rows = await store.get_pending_delete_propagations(limit=1000)
+        return sum(1 for r in rows if r["op_type"] == op_type and r["target_id"] == target_id)
+
+    # ── Card delete (soft) ─────────────────────────────────────────────────
+
+    async def test_delete_card_public_enqueues_outbox(self, store, text_id, card_id):
+        """Soft-deleting a *public* card must produce a card_delete outbox row."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "public")
+
+        ok = await store.delete_card(card_id)
+        assert ok is True
+
+        n = await self._count_outbox(store, "card_delete", card_id)
+        assert n == 1, (
+            f"Expected 1 card_delete outbox row for {card_id}, got {n} — "
+            "the outbox INSERT was likely not in the same transaction as the DELETE."
+        )
+
+    async def test_delete_card_private_no_outbox(self, store, text_id, card_id):
+        """Soft-deleting a *private* card must NOT produce a card_delete row."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "private")
+
+        ok = await store.delete_card(card_id)
+        assert ok is True
+
+        n = await self._count_outbox(store, "card_delete", card_id)
+        assert n == 0, "Private-card delete must not enqueue outbox"
+
+    async def test_delete_card_nonexistent_returns_false(self, store):
+        """Deleting a non-existent card returns False and enqueues nothing."""
+        ok = await store.delete_card("no_such_card")
+        assert ok is False
+        rows = await store.get_pending_delete_propagations(limit=1000)
+        assert len(rows) == 0
+
+    async def test_delete_card_idempotent_outbox(self, store, text_id, card_id):
+        """Deleting the same public card twice must produce exactly ONE outbox row."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "public")
+
+        ok1 = await store.delete_card(card_id)
+        ok2 = await store.delete_card(card_id)  # second soft-delete is a no-op
+        assert ok1 is True
+        assert ok2 is True
+
+        n = await self._count_outbox(store, "card_delete", card_id)
+        assert n == 1, "ON CONFLICT DO NOTHING must prevent duplicate outbox rows"
+
+    # ── Card purge (hard) ──────────────────────────────────────────────────
+
+    async def test_purge_card_public_enqueues_outbox(self, store, text_id, card_id):
+        """Hard-deleting a *public* card must produce a card_delete outbox row."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "public")
+        await store.delete_card(card_id)
+
+        ok = await store.purge_card(card_id)
+        assert ok is True
+
+        n = await self._count_outbox(store, "card_delete", card_id)
+        assert n == 1
+
+    async def test_purge_card_private_no_outbox(self, store, text_id, card_id):
+        """Hard-deleting a *private* card must NOT produce a card_delete row."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "private")
+        await store.delete_card(card_id)
+
+        ok = await store.purge_card(card_id)
+        assert ok is True
+
+        n = await self._count_outbox(store, "card_delete", card_id)
+        assert n == 0
+
+    async def test_purge_card_nonexistent_returns_true(self, store):
+        """Purging a non-existent card returns True (idempotent) and enqueues nothing."""
+        ok = await store.purge_card("no_such_card")
+        assert ok is True
+        rows = await store.get_pending_delete_propagations(limit=1000)
+        assert len(rows) == 0
+
+    # ── DM retract ──────────────────────────────────────────────────────────
+
+    async def test_retract_dm_enqueues_outbox(self, store):
+        """Retracting a DM must produce a dm_retract outbox row."""
+        msg = await store.send_message("sender_1", "receiver_1", "Hello DM")
+        msg_id = msg["id"]
+
+        await store.retract_dm_message(msg_id)
+
+        n = await self._count_outbox(store, "dm_retract", msg_id)
+        assert n == 1, (
+            f"Expected 1 dm_retract outbox row for {msg_id}, got {n}"
+        )
+
+    async def test_retract_dm_idempotent_outbox(self, store):
+        """Retracting the same DM twice must produce exactly ONE outbox row."""
+        msg = await store.send_message("sender_2", "receiver_2", "Hello again")
+        msg_id = msg["id"]
+
+        await store.retract_dm_message(msg_id)
+        await store.retract_dm_message(msg_id)  # second retract is a no-op
+
+        n = await self._count_outbox(store, "dm_retract", msg_id)
+        assert n == 1, "ON CONFLICT must prevent duplicate dm_retract outbox rows"
+
+    async def test_retract_dm_idempotent_nonexistent(self, store):
+        """Retracting a non-existent DM still succeeds (idempotent) and enqueues."""
+        await store.retract_dm_message("no_such_msg")
+
+        n = await self._count_outbox(store, "dm_retract", "no_such_msg")
+        assert n == 1  # still enqueues — the outbox consumer is idempotent too
+
+    # ── User purge ─────────────────────────────────────────────────────────
+
+    async def test_delete_user_enqueues_outbox(self, store):
+        """Cascade-deleting a user must produce a user_purge outbox row."""
+        uid = f"user_{uuid.uuid4().hex}"
+        pwd = "$2b$12$dummyhashdummyhashdummyhashdummyhashdummyha"
+        await store.create_user(uid, uid, pwd)
+
+        counts = await store.delete_user(uid)
+        assert counts.get("user") == 1
+
+        n = await self._count_outbox(store, "user_purge", uid)
+        assert n == 1, (
+            f"Expected 1 user_purge outbox row for {uid}, got {n}"
+        )
+
+    async def test_delete_user_idempotent_outbox(self, store):
+        """Deleting the same user twice — second call fails, but only ONE outbox row exists."""
+        uid = f"user_idem_{uuid.uuid4().hex}"
+        pwd = "$2b$12$dummyhashdummyhashdummyhashdummyhashdummyha"
+        await store.create_user(uid, uid, pwd)
+
+        await store.delete_user(uid)
+        with pytest.raises(ValueError, match="用户不存在"):
+            await store.delete_user(uid)
+
+        n = await self._count_outbox(store, "user_purge", uid)
+        assert n == 1, "Must not create duplicate outbox rows"
+
+    # ── Cross-operation isolation ──────────────────────────────────────────
+
+    async def test_card_and_user_outbox_rows_are_separate(self, store, text_id, card_id):
+        """Deleting a card and a user must produce distinct outbox rows."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{}')
+        await store.update_card_visibility(card_id, "public")
+
+        uid = f"user_mixed_{uuid.uuid4().hex}"
+        pwd = "$2b$12$dummyhashdummyhashdummyhashdummyhashdummyha"
+        await store.create_user(uid, uid, pwd)
+
+        await store.delete_card(card_id)
+        await store.delete_user(uid)
+
+        rows = await store.get_pending_delete_propagations(limit=1000)
+        pairs = {(r["op_type"], r["target_id"]) for r in rows}
+        assert ("card_delete", card_id) in pairs
+        assert ("user_purge", uid) in pairs

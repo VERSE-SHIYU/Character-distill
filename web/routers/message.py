@@ -181,22 +181,12 @@ async def retract_dm_message(
     if msg["sender_id"] != user["id"]:
         raise HTTPException(403, "只能撤回自己发送的消息")
 
-    # Mark retracted locally
+    # Mark retracted locally (also enqueues cross-border outbox atomically)
     try:
         await storage.retract_dm_message(message_id)
     except Exception as exc:
         print(f"[message] Retract DM failed: {exc}")
         raise HTTPException(500, "撤回失败")
-
-    # Enqueue cross-border propagation if applicable
-    try:
-        receiver = await storage.get_user_by_id(msg["receiver_id"])
-        sender_region = user.get("home_region", "")
-        receiver_region = receiver.get("home_region", "") if receiver else ""
-        if sender_region and receiver_region and sender_region != receiver_region:
-            await storage.enqueue_delete_propagation("dm_retract", message_id)
-    except Exception as exc:
-        print(f"[message] Enqueue dm_retract propagation failed (non-fatal): {exc}")
 
     return {"ok": True}
 

@@ -821,13 +821,30 @@ class PostgresStore(StorageBase):
             raise
 
     async def delete_card(self, card_id: str) -> bool:
-        """Soft delete: set deleted_at timestamp."""
+        """Soft delete: set deleted_at timestamp, enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE cards SET deleted_at = CURRENT_TIMESTAMP::text WHERE id = $1 AND deleted_at IS NULL",
-                    card_id,
-                )
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT visibility FROM cards WHERE id = $1",
+                        card_id,
+                    )
+                    if row is None:
+                        return False
+                    visibility = row["visibility"]
+
+                    await conn.execute(
+                        "UPDATE cards SET deleted_at = CURRENT_TIMESTAMP::text WHERE id = $1 AND deleted_at IS NULL",
+                        card_id,
+                    )
+
+                    if visibility == "public":
+                        await conn.execute(
+                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                               VALUES ($1, $2, $3)
+                               ON CONFLICT (op_type, target_id) DO NOTHING""",
+                            "card_delete", card_id, "",
+                        )
             return True
         except Exception as exc:
             print(f"[PostgresStore] Delete card failed: {exc}")
@@ -847,10 +864,27 @@ class PostgresStore(StorageBase):
             return False
 
     async def purge_card(self, card_id: str) -> bool:
-        """Permanently delete a card (hard delete)."""
+        """Permanently delete a card, enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
-                await conn.execute("DELETE FROM cards WHERE id = $1", card_id)
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        "SELECT visibility FROM cards WHERE id = $1",
+                        card_id,
+                    )
+                    if row is None:
+                        return True  # already gone
+                    visibility = row["visibility"]
+
+                    await conn.execute("DELETE FROM cards WHERE id = $1", card_id)
+
+                    if visibility == "public":
+                        await conn.execute(
+                            """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                               VALUES ($1, $2, $3)
+                               ON CONFLICT (op_type, target_id) DO NOTHING""",
+                            "card_delete", card_id, "",
+                        )
             return True
         except Exception as exc:
             print(f"[PostgresStore] Purge card failed: {exc}")
@@ -2297,7 +2331,7 @@ class PostgresStore(StorageBase):
             raise
 
     async def delete_user(self, user_id: str) -> dict:
-        """Cascade-delete a user."""
+        """Cascade-delete a user, enqueue purge outbox atomically."""
         counts = {}
         try:
             async with await self._connect() as conn:
@@ -2329,6 +2363,14 @@ class PostgresStore(StorageBase):
                     if self._parse_rowcount(tag) == 0:
                         raise ValueError("用户不存在")
                     counts["user"] = 1
+
+                    # Enqueue cross-border purge — same transaction as the delete
+                    await conn.execute(
+                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                           VALUES ($1, $2, $3)
+                           ON CONFLICT (op_type, target_id) DO NOTHING""",
+                        "user_purge", user_id, "",
+                    )
             return counts
         except ValueError:
             raise
@@ -3633,13 +3675,20 @@ class PostgresStore(StorageBase):
             raise
 
     async def retract_dm_message(self, message_id: str) -> None:
-        """Set retracted=1 on a direct message. Idempotent: no-op if not found."""
+        """Set retracted=1 on a direct message and enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE direct_messages SET retracted = 1 WHERE id = $1",
-                    message_id,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "UPDATE direct_messages SET retracted = 1 WHERE id = $1",
+                        message_id,
+                    )
+                    await conn.execute(
+                        """INSERT INTO cross_border_delete_outbox (op_type, target_id, payload)
+                           VALUES ($1, $2, $3)
+                           ON CONFLICT (op_type, target_id) DO NOTHING""",
+                        "dm_retract", message_id, "",
+                    )
         except Exception as exc:
             print(f"[PostgresStore] Retract DM message failed: {exc}")
             raise

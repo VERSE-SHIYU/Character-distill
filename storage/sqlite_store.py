@@ -1612,13 +1612,28 @@ class SQLiteStore(StorageBase):
             raise
 
     async def delete_card(self, card_id: str) -> bool:
-        """Soft delete: set deleted_at timestamp."""
+        """Soft delete: set deleted_at timestamp, enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT visibility FROM cards WHERE id = ?", (card_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return False
+                visibility = row["visibility"]
+
                 await conn.execute(
                     "UPDATE cards SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
                     (card_id,),
                 )
+
+                if visibility == "public":
+                    await conn.execute(
+                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                           (op_type, target_id, payload) VALUES (?, ?, ?)""",
+                        ("card_delete", card_id, ""),
+                    )
                 await conn.commit()
             return True
         except Exception as exc:
@@ -1640,10 +1655,25 @@ class SQLiteStore(StorageBase):
             return False
 
     async def purge_card(self, card_id: str) -> bool:
-        """Permanently delete a card (hard delete)."""
+        """Permanently delete a card, enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT visibility FROM cards WHERE id = ?", (card_id,),
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    return True  # already gone
+                visibility = row["visibility"]
+
                 await conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+
+                if visibility == "public":
+                    await conn.execute(
+                        """INSERT OR IGNORE INTO cross_border_delete_outbox
+                           (op_type, target_id, payload) VALUES (?, ?, ?)""",
+                        ("card_delete", card_id, ""),
+                    )
                 await conn.commit()
             return True
         except Exception as exc:
@@ -3282,6 +3312,12 @@ class SQLiteStore(StorageBase):
                     raise ValueError("用户不存在")
                 counts["user"] = 1
 
+                # Enqueue cross-border purge — same transaction as the delete
+                await conn.execute(
+                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                       (op_type, target_id, payload) VALUES (?, ?, ?)""",
+                    ("user_purge", user_id, ""),
+                )
                 await conn.commit()
             return counts
         except ValueError:
@@ -4709,12 +4745,17 @@ class SQLiteStore(StorageBase):
             raise
 
     async def retract_dm_message(self, message_id: str) -> None:
-        """Set retracted=1 on a direct message. Idempotent: no-op if not found."""
+        """Set retracted=1 on a direct message and enqueue outbox atomically."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     "UPDATE direct_messages SET retracted = 1 WHERE id = ?",
                     (message_id,),
+                )
+                await conn.execute(
+                    """INSERT OR IGNORE INTO cross_border_delete_outbox
+                       (op_type, target_id, payload) VALUES (?, ?, ?)""",
+                    ("dm_retract", message_id, ""),
                 )
                 await conn.commit()
         except Exception as exc:

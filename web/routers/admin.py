@@ -140,13 +140,6 @@ async def delete_user(
     except Exception as exc:
         print(f"[admin] Mem0 cleanup for user {user_id} failed (non-fatal): {exc}")
 
-    # Enqueue cross-border purge propagation BEFORE local deletion
-    # so the outbox row survives even if the process crashes mid-delete.
-    try:
-        await storage.enqueue_delete_propagation("user_purge", user_id)
-    except Exception as exc:
-        print(f"[admin] Enqueue user_purge propagation failed (non-fatal): {exc}")
-
     try:
         counts = await storage.delete_user(user_id)
         return {"ok": True, "deleted": counts}
@@ -195,10 +188,6 @@ async def batch_delete_users(
             if memory_manager and memory_manager.enabled:
                 for cid in card_ids:
                     memory_manager.delete_all(cid)
-            try:
-                await storage.enqueue_delete_propagation("user_purge", user_id)
-            except Exception as exc:
-                print(f"[admin] Batch enqueue user_purge for {user_id} failed (non-fatal): {exc}")
             await storage.delete_user(user_id)
             deleted += 1
         except Exception as exc:
