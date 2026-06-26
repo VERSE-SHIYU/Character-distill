@@ -1,9 +1,4 @@
 """ChatEngine 三轮对话冒烟脚本。"""
-import io
-import sys
-
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-
 from adapters.llm_adapter import LLMAdapter
 from core.distiller import Distiller
 from core.rag import RAGEngine
@@ -21,6 +16,10 @@ test_text = """
 
 
 def main():
+    import io
+    import sys
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
     llm = LLMAdapter()
     card = Distiller(llm).distill(test_text, "张三")
     print(f"角色：{card.name} — {card.identity}\n")
