@@ -458,6 +458,14 @@ async def publish_card(
     )
     if not ok:
         raise HTTPException(500, "发布失败")
+
+    # Mark the published fork as needing cross-border sync (not blocking).
+    # The background resync loop will handle the actual peer delivery.
+    try:
+        await storage.mark_card_unsynced(ok)
+    except Exception as exc:
+        print(f"[market] Mark card unsynced failed for {ok}: {exc}")
+
     return {"ok": True, "card_id": ok}
 
 

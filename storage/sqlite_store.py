@@ -722,6 +722,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Cross-border consent migration failed: {exc}")
 
+                    # Run 072_card_sync migration (ALTER TABLE ADD COLUMN + INDEX)
+                    card_sync_path = migrations_dir / "072_card_sync.sql"
+                    if card_sync_path.exists():
+                        try:
+                            await conn.executescript(card_sync_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Card sync migration failed: {exc}")
+
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
                     try:
@@ -4411,6 +4421,89 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Revoke cross-border consent failed: {exc}")
+            raise
+
+    # ── Card cross-border sync ─────────────────────────────
+
+    async def get_unsynced_cross_border_cards(self, limit: int = 100) -> list[dict]:
+        """Return public unsynced cards, oldest first."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, user_id, name, card_json, avatar_data, visibility,
+                              market_description, market_tags, created_at
+                       FROM cards
+                       WHERE visibility = 'public' AND cross_border_synced = 0 AND deleted_at IS NULL
+                       ORDER BY created_at ASC
+                       LIMIT ?""",
+                    (limit,),
+                )
+                rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as exc:
+            print(f"[SQLiteStore] Get unsynced cards failed: {exc}")
+            raise
+
+    async def mark_card_synced(self, card_id: str) -> None:
+        """Mark a card as successfully synced to peer node."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET cross_border_synced = 1 WHERE id = ?",
+                    (card_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark card synced failed: {exc}")
+            raise
+
+    async def mark_card_unsynced(self, card_id: str) -> None:
+        """Mark a published card as needing peer sync."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET cross_border_synced = 0 WHERE id = ? AND visibility = 'public'",
+                    (card_id,),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark card unsynced failed: {exc}")
+            raise
+
+    async def update_remote_card(self, card_id: str, name: str, card_json: str, avatar_data: str,
+                                 market_description: str, market_tags: str) -> None:
+        """Update a received remote card replica in-place."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE cards SET name = ?, card_json = ?, avatar_data = ?,
+                              market_description = ?, market_tags = ?,
+                              cross_border_synced = 1
+                       WHERE id = ?""",
+                    (name, card_json, avatar_data, market_description, market_tags, card_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update remote card failed: {exc}")
+            raise
+
+    async def create_remote_card(self, card_id: str, text_id: str, name: str, card_json: str,
+                                 created_at: str, avatar_data: str, user_id: str,
+                                 forked_from: str, market_description: str, market_tags: str) -> None:
+        """Insert a received remote card as a read-only replica."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data,
+                                          user_id, visibility, forked_from, likes,
+                                          market_description, market_tags, cross_border_synced)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, 1)""",
+                    (card_id, text_id, name, card_json, created_at, avatar_data,
+                     user_id, forked_from, market_description, market_tags),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Create remote card failed: {exc}")
             raise
 
     async def get_conversations(self, user_id: str) -> list[dict]:

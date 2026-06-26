@@ -51,3 +51,60 @@ async def receive_dm(
         raise HTTPException(500, f"Failed to store received message: {exc}")
 
     return {"ok": True, "message": result}
+
+
+@router.post("/card/receive")
+async def receive_card(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive a public card replica from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Upserts the card (INSERT if new, UPDATE if existing) as a read-only copy.
+    """
+    body = await request.json()
+    card = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, card)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    required = ("id", "user_id", "name", "card_json", "visibility")
+    missing = [f for f in required if not card.get(f)]
+    if missing:
+        raise HTTPException(400, f"Missing required fields: {', '.join(missing)}")
+
+    # Check if card already exists → UPDATE replica; otherwise INSERT
+    existing = await storage.get_card(card["id"])
+    if existing:
+        try:
+            await storage.update_remote_card(
+                card["id"],
+                card.get("name", ""),
+                card.get("card_json", "{}"),
+                card.get("avatar_data", ""),
+                card.get("market_description", ""),
+                card.get("market_tags", ""),
+            )
+        except Exception as exc:
+            raise HTTPException(500, f"Failed to update received card: {exc}")
+    else:
+        try:
+            await storage.create_remote_card(
+                card_id=card["id"],
+                text_id=card.get("text_id", card["id"]),
+                name=card.get("name", ""),
+                card_json=card.get("card_json", "{}"),
+                created_at=card.get("created_at", ""),
+                avatar_data=card.get("avatar_data", ""),
+                user_id=card["user_id"],
+                forked_from=card.get("id", ""),
+                market_description=card.get("market_description", ""),
+                market_tags=card.get("market_tags", ""),
+            )
+        except Exception as exc:
+            raise HTTPException(500, f"Failed to store received card: {exc}")
+
+    return {"ok": True, "card_id": card["id"]}

@@ -497,3 +497,94 @@ class TestCrossBorderResync:
         # Oldest first
         assert unsynced[0]["content"] == "msg_0"
         assert unsynced[2]["content"] == "msg_2"
+
+
+# ── P2-5: Card cross-border sync ─────────────────────────────────────
+
+class TestCardCrossBorderSync:
+    """get_unsynced_cross_border_cards, mark_card_synced, mark_card_unsynced, remote card ops."""
+
+    async def _mk_public_unsynced_card(self, store, card_id: str, text_id: str, name: str = "test_card"):
+        """Helper: save a text + card, then make it public and unsynced."""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, name, '{"name": "test"}')
+        await store.execute(
+            "UPDATE cards SET visibility = 'public', cross_border_synced = 0 WHERE id = ?",
+            (card_id,),
+        )
+
+    async def test_get_unsynced_returns_public_synced0(self, store, text_id):
+        cid = f"c_{uuid.uuid4().hex}"
+        await self._mk_public_unsynced_card(store, cid, text_id)
+        unsynced = await store.get_unsynced_cross_border_cards(limit=10)
+        assert any(c["id"] == cid for c in unsynced)
+
+    async def test_non_public_not_returned(self, store, text_id):
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(cid, text_id, "test_card", '{"name": "test"}')
+        # Private card with synced=0 should NOT appear
+        await store.execute(
+            "UPDATE cards SET visibility = 'private', cross_border_synced = 0 WHERE id = ?",
+            (cid,),
+        )
+        unsynced = await store.get_unsynced_cross_border_cards()
+        assert not any(c["id"] == cid for c in unsynced)
+
+    async def test_mark_card_synced_removes_from_unsynced(self, store, text_id):
+        cid = f"c_{uuid.uuid4().hex}"
+        await self._mk_public_unsynced_card(store, cid, text_id)
+        unsynced_before = await store.get_unsynced_cross_border_cards()
+        assert any(c["id"] == cid for c in unsynced_before)
+        await store.mark_card_synced(cid)
+        unsynced_after = await store.get_unsynced_cross_border_cards()
+        assert not any(c["id"] == cid for c in unsynced_after)
+
+    async def test_mark_card_unsynced_makes_it_appear(self, store, text_id):
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(cid, text_id, "test_card", '{"name": "test"}')
+        await store.execute(
+            "UPDATE cards SET visibility = 'public' WHERE id = ?",
+            (cid,),
+        )
+        # Card is public but synced=1 — should not appear
+        unsynced_before = await store.get_unsynced_cross_border_cards()
+        assert not any(c["id"] == cid for c in unsynced_before)
+        # Mark unsynced — should now appear
+        await store.mark_card_unsynced(cid)
+        unsynced_after = await store.get_unsynced_cross_border_cards()
+        assert any(c["id"] == cid for c in unsynced_after)
+
+    async def test_get_unsynced_limit(self, store, text_id):
+        ids = [f"c_{uuid.uuid4().hex}" for _ in range(5)]
+        for i, cid in enumerate(ids):
+            await self._mk_public_unsynced_card(store, cid, text_id, name=f"test_card_{i}")
+        unsynced = await store.get_unsynced_cross_border_cards(limit=3)
+        assert len(unsynced) == 3
+
+    async def test_create_remote_card(self, store, text_id):
+        cid = f"remote_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source")
+        await store.create_remote_card(
+            card_id=cid, text_id=text_id, name="remote", card_json='{"name": "remote"}',
+            created_at="2026-06-26", avatar_data="", user_id="remote_user",
+            forked_from="", market_description="desc", market_tags="tag",
+        )
+        card = await store.get_card(cid)
+        assert card is not None
+        assert card["name"] == "remote"
+        assert card["visibility"] == "public"
+
+    async def test_update_remote_card(self, store, text_id):
+        cid = f"remote_upd_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "source")
+        await store.create_remote_card(
+            card_id=cid, text_id=text_id, name="v1", card_json='{"name": "v1"}',
+            created_at="2026-06-26", avatar_data="", user_id="remote_user",
+            forked_from="", market_description="desc", market_tags="tag",
+        )
+        await store.update_remote_card(cid, "v2", '{"name": "v2"}', "", "desc2", "tag2")
+        card = await store.get_card(cid)
+        assert card is not None
+        assert card["name"] == "v2"

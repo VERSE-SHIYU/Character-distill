@@ -3378,6 +3378,84 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Revoke cross-border consent failed: {exc}")
             raise
 
+    # ── Card cross-border sync ─────────────────────────────
+
+    async def get_unsynced_cross_border_cards(self, limit: int = 100) -> list[dict]:
+        """Return public unsynced cards, oldest first."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT id, user_id, name, card_json, avatar_data, visibility,
+                              market_description, market_tags, created_at
+                       FROM cards
+                       WHERE visibility = 'public' AND cross_border_synced = 0 AND deleted_at IS NULL
+                       ORDER BY created_at ASC
+                       LIMIT $1""",
+                    limit,
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get unsynced cards failed: {exc}")
+            raise
+
+    async def mark_card_synced(self, card_id: str) -> None:
+        """Mark a card as successfully synced to peer node."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET cross_border_synced = 1 WHERE id = $1",
+                    card_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Mark card synced failed: {exc}")
+            raise
+
+    async def mark_card_unsynced(self, card_id: str) -> None:
+        """Mark a published card as needing peer sync."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE cards SET cross_border_synced = 0 WHERE id = $1 AND visibility = 'public'",
+                    card_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Mark card unsynced failed: {exc}")
+            raise
+
+    async def update_remote_card(self, card_id: str, name: str, card_json: str, avatar_data: str,
+                                 market_description: str, market_tags: str) -> None:
+        """Update a received remote card replica in-place."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE cards SET name = $1, card_json = $2, avatar_data = $3,
+                              market_description = $4, market_tags = $5,
+                              cross_border_synced = 1
+                       WHERE id = $6""",
+                    name, card_json, avatar_data, market_description, market_tags, card_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update remote card failed: {exc}")
+            raise
+
+    async def create_remote_card(self, card_id: str, text_id: str, name: str, card_json: str,
+                                 created_at: str, avatar_data: str, user_id: str,
+                                 forked_from: str, market_description: str, market_tags: str) -> None:
+        """Insert a received remote card as a read-only replica."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data,
+                                          user_id, visibility, forked_from, likes,
+                                          market_description, market_tags, cross_border_synced)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, 'public', $8, 0, $9, $10, 1)""",
+                    card_id, text_id, name, card_json, created_at, avatar_data,
+                    user_id, forked_from, market_description, market_tags,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Create remote card failed: {exc}")
+            raise
+
     async def get_conversations(self, user_id: str) -> list[dict]:
         try:
             async with await self._connect() as conn:
