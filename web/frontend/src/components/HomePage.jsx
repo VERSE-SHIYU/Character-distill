@@ -355,7 +355,10 @@ export default function HomePage() {
           {/* C. 发现角色区 */}
           <div className="home-discover-section">
             <div className="home-section-header">
-              <h2 className="home-section-title">发现角色</h2>
+              <h2 className="home-section-title">
+                <svg className="home-section-title-sparkle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2 7 7 2-7 2-2 7-2-7-7-2 7-2z"/></svg>
+                发现角色
+              </h2>
               <div className="home-section-header-actions">
                 <button
                   type="button"
@@ -397,26 +400,89 @@ export default function HomePage() {
                 ))}
               </div>
             ) : discoverCards.length === 0 && selectedTag === '' ? (
-              <div className="home-empty-hero">
-                <div className="home-empty-icon">✨</div>
-                <h3>还没有公开角色</h3>
-                <p>上传小说或聊天记录，AI 蒸馏出角色，成为第一个创作者</p>
-                <button className="btn-primary" onClick={() => setView('text')}>开始创作</button>
+              <div className="discover-empty">
+                <div className="discover-empty-stage" aria-hidden="true">
+                  <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    {/* Stage arch */}
+                    <path d="M20 180V40a20 20 0 0120-20h160a20 20 0 0120 20v140" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" opacity="0.25" />
+                    {/* Curtain left */}
+                    <path d="M20 180V80l30 20-30 20v60" fill="var(--accent-soft)" opacity="0.15" />
+                    {/* Curtain right */}
+                    <path d="M220 180V80l-30 20 30 20v60" fill="var(--accent-soft)" opacity="0.15" />
+                    {/* Spotlight cone */}
+                    <path d="M120 30 L80 175 L160 175 Z" fill="url(#spotlight-grad)" opacity="0.12" />
+                    {/* Pedestal */}
+                    <rect x="88" y="160" width="64" height="8" rx="4" fill="var(--glass-border)" />
+                    <rect x="100" y="152" width="40" height="10" rx="3" fill="var(--glass-border)" opacity="0.6" />
+                    {/* Dotted character silhouette */}
+                    <path d="M120 58c-6 0-10 4.5-10 10s4 10 10 10 10-4.5 10-10-4-10-10-10z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M100 140c0-20 20-24 20-24s20 4 20 24" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M108 104 C108 92 120 88 120 88 C120 88 132 92 132 104 L132 118 L108 118 Z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    {/* Arms */}
+                    <path d="M108 108Q95 114 88 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M132 108Q145 114 152 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    {/* Sparkle */}
+                    <path d="M185 45l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="var(--accent)" opacity="0.6">
+                      <animateTransform attributeName="transform" type="rotate" from="0 185 45" to="360 185 45" dur="8s" repeatCount="indefinite" />
+                    </path>
+                    {/* Gradients */}
+                    <defs>
+                      <linearGradient id="spotlight-grad" x1="120" y1="30" x2="120" y2="175">
+                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+                <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
+                <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
+                <button className="discover-empty-cta" onClick={() => setView('text')}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
+                  开始创作
+                </button>
               </div>
             ) : discoverCards.length === 0 ? (
-              <div className="home-no-chars">
-                <p style={{ fontSize: 14, color: 'var(--text-dim)' }}>该分类暂无推荐角色</p>
+              <div className="discover-empty-sm">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                <span>该分类暂无推荐角色</span>
               </div>
             ) : validDiscoverCards.length === 0 && selectedTag === '' ? (
-              <div className="home-empty-hero">
-                <div className="home-empty-icon">✨</div>
-                <h3>还没有公开角色</h3>
-                <p>上传小说或聊天记录，AI 蒸馏出角色，成为第一个创作者</p>
-                <button className="btn-primary" onClick={() => setView('text')}>开始创作</button>
+              <div className="discover-empty">
+                <div className="discover-empty-stage" aria-hidden="true">
+                  <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20 180V40a20 20 0 0120-20h160a20 20 0 0120 20v140" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" opacity="0.25" />
+                    <path d="M20 180V80l30 20-30 20v60" fill="var(--accent-soft)" opacity="0.15" />
+                    <path d="M220 180V80l-30 20 30 20v60" fill="var(--accent-soft)" opacity="0.15" />
+                    <path d="M120 30 L80 175 L160 175 Z" fill="url(#spotlight-grad2)" opacity="0.12" />
+                    <rect x="88" y="160" width="64" height="8" rx="4" fill="var(--glass-border)" />
+                    <rect x="100" y="152" width="40" height="10" rx="3" fill="var(--glass-border)" opacity="0.6" />
+                    <path d="M120 58c-6 0-10 4.5-10 10s4 10 10 10 10-4.5 10-10-4-10-10-10z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M100 140c0-20 20-24 20-24s20 4 20 24" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M108 104 C108 92 120 88 120 88 C120 88 132 92 132 104 L132 118 L108 118 Z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M108 108Q95 114 88 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M132 108Q145 114 152 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
+                    <path d="M185 45l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="var(--accent)" opacity="0.6">
+                      <animateTransform attributeName="transform" type="rotate" from="0 185 45" to="360 185 45" dur="8s" repeatCount="indefinite" />
+                    </path>
+                    <defs>
+                      <linearGradient id="spotlight-grad2" x1="120" y1="30" x2="120" y2="175">
+                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
+                        <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                  </svg>
+                </div>
+                <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
+                <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
+                <button className="discover-empty-cta" onClick={() => setView('text')}>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
+                  开始创作
+                </button>
               </div>
             ) : validDiscoverCards.length === 0 ? (
-              <div className="home-no-chars">
-                <p style={{ fontSize: 14, color: 'var(--text-dim)' }}>该分类暂无推荐角色</p>
+              <div className="discover-empty-sm">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                <span>该分类暂无推荐角色</span>
               </div>
             ) : (
               <div className="home-discover-grid">

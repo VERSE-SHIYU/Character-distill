@@ -6897,10 +6897,23 @@ select.settings-input {
 }
 
 .home-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text);
   margin-bottom: 10px;
+}
+
+.home-section-title-sparkle {
+  flex-shrink: 0;
+  animation: sparkle-rotate 4s ease-in-out infinite;
+}
+
+@keyframes sparkle-rotate {
+  0%, 100% { transform: rotate(0deg) scale(1); opacity: 0.7; }
+  50%      { transform: rotate(180deg) scale(1.15); opacity: 1; }
 }
 
 /* Section header with optional right-side button */
@@ -15242,25 +15255,81 @@ select.settings-input {
   color: var(--primary);
 }
 
-/* ── 空角色英雄区 ── */
-.home-empty-hero {
+/* ── 发现角色空状态 ── */
+.discover-empty {
   text-align: center;
-  padding: 60px 20px;
+  padding: 48px 20px 56px;
+  animation: fade-up 0.5s var(--ease-out);
 }
-.home-empty-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
+
+.discover-empty-stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 20px;
 }
-.home-empty-hero h3 {
-  font-size: 18px;
+
+.discover-empty-svg {
+  width: 180px;
+  height: 150px;
+  filter: drop-shadow(0 4px 16px rgba(0,0,0,0.04));
+}
+
+.discover-empty-title {
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 8px;
+  margin: 0 0 8px;
+  line-height: 1.4;
 }
-.home-empty-hero p {
+
+.discover-empty-desc {
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.6;
+  margin: 0 auto 24px;
+  max-width: 300px;
+}
+
+.discover-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+}
+
+.discover-empty-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+}
+
+.discover-empty-cta:active {
+  transform: translateY(0);
+}
+
+/* Small empty state (tag filter with no results) */
+.discover-empty-sm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  text-align: center;
+}
+
+.discover-empty-sm span {
   font-size: 14px;
   color: var(--text-dim);
-  margin-bottom: 20px;
 }
 
 .home-discover-grid {
