@@ -663,23 +663,23 @@ const useAppStore = create((set, get) => ({
           }))
           get()._persistTasks()
           if (payload.status === 'done') {
-
-            set((s) => ({
-              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
-                ? false : s.distilling,
-              currentTextId: s.currentTextId || textId,
+            // only refresh cards when user is viewing this text, else leave it to selectText/loadCards
+            const s = get()
+            set((s2) => ({
+              distilling: s2.distillTasks.every((t) => t.status === 'done' || t.status === 'error')
+                ? false : s2.distilling,
+              currentTextId: s2.currentTextId || textId,
             }))
             if (payload.card_id) {
-              // 刷新全量卡片列表（覆盖式更新）
-              fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
-                .then((r) => r.json())
-                .then((cards) => {
-
-                  set({ cards })
-                })
-                .catch((err) => console.warn('[distill] Failed to refresh cards on done:', err))
+              if (s.currentTextId === textId) {
+                fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
+                  .then((r) => r.json())
+                  .then((cards) => {
+                    set({ cards })
+                  })
+                  .catch((err) => console.warn('[distill] Failed to refresh cards on done:', err))
+              }
             } else {
-              // 兜底：没有 card_id 时按名字模糊匹配
               fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
                 .then((r) => r.json())
                 .then((cards) => {
@@ -687,16 +687,19 @@ const useAppStore = create((set, get) => ({
                     || cards.find((c) => c.name?.includes(characterName) || characterName?.includes(c.name))
                     || cards[cards.length - 1]
                   if (card) {
-                    set((s) => {
-                      const cardId = card.id
-                      const exists = s.cards.some((c) => c.id === cardId)
-                      const freshCard = { ...card, text_id: textId }
-                      return {
-                        cards: exists
-                          ? s.cards.map((c) => c.id === cardId ? freshCard : c)
-                          : [freshCard, ...s.cards],
-                      }
-                    })
+                    const cur = get()
+                    if (cur.currentTextId === textId) {
+                      set((s2) => {
+                        const cardId = card.id
+                        const exists = s2.cards.some((c) => c.id === cardId)
+                        const freshCard = { ...card, text_id: textId }
+                        return {
+                          cards: exists
+                            ? s2.cards.map((c) => c.id === cardId ? freshCard : c)
+                            : [freshCard, ...s2.cards],
+                        }
+                      })
+                    }
                   } else {
                     console.warn(`[distill] Card not found by name matching: ${characterName}, cards=`, cards)
                   }
