@@ -60,6 +60,7 @@ from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
 from routers.auth import JWT_ALGORITHM, get_jwt_secret, validate_jwt_secret
 from routers.admin import require_admin, router as admin_router
+from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
@@ -86,10 +87,16 @@ async def _lifespan(app: FastAPI):
     set_main_loop(loop)
     await _preload_embedding()
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
+    resync_task = asyncio.create_task(_cross_border_resync_loop())
     yield
     cleanup_task.cancel()
+    resync_task.cancel()
     try:
         await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await resync_task
     except asyncio.CancelledError:
         pass
 

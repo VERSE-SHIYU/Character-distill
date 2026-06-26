@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from cross_border_sync import forward_dm_to_peer
 from deps import get_storage
 from limiter import limiter
 from storage.base import StorageBase
@@ -103,37 +102,13 @@ async def send_message(
             user["id"], body.receiver_id, body.content.strip(), cross_border_synced=0,
         )
 
-        # Forward to peer node
-        peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-        if peer_url:
+        # Forward to peer node (shared function, single source of truth for signing)
+        ok = await forward_dm_to_peer(msg, storage)
+        if ok:
             try:
-                from inter_node_auth import create_auth_header
-
-                # Build an explicit string-typed payload for signing + wire transfer.
-                # Using the raw msg dict is unsafe: datetime fields get serialized to
-                # strings by httpx.json() but are seen as datetime objects by json.dumps
-                # inside _sign(), producing mismatched HMAC signatures.
-                payload = {
-                    "id": msg["id"],
-                    "sender_id": msg["sender_id"],
-                    "receiver_id": msg["receiver_id"],
-                    "content": msg["content"],
-                    "created_at": str(msg["created_at"]),
-                }
-                headers = create_auth_header(payload)
-                import httpx
-
-                async with httpx.AsyncClient(timeout=10) as client:
-                    resp = await client.post(
-                        f"{peer_url}/api/inter-node/dm/receive",
-                        json=payload,
-                        headers=headers,
-                    )
-                    if resp.status_code == 200:
-                        await storage.mark_message_synced(msg["id"])
+                await storage.mark_message_synced(msg["id"])
             except Exception as exc:
-                # Already saved locally with synced=0 — don't lose the message
-                print(f"[message] Cross-border forward failed for {msg['id']}: {exc}")
+                print(f"[message] Mark synced failed for {msg['id']}: {exc}")
 
         return {"message": msg}
 

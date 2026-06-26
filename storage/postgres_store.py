@@ -3322,6 +3322,23 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Mark message synced failed: {exc}")
             raise
 
+    async def get_unsynced_cross_border_messages(self, limit: int = 100) -> list[dict]:
+        """Return unsynced cross-border DMs, oldest first."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT id, sender_id, receiver_id, content, created_at
+                       FROM direct_messages
+                       WHERE cross_border_synced = 0
+                       ORDER BY created_at ASC
+                       LIMIT $1""",
+                    limit,
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get unsynced messages failed: {exc}")
+            raise
+
     async def has_cross_border_consent(self, user_id: str, target_region: str, scope: str = "direct_message") -> bool:
         """Check if user has granted cross-border consent for (target_region, scope)."""
         try:

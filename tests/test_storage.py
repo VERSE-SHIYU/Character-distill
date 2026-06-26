@@ -437,3 +437,63 @@ class TestCsvExport:
     async def test_export_usage_csv(self, store):
         csv_str = await store.export_usage_csv()
         assert "total_calls" in csv_str
+
+
+# ── P2-4: Cross-border DM resync ─────────────────────────────────────
+
+class TestCrossBorderResync:
+    """get_unsynced_cross_border_messages, mark_message_synced."""
+
+    async def test_get_unsynced_returns_synced0(self, store):
+        uid = "u_cb_sender"
+        uid2 = "u_cb_recv"
+        import hashlib
+        await store.create_user(uid, "cb_sender", hashlib.sha256(b"p").hexdigest())
+        await store.create_user(uid2, "cb_recv", hashlib.sha256(b"p").hexdigest())
+
+        # Send a cross-border (synced=0) and a normal (synced=1) message
+        await store.send_message(uid, uid2, "unsynced msg", cross_border_synced=0)
+        await store.send_message(uid, uid2, "synced msg", cross_border_synced=1)
+
+        unsynced = await store.get_unsynced_cross_border_messages(limit=10)
+        assert len(unsynced) == 1
+        assert unsynced[0]["content"] == "unsynced msg"
+        assert unsynced[0]["sender_id"] == uid
+        assert unsynced[0]["receiver_id"] == uid2
+
+    async def test_mark_synced_removes_from_unsynced(self, store):
+        uid = "u_cb_sender2"
+        uid2 = "u_cb_recv2"
+        import hashlib
+        await store.create_user(uid, "cb_sender2", hashlib.sha256(b"p").hexdigest())
+        await store.create_user(uid2, "cb_recv2", hashlib.sha256(b"p").hexdigest())
+
+        msg = await store.send_message(uid, uid2, "retry msg", cross_border_synced=0)
+
+        unsynced_before = await store.get_unsynced_cross_border_messages()
+        assert any(m["id"] == msg["id"] for m in unsynced_before)
+
+        await store.mark_message_synced(msg["id"])
+
+        unsynced_after = await store.get_unsynced_cross_border_messages()
+        assert not any(m["id"] == msg["id"] for m in unsynced_after)
+
+    async def test_empty_when_none_unsynced(self, store):
+        unsynced = await store.get_unsynced_cross_border_messages()
+        assert unsynced == []
+
+    async def test_unsynced_limit(self, store):
+        uid = "u_cb_sender3"
+        uid2 = "u_cb_recv3"
+        import hashlib
+        await store.create_user(uid, "cb_sender3", hashlib.sha256(b"p").hexdigest())
+        await store.create_user(uid2, "cb_recv3", hashlib.sha256(b"p").hexdigest())
+
+        for i in range(5):
+            await store.send_message(uid, uid2, f"msg_{i}", cross_border_synced=0)
+
+        unsynced = await store.get_unsynced_cross_border_messages(limit=3)
+        assert len(unsynced) == 3
+        # Oldest first
+        assert unsynced[0]["content"] == "msg_0"
+        assert unsynced[2]["content"] == "msg_2"
