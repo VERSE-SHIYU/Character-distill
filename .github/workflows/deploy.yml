@@ -44,6 +44,7 @@ jobs:
         env:
           STORAGE_BACKEND: postgres
           DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
+          JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
         run: pytest tests/ -v --tb=short
 
   # ── 关卡2：构建并推送镜像（test 通过后才执行） ──────────────────
