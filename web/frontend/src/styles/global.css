@@ -6274,7 +6274,7 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(45, 45, 45, 0.4);
+  background: rgba(30, 30, 30, 0.55);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   animation: modal-fade-in 0.2s var(--ease-out);
@@ -6293,7 +6293,7 @@ select.settings-input {
   flex-direction: column;
   overflow: hidden;
   padding: 28px 28px 24px;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.4);
