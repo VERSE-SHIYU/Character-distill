@@ -5,8 +5,8 @@ on:
     branches: [main]
 
 env:
-  APP_IMAGE: registry.cn-shenzhen.aliyuncs.com/verse-shiyu/character-distill-app
-  NGINX_IMAGE: registry.cn-shenzhen.aliyuncs.com/verse-shiyu/character-distill-nginx
+  APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
+  NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
   build-and-deploy:
@@ -21,7 +21,7 @@ jobs:
       - name: Login to Aliyun ACR
         uses: docker/login-action@v3
         with:
-          registry: registry.cn-shenzhen.aliyuncs.com
+          registry: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
@@ -55,7 +55,7 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             cd /opt/character-distill
-            echo "${{ secrets.ACR_PASSWORD }}" | docker login registry.cn-shenzhen.aliyuncs.com \
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com \
               -u "${{ secrets.ACR_USERNAME }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
