@@ -4,6 +4,12 @@ import { parseCardJson } from '../utils/card'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
 
+const INITIAL_AFFINITY = {
+  affinity: 50, trust: 30, guard: 70,
+  mood: '平静', reason: '', inner_voice: '',
+  mood_emoji: '😊', stage: '陌生', stage_emoji: '🫥',
+}
+
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
 
@@ -338,7 +344,7 @@ const useAppStore = create((set, get) => ({
   webSearchEnabled: false,
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
-  affinity: { affinity: 50, trust: 30, mood: '平静', guard: 70, reason: '', inner_voice: '', mood_emoji: '😊', stage: '陌生', stage_emoji: '🫥' },
+  affinity: { ...INITIAL_AFFINITY },
   affinityOpen: localStorage.getItem('affinity_open') !== 'false',
   setAffinityOpen: (val) => {
     localStorage.setItem('affinity_open', val ? 'true' : 'false')
@@ -358,6 +364,8 @@ const useAppStore = create((set, get) => ({
       set({ affinity: data })
     } catch { /* non-fatal */ }
   },
+
+  resetAffinity: () => set({ affinity: { ...INITIAL_AFFINITY } }),
 
   // Recording
   isRecording: false,
@@ -994,6 +1002,8 @@ const useAppStore = create((set, get) => ({
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
     })
+    get().resetAffinity()
+    get().fetchAffinity()
   },
 
   enterArchive: async (session) => {
@@ -1020,6 +1030,7 @@ const useAppStore = create((set, get) => ({
       userAvatar: null,
       error: null,
     })
+    get().resetAffinity()
     get().fetchAffinity()
   },
 
@@ -1071,6 +1082,7 @@ const useAppStore = create((set, get) => ({
           : [],
         currentTextTitle: textTitle || get().currentTextTitle,
       })
+      get().resetAffinity()
       get().fetchAffinity()
     } catch (err) {
       console.error('[store] createNewArchive failed:', err)
