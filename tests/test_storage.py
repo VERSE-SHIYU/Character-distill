@@ -993,3 +993,114 @@ class TestStandaloneCardListing:
         cards = await store.list_cards(text_id, "user_sc")
         ids = {c["id"] for c in cards}
         assert cid not in ids, "Detached card must NOT appear in list_cards by text_id"
+
+
+# ── Session avatar isolation ───────────────────────────────────────────
+
+class TestSessionAvatarIsolation:
+    """Session-level user avatar isolation: A≠B, session≠global, cross-user denied."""
+
+    async def _setup_user_text_card(self, store, uid, text_id, card_id):
+        """Create a user, text, and card for testing."""
+        import hashlib
+        try:
+            await store.create_user(uid, uid, hashlib.sha256(b"p").hexdigest())
+        except ValueError:
+            pass
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", '{"name": "张三"}', user_id=uid)
+
+    async def test_session_avatar_isolated_between_sessions(self, store):
+        """Set session A's avatar — session B must remain empty."""
+        uid = f"u_{uuid.uuid4().hex}"
+        tid = f"txt_{uuid.uuid4().hex}"
+        cid = f"card_{uuid.uuid4().hex}"
+        sid_a = f"ses_{uuid.uuid4().hex}"
+        sid_b = f"ses_{uuid.uuid4().hex}"
+        await self._setup_user_text_card(store, uid, tid, cid)
+        await store.save_session(sid_a, cid, "user", "", user_id=uid)
+        await store.save_session(sid_b, cid, "user", "", user_id=uid)
+
+        ok = await store.update_session_avatar(sid_a, uid, "avatarX")
+        assert ok is True
+
+        session_a = await store.get_session(sid_a)
+        assert session_a["avatar_data"] == "avatarX", "A should have session avatar"
+
+        session_b = await store.get_session(sid_b)
+        assert session_b["avatar_data"] == "", "B must remain empty (unaffected by A)"
+
+    async def test_session_avatar_does_not_touch_global(self, store):
+        """Setting a session avatar must NOT alter the user's global avatar."""
+        uid = f"u_{uuid.uuid4().hex}"
+        tid = f"txt_{uuid.uuid4().hex}"
+        cid = f"card_{uuid.uuid4().hex}"
+        sid = f"ses_{uuid.uuid4().hex}"
+        await self._setup_user_text_card(store, uid, tid, cid)
+        await store.save_session(sid, cid, "user", "", user_id=uid)
+
+        await store.update_user_avatar(uid, "global1")
+        ok = await store.update_session_avatar(sid, uid, "avatarX")
+        assert ok is True
+
+        global_avatar = await store.get_user_avatar(uid)
+        assert global_avatar == "global1", "Global avatar must be unchanged by session-level write"
+
+    async def test_two_sessions_independent(self, store):
+        """Two sessions under the same user — each has its own avatar, no cross-contamination."""
+        uid = f"u_{uuid.uuid4().hex}"
+        tid = f"txt_{uuid.uuid4().hex}"
+        cid = f"card_{uuid.uuid4().hex}"
+        sid_a = f"ses_{uuid.uuid4().hex}"
+        sid_b = f"ses_{uuid.uuid4().hex}"
+        await self._setup_user_text_card(store, uid, tid, cid)
+        await store.save_session(sid_a, cid, "user", "", user_id=uid)
+        await store.save_session(sid_b, cid, "user", "", user_id=uid)
+
+        ok_a = await store.update_session_avatar(sid_a, uid, "X")
+        ok_b = await store.update_session_avatar(sid_b, uid, "Y")
+        assert ok_a is True
+        assert ok_b is True
+
+        session_a = await store.get_session(sid_a)
+        session_b = await store.get_session(sid_b)
+        assert session_a["avatar_data"] == "X", "Session A should have its own avatar"
+        assert session_b["avatar_data"] == "Y", "Session B should have its own avatar"
+
+    async def test_session_avatar_ownership_denied(self, store):
+        """Cross-user write must be rejected: returns False, target data unchanged."""
+        import hashlib
+        uid = f"u_{uuid.uuid4().hex}"
+        other_id = f"u_{uuid.uuid4().hex}"
+        tid = f"txt_{uuid.uuid4().hex}"
+        cid = f"card_{uuid.uuid4().hex}"
+        sid = f"ses_{uuid.uuid4().hex}"
+        try:
+            await store.create_user(uid, uid, hashlib.sha256(b"p").hexdigest())
+        except ValueError:
+            pass
+        try:
+            await store.create_user(other_id, other_id, hashlib.sha256(b"p").hexdigest())
+        except ValueError:
+            pass
+        await store.save_text(tid, "src.txt", "source")
+        await store.save_card(cid, tid, "张三", '{"name": "张三"}', user_id=uid)
+        await store.save_session(sid, cid, "user", "", user_id=uid)
+
+        ok = await store.update_session_avatar(sid, other_id, "hack")
+        assert ok is False, "Ownership check must reject cross-user write"
+
+        session = await store.get_session(sid)
+        assert session["avatar_data"] == "", "Session avatar must remain unchanged after rejected write"
+
+    async def test_unset_session_falls_back_logic(self, store):
+        """Session never given an avatar — avatar_data must be empty (frontend falls back to global)."""
+        uid = f"u_{uuid.uuid4().hex}"
+        tid = f"txt_{uuid.uuid4().hex}"
+        cid = f"card_{uuid.uuid4().hex}"
+        sid = f"ses_{uuid.uuid4().hex}"
+        await self._setup_user_text_card(store, uid, tid, cid)
+        await store.save_session(sid, cid, "user", "", user_id=uid)
+
+        session = await store.get_session(sid)
+        assert session["avatar_data"] == "", "Unset session avatar must be empty (fallback to global avatar in frontend)"
