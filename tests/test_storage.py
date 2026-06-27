@@ -1177,3 +1177,50 @@ class TestRebuildHistoryFromDb:
         ]
         result = _rebuild_history_from_db(msgs)
         assert len(result) == 4
+
+
+# ── Cross-border admin user fields ─────────────────────────────────────
+
+class TestGetAllUsersAdminFields:
+    """get_all_users_admin_fields must return only whitelisted admin-safe fields."""
+
+    async def test_returns_admin_safe_fields(self, store):
+        """Result dicts must never contain password_hash or api_key."""
+        import hashlib
+        uid = f"u_{uuid.uuid4().hex}"
+        await store.create_user(uid, "admin_fields_test", hashlib.sha256(b"p").hexdigest())
+
+        rows = await store.get_all_users_admin_fields()
+        matching = [r for r in rows if r.get("id") == uid]
+        assert len(matching) == 1
+        row = matching[0]
+
+        # Must contain whitelisted fields
+        assert "id" in row
+        assert row.get("username") == "admin_fields_test"
+
+        # Must NOT contain secrets
+        assert "password_hash" not in row, "password_hash leaked in admin fields!"
+        assert "api_key" not in row, "api_key leaked in admin fields!"
+        assert "email" not in row, "email must not be in admin fields (not needed for cross-border)"
+
+    async def test_field_whitelist_is_explicit(self, store):
+        """Only the whitelisted fields should be present."""
+        import hashlib
+        uid = f"u_{uuid.uuid4().hex}"
+        await store.create_user(uid, "whitelist_test", hashlib.sha256(b"p").hexdigest())
+
+        rows = await store.get_all_users_admin_fields()
+        matching = [r for r in rows if r.get("id") == uid]
+        assert len(matching) == 1
+        row = matching[0]
+
+        allowed = {"id", "username", "home_region", "is_disabled", "created_at", "last_active_at"}
+        actual = set(row.keys())
+        extras = actual - allowed
+        assert not extras, f"Unexpected fields in admin output: {extras}"
+
+    async def test_returns_empty_list_when_no_users(self, store):
+        """Empty DB returns empty list, not None or error."""
+        rows = await store.get_all_users_admin_fields()
+        assert isinstance(rows, list)

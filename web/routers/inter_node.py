@@ -183,3 +183,26 @@ async def receive_user_purge(
         raise HTTPException(500, f"Failed to purge user data: {exc}")
 
     return {"ok": True, "target_id": user_id, "deleted": counts}
+
+
+@router.post("/admin/users")
+async def receive_admin_users(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> list[dict]:
+    """Return admin-safe user fields for cross-border admin view.
+
+    Authenticated via HMAC-SHA256 (inter_node_auth), NOT JWT.
+    Only returns whitelisted admin fields — no password_hash, api_key, or
+    any secrets from user_secrets table.  This is the read-only view used
+    by the peer node's admin panel.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    return await storage.get_all_users_admin_fields()

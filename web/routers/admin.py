@@ -52,6 +52,81 @@ async def list_users(
     return users
 
 
+@router.get("/users/federated")
+@limiter.limit("30/minute")
+async def list_users_federated(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """List local + optional peer-node users (federated admin view).
+
+    When PEER_NODE_URL is configured, fetches peer users via HMAC-signed
+    inter-node request.  Peer unreachable degrades gracefully — returns
+    local users with ``peer_unreachable=True`` flag.
+    """
+    import os
+
+    # 1. Local users
+    local_users = await storage.get_all_users()
+    now = time.time()
+    for u in local_users:
+        ts = u.get("last_active_at") or u.get("last_login_at")
+        if ts:
+            try:
+                dt = __import__("datetime").datetime.fromisoformat(ts)
+                u["online"] = (now - dt.timestamp()) < 300
+            except Exception:
+                u["online"] = False
+        else:
+            u["online"] = False
+        u["node_region"] = "local"
+
+    result: dict[str, Any] = {
+        "local": local_users,
+        "peer": [],
+        "peer_unreachable": False,
+    }
+
+    # 2. Peer users (only if inter-node is configured)
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return result
+
+    from inter_node_auth import create_auth_header
+    import httpx
+
+    payload = {"request": "admin_users"}
+    headers = create_auth_header(payload)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{peer_url}/api/inter-node/admin/users",
+                json=payload,
+                headers=headers,
+            )
+        if resp.status_code == 200:
+            peer_users = resp.json()
+            for u in peer_users:
+                ts = u.get("last_active_at") or ""
+                if ts:
+                    try:
+                        dt = __import__("datetime").datetime.fromisoformat(ts)
+                        u["online"] = (now - dt.timestamp()) < 300
+                    except Exception:
+                        u["online"] = False
+                else:
+                    u["online"] = False
+                u["node_region"] = "peer"
+            result["peer"] = peer_users
+        else:
+            result["peer_unreachable"] = True
+    except Exception:
+        result["peer_unreachable"] = True
+
+    return result
+
+
 @router.get("/dashboard")
 @limiter.limit("30/minute")
 async def dashboard(

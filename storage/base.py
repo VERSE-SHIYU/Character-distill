@@ -138,6 +138,10 @@ class StorageBase(ABC):
         """List all users (admin)."""
 
     @abstractmethod
+    async def get_all_users_admin_fields(self) -> list[dict]:
+        """List all users with only admin-safe fields (no secrets, for cross-border export)."""
+
+    @abstractmethod
     async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
         """Promote or demote a user to/from admin."""
 

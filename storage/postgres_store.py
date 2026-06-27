@@ -1975,6 +1975,21 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get all users failed: {exc}")
             raise
 
+    async def get_all_users_admin_fields(self) -> list[dict]:
+        """List all users with admin-safe fields only (for cross-border export).
+
+        Explicit field whitelist — no password_hash, api_key, or secrets.
+        """
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, username, home_region, is_disabled, created_at, last_active_at FROM users ORDER BY created_at DESC"
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get all users admin fields failed: {exc}")
+            raise
+
     async def update_last_login(self, user_id: str) -> None:
         """Update the last_login_at timestamp for a user."""
         try:
