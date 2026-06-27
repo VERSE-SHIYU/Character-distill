@@ -1020,6 +1020,7 @@ const useAppStore = create((set, get) => ({
       userAvatar: null,
       error: null,
     })
+    get().fetchAffinity()
   },
 
   createNewArchive: async () => {
@@ -1039,7 +1040,7 @@ const useAppStore = create((set, get) => ({
       archiveList: [],
       pendingCard: null,
       _pendingChatCardId: null,
-            currentCard: card,
+      currentCard: card,
       currentView: 'chat',
       sending: true,
       messages: [],
@@ -1070,6 +1071,7 @@ const useAppStore = create((set, get) => ({
           : [],
         currentTextTitle: textTitle || get().currentTextTitle,
       })
+      get().fetchAffinity()
     } catch (err) {
       console.error('[store] createNewArchive failed:', err)
       set({ _pendingChatCardId: null, error: err.message, sending: false })
