@@ -27,12 +27,14 @@ def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, str]]:
     """Filter DB messages and map roles to engine.history format.
 
     Only user and char messages are kept (whitelist approach); summary,
-    system, and other synthetic roles are excluded.
+    system, and other synthetic roles are excluded.  Retracted messages
+    are also excluded — a retracted reply is invisible to both the user
+    and the LLM.
     """
     return [
         {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
         for m in db_messages
-        if m["role"] in ("user", "char")
+        if m["role"] in ("user", "char") and not m.get("retracted")
     ]
 
 
@@ -104,7 +106,7 @@ async def _ensure_session(
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
-    # Reload history from DB
+    # Reload history from DB (retracted messages filtered by _rebuild_history_from_db)
     db_messages = await storage.get_messages(session_id)
     engine.history = _rebuild_history_from_db(db_messages)
     # Restore last_summary from DB
@@ -207,7 +209,7 @@ async def _do_chat(
             engine._main_loop = asyncio.get_running_loop()
         # Prepend quote context for LLM if replying
         llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
-        print(f"[chat] _do_chat: history={len(engine.history) if engine else 0} messages")
+        print(f"[chat] _do_chat session={session_id} history={len(engine.history) if engine else 0} messages")
         async with session["lock"]:
             import time as _t; _t0 = _t.time()
             resp = await asyncio.to_thread(engine.chat, llm_msg, voice_mode=voice_mode)
@@ -225,6 +227,10 @@ async def _do_chat(
             retracted = await asyncio.to_thread(engine._should_retract, resp)
         except Exception:
             retracted = False
+
+    # If retracted, remove assistant from memory so LLM never sees it
+    if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
+        engine.history.pop()
 
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
@@ -339,7 +345,7 @@ async def _do_chat_stream(
             engine = session["engine"]
             engine._storage = storage
             engine._user_id = user_id
-            print(f"[chat] _do_chat_stream: history={len(engine.history) if engine else 0} messages")
+            print(f"[chat] _do_chat_stream session={session_id} history={len(engine.history) if engine else 0} messages")
             # Prepend quote context for LLM if replying
             llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
             async with session["lock"]:
@@ -369,6 +375,10 @@ async def _do_chat_stream(
                     retracted = await asyncio.to_thread(engine._should_retract, full_reply)
                 except Exception:
                     retracted = False
+
+            # If retracted, remove assistant from memory so LLM never sees it
+            if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
+                engine.history.pop()
 
             try:
                 char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500], retracted=retracted)

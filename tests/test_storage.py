@@ -1104,3 +1104,76 @@ class TestSessionAvatarIsolation:
 
         session = await store.get_session(sid)
         assert session["avatar_data"] == "", "Unset session avatar must be empty (fallback to global avatar in frontend)"
+
+
+# ── Retracted message filtering ────────────────────────────────────────
+
+class TestRebuildHistoryFromDb:
+    """_rebuild_history_from_db must exclude retracted messages."""
+
+    def test_filters_retracted_char_message(self):
+        """A char message with retracted=True must not appear in the result."""
+        from web.routers.chat import _rebuild_history_from_db
+        msgs = [
+            {"role": "user",   "content": "你好",       "retracted": False},
+            {"role": "char",   "content": "你是谁？我不认识你", "retracted": True},
+            {"role": "user",   "content": "别闹了",     "retracted": False},
+            {"role": "char",   "content": "哈哈开玩笑的", "retracted": False},
+        ]
+        result = _rebuild_history_from_db(msgs)
+        assert len(result) == 3
+        assert not any(m["content"] == "你是谁？我不认识你" for m in result)
+
+    def test_keeps_normal_messages(self):
+        """Non-retracted messages pass through unchanged."""
+        from web.routers.chat import _rebuild_history_from_db
+        msgs = [
+            {"role": "user", "content": "第一句", "retracted": False},
+            {"role": "char", "content": "回复一", "retracted": False},
+        ]
+        result = _rebuild_history_from_db(msgs)
+        assert len(result) == 2
+        assert result[0] == {"role": "user", "content": "第一句"}
+        assert result[1] == {"role": "assistant", "content": "回复一"}
+
+    def test_skips_summary_role(self):
+        """Summary and other synthetic roles are filtered out as before."""
+        from web.routers.chat import _rebuild_history_from_db
+        msgs = [
+            {"role": "user",    "content": "hi",  "retracted": False},
+            {"role": "char",    "content": "hey", "retracted": False},
+            {"role": "summary", "content": "摘要", "retracted": False},
+        ]
+        result = _rebuild_history_from_db(msgs)
+        assert len(result) == 2
+
+    def test_messages_still_alternating_and_start_with_user(self):
+        """After filtering retracted, history must start with user and alternate."""
+        from web.routers.chat import _rebuild_history_from_db
+        msgs = [
+            {"role": "user", "content": "回合1用户",  "retracted": False},
+            {"role": "char", "content": "回合1回复",  "retracted": True},   # filtered
+            {"role": "user", "content": "回合2用户",  "retracted": False},
+            {"role": "char", "content": "回合2回复",  "retracted": False},
+        ]
+        result = _rebuild_history_from_db(msgs)
+        assert len(result) == 3
+        # Must start with user
+        assert result[0]["role"] == "user"
+        # Must alternate (user → assistant → user)
+        roles = [m["role"] for m in result]
+        assert roles == ["user", "user", "assistant"], (
+            f"Expected alternating roles starting with user, got {roles}"
+        )
+
+    def test_retracted_0_or_none_passes_through(self):
+        """retracted=0, retracted=None or missing retracted should NOT be filtered."""
+        from web.routers.chat import _rebuild_history_from_db
+        msgs = [
+            {"role": "user", "content": "a", "retracted": 0},
+            {"role": "char", "content": "b", "retracted": None},
+            {"role": "user", "content": "c"},                          # missing key
+            {"role": "char", "content": "d", "retracted": False},
+        ]
+        result = _rebuild_history_from_db(msgs)
+        assert len(result) == 4
