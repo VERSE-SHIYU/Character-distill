@@ -16,7 +16,7 @@ import pytest
 def _ensure_no_env_leak(monkeypatch):
     """Isolate env vars per test."""
     monkeypatch.delenv("PEER_NODE_URL", raising=False)
-    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret")
+    monkeypatch.setenv("INTER_NODE_SECRET", "test-inter-node-secret-0123456789abcdef")
 
 
 class MockResponse:
