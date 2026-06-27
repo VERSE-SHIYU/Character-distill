@@ -3945,7 +3945,7 @@ html.theme-aurora::before {
   min-height: 0;
   overflow-y: auto;
   scroll-behavior: smooth;
-  padding: 16px;
+  padding: 16px 16px 48px;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -11515,7 +11515,7 @@ select.settings-input {
   gap: 0;
 }
 .group-chat-layout .group-chat-messages-area {
-  padding: 16px 20px;
+  padding: 16px 20px 48px;
   gap: 18px;
   overflow-x: visible;
   overflow-y: auto;
@@ -16360,14 +16360,15 @@ select.settings-input {
 /* ── Message reaction bar (hover reveal via .cbubble:hover) ── */
 .msg-reactions-bar {
   position: absolute;
-  bottom: -32px;
+  top: 100%;
   z-index: 10;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.15s ease, visibility 0.15s ease;
   pointer-events: none;
 }
-.cbubble:hover .msg-reactions-bar {
+.cbubble:hover .msg-reactions-bar,
+.msg-reactions-bar:hover {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
