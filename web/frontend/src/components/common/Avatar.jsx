@@ -8,13 +8,14 @@ function hashColor(name) {
   return COLORS[Math.abs(h) % COLORS.length]
 }
 
-export default function Avatar({ name = '?', src = null, size = 40, className = '' }) {
+export default function Avatar({ name = '?', src = null, size = 40, className = '', onClick, style }) {
   const bg = hashColor(name)
   const letter = name[0] || '?'
 
   return (
     <div
       className={className}
+      onClick={onClick}
       style={{
         width: size,
         height: size,
@@ -31,6 +32,8 @@ export default function Avatar({ name = '?', src = null, size = 40, className = 
         position: 'relative',
         border: '2px solid rgba(128,128,128,0.15)',
         boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+        cursor: onClick ? 'pointer' : undefined,
+        ...style,
       }}
     >
       {src ? (

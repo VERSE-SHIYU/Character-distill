@@ -1031,12 +1031,13 @@ function ChatView() {
 
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
   const [showRetracted, setShowRetracted] = useState(false)
-  const userInitial = (userRole || '我').charAt(0)
-
   const userAvatarNode = (
-    <div className="user-avatar-circle" style={userAvatarUrl ? { backgroundImage: `url(${userAvatarUrl})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}} onClick={onUserAvatarClick}>
-      {!userAvatarUrl && userInitial}
-    </div>
+    <Avatar
+      name={userRole || '我'}
+      src={userAvatarUrl}
+      size={68}
+      onClick={onUserAvatarClick}
+    />
   )
 
   return (
