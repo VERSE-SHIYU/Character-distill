@@ -13101,6 +13101,26 @@ select.settings-input {
   flex-shrink: 0;
 }
 
+.mine-follow-search-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(128,128,128,0.3));
+  background: rgba(128,128,128,0.08);
+  color: var(--text, inherit);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+}
+.mine-follow-search-input:focus {
+  border-color: var(--accent, #6c8cff);
+  background: rgba(128,128,128,0.12);
+}
+.mine-follow-search-input::placeholder {
+  color: var(--text-dim, #999);
+}
+
 /* ── 粉丝/关注者列表 ── */
 .mine-follow-list {
   display: flex;

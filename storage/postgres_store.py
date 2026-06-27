@@ -797,9 +797,9 @@ class PostgresStore(StorageBase):
                 texts = self._list_rows(texts_rows)
 
                 users_rows = await conn.fetch(
-                    """SELECT id, username, avatar_data
+                    """SELECT id, username, nickname, avatar_data
                        FROM users
-                       WHERE username LIKE $1 AND is_disabled = 0
+                       WHERE (username ILIKE $1 OR nickname ILIKE $1) AND is_disabled = 0
                        ORDER BY username
                        LIMIT 5""",
                     like,
@@ -1887,7 +1887,7 @@ class PostgresStore(StorageBase):
         import uuid as _uuid
         from datetime import datetime, timedelta, timezone
         cid = _uuid.uuid4().hex[:16]
-        expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -3159,7 +3159,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT u.id, u.username, u.avatar_data,
+                    """SELECT u.id, u.username, u.nickname, u.avatar_data,
                               (SELECT 1 FROM user_follows WHERE follower_id = $2 AND following_id = u.id) IS NOT NULL AS is_following,
                               (SELECT COUNT(*) FROM cards WHERE user_id = u.id AND visibility = 'public' AND deleted_at IS NULL) AS cards_count
                        FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = $1""",

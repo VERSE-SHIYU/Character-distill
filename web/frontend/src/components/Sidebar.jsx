@@ -253,6 +253,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
                           <Avatar name={displayName(u) || '?'} size={28} src={u.avatar_data} />
                           <div className="sidebar-search-item-text">
                             <span className="sidebar-search-item-name">{displayName(u)}</span>
+                            <span className="sidebar-search-item-sub">@{u.username}</span>
                           </div>
                         </button>
                       ))}

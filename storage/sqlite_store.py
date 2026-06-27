@@ -1615,12 +1615,12 @@ class SQLiteStore(StorageBase):
 
                 # Users
                 cur = await conn.execute(
-                    """SELECT id, username, avatar_data
+                    """SELECT id, username, nickname, avatar_data
                        FROM users
-                       WHERE username LIKE ? AND is_disabled = 0
+                       WHERE (username LIKE ? OR nickname LIKE ?) AND is_disabled = 0
                        ORDER BY username
                        LIMIT 5""",
-                    (like,),
+                    (like, like),
                 )
                 users = self._list_rows(await cur.fetchall())
 
@@ -4212,7 +4212,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT u.id, u.username, u.avatar_data,
+                    """SELECT u.id, u.username, u.nickname, u.avatar_data,
                               EXISTS(SELECT 1 FROM user_follows WHERE follower_id = :viewer AND following_id = u.id) AS is_following,
                               (SELECT COUNT(*) FROM cards WHERE user_id = u.id AND visibility = 'public' AND deleted_at IS NULL) AS cards_count
                        FROM user_follows f JOIN users u ON u.id = f.following_id WHERE f.follower_id = :uid""",

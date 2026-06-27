@@ -248,6 +248,7 @@ export default function MinePage() {
   const [following, setFollowing] = useState([])
   const [followingLoading, setFollowingLoading] = useState(false)
   const [followingLocked, setFollowingLocked] = useState(false)
+  const [followingFilter, setFollowingFilter] = useState('')
 
   // Online status (self always visible)
   const [selfOnline, setSelfOnline] = useState(null)
@@ -1029,50 +1030,68 @@ export default function MinePage() {
               </button>
             </div>
           ) : (
-            <div className="mine-following-list">
-              {following.map(u => (
-                <div key={u.id} className="mine-following-card">
-                  <Avatar name={displayName(u) || '?'} src={u.avatar_data} size={44} />
-                  <div className="mine-following-info">
-                    <button
-                      type="button"
-                      className="mine-following-name"
-                      onClick={() => { setAuthorUserId(u.id); setView('author') }}
-                    >
-                      {displayName(u)}
-                    </button>
-                    <span className="mine-following-meta">
-                      {u.cards_count ?? 0} 个角色
-                    </span>
-                  </div>
-                  {authUser?.id !== u.id && (
-                    <div className="mine-following-actions">
-                      <button
-                        type="button"
-                        className="btn-sm btn-outline"
-                        onClick={() => goToMessages(u.id, u.username)}
-                      >
-                        私信
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-sm btn-secondary"
-                        onClick={async () => {
-                          await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
-                            method: 'POST',
-                            headers: getAuthHeaders(),
-                          })
-                          setFollowing(prev => prev.filter(f => f.id !== u.id))
-                          setFollowingCount(prev => Math.max(0, prev - 1))
-                        }}
-                      >
-                        取消关注
-                      </button>
+            <>
+              {isMe && (
+                <input
+                  type="text"
+                  className="mine-follow-search-input"
+                  placeholder="搜索关注的人…"
+                  value={followingFilter}
+                  onChange={(e) => setFollowingFilter(e.target.value)}
+                />
+              )}
+              <div className="mine-following-list">
+                {following
+                  .filter(u => {
+                    if (!followingFilter.trim()) return true
+                    const kw = followingFilter.trim().toLowerCase()
+                    return (u.username || '').toLowerCase().includes(kw)
+                      || (u.nickname || '').toLowerCase().includes(kw)
+                  })
+                  .map(u => (
+                    <div key={u.id} className="mine-following-card">
+                      <Avatar name={displayName(u) || '?'} src={u.avatar_data} size={44} />
+                      <div className="mine-following-info">
+                        <button
+                          type="button"
+                          className="mine-following-name"
+                          onClick={() => { setAuthorUserId(u.id); setView('author') }}
+                        >
+                          {displayName(u)}
+                        </button>
+                        <span className="mine-following-meta">
+                          {u.cards_count ?? 0} 个角色
+                        </span>
+                      </div>
+                      {authUser?.id !== u.id && (
+                        <div className="mine-following-actions">
+                          <button
+                            type="button"
+                            className="btn-sm btn-outline"
+                            onClick={() => goToMessages(u.id, u.username)}
+                          >
+                            私信
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-sm btn-secondary"
+                            onClick={async () => {
+                              await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
+                                method: 'POST',
+                                headers: getAuthHeaders(),
+                              })
+                              setFollowing(prev => prev.filter(f => f.id !== u.id))
+                              setFollowingCount(prev => Math.max(0, prev - 1))
+                            }}
+                          >
+                            取消关注
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                  ))}
+              </div>
+            </>
           )
         )}
       </div>
