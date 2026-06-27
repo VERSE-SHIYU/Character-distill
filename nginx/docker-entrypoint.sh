@@ -15,6 +15,10 @@ else
 fi
 
 # 启动前语法自检：allow allow <IP> 这类错误被 fail-fast 抓出
-openresty -t || { echo "[entrypoint] nginx 配置校验失败，拒绝启动"; exit 1; }
+openresty -t -c /etc/nginx/nginx.conf || { echo "[entrypoint] nginx 配置校验失败，拒绝启动"; exit 1; }
 
-exec openresty -g "daemon off;"
+# 预创建 WAF 日志文件，避免 fail2ban 因找不到 waf.log 而崩溃。
+# waf.lua/cc.lua 仅在检测到攻击时写入此文件，无攻击时文件不会自动生成。
+touch /var/log/openresty/waf.log
+
+exec openresty -g "daemon off;" -c /etc/nginx/nginx.conf

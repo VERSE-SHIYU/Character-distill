@@ -48,6 +48,11 @@ services:
     oom_score_adj: -500
     mem_limit: 512m
     mem_reservation: 256m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     networks:
       - prod
@@ -72,6 +77,11 @@ services:
     oom_score_adj: 300
     mem_limit: 768m
     mem_reservation: 384m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     networks:
       - prod
@@ -90,6 +100,11 @@ services:
       - app
     mem_limit: 128m
     mem_reservation: 64m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     networks:
       - prod
@@ -105,6 +120,11 @@ services:
       - NET_RAW
     mem_limit: 96m
     mem_reservation: 48m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
     networks:
       - prod
