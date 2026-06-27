@@ -96,6 +96,7 @@ services:
     volumes:
       - ssl_certs:/etc/ssl:ro
       - nginx_logs:/var/log/openresty
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
       - app
     mem_limit: 128m
