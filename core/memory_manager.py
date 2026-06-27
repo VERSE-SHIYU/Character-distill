@@ -15,7 +15,9 @@ RERANK_BETA  = 0.15    # 时间新近度权重
 RERANK_GAMMA = 0.25    # 重要性权重
 RERANK_DELTA = 0.15    # 情绪契合度权重
 RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
-REFLECTION_THRESHOLD = 30  # 累计重要性达此值触发反思
+REFLECTION_THRESHOLD = 30   # 累计重要性达此值（且满足双条件）触发反思
+REFLECTION_MIN_ROUNDS = 8   # 距上次反思最少轮数，防高频触发
+REFLECTION_MIN_QUALITY = 3  # 触发反思最少需要的高质量（importance>=7）原始记忆条数
 
 # ── 情绪极性关键词（子串匹配，覆盖 LLM 丰富情绪词）──
 _POSITIVE_KEYWORDS = [
