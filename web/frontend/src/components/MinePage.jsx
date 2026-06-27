@@ -1044,29 +1044,31 @@ export default function MinePage() {
                       {u.cards_count ?? 0} 个角色
                     </span>
                   </div>
-                  <div className="mine-following-actions">
-                    <button
-                      type="button"
-                      className="btn-sm btn-outline"
-                      onClick={() => goToMessages(u.id, u.username)}
-                    >
-                      私信
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-sm btn-secondary"
-                      onClick={async () => {
-                        await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
-                          method: 'POST',
-                          headers: getAuthHeaders(),
-                        })
-                        setFollowing(prev => prev.filter(f => f.id !== u.id))
-                        setFollowingCount(prev => Math.max(0, prev - 1))
-                      }}
-                    >
-                      取消关注
-                    </button>
-                  </div>
+                  {authUser?.id !== u.id && (
+                    <div className="mine-following-actions">
+                      <button
+                        type="button"
+                        className="btn-sm btn-outline"
+                        onClick={() => goToMessages(u.id, u.username)}
+                      >
+                        私信
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-sm btn-secondary"
+                        onClick={async () => {
+                          await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
+                            method: 'POST',
+                            headers: getAuthHeaders(),
+                          })
+                          setFollowing(prev => prev.filter(f => f.id !== u.id))
+                          setFollowingCount(prev => Math.max(0, prev - 1))
+                        }}
+                      >
+                        取消关注
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
