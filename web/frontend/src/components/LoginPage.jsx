@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [tab, setTab] = useState('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -115,6 +116,10 @@ export default function LoginPage() {
     }
     if (tab === 'register' && strength.level < 3) {
       setError('密码至少 8 位，需包含字母和数字')
+      return
+    }
+    if (tab === 'register' && password !== confirmPassword) {
+      setError('两次输入的密码不一致')
       return
     }
     setLoading(true)
@@ -225,7 +230,7 @@ export default function LoginPage() {
         <div className="login-tabs">
           <button
             className={`login-tab${tab === 'login' ? ' active' : ''}`}
-            onClick={() => { setTab('login'); setError(''); setCodeSent(false); setCountdown(0) }}
+            onClick={() => { setTab('login'); setError(''); setCodeSent(false); setCountdown(0); setConfirmPassword('') }}
           >
             登录
           </button>
@@ -269,6 +274,24 @@ export default function LoginPage() {
               {strength.label && (
                 <div className="login-pw-strength" style={{ marginBottom: 12 }}>
                   <span className="login-pw-strength-bar" style={{ width: `${strength.level * 33}%`, backgroundColor: strength.color }} />
+                </div>
+              )}
+
+              {/* Confirm password */}
+              <div className="login-field">
+                <label htmlFor="reg-confirm-pass">确认密码</label>
+                <input
+                  id="reg-confirm-pass"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="请再次输入密码"
+                  autoComplete="new-password"
+                />
+              </div>
+              {confirmPassword !== '' && (
+                <div style={{ fontSize: 13, margin: '4px 0 10px', color: password === confirmPassword ? '#22c55e' : '#ef4444' }}>
+                  {password === confirmPassword ? '✓ 密码一致' : '两次密码不一致'}
                 </div>
               )}
 
@@ -343,7 +366,7 @@ export default function LoginPage() {
 
           {error && <div className="login-error">{error}</div>}
 
-          <button className="login-submit" type="submit" disabled={loading || (tab === 'register' && (strength.level < 3 || !agreed))}>
+          <button className="login-submit" type="submit" disabled={loading || (tab === 'register' && (strength.level < 3 || !agreed || (confirmPassword !== '' && password !== confirmPassword)))}>
             {loading ? '请稍候…' : tab === 'login' ? '登录' : '注册'}
           </button>
 
