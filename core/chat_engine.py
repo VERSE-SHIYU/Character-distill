@@ -275,20 +275,28 @@ class ChatEngine:
     ) -> list[dict[str, Any]]:
         """从历史 + 当前用户消息构建 messages 数组。
 
-        按 token 预算（self._ctx_engine.MAX_HISTORY）从最近往前保留完整轮次，
-        确保 user/assistant 交替合法。末尾追加当前用户消息。
+        按 token 预算从最近往前保留完整轮次（user+assistant 成对截取），
+        保证历史部分以 user 开头、严格交替。末尾追加当前用户消息。
         """
         budget = self._ctx_engine.MAX_HISTORY
         used = 0
 
-        # 从末尾往前收集历史消息
+        # 从末尾按完整轮次（user+assistant 成对）收集
         collected: list[dict[str, Any]] = []
-        for msg in reversed(history):
-            tok = _count_tokens(msg.get("content", ""))
-            if used + tok > budget:
+        i = len(history) - 1
+        while i >= 1:
+            user_msg = history[i - 1]
+            asst_msg = history[i]
+            pair_tok = (
+                _count_tokens(user_msg.get("content", ""))
+                + _count_tokens(asst_msg.get("content", ""))
+            )
+            if used + pair_tok > budget:
                 break
-            collected.append(msg)
-            used += tok
+            collected.append(asst_msg)
+            collected.append(user_msg)
+            used += pair_tok
+            i -= 2
 
         # 恢复时间顺序
         collected.reverse()
