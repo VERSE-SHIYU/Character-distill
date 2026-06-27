@@ -82,8 +82,58 @@ M. 心理画像（用于情感动力学建模 — 依据 Kuppens 情感动力学
    - soft_spots（1-3 条）：戳中会让 ta 心软/好感上升的点，从原文提取。
 
 ## 输出要求
-严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。
-列表字段（personality_traits/values/key_memories/inner_tensions/emotional_patterns/character_arc/triggers/soft_spots）的每个元素必须是【一句字符串】，不是对象。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。
+严格按以下 JSON 格式输出，不要输出任何其他内容（不要 markdown 代码块标记）。把结论和关键依据（含出处）浓缩进一句话，出处用括号附句尾。严禁输出 {trait:..., description:...} 这种嵌套对象。
+
+完整 JSON 模板（所有字段必须包含，psyche 为必需嵌套对象）：
+{
+  "name": "角色名",
+  "identity": "一句话身份",
+  "personality_traits": ["特质1（原文证据）", "特质2（原文证据）", "特质3（原文证据）"],
+  "speaking_style": {
+    "tone": "语气描述",
+    "sentence_pattern": "句式特点描述",
+    "catchphrases": ["口癖1", "口癖2"],
+    "vocabulary_level": "文雅/日常/粗白",
+    "taboo_words": ["禁忌词1", "禁忌词2"]
+  },
+  "values": ["核心价值观1", "核心价值观2"],
+  "key_memories": ["关键经历1（原文出处）", "关键经历2（原文出处）"],
+  "relationships": [
+    {"target": "对方名", "relation": "关系类型", "attitude": "态度描述", "note": "一句话口径——本角色怎么看对方"}
+  ],
+  "inner_tensions": ["内在矛盾1（原文出处）", "内在矛盾2（原文出处）"],
+  "background": "背景摘要",
+  "first_message": "角色开场白",
+  "dialogue_examples": ["对方：xxx\n角色：xxx"],
+  "emotional_patterns": ["情感模式1（原文出处）", "情感模式2（原文出处）"],
+  "decision_style": "决策风格描述（含原文依据）",
+  "character_arc": ["阶段1变化", "阶段2变化"],
+  "psyche": {
+    "openness": 3,
+    "conscientiousness": 3,
+    "extraversion": 3,
+    "agreeableness": 3,
+    "neuroticism": 3,
+    "affinity_baseline": 50,
+    "volatility": "适中",
+    "grudge_inertia": "一般",
+    "triggers": ["雷点1（原文冲突场景）", "雷点2（原文冲突场景）"],
+    "soft_spots": ["软肋1（原文出处）", "软肋2（原文出处）"]
+  },
+  "cognitive": {
+    "education_level": "文盲/识字不多/普通/受过良好教育/学者",
+    "knowledge_scope": "此角色的知识边界描述",
+    "speech_style": "说话腔调描述（含原文例证）",
+    "vocabulary_level": "粗白/日常/文雅/书面"
+  }
+}
+
+重要：
+- psyche 是必需嵌套对象，triggers 和 soft_spots 放在 psyche 内部，不在顶层
+- personality_traits/values/key_memories/inner_tensions/emotional_patterns/character_arc/dialogue_examples 的每个元素是【一句字符串】，不是对象
+- relationships 的每个元素是【对象】，含 target/relation/attitude/note 四个字段
+- 数字字段（openness/conscientiousness 等）输出整数，不要加引号
+- 所有字段必须按此模板输出，不要添加自定义字段
 """
 
 
