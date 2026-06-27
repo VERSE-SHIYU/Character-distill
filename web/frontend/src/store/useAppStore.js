@@ -4,6 +4,11 @@ import { parseCardJson } from '../utils/card'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
 
+const clientTz = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone }
+  catch { return '' }
+}
+
 const INITIAL_AFFINITY = {
   affinity: 50, trust: 30, guard: 70,
   mood: '平静', reason: '', inner_voice: '',
@@ -1128,6 +1133,7 @@ const useAppStore = create((set, get) => ({
         user_role: get().userRole,
         web_search: get().webSearchEnabled,
         affinity_enabled: get().affinityEnabled,
+        client_tz: clientTz(),
       })
       set((s) => {
         const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at })
@@ -1174,7 +1180,7 @@ const useAppStore = create((set, get) => ({
 
     let fullReply = ''
 
-    const body = { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled }
+    const body = { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
     const cancel = streamSSE(

@@ -9,6 +9,7 @@ from collections.abc import Generator
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.clock import UserClock, describe_time_period
 from core.context_engine import ContextEngine
 from core.rag import RAGEngine
 from core.schema import CharacterCard
@@ -19,23 +20,6 @@ from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
 from core.affinity_service import AffinityService, calc_stage
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
-
-
-def _describe_time_period(hour: int) -> str:
-    """将小时（0-23）映射为中文时段名。"""
-    if 5 <= hour < 8:
-        return "清晨"
-    if 8 <= hour < 11:
-        return "上午"
-    if 11 <= hour < 13:
-        return "中午"
-    if 13 <= hour < 17:
-        return "下午"
-    if 17 <= hour < 19:
-        return "傍晚"
-    if 19 <= hour < 23:
-        return "夜晚"
-    return "深夜"  # 23 <= hour or hour < 5
 
 
 class ChatEngine:
@@ -65,6 +49,7 @@ class ChatEngine:
         self._user_id: str = ""
         self._session_id: str = ""
         self._group_id: str = ""       # 群聊上下文：群 ID（空串=单聊或无上下文）
+        self._user_tz: str = ""
         self.history: list[dict[str, Any]] = []
         # 四维好感度（通过 AffinityService 托管，@property 透明转发）
         self._affinity_service = AffinityService()
@@ -697,8 +682,8 @@ class ChatEngine:
 
     def _build_time_awareness_block(self) -> str:
         """构建「当前时间+时段+距上次对话间隔」提示片段。"""
-        now = datetime.now()
-        period = _describe_time_period(now.hour)
+        now = UserClock.now(self._user_tz)
+        period = describe_time_period(now.hour)
 
         interval_desc = ""
         is_first_message = len(self.history) == 0
@@ -716,9 +701,10 @@ class ChatEngine:
                     if isinstance(updated_at, str):
                         updated_at = datetime.fromisoformat(updated_at)
                     if updated_at:
-                        days_ago = (now.date() - updated_at.date()).days
+                        user_updated = UserClock.to_user_tz(updated_at, self._user_tz)
+                        days_ago = (now.date() - user_updated.date()).days
                         if days_ago == 0:
-                            seconds = (now - updated_at).total_seconds()
+                            seconds = (now - user_updated).total_seconds()
                             if seconds < 0:
                                 pass
                             elif seconds < 600:

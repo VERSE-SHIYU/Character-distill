@@ -141,10 +141,11 @@ class ChatRequest(BaseModel):
     message: str
     stream: bool = False
     user_role: str = ""
-    hidden: bool = False  # inject into LLM context without saving user msg (for revoke notice)
-    web_search: bool = False  # enable reality-enhanced web search
-    voice_mode: bool = False  # strip parentheses/action descriptions for voice output
-    affinity_enabled: bool = True  # enable/disable backend affinity evaluation
+    hidden: bool = False
+    web_search: bool = False
+    voice_mode: bool = False
+    affinity_enabled: bool = True
+    client_tz: str = ""
     reply_to_id: int | None = None
     reply_to_preview: str = ""
 
@@ -173,6 +174,7 @@ async def _do_chat(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
+    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
 ) -> dict[str, Any]:
@@ -197,6 +199,8 @@ async def _do_chat(
                     )
             except Exception as exc:
                 print(f"[chat] Save user_role failed (non-fatal): {exc}")
+    if client_tz and session.get("engine"):
+        session["engine"]._user_tz = client_tz
 
     try:
         engine = session.get("engine")
@@ -288,6 +292,7 @@ async def _do_chat_stream(
     web_search: bool = False,
     voice_mode: bool = False,
     affinity_enabled: bool = True,
+    client_tz: str = "",
     reply_to_id: int | None = None,
     reply_to_preview: str = "",
 ):
@@ -312,6 +317,8 @@ async def _do_chat_stream(
                     )
             except Exception as exc:
                 print(f"[chat] Save user_role failed (non-fatal): {exc}")
+    if client_tz and session.get("engine"):
+        session["engine"]._user_tz = client_tz
 
     engine = session.get("engine")
     if engine:
@@ -479,8 +486,8 @@ async def send_message(
     if await get_user_llm(user_id, storage) is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
-        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.reply_to_id, req.reply_to_preview)
+        return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview)
 
 
 @router.post("/revoke")
