@@ -936,6 +936,7 @@ async def start_session(
                 pass
             session_id = await asyncio.to_thread(
                 text_manager._create_session, content, card, all_characters, None, req.card_id, user_id,
+                user_role=req.user_role,
             )
             # Fire-and-forget scene index via isolated service
             indexing_service = get_indexing_service()
@@ -952,6 +953,7 @@ async def start_session(
                 per_user_llm, None, card,
                 memory_manager=get_memory_manager(),
                 card_id=req.card_id,
+                user_role=req.user_role,
             )
             session_id = _uuid.uuid4().hex[:12]
             sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}

@@ -501,6 +501,7 @@ class TextManager:
         rag: Any = None,
         card_id: str = "",
         user_id: str = "",
+        user_role: str = "",
         embedding_key: str = "",
         embedding_region: str = "",
     ) -> str:
@@ -511,6 +512,7 @@ class TextManager:
             all_characters=all_characters,
             memory_manager=get_memory_manager(),
             card_id=card_id,
+            user_role=user_role,
         )
         session_id = uuid.uuid4().hex[:12]
         self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}
