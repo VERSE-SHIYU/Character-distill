@@ -213,9 +213,11 @@ export default function ImageCropModal({ file, onConfirm, onCancel }) {
     ec.width = EXPORT_SIZE
     ec.height = EXPORT_SIZE
     const ctx = ec.getContext('2d')
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, EXPORT_SIZE, EXPORT_SIZE)
     ctx.drawImage(img, srcCx - srcSize / 2, srcCy - srcSize / 2, srcSize, srcSize, 0, 0, EXPORT_SIZE, EXPORT_SIZE)
 
-    onConfirm(ec.toDataURL('image/png'))
+    onConfirm(ec.toDataURL('image/jpeg', 0.85))
   }, [onConfirm])
 
   if (!file) return null

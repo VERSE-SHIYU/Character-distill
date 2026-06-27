@@ -6,7 +6,6 @@ import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
-import RoleSetupModal from './RoleSetupModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
@@ -120,7 +119,6 @@ function ChatView() {
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
 
-  const [showRoleModal, setShowRoleModal] = useState(false)
   const [cropFile, setCropFile] = useState(null)
 
   // Font size: 0=small, 1=medium (default), 2=large
@@ -190,10 +188,6 @@ function ChatView() {
     document.body.removeChild(a); URL.revokeObjectURL(url)
   }, [charName, messages, userRole])
 
-  useEffect(() => {
-    if (!userRole && !sessionId) setShowRoleModal(true)
-  }, [])
-
   const currentText = texts.find((t) => t.id === currentTextId)
   const textLabel = currentText
     ? `${currentText.filename} (${Number(currentText.char_count || 0).toLocaleString('zh-CN')}字)`
@@ -228,22 +222,24 @@ function ChatView() {
   const handleUserCropConfirm = useCallback(async (base64) => {
     setUserCropFile(null)
     if (!sessionId) {
-      // No active session — write global avatar
       useAppStore.setState({ userAvatar: base64 })
       try {
         await useAppStore.getState().saveUserAvatar(base64)
       } catch { /* non-fatal */ }
       return
     }
-    // Write session-level avatar (per-conversation isolation)
+    const prev = useAppStore.getState().currentSessionAvatar
+    useAppStore.getState().setCurrentSessionAvatar(base64)
     try {
       await fetchWithTimeout(`/api/history/${sessionId}/avatar`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ avatar_data: base64 }),
       })
-      useAppStore.getState().setCurrentSessionAvatar(base64)
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      useAppStore.getState().setCurrentSessionAvatar(prev)
+      useAppStore.setState({ error: '头像保存失败，请重试' })
+    }
   }, [sessionId])
 
   const handleUserCropCancel = useCallback(() => setUserCropFile(null), [])
@@ -841,15 +837,6 @@ function ChatView() {
           </>
         )}
       </div>
-
-      <RoleSetupModal
-        isOpen={showRoleModal}
-        characterName={charName}
-        relationships={cardData.relationships || []}
-        textType={currentCard?.text_type || 'story'}
-        onConfirm={(role) => setShowRoleModal(false)}
-        onSkip={() => setShowRoleModal(false)}
-      />
 
       <ImageCropModal
         file={cropFile}
