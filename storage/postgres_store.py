@@ -769,19 +769,19 @@ class PostgresStore(StorageBase):
                 cards_local = await conn.fetch(
                     """SELECT id, name, card_json, avatar_data, author_name
                         FROM (
-                          SELECT c.id, c.name, c.card_json, c.avatar_data,
-                                 COALESCE(u.username, '') AS author_name
-                          FROM cards c
-                          LEFT JOIN users u ON u.id = c.user_id
-                          WHERE c.visibility = 'public' AND c.deleted_at IS NULL
-                            AND c.name LIKE $1
-                          ORDER BY c.likes DESC
-                          LIMIT 5
+                          (SELECT c.id, c.name, c.card_json, c.avatar_data,
+                                  COALESCE(u.username, '') AS author_name
+                           FROM cards c
+                           LEFT JOIN users u ON u.id = c.user_id
+                           WHERE c.visibility = 'public' AND c.deleted_at IS NULL
+                             AND c.name ILIKE $1
+                           ORDER BY c.likes DESC
+                           LIMIT 5)
                           UNION ALL
-                          SELECT id, name, card_json, avatar_data, '' AS author_name
-                          FROM remote_cards
-                          WHERE name LIKE $2
-                          LIMIT 5
+                          (SELECT id, name, card_json, avatar_data, '' AS author_name
+                           FROM remote_cards
+                           WHERE name ILIKE $2
+                           LIMIT 5)
                         ) combined LIMIT 5""",
                     like, like,
                 )
