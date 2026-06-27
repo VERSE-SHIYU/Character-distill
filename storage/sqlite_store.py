@@ -3584,6 +3584,21 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Delete announcement failed: {exc}")
             raise
 
+    async def set_announcement_active(self, announcement_id: str, active: bool) -> bool:
+        try:
+            async with await self._connect() as conn:
+                if active:
+                    await conn.execute("UPDATE announcements SET is_active = 0")
+                cursor = await conn.execute(
+                    "UPDATE announcements SET is_active = ? WHERE id = ?",
+                    (1 if active else 0, announcement_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Set announcement active failed: {exc}")
+            raise
+
     async def get_active_announcement(self) -> dict | None:
         try:
             async with await self._connect() as conn:

@@ -577,6 +577,10 @@ class AnnouncementCreateRequest(BaseModel):
     align: str = 'left'
 
 
+class AnnouncementActiveRequest(BaseModel):
+    active: bool
+
+
 @router.post("/announcement")
 @limiter.limit("30/minute")
 async def admin_create_announcement(
@@ -602,6 +606,22 @@ async def admin_delete_announcement(
 ) -> dict[str, bool]:
     """Delete an announcement by id."""
     ok = await storage.delete_announcement(announcement_id)
+    if not ok:
+        raise HTTPException(404, "公告不存在")
+    return {"ok": True}
+
+
+@router.patch("/announcement/{announcement_id}/active")
+@limiter.limit("30/minute")
+async def admin_set_announcement_active(
+    request: Request,
+    announcement_id: str,
+    req: AnnouncementActiveRequest,
+    _admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, bool]:
+    """上架/下架公告。"""
+    ok = await storage.set_announcement_active(announcement_id, req.active)
     if not ok:
         raise HTTPException(404, "公告不存在")
     return {"ok": True}

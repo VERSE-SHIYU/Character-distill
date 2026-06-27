@@ -306,6 +306,7 @@ export const adminAPI = {
   // ---- P2: Announcements ----
   createAnnouncement: (content, align = 'left') => fetchWithTimeout('/api/admin/announcement', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content, align }) }).then(r => r.json()),
   deleteAnnouncement: (id) => fetchWithTimeout(`/api/admin/announcement/${id}`, { method: 'DELETE' }).then(r => r.json()),
+  setAnnouncementActive: (id, active) => fetchWithTimeout(`/api/admin/announcement/${id}/active`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) }).then(r => r.json()),
   listAnnouncements: () => fetchWithTimeout('/api/admin/announcements').then(r => r.json()),
 
   // ---- P2: CSV Export ----

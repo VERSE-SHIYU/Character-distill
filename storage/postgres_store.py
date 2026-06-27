@@ -2607,6 +2607,21 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Delete announcement failed: {exc}")
             raise
 
+    async def set_announcement_active(self, announcement_id: str, active: bool) -> bool:
+        try:
+            async with await self._connect() as conn:
+                async with conn.transaction():
+                    if active:
+                        await conn.execute("UPDATE announcements SET is_active = 0")
+                    tag = await conn.execute(
+                        "UPDATE announcements SET is_active = $1 WHERE id = $2",
+                        1 if active else 0, announcement_id,
+                    )
+                return self._parse_rowcount(tag) > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Set announcement active failed: {exc}")
+            raise
+
     async def get_active_announcement(self) -> dict | None:
         try:
             async with await self._connect() as conn:

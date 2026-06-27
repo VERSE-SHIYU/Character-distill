@@ -329,3 +329,7 @@ class StorageBase(ABC):
         Returns {"card_count": int, "session_count": int, "message_count": int}.
         Cards with shared sessions are counted once.
         """
+
+    @abstractmethod
+    async def set_announcement_active(self, announcement_id: str, active: bool) -> bool:
+        """Set announcement active/inactive. When activating, all others are deactivated first."""

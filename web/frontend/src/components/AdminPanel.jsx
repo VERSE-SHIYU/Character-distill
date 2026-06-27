@@ -1642,6 +1642,17 @@ function AnnouncementsTab() {
     }
   }
 
+  const handleToggleActive = async (id, active) => {
+    try {
+      await adminAPI.setAnnouncementActive(id, active)
+      setActionMsg(active ? '公告已上架' : '公告已下架')
+      setTimeout(() => setActionMsg(''), 2000)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const handleDelete = async () => {
     try {
       await adminAPI.deleteAnnouncement(deleteTarget)
@@ -1746,6 +1757,9 @@ function AnnouncementsTab() {
                   {a.is_active ? '当前' : '历史'}
                 </span>
                 <span className="announcement-time">{fmtDate(a.created_at)}</span>
+                <button className="btn-ghost btn-sm" onClick={() => handleToggleActive(a.id, !a.is_active)}>
+                  {a.is_active ? '下架' : '上架'}
+                </button>
                 <button className="btn-ghost-danger btn-sm" onClick={() => setDeleteTarget(a.id)}>
                   <Trash2 size={14} />
                 </button>
