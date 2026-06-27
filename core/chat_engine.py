@@ -191,7 +191,7 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
+        # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
         system_prompt += self._build_all_enhancements()
 
         if voice_mode:
@@ -206,6 +206,14 @@ class ChatEngine:
 
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
+
+        # 时间感知块附着在当前用户消息末尾，而非 system prompt 中
+        time_block = self._build_time_awareness_block()
+        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
+            llm_messages[-1] = {
+                **llm_messages[-1],
+                "content": llm_messages[-1]["content"] + time_block,
+            }
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -233,7 +241,7 @@ class ChatEngine:
             current_mood=self._mood,
         )
 
-        # ── 好感人格 + 认知画像 + 时间感知 + 事件提醒注入 ──
+        # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
         system_prompt += self._build_all_enhancements()
 
         if voice_mode:
@@ -248,6 +256,14 @@ class ChatEngine:
 
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
+
+        # 时间感知块附着在当前用户消息末尾，而非 system prompt 中
+        time_block = self._build_time_awareness_block()
+        if time_block and llm_messages and llm_messages[-1]["role"] == "user":
+            llm_messages[-1] = {
+                **llm_messages[-1],
+                "content": llm_messages[-1]["content"] + time_block,
+            }
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -625,7 +641,7 @@ class ChatEngine:
         return (
             self._build_affinity_persona_block()
             + self._build_cognitive_block()
-            + self._build_time_awareness_block()
+            # 时间感知已移至当前消息末尾（贴近即将生成的回复），不在此处拼接
             + self._event_service.build_candidate_block()
             + self._build_relationship_block()
         )

@@ -2366,26 +2366,44 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get group messages failed: {exc}")
             raise
 
-    async def toggle_reaction(self, message_id: int, user_id: str, emoji: str) -> bool:
-        """Toggle a reaction. Returns True if added, False if removed."""
+    _REACTION_TABLES = frozenset({"message_reactions", "dm_reactions"})
+
+    @staticmethod
+    def _aggregate_reactions(rows: list[dict]) -> dict:
+        """从 (message_id, emoji, user_id) 行聚合成统一返回结构，与具体来源表无关。"""
+        result: dict = {}
+        for row in rows:
+            mid = row["message_id"]
+            emoji = row["emoji"]
+            uid = row["user_id"]
+            result.setdefault(mid, {}).setdefault(
+                emoji, {"emoji": emoji, "count": 0, "users": []}
+            )
+            result[mid][emoji]["count"] += 1
+            result[mid][emoji]["users"].append(uid)
+        return {mid: list(m.values()) for mid, m in result.items()}
+
+    async def _toggle_reaction_generic(self, table: str, message_id, user_id: str, emoji: str) -> bool:
+        """Toggle 逻辑与具体表无关，table 必须是预定义白名单中的表名。"""
+        if table not in self._REACTION_TABLES:
+            raise ValueError(f"非法 reaction 表名: {table}")
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+                    f"SELECT id FROM {table} WHERE message_id = ? AND user_id = ? AND emoji = ?",
                     (message_id, user_id, emoji),
                 )
                 existing = await cursor.fetchone()
                 if existing:
                     await conn.execute(
-                        "DELETE FROM message_reactions WHERE id = ?",
+                        f"DELETE FROM {table} WHERE id = ?",
                         (existing["id"],),
                     )
                     await conn.commit()
                     return False
                 else:
                     await conn.execute(
-                        """INSERT INTO message_reactions (message_id, user_id, emoji)
-                           VALUES (?, ?, ?)""",
+                        f"INSERT INTO {table} (message_id, user_id, emoji) VALUES (?, ?, ?)",
                         (message_id, user_id, emoji),
                     )
                     await conn.commit()
@@ -2393,6 +2411,10 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Toggle reaction failed: {exc}")
             raise
+
+    async def toggle_reaction(self, message_id: int, user_id: str, emoji: str) -> bool:
+        """Toggle a reaction. Returns True if added, False if removed."""
+        return await self._toggle_reaction_generic("message_reactions", message_id, user_id, emoji)
 
     async def get_reactions(self, message_ids: list[int]) -> dict[int, list]:
         """Batch query reactions for given message IDs.
@@ -2411,21 +2433,7 @@ class SQLiteStore(StorageBase):
                     message_ids,
                 )
                 rows = await cursor.fetchall()
-            result: dict[int, dict[str, dict]] = {}
-            for row in rows:
-                mid = row["message_id"]
-                emoji = row["emoji"]
-                uid = row["user_id"]
-                if mid not in result:
-                    result[mid] = {}
-                if emoji not in result[mid]:
-                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
-                result[mid][emoji]["count"] += 1
-                result[mid][emoji]["users"].append(uid)
-            return {
-                mid: list(emoji_map.values())
-                for mid, emoji_map in result.items()
-            }
+            return self._aggregate_reactions(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get reactions failed: {exc}")
             raise
@@ -2476,31 +2484,7 @@ class SQLiteStore(StorageBase):
 
     async def toggle_dm_reaction(self, message_id: str, user_id: str, emoji: str) -> bool:
         """Toggle a DM reaction. Returns True if added, False if removed."""
-        try:
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "SELECT id FROM dm_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
-                    (message_id, user_id, emoji),
-                )
-                existing = await cursor.fetchone()
-                if existing:
-                    await conn.execute(
-                        "DELETE FROM dm_reactions WHERE id = ?",
-                        (existing["id"],),
-                    )
-                    await conn.commit()
-                    return False
-                else:
-                    await conn.execute(
-                        """INSERT INTO dm_reactions (message_id, user_id, emoji)
-                           VALUES (?, ?, ?)""",
-                        (message_id, user_id, emoji),
-                    )
-                    await conn.commit()
-                    return True
-        except Exception as exc:
-            print(f"[SQLiteStore] Toggle DM reaction failed: {exc}")
-            raise
+        return await self._toggle_reaction_generic("dm_reactions", message_id, user_id, emoji)
 
     async def get_dm_message(self, message_id: str) -> dict | None:
         """Return a single direct message by id."""
@@ -2532,21 +2516,7 @@ class SQLiteStore(StorageBase):
                     (user_id, other_id, other_id, user_id),
                 )
                 rows = await cursor.fetchall()
-            result: dict[str, dict[str, dict]] = {}
-            for row in rows:
-                mid = row["message_id"]
-                emoji = row["emoji"]
-                uid = row["user_id"]
-                if mid not in result:
-                    result[mid] = {}
-                if emoji not in result[mid]:
-                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
-                result[mid][emoji]["count"] += 1
-                result[mid][emoji]["users"].append(uid)
-            return {
-                mid: list(emoji_map.values())
-                for mid, emoji_map in result.items()
-            }
+            return self._aggregate_reactions(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get DM reactions failed: {exc}")
             raise

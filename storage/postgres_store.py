@@ -1513,30 +1513,52 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get group messages failed: {exc}")
             raise
 
-    async def toggle_reaction(self, message_id: int, user_id: str, emoji: str) -> bool:
-        """Toggle a reaction. Returns True if added, False if removed."""
+    _REACTION_TABLES = frozenset({"message_reactions", "dm_reactions"})
+
+    @staticmethod
+    def _aggregate_reactions(rows: list[dict]) -> dict:
+        """从 (message_id, emoji, user_id) 行聚合成统一返回结构，与具体来源表无关。"""
+        result: dict = {}
+        for row in rows:
+            mid = row["message_id"]
+            emoji = row["emoji"]
+            uid = row["user_id"]
+            result.setdefault(mid, {}).setdefault(
+                emoji, {"emoji": emoji, "count": 0, "users": []}
+            )
+            result[mid][emoji]["count"] += 1
+            result[mid][emoji]["users"].append(uid)
+        return {mid: list(m.values()) for mid, m in result.items()}
+
+    async def _toggle_reaction_generic(self, table: str, message_id, user_id: str, emoji: str) -> bool:
+        """Toggle 逻辑与具体表无关，table 必须是预定义白名单中的表名。"""
+        if table not in self._REACTION_TABLES:
+            raise ValueError(f"非法 reaction 表名: {table}")
         try:
             async with await self._connect() as conn:
                 existing = await conn.fetchrow(
-                    "SELECT id FROM message_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3",
+                    f"SELECT id FROM {table} WHERE message_id = $1 AND user_id = $2 AND emoji = $3",
                     message_id, user_id, emoji,
                 )
                 if existing:
                     await conn.execute(
-                        "DELETE FROM message_reactions WHERE id = $1",
+                        f"DELETE FROM {table} WHERE id = $1",
                         existing[0],
                     )
                     return False
                 else:
                     await conn.execute(
-                        """INSERT INTO message_reactions (message_id, user_id, emoji)
-                           VALUES ($1, $2, $3)""",
+                        f"INSERT INTO {table} (message_id, user_id, emoji) VALUES ($1, $2, $3)",
                         message_id, user_id, emoji,
                     )
                     return True
         except Exception as exc:
             print(f"[PostgresStore] Toggle reaction failed: {exc}")
             raise
+
+    async def toggle_reaction(self, message_id: int, user_id: str, emoji: str) -> bool:
+        """Toggle a reaction. Returns True if added, False if removed."""
+        return await self._toggle_reaction_generic("message_reactions", message_id, user_id, emoji)
 
     async def get_reactions(self, message_ids: list[int]) -> dict[int, list]:
         """Batch query reactions for given message IDs."""
@@ -1552,21 +1574,7 @@ class PostgresStore(StorageBase):
                         ORDER BY id ASC""",
                     *message_ids,
                 )
-            result: dict[int, dict[str, dict]] = {}
-            for row in rows:
-                mid = row["message_id"]
-                emoji = row["emoji"]
-                uid = row["user_id"]
-                if mid not in result:
-                    result[mid] = {}
-                if emoji not in result[mid]:
-                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
-                result[mid][emoji]["count"] += 1
-                result[mid][emoji]["users"].append(uid)
-            return {
-                mid: list(emoji_map.values())
-                for mid, emoji_map in result.items()
-            }
+            return self._aggregate_reactions(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get reactions failed: {exc}")
             raise
@@ -1615,28 +1623,7 @@ class PostgresStore(StorageBase):
 
     async def toggle_dm_reaction(self, message_id: str, user_id: str, emoji: str) -> bool:
         """Toggle a DM reaction. Returns True if added, False if removed."""
-        try:
-            async with await self._connect() as conn:
-                existing = await conn.fetchrow(
-                    "SELECT id FROM dm_reactions WHERE message_id = $1 AND user_id = $2 AND emoji = $3",
-                    message_id, user_id, emoji,
-                )
-                if existing:
-                    await conn.execute(
-                        "DELETE FROM dm_reactions WHERE id = $1",
-                        existing[0],
-                    )
-                    return False
-                else:
-                    await conn.execute(
-                        """INSERT INTO dm_reactions (message_id, user_id, emoji)
-                           VALUES ($1, $2, $3)""",
-                        message_id, user_id, emoji,
-                    )
-                    return True
-        except Exception as exc:
-            print(f"[PostgresStore] Toggle DM reaction failed: {exc}")
-            raise
+        return await self._toggle_reaction_generic("dm_reactions", message_id, user_id, emoji)
 
     async def get_dm_message(self, message_id: str) -> dict | None:
         """Return a single direct message by id."""
@@ -1666,21 +1653,7 @@ class PostgresStore(StorageBase):
                        ORDER BY r.id ASC""",
                     user_id, other_id, other_id, user_id,
                 )
-            result: dict[str, dict[str, dict]] = {}
-            for row in rows:
-                mid = row["message_id"]
-                emoji = row["emoji"]
-                uid = row["user_id"]
-                if mid not in result:
-                    result[mid] = {}
-                if emoji not in result[mid]:
-                    result[mid][emoji] = {"emoji": emoji, "count": 0, "users": []}
-                result[mid][emoji]["count"] += 1
-                result[mid][emoji]["users"].append(uid)
-            return {
-                mid: list(emoji_map.values())
-                for mid, emoji_map in result.items()
-            }
+            return self._aggregate_reactions(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get DM reactions failed: {exc}")
             raise
