@@ -122,7 +122,7 @@ class StorageBase(ABC):
         """Export one session in json or txt format."""
 
     @abstractmethod
-    async def create_user(self, id: str, username: str, password_hash: str) -> dict:
+    async def create_user(self, id: str, username: str, password_hash: str, home_region: str = "") -> dict:
         """Create a new user."""
 
     @abstractmethod

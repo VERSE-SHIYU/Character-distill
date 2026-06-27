@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
+from cross_border_sync import forward_invite_code_delete_to_peer, forward_invite_code_to_peer
 from routers.auth import get_current_user
 from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
@@ -322,6 +323,7 @@ async def generate_invites(
     for _ in range(count):
         code = secrets.token_urlsafe(12)
         record = await storage.create_invite_code(code, admin_user["id"])
+        await forward_invite_code_to_peer(record)
         codes.append(record)
     return codes
 
@@ -349,6 +351,7 @@ async def delete_invite(
         ok = await storage.delete_invite_code(code)
         if not ok:
             raise HTTPException(404, "邀请码不存在")
+        await forward_invite_code_delete_to_peer(code)
         return {"ok": True}
     except HTTPException:
         raise

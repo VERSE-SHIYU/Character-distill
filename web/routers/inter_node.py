@@ -155,6 +155,71 @@ async def receive_dm_retract(
     return {"ok": True, "target_id": message_id}
 
 
+@router.post("/invite-code/receive")
+async def receive_invite_code(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive an invite code from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: re-delivery of an existing code is silently ignored.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    code = str(payload.get("code", ""))
+    created_by = str(payload.get("created_by", "peer"))
+    if not code:
+        raise HTTPException(400, "Missing required field: code")
+
+    existing = await storage.get_invite_code(code)
+    if existing:
+        return {"ok": True, "duplicate": True}
+
+    try:
+        await storage.create_invite_code(code, created_by)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to store invite code: {exc}")
+
+    return {"ok": True}
+
+
+@router.post("/invite-code/delete")
+async def receive_invite_code_delete(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive an invite-code delete propagation from a peer node.
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: deleting an already-deleted (or never-synced) code returns 200.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    code = str(payload.get("code", ""))
+    if not code:
+        raise HTTPException(400, "Missing required field: code")
+
+    try:
+        await storage.delete_invite_code(code)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to delete invite code: {exc}")
+
+    return {"ok": True}
+
+
 @router.post("/user/purge")
 async def receive_user_purge(
     request: Request,

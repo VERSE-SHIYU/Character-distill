@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from pydantic import BaseModel
 
 from core.schema import PRESET_TAGS
+from cross_border_sync import forward_card_to_peer
 from deps import get_storage
 from limiter import get_client_ip, limiter
 from storage.base import StorageBase
@@ -465,6 +466,15 @@ async def publish_card(
         await storage.mark_card_unsynced(ok)
     except Exception as exc:
         print(f"[market] Mark card unsynced failed for {ok}: {exc}")
+
+    # Synchronously forward to peer node so the card is visible
+    # on both regions immediately (best-effort, don't block response).
+    try:
+        card_record = await storage.get_card(ok)
+        if card_record:
+            await forward_card_to_peer(card_record, storage)
+    except Exception as exc:
+        print(f"[market] Forward card to peer failed for {ok}: {exc}")
 
     return {"ok": True, "card_id": ok}
 

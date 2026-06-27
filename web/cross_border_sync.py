@@ -151,6 +151,67 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
         return False
 
 
+async def forward_invite_code_to_peer(record: dict) -> bool:
+    """Forward a newly created invite code to the peer node.
+
+    Builds a string-typed payload, signs with HMAC, POSTs to the peer's
+    invite-code receive endpoint.  Best-effort: returns False on failure,
+    caller is not expected to retry.
+    """
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return False
+
+    from inter_node_auth import create_auth_header
+
+    payload = {
+        "code": str(record.get("code", "")),
+        "created_by": str(record.get("created_by", "")),
+    }
+    headers = create_auth_header(payload)
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{peer_url}/api/inter-node/invite-code/receive",
+                json=payload,
+                headers=headers,
+            )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def forward_invite_code_delete_to_peer(code: str) -> bool:
+    """Forward an invite-code delete to the peer node.
+
+    Best-effort: returns False on failure, caller is not expected to retry.
+    """
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return False
+
+    from inter_node_auth import create_auth_header
+
+    payload = {"code": code}
+    headers = create_auth_header(payload)
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{peer_url}/api/inter-node/invite-code/delete",
+                json=payload,
+                headers=headers,
+            )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 async def _cross_border_resync_loop() -> None:
     """Periodically retry unsynced cross-border DMs and public cards.
 

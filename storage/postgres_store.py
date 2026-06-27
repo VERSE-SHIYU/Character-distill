@@ -1745,14 +1745,14 @@ class PostgresStore(StorageBase):
 
     # ── Users ──────────────────────────────────────────────────────
 
-    async def create_user(self, id: str, username: str, password_hash: str, email: str = "") -> dict:
+    async def create_user(self, id: str, username: str, password_hash: str, email: str = "", home_region: str = "") -> dict:
         """Create a new user. Raises on duplicate username."""
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "INSERT INTO users (id, username, username_lower, email, email_verified) VALUES ($1, $2, $3, $4, $5)",
-                        id, username, username.lower(), email, 1 if email else 0,
+                        "INSERT INTO users (id, username, username_lower, email, email_verified, home_region) VALUES ($1, $2, $3, $4, $5, $6)",
+                        id, username, username.lower(), email, 1 if email else 0, home_region,
                     )
                     await conn.execute(
                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
