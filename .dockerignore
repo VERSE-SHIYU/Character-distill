@@ -23,3 +23,14 @@ prod.env
 test_*.py
 *.md
 
+# Test / CI / dev — not needed at runtime
+tests/
+scripts/
+.github/
+.pytest_cache/
+.gitignore
+
+# Compose files (host-side deployment only)
+docker-compose.yml
+docker-compose.prod.yml
+
