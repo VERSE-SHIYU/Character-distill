@@ -152,6 +152,12 @@ class MemoryManager:
             self._enabled = False
             return
 
+        dashscope_key = os.getenv("DASHSCOPE_API_KEY")
+        if not dashscope_key:
+            print("[MemoryManager] 请在 .env 配置 DASHSCOPE_API_KEY 以启用记忆功能")
+            self._enabled = False
+            return
+
         try:
             from mem0 import Memory
 
@@ -164,7 +170,7 @@ class MemoryManager:
                     "config": {
                         "path": db_path,
                         "on_disk": True,
-                        "embedding_model_dims": 384,
+                        "embedding_model_dims": 1024,
                     },
                 },
                 "llm": {
@@ -176,15 +182,17 @@ class MemoryManager:
                     },
                 },
                 "embedder": {
-                    "provider": "huggingface",
+                    "provider": "openai",
                     "config": {
-                        "model": "sentence-transformers/all-MiniLM-L6-v2",
-                        "embedding_dims": 384,
+                        "model": "text-embedding-v4",
+                        "api_key": dashscope_key,
+                        "openai_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                        "embedding_dims": 1024,
                     },
                 },
             }
             self._mem = Memory.from_config(mem0_config)
-            print("[MemoryManager] Mem0 initialized (DeepSeek + local embeddings)")
+            print("[MemoryManager] Mem0 initialized (DeepSeek LLM + DashScope Embedding)")
         except Exception as exc:
             print(f"[MemoryManager] Mem0 init failed: {exc}")
             self._enabled = False
