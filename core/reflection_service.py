@@ -58,6 +58,10 @@ class ReflectionService:
             meta = m.get("metadata") or {}
             if isinstance(meta, dict) and meta.get("is_reflection"):
                 continue
+            # 低可信记忆不进反思，避免反话/假设/角色扮演内容被固化
+            conf = meta.get("assertion_confidence", 50) if isinstance(meta, dict) else 50
+            if conf < 40:
+                continue
             text = m.get("memory", "").strip()
             if not text:
                 continue

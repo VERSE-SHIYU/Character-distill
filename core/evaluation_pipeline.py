@@ -39,6 +39,7 @@ class EvalResult:
     applied: bool = False
     in_character: int = 80  # 瞬时信号，不入库，不跨 session
     ooc_reason: str = ""
+    assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
 
 
 class EvaluationPipeline:
@@ -69,6 +70,10 @@ class EvaluationPipeline:
         if not isinstance(in_character, int) or in_character < 0 or in_character > 100:
             in_character = 80
         ooc_reason = data.get("ooc_reason", "")
+        # 用户输入可信度：用于记忆写入过滤，与好感/出戏正交
+        assertion_confidence = data.get("assertion_confidence", 50)
+        if not isinstance(assertion_confidence, int) or assertion_confidence < 0 or assertion_confidence > 100:
+            assertion_confidence = 50
         # 到此核心状态已落定，下面任何异常都不得回滚
 
         # ── SIDE-EFFECT layer（全部 fire-and-forget）─────────────
@@ -81,6 +86,7 @@ class EvaluationPipeline:
             stage_upgraded=ctx.affinity_service.stage_upgraded,
             in_character=in_character,
             ooc_reason=ooc_reason,
+            assertion_confidence=assertion_confidence,
             applied=True,
         )
 

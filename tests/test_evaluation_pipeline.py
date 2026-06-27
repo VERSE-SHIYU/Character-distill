@@ -181,6 +181,7 @@ class TestEvaluationPipeline:
         assert result.affinity == 65
         assert result.in_character == 80  # default when LLM doesn't provide it
         assert result.ooc_reason == ""
+        assert result.assertion_confidence == 50  # default when LLM doesn't provide it
         assert svc.affinity == 65
         assert svc.trust == 45
         assert svc.mood == "开心"
@@ -209,6 +210,28 @@ class TestEvaluationPipeline:
         # in_character 不影响好感数值
         assert svc.affinity == 55
         assert svc.trust == 40
+
+    def test_assertion_confidence_propagated(self, monkeypatch):
+        """assertion_confidence 字段从 LLM data → EvalResult 正确传播，且与 in_character 正交。"""
+        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        llm_reply = (
+            '{"affinity":60,"trust":35,"mood":"平静","guard":55,'
+            '"inner_voice":"嗯","mood_emoji":"😐","importance":4,'
+            '"time_event":null,"in_character":85,"ooc_reason":"",'
+            '"assertion_confidence":30}'
+        )
+        llm = FakeLLM(reply=llm_reply)
+        svc = AffinityService()
+        ctx = _build_context(affinity_service=svc, llm=llm)
+        pipeline = EvaluationPipeline()
+        result = pipeline.run(ctx)
+
+        assert result.applied is True
+        assert result.assertion_confidence == 30  # 低可信
+        assert result.in_character == 85           # 高 in_character，正交
+        # assertion_confidence 不影响好感数值
+        assert svc.affinity == 60
+        assert svc.trust == 35
 
     def test_core_layer_failure_returns_applied_false(self):
         """CORE 层 LLM 抛异常 → applied=False, importance=5，不触碰持久化。"""

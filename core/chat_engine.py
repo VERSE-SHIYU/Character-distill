@@ -72,6 +72,7 @@ class ChatEngine:
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
         self._last_in_character: int = 80  # 瞬时纠偏信号，不入库，不跨 session
+        self._last_assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
         self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
         self._pipeline = EvaluationPipeline()
@@ -338,7 +339,7 @@ class ChatEngine:
                     {"role": "assistant", "content": reply},
                 ],
                 self._card_id,
-                metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity},
+                metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity, "assertion_confidence": self._last_assertion_confidence},
             )
         self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
 
@@ -456,6 +457,7 @@ class ChatEngine:
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance
         self._last_in_character = result.in_character
+        self._last_assertion_confidence = result.assertion_confidence
 
         if result.applied:
             print(f"[Affinity] PARSED: affinity={ctx.affinity_service.affinity} "
