@@ -90,12 +90,15 @@ class ContextEngine:
 
     def build(
         self,
-        history: list[dict[str, Any]],
         user_message: str,
         user_role: str = "",
         current_mood: str | None = None,
     ) -> str:
-        """构建 system prompt，控制在 TOTAL_BUDGET token 内。"""
+        """构建 system prompt，控制在 TOTAL_BUDGET token 内。
+
+        对话历史已从 system prompt 中移出，改为通过 messages 数组传递
+        （见 ChatEngine._build_llm_messages），由 role 字段天然区分说话人。
+        """
         budget = self.TOTAL_BUDGET
         parts: list[str] = []
 
@@ -106,10 +109,9 @@ class ContextEngine:
         parts.append(card_core)
         parts.append(rules_block)
 
-        # ② 动态区（优先级：history > card_ext > scene > memory > web）
+        # ② 动态区（优先级：card_ext > scene > memory > web）
         card_ext = self._build_card_ext()
         sources = [
-            ("history", self._build_history(history), self.MAX_HISTORY),
             ("card_ext", card_ext, self.MAX_CARD_EXT),
             ("scene", self._retrieve_scenes(user_message), self.MAX_SCENE),
             ("memory", self._retrieve_memories(user_message, current_mood=current_mood), self.MAX_MEMORY),
@@ -235,67 +237,6 @@ class ContextEngine:
         return rules
 
     # ── 动态区 ────────────────────────────────────────────────
-
-    def _build_history(self, history: list[dict[str, Any]]) -> str:
-        """最近对话历史 + 情感锚点保留。
-
-        情感突变时（闲聊→冲突），关键情感消息可能被截掉。
-        保留最近 2 条非"平静"的消息作为情感锚点，占用 MAX_HISTORY 的 20% 预算。
-        """
-        if not history:
-            return ""
-
-        # 1. 找出情感锚点（非平静的消息），最多最近2条
-        anchor_budget = int(self.MAX_HISTORY * 0.2)
-        anchors: list[dict[str, Any]] = []
-        for m in reversed(history):
-            if m.get("role") == "assistant":
-                continue  # 不把角色自己的回复钉为锚点,避免自我复读强化
-            if _detect_emotion(m.get("content", "")) != "平静":
-                anchors.append(m)
-                if len(anchors) >= 2:
-                    break
-
-        anchor_ids = {id(m) for m in anchors}
-
-        # Anchors were collected in reverse (newest first); restore chronological order.
-        anchors.reverse()
-
-        # 2. 先填充锚点
-        lines: list[str] = []
-        used = 0
-        for m in anchors:
-            role = "你" if m.get("role") == "assistant" else "对方"
-            line = f"{role}：{m.get('content', '')}"
-            t = _count_tokens(line)
-            if used + t > anchor_budget:
-                break
-            lines.append(line)
-            used += t
-
-        # 3. 从最近往前填充普通消息
-        remaining = self.MAX_HISTORY - used
-        recent_lines: list[str] = []
-        recent_used = 0
-        for m in reversed(history):
-            if id(m) in anchor_ids:
-                continue
-            role = "你" if m.get("role") == "assistant" else "对方"
-            line = f"{role}：{m.get('content', '')}"
-            t = _count_tokens(line)
-            if recent_used + t > remaining:
-                break
-            recent_lines.append(line)
-            recent_used += t
-
-        # 4. 合并：锚点作为关键记忆在前，最近对话在后
-        result_parts: list[str] = []
-        if lines:
-            result_parts.append("【关键情感记忆】\n" + "\n".join(lines))
-        if recent_lines:
-            result_parts.append("【近期对话记录】\n" + "\n".join(reversed(recent_lines)))
-
-        return "\n".join(result_parts) if result_parts else ""
 
     def _retrieve_scenes(self, query: str) -> str:
         """从 RAG 检索相关场景片段（情感加权）。"""

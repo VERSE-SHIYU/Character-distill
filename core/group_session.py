@@ -135,20 +135,21 @@ class GroupSession:
             "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
         })
 
-        # 转换历史为目标角色视角，嵌入 system prompt
+        # 转换历史为目标角色视角
         converted = self._convert_history(target_card_id)
+        # system prompt 不再含对话历史，历史通过 messages 数组传递
         system_prompt = engine._ctx_engine.build(
-            converted, message, engine.user_role,
+            message, engine.user_role,
         )
         # Inject user persona context + all enhancement blocks (affinity/cognitive/time/event)
         system_prompt += self._build_persona_context()
         system_prompt += engine._build_all_enhancements()
 
+        # 构造 messages 数组：转换后的历史 + 当前消息
+        llm_messages = [*converted, {"role": "user", "content": message}]
+
         # 直接调用 LLM，不走 engine.chat() 以免污染单聊历史
-        response = await engine.llm.achat(
-            system_prompt,
-            [{"role": "user", "content": message}],
-        )
+        response = await engine.llm.achat(system_prompt, llm_messages)
         engine._try_record_usage("chat")
 
         # 记录角色回复到群聊历史
@@ -284,20 +285,18 @@ class GroupSession:
 
                 converted = self._convert_history(card_id)
                 system_prompt = engine._ctx_engine.build(
-                    converted, "", engine.user_role,
+                    "", engine.user_role,
                 )
                 system_prompt += "\n\n" + context_msg
                 system_prompt += self._build_persona_context()
                 system_prompt += engine._build_all_enhancements()
 
-                response = await engine.llm.achat(
-                    system_prompt,
-                    [{"role": "user", "content": ""}],
-                )
+                llm_messages = [*converted, {"role": "user", "content": ""}]
+                response = await engine.llm.achat(system_prompt, llm_messages)
             else:
                 converted = self._convert_history(card_id)
                 system_prompt = engine._ctx_engine.build(
-                    converted, message, engine.user_role,
+                    message, engine.user_role,
                 )
                 system_prompt += self._build_persona_context()
                 system_prompt += engine._build_all_enhancements()
@@ -317,10 +316,8 @@ class GroupSession:
                         "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
                         "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
                     )
-                response = await engine.llm.achat(
-                    system_prompt,
-                    [{"role": "user", "content": message}],
-                )
+                llm_messages = [*converted, {"role": "user", "content": message}]
+                response = await engine.llm.achat(system_prompt, llm_messages)
 
             engine._try_record_usage("chat")
 

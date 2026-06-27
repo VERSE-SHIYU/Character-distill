@@ -12,6 +12,7 @@ from adapters.llm_adapter import LLMAdapter
 from core.context_engine import ContextEngine
 from core.rag import RAGEngine
 from core.schema import CharacterCard
+from core.context_engine import _count_tokens
 from core.utils import try_record_usage
 from core.event_service import EventService
 from core.reaction_service import ReactionService
@@ -182,10 +183,11 @@ class ChatEngine:
     def chat(self, user_message: str, voice_mode: bool = False) -> str:
         """非流式对话一轮，返回模型回复。
 
-        History 已由 ContextEngine 嵌入 system prompt，此处只传当前消息。
+        对话历史以 messages 数组传递（见 _build_llm_messages），
+        system prompt 只含角色卡、场景、记忆、增强项，不含逐条历史。
         voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
         system_prompt = self._ctx_engine.build(
-            self.history, user_message, self.user_role,
+            user_message, self.user_role,
             current_mood=self._mood,
         )
 
@@ -202,12 +204,13 @@ class ChatEngine:
                 "4. 直接说出角色想说的话，就像在真实语音通话中一样"
             )
 
+        # 构造 messages 数组：历史（截断）+ 当前句
+        llm_messages = self._build_llm_messages(self.history, user_message)
+
         self.history.append({"role": "user", "content": user_message})
 
         try:
-            response = self.llm.chat(
-                system_prompt, [{"role": "user", "content": user_message}]
-            )
+            response = self.llm.chat(system_prompt, llm_messages)
         except Exception as exc:
             print(f"调用 LLM 对话失败：{exc}")
             if self.history and self.history[-1].get("role") == "user":
@@ -226,7 +229,7 @@ class ChatEngine:
         self._last_rag_context = ""
 
         system_prompt = self._ctx_engine.build(
-            self.history, user_message, self.user_role,
+            user_message, self.user_role,
             current_mood=self._mood,
         )
 
@@ -243,14 +246,15 @@ class ChatEngine:
                 "4. 直接说出角色想说的话，就像在真实语音通话中一样"
             )
 
+        # 构造 messages 数组：历史（截断）+ 当前句
+        llm_messages = self._build_llm_messages(self.history, user_message)
+
         self.history.append({"role": "user", "content": user_message})
 
         collected: list[str] = []
 
         try:
-            for piece in self.llm.chat_stream(
-                system_prompt, [{"role": "user", "content": user_message}]
-            ):
+            for piece in self.llm.chat_stream(system_prompt, llm_messages):
                 collected.append(piece)
                 yield piece
         except Exception as exc:
@@ -265,6 +269,34 @@ class ChatEngine:
         if not full_reply.strip():
             print(f"[chat_stream] WARNING: LLM returned empty response (history={len(self.history)} messages, sp_len={len(system_prompt)} chars)")
         self.history.append({"role": "assistant", "content": full_reply})
+
+    def _build_llm_messages(
+        self, history: list[dict[str, Any]], current_user_message: str,
+    ) -> list[dict[str, Any]]:
+        """从历史 + 当前用户消息构建 messages 数组。
+
+        按 token 预算（self._ctx_engine.MAX_HISTORY）从最近往前保留完整轮次，
+        确保 user/assistant 交替合法。末尾追加当前用户消息。
+        """
+        budget = self._ctx_engine.MAX_HISTORY
+        used = 0
+
+        # 从末尾往前收集历史消息
+        collected: list[dict[str, Any]] = []
+        for msg in reversed(history):
+            tok = _count_tokens(msg.get("content", ""))
+            if used + tok > budget:
+                break
+            collected.append(msg)
+            used += tok
+
+        # 恢复时间顺序
+        collected.reverse()
+
+        # 追加当前用户消息
+        collected.append({"role": "user", "content": current_user_message})
+
+        return collected
 
     def post_stream_process(self, user_message: str, full_reply: str) -> None:
         """Post-stream housekeeping after done event: affinity first, then memory with metadata. Does NOT block UI unlock."""

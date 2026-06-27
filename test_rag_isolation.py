@@ -54,7 +54,7 @@ async def test_create_session_rag_none():
     assert engine.rag is None, f"Expected rag=None, got {engine.rag}"
     assert engine._ctx_engine.rag is None
     # Build system prompt should work without RAG
-    prompt = engine._ctx_engine.build([], "你好", "")
+    prompt = engine._ctx_engine.build("你好", "")
     assert len(prompt) > 0
     print("PASS (session created, no embedding)")
 
