@@ -764,6 +764,22 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Nickname migration failed: {exc}")
 
+                    # Username lower: add column, backfill, create unique index
+                    try:
+                        await conn.execute("ALTER TABLE users ADD COLUMN username_lower TEXT")
+                        await conn.commit()
+                    except Exception as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            print(f"[SQLiteStore] Add username_lower column failed: {exc}")
+                    await conn.execute("UPDATE users SET username_lower = LOWER(username) WHERE username_lower IS NULL")
+                    await conn.commit()
+                    try:
+                        await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(username_lower)")
+                        await conn.commit()
+                    except Exception as exc:
+                        print(f"[SQLiteStore] Create username_lower unique index failed — duplicate usernames exist: {exc}")
+                        raise
+
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
                     # Data residency: remove password_hash/api_key/base_url/model from users
@@ -798,6 +814,7 @@ class SQLiteStore(StorageBase):
                                 "embedding_region": "TEXT DEFAULT 'cn'",
                                 "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
                                 "nickname": "TEXT DEFAULT ''",
+                                "username_lower": "TEXT",
                                 "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                             }
                             col_list = ", ".join(keep_cols)
@@ -2634,8 +2651,8 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO users (id, username, email, email_verified) VALUES (?, ?, ?, ?)",
-                    (id, username, email, 1 if email else 0),
+                    "INSERT INTO users (id, username, username_lower, email, email_verified) VALUES (?, ?, ?, ?, ?)",
+                    (id, username, username.lower(), email, 1 if email else 0),
                 )
                 await conn.execute(
                     "INSERT INTO user_secrets (user_id, password_hash) VALUES (?, ?)",
@@ -2650,7 +2667,7 @@ class SQLiteStore(StorageBase):
             raise
 
     async def get_user_by_username(self, username: str) -> dict | None:
-        """Get a user by username."""
+        """Get a user by username (case-insensitive via username_lower)."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -2658,8 +2675,8 @@ class SQLiteStore(StorageBase):
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
-                       WHERE u.username = ?""",
-                    (username,),
+                       WHERE u.username_lower = ?""",
+                    (username.lower(),),
                 )
                 row = await cursor.fetchone()
             return self._row_to_dict(row)

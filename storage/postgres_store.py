@@ -1751,8 +1751,8 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "INSERT INTO users (id, username, email, email_verified) VALUES ($1, $2, $3, $4)",
-                        id, username, email, 1 if email else 0,
+                        "INSERT INTO users (id, username, username_lower, email, email_verified) VALUES ($1, $2, $3, $4, $5)",
+                        id, username, username.lower(), email, 1 if email else 0,
                     )
                     await conn.execute(
                         "INSERT INTO user_secrets (user_id, password_hash) VALUES ($1, $2)",
@@ -1766,7 +1766,7 @@ class PostgresStore(StorageBase):
             raise
 
     async def get_user_by_username(self, username: str) -> dict | None:
-        """Get a user by username."""
+        """Get a user by username (case-insensitive via username_lower)."""
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -1774,8 +1774,8 @@ class PostgresStore(StorageBase):
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
-                       WHERE u.username = $1""",
-                    username,
+                       WHERE u.username_lower = $1""",
+                    username.lower(),
                 )
             return self._row_to_dict(row)
         except Exception as exc:

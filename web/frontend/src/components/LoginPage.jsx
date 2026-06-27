@@ -260,7 +260,7 @@ export default function LoginPage() {
               autoFocus
             />
             {tab === 'register' && (
-              <span className="login-field-hint">用于登录，注册后不可修改；昵称可在「我的-昵称」中随时设置</span>
+              <span className="login-field-hint">英文 / 数字 / 下划线，2–20 位，不区分大小写（Tracy 与 tracy 视为同一账号）；昵称可在「我的-昵称」中随时设置</span>
             )}
           </div>
           <div className="login-field">
