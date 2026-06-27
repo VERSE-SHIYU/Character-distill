@@ -764,22 +764,6 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Nickname migration failed: {exc}")
 
-                    # Username lower: add column, backfill, create unique index
-                    try:
-                        await conn.execute("ALTER TABLE users ADD COLUMN username_lower TEXT")
-                        await conn.commit()
-                    except Exception as exc:
-                        if "duplicate column" not in str(exc).lower():
-                            print(f"[SQLiteStore] Add username_lower column failed: {exc}")
-                    await conn.execute("UPDATE users SET username_lower = LOWER(username) WHERE username_lower IS NULL")
-                    await conn.commit()
-                    try:
-                        await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(username_lower)")
-                        await conn.commit()
-                    except Exception as exc:
-                        print(f"[SQLiteStore] Create username_lower unique index failed — duplicate usernames exist: {exc}")
-                        raise
-
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
                     # Data residency: remove password_hash/api_key/base_url/model from users
@@ -833,6 +817,23 @@ class SQLiteStore(StorageBase):
                     except Exception as exc:
                         if "no such column" not in str(exc).lower():
                             print(f"[SQLiteStore] Data residency column removal: {exc}")
+
+                    # Username lower: add column, backfill, create unique index
+                    # Must run AFTER data-residency table rebuild (which would drop the index).
+                    try:
+                        await conn.execute("ALTER TABLE users ADD COLUMN username_lower TEXT")
+                        await conn.commit()
+                    except Exception as exc:
+                        if "duplicate column" not in str(exc).lower():
+                            print(f"[SQLiteStore] Add username_lower column failed: {exc}")
+                    await conn.execute("UPDATE users SET username_lower = LOWER(username) WHERE username_lower IS NULL")
+                    await conn.commit()
+                    try:
+                        await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(username_lower)")
+                        await conn.commit()
+                    except Exception as exc:
+                        print(f"[SQLiteStore] Create username_lower unique index failed — duplicate usernames exist: {exc}")
+                        raise
 
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
