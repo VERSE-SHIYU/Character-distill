@@ -271,3 +271,37 @@ async def receive_admin_users(
         raise HTTPException(401, f"Unauthorized: {reason}")
 
     return await storage.get_all_users_admin_fields()
+
+
+@router.post("/user/sync")
+async def receive_user_sync(
+    request: Request,
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Receive a user profile from a peer node (lightweight stub).
+
+    Authenticated via HMAC-SHA256, NOT JWT.
+    Idempotent: upserts into remote_user_profiles table.
+    """
+    body = await request.json()
+    payload = body if isinstance(body, dict) else {}
+
+    auth_header = request.headers.get("Authorization", "")
+    valid, reason = verify_auth_header(auth_header, payload)
+    if not valid:
+        raise HTTPException(401, f"Unauthorized: {reason}")
+
+    user_id = str(payload.get("id", ""))
+    username = str(payload.get("username", ""))
+    home_region = str(payload.get("home_region", ""))
+    avatar_data = str(payload.get("avatar_data", ""))
+
+    if not user_id or not username:
+        raise HTTPException(400, "Missing required fields: id, username")
+
+    try:
+        await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
+    except Exception as exc:
+        raise HTTPException(500, f"Failed to store remote user profile: {exc}")
+
+    return {"ok": True, "user_id": user_id}

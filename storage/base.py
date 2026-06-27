@@ -142,6 +142,14 @@ class StorageBase(ABC):
         """List all users with only admin-safe fields (no secrets, for cross-border export)."""
 
     @abstractmethod
+    async def upsert_remote_user_profile(self, id: str, username: str, home_region: str, avatar_data: str = "") -> None:
+        """Create or update a remote user profile (received from peer node)."""
+
+    @abstractmethod
+    async def get_remote_user_profile(self, id: str) -> dict | None:
+        """Get a remote user profile by ID."""
+
+    @abstractmethod
     async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
         """Promote or demote a user to/from admin."""
 

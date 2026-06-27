@@ -75,9 +75,15 @@ async def send_message(
         raise HTTPException(400, "消息不能为空")
     if body.receiver_id == user["id"]:
         raise HTTPException(400, "不能给自己发消息")
+
+    # Look up receiver: local first, then remote user profile (cross-border stubs)
     receiver = await storage.get_user_by_id(body.receiver_id)
     if not receiver:
-        raise HTTPException(404, "用户不存在")
+        remote_profile = await storage.get_remote_user_profile(body.receiver_id)
+        if remote_profile:
+            receiver = remote_profile
+        else:
+            raise HTTPException(404, "用户不存在")
 
     sender_region = user.get("home_region", "")
     receiver_region = receiver.get("home_region", "")

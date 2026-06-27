@@ -4772,6 +4772,39 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get remote card failed: {exc}")
             return None
 
+    # ── Remote user profiles (cross-border user stubs) ──────
+
+    async def upsert_remote_user_profile(self, id: str, username: str, home_region: str, avatar_data: str = "") -> None:
+        """Create or update a remote user profile (received from peer node)."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT OR REPLACE INTO remote_user_profiles
+                       (id, username, home_region, avatar_data)
+                       VALUES (?, ?, ?, ?)""",
+                    (id, username, home_region, avatar_data),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Upsert remote user profile failed: {exc}")
+            raise
+
+    async def get_remote_user_profile(self, id: str) -> dict | None:
+        """Get a remote user profile by ID."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, username, home_region, avatar_data, created_at FROM remote_user_profiles WHERE id = ?",
+                    (id,),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get remote user profile failed: {exc}")
+            raise
+
+    # ── Remote cards ────────────────────────────────────────
+
     async def upsert_remote_card(self, card_id: str, origin_region: str, user_id: str,
                                   name: str, card_json: str, avatar_data: str,
                                   market_description: str, market_tags: str,
@@ -4909,8 +4942,8 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT
                          sub.other_id,
-                         u.username,
-                         u.avatar_data,
+                         COALESCE(u.username, rup.username, '') AS username,
+                         COALESCE(u.avatar_data, rup.avatar_data, '') AS avatar_data,
                          (SELECT dm2.content FROM direct_messages dm2
                           WHERE (dm2.sender_id = ? AND dm2.receiver_id = sub.other_id)
                              OR (dm2.sender_id = sub.other_id AND dm2.receiver_id = ?)
@@ -4930,7 +4963,8 @@ class SQLiteStore(StorageBase):
                          FROM direct_messages
                          WHERE sender_id = ? OR receiver_id = ?
                        ) sub
-                       JOIN users u ON u.id = sub.other_id
+                       LEFT JOIN users u ON u.id = sub.other_id
+                       LEFT JOIN remote_user_profiles rup ON rup.id = sub.other_id
                        ORDER BY last_time DESC""",
                     (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
                 )

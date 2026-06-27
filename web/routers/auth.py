@@ -271,6 +271,13 @@ async def register(request: Request, req: AuthRequest, storage: StorageBase = De
     if inv:
         await storage.use_invite_code(inv, user["id"])
 
+    # Best-effort sync profile to peer node
+    try:
+        from cross_border_sync import forward_user_profile_to_peer
+        await forward_user_profile_to_peer(user["id"], user.get("username", ""), node_region, user.get("avatar_data", ""))
+    except Exception as exc:
+        print(f"[auth] Forward user profile to peer failed: {exc}")
+
     # Record consent
     try:
         client_ip = get_client_ip(request)

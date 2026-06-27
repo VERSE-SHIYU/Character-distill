@@ -212,6 +212,40 @@ async def forward_invite_code_delete_to_peer(code: str) -> bool:
         return False
 
 
+async def forward_user_profile_to_peer(user_id: str, username: str, home_region: str, avatar_data: str = "") -> bool:
+    """Forward a user profile to the peer node (lightweight stub sync).
+
+    Best-effort: returns False on failure.  Caller is not expected to retry;
+    the profile will be synced when the first DM exchange happens.
+    """
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return False
+
+    from inter_node_auth import create_auth_header
+
+    payload = {
+        "id": user_id,
+        "username": username,
+        "home_region": home_region,
+        "avatar_data": avatar_data,
+    }
+    headers = create_auth_header(payload)
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{peer_url}/api/inter-node/user/sync",
+                json=payload,
+                headers=headers,
+            )
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 async def _cross_border_resync_loop() -> None:
     """Periodically retry unsynced cross-border DMs and public cards.
 

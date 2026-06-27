@@ -3660,6 +3660,40 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get remote card failed: {exc}")
             return None
 
+    # ── Remote user profiles (cross-border user stubs) ──────
+
+    async def upsert_remote_user_profile(self, id: str, username: str, home_region: str, avatar_data: str = "") -> None:
+        """Create or update a remote user profile (received from peer node)."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO remote_user_profiles (id, username, home_region, avatar_data)
+                       VALUES ($1, $2, $3, $4)
+                       ON CONFLICT (id) DO UPDATE SET
+                         username = EXCLUDED.username,
+                         home_region = EXCLUDED.home_region,
+                         avatar_data = EXCLUDED.avatar_data""",
+                    id, username, home_region, avatar_data,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Upsert remote user profile failed: {exc}")
+            raise
+
+    async def get_remote_user_profile(self, id: str) -> dict | None:
+        """Get a remote user profile by ID."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT id, username, home_region, avatar_data, created_at FROM remote_user_profiles WHERE id = $1",
+                    id,
+                )
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[PostgresStore] Get remote user profile failed: {exc}")
+            raise
+
+    # ── Remote cards ────────────────────────────────────────
+
     async def upsert_remote_card(self, card_id: str, origin_region: str, user_id: str,
                                   name: str, card_json: str, avatar_data: str,
                                   market_description: str, market_tags: str,
@@ -3792,8 +3826,8 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     """SELECT
                          sub.other_id,
-                         u.username,
-                         u.avatar_data,
+                         COALESCE(u.username, rup.username, '') AS username,
+                         COALESCE(u.avatar_data, rup.avatar_data, '') AS avatar_data,
                          (SELECT dm2.content FROM direct_messages dm2
                           WHERE (dm2.sender_id = $1 AND dm2.receiver_id = sub.other_id)
                              OR (dm2.sender_id = sub.other_id AND dm2.receiver_id = $2)
@@ -3813,7 +3847,8 @@ class PostgresStore(StorageBase):
                          FROM direct_messages
                          WHERE sender_id = $7 OR receiver_id = $8
                        ) sub
-                       JOIN users u ON u.id = sub.other_id
+                       LEFT JOIN users u ON u.id = sub.other_id
+                       LEFT JOIN remote_user_profiles rup ON rup.id = sub.other_id
                        ORDER BY last_time DESC""",
                     user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id,
                 )
