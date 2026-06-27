@@ -232,6 +232,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
 
 export const adminAPI = {
   listUsers: () => fetchWithTimeout('/api/admin/users').then(r => r.json()),
+  listUsersFederated: () => fetchWithTimeout('/api/admin/users/federated').then(r => r.json()),
 
   getDashboard: () => fetchWithTimeout('/api/admin/dashboard').then(r => r.json()),
 

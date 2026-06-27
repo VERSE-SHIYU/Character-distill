@@ -318,14 +318,16 @@ function UsersTab() {
   const [detailData, setDetailData] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
+  const [peerUnreachable, setPeerUnreachable] = useState(false)
   const authUser = useAppStore((s) => s.authUser)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const data = await adminAPI.listUsers()
-      setUsers(data)
+      const data = await adminAPI.listUsersFederated()
+      setUsers([...(data.local || []), ...(data.peer || [])])
+      setPeerUnreachable(data.peer_unreachable || false)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -479,6 +481,11 @@ function UsersTab() {
           <button className="admin-error-close" onClick={() => setActionError('')}>✕</button>
         </div>
       )}
+      {peerUnreachable && (
+        <div className="admin-error-banner">
+          <span>对端节点不可达，仅显示本地用户</span>
+        </div>
+      )}
       {loading ? (
         <div className="admin-loading">加载中…</div>
       ) : (
@@ -503,12 +510,11 @@ function UsersTab() {
                   />
                 </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
-                <th style={{ minWidth: 150 }}>邮箱</th>
+                <th style={{ minWidth: 70 }}>节点</th>
                 <th style={{ minWidth: 70 }}>角色</th>
                 <th style={{ minWidth: 70 }}>状态</th>
                 <th style={{ minWidth: 70 }}>在线</th>
                 <th style={{ minWidth: 100 }}>最后活跃</th>
-                <th style={{ minWidth: 100 }}>最后登录</th>
                 <th style={{ minWidth: 100 }}>注册时间</th>
                 <th style={{ minWidth: 200 }}>操作</th>
               </tr>
@@ -524,7 +530,11 @@ function UsersTab() {
                     )}
                   </td>
                   <td>{u.username}</td>
-                  <td>{u.email || <span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>未绑定</span>}</td>
+                  <td>
+                    <span className={`admin-status${u.node_region === 'peer' ? '' : ''}`} style={{ fontSize: 12 }}>
+                      {u.node_region === 'peer' ? '对端' : '本地'}
+                    </span>
+                  </td>
                   <td>{u.is_admin ? '管理员' : '用户'}</td>
                   <td>
                     <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
@@ -537,7 +547,6 @@ function UsersTab() {
                     </span>
                   </td>
                   <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{u.last_active_at ? formatChatTime(u.last_active_at) : '-'}</td>
-                  <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{fmtDate(u.last_login_at)}</td>
                   <td>{fmtDate(u.created_at)}</td>
                   <td className="admin-actions-cell">
                     <button
@@ -549,22 +558,16 @@ function UsersTab() {
                     <button
                       className="btn-ghost-sm"
                       onClick={() => toggleDisable(u)}
+                      disabled={u.node_region === 'peer'}
                     >
                       {u.is_disabled ? '启用' : '禁用'}
                     </button>
-                    <button
-                      className="btn-ghost-sm"
-                      onClick={() => { setEmailTarget(u); setNewEmail(u.email || ''); setEmailError(''); setEmailOk('') }}
-                    >
-                      邮箱
-                    </button>
-                    {u.email && (
+                    {u.node_region !== 'peer' && (
                       <button
-                        className="btn-ghost-danger btn-sm"
-                        onClick={() => handleClearEmail(u)}
-                        title="清除邮箱"
+                        className="btn-ghost-sm"
+                        onClick={() => { setEmailTarget(u); setNewEmail(''); setEmailError(''); setEmailOk('') }}
                       >
-                        清除邮箱
+                        邮箱
                       </button>
                     )}
                     <button

@@ -22,7 +22,8 @@ WORKDIR /app
 
 # Python 依赖（先拷贝 requirements 利用 Docker 缓存）
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip uninstall -y onnxruntime kubernetes 2>/dev/null || true
 
 # 拷贝项目代码
 COPY . .
