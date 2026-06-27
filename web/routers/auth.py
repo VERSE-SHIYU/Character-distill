@@ -207,7 +207,7 @@ async def send_code(
     purpose_label = {"register": "注册", "reset_password": "重置密码", "bind_email": "绑定邮箱"}.get(req.purpose, "验证")
     try:
         send_verification_code(email, code, purpose_label)
-    except RuntimeError as exc:
+    except Exception as exc:
         raise HTTPException(500, "邮件发送失败，请稍后重试")
     return {"ok": True}
 

@@ -835,6 +835,16 @@ class SQLiteStore(StorageBase):
                         print(f"[SQLiteStore] Create username_lower unique index failed — duplicate usernames exist: {exc}")
                         raise
 
+                    # Run 078_username_lower migration (ALTER TABLE may fail if column exists)
+                    username_lower_path = migrations_dir / "078_username_lower.sql"
+                    if username_lower_path.exists():
+                        try:
+                            await conn.executescript(username_lower_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Username_lower migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
