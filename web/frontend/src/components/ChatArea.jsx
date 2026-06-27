@@ -23,16 +23,17 @@ export default function ChatArea() {
   const resumeLoading = useAppStore((s) => s.resumeLoading)
   const currentView = useAppStore((s) => s.currentView)
   const chatSnapshot = useAppStore((s) => s.chatSnapshot)
+  const archiveModalOpen = useAppStore((s) => s.archiveModalOpen)
   const setView = useAppStore((s) => s.setView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
 
-  // Auto-recover: only create session when user is on chat view and no snapshot restore is pending
+  // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   useEffect(() => {
-    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !chatSnapshot) {
+    if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !chatSnapshot && !archiveModalOpen) {
       startChat(currentCard)
     }
-  }, [currentView, currentCard?.id, sessionId, resumeLoading, chatSnapshot])
+  }, [currentView, currentCard?.id, sessionId, resumeLoading, chatSnapshot, archiveModalOpen])
 
   if (!currentCard || !sessionId) {
     if (resumeLoading) {

@@ -854,6 +854,7 @@ const useAppStore = create((set, get) => ({
   archiveModalOpen: false,
   archiveList: [],
   pendingCard: null,
+  _pendingChatCardId: null,
 
   selectCard: async (card) => {
     const state = get()
@@ -899,15 +900,21 @@ const useAppStore = create((set, get) => ({
 
   startChat: async (card) => {
     if (!card) {
-      set({ currentView: 'chat' })
+      set({ _pendingChatCardId: null, currentView: 'chat' })
       return
     }
 
     const state = get()
+    // Idempotency guard: prevent duplicate calls for the same card
+    // (covers the race where ChatArea's auto-recovery effect fires
+    //  while an archive-check is already in-flight or has returned early)
+    if (state._pendingChatCardId === card.id) return
+    set({ _pendingChatCardId: card.id })
+
     get().setPreviousView(get().currentView)
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
-      set({ currentView: 'chat' })
+      set({ _pendingChatCardId: null, currentView: 'chat' })
       return
     }
 
@@ -950,7 +957,7 @@ const useAppStore = create((set, get) => ({
     try {
       if (!sessionId) {
         if (!cardId) {
-          set({ error: '缺少角色信息，无法创建会话', sending: false })
+          set({ _pendingChatCardId: null, error: '缺少角色信息，无法创建会话', sending: false })
           return
         }
         const result = await postJSON('/api/distill/start_session', {
@@ -967,7 +974,7 @@ const useAppStore = create((set, get) => ({
     } catch (err) {
       if (err.name === 'AbortError' || err.status === 408) return
       console.error('[store] startChat create session failed:', err)
-      set({ error: err.message, sending: false })
+      set({ _pendingChatCardId: null, error: err.message, sending: false })
       return
     }
 
@@ -976,6 +983,7 @@ const useAppStore = create((set, get) => ({
       : get().currentTextTitle
 
     set({
+      _pendingChatCardId: null,
       currentCard: { ...card, session_id: sessionId },
       sessionId,
       currentSessionAvatar: null,
@@ -998,6 +1006,7 @@ const useAppStore = create((set, get) => ({
       archiveModalOpen: false,
       archiveList: [],
       pendingCard: null,
+      _pendingChatCardId: null,
       currentCard: { ...card, session_id: session.id },
       sessionId: session.id,
       currentView: 'chat',
@@ -1021,7 +1030,7 @@ const useAppStore = create((set, get) => ({
     const data = parseCardJson(card)
 
     if (!cardId) {
-      set({ error: '缺少角色信息，无法创建会话', archiveModalOpen: false, pendingCard: null })
+      set({ _pendingChatCardId: null, error: '缺少角色信息，无法创建会话', archiveModalOpen: false, pendingCard: null })
       return
     }
 
@@ -1029,7 +1038,8 @@ const useAppStore = create((set, get) => ({
       archiveModalOpen: false,
       archiveList: [],
       pendingCard: null,
-      currentCard: card,
+      _pendingChatCardId: null,
+            currentCard: card,
       currentView: 'chat',
       sending: true,
       messages: [],
@@ -1062,7 +1072,7 @@ const useAppStore = create((set, get) => ({
       })
     } catch (err) {
       console.error('[store] createNewArchive failed:', err)
-      set({ error: err.message, sending: false })
+      set({ _pendingChatCardId: null, error: err.message, sending: false })
     }
   },
 
