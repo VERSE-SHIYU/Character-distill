@@ -27,10 +27,7 @@ export default function ArchiveListModal() {
   const pendingCard = useAppStore((s) => s.pendingCard)
   const enterArchive = useAppStore((s) => s.enterArchive)
   const createNewArchive = useAppStore((s) => s.createNewArchive)
-
-  const close = () => {
-    useAppStore.setState({ archiveModalOpen: false, archiveList: [], pendingCard: null })
-  }
+  const close = useAppStore((s) => s.closeArchiveModal)
 
   if (!archiveModalOpen) return null
 

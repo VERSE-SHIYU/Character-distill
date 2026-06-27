@@ -1076,6 +1076,13 @@ const useAppStore = create((set, get) => ({
     }
   },
 
+  closeArchiveModal: () => set({
+    archiveModalOpen: false,
+    archiveList: [],
+    pendingCard: null,
+    _pendingChatCardId: null,
+  }),
+
   sendMessage: async (message) => {
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return
