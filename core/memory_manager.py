@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# ── 加权检索常量（Generative Agents 风格多信号打分）──
-RERANK_ALPHA = 0.45    # 语义相关性权重
+# ── 加权检索常量（两级门控: base = α·rel + β·rec + γ·imp, final = base × (1+λ·emo)）──
+RERANK_ALPHA = 0.60    # 语义相关性权重（含原 DELTA 并入）
 RERANK_BETA  = 0.15    # 时间新近度权重
 RERANK_GAMMA = 0.25    # 重要性权重
-RERANK_DELTA = 0.15    # 情绪契合度权重
+RERANK_LAMBDA = 0.25   # 情绪提亮乘性增益上界（final 最多放大 1.25×, 语义无关项不被抬高）
 RECENCY_TAU_HOURS = 72 # 指数衰减时间常数（小时）
 REFLECTION_THRESHOLD = 30   # 累计重要性达此值（且满足双条件）触发反思
 REFLECTION_MIN_ROUNDS = 8   # 距上次反思最少轮数，防高频触发
@@ -23,7 +23,7 @@ REFLECTION_MIN_QUALITY = 3  # 触发反思最少需要的高质量（importance>
 _POSITIVE_KEYWORDS = [
     "开心", "喜悦", "高兴", "快乐", "幸福", "甜蜜", "心动", "期待", "好奇",
     "温柔", "安心", "放心", "欣慰", "感激", "感动", "满足", "骄傲", "自豪",
-    "兴奋", "放松", "惬意", "释然", "喜欢", "上头", "心软",
+    "兴奋", "放松", "惬意", "释然", "窃喜", "喜欢", "上头", "心软",
 ]
 _NEGATIVE_KEYWORDS = [
     "烦乱", "愤怒", "暴怒", "生气", "恼火", "烦躁", "焦虑", "不安", "紧张",
@@ -32,6 +32,73 @@ _NEGATIVE_KEYWORDS = [
     "疏离", "不屑", "心碎", "背叛", "刺痛", "又气", "心痛", "心如刀绞",
     "自毁", "恨",
 ]
+
+# ── VAD 情绪映射表（valence∈[-1,1], arousal∈[0,1], 子串命中聚合｜零模型）──
+_VAD_MAP: dict[str, tuple[float, float]] = {
+    # 正面
+    "开心": (0.80, 0.70), "喜悦": (0.90, 0.60), "高兴": (0.80, 0.60),
+    "快乐": (0.85, 0.60), "幸福": (0.90, 0.40), "甜蜜": (0.80, 0.30),
+    "心动": (0.70, 0.80), "期待": (0.50, 0.70), "好奇": (0.40, 0.60),
+    "温柔": (0.70, 0.20), "安心": (0.60, 0.20), "放心": (0.60, 0.15),
+    "欣慰": (0.70, 0.30), "感激": (0.80, 0.50), "感动": (0.80, 0.60),
+    "满足": (0.70, 0.30), "骄傲": (0.60, 0.50), "自豪": (0.60, 0.50),
+    "兴奋": (0.80, 0.90), "放松": (0.70, 0.10), "惬意": (0.70, 0.15),
+    "释然": (0.50, 0.10), "窃喜": (0.60, 0.40), "喜欢": (0.80, 0.60), "上头": (0.60, 0.90),
+    "心软": (0.40, 0.30),
+    # 负面
+    "烦乱": (-0.50, 0.70), "愤怒": (-0.90, 0.90), "暴怒": (-0.95, 0.95),
+    "生气": (-0.70, 0.70), "恼火": (-0.60, 0.70), "烦躁": (-0.50, 0.70),
+    "焦虑": (-0.50, 0.80), "不安": (-0.40, 0.60), "紧张": (-0.30, 0.70),
+    "委屈": (-0.50, 0.30), "吃味": (-0.30, 0.40), "嫉妒": (-0.50, 0.60),
+    "失落": (-0.50, 0.20), "伤心": (-0.70, 0.30), "难过": (-0.60, 0.30),
+    "悲伤": (-0.80, 0.30), "痛苦": (-0.90, 0.50), "绝望": (-0.95, 0.20),
+    "恐惧": (-0.80, 0.90), "害怕": (-0.70, 0.80), "防备": (-0.20, 0.60),
+    "警觉": (-0.10, 0.70), "厌恶": (-0.70, 0.60), "嫌弃": (-0.50, 0.40),
+    "无奈": (-0.30, 0.20), "疲惫": (-0.40, 0.10), "冷淡": (-0.30, 0.10),
+    "疏离": (-0.30, 0.15), "不屑": (-0.40, 0.30), "心碎": (-0.90, 0.40),
+    "背叛": (-0.85, 0.60), "刺痛": (-0.60, 0.50), "又气": (-0.50, 0.70),
+    "心痛": (-0.70, 0.30), "心如刀绞": (-0.90, 0.60),
+    "自毁": (-0.95, 0.30), "恨": (-0.90, 0.70),
+}
+
+
+def _lookup_vad(mood: str) -> tuple[float, float]:
+    """子串匹配 VAD 表，返回 (valence, arousal)。零匹配时按极性回退。"""
+    if not mood:
+        return (0.0, 0.5)
+    m = mood.strip()
+    vals, arous = [], []
+    for kw, (v, a) in _VAD_MAP.items():
+        if kw in m:
+            vals.append(v)
+            arous.append(a)
+    if vals:
+        return (sum(vals) / len(vals), sum(arous) / len(arous))
+    pol = _get_emotion_polarity(mood)
+    if pol == 1:
+        return (0.5, 0.5)
+    if pol == -1:
+        return (-0.5, 0.5)
+    return (0.0, 0.5)
+
+
+def _emotion_affinity(current_mood: str | None, memory_mood: str) -> float:
+    """VAD 加权欧氏距离情感亲和度 [0,1]。
+
+    valence 差权重为 arousal 的 2 倍（情感色调比激活度更重要）。
+    """
+    if current_mood is None:
+        return 0.5
+    cur_v, cur_a = _lookup_vad(current_mood)
+    mem_v, mem_a = _lookup_vad(memory_mood)
+    d_v = cur_v - mem_v      # [-2, 2]
+    d_a = cur_a - mem_a      # [-1, 1]
+    # 加权欧氏距离: valence 权重 2, arousal 权重 1
+    dist = math.sqrt(0.5 * d_v * d_v + d_a * d_a)
+    # 最大可能距离 sqrt(2*1 + 1*1) = sqrt(3)
+    sim = 1.0 - dist / math.sqrt(3.0)
+    return max(0.0, min(1.0, sim))
+
 
 def _get_emotion_polarity(mood: str) -> int:
     """返回情绪极性：1=正面, -1=负面, 0=中性/未知。
@@ -131,11 +198,12 @@ class MemoryManager:
         return self._context_window
 
     def search(self, query: str, card_id: str, current_mood: str | None = None) -> list[dict[str, Any]]:
-        """检索长期记忆，返回结构化 dict 列表（经加权重排）。
+        """检索长期记忆，返回结构化 dict 列表（两级门控重排）。
 
         每条返回: {text, relevance, importance, age_seconds}
-        加权公式: final = α·relevance_norm + β·recency + γ·importance_norm + δ·emotion_match
-        current_mood 为 None 时 emotion_match=0.5（退化，向后兼容）。
+        两级门控: base = α·relevance_norm + β·recency + γ·importance_norm,
+                  final = base × (1 + λ·emo_affinity)    # 乘性提亮,不翻转排序
+        current_mood 为 None 时 emo_affinity=0.5（退化，向后兼容）。
         """
         if not self.enabled:
             return []
@@ -191,26 +259,27 @@ class MemoryManager:
         rel_min, rel_max = min(rels), max(rels)
         rel_range = rel_max - rel_min if rel_max > rel_min else 1.0
 
-        # 计算 final 加权分并排序
+        # 两级门控评分: base = α·rel + β·rec + γ·imp, final = base × (1 + λ·emo_affinity)
         for s in scored:
             relevance_norm = (s["relevance"] - rel_min) / rel_range
             age_hours = s["age_seconds"] / 3600.0
             recency = math.exp(-age_hours / RECENCY_TAU_HOURS)
             importance_norm = s["importance"] / 10.0
-            emo_match = _emotion_match(current_mood, s["memory_mood"])
-            s["final"] = (
+            emo_aff = _emotion_affinity(current_mood, s["memory_mood"])
+            base = (
                 RERANK_ALPHA * relevance_norm
                 + RERANK_BETA * recency
                 + RERANK_GAMMA * importance_norm
-                + RERANK_DELTA * emo_match
             )
-            s["emo_match"] = emo_match
+            s["final"] = base * (1 + RERANK_LAMBDA * emo_aff)
+            s["emo_affinity"] = emo_aff
+            s["base"] = base
 
         scored.sort(key=lambda s: s["final"], reverse=True)
         top = scored[: self._search_top_k]
         if top:
             summary = ", ".join(
-                f"imp={m['importance']} emo={m['emo_match']:.1f} final={m['final']:.3f}" for m in top[:3]
+                f"imp={m['importance']} base={m['base']:.3f} emo_aff={m['emo_affinity']:.2f} final={m['final']:.3f}" for m in top[:3]
             )
             mood_tag = f"mood={current_mood}" if current_mood else "mood=None"
             print(f"[MemoryManager] search top-{len(top)} ({mood_tag}): {summary}")
