@@ -6,6 +6,7 @@ import { formatChatTime } from '../utils/time'
 import { Calendar } from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
 import ChatBubble from './common/ChatBubble'
+import { displayName } from '../utils/displayName'
 import MessageReactions from './common/MessageReactions'
 import ChatInputBar from './common/ChatInputBar'
 const POLL_INTERVAL = 5000
@@ -357,7 +358,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       side={isMe ? 'right' : 'left'}
                       avatar={
                         <Avatar
-                          name={isMe ? (authUser?.username || '?') : (otherUsername || '?')}
+                          name={isMe ? (displayName(authUser) || '?') : (otherUsername || '?')}
                           src={isMe ? userAvatar : otherAvatar}
                           size={52}
                         />
@@ -468,7 +469,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       <div className="group-history-list">
                         {filteredHistoryMessages.map((m, i) => {
                           const isMe = m.sender_id === authUser?.id
-                          const speakerName = isMe ? (authUser?.username || '我') : (otherUsername || '对方')
+                          const speakerName = isMe ? (displayName(authUser) || '我') : (otherUsername || '对方')
                           return (
                             <div key={m.id || i} className="group-history-item">
                               <Avatar name={speakerName} size={28}

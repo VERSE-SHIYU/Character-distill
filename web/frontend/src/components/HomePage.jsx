@@ -6,6 +6,7 @@ import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
 import { SkeletonCard } from './common/Skeleton'
 import { formatRelativeTime } from '../utils/time'
+import { displayName } from '../utils/displayName'
 
 function previewText(text, max = 60) {
   if (!text) return ''
@@ -159,7 +160,7 @@ export default function HomePage() {
   else if (hour < 14) greeting = '中午好'
   else if (hour < 18) greeting = '下午好'
   else greeting = '晚上好'
-  const username = authUser?.username || '用户'
+  const username = displayName(authUser) || '用户'
 
   const cardCount = allCards.length
   const textCount = texts.length

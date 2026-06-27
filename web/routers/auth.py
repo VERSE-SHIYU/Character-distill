@@ -83,6 +83,10 @@ class BindEmailRequest(BaseModel):
     code: str
 
 
+class NicknameRequest(BaseModel):
+    nickname: str
+
+
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -399,6 +403,7 @@ async def me(
     resp["cards_visible"] = bool(user.get("cards_visible", True))
     resp["books_visible"] = bool(user.get("books_visible", True))
     resp["following_visible"] = bool(user.get("following_visible", True))
+    resp["nickname"] = user.get("nickname", "")
     return resp
 
 
@@ -586,6 +591,22 @@ async def update_bio(
     return {"ok": True, "bio": bio}
 
 
+@router.put("/nickname")
+@limiter.limit("10/minute")
+async def update_nickname(
+    request: Request,
+    req: NicknameRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Update the current user's display nickname (0–30 chars, empty = use username)."""
+    nickname = req.nickname.strip()
+    if len(nickname) > 30:
+        raise HTTPException(400, "昵称长度不能超过 30 个字符")
+    await storage.update_user_nickname(user["id"], nickname)
+    return {"ok": True, "nickname": nickname}
+
+
 # ---- Presence visibility ----
 
 @router.get("/presence-visibility")
@@ -686,6 +707,7 @@ def _user_response(user: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user["id"],
         "username": user["username"],
+        "nickname": user.get("nickname", ""),
         "created_at": user.get("created_at", ""),
         "is_admin": bool(user.get("is_admin", False)),
         "is_disabled": bool(user.get("is_disabled", False)),

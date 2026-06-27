@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import PrivateMessageChat from './PrivateMessageChat'
+import { displayName } from '../utils/displayName'
 
 const POLL_INTERVAL = 30000
 
@@ -164,10 +165,10 @@ export default function MessagesPage() {
                   className={`messages-conv-item${activeOtherId === conv.other_id ? ' active' : ''}`}
                   onClick={() => handleSelectConversation(conv.other_id, conv.username)}
                 >
-                  <Avatar name={conv.username || '?'} src={conv.avatar_data} size={44} />
+                  <Avatar name={displayName(conv) || '?'} src={conv.avatar_data} size={44} />
                   <div className="messages-conv-body">
                     <div className="messages-conv-head">
-                      <span className="messages-conv-name">{conv.username}</span>
+                      <span className="messages-conv-name">{displayName(conv)}</span>
                       <span className="messages-conv-time">{formatTime(conv.last_time)}</span>
                     </div>
                     <div className="messages-conv-bottom">

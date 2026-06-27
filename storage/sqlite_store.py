@@ -754,6 +754,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] DM retracted migration failed: {exc}")
 
+                    # Run 077_nickname migration (ALTER TABLE may fail if column exists)
+                    nickname_path = migrations_dir / "077_nickname.sql"
+                    if nickname_path.exists():
+                        try:
+                            await conn.executescript(nickname_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Nickname migration failed: {exc}")
+
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
                     # Data residency: remove password_hash/api_key/base_url/model from users
@@ -787,6 +797,7 @@ class SQLiteStore(StorageBase):
                                 "embedding_key": "TEXT DEFAULT ''",
                                 "embedding_region": "TEXT DEFAULT 'cn'",
                                 "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
+                                "nickname": "TEXT DEFAULT ''",
                                 "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                             }
                             col_list = ", ".join(keep_cols)
@@ -2643,7 +2654,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
@@ -2661,7 +2672,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.email, u.email_verified,
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
@@ -2680,7 +2691,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.is_admin, u.is_disabled, u.created_at,
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
@@ -2826,7 +2837,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, nickname, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return self._list_rows(rows)
@@ -2842,7 +2853,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, username, home_region, is_disabled, created_at, last_active_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, nickname, home_region, is_disabled, created_at, last_active_at FROM users ORDER BY created_at DESC"
                 )
                 rows = await cursor.fetchall()
             return self._list_rows(rows)
@@ -3154,6 +3165,19 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user bio failed: {exc}")
+            raise
+
+    async def update_user_nickname(self, user_id: str, nickname: str) -> None:
+        """Update a user's display nickname."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET nickname = ? WHERE id = ?",
+                    (nickname, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user nickname failed: {exc}")
             raise
 
     async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:

@@ -1770,7 +1770,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
@@ -1787,7 +1787,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.email, u.email_verified,
                               u.is_admin, u.is_disabled, u.created_at
                        FROM users u
@@ -1805,7 +1805,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    """SELECT u.id, u.username, s.password_hash,
+                    """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.is_admin, u.is_disabled, u.created_at,
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
@@ -1941,7 +1941,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, nickname, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
             return self._list_rows(rows)
         except Exception as exc:
@@ -1956,7 +1956,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    "SELECT id, username, home_region, is_disabled, created_at, last_active_at FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, nickname, home_region, is_disabled, created_at, last_active_at FROM users ORDER BY created_at DESC"
                 )
             return self._list_rows(rows)
         except Exception as exc:
@@ -2241,6 +2241,18 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update user bio failed: {exc}")
+            raise
+
+    async def update_user_nickname(self, user_id: str, nickname: str) -> None:
+        """Update a user's display nickname."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET nickname = $1 WHERE id = $2",
+                    nickname, user_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update user nickname failed: {exc}")
             raise
 
     async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:

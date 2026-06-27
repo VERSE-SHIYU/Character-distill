@@ -5,6 +5,7 @@ import ConfirmModal from './common/ConfirmModal'
 import Modal from './common/Modal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
 import { formatChatTime } from '../utils/time'
+import { displayName } from '../utils/displayName'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import EmojiPicker from './common/EmojiPicker'
 
@@ -529,7 +530,7 @@ function UsersTab() {
                       <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
                     )}
                   </td>
-                  <td>{u.username}</td>
+                  <td>{displayName(u) || u.username}</td>
                   <td>
                     <span className={`admin-status${u.node_region === 'peer' ? '' : ''}`} style={{ fontSize: 12 }}>
                       {u.node_region === 'peer' ? '对端' : '本地'}
@@ -597,7 +598,7 @@ function UsersTab() {
       {/* Set email modal */}
       {emailTarget && (
         <Modal isOpen={true} onClose={() => setEmailTarget(null)} maxWidth={380} closeOnOverlay={true}>
-          <h3 className="modal-title">设置邮箱 — {emailTarget.username}</h3>
+          <h3 className="modal-title">设置邮箱 — {displayName(emailTarget)}</h3>
           <div className="modal-body">
             <label className="login-field" style={{ margin: 0 }}>
               <span>邮箱地址</span>
@@ -625,7 +626,7 @@ function UsersTab() {
       {/* Reset password modal */}
       {resetTarget && (
         <Modal isOpen={true} onClose={() => setResetTarget(null)} maxWidth={380} closeOnOverlay={true}>
-          <h3 className="modal-title">重置密码 — {resetTarget.username}</h3>
+          <h3 className="modal-title">重置密码 — {displayName(resetTarget)}</h3>
           <div className="modal-body">
             <label className="login-field" style={{ margin: 0 }}>
               <span>新密码</span>
@@ -653,13 +654,13 @@ function UsersTab() {
       {/* Delete user confirmation modal */}
       {deleteTarget && (
         <Modal isOpen={true} onClose={() => { if (!deleting) { setDeleteTarget(null); setConfirmName('') } }} maxWidth={420} closeOnOverlay={!deleting}>
-          <h3 className="modal-title">删除用户 — {deleteTarget.username}</h3>
+          <h3 className="modal-title">删除用户 — {displayName(deleteTarget)}</h3>
           <div className="modal-body">
             <p style={{ fontSize: 14, color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.6 }}>
               删除用户将清除其所有数据（文本、角色卡、对话、记忆），不可恢复。
             </p>
             <p style={{ fontSize: 13, margin: '0 0 8px' }}>
-              请输入用户名 <strong>{deleteTarget.username}</strong> 确认删除：
+              请输入用户名 <strong>{displayName(deleteTarget)}</strong> 确认删除：
             </p>
             <input
               className="login-input"
@@ -702,7 +703,7 @@ function UsersTab() {
             <div style={{ maxHeight: 120, overflow: 'auto', marginBottom: 12, padding: 8, backgroundColor: 'var(--pill-bg)', borderRadius: 6, fontSize: 13 }}>
               {[...selectedUsers].map((uid) => {
                 const u = users.find((x) => x.id === uid)
-                return <div key={uid} style={{ padding: '2px 0' }}>{u?.username || uid} {u?.is_admin ? '(管理员)' : ''}</div>
+                return <div key={uid} style={{ padding: '2px 0' }}>{u ? displayName(u) : uid} {u?.is_admin ? '(管理员)' : ''}</div>
               })}
             </div>
             <label className="login-field" style={{ margin: 0 }}>
@@ -730,7 +731,7 @@ function UsersTab() {
       <ConfirmModal
         isOpen={!!disableConfirm}
         title="禁用用户"
-        message={`确定禁用用户「${disableConfirm?.username}」？`}
+        message={`确定禁用用户「${disableConfirm ? displayName(disableConfirm) : '?'}」？`}
         confirmText="确定"
         onConfirm={async () => {
           const user = disableConfirm
@@ -748,7 +749,7 @@ function UsersTab() {
       <ConfirmModal
         isOpen={!!clearEmailConfirm}
         title="清除邮箱"
-        message={`确定清除用户「${clearEmailConfirm?.username}」的邮箱？`}
+        message={`确定清除用户「${clearEmailConfirm ? displayName(clearEmailConfirm) : '?'}」的邮箱？`}
         confirmText="确定"
         onConfirm={async () => {
           const user = clearEmailConfirm
@@ -767,7 +768,7 @@ function UsersTab() {
       {/* User Detail Modal */}
       {detailTarget && (
         <Modal isOpen={true} onClose={() => { setDetailTarget(null); setDetailData(null); setDetailError('') }} maxWidth={520} closeOnOverlay={true}>
-          <h3 className="modal-title">用户详情 — {detailTarget.username}</h3>
+          <h3 className="modal-title">用户详情 — {displayName(detailTarget)}</h3>
             <div className="modal-body">
               {detailLoading ? (
                 <div className="admin-loading">加载中…</div>
@@ -781,7 +782,7 @@ function UsersTab() {
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">用户名</span>
-                    <span className="user-detail-value">{detailData.username}</span>
+                    <span className="user-detail-value">{displayName(detailData)}</span>
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">邮箱</span>
@@ -1126,7 +1127,7 @@ function UsageTab() {
               <tbody>
                 {data.map((r) => (
                   <tr key={r.user_id}>
-                    <td>{r.username}</td>
+                    <td>{displayName(r) || r.username}</td>
                     <td>{r.total_calls}</td>
                     <td>{fmt(r.total_prompt_tokens)}</td>
                     <td>{fmt(r.total_completion_tokens)}</td>
@@ -1363,7 +1364,7 @@ function ContentAuditTab() {
                 <tr key={c.id}>
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{c.id?.slice(0, 8)}</td>
                   <td>{c.name || '-'}</td>
-                  <td>{c.username}</td>
+                  <td>{displayName(c) || c.username}</td>
                   <td>
                     <span className={`admin-status${c.visibility === 'public' ? '' : ' disabled'}`}>
                       {c.visibility === 'public' ? '公开' : '非公开'}
@@ -1400,7 +1401,7 @@ function ContentAuditTab() {
             <tbody>
               {posts.map((p) => (
                 <tr key={p.id}>
-                  <td>{p.username}</td>
+                  <td>{displayName(p) || p.username}</td>
                   <td style={{ maxWidth: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.content}</td>
                   <td>{p.visibility}</td>
                   <td style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{p.created_at?.slice(0, 16).replace('T', ' ')}</td>

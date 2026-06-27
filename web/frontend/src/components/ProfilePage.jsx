@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import { displayName } from '../utils/displayName'
 import Avatar from './common/Avatar'
 import ImageCropModal from './common/ImageCropModal'
 import { Heart, Star, Theater, Book, Mic, Lock, Mail } from './common/Icon'
@@ -11,6 +12,7 @@ export default function ProfilePage() {
   const setUserAvatar = useAppStore((s) => s.setUserAvatar)
   const loadUserAvatar = useAppStore((s) => s.loadUserAvatar)
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
+  const updateNickname = useAppStore((s) => s.updateNickname)
   const setView = useAppStore((s) => s.setView)
 
   const [cropFile, setCropFile] = useState(null)
@@ -24,6 +26,17 @@ export default function ProfilePage() {
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [confirmPw, setConfirmPw] = useState('')
+
+  // Nickname
+  const [nickname, setNickname] = useState(authUser?.nickname || '')
+  const [nicknameSaving, setNicknameSaving] = useState(false)
+  const [nicknameMsg, setNicknameMsg] = useState('')
+  const [nicknameError, setNicknameError] = useState(false)
+
+  // Sync nickname state when authUser changes (e.g. after save)
+  useEffect(() => {
+    setNickname(authUser?.nickname || '')
+  }, [authUser?.nickname])
 
   // Email binding
   const [email, setEmail] = useState('')
@@ -215,6 +228,27 @@ export default function ProfilePage() {
     }
   }, [bindEmail, bindCode])
 
+  const handleNicknameSave = useCallback(async () => {
+    const trimmed = nickname.trim()
+    if (trimmed.length > 30) {
+      setNicknameMsg('昵称长度不能超过 30 个字符')
+      setNicknameError(true)
+      return
+    }
+    setNicknameSaving(true)
+    setNicknameMsg('')
+    setNicknameError(false)
+    try {
+      await updateNickname(trimmed)
+      setNicknameMsg('昵称已更新')
+    } catch (err) {
+      setNicknameMsg(err.message || '保存失败')
+      setNicknameError(true)
+    } finally {
+      setNicknameSaving(false)
+    }
+  }, [nickname, updateNickname])
+
   const togglePrivacy = useCallback(async (key) => {
     const next = !privacy[key]
     setPrivacy((p) => ({ ...p, [key]: next }))
@@ -252,7 +286,7 @@ export default function ProfilePage() {
             title="更换头像"
             disabled={avatarSaving}
           >
-            <Avatar name={authUser?.username || '?'} src={userAvatar} size={96} />
+            <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
             <span className="profile-avatar-overlay">
               {avatarSaving ? '…' : '\u{1F4F7}'}
             </span>
@@ -291,6 +325,40 @@ export default function ProfilePage() {
             <span className="profile-stat-label">{label}</span>
           </button>
         ))}
+      </div>
+
+      {/* 昵称设置 */}
+      <div className="profile-card">
+        <h2 className="profile-section-title">昵称</h2>
+        <div className="profile-field">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              className="profile-input"
+              style={{ flex: 1 }}
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder={`留空则显示「${authUser?.username || ''}」`}
+              maxLength={30}
+            />
+            <button
+              type="button"
+              className="btn-primary profile-save-btn"
+              onClick={handleNicknameSave}
+              disabled={nicknameSaving}
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              {nicknameSaving ? '保存中…' : '保存'}
+            </button>
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>
+            昵称可重复，为空时显示用户名。用户名不可修改。
+          </div>
+          {nicknameMsg && (
+            <span className={`profile-inline-msg${nicknameError ? ' error' : ' success'}`}>
+              {nicknameMsg}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* 3项网格：音色/密码/邮箱 */}

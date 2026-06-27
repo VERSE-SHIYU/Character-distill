@@ -11,6 +11,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
+import { displayName } from '../utils/displayName'
 import { getCoverGradient } from './BookReader'
 
 /* ── MineCardMenu ── */
@@ -124,7 +125,7 @@ export default function MinePage() {
   }
   const userId = isMe ? authUser?.id : authorUserId
   const prof = isMe ? authUser : profileAuthor
-  const username = prof?.username || '?'
+  const username = displayName(prof) || '?'
   const avatarSrc = isMe ? userAvatar : profileAuthor?.avatar_data
 
   // Clear authorUserId when navigating to "mine" view (same component, no remount)
@@ -989,9 +990,9 @@ export default function MinePage() {
               {followers.map(f => (
                 <div key={f.id} className="mine-follow-card">
                   <button type="button" className="mine-follow-card-main" onClick={() => { setAuthorUserId(f.id); setView('author') }}>
-                    <Avatar name={f.username || '?'} size={44} src={f.avatar_data} />
+                    <Avatar name={displayName(f) || '?'} size={44} src={f.avatar_data} />
                     <div className="mine-follow-info">
-                      <span className="mine-follow-name">{f.username}</span>
+                      <span className="mine-follow-name">{displayName(f)}</span>
                       {f.bio && <span className="mine-follow-bio">{f.bio}</span>}
                     </div>
                   </button>
@@ -1031,14 +1032,14 @@ export default function MinePage() {
             <div className="mine-following-list">
               {following.map(u => (
                 <div key={u.id} className="mine-following-card">
-                  <Avatar name={u.username || '?'} src={u.avatar_data} size={44} />
+                  <Avatar name={displayName(u) || '?'} src={u.avatar_data} size={44} />
                   <div className="mine-following-info">
                     <button
                       type="button"
                       className="mine-following-name"
                       onClick={() => { setAuthorUserId(u.id); setView('author') }}
                     >
-                      {u.username}
+                      {displayName(u)}
                     </button>
                     <span className="mine-following-meta">
                       {u.cards_count ?? 0} 个角色

@@ -15,6 +15,7 @@ import ReplyQuote from './common/ReplyQuote'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
+import { displayName } from '../utils/displayName'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -421,7 +422,7 @@ export default function GroupChatPage() {
     const personaName = (group.user_persona_type === 'character' || group.user_persona_type === 'stranger')
       ? (group.user_persona_name || '角色')
       : null
-    const who = personaName || userRole || authUser?.username || '用户'
+    const who = personaName || userRole || displayName(authUser) || '用户'
     setSystemMessage(`${who} 加入了群聊`)
   }
 
@@ -622,7 +623,7 @@ export default function GroupChatPage() {
       : (currentGroup?.user_persona_type === 'stranger' && currentGroup?.user_persona_name)
         ? currentGroup.user_persona_name
         : null
-    const speaker = personaSpeaker || userRole || authUser?.username || '我'
+    const speaker = personaSpeaker || userRole || displayName(authUser) || '我'
     setMessages(prev => [...prev, {
       id: `optimistic-${Date.now()}`,
       role: 'user',
@@ -1049,7 +1050,7 @@ export default function GroupChatPage() {
                             ) : (
                             <ChatBubble
                               side="right"
-                              avatar={<Avatar name={personaSpeaker || authUser?.username || '我'} size={72} src={userAvatar} />}
+                              avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={72} src={userAvatar} />}
                               name={personaSpeaker || undefined}
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />

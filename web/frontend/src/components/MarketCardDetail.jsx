@@ -8,6 +8,7 @@ import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
+import { displayName } from '../utils/displayName'
 import EmojiPicker from './common/EmojiPicker'
 import { formatRelativeTime } from '../utils/time'
 
@@ -788,11 +789,11 @@ export default function MarketCardDetail() {
                         <input type="checkbox" className="comment-checkbox" checked={selectedCommentIds.has(c.id)} onChange={() => toggleSelectComment(c.id)} />
                       )}
                       <button type="button" className="market-detail-comment-avatar-btn" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>
-                        <Avatar name={c.username} src={c.avatar_data} size={32} />
+                        <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={32} />
                       </button>
                       <div className="market-detail-comment-body">
                         <div className="market-detail-comment-head">
-                          <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>{c.username}</button>
+                          <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>{displayName(c)}</button>
                           <span className="market-detail-comment-time">{formatRelativeTime(c.created_at)}</span>
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>

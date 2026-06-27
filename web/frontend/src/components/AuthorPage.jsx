@@ -9,6 +9,7 @@ import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
+import { displayName } from '../utils/displayName'
 
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
@@ -236,10 +237,10 @@ export default function AuthorPage({ embedded = false }) {
 
               {/* ── Section 1: Profile hero ── */}
               <div className="author-hero">
-                <Avatar name={author.username || '?'} src={author.avatar_data} size={72} />
+                <Avatar name={displayName(author) || '?'} src={author.avatar_data} size={72} />
                 <div className="author-hero-text">
                   <h2 className="author-name">
-                    {author.username}
+                    {displayName(author)}
                     {!authorPresenceHidden && authorOnline !== null && (
                       <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <span style={{ width: 6, height: 6, borderRadius: '50%', background: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
@@ -272,9 +273,9 @@ export default function AuthorPage({ embedded = false }) {
                             {followersList.map((f) => (
                               <div key={f.id || f.user_id} className="stat-follow-modal-item">
                                 <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowers(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
-                                  <Avatar name={f.username || '?'} src={f.avatar_data || null} size={36} />
+                                  <Avatar name={displayName(f) || '?'} src={f.avatar_data || null} size={36} />
                                   <div className="stat-follow-modal-info">
-                                    <span className="stat-follow-modal-name">{f.username}</span>
+                                    <span className="stat-follow-modal-name">{displayName(f)}</span>
                                     {f.bio && <span className="stat-follow-modal-bio">{f.bio}</span>}
                                   </div>
                                 </button>
@@ -319,9 +320,9 @@ export default function AuthorPage({ embedded = false }) {
                             {followingList.map((f) => (
                               <div key={f.id || f.user_id} className="stat-follow-modal-item">
                                 <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowing(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
-                                  <Avatar name={f.username || '?'} src={f.avatar_data || null} size={36} />
+                                  <Avatar name={displayName(f) || '?'} src={f.avatar_data || null} size={36} />
                                   <div className="stat-follow-modal-info">
-                                    <span className="stat-follow-modal-name">{f.username}</span>
+                                    <span className="stat-follow-modal-name">{displayName(f)}</span>
                                     {f.bio && <span className="stat-follow-modal-bio">{f.bio}</span>}
                                   </div>
                                 </button>

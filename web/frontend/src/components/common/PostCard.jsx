@@ -5,6 +5,7 @@ import Avatar from './Avatar'
 import { Heart, MessageSquare, Trash2 } from './Icon'
 import { parseCardJson } from '../../utils/card'
 import { formatRelativeTime } from '../../utils/time'
+import { displayName } from '../../utils/displayName'
 
 /* ── Expandable text ── */
 function ExpandableText({ text, maxLines = 6 }) {
@@ -205,7 +206,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                   className="post-card-comment-avatar-btn"
                   onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
                 >
-                  <Avatar name={c.username} src={c.avatar_data} size={28} />
+                  <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={28} />
                 </button>
                 <div className="post-card-comment-body">
                   <div className="post-card-comment-head">
@@ -214,7 +215,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                       className="post-card-comment-user"
                       onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
                     >
-                      {c.username}
+                      {displayName(c)}
                     </button>
                     {c.ip_location && <span className="post-card-comment-ip">IP属地: {c.ip_location}</span>}
                     <span className="post-card-comment-time">{c.created_at ? formatRelativeTime(c.created_at) : ''}</span>

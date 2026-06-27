@@ -420,6 +420,23 @@ const useAppStore = create((set, get) => ({
     return res.json()
   },
 
+  updateNickname: async (newNickname) => {
+    const res = await fetchWithTimeout('/api/auth/nickname', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname: newNickname }),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: '保存失败' }))
+      throw new Error(err.detail || '保存失败')
+    }
+    const data = await res.json()
+    set((s) => ({
+      authUser: s.authUser ? { ...s.authUser, nickname: data.nickname } : null,
+    }))
+    return data
+  },
+
   _synthesizeVoiceReply: async (reply, charIdx) => {
     const { sessionId } = get()
     if (!reply || !sessionId) return

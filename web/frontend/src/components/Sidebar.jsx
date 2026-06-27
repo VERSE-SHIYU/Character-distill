@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
 import { fetchWithTimeout, globalSearch } from '../api/client'
+import { displayName } from '../utils/displayName'
 
 function Svg({ d, viewBox = '0 0 24 24', children, size = 20 }) {
   return (
@@ -249,9 +250,9 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
                       <div className="sidebar-search-group-title">用户</div>
                       {searchResults.users.map((u) => (
                         <button key={u.id} className="sidebar-search-item" onClick={() => handleResultClick('user', u)}>
-                          <Avatar name={u.username || '?'} size={28} src={u.avatar_data} />
+                          <Avatar name={displayName(u) || '?'} size={28} src={u.avatar_data} />
                           <div className="sidebar-search-item-text">
-                            <span className="sidebar-search-item-name">{u.username}</span>
+                            <span className="sidebar-search-item-name">{displayName(u)}</span>
                           </div>
                         </button>
                       ))}
@@ -302,8 +303,8 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               onClick={() => setView('profile')}
               title="个人设置"
             >
-              <Avatar name={authUser.username} src={useAppStore.getState().userAvatar} size={60} />
-              <span className="sidebar-user-name">{authUser.username}</span>
+              <Avatar name={displayName(authUser) || '?'} src={useAppStore.getState().userAvatar} size={60} />
+              <span className="sidebar-user-name">{displayName(authUser)}</span>
             </button>
           </div>
           <div className="sidebar-action-row">

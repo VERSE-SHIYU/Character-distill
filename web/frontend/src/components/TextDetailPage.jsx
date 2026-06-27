@@ -7,6 +7,7 @@ import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { Heart } from './common/Icon'
 import { formatRelativeTime } from '../utils/time'
+import { displayName } from '../utils/displayName'
 
 export default function TextDetailPage() {
   const setView = useAppStore((s) => s.setView)
@@ -327,10 +328,10 @@ function CommentItem({
   return (
     <div className="market-card" style={{ alignItems: 'flex-start', flexDirection: 'column' }}>
       <div style={{ display: 'flex', gap: 10, width: '100%' }}>
-        <Avatar name={comment.username || '?'} size={36} />
+        <Avatar name={displayName(comment) || '?'} size={36} />
         <div className="market-card-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <span style={{ fontWeight: 600, fontSize: 13 }}>{comment.username}</span>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>{displayName(comment)}</span>
             <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(comment.created_at)}</span>
           </div>
           <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 6 }}>
@@ -400,10 +401,10 @@ function CommentItem({
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {displayReplies.map((reply) => (
               <div key={reply.id} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                <Avatar name={reply.username || '?'} size={28} />
+                <Avatar name={displayName(reply) || '?'} size={28} />
                 <div className="market-card-body">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <span style={{ fontWeight: 600, fontSize: 12 }}>{reply.username}</span>
+                    <span style={{ fontWeight: 600, fontSize: 12 }}>{displayName(reply)}</span>
                     <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(reply.created_at)}</span>
                   </div>
                   <p style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
