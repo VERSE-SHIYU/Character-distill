@@ -21,8 +21,10 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Python 依赖（先拷贝 requirements 利用 Docker 缓存）
+# 国内构建时: docker build --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_INDEX_URL=https://pypi.org/simple/
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
+RUN pip install --no-cache-dir -r requirements.txt -i "$PIP_INDEX_URL" && \
     pip uninstall -y onnxruntime kubernetes 2>/dev/null || true
 
 # 拷贝项目代码

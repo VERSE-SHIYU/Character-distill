@@ -220,6 +220,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Sensitive compose files (contain credentials)
+docker-compose.yml
+
 # Claude Code
 .claude/
 

@@ -7,4 +7,12 @@ services:
       - ./data:/app/data
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     restart: unless-stopped
+    networks:
+      - prod
+
+networks:
+  prod:
+    external: true

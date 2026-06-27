@@ -338,7 +338,8 @@ async def migrate_users(
     user_cols = [c for c in sqlite_users[0].keys()
                  if c in pg_users_cols and c not in SECRET_COLUMNS]
     # home_region 不在 SQLite 中，手动追加
-    user_cols.append("home_region")
+    if "home_region" not in user_cols:
+        user_cols.append("home_region")
 
     secrets_cols = ["user_id", "password_hash", "api_key", "base_url", "model"]
 
