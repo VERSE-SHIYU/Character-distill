@@ -166,6 +166,10 @@ class AffinityService:
             "反例：对方说\"今天吃了火锅\" → null\n"
             "反例：对方说\"今天好累\" → null\n"
             "due_at 尽量归一化成 ISO 时间，模糊时间给粗略日期即可。\n\n"
+            "出戏判定规则（用于 in_character / ooc_reason 字段）：\n"
+            "- 符合人设的冷淡、拒绝、距离感是高分（in_character 高），不是出戏\n"
+            "- 出戏特指「违背这张卡片的性格与当前关系阶段，去无原则讨好/迁就对方」\n"
+            "- 评判只针对「是否像这个人」，不涉及内容安全（安全另有独立约束）\n\n"
             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
             '  "affinity": 0-100整数,\n'
@@ -175,7 +179,9 @@ class AffinityService:
             '  "inner_voice": "你的第一人称内心独白2-3句",\n'
             '  "mood_emoji": "一个最贴合此刻情绪的emoji",\n'
             '  "importance": 1-10整数,\n'
-            '  "time_event": null 或 {"event":"事件名","when_text":"用户原话描述","due_at":"ISO时间"}\n'
+            '  "time_event": null 或 {"event":"事件名","when_text":"用户原话描述","due_at":"ISO时间"},\n'
+            '  "in_character": 0-100整数,  // 刚才的回复有多符合这张卡片此刻该有的姿态\n'
+            '  "ooc_reason": "一句话说明哪里出戏，符合人设则空字符串"\n'
             "}"
         )
         return prompt

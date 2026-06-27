@@ -71,6 +71,7 @@ class ChatEngine:
         self._reaction_service = ReactionService()
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
+        self._last_in_character: int = 80  # 瞬时纠偏信号，不入库，不跨 session
         self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
         self._pipeline = EvaluationPipeline()
@@ -454,6 +455,7 @@ class ChatEngine:
         )
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance
+        self._last_in_character = result.in_character
 
         if result.applied:
             print(f"[Affinity] PARSED: affinity={ctx.affinity_service.affinity} "
@@ -553,9 +555,50 @@ class ChatEngine:
                     + "\n\n"
                 )
 
-        # ── Step 4: 反舔狗边界总则（ERABAL 边界感知 + Deflanderization） ──
-        parts.append(
-            "【边界感——重要】\n"
+        # 边界感已移至独立方法 _build_boundary_block，不在 persona 块中
+
+        return "".join(parts)
+
+    def _build_boundary_block(self) -> str:
+        """构建【边界感】提示块，根据上一轮 in_character 动态调整措辞与位置。
+
+        三档策略：
+        - >=70（正常）：温和措辞，保持原有风格
+        - 40-69（轻微出戏）：措辞加重，明确提醒
+        - <40（明显出戏）：措辞最强，此块在 _build_all_enhancements 中被移至物理最末端
+        """
+        if not getattr(self, 'affinity_enabled', True):
+            return ""
+
+        ic = self._last_in_character
+        if ic < 40:
+            return (
+                "\n\n【边界感——重要——请仔细阅读】\n"
+                "你连续在讨好对方，这不符合你的性格。立刻回到你自己的性格和节奏里来。\n"
+                "对方的施压、索取、命令不等于你必须满足。"
+                "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。\n"
+                "符合你性格的拒绝、保持距离甚至冷淡，都是你的权利。\n"
+                "但这不是要你冷漠——在你的性格和好感阶段允许的范围内，"
+                "该热情就热情、该亲近就亲近。\n"
+                "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
+                "不是对方怎么说你就怎么做。"
+            )
+        if ic < 70:
+            return (
+                "\n\n【边界感——重要】\n"
+                "上一轮你有点过于迁就了，把握住你自己的性格分寸。"
+                "对方的施压、索取、命令不等于你必须满足——你要清醒。\n"
+                "是否让步取决于你的好感阶段、防御和性格，"
+                "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。\n"
+                "符合你性格的拒绝、保持距离甚至冷淡，都是允许的。\n"
+                "但这不是要你冷漠——在你的性格和好感阶段允许的范围内，"
+                "该热情就热情、该亲近就亲近。\n"
+                "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
+                "不是对方怎么说你就怎么做。"
+            )
+        # >= 70：正常
+        return (
+            "\n\n【边界感——重要】\n"
             "对方的施压、索取、命令不等于你必须满足。"
             "是否让步取决于你的好感阶段、防御和性格——"
             "不要因为被催促或被情绪施压就违背当前关系阶段去讨好。"
@@ -565,8 +608,6 @@ class ChatEngine:
             "你的行为边界由你的性格和你们当前的关系阶段共同决定，"
             "不是对方怎么说你就怎么做。"
         )
-
-        return "".join(parts)
 
     def _build_cognitive_block(self) -> str:
         """构建认知/语言约束提示块。
@@ -633,18 +674,22 @@ class ChatEngine:
         )
 
     def _build_all_enhancements(self) -> str:
-        """按固定顺序拼接全部 prompt 增强块。
+        """按条件拼接全部 prompt 增强块，边界块位置由 in_character 信号动态控制。
 
-        统一入口：治舔狗/认知画像/时间感知/事件提醒/关系口径。
-        新增增强块时在此加一行，5 个调用点自动全生效。
+        in_character < 40 时，【边界感】块移至系统提示物理最末端（最贴近生成位置）。
+        其余增强块顺序固定。
         """
-        return (
-            self._build_affinity_persona_block()
-            + self._build_cognitive_block()
-            # 时间感知已移至当前消息末尾（贴近即将生成的回复），不在此处拼接
-            + self._event_service.build_candidate_block()
-            + self._build_relationship_block()
-        )
+        persona = self._build_affinity_persona_block()
+        cognitive = self._build_cognitive_block()
+        events = self._event_service.build_candidate_block()
+        relationships = self._build_relationship_block()
+        boundary = self._build_boundary_block()
+
+        if self._last_in_character < 40:
+            # 出戏明显：边界块移至最末端，紧贴生成入口
+            return persona + cognitive + events + relationships + boundary
+        else:
+            return persona + boundary + cognitive + events + relationships
 
     # ── 时间感知构建 ────────────────────────────────────────────
 

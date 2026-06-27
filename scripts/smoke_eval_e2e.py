@@ -251,7 +251,8 @@ def smoke_c_fault_injection(store, db_path: str, llm: LLMAdapter) -> dict:
         '{"affinity":58,"trust":42,"mood":"开心","guard":38,'
         '"inner_voice":"她主动关心我，有点感动。","mood_emoji":"😊",'
         '"importance":7,'
-        '"time_event":{"event":"明天有面试","when_text":"明天","due_at":"2026-06-26T10:00"}}'
+        '"time_event":{"event":"明天有面试","when_text":"明天","due_at":"2026-06-26T10:00"},'
+        '"in_character":85,"ooc_reason":""}'
     )
 
     class FaultLLM:

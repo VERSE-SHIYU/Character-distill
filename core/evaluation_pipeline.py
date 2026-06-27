@@ -37,6 +37,8 @@ class EvalResult:
     affinity: int = 50
     stage_upgraded: bool = False
     applied: bool = False
+    in_character: int = 80  # 瞬时信号，不入库，不跨 session
+    ooc_reason: str = ""
 
 
 class EvaluationPipeline:
@@ -62,6 +64,11 @@ class EvaluationPipeline:
             return EvalResult(importance=5, applied=False)
 
         importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage)
+        # 瞬时纠偏信号：只传递，不入库，不跨 session
+        in_character = data.get("in_character", 80)
+        if not isinstance(in_character, int) or in_character < 0 or in_character > 100:
+            in_character = 80
+        ooc_reason = data.get("ooc_reason", "")
         # 到此核心状态已落定，下面任何异常都不得回滚
 
         # ── SIDE-EFFECT layer（全部 fire-and-forget）─────────────
@@ -72,6 +79,8 @@ class EvaluationPipeline:
             importance=importance,
             affinity=ctx.affinity_service.affinity,
             stage_upgraded=ctx.affinity_service.stage_upgraded,
+            in_character=in_character,
+            ooc_reason=ooc_reason,
             applied=True,
         )
 

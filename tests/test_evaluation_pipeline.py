@@ -179,12 +179,36 @@ class TestEvaluationPipeline:
         assert result.applied is True
         assert result.importance == 7
         assert result.affinity == 65
+        assert result.in_character == 80  # default when LLM doesn't provide it
+        assert result.ooc_reason == ""
         assert svc.affinity == 65
         assert svc.trust == 45
         assert svc.mood == "开心"
         assert svc.guard == 35
         # stage_upgraded: 65 → 认识阶段（默认 50 → 65 跨档）
         assert result.stage_upgraded is True
+
+    def test_in_character_propagated(self, monkeypatch):
+        """in_character 字段从 LLM data → EvalResult → ChatEngine 正确传播。"""
+        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        llm_reply = (
+            '{"affinity":55,"trust":40,"mood":"平静","guard":50,'
+            '"inner_voice":"还行","mood_emoji":"😐","importance":6,'
+            '"time_event":null,'
+            '"in_character":35,"ooc_reason":"对方施压后立刻妥协，不符合性格"}'
+        )
+        llm = FakeLLM(reply=llm_reply)
+        svc = AffinityService()
+        ctx = _build_context(affinity_service=svc, llm=llm)
+        pipeline = EvaluationPipeline()
+        result = pipeline.run(ctx)
+
+        assert result.applied is True
+        assert result.in_character == 35
+        assert result.ooc_reason == "对方施压后立刻妥协，不符合性格"
+        # in_character 不影响好感数值
+        assert svc.affinity == 55
+        assert svc.trust == 40
 
     def test_core_layer_failure_returns_applied_false(self):
         """CORE 层 LLM 抛异常 → applied=False, importance=5，不触碰持久化。"""
