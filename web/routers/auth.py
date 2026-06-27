@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import secrets
 import time
 import uuid
@@ -24,6 +25,8 @@ from limiter import limiter
 from web.geo_guard import check_api_allowed
 from web.legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 from web.limiter import get_client_ip
+
+USERNAME_RE = re.compile(r'^[a-zA-Z0-9_]{2,20}$')
 
 logger = logging.getLogger("charsim.auth")
 
@@ -214,8 +217,8 @@ async def send_code(
 async def register(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
-    if not username or len(username) < 2:
-        raise HTTPException(400, "用户名至少 2 个字符")
+    if not USERNAME_RE.match(username):
+        raise HTTPException(400, "用户名只能包含英文字母、数字、下划线，长度 2–20 位")
     if not req.password or len(req.password) < 8:
         raise HTTPException(400, "密码至少 8 位，需包含字母和数字")
     if not _is_strong_password(req.password):

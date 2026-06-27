@@ -110,6 +110,10 @@ export default function LoginPage() {
       setError('请填写用户名和密码')
       return
     }
+    if (tab === 'register' && !/^[a-zA-Z0-9_]{2,20}$/.test(username.trim())) {
+      setError('用户名只能含英文、数字、下划线，2–20 位')
+      return
+    }
     if (tab === 'register' && !inviteCode.trim()) {
       setError('请填写邀请码')
       return
@@ -251,10 +255,13 @@ export default function LoginPage() {
               name={tab === 'register' ? `reg-user-${nameSuffix.current}` : 'username'}
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="请输入用户名"
+              placeholder={tab === 'register' ? '英文 / 数字 / 下划线，2–20 位' : '请输入用户名'}
               autoComplete={tab === 'login' ? 'username' : 'off'}
               autoFocus
             />
+            {tab === 'register' && (
+              <span className="login-field-hint">用于登录，注册后不可修改；昵称可在「我的-昵称」中随时设置</span>
+            )}
           </div>
           <div className="login-field">
             <label htmlFor={tab === 'register' ? `reg-pass-${nameSuffix.current}` : 'login-password'}>密码</label>
