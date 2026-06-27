@@ -1909,7 +1909,7 @@ class PostgresStore(StorageBase):
                 )
                 if not row:
                     return False
-                if row["expires_at"] < datetime.now(timezone.utc).isoformat():
+                if row["expires_at"] < datetime.now(timezone.utc):
                     return False
                 await conn.execute(
                     "UPDATE verification_codes SET used = 1 WHERE id = $1",
@@ -1927,7 +1927,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 tag = await conn.execute(
                     "DELETE FROM verification_codes WHERE expires_at < $1",
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc),
                 )
                 return self._parse_rowcount(tag)
         except Exception as exc:

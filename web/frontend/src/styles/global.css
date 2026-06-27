@@ -13105,7 +13105,7 @@ select.settings-input {
   width: 100%;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-color, rgba(128,128,128,0.3));
+  border: 1px solid var(--input-border);
   background: rgba(128,128,128,0.08);
   color: var(--text, inherit);
   font-size: 14px;
