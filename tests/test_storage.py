@@ -1215,7 +1215,7 @@ class TestGetAllUsersAdminFields:
         assert len(matching) == 1
         row = matching[0]
 
-        allowed = {"id", "username", "home_region", "is_disabled", "created_at", "last_active_at"}
+        allowed = {"id", "username", "nickname", "home_region", "is_disabled", "created_at", "last_active_at"}
         actual = set(row.keys())
         extras = actual - allowed
         assert not extras, f"Unexpected fields in admin output: {extras}"
