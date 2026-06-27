@@ -641,7 +641,7 @@ async def legacy_chat(
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
     user_id = user["id"]
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, affinity_enabled=req.affinity_enabled)
+    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, voice_mode=False, affinity_enabled=req.affinity_enabled, client_tz=req.client_tz)
 
 
 @legacy_router.post("/api/reset")
