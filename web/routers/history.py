@@ -147,6 +147,26 @@ async def get_session_detail(
     return {"session": session, "messages": messages}
 
 
+class UpdateAvatarRequest(BaseModel):
+    avatar_data: str
+
+
+@router.put("/{session_id}/avatar")
+async def update_session_avatar(
+    session_id: str,
+    body: UpdateAvatarRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Update session-level user avatar (per-conversation, not global)."""
+    if len(body.avatar_data) > 150_000:
+        raise HTTPException(400, "头像数据过大")
+    ok = await storage.update_session_avatar(session_id, user["id"], body.avatar_data)
+    if not ok:
+        raise HTTPException(404, "会话不存在或无权修改")
+    return {"ok": True}
+
+
 @router.post("/{session_id}/resume")
 async def resume_session(
     session_id: str,

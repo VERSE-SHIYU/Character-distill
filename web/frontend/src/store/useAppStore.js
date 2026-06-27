@@ -49,6 +49,7 @@ const useAppStore = create((set, get) => ({
       standaloneCards: [],
       currentCard: null,
       sessionId: null,
+      currentSessionAvatar: null,
       messages: [],
       currentTextId: null,
       currentTextTitle: '',
@@ -364,6 +365,9 @@ const useAppStore = create((set, get) => ({
 
   userAvatar: null,
   setUserAvatar: (url) => set({ userAvatar: url }),
+
+  currentSessionAvatar: null,
+  setCurrentSessionAvatar: (url) => set({ currentSessionAvatar: url }),
 
   userBanner: null,
   setUserBanner: (url) => set({ userBanner: url }),
@@ -937,6 +941,7 @@ const useAppStore = create((set, get) => ({
       currentView: 'chat',
       sending: true,
       messages: [],
+      currentSessionAvatar: null,
       userAvatar: null,
       _chatAbort: abort,
     })
@@ -973,6 +978,7 @@ const useAppStore = create((set, get) => ({
     set({
       currentCard: { ...card, session_id: sessionId },
       sessionId,
+      currentSessionAvatar: null,
       sending: false,
       messages: data.first_message
         ? [{ role: 'char', content: data.first_message }]
@@ -1001,6 +1007,7 @@ const useAppStore = create((set, get) => ({
         : data.first_message
           ? [{ role: 'char', content: data.first_message }]
           : [],
+      currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
       error: null,
     })
@@ -1026,6 +1033,7 @@ const useAppStore = create((set, get) => ({
       currentView: 'chat',
       sending: true,
       messages: [],
+      currentSessionAvatar: null,
       userAvatar: null,
     })
 
@@ -1285,6 +1293,7 @@ const useAppStore = create((set, get) => ({
       set({
         sessionId: session.id || sessionId,
         userRole: session.user_role ?? '',
+        currentSessionAvatar: session.avatar_data ?? null,
         messages,
         currentCard: {
           id: session.card_id,

@@ -1870,6 +1870,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get session failed: {exc}")
             raise
 
+    async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update session-level user avatar. Ownership check prevents cross-user writes."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE sessions SET avatar_data = ? WHERE id = ? AND user_id = ?",
+                    (avatar_data, session_id, user_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Update session avatar failed: {exc}")
+            raise
+
     async def list_sessions(
         self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:

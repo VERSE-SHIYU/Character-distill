@@ -68,6 +68,10 @@ class StorageBase(ABC):
         """Get a session record by ID."""
 
     @abstractmethod
+    async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update session-level user avatar. Returns False if ownership check fails."""
+
+    @abstractmethod
     async def list_sessions(
         self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:

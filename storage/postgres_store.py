@@ -1061,6 +1061,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get session failed: {exc}")
             raise
 
+    async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update session-level user avatar. Ownership check prevents cross-user writes."""
+        try:
+            async with await self._connect() as conn:
+                tag = await conn.execute(
+                    "UPDATE sessions SET avatar_data = $1 WHERE id = $2 AND user_id = $3",
+                    avatar_data, session_id, user_id,
+                )
+                return tag.rowcount > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Update session avatar failed: {exc}")
+            raise
+
     async def list_sessions(self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = "") -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)

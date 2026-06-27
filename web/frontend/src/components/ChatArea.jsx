@@ -210,8 +210,10 @@ function ChatView() {
   const avatarUrl = cardAvatars[cardId] || null
   const avatarInputRef = useRef(null)
 
-  // ---- User avatar ----
-  const userAvatarUrl = useAppStore((s) => s.userAvatar)
+  // ---- User avatar (session-level with global fallback) ----
+  const globalUserAvatar = useAppStore((s) => s.userAvatar)
+  const currentSessionAvatar = useAppStore((s) => s.currentSessionAvatar)
+  const userAvatarUrl = currentSessionAvatar || globalUserAvatar
   const userAvatarInputRef = useRef(null)
   const [userCropFile, setUserCropFile] = useState(null)
 
@@ -224,11 +226,24 @@ function ChatView() {
 
   const handleUserCropConfirm = useCallback(async (base64) => {
     setUserCropFile(null)
-    useAppStore.setState({ userAvatar: base64 })
+    if (!sessionId) {
+      // No active session — write global avatar
+      useAppStore.setState({ userAvatar: base64 })
+      try {
+        await useAppStore.getState().saveUserAvatar(base64)
+      } catch { /* non-fatal */ }
+      return
+    }
+    // Write session-level avatar (per-conversation isolation)
     try {
-      await useAppStore.getState().saveUserAvatar(base64)
+      await fetchWithTimeout(`/api/history/${sessionId}/avatar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar_data: base64 }),
+      })
+      useAppStore.getState().setCurrentSessionAvatar(base64)
     } catch { /* non-fatal */ }
-  }, [])
+  }, [sessionId])
 
   const handleUserCropCancel = useCallback(() => setUserCropFile(null), [])
 
