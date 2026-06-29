@@ -464,7 +464,7 @@ function UsersTab() {
 
   const fmtDate = (iso) => {
     if (!iso) return '-'
-    return iso.slice(0, 10)
+    return formatChatTime(iso)
   }
 
   return (
