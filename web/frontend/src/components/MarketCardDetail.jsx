@@ -7,6 +7,7 @@ import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+import EditCardModal from './EditCardModal'
 import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import EmojiPicker from './common/EmojiPicker'
@@ -71,7 +72,6 @@ export default function MarketCardDetail() {
   const [restoring, setRestoring] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editing, setEditing] = useState(false)
-  const editFormRef = useRef(null)
   const [cropFile, setCropFile] = useState(null)
   const [avatarSaving, setAvatarSaving] = useState(false)
   const avatarInputRef = useRef(null)
@@ -415,25 +415,14 @@ export default function MarketCardDetail() {
     }
   }
 
-  const handleEditSave = async (formData) => {
+  const handleEditSave = async (cardJson) => {
     setEditing(true)
     try {
-      const currentCardJson = parseCardJson(card)
-      const updatedJson = {
-        ...currentCardJson,
-        name: formData.name.trim(),
-        identity: formData.identity.trim(),
-        background: formData.background.trim(),
-        personality_traits: formData.personality_traits.split('\n').map(s => s.trim()).filter(Boolean),
-        values: formData.values.split('\n').map(s => s.trim()).filter(Boolean),
-        key_memories: formData.key_memories.split('\n').map(s => s.trim()).filter(Boolean),
-        inner_tensions: formData.inner_tensions.split('\n').map(s => s.trim()).filter(Boolean),
-      }
       const res = await fetchWithTimeout(`/api/market/${cardId}/publish`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({
-          card_json: JSON.stringify(updatedJson),
+          card_json: JSON.stringify(cardJson),
           market_description: card.market_description || '',
           market_tags: card.market_tags || '',
           publish_message: '编辑更新',
@@ -444,7 +433,6 @@ export default function MarketCardDetail() {
         throw new Error(err.detail || '保存失败')
       }
       setShowEditModal(false)
-      // Reload card data
       const cardRes = await fetchWithTimeout(`/api/market/card/${cardId}`)
       const cardData = await cardRes.json()
       setCard(cardData)
@@ -1114,60 +1102,16 @@ export default function MarketCardDetail() {
       )}
 
       {/* ── Edit card modal ── */}
-      {showEditModal && (() => {
-        const current = parseCardJson(card)
-        const readForm = () => {
-          const el = editFormRef.current
-          if (!el) return {}
-          const fields = el.querySelectorAll('[data-field]')
-          const data = {}
-          fields.forEach((f) => { data[f.getAttribute('data-field')] = f.value })
-          return data
-        }
-        return (
-          <div className="modal-overlay" onClick={() => { if (!editing) setShowEditModal(false) }}>
-            <div className="modal-card" style={{ maxWidth: 520, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
-              <h3 className="modal-title">编辑角色卡</h3>
-              <div className="modal-body" style={{ overflow: 'auto', flex: 1, padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: 12 }} ref={editFormRef}>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>名称</label>
-                  <input className="market-detail-comment-field" data-field="name" defaultValue={current.name || ''} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>身份</label>
-                  <input className="market-detail-comment-field" data-field="identity" defaultValue={current.identity || ''} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>背景</label>
-                  <textarea className="market-detail-comment-field" data-field="background" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={current.background || ''} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>性格特征（每行一个）</label>
-                  <textarea className="market-detail-comment-field" data-field="personality_traits" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.personality_traits || []).join('\n')} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>核心价值观（每行一个）</label>
-                  <textarea className="market-detail-comment-field" data-field="values" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.values || []).join('\n')} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>关键记忆（每行一个）</label>
-                  <textarea className="market-detail-comment-field" data-field="key_memories" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.key_memories || []).join('\n')} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)', display: 'block', marginBottom: 4 }}>内在矛盾（每行一个）</label>
-                  <textarea className="market-detail-comment-field" data-field="inner_tensions" style={{ minHeight: 60, resize: 'vertical', fontFamily: 'inherit' }} defaultValue={(current.inner_tensions || []).join('\n')} />
-                </div>
-              </div>
-              <div className="modal-actions" style={{ borderTop: '1px solid var(--border)', padding: 12 }}>
-                <button className="btn-ghost" onClick={() => setShowEditModal(false)} disabled={editing}>取消</button>
-                <button className="btn-primary" onClick={() => handleEditSave(readForm())} disabled={editing}>
-                  {editing ? '保存中…' : '保存'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      })()}
+      {showEditModal && (
+        <EditCardModal
+          isOpen={showEditModal}
+          data={parseCardJson(card)}
+          cardId={cardId}
+          editName={true}
+          onSave={handleEditSave}
+          onClose={() => { if (!editing) setShowEditModal(false) }}
+        />
+      )}
 
       <ImageCropModal
         file={cropFile}
