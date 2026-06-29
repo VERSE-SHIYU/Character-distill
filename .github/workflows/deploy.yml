@@ -26,6 +26,11 @@ on:
           - sz-only
           - sg-only
           - both
+      image_sha:
+        description: '镜像 SHA 标签（留空=最新 build）'
+        required: false
+        default: ''
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -121,31 +126,48 @@ jobs:
   # ── 关卡3a：灰度部署深圳 ────────────────────────────────────
   deploy-sz:
     needs: build
-    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
+    if: always() && needs.build.result == 'success' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
     runs-on: ubuntu-latest
+    env:
+      TARGET_SHA: ${{ github.event.inputs.image_sha || needs.build.outputs.commit_sha }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Push docker-compose.prod.yml to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 47.107.42.111
+          username: root
+          key: ${{ secrets.SZ_DEPLOY_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/character-distill/
+          overwrite: true
+
       - name: Deploy to Shenzhen
         uses: appleboy/ssh-action@v1
         with:
           host: 47.107.42.111
           username: root
           key: ${{ secrets.SZ_DEPLOY_KEY }}
+          envs: TARGET_SHA
           script: |
             set -e
             cd /opt/character-distill
 
-            # 拉最新代码（获取更新后的 docker-compose.prod.yml）
-            git pull origin main
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
 
             # 记录当前版本用于回滚
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
-            echo "上一个版本: ${PREV_SHA:-首次部署}"
+            echo "当前版本: ${PREV_SHA:-首次部署}"
+            echo "目标版本: ${TARGET_SHA}"
 
-            # 登录 GHCR 并拉取新镜像
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
-            docker compose -f docker-compose.prod.yml pull app nginx
+            # 拉取目标镜像
+            docker pull ghcr.io/verse-shiyu/character-distill-app:${TARGET_SHA}
+            docker pull ghcr.io/verse-shiyu/character-distill-nginx:${TARGET_SHA}
 
-            # 部署
+            # 部署（环境变量交给 compose 解析 image tag）
+            export APP_IMAGE_TAG=${TARGET_SHA}
+            export NGINX_IMAGE_TAG=${TARGET_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             # 健康检查（最多 60 秒）
@@ -166,7 +188,9 @@ jobs:
               echo "❌ SZ 健康检查失败，回滚..."
               if [ -n "$PREV_SHA" ]; then
                 docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
-                docker tag ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA} ghcr.io/verse-shiyu/character-distill-app:latest
+                docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
+                export APP_IMAGE_TAG=${PREV_SHA}
+                export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
                 echo "已回滚到 ${PREV_SHA}"
               fi
@@ -180,29 +204,48 @@ jobs:
   deploy-sg:
     needs: [build, deploy-sz]
     if: |
-      github.event_name == 'workflow_dispatch' &&
-      (github.event.inputs.target == 'sg-only' ||
-       (github.event.inputs.target == 'both' && needs.deploy-sz.result == 'success'))
+      always() && needs.build.result == 'success' && (
+      github.event.inputs.target == 'sg-only' ||
+      (github.event.inputs.target == 'both' && needs.deploy-sz.result == 'success')
+      )
     runs-on: ubuntu-latest
+    env:
+      TARGET_SHA: ${{ github.event.inputs.image_sha || needs.build.outputs.commit_sha }}
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Push docker-compose.prod.yml to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 43.134.55.201
+          username: ubuntu
+          key: ${{ secrets.SG_DEPLOY_KEY }}
+          source: docker-compose.prod.yml
+          target: /home/ubuntu/Character-distill/
+          overwrite: true
+
       - name: Deploy to Singapore
         uses: appleboy/ssh-action@v1
         with:
           host: 43.134.55.201
           username: ubuntu
           key: ${{ secrets.SG_DEPLOY_KEY }}
+          envs: TARGET_SHA
           script: |
             set -e
             cd /home/ubuntu/Character-distill
 
-            git pull origin main
+            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
 
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
-            echo "上一个版本: ${PREV_SHA:-首次部署}"
+            echo "当前版本: ${PREV_SHA:-首次部署}"
+            echo "目标版本: ${TARGET_SHA}"
 
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
-            docker compose -f docker-compose.prod.yml pull app nginx
+            docker pull ghcr.io/verse-shiyu/character-distill-app:${TARGET_SHA}
+            docker pull ghcr.io/verse-shiyu/character-distill-nginx:${TARGET_SHA}
 
+            export APP_IMAGE_TAG=${TARGET_SHA}
+            export NGINX_IMAGE_TAG=${TARGET_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             echo "等待健康检查..."
@@ -221,7 +264,9 @@ jobs:
               echo "❌ SG 健康检查失败，回滚..."
               if [ -n "$PREV_SHA" ]; then
                 docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
-                docker tag ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA} ghcr.io/verse-shiyu/character-distill-app:latest
+                docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
+                export APP_IMAGE_TAG=${PREV_SHA}
+                export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
                 echo "已回滚到 ${PREV_SHA}"
               fi
