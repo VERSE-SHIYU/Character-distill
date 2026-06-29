@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # Ensure repo root on path
-_repo = Path(__file__).resolve().parent
+_repo = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_repo))
 
 from core.schema import CharacterCard, SpeakingStyle

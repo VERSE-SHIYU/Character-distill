@@ -222,6 +222,7 @@ __marimo__/
 
 # Sensitive compose files (contain credentials)
 docker-compose.yml
+docker-compose.override.yml
 
 # Claude Code
 .claude/
