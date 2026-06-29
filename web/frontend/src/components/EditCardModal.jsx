@@ -29,7 +29,7 @@ const LIMITS = {
 
 const REL_LIMITS = { target: 20, relation: 20, attitude: 50, maxCount: 8 }
 
-export default function EditCardModal({ isOpen, data, cardId, onSave, onClose }) {
+export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, editName = false }) {
   const style = data.speaking_style || {}
   const rels = data.relationships || []
 
@@ -40,6 +40,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
   // lazy init on open
   if (isOpen && Object.keys(form).length === 0) {
     const init = {
+      name: data.name || '',
       identity: data.identity || '',
       personality_traits: splitLines(data.personality_traits),
       tone: style.tone || '',
@@ -120,6 +121,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
     }
     const cardJson = {
       ...data,
+      name: editName ? form.name.trim() : data.name,
       identity: form.identity,
       personality_traits: joinLines(form.personality_traits),
       speaking_style: {
@@ -157,6 +159,11 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose })
         <div className="modal-title">编辑角色卡 — {data.name}</div>
 
         <div className="edit-form-scroll">
+          {editName && (
+            <ModalField label="名称">
+              <input className="modal-input" value={form.name} onChange={(e) => update('name', e.target.value)} maxLength={40} />
+            </ModalField>
+          )}
           <Field label="一句话身份" mono field="identity" value={form.identity}>
             <input className="modal-input" value={form.identity} onChange={(e) => update('identity', e.target.value)} maxLength={LIMITS.identity.max} />
           </Field>
