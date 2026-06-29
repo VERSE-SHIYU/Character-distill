@@ -919,6 +919,7 @@ const useAppStore = create((set, get) => ({
           text_id: card.text_id,
           card_id: card.id || card.card_id,
           user_role: get().userRole,
+          client_tz: clientTz(),
         }, 120000, abort.signal)
         sessionId = result.session_id
       } catch (err) {
@@ -997,6 +998,7 @@ const useAppStore = create((set, get) => ({
           text_id: card.text_id || '',
           card_id: cardId,
           user_role: get().userRole,
+          client_tz: clientTz(),
         }, undefined, abort.signal)
         sessionId = result.session_id
         // Use dynamically generated opening line from API response
@@ -1089,6 +1091,7 @@ const useAppStore = create((set, get) => ({
         text_id: card.text_id || '',
         card_id: cardId,
         user_role: get().userRole,
+        client_tz: clientTz(),
       })
       const sessionId = result.session_id
       if (result.first_message) {
