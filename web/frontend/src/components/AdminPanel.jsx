@@ -909,7 +909,7 @@ function InvitesTab() {
   const handleExportCSV = () => {
     if (codes.length === 0) return
     const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"'
-    const header = ['邀请码', '状态', '使用者', '使用时间', '创建时间']
+    const header = ['邀请码', '状态', '使用者', '使用时间', '创建时间'].map(esc)
     const rows = codes.map((c) => [
       esc(c.code),
       esc(c.used_by ? '已使用' : '未使用'),
@@ -917,8 +917,8 @@ function InvitesTab() {
       esc(c.used_at || ''),
       esc(c.created_at || ''),
     ].join(','))
-    const csv = header.join(',') + '\r\n' + rows.join('\r\n')
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
+    const csv = header.join(',') + '\r\n' + rows.join('\r\n') + '\r\n'
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
