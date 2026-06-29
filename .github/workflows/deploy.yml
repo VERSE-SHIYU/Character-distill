@@ -1,7 +1,7 @@
 # ============================================================
 # Build & Deploy — GHCR + 双节点灰度部署
 #
-# 流程：test → build(GHCR) → deploy SZ(灰度) → deploy SG
+# 流程：push → test + build(GHCR)；手动触发 → 部署 SZ→SG
 # 回滚：健康检查失败自动回滚到上一个 sha
 #
 # 所需 GitHub Secrets:
@@ -14,7 +14,18 @@ name: Build & Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main]    # push 只跑 test + build
+  workflow_dispatch:     # 手动触发时才部署
+    inputs:
+      target:
+        description: '部署目标'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - sz-only
+          - sg-only
+          - both
 
 env:
   REGISTRY: ghcr.io
@@ -104,6 +115,7 @@ jobs:
   # ── 关卡3a：灰度部署深圳 ────────────────────────────────────
   deploy-sz:
     needs: build
+    if: github.event_name == 'workflow_dispatch' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Shenzhen
@@ -158,9 +170,13 @@ jobs:
             docker image prune -f
             echo "✅ SZ 部署成功"
 
-  # ── 关卡3b：部署新加坡（SZ 通过后才执行） ────────────────────
+  # ── 关卡3b：部署新加坡 ────────────────────────────────────
   deploy-sg:
-    needs: deploy-sz
+    needs: [build, deploy-sz]
+    if: |
+      github.event_name == 'workflow_dispatch' &&
+      (github.event.inputs.target == 'sg-only' ||
+       (github.event.inputs.target == 'both' && needs.deploy-sz.result == 'success'))
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to Singapore
