@@ -160,9 +160,9 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
 
         <div className="edit-form-scroll">
           {editName && (
-            <ModalField label="名称">
+            <Field label="名称">
               <input className="modal-input" value={form.name} onChange={(e) => update('name', e.target.value)} maxLength={40} />
-            </ModalField>
+            </Field>
           )}
           <Field label="一句话身份" mono field="identity" value={form.identity}>
             <input className="modal-input" value={form.identity} onChange={(e) => update('identity', e.target.value)} maxLength={LIMITS.identity.max} />
