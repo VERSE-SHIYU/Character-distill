@@ -187,7 +187,7 @@ router = APIRouter(prefix="/api/text", tags=["text"])
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 30 * 1024 * 1024  # 30MB
 ALLOWED_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".log", ".pdf", ".docx"}
 
 
@@ -233,7 +233,7 @@ async def upload_text(
                     if total_size > MAX_FILE_SIZE:
                         await f.close()
                         os.unlink(temp_path)
-                        raise HTTPException(413, "文件超过10MB限制")
+                        raise HTTPException(413, "文件体积超过 30MB 上限（内容字数上限另为 100 万字，PDF/Word 因格式体积更大）")
                     await f.write(chunk)
 
             try:
