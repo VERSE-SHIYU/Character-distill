@@ -1077,7 +1077,6 @@ const useAppStore = create((set, get) => ({
       archiveModalOpen: false,
       archiveList: [],
       pendingCard: null,
-      _pendingChatCardId: null,
       currentCard: card,
       currentView: 'chat',
       sending: true,
@@ -1105,6 +1104,7 @@ const useAppStore = create((set, get) => ({
         currentCard: { ...card, session_id: sessionId },
         sessionId,
         sending: false,
+        _pendingChatCardId: null,
         messages: data.first_message
           ? [{ role: 'char', content: data.first_message }]
           : [],
