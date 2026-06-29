@@ -1,8 +1,12 @@
 # ============================================================
-# Build & Deploy — GHCR + 双节点灰度部署
+# Deploy — 仅 workflow_dispatch：解析 digest → 灰度部署 SZ/SG
 #
-# 流程：push → test + build(GHCR)；手动触发 → 部署 SZ→SG
-# 回滚：健康检查失败自动回滚到上一个 sha
+# 绝不包含 build 逻辑。镜像由 build.yml（push 触发）构建。
+# digest 从最近的 build.yml 成功运行的 artifact 获取，
+# 确保两节点拉到完全相同的 sha256 镜像。
+#
+# 回滚：填 image_sha（已有 tag），绕过 digest 直接按 tag 拉取。
+# 显式 pin：填 build_run_id，锁定到某次 CI 构建的 digest。
 #
 # 所需 GitHub Secrets:
 #   GHCR_TOKEN    — GitHub PAT (read:packages + write:packages)
@@ -10,15 +14,13 @@
 #   SG_DEPLOY_KEY — 新加坡服务器 SSH 私钥
 # ============================================================
 
-name: Build & Deploy
+name: Deploy
 
 on:
-  push:
-    branches: [main]    # push 只跑 test + build
-  workflow_dispatch:     # 手动触发时才部署
+  workflow_dispatch:
     inputs:
       target:
-        description: '部署目标'
+        description: 'Deploy target'
         required: true
         default: 'both'
         type: choice
@@ -27,7 +29,12 @@ on:
           - sg-only
           - both
       image_sha:
-        description: '镜像 SHA 标签（留空=最新 build）'
+        description: 'Rollback SHA tag (leave empty = deploy latest build)'
+        required: false
+        default: ''
+        type: string
+      build_run_id:
+        description: 'Build workflow run ID (leave empty = latest successful build)'
         required: false
         default: ''
         type: string
@@ -38,98 +45,99 @@ env:
   NGINX_IMAGE: ghcr.io/verse-shiyu/character-distill-nginx
 
 jobs:
-  # ── 关卡1：测试 ─────────────────────────────────────────────
-  test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: charsim
-          POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: charsim
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
-          pip install --no-cache-dir -r requirements.txt
-          pip install --no-cache-dir pytest pytest-asyncio
-
-      - name: Run tests
-        env:
-          STORAGE_BACKEND: postgres
-          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
-          JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
-        run: pytest tests/ -v --tb=short
-
-  # ── 关卡2：构建并推送到 GHCR ────────────────────────────────
-  build:
-    needs: test
+  # ── 解析目标镜像：digest / rollback tag / pinned run ────────
+  resolve-digest:
     runs-on: ubuntu-latest
     outputs:
-      commit_sha: ${{ steps.export_sha.outputs.commit_sha }}
+      app_digest: ${{ steps.parse.outputs.app_digest }}
+      nginx_digest: ${{ steps.parse.outputs.nginx_digest }}
+      commit_sha: ${{ steps.parse.outputs.commit_sha }}
+      build_run_id: ${{ steps.parse.outputs.build_run_id }}
+      build_time: ${{ steps.parse.outputs.build_time }}
     permissions:
-      contents: read
-      packages: write
+      actions: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Resolve source build run
+        id: resolve
+        run: |
+          if [ -n "${{ github.event.inputs.image_sha }}" ]; then
+            echo "mode=rollback" >> $GITHUB_OUTPUT
+            echo "commit_sha=${{ github.event.inputs.image_sha }}" >> $GITHUB_OUTPUT
+          elif [ -n "${{ github.event.inputs.build_run_id }}" ]; then
+            echo "mode=pinned" >> $GITHUB_OUTPUT
+            echo "run_id=${{ github.event.inputs.build_run_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "mode=latest" >> $GITHUB_OUTPUT
+            RUN_ID=$(gh run list --workflow build.yml --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId')
+            if [ -z "${RUN_ID}" ]; then
+              echo "::error::No successful build.yml run found on main branch"
+              exit 1
+            fi
+            echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-      - name: Export commit SHA for downstream deploy
-        id: export_sha
-        run: echo "commit_sha=${GITHUB_SHA}" >> $GITHUB_OUTPUT
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
+      - name: Download digest artifact
+        if: steps.resolve.outputs.mode != 'rollback'
+        uses: actions/download-artifact@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          name: digest-info
+          run-id: ${{ steps.resolve.outputs.run_id }}
+          github-token: ${{ github.token }}
 
-      - name: Build and push app image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ env.APP_IMAGE }}:latest
-            ${{ env.APP_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Parse digests
+        id: parse
+        run: |
+          if [ "${{ steps.resolve.outputs.mode }}" = "rollback" ]; then
+            echo "app_digest=" >> $GITHUB_OUTPUT
+            echo "nginx_digest=" >> $GITHUB_OUTPUT
+            echo "commit_sha=${{ steps.resolve.outputs.commit_sha }}" >> $GITHUB_OUTPUT
+            echo "build_run_id=" >> $GITHUB_OUTPUT
+            echo "build_time=" >> $GITHUB_OUTPUT
+          elif [ -f digest-info.json ]; then
+            echo "app_digest=$(jq -r '.app_digest // empty' digest-info.json)" >> $GITHUB_OUTPUT
+            echo "nginx_digest=$(jq -r '.nginx_digest // empty' digest-info.json)" >> $GITHUB_OUTPUT
+            echo "commit_sha=$(jq -r '.commit_sha // empty' digest-info.json)" >> $GITHUB_OUTPUT
+            echo "build_run_id=$(jq -r '.build_run_id // empty' digest-info.json)" >> $GITHUB_OUTPUT
+            echo "build_time=$(jq -r '.build_time // empty' digest-info.json)" >> $GITHUB_OUTPUT
+          else
+            echo "::error::digest-info.json not found after artifact download"
+            exit 1
+          fi
 
-      - name: Build and push nginx image
-        uses: docker/build-push-action@v5
-        with:
-          context: ./nginx
-          push: true
-          tags: |
-            ${{ env.NGINX_IMAGE }}:latest
-            ${{ env.NGINX_IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Job summary
+        run: |
+          MODE="${{ steps.resolve.outputs.mode }}"
+          TARGET="${{ github.event.inputs.target }}"
+          COMMIT="${{ steps.parse.outputs.commit_sha }}"
+          APP_DIGEST_VAL="${{ steps.parse.outputs.app_digest || '-' }}"
+          NGINX_DIGEST_VAL="${{ steps.parse.outputs.nginx_digest || '-' }}"
+          BUILD_RUN="${{ steps.parse.outputs.build_run_id || '-' }}"
+          BUILD_TIME="${{ steps.parse.outputs.build_time || '-' }}"
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## Deploy target
 
-  # ── 关卡3a：灰度部署深圳 ────────────────────────────────────
+          | Field | Value |
+          |-------|-------|
+          | **Mode** | ${MODE} |
+          | **Target nodes** | ${TARGET} |
+          | **Commit** | \`${COMMIT}\` |
+          | **App image digest** | \`${APP_DIGEST_VAL}\` |
+          | **Nginx image digest** | \`${NGINX_DIGEST_VAL}\` |
+          | **Build run ID** | ${BUILD_RUN} |
+          | **Build time** | ${BUILD_TIME} |
+          EOF
+
+  # ── 灰度部署深圳 ───────────────────────────────────────────
   deploy-sz:
-    needs: build
-    if: always() && needs.build.result == 'success' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
+    needs: resolve-digest
+    if: always() && needs.resolve-digest.result == 'success' && (github.event.inputs.target == 'sz-only' || github.event.inputs.target == 'both')
     runs-on: ubuntu-latest
     env:
-      TARGET_SHA: ${{ github.event.inputs.image_sha || needs.build.outputs.commit_sha }}
+      APP_DIGEST: ${{ needs.resolve-digest.outputs.app_digest }}
+      NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
+      COMMIT_SHA: ${{ needs.resolve-digest.outputs.commit_sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -149,68 +157,85 @@ jobs:
           host: 47.107.42.111
           username: root
           key: ${{ secrets.SZ_DEPLOY_KEY }}
-          envs: TARGET_SHA
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA
           script: |
             set -e
             cd /opt/character-distill
 
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
 
-            # 记录当前版本用于回滚
+            # Record current version for rollback
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
-            echo "当前版本: ${PREV_SHA:-首次部署}"
-            echo "目标版本: ${TARGET_SHA}"
+            echo "Previous version: ${PREV_SHA:-first deploy}"
+            echo "Target commit: ${COMMIT_SHA}"
 
-            # 拉取目标镜像
-            docker pull ghcr.io/verse-shiyu/character-distill-app:${TARGET_SHA}
-            docker pull ghcr.io/verse-shiyu/character-distill-nginx:${TARGET_SHA}
+            if [ -z "${COMMIT_SHA}" ]; then
+              echo "FATAL: COMMIT_SHA is empty, cannot deploy"
+              exit 1
+            fi
 
-            # 部署（环境变量交给 compose 解析 image tag）
-            export APP_IMAGE_TAG=${TARGET_SHA}
-            export NGINX_IMAGE_TAG=${TARGET_SHA}
+            # Pull by digest (pin exact image), or by tag for rollback
+            if [ -n "${APP_DIGEST}" ]; then
+              docker pull ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST}
+              docker tag ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST} ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
+            else
+              docker pull ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
+            fi
+
+            if [ -n "${NGINX_DIGEST}" ]; then
+              docker pull ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST}
+              docker tag ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST} ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
+            else
+              docker pull ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
+            fi
+
+            export APP_IMAGE_TAG=${COMMIT_SHA}
+            export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # 健康检查（最多 60 秒）
-            echo "等待健康检查..."
+            # Health check (max 60s)
+            echo "Waiting for health check..."
             HEALTHY=0
             for i in $(seq 1 12); do
               sleep 5
               if curl -sf http://localhost:7860/api/health > /dev/null 2>&1; then
-                echo "✅ SZ 健康检查通过（第 ${i} 次）"
+                echo "SZ health check passed (attempt ${i})"
                 HEALTHY=1
                 break
               fi
-              echo "  第 ${i}/12 次未通过..."
+              echo "  Attempt ${i}/12 failed..."
             done
 
-            # 失败回滚
+            # Rollback on failure
             if [ "$HEALTHY" -ne 1 ]; then
-              echo "❌ SZ 健康检查失败，回滚..."
+              echo "SZ health check FAILED, rolling back..."
               if [ -n "$PREV_SHA" ]; then
                 docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
                 docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
                 export APP_IMAGE_TAG=${PREV_SHA}
                 export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
-                echo "已回滚到 ${PREV_SHA}"
+                echo "Rolled back to ${PREV_SHA}"
               fi
               exit 1
             fi
 
             docker image prune -f
-            echo "✅ SZ 部署成功"
+            echo "SZ deployment successful"
 
-  # ── 关卡3b：部署新加坡 ────────────────────────────────────
+  # ── 部署新加坡 ────────────────────────────────────────────
   deploy-sg:
-    needs: [build, deploy-sz]
+    needs: [resolve-digest, deploy-sz]
     if: |
-      always() && needs.build.result == 'success' && (
+      always() && needs.resolve-digest.result == 'success' && (
       github.event.inputs.target == 'sg-only' ||
       (github.event.inputs.target == 'both' && needs.deploy-sz.result == 'success')
       )
     runs-on: ubuntu-latest
     env:
-      TARGET_SHA: ${{ github.event.inputs.image_sha || needs.build.outputs.commit_sha }}
+      APP_DIGEST: ${{ needs.resolve-digest.outputs.app_digest }}
+      NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
+      COMMIT_SHA: ${{ needs.resolve-digest.outputs.commit_sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -230,7 +255,7 @@ jobs:
           host: 43.134.55.201
           username: ubuntu
           key: ${{ secrets.SG_DEPLOY_KEY }}
-          envs: TARGET_SHA
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA
           script: |
             set -e
             cd /home/ubuntu/Character-distill
@@ -238,40 +263,56 @@ jobs:
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
 
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
-            echo "当前版本: ${PREV_SHA:-首次部署}"
-            echo "目标版本: ${TARGET_SHA}"
+            echo "Previous version: ${PREV_SHA:-first deploy}"
+            echo "Target commit: ${COMMIT_SHA}"
 
-            docker pull ghcr.io/verse-shiyu/character-distill-app:${TARGET_SHA}
-            docker pull ghcr.io/verse-shiyu/character-distill-nginx:${TARGET_SHA}
+            if [ -z "${COMMIT_SHA}" ]; then
+              echo "FATAL: COMMIT_SHA is empty, cannot deploy"
+              exit 1
+            fi
 
-            export APP_IMAGE_TAG=${TARGET_SHA}
-            export NGINX_IMAGE_TAG=${TARGET_SHA}
+            if [ -n "${APP_DIGEST}" ]; then
+              docker pull ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST}
+              docker tag ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST} ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
+            else
+              docker pull ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
+            fi
+
+            if [ -n "${NGINX_DIGEST}" ]; then
+              docker pull ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST}
+              docker tag ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST} ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
+            else
+              docker pull ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
+            fi
+
+            export APP_IMAGE_TAG=${COMMIT_SHA}
+            export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            echo "等待健康检查..."
+            echo "Waiting for health check..."
             HEALTHY=0
             for i in $(seq 1 12); do
               sleep 5
               if curl -sf http://localhost:7860/api/health > /dev/null 2>&1; then
-                echo "✅ SG 健康检查通过（第 ${i} 次）"
+                echo "SG health check passed (attempt ${i})"
                 HEALTHY=1
                 break
               fi
-              echo "  第 ${i}/12 次未通过..."
+              echo "  Attempt ${i}/12 failed..."
             done
 
             if [ "$HEALTHY" -ne 1 ]; then
-              echo "❌ SG 健康检查失败，回滚..."
+              echo "SG health check FAILED, rolling back..."
               if [ -n "$PREV_SHA" ]; then
                 docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
                 docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
                 export APP_IMAGE_TAG=${PREV_SHA}
                 export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
-                echo "已回滚到 ${PREV_SHA}"
+                echo "Rolled back to ${PREV_SHA}"
               fi
               exit 1
             fi
 
             docker image prune -f
-            echo "✅ SG 部署成功"
+            echo "SG deployment successful"
