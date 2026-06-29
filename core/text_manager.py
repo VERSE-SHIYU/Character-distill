@@ -164,21 +164,16 @@ class TextManager:
 
     async def upload_text_from_file(self, file_path: str, filename: str, title: str = "", description: str = "", text_type: str = "story", user_id: str = "") -> dict[str, Any]:
         """Parse an on-disk file and save to storage. Returns dict with text_id and char stats."""
-        import aiofiles
-
         ext = Path(filename).suffix.lower()
 
         if ext in (".txt", ".md", ".log", ""):
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                content = await f.read()
+            content = await self._read_text_file(file_path)
             parsed = content.strip()
         elif ext == ".json":
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                raw = await f.read()
+            raw = await self._read_text_file(file_path)
             parsed = self._parse_content(filename, raw).strip()
         elif ext == ".csv":
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                raw = await f.read()
+            raw = await self._read_text_file(file_path)
             parsed = self._parse_content(filename, raw).strip()
         elif ext == ".pdf":
             parsed = await asyncio.to_thread(self._extract_pdf, file_path)
@@ -218,17 +213,63 @@ class TextManager:
         return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
     @staticmethod
+    async def _read_text_file(file_path: str) -> str:
+        """Read a text file with encoding fallback for Chinese sources.
+
+        Tries utf-8-sig (strips BOM) -> utf-8 -> gb18030 (GBK superset,
+        covers Windows-generated Simplified Chinese). Clear error if none fit.
+        """
+        import aiofiles
+
+        for enc in ("utf-8-sig", "utf-8", "gb18030"):
+            try:
+                async with aiofiles.open(file_path, "r", encoding=enc) as f:
+                    return await f.read()
+            except UnicodeDecodeError:
+                continue
+        raise ValueError("文件编码无法识别，请另存为 UTF-8 后重新上传")
+
+    @staticmethod
     def _extract_pdf(file_path: str) -> str:
-        """Extract text from PDF, returning Markdown format."""
+        """Extract text from a digital (text-layer) PDF, returning Markdown.
+
+        Guards against oversized PDFs (page count) and skips image/vector
+        processing to keep memory bounded. Does NOT OCR scanned PDFs.
+        """
+        import pymupdf
         import pymupdf4llm
 
+        MAX_PDF_PAGES = 2000
+
         try:
-            md_text = pymupdf4llm.to_markdown(file_path)
-            if not md_text or not md_text.strip():
-                raise ValueError("PDF 提取文本为空，可能是扫描件或图片PDF")
-            return md_text
+            doc = pymupdf.open(file_path)
         except Exception as e:
-            raise ValueError(f"PDF 解析失败: {str(e)}") from e
+            raise ValueError(f"PDF 文件无法打开（可能已损坏或加密）：{str(e)}") from e
+
+        try:
+            page_count = doc.page_count
+            if page_count > MAX_PDF_PAGES:
+                raise ValueError(
+                    f"PDF 共 {page_count} 页，超过 {MAX_PDF_PAGES} 页上限，请拆分后上传"
+                )
+            try:
+                md_text = pymupdf4llm.to_markdown(
+                    doc,
+                    ignore_images=True,
+                    ignore_graphics=True,
+                    show_progress=False,
+                )
+            except Exception as e:
+                raise ValueError(f"PDF 解析失败：{str(e)}") from e
+        finally:
+            doc.close()
+
+        if not md_text or not md_text.strip():
+            raise ValueError(
+                "该 PDF 无法提取文字（疑似扫描件或图片 PDF）。"
+                "请上传可复制文字的 PDF，或直接上传 .txt 文件"
+            )
+        return md_text
 
     @staticmethod
     def _extract_docx(file_path: str) -> str:
