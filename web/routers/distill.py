@@ -989,7 +989,9 @@ async def start_session(
                 f"请以{card.name}的口吻说一句自然简短的问候，可结合当前是「{_period}」的情境（但不必每次都点明时间），"
                 f"暗示{card.name}的性格或处境。只输出这句话本身，不要解释，不要加引号，不超过50个字。"
             )
-            opening = per_user_llm.chat(prompt, [{"role": "user", "content": "请说开场白"}])
+            opening = await asyncio.to_thread(
+                per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
+            )
             opening = opening.strip().strip('"').strip("'").strip("「」")
             if opening and len(opening) <= 100:
                 generated_opening = opening
