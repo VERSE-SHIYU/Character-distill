@@ -58,7 +58,7 @@ services:
       - prod
 
   app:
-    image: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app:latest
+    image: ghcr.io/verse-shiyu/character-distill-app:latest
     # 仅本机暴露，外网只能经 nginx 进来
     ports:
       - "127.0.0.1:7860:7860"
@@ -87,7 +87,7 @@ services:
       - prod
 
   nginx:
-    image: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx:latest
+    image: ghcr.io/verse-shiyu/character-distill-nginx:latest
     environment:
       - PEER_NODE_IP=${PEER_NODE_IP}
     ports:
