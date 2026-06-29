@@ -37,8 +37,11 @@ const useAppStore = create((set, get) => ({
     })
     setToken(data.access_token)
     if (data.refresh_token) setRefreshToken(data.refresh_token)
-    set({ authUser: data.user, isLoggedIn: true, currentView: 'home' })
+    set({ authUser: data.user, isLoggedIn: true, currentView: 'home', pendingCrossBorderConsent: true })
   },
+
+  pendingCrossBorderConsent: false,
+  grantCrossBorderConsent: () => set({ pendingCrossBorderConsent: false }),
 
   _clearNavState: () => {
     const keys = ['nav_view', 'nav_author_user_id', 'nav_text_detail_id', 'nav_market_card_id', 'nav_msg_target_user_id']

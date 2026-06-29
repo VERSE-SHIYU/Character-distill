@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import ReactMarkdown from 'react-markdown'
-import termsMd from '../legal/terms_v4.md?raw'
-import privacyMd from '../legal/privacy_v2.md?raw'
+import termsMd from '../legal/terms_v5.md?raw'
+import privacyMd from '../legal/privacy_v3.md?raw'
 
 export default function LegalPage() {
   const legalTab = useAppStore((s) => s.legalTab)

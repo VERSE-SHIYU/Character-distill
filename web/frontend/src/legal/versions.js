@@ -8,9 +8,9 @@
 // 后端会校验前端提交的版本号 == 后端当前版本，不匹配则拒绝注册。
 // 这样能确保留痕记录的是"用户同意了当时的现行版本"，满足合规举证。
 
-export const TERMS_VERSION = "v4";
-export const PRIVACY_VERSION = "v2";
+export const TERMS_VERSION = "v5";
+export const PRIVACY_VERSION = "v3";
 
 // md 文件名跟随版本号，便于改版时一眼对应
-export const TERMS_FILE = "terms_v4.md";
-export const PRIVACY_FILE = "privacy_v2.md";
+export const TERMS_FILE = "terms_v5.md";
+export const PRIVACY_FILE = "privacy_v3.md";

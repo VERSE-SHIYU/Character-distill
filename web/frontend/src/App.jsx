@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
 import DistillTaskBar from './components/DistillTaskBar'
 import ArchiveListModal from './components/ArchiveListModal'
+import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import Loading from './components/common/Loading'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -248,6 +249,7 @@ export default function App() {
       </main>
       <DistillTaskBar />
       <ArchiveListModal />
+      <CrossBorderConsentModal />
     </div>
   )
 }
