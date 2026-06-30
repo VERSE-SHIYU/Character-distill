@@ -305,7 +305,7 @@ class PostgresStore(StorageBase):
                     "UPDATE cards SET text_id = NULL WHERE text_id = $1",
                     id,
                 )
-                return tag.rowcount
+                return self._parse_rowcount(tag)
         except Exception as exc:
             print(f"[PostgresStore] Detach text cards failed: {exc}")
             raise
@@ -1069,7 +1069,7 @@ class PostgresStore(StorageBase):
                     "UPDATE sessions SET avatar_data = $1 WHERE id = $2 AND user_id = $3",
                     avatar_data, session_id, user_id,
                 )
-                return tag.rowcount > 0
+                return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Update session avatar failed: {exc}")
             raise
