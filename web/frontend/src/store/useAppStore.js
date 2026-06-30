@@ -896,6 +896,9 @@ const useAppStore = create((set, get) => ({
   selectCard: async (card) => {
     const state = get()
     get().setPreviousView(get().currentView)
+    if (state.lastDistilledCardId === card.id) {
+      set({ lastDistilledCardId: null })
+    }
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
       set({ currentView: 'chat' })
@@ -933,9 +936,6 @@ const useAppStore = create((set, get) => ({
       }
     }
     set({ sessionId, resumeLoading: false })
-    if (get().lastDistilledCardId === card.id) {
-      set({ lastDistilledCardId: null })
-    }
     get().loadVoiceRef(card?.id || card?.card_id || null)
   },
 
