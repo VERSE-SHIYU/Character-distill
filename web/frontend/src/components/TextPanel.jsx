@@ -9,9 +9,28 @@ import { MessageSquare, Book, File } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
 import EditCardModal from './EditCardModal'
+import useSmoothProgress from '../hooks/useSmoothProgress'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
+
+function UploadProgressBanner({ task }) {
+  const displayPct = useSmoothProgress(task.progress_pct, false)
+  const statusMap = {
+    parsing: '正在读取文本…',
+    identifying: '正在识别角色…',
+    resolving: '正在识别角色…',
+  }
+  const message = statusMap[task.status] || '处理中…'
+  const pctText = displayPct > 0 ? `${Math.round(displayPct)}%` : ''
+
+  return (
+    <div className="upload-progress">
+      <div className="progress-bar" style={{ width: `${displayPct}%` }} />
+      <span>{message} {pctText}</span>
+    </div>
+  )
+}
 
 function extOf(name) {
   const i = name.lastIndexOf('.')
@@ -279,10 +298,7 @@ export default function TextPanel() {
         </div>
       )}
       {uploadProgress === null && uploadTaskProgress !== null && (
-        <div className="upload-progress">
-          <div className="progress-bar" style={{ width: `${uploadTaskProgress.progress_pct || 0}%` }} />
-          <span>{uploadTaskProgress.message || '预处理中…'}</span>
-        </div>
+        <UploadProgressBanner task={uploadTaskProgress} />
       )}
 
       <section className="text-list-section">

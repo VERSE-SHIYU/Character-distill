@@ -933,6 +933,9 @@ const useAppStore = create((set, get) => ({
       }
     }
     set({ sessionId, resumeLoading: false })
+    if (get().lastDistilledCardId === card.id) {
+      set({ lastDistilledCardId: null })
+    }
     get().loadVoiceRef(card?.id || card?.card_id || null)
   },
 
