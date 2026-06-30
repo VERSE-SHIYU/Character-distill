@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
+import useTypewriter from '../hooks/useTypewriter'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON, streamSSE } from '../api/client'
 import Avatar from './common/Avatar'
@@ -672,17 +673,23 @@ export default function GroupChatPage() {
           })
         } else if (payload.type === 'reply') {
           // Append character reply as it comes in
+          const role = payload.role || 'assistant'
           setMessages(prev => [...prev, {
             id: payload.msg_id,
-            role: payload.role || 'assistant',
+            role,
             speaker: payload.speaker,
             content: payload.reply,
             speaker_card_id: payload.card_id,
             created_at: new Date().toISOString(),
+            _typing: role === 'assistant', // typewriter: only for normal text replies
           }])
         }
       },
     )
+  }
+
+  function clearTyping(msgId) {
+    setMessages(prev => prev.map(x => x.id === msgId ? { ...x, _typing: false } : x))
   }
 
   async function reactToMessage(messageId, emoji) {
@@ -1142,7 +1149,7 @@ export default function GroupChatPage() {
                                 }}
                               >
                                 <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
-                                <span className="messages-msg-text">{m.content}</span>
+                                <GroupMessageText content={m.content} typing={!!m._typing} onTypingDone={() => clearTyping(m.id)} />
                                 <MessageReactions
                                   side="left"
                                   reactions={reactions}
@@ -1575,4 +1582,31 @@ export default function GroupChatPage() {
       />
     </div>
   )
+}
+
+// ---- Typewriter text for streaming character replies ----
+
+function GroupMessageText({ content, typing, onTypingDone }) {
+  const tw = useTypewriter()
+  const phaseRef = useRef('idle')
+
+  useEffect(() => {
+    if (typing && phaseRef.current === 'idle') {
+      phaseRef.current = 'typing'
+      tw.reset()
+      tw.push([...content].join(''))
+    }
+  }, [typing, content, tw])
+
+  useEffect(() => {
+    if (phaseRef.current === 'typing' && tw.isDone) {
+      phaseRef.current = 'done'
+      onTypingDone?.()
+    }
+  }, [tw.isDone, onTypingDone])
+
+  useEffect(() => () => { tw.flush(); tw.reset() }, [tw])
+
+  const display = (typing || phaseRef.current === 'typing') ? tw.displayedText : content
+  return <span className="messages-msg-text">{display}</span>
 }
