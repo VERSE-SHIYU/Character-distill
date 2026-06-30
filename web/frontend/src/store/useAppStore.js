@@ -180,6 +180,7 @@ const useAppStore = create((set, get) => ({
   distillStatus: '',
   distillIncrementalActive: false,
   distillTasks: [],
+  lastDistilledCardId: null,
   identifying: false,
 
   messages: [],
@@ -610,7 +611,7 @@ const useAppStore = create((set, get) => ({
       sessionId: null,
       messages: [],
     })
-    get().loadCards(textId)
+    return get().loadCards(textId)
   },
 
   openCharacterList: (textId) => {
@@ -712,7 +713,7 @@ const useAppStore = create((set, get) => ({
                 fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
                   .then((r) => r.json())
                   .then((cards) => {
-                    set({ cards })
+                    set({ cards, lastDistilledCardId: payload.card_id })
                   })
                   .catch((err) => console.warn('[distill] Failed to refresh cards on done:', err))
               }
@@ -734,6 +735,7 @@ const useAppStore = create((set, get) => ({
                           cards: exists
                             ? s2.cards.map((c) => c.id === cardId ? freshCard : c)
                             : [freshCard, ...s2.cards],
+                          lastDistilledCardId: cardId,
                         }
                       })
                     }
@@ -815,6 +817,8 @@ const useAppStore = create((set, get) => ({
     }))
     get()._persistTasks()
   },
+
+  setLastDistilledCardId: (id) => set({ lastDistilledCardId: id }),
 
   restoreDistillTasks: () => {
     try {

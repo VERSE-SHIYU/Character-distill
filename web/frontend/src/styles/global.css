@@ -3104,6 +3104,12 @@ html.theme-aurora::before {
   animation: cardBounceIn 0.35s var(--ease-out) both;
 }
 
+.char-list-item.is-new {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.2), 0 0 12px rgba(var(--accent-rgb), 0.15);
+  animation: cardBounceIn 0.35s var(--ease-out) both;
+}
+
 /* Identified characters (not yet distilled) */
 .char-identified {
   margin-top: 16px;

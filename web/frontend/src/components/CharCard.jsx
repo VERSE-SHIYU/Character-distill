@@ -164,6 +164,8 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const standaloneCards = useAppStore((s) => s.standaloneCards)
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
+  const lastDistilledCardId = useAppStore((s) => s.lastDistilledCardId)
+  const setLastDistilledCardId = useAppStore((s) => s.setLastDistilledCardId)
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
@@ -247,6 +249,16 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       }
     }
   }, [currentCard?.id])
+
+  // Scroll newly distilled card into center view
+  useEffect(() => {
+    if (lastDistilledCardId) {
+      const el = document.querySelector(`[data-card-id="${lastDistilledCardId}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }
+  }, [lastDistilledCardId])
 
   // Load card avatars for the sidebar list
   const avatarRequestedRef = useRef(new Set())
@@ -403,9 +415,9 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 key={c.id}
                 role="button"
                 tabIndex={0}
-                className={`char-list-item${isActive ? ' active' : ''}`}
+                className={`char-list-item${isActive ? ' active' : ''}${c.id === lastDistilledCardId ? ' is-new' : ''}`}
                 data-card-id={c.id}
-                onClick={() => onSelectCard({ ...c, ...cardData, text_id: textId })}
+                onClick={() => { onSelectCard({ ...c, ...cardData, text_id: textId }); setLastDistilledCardId(null) }}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelectCard({ ...c, ...cardData, text_id: textId }) }}
               >
                 <Avatar name={name} size={40} src={cardAvatars[c.id]} />

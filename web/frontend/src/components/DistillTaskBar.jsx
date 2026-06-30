@@ -20,13 +20,20 @@ function DistillTaskItem({ task }) {
   const strPct = displayPct > 0 ? `${Math.round(displayPct)}%` : '…'
   const showIndeterminate = displayPct <= 5
 
-  const handleDoneClick = () => {
+  const handleDoneClick = async () => {
     const s = useAppStore.getState()
+    const { card_id } = task
     if (task.textId && s.currentTextId !== task.textId) {
-      s.selectText(task.textId)
+      await s.selectText(task.textId)
     } else {
-      if (task.textId) loadCards(task.textId)
+      if (task.textId) await loadCards(task.textId)
       setView('character')
+    }
+    // After navigation, select the newly generated card
+    if (card_id) {
+      const state = useAppStore.getState()
+      const card = state.cards.find(c => c.id === card_id)
+      if (card) state.viewCard(card)
     }
   }
 
