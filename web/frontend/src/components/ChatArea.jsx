@@ -498,7 +498,7 @@ function ChatView() {
           </button>
           <button
             type="button"
-            className="chat-topbar-avatar-btn"
+            className="chat-topbar-avatar-btn avatar-shape"
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
           >

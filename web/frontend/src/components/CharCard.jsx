@@ -871,12 +871,12 @@ function CardDetail({ card, textId }) {
         <div className="card-hero">
           <button
             type="button"
-            className="card-avatar-btn"
+            className="card-avatar-btn avatar-shape"
             onClick={() => avatarInputRef.current?.click()}
             title="点击上传头像"
           >
             <Avatar name={name} src={avatarUrl} size={72} />
-            <div className="card-avatar-overlay">{'\u{1F4F7}'}</div>
+            <div className="card-avatar-overlay avatar-shape">{'\u{1F4F7}'}</div>
           </button>
           <input
             ref={avatarInputRef}

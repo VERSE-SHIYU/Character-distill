@@ -1032,7 +1032,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 name={isUser ? undefined : charName}
                 avatar={
                   isUser
-                    ? <div className="user-avatar-circle" style={session.avatar_data ? { backgroundImage: `url(${session.avatar_data})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}>{!session.avatar_data && userInitial}</div>
+                    ? <div className="user-avatar-circle avatar-shape" style={session.avatar_data ? { backgroundImage: `url(${session.avatar_data})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}>{!session.avatar_data && userInitial}</div>
                     : <Avatar name={charName} size={68} src={cardAvatars?.[session.card_id]} />
                 }
                 time={msg.created_at ? formatChatTime(msg.created_at) : undefined}

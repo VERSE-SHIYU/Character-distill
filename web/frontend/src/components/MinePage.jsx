@@ -550,7 +550,7 @@ export default function MinePage() {
               <Avatar name={username} src={avatarSrc} size={60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
               {isMe && (
                 <>
-                  <div className="mine-avatar-overlay" onClick={() => avatarInputRef.current?.click()}>
+                  <div className="mine-avatar-overlay avatar-shape" onClick={() => avatarInputRef.current?.click()}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
                   </div>
                   <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />

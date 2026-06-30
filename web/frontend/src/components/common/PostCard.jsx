@@ -203,7 +203,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
               <div key={c.id} className="post-card-comment">
                 <button
                   type="button"
-                  className="post-card-comment-avatar-btn"
+                  className="post-card-comment-avatar-btn avatar-shape"
                   onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
                 >
                   <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={28} />

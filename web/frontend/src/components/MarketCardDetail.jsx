@@ -577,12 +577,12 @@ export default function MarketCardDetail() {
             <div className="market-detail-hero">
               {card.user_id === authUser?.id ? (
                 <>
-                  <button type="button" className="card-avatar-btn" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
+                  <button type="button" className="card-avatar-btn avatar-shape" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
                     {card.avatar_data
                       ? <Avatar name={charName} src={card.avatar_data} size={96} />
                       : <Avatar name={charName} size={96} />
                     }
-                    <div className="card-avatar-overlay">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
+                    <div className="card-avatar-overlay avatar-shape">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
                   </button>
                   <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
                 </>
@@ -776,7 +776,7 @@ export default function MarketCardDetail() {
                       {batchMode && card.user_id === authUser?.id && (
                         <input type="checkbox" className="comment-checkbox" checked={selectedCommentIds.has(c.id)} onChange={() => toggleSelectComment(c.id)} />
                       )}
-                      <button type="button" className="market-detail-comment-avatar-btn" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>
+                      <button type="button" className="market-detail-comment-avatar-btn avatar-shape" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>
                         <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={32} />
                       </button>
                       <div className="market-detail-comment-body">

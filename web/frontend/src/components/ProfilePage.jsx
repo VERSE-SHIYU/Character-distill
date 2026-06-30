@@ -281,13 +281,13 @@ export default function ProfilePage() {
         <div className="profile-avatar-section">
           <button
             type="button"
-            className="profile-avatar-wrap"
+            className="profile-avatar-wrap avatar-shape"
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
             disabled={avatarSaving}
           >
             <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
-            <span className="profile-avatar-overlay">
+            <span className="profile-avatar-overlay avatar-shape">
               {avatarSaving ? '…' : '\u{1F4F7}'}
             </span>
           </button>
