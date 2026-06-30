@@ -981,9 +981,11 @@ async def start_session(
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
-    # ── Generate dynamic opening line ────────────────────────
-    generated_opening = ""
-    if per_user_llm is not None and card.first_message:
+    # ── Inject opening line (seed message, not user-driven) ──────────
+    opening = card.first_message or ""
+    generated = False  # whether opening was LLM-generated (not from card.first_message)
+
+    if not opening and per_user_llm is not None:
         try:
             style = card.speaking_style
             traits = "，".join(card.personality_traits[:3])
@@ -1007,16 +1009,43 @@ async def start_session(
             )
             opening = opening.strip().strip('"').strip("'").strip("「」")
             if opening and len(opening) <= 100:
-                generated_opening = opening
+                generated = True
                 print(f"[start_session] Generated opening: {opening}")
+            else:
+                opening = ""
         except Exception as exc:
             print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+            opening = ""
+
+    # Persist generated opening back to card for future sessions
+    if generated and opening:
+        card.first_message = opening
+        try:
+            await storage.update_card(req.card_id, card.model_dump())
+            print(f"[start_session] Persisted first_message to card {req.card_id}")
+        except Exception as exc:
+            print(f"[start_session] Update card first_message failed (non-fatal): {exc}")
+
+    # Save opening to DB + engine.history (strictly as seed — no retraction, no affinity)
+    first_created_at = ""
+    if opening:
+        engine_obj = sessions[session_id].get("engine") if sessions.get(session_id) else None
+        if engine_obj:
+            try:
+                rec = await storage.save_message(session_id, "char", opening, "", retracted=False)
+                first_created_at = rec.get("created_at", "")
+                engine_obj.history.append({"role": "assistant", "content": opening})
+                sessions[session_id].setdefault("message_ids", []).append(rec["id"])
+                print(f"[start_session] Injected opening into session {session_id}")
+            except Exception as exc:
+                print(f"[start_session] Save opening message failed (non-fatal): {exc}")
 
     result = card.model_dump()
     result["session_id"] = session_id
     result["card_id"] = req.card_id
-    if generated_opening:
-        result["first_message"] = generated_opening
+    if opening:
+        result["first_message"] = opening
+        result["first_created_at"] = first_created_at
     return result
 
 
