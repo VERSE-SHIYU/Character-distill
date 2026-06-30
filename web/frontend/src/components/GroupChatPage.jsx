@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
-import { fetchWithTimeout, postJSON } from '../api/client'
+import { fetchWithTimeout, postJSON, streamSSE } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -632,27 +632,57 @@ export default function GroupChatPage() {
       created_at: new Date().toISOString(),
     }])
     setMessageText('')
-    try {
-      // Broadcast: one director message, all targets reply in parallel
-      const data = await postJSON(`/api/group/${currentGroup.id}/broadcast`, {
+    // SSE: characters appear one by one as they finish
+    streamSSE(
+      `/api/group/${currentGroup.id}/broadcast`,
+      {
         target_card_ids: [...targets],
         message: content,
         speaker,
         reply_to_id: replyTo?.id || null,
-      })
-      void data
-      if (currentGroupRef.current !== sendGroupId) return
-      // Reload history once after all replies
-      await loadHistory(sendGroupId)
-      fetchAffinities(sendGroupId)
-      setTargetCardIds([])
-      setReplyTo(null)
-    } catch (err) {
-      if (currentGroupRef.current !== sendGroupId) return
-      setError(err.message)
-    } finally {
-      if (currentGroupRef.current === sendGroupId) setSending(false)
-    }
+      },
+      null, // onToken — not used (whole-reply per event)
+      (payload) => {
+        // onDone
+        if (currentGroupRef.current !== sendGroupId) return
+        setSending(false)
+        setTargetCardIds([])
+        setReplyTo(null)
+        fetchAffinities(sendGroupId)
+      },
+      (err) => {
+        // onError
+        if (currentGroupRef.current !== sendGroupId) return
+        setError(err.message)
+        setSending(false)
+      },
+      null, // onStatus
+      (payload) => {
+        // onEvent: user/reply SSE events
+        if (currentGroupRef.current !== sendGroupId) return
+        if (payload.type === 'user') {
+          // Replace optimistic user message ID with real one from server
+          setMessages(prev => {
+            const msgs = [...prev]
+            const last = msgs[msgs.length - 1]
+            if (last && last.role === 'user' && last.id?.startsWith('optimistic-')) {
+              msgs[msgs.length - 1] = { ...last, id: payload.msg_id }
+            }
+            return msgs
+          })
+        } else if (payload.type === 'reply') {
+          // Append character reply as it comes in
+          setMessages(prev => [...prev, {
+            id: payload.msg_id,
+            role: 'assistant',
+            speaker: payload.speaker,
+            content: payload.reply,
+            speaker_card_id: payload.card_id,
+            created_at: new Date().toISOString(),
+          }])
+        }
+      },
+    )
   }
 
   async function reactToMessage(messageId, emoji) {

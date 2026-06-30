@@ -180,6 +180,30 @@ class GroupSession:
 
         auto_mode=True 时，导演消息不记入历史，改用指令 prompt 驱动角色自主发言。
         """
+        await self._broadcast_prep(message, target_card_ids, auto_mode)
+        must_speak_card_id = self._pick_must_speak(target_card_ids, auto_mode)
+
+        return await asyncio.gather(*[
+            self._reply_for_broadcast(cid, message, cid == must_speak_card_id, auto_mode)
+            for cid in target_card_ids
+        ])
+
+    async def broadcast_stream(
+        self, message: str, target_card_ids: list[str], auto_mode: bool = False,
+    ):
+        """流式广播：每个角色回复完成就 yield，不等待全部完成。"""
+        await self._broadcast_prep(message, target_card_ids, auto_mode)
+        must_speak_card_id = self._pick_must_speak(target_card_ids, auto_mode)
+
+        coros = [
+            self._reply_for_broadcast(cid, message, cid == must_speak_card_id, auto_mode)
+            for cid in target_card_ids
+        ]
+        for coro in asyncio.as_completed(coros):
+            yield await coro
+
+    async def _broadcast_prep(self, message: str, target_card_ids: list[str], auto_mode: bool) -> None:
+        """Shared broadcast preparation: save user message, restore group affinities."""
         speaker = self.speaker_name
 
         if not auto_mode:
@@ -190,7 +214,6 @@ class GroupSession:
                 "speaker_card_id": self.user_persona_card_id if self.user_persona_type == "character" else "",
             })
 
-        # ── 设置主线程事件循环引用 + 恢复群聊好感（从 group_affinity 表） ──
         _main_loop = asyncio.get_running_loop()
         if self._storage:
             for cid in target_card_ids:
@@ -210,139 +233,136 @@ class GroupSession:
                 if eng:
                     eng._main_loop = _main_loop
 
-        # ── 选出本轮"必须正常说话"的角色，避免全员敷衍/表情/沉默冷场 ──
+    def _pick_must_speak(self, target_card_ids: list[str], auto_mode: bool):
+        """选出本轮必须正常说话的角色，避免全员敷衍冷场。"""
+        if auto_mode:
+            return None
         all_card_ids = list(self.engines.keys())
-        if not auto_mode:
-            if len(target_card_ids) < len(all_card_ids):
-                # @ 点名 → 第一个被 @ 的角色必须正常说话
-                must_speak_card_id = target_card_ids[0] if target_card_ids else None
-            else:
-                # 全体广播 → 好感最高的角色必须正常说话
-                must_speak_card_id = max(
-                    target_card_ids,
-                    key=lambda cid: self.engines[cid]._affinity if cid in self.engines else 0,
-                )
-        else:
-            must_speak_card_id = None
+        if len(target_card_ids) < len(all_card_ids):
+            return target_card_ids[0] if target_card_ids else None
+        return max(
+            target_card_ids,
+            key=lambda cid: self.engines[cid]._affinity if cid in self.engines else 0,
+        )
 
-        async def _reply(card_id: str, must_speak: bool = False) -> dict:
-            engine = self.engines.get(card_id)
-            if not engine:
-                return {"card_id": card_id, "reply": "", "speaker": "?"}
+    async def _reply_for_broadcast(
+        self, card_id: str, message: str, must_speak: bool = False, auto_mode: bool = False,
+    ) -> dict:
+        """为一个角色生成广播回复（与 broadcast / broadcast_stream 共用）。"""
+        engine = self.engines.get(card_id)
+        if not engine:
+            return {"card_id": card_id, "reply": "", "speaker": "?"}
 
-            if auto_mode:
-                # ── immersive relay ────────────────────────────
-                # Find previous character's message in history
-                prev_speaker = None
-                prev_content = None
-                for msg in reversed(self.group_history):
-                    if msg.get("role") == "assistant" and msg.get("speaker_card_id"):
-                        prev_speaker = msg.get("speaker", "")
-                        prev_content = msg.get("content", "")
-                        break
+        if auto_mode:
+            # ── immersive relay ────────────────────────────
+            prev_speaker = None
+            prev_content = None
+            for msg in reversed(self.group_history):
+                if msg.get("role") == "assistant" and msg.get("speaker_card_id"):
+                    prev_speaker = msg.get("speaker", "")
+                    prev_content = msg.get("content", "")
+                    break
 
-                ctx_parts = []
-                current_name = engine.card.name
+            ctx_parts = []
+            current_name = engine.card.name
 
-                if prev_speaker and prev_content:
-                    ctx_parts.append(
-                        f"你正在群聊场景中。{prev_speaker}刚说：『{prev_content[:200]}』"
-                    )
-                    ctx_parts.append(
-                        f"你是{current_name}，你与{prev_speaker}的关系："
-                    )
-                    rel_attitude = None
-                    if engine.card.relationships:
-                        for rel in engine.card.relationships:
-                            tn = rel.target
-                            if prev_speaker and (tn in prev_speaker or prev_speaker in tn):
-                                rel_attitude = rel.attitude
-                                break
-                    ctx_parts[-1] += rel_attitude if rel_attitude else "（普通群聊关系）"
-                    ctx_parts.append(
-                        "基于你的性格、关系、此刻情绪自然接话——"
-                        "可回应/反驳/调侃/岔开，像真实对话推进。"
-                    )
-                else:
-                    last_msg = self.group_history[-1] if self.group_history else None
-                    if last_msg and last_msg.get("role") == "user":
-                        ctx_parts.append(
-                            f"你是{current_name}。"
-                            f"针对【{last_msg.get('content', '')[:200]}】开启对话。"
-                        )
-                    else:
-                        ctx_parts.append(
-                            f"你是{current_name}。"
-                            "你来自然开启这段对话，符合你的性格和情境。"
-                        )
-
+            if prev_speaker and prev_content:
                 ctx_parts.append(
-                    "只输出你这个角色的话和动作。"
-                    "绝不提导演/指令/系统/轮次等元信息。"
-                    "绝不复述别人已说过的话。"
+                    f"你正在群聊场景中。{prev_speaker}刚说：『{prev_content[:200]}』"
                 )
-                context_msg = "\n\n".join(ctx_parts)
-
-                converted = self._convert_history(card_id)
-                system_prompt = engine._ctx_engine.build(
-                    "", engine.user_role,
+                ctx_parts.append(
+                    f"你是{current_name}，你与{prev_speaker}的关系："
                 )
-                system_prompt += "\n\n" + context_msg
-                system_prompt += self._build_persona_context()
-                system_prompt += engine._build_all_enhancements()
-
-                llm_messages = [*converted, {"role": "user", "content": ""}]
-                response = await engine.llm.achat(system_prompt, llm_messages)
+                rel_attitude = None
+                if engine.card.relationships:
+                    for rel in engine.card.relationships:
+                        tn = rel.target
+                        if prev_speaker and (tn in prev_speaker or prev_speaker in tn):
+                            rel_attitude = rel.attitude
+                            break
+                ctx_parts[-1] += rel_attitude if rel_attitude else "（普通群聊关系）"
+                ctx_parts.append(
+                    "基于你的性格、关系、此刻情绪自然接话——"
+                    "可回应/反驳/调侃/岔开，像真实对话推进。"
+                )
             else:
-                converted = self._convert_history(card_id)
-                system_prompt = engine._ctx_engine.build(
-                    message, engine.user_role,
-                )
-                system_prompt += self._build_persona_context()
-                system_prompt += engine._build_all_enhancements()
-                if must_speak:
-                    system_prompt += (
-                        "\n\n[本轮请正常回应]\n"
-                        "对方在等你的回应,这一轮请正常说话,不要用表情或[SILENT]敷衍。"
+                last_msg = self.group_history[-1] if self.group_history else None
+                if last_msg and last_msg.get("role") == "user":
+                    ctx_parts.append(
+                        f"你是{current_name}。"
+                        f"针对【{last_msg.get('content', '')[:200]}】开启对话。"
                     )
                 else:
-                    system_prompt += (
-                        "\n\n[如何回应——像真人一样有分寸]\n"
-                        "你不必每次都认真长篇回复。根据你的性格和此刻的心情,你可以选择:\n"
-                        "1. 认真回应——当对方的话值得你正经对待时。\n"
-                        "2. 冷淡敷衍——甩一句简短冷话('哦。''随便你''关你什么事'),嘴硬或不想深聊时,这往往比长篇更像你。\n"
-                        "3. 只用一个表情代替说话——当一个表情就够表达你的态度时,严格输出 [REACT:表情] 这一种格式(整条回复就只有这个,不要再加别的字)。\n"
-                        "   表情要符合你的性格:嘴硬的人可能用 👍 敷衍(不肯说软话),温柔的人用 ❤️ 含蓄表态,暴躁的人用 🔥 或 😮。可选:👍 ❤️ 😂 😮 😢 🔥\n"
-                        "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
-                        "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
+                    ctx_parts.append(
+                        f"你是{current_name}。"
+                        "你来自然开启这段对话，符合你的性格和情境。"
                     )
-                llm_messages = [*converted, {"role": "user", "content": message}]
-                response = await engine.llm.achat(system_prompt, llm_messages)
 
-            engine._try_record_usage("chat")
+            ctx_parts.append(
+                "只输出你这个角色的话和动作。"
+                "绝不提导演/指令/系统/轮次等元信息。"
+                "绝不复述别人已说过的话。"
+            )
+            context_msg = "\n\n".join(ctx_parts)
 
-            # [SILENT] → 以 role='silent' 入历史，不进 LLM 上下文，不评好感
-            import re as _re
-            is_silent = bool(_re.fullmatch(r'\s*\[SILENT\]\s*', response))
-            role = "silent" if is_silent else "assistant"
-            self.group_history.append({
-                "speaker": engine.card.name,
-                "role": role,
-                "content": response,
-                "speaker_card_id": card_id,
-            })
+            converted = self._convert_history(card_id)
+            system_prompt = engine._ctx_engine.build(
+                "", engine.user_role,
+            )
+            system_prompt += "\n\n" + context_msg
+            system_prompt += self._build_persona_context()
+            system_prompt += engine._build_all_enhancements()
 
-            # ── 后台评估好感（不阻塞 broadcast 返回） ──
-            if not auto_mode and not is_silent and self._storage and self.id:
-                engine._storage = self._storage
-                engine._group_id = self.id
-                try:
-                    asyncio.create_task(
-                        asyncio.to_thread(engine._evaluate_affinity, message, response)
-                    )
-                except Exception as exc:
-                    print(f"[GroupSession] Schedule affinity eval failed (card={card_id}): {exc}")
+            llm_messages = [*converted, {"role": "user", "content": ""}]
+            response = await engine.llm.achat(system_prompt, llm_messages)
+        else:
+            converted = self._convert_history(card_id)
+            system_prompt = engine._ctx_engine.build(
+                message, engine.user_role,
+            )
+            system_prompt += self._build_persona_context()
+            system_prompt += engine._build_all_enhancements()
+            if must_speak:
+                system_prompt += (
+                    "\n\n[本轮请正常回应]\n"
+                    "对方在等你的回应,这一轮请正常说话,不要用表情或[SILENT]敷衍。"
+                )
+            else:
+                system_prompt += (
+                    "\n\n[如何回应——像真人一样有分寸]\n"
+                    "你不必每次都认真长篇回复。根据你的性格和此刻的心情,你可以选择:\n"
+                    "1. 认真回应——当对方的话值得你正经对待时。\n"
+                    "2. 冷淡敷衍——甩一句简短冷话('哦。''随便你''关你什么事'),嘴硬或不想深聊时,这往往比长篇更像你。\n"
+                    "3. 只用一个表情代替说话——当一个表情就够表达你的态度时,严格输出 [REACT:表情] 这一种格式(整条回复就只有这个,不要再加别的字)。\n"
+                    "   表情要符合你的性格:嘴硬的人可能用 👍 敷衍(不肯说软话),温柔的人用 ❤️ 含蓄表态,暴躁的人用 🔥 或 😮。可选:👍 ❤️ 😂 😮 😢 🔥\n"
+                    "4. 当你此刻完全不想回应（生气、冷战、懒得搭理、被冒犯到不想说话）——可以选择沉默,严格输出 [SILENT]（整条回复就只有这个）。这是符合性格的态度表达,偶尔为之,不是逃避每个问题。\n"
+                    "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
+                )
+            llm_messages = [*converted, {"role": "user", "content": message}]
+            response = await engine.llm.achat(system_prompt, llm_messages)
 
-            return {"card_id": card_id, "reply": response, "speaker": engine.card.name}
+        engine._try_record_usage("chat")
 
-        return await asyncio.gather(*[_reply(cid, must_speak=(cid == must_speak_card_id)) for cid in target_card_ids])
+        # [SILENT] → 以 role='silent' 入历史，不进 LLM 上下文，不评好感
+        import re as _re
+        is_silent = bool(_re.fullmatch(r'\s*\[SILENT\]\s*', response))
+        role = "silent" if is_silent else "assistant"
+        self.group_history.append({
+            "speaker": engine.card.name,
+            "role": role,
+            "content": response,
+            "speaker_card_id": card_id,
+        })
+
+        # ── 后台评估好感（不阻塞回复） ──
+        if not auto_mode and not is_silent and self._storage and self.id:
+            engine._storage = self._storage
+            engine._group_id = self.id
+            try:
+                asyncio.create_task(
+                    asyncio.to_thread(engine._evaluate_affinity, message, response)
+                )
+            except Exception as exc:
+                print(f"[GroupSession] Schedule affinity eval failed (card={card_id}): {exc}")
+
+        return {"card_id": card_id, "reply": response, "speaker": engine.card.name}

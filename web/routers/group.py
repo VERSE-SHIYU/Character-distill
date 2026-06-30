@@ -11,6 +11,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.trash_service import hard_delete, restore, soft_delete
@@ -525,8 +526,8 @@ async def broadcast_message(
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
-) -> dict:
-    """导演发一条消息，多个角色并行回复（仅记录一条导演消息）。"""
+):
+    """导演发一条消息，多个角色并行回复。SSE 流式返回，每个角色回复完成即推送。"""
     user_id = user["id"]
     group = _group_sessions.get(group_id)
     if group is None:
@@ -544,65 +545,77 @@ async def broadcast_message(
     if session_rec and session_rec.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")
 
-    async with group.lock:
+    async def event_generator():
         try:
-            results = await group.broadcast(req.message, req.target_card_ids, auto_mode=req.auto_mode)
+            reply_preview = ""
+            if req.reply_to_id:
+                try:
+                    history = await storage.get_group_messages(group_id)
+                    replied = next((m for m in history if m["id"] == req.reply_to_id), None)
+                    if replied:
+                        reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
+                except Exception:
+                    pass
+
+            user_speaker = req.speaker or group.speaker_name
+            user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
+
+            # Save user message and yield event
+            user_msg_id = None
+            if not req.auto_mode:
+                user_msg_id = await storage.save_group_message(
+                    group_id, user_speaker, "user", req.message, user_speaker_card_id,
+                    reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
+                )
+                yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id}, ensure_ascii=False)}\n\n"
+
+            # Stream character replies one by one
+            async with group.lock:
+                async for r in group.broadcast_stream(req.message, req.target_card_ids, auto_mode=req.auto_mode):
+                    if not r["reply"]:
+                        continue
+
+                    msg_rec = None
+                    m = re.fullmatch(r'\s*\[REACT:(.+?)\]\s*', r["reply"])
+                    if m:
+                        if not req.auto_mode and user_msg_id is not None:
+                            await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
+                        continue
+
+                    s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
+                    if s:
+                        if not req.auto_mode:
+                            msg_rec = await storage.save_group_message(
+                                group_id, r["speaker"], "silent", "", r["card_id"],
+                            )
+                    else:
+                        msg_rec = await storage.save_group_message(
+                            group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+                        )
+
+                    if msg_rec:
+                        yield f"data: {json.dumps({
+                            'type': 'reply',
+                            'card_id': r['card_id'],
+                            'speaker': r['speaker'],
+                            'reply': r['reply'],
+                            'msg_id': msg_rec['id'],
+                        }, ensure_ascii=False)}\n\n"
+
+            # Done — all replies sent
+            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+
+            # 后台评估点赞触发的 affinity 变化（不阻塞回复）
+            asyncio.create_task(
+                _run_group_affinity(group, group_id, req.target_card_ids, req.message, storage)
+            )
+
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(500, "操作失败，请稍后重试") from exc
+            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
 
-    # 持久化
-    reply_preview = ""
-    if req.reply_to_id:
-        try:
-            history = await storage.get_group_messages(group_id)
-            replied = next((m for m in history if m["id"] == req.reply_to_id), None)
-            if replied:
-                reply_preview = (replied.get("speaker", "") + ": " + replied["content"])[:80]
-        except Exception:
-            pass
-    user_speaker = req.speaker or group.speaker_name
-    user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
-
-    user_msg_id = None
-    try:
-        if not req.auto_mode:
-            user_msg_id = await storage.save_group_message(
-                group_id, user_speaker, "user", req.message, user_speaker_card_id,
-                reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
-            )
-        for r in results:
-            if not r["reply"]:
-                continue
-            # [REACT:x] → attach reaction to user message instead of saving as message
-            m = re.fullmatch(r'\s*\[REACT:(.+?)\]\s*', r["reply"])
-            if m:
-                if not req.auto_mode and user_msg_id is not None:
-                    await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
-                # auto_mode: discard silently (no user message to attach to)
-                continue
-            # [SILENT] → save as role='silent' (visible to user, filtered from LLM context)
-            s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
-            if s:
-                if not req.auto_mode:
-                    await storage.save_group_message(
-                        group_id, r["speaker"], "silent", "", r["card_id"],
-                    )
-                # auto_mode: discard silently
-                continue
-            await storage.save_group_message(
-                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
-            )
-    except Exception as exc:
-        print(f"[group] Save broadcast messages failed (non-fatal): {exc}")
-
-    # 后台评估点赞触发的 affinity 变化（不阻塞回复）
-    asyncio.create_task(
-        _run_group_affinity(group, group_id, req.target_card_ids, req.message, storage)
-    )
-
-    return {"replies": results}
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/{group_id}/affinities")

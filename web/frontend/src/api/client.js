@@ -135,7 +135,7 @@ export async function postJSON(url, body, ms, externalSignal = null) {
   return res.json()
 }
 
-export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
+export function streamSSE(url, body, onToken, onDone, onError, onStatus, onEvent) {
   const controller = new AbortController()
   const timeoutMs = 600000 // 10 min total
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
@@ -203,6 +203,8 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
             if (payload.heartbeat) continue
             if (payload.token !== undefined) {
               onToken(payload.token)
+            } else if (payload.type && onEvent) {
+              onEvent(payload)
             }
             if (payload.status !== undefined && onStatus) {
               onStatus(payload)
