@@ -3286,7 +3286,7 @@ html.theme-aurora::before {
 .card-avatar-overlay {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
+  border-radius: var(--avatar-radius);
   background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;
@@ -3997,11 +3997,11 @@ html.theme-aurora::before {
 
 /* Avatar size controlled by the <Avatar size={68}> prop (inline style) */
 
-/* User avatar — circular, matches character avatar */
+/* User avatar — rounded-square, matches character avatar */
 .user-avatar-circle {
   width: 68px;
   height: 68px;
-  border-radius: 50%;
+  border-radius: var(--avatar-radius);
   background: var(--primary);
   color: #fff;
   display: flex;
