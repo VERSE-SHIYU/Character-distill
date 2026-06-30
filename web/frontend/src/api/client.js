@@ -86,7 +86,7 @@ export async function fetchWithTimeout(url, opts = {}, ms = 600000, externalSign
       try { const b = await res.json(); if (b.detail) detail = b.detail } catch {}
       throw new AppError(detail, 429)
     }
-    if (res.status === 401 && !url.endsWith('/api/auth/refresh') && !url.endsWith('/api/auth/login') && !url.endsWith('/api/auth/register')) {
+    if (res.status === 401 && !url.endsWith('/api/auth/refresh') && !url.endsWith('/api/auth/login') && !url.endsWith('/api/auth/register') && !url.endsWith('/api/auth/logout')) {
       // Try refresh once, then retry original request
       const newToken = await tryRefresh()
       if (newToken) {

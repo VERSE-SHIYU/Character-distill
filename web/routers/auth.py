@@ -326,7 +326,7 @@ async def reset_password(
 
 
 @router.post("/login")
-@limiter.limit("5/minute")
+@limiter.limit("10/minute")
 async def login(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())

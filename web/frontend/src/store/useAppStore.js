@@ -233,6 +233,8 @@ const useAppStore = create((set, get) => ({
   voiceRefInfo: null,
 
   checkVoiceStatus: async () => {
+    const token = localStorage.getItem('auth_token')
+    if (!token) return // skip if not logged in
     try {
       const res = await fetchWithTimeout('/api/voice/status')
       const data = await res.json()

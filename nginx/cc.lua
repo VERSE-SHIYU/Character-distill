@@ -10,8 +10,9 @@ local now = ngx.time()
 -- 检查是否已被封禁
 local ban_until = cc_ban:get(ip)
 if ban_until and tonumber(ban_until) > now then
+    ngx.header.content_type = "application/json"
     ngx.status = 429
-    ngx.say("Too Many Requests")
+    ngx.say('{"detail":"请求过于频繁，请稍后再试"}')
     ngx.exit(429)
 end
 
@@ -23,9 +24,9 @@ if count == 1 then
     cc_req:expire(key, 20)
 end
 
--- 阈值: 10秒内100次请求则封10分钟
-if count > 100 then
-    cc_ban:set(ip, now + 600, 600)
+-- 阈值: 10秒内300次请求则封60秒（SPA 页面含大量静态/API请求，100次容易误伤）
+if count > 300 then
+    cc_ban:set(ip, now + 60, 60)
     -- 写入日志供Fail2Ban检测
     local f = io.open("/var/log/openresty/waf.log", "a")
     if f then
@@ -33,7 +34,8 @@ if count > 100 then
             ngx.var.time_iso8601, ip, count))
         f:close()
     end
+    ngx.header.content_type = "application/json"
     ngx.status = 429
-    ngx.say("Too Many Requests")
+    ngx.say('{"detail":"请求过于频繁，请稍后再试"}')
     ngx.exit(429)
 end
