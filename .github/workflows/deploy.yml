@@ -54,6 +54,8 @@ jobs:
       commit_sha: ${{ steps.parse.outputs.commit_sha }}
       build_run_id: ${{ steps.parse.outputs.build_run_id }}
       build_time: ${{ steps.parse.outputs.build_time }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     permissions:
       actions: read
     steps:
@@ -68,15 +70,13 @@ jobs:
             echo "run_id=${{ github.event.inputs.build_run_id }}" >> $GITHUB_OUTPUT
           else
             echo "mode=latest" >> $GITHUB_OUTPUT
-            RUN_ID=$(gh run list --workflow build.yml --branch main --status success --limit 1 --json databaseId -q '.[0].databaseId')
+            RUN_ID=$(gh run list --workflow build.yml --branch main --status success --repo ${{ github.repository }} --limit 1 --json databaseId --jq '.[0].databaseId')
             if [ -z "${RUN_ID}" ]; then
               echo "::error::No successful build.yml run found on main branch"
               exit 1
             fi
             echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Download digest artifact
         if: steps.resolve.outputs.mode != 'rollback'
