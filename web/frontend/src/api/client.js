@@ -158,6 +158,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus) {
             return doFetch()
           }
           removeAuth()
+          window.dispatchEvent(new CustomEvent('auth:expired'))
           onError(new AppError('请重新登录', 401))
           return
         }
