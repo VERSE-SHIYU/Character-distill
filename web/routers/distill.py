@@ -152,7 +152,9 @@ def _run_distill_task(
         aliases: list[str] = []
 
         with _task_lock:
-            _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在识别角色…"})
+            _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在读取文本…"})
+        with _task_lock:
+            _tasks[task_id].update({"progress_pct": 8, "message": "正在识别角色…"})
 
         try:
             chars = distiller.identify_characters(content)
@@ -178,6 +180,9 @@ def _run_distill_task(
 
         # Step 2: run incremental distill (synchronous, collect full output)
         full = ""
+        full_format = ""
+        cur_phase = None
+        EXPECT_CHARS = 1200
         stream = distiller.distill_incremental_stream(content, name, aliases, text_type)
         for piece in stream:
             with _task_lock:
@@ -191,6 +196,7 @@ def _run_distill_task(
                     return
                 if piece.get("heartbeat"):
                     continue
+                cur_phase = piece.get("status", cur_phase)
                 with _task_lock:
                     current = piece.get("current", 0)
                     total = piece.get("total", 1)
@@ -202,6 +208,7 @@ def _run_distill_task(
                         pct = 70 + int((current / total) * 20) if total > 0 else 75
                         msg = f"合并角色信息 {current}/{total}"
                     elif status == "formatting":
+                        full_format = ""
                         pct = 92
                         msg = "生成角色卡…"
                     else:
@@ -216,6 +223,12 @@ def _run_distill_task(
                         "message": msg,
                     })
             else:
+                if cur_phase == "formatting":
+                    full_format += piece
+                    f_len = len(full_format)
+                    f_pct = 92 + min(int(f_len / EXPECT_CHARS * 7), 7)
+                    with _task_lock:
+                        _tasks[task_id].update({"progress_pct": f_pct})
                 full += piece
 
         # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
