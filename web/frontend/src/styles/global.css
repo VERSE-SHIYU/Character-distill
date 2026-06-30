@@ -3289,7 +3289,6 @@ html.theme-aurora::before {
 .card-avatar-overlay {
   position: absolute;
   inset: 0;
-  border-radius: var(--avatar-radius);
   background: rgba(0, 0, 0, 0.35);
   display: flex;
   align-items: center;
@@ -3625,7 +3624,6 @@ html.theme-aurora::before {
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  border-radius: var(--avatar-radius);
   overflow: hidden;
 }
 .chat-topbar-mood-btn {
@@ -4004,7 +4002,6 @@ html.theme-aurora::before {
 .user-avatar-circle {
   width: 68px;
   height: 68px;
-  border-radius: var(--avatar-radius);
   background: var(--primary);
   color: #fff;
   display: flex;
@@ -6993,9 +6990,9 @@ select.settings-input {
   box-shadow: var(--shadow), 0 0 0 1px rgba(123,97,255,0.08);
 }
 
-/* Circular avatar in char grid */
+/* Home page char grid avatar */
 .home-char-card > div:first-child {
-  border-radius: 50% !important;
+  border-radius: var(--avatar-radius) !important;
   border-color: var(--glass-border) !important;
 }
 
