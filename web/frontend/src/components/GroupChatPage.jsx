@@ -674,7 +674,7 @@ export default function GroupChatPage() {
           // Append character reply as it comes in
           setMessages(prev => [...prev, {
             id: payload.msg_id,
-            role: 'assistant',
+            role: payload.role || 'assistant',
             speaker: payload.speaker,
             content: payload.reply,
             speaker_card_id: payload.card_id,

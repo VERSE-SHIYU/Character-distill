@@ -588,19 +588,28 @@ async def broadcast_message(
                             msg_rec = await storage.save_group_message(
                                 group_id, r["speaker"], "silent", "", r["card_id"],
                             )
+                            if msg_rec:
+                                yield f"data: {json.dumps({
+                                    'type': 'reply',
+                                    'card_id': r['card_id'],
+                                    'speaker': r['speaker'],
+                                    'reply': '',
+                                    'role': 'silent',
+                                    'msg_id': msg_rec['id'],
+                                }, ensure_ascii=False)}\n\n"
                     else:
                         msg_rec = await storage.save_group_message(
                             group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
                         )
-
-                    if msg_rec:
-                        yield f"data: {json.dumps({
-                            'type': 'reply',
-                            'card_id': r['card_id'],
-                            'speaker': r['speaker'],
-                            'reply': r['reply'],
-                            'msg_id': msg_rec['id'],
-                        }, ensure_ascii=False)}\n\n"
+                        if msg_rec:
+                            yield f"data: {json.dumps({
+                                'type': 'reply',
+                                'card_id': r['card_id'],
+                                'speaker': r['speaker'],
+                                'reply': r['reply'],
+                                'role': 'assistant',
+                                'msg_id': msg_rec['id'],
+                            }, ensure_ascii=False)}\n\n"
 
             # Done — all replies sent
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
