@@ -1023,16 +1023,20 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   // Typewriter: smooth character-by-character reveal for streaming messages
   const tw = useTypewriter()
-  const lastContentLenRef = useRef(0)
+  const lastCodePointCount = useRef(0)
   const prevStreamingRef = useRef(isStreaming)
+  const wasStreamingRef = useRef(false)
   const contentRef = useRef(content)
   contentRef.current = content
 
+  // Bug 1 fix: track by code point count, not UTF-16 .length
+  // ensures emoji surrogate pairs are never split
   useEffect(() => {
     if (!isStreaming) return
-    if (content.length > lastContentLenRef.current) {
-      tw.push(content.slice(lastContentLenRef.current))
-      lastContentLenRef.current = content.length
+    const cps = [...content]
+    if (cps.length > lastCodePointCount.current) {
+      tw.push(cps.slice(lastCodePointCount.current).join(''))
+      lastCodePointCount.current = cps.length
     }
   }, [content, isStreaming, tw])
 
@@ -1040,23 +1044,36 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     const prev = prevStreamingRef.current
     prevStreamingRef.current = isStreaming
     if (isStreaming && !prev) {
+      wasStreamingRef.current = true
       tw.reset()
-      lastContentLenRef.current = 0
+      lastCodePointCount.current = 0
       const cur = contentRef.current
       if (cur) {
-        tw.push(cur)
-        lastContentLenRef.current = cur.length
+        const cps = [...cur]
+        tw.push(cps.join(''))
+        lastCodePointCount.current = cps.length
       }
-    } else if (!isStreaming && prev) {
-      tw.flush()
     }
+    // Bug 2 fix: on normal stream end, do NOT flush — let rAF drain naturally.
+    // flush is only for interrupt scenarios (cancel/revoke/unmount below).
+    // The displayContent logic below keeps showing tw.displayedText until
+    // the queue empties and displayedText catches up to content.
   }, [isStreaming, tw])
 
+  // Interrupt scenario cleanup (revoke / cancel / unmount)
   useEffect(() => {
-    return () => { tw.reset() }
+    return () => {
+      tw.flush()
+      tw.reset()
+    }
   }, [tw])
 
-  const displayContent = isStreaming ? tw.displayedText : content
+  // Bug 2 fix: keep showing typewriter output during the drain phase after
+  // isStreaming becomes false. Only switch to raw content when the typewriter
+  // has fully caught up (isDone && displayedText === content).
+  const typewriterActive = wasStreamingRef.current
+    && !(tw.isDone && tw.displayedText === content)
+  const displayContent = typewriterActive ? tw.displayedText : content
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}

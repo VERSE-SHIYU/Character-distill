@@ -17,7 +17,9 @@ export default function useTypewriter() {
   const lastTsRef = useRef(null)
   const accumRef = useRef(0)
   const rafRef = useRef(null)
+  const isDoneRef = useRef(true)
   const [displayedText, setDisplayedText] = useState('')
+  const [isDone, setIsDone] = useState(true)
 
   useEffect(() => {
     const loop = (timestamp) => {
@@ -42,6 +44,10 @@ export default function useTypewriter() {
           setDisplayedText(displayedRef.current)
           accumRef.current -= count * CHAR_INTERVAL_MS
         }
+        if (queueRef.current.length === 0 && !isDoneRef.current) {
+          isDoneRef.current = true
+          setIsDone(true)
+        }
       }
 
       rafRef.current = requestAnimationFrame(loop)
@@ -56,6 +62,10 @@ export default function useTypewriter() {
   const push = useCallback((text) => {
     if (!text) return
     queueRef.current = queueRef.current.concat([...text])
+    if (isDoneRef.current) {
+      isDoneRef.current = false
+      setIsDone(false)
+    }
   }, [])
 
   const flush = useCallback(() => {
@@ -65,6 +75,10 @@ export default function useTypewriter() {
       queueRef.current = []
       setDisplayedText(displayedRef.current)
     }
+    if (!isDoneRef.current) {
+      isDoneRef.current = true
+      setIsDone(true)
+    }
   }, [])
 
   const reset = useCallback(() => {
@@ -73,7 +87,9 @@ export default function useTypewriter() {
     accumRef.current = 0
     lastTsRef.current = null
     setDisplayedText('')
+    isDoneRef.current = true
+    setIsDone(true)
   }, [])
 
-  return { push, displayedText, flush, reset }
+  return { push, displayedText, flush, reset, isDone }
 }
