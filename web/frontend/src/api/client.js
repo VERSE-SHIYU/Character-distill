@@ -100,6 +100,7 @@ export async function fetchWithTimeout(url, opts = {}, ms = 600000, externalSign
         return retryRes
       }
       removeAuth()
+      window.dispatchEvent(new CustomEvent('auth:expired'))
       throw new AppError('请重新登录', 401)
     }
     if (!res.ok) {

@@ -371,7 +371,7 @@ const useAppStore = create((set, get) => ({
       const res = await fetchWithTimeout(`/api/chat/affinity/${sessionId}`)
       const data = await res.json()
       set({ affinity: data })
-    } catch { /* non-fatal */ }
+    } catch (err) { if (err?.status !== 401) console.warn('[affinity]', err) }
   },
 
   resetAffinity: () => set({ affinity: { ...INITIAL_AFFINITY } }),

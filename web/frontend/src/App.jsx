@@ -158,6 +158,16 @@ export default function App() {
     }
   }, [isLoggedIn])
 
+  // Global handler: refresh token expired → log out
+  useEffect(() => {
+    const handler = () => {
+      logout()
+      setView('login')
+    }
+    window.addEventListener('auth:expired', handler)
+    return () => window.removeEventListener('auth:expired', handler)
+  }, [logout])
+
   // Sidebar auto-hide state
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarPinned, setSidebarPinned] = useState(false)
