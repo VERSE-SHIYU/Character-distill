@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
+import useTypewriter from '../hooks/useTypewriter'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
@@ -1019,6 +1020,43 @@ function ChatView() {
 
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
   const [showRetracted, setShowRetracted] = useState(false)
+
+  // Typewriter: smooth character-by-character reveal for streaming messages
+  const tw = useTypewriter()
+  const lastContentLenRef = useRef(0)
+  const prevStreamingRef = useRef(isStreaming)
+  const contentRef = useRef(content)
+  contentRef.current = content
+
+  useEffect(() => {
+    if (!isStreaming) return
+    if (content.length > lastContentLenRef.current) {
+      tw.push(content.slice(lastContentLenRef.current))
+      lastContentLenRef.current = content.length
+    }
+  }, [content, isStreaming, tw])
+
+  useEffect(() => {
+    const prev = prevStreamingRef.current
+    prevStreamingRef.current = isStreaming
+    if (isStreaming && !prev) {
+      tw.reset()
+      lastContentLenRef.current = 0
+      const cur = contentRef.current
+      if (cur) {
+        tw.push(cur)
+        lastContentLenRef.current = cur.length
+      }
+    } else if (!isStreaming && prev) {
+      tw.flush()
+    }
+  }, [isStreaming, tw])
+
+  useEffect(() => {
+    return () => { tw.reset() }
+  }, [tw])
+
+  const displayContent = isStreaming ? tw.displayedText : content
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}
@@ -1056,7 +1094,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           </span>
         ) : (
           <span className="chat-bubble-text">
-            {content}
+            {displayContent}
             {isStreaming && <span className="chat-cursor" />}
           </span>
         )}
