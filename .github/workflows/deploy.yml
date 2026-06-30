@@ -220,7 +220,23 @@ jobs:
               exit 1
             fi
 
-            docker image prune -f
+            # ── 镜像/缓存自动清理（保留当前版+上一版用于 rollback）──
+            # 1. 清构建缓存（保留 2GB 热缓存加速下次 build）
+            docker builder prune -f --keep-storage 2GB || true
+            # 2. 清旧镜像：只保留当前版 COMMIT_SHA + 上一版 PREV_SHA + latest
+            if [ -n "$PREV_SHA" ]; then
+              for repo in character-distill-app character-distill-nginx; do
+                docker images "ghcr.io/verse-shiyu/${repo}" --format '{{.Tag}}' \
+                  | grep -vE "^(${COMMIT_SHA}|${PREV_SHA}|latest|<none>)$" \
+                  | while read tag; do
+                      docker rmi "ghcr.io/verse-shiyu/${repo}:${tag}" 2>/dev/null || true
+                    done
+              done
+            else
+              echo "PREV_SHA empty (first deploy?), skip old-image cleanup"
+            fi
+            # 3. 清 dangling 镜像
+            docker image prune -f || true
             echo "SZ deployment successful"
 
   # ── 部署新加坡 ────────────────────────────────────────────
@@ -314,5 +330,21 @@ jobs:
               exit 1
             fi
 
-            docker image prune -f
+            # ── 镜像/缓存自动清理（保留当前版+上一版用于 rollback）──
+            # 1. 清构建缓存（保留 2GB 热缓存加速下次 build）
+            docker builder prune -f --keep-storage 2GB || true
+            # 2. 清旧镜像：只保留当前版 COMMIT_SHA + 上一版 PREV_SHA + latest
+            if [ -n "$PREV_SHA" ]; then
+              for repo in character-distill-app character-distill-nginx; do
+                docker images "ghcr.io/verse-shiyu/${repo}" --format '{{.Tag}}' \
+                  | grep -vE "^(${COMMIT_SHA}|${PREV_SHA}|latest|<none>)$" \
+                  | while read tag; do
+                      docker rmi "ghcr.io/verse-shiyu/${repo}:${tag}" 2>/dev/null || true
+                    done
+              done
+            else
+              echo "PREV_SHA empty (first deploy?), skip old-image cleanup"
+            fi
+            # 3. 清 dangling 镜像
+            docker image prune -f || true
             echo "SG deployment successful"
