@@ -1021,59 +1021,47 @@ function ChatView() {
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
   const [showRetracted, setShowRetracted] = useState(false)
 
-  // Typewriter: smooth character-by-character reveal for streaming messages
+  // Typewriter: smooth code-point-by-code-point reveal for streaming messages.
+  // phase: 'idle' = show raw content; 'typing' = show typewriter output (streaming + drain tail)
   const tw = useTypewriter()
-  const lastCodePointCount = useRef(0)
-  const prevStreamingRef = useRef(isStreaming)
-  const wasStreamingRef = useRef(false)
-  const contentRef = useRef(content)
-  contentRef.current = content
+  const lastCpCountRef = useRef(0)
+  const [phase, setPhase] = useState('idle')
 
-  // Bug 1 fix: track by code point count, not UTF-16 .length
-  // ensures emoji surrogate pairs are never split
+  // Enter typing mode exactly when streaming begins; seed any content already present.
   useEffect(() => {
-    if (!isStreaming) return
+    if (isStreaming && phase === 'idle') {
+      tw.reset()
+      lastCpCountRef.current = 0
+      setPhase('typing')
+    }
+  }, [isStreaming, phase, tw])
+
+  // While typing, push code-point diffs into the queue (emoji-safe).
+  useEffect(() => {
+    if (phase !== 'typing' || !isStreaming) return
     const cps = [...content]
-    if (cps.length > lastCodePointCount.current) {
-      tw.push(cps.slice(lastCodePointCount.current).join(''))
-      lastCodePointCount.current = cps.length
+    if (cps.length > lastCpCountRef.current) {
+      tw.push(cps.slice(lastCpCountRef.current).join(''))
+      lastCpCountRef.current = cps.length
     }
-  }, [content, isStreaming, tw])
+  }, [content, isStreaming, phase, tw])
 
+  // On normal stream end: do NOT flush. Let rAF drain the queue naturally.
+  // Once drained (isDone) and the visible text equals content, leave typing mode.
   useEffect(() => {
-    const prev = prevStreamingRef.current
-    prevStreamingRef.current = isStreaming
-    if (isStreaming && !prev) {
-      wasStreamingRef.current = true
-      tw.reset()
-      lastCodePointCount.current = 0
-      const cur = contentRef.current
-      if (cur) {
-        const cps = [...cur]
-        tw.push(cps.join(''))
-        lastCodePointCount.current = cps.length
-      }
+    if (phase === 'typing' && !isStreaming && tw.isDone) {
+      setPhase('idle')
     }
-    // Bug 2 fix: on normal stream end, do NOT flush — let rAF drain naturally.
-    // flush is only for interrupt scenarios (cancel/revoke/unmount below).
-    // The displayContent logic below keeps showing tw.displayedText until
-    // the queue empties and displayedText catches up to content.
-  }, [isStreaming, tw])
+  }, [phase, isStreaming, tw.isDone])
 
-  // Interrupt scenario cleanup (revoke / cancel / unmount)
+  // Interrupt scenarios (revoke / cancel / unmount): finish immediately, no lost chars.
   useEffect(() => {
-    return () => {
-      tw.flush()
-      tw.reset()
-    }
+    return () => { tw.flush(); tw.reset() }
   }, [tw])
 
-  // Bug 2 fix: keep showing typewriter output during the drain phase after
-  // isStreaming becomes false. Only switch to raw content when the typewriter
-  // has fully caught up (isDone && displayedText === content).
-  const typewriterActive = wasStreamingRef.current
-    && !(tw.isDone && tw.displayedText === content)
-  const displayContent = typewriterActive ? tw.displayedText : content
+  // During 'typing' show typewriter output; the drain tail keeps showing it until
+  // isDone flips, at which point phase→idle and we show raw content.
+  const displayContent = phase === 'typing' ? tw.displayedText : content
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}
