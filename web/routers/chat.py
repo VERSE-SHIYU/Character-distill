@@ -23,19 +23,26 @@ legacy_router = APIRouter(tags=["legacy-chat"])
 MAX_MESSAGE_LENGTH = 5000
 
 
-def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, str]]:
+def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, object]]:
     """Filter DB messages and map roles to engine.history format.
 
     Only user and char messages are kept (whitelist approach); summary,
-    system, and other synthetic roles are excluded.  Retracted messages
-    are also excluded — a retracted reply is invisible to both the user
-    and the LLM.
+    system, and other synthetic roles are excluded.  Retracted char
+    messages ARE kept (with retracted=True) so the LLM stays aware of
+    what was said; the frontend hides them via the retracted flag.
     """
-    return [
-        {"role": "assistant" if m["role"] == "char" else m["role"], "content": m["content"]}
-        for m in db_messages
-        if m["role"] in ("user", "char") and not m.get("retracted")
-    ]
+    result: list[dict[str, object]] = []
+    for m in db_messages:
+        if m["role"] not in ("user", "char"):
+            continue
+        entry: dict[str, object] = {
+            "role": "assistant" if m["role"] == "char" else m["role"],
+            "content": m["content"],
+        }
+        if m.get("retracted"):
+            entry["retracted"] = True
+        result.append(entry)
+    return result
 
 
 async def _ensure_session(
@@ -232,9 +239,9 @@ async def _do_chat(
         except Exception:
             retracted = False
 
-    # If retracted, remove assistant from memory so LLM never sees it
+    # If retracted, mark as retracted so LLM still knows it was said (annotation handled in _build_llm_messages)
     if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
-        engine.history.pop()
+        engine.history[-1]["retracted"] = True
 
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
@@ -383,9 +390,9 @@ async def _do_chat_stream(
                 except Exception:
                     retracted = False
 
-            # If retracted, remove assistant from memory so LLM never sees it
+            # If retracted, mark as retracted so LLM still knows it was said (annotation handled in _build_llm_messages)
             if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
-                engine.history.pop()
+                engine.history[-1]["retracted"] = True
 
             try:
                 char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500], retracted=retracted)

@@ -296,6 +296,12 @@ class ChatEngine:
             )
             if used + pair_tok > budget:
                 break
+            # Retracted assistant messages: keep in context with annotation so character still "remembers"
+            if asst_msg.get("retracted"):
+                asst_msg = {
+                    **asst_msg,
+                    "content": f"（你随后撤回了这句话，但你记得说过）{asst_msg.get('content', '')}",
+                }
             collected.append(asst_msg)
             collected.append(user_msg)
             used += pair_tok
