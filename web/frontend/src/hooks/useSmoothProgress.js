@@ -15,15 +15,33 @@ export function nextPct(prev, softCap, dtMs, decay = DECAY_RATE) {
   return prev + diff * factor
 }
 
+function resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDisplayPct) {
+  displayRef.current = 0
+  renderedRef.current = 0
+  targetRef.current = target
+  lastTsRef.current = null
+  setDisplayPct(0)
+}
+
 export default function useSmoothProgress(target, done) {
   const displayRef = useRef(0)
   const renderedRef = useRef(0)
   const targetRef = useRef(target)
   const lastTsRef = useRef(null)
   const rafRef = useRef(null)
+  const prevDoneRef = useRef(done)
   const [displayPct, setDisplayPct] = useState(0)
 
   useEffect(() => {
+    const prevDone = prevDoneRef.current
+    prevDoneRef.current = done
+
+    // done true→false transition → retry, reset everything
+    if (prevDone && !done) {
+      resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDisplayPct)
+      return
+    }
+
     if (done) {
       if (displayRef.current !== 100) {
         displayRef.current = 100
@@ -32,6 +50,14 @@ export default function useSmoothProgress(target, done) {
       }
       return
     }
+
+    // target dropped significantly → new cycle with fresh progress
+    if (target != null && targetRef.current != null && target < targetRef.current - 1) {
+      resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDisplayPct)
+      return
+    }
+
+    // Normal: propagate larger targets
     if (target != null && (targetRef.current == null || target > targetRef.current)) {
       targetRef.current = target
     }
