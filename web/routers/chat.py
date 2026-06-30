@@ -22,6 +22,11 @@ legacy_router = APIRouter(tags=["legacy-chat"])
 
 MAX_MESSAGE_LENGTH = 5000
 
+# Retraction state machine
+RETRACT_COOLDOWN_TURNS = 4      # 距上次撤回至少间隔的轮数
+RETRACT_MAX_PER_SESSION = 3     # 单会话最大撤回次数
+RETRACT_BASE_PROB = 0.2         # 通过冷却与上限后的基础概率
+
 
 def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, object]]:
     """Filter DB messages and map roles to engine.history format.
@@ -45,6 +50,48 @@ def _rebuild_history_from_db(db_messages: list[dict]) -> list[dict[str, object]]
     return result
 
 
+async def _decide_retraction(engine, session: dict, reply: str) -> bool:
+    """Session-level retraction state machine — decide if this reply should be retracted.
+
+    All conditions must pass:
+      1. Cooldown: at least RETRACT_COOLDOWN_TURNS since last retract
+      2. Session cap: retract_count < RETRACT_MAX_PER_SESSION
+      3. Probability gate: random() < RETRACT_BASE_PROB
+      4. LLM judgement: engine._should_retract(reply) returns True
+
+    On hit, updates last_retract_turn / retract_count / turn_index.
+    """
+    state = session.setdefault("retract_state", {
+        "last_retract_turn": -999,
+        "retract_count": 0,
+        "turn_index": 0,
+    })
+    state["turn_index"] += 1
+
+    if not engine:
+        return False
+
+    if state["turn_index"] - state["last_retract_turn"] < RETRACT_COOLDOWN_TURNS:
+        return False
+
+    if state["retract_count"] >= RETRACT_MAX_PER_SESSION:
+        return False
+
+    if random.random() >= RETRACT_BASE_PROB:
+        return False
+
+    try:
+        retracted = await asyncio.to_thread(engine._should_retract, reply)
+    except Exception:
+        retracted = False
+
+    if retracted:
+        state["last_retract_turn"] = state["turn_index"]
+        state["retract_count"] += 1
+
+    return retracted
+
+
 async def _ensure_session(
     session_id: str,
     storage: StorageBase,
@@ -55,6 +102,11 @@ async def _ensure_session(
     session = sessions.get(session_id)
     if session is not None:
         session.setdefault("lock", asyncio.Lock())
+        session.setdefault("retract_state", {
+            "last_retract_turn": -999,
+            "retract_count": 0,
+            "turn_index": 0,
+        })
         # SECURITY: verify session ownership even on memory hit
         if session.get("user_id") and session["user_id"] != user_id:
             raise HTTPException(403, "无权访问此会话")
@@ -134,6 +186,11 @@ async def _ensure_session(
         print(f"[chat] Restore affinity failed (non-fatal): {exc}")
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
     sessions[session_id].setdefault("lock", asyncio.Lock())
+    sessions[session_id].setdefault("retract_state", {
+        "last_retract_turn": -999,
+        "retract_count": 0,
+        "turn_index": 0,
+    })
 
     print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
     touch_session(sessions[session_id])
@@ -230,14 +287,8 @@ async def _do_chat(
         print(f"[chat] Chat failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
-    # Determine retraction before persisting
-    engine = session.get("engine")
-    retracted = False
-    if engine and random.random() < 0.2:
-        try:
-            retracted = await asyncio.to_thread(engine._should_retract, resp)
-        except Exception:
-            retracted = False
+    # Determine retraction before persisting (session-level state machine)
+    retracted = await _decide_retraction(session.get("engine"), session, resp)
 
     # If retracted, mark as retracted so LLM still knows it was said (annotation handled in _build_llm_messages)
     if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
@@ -381,14 +432,9 @@ async def _do_chat_stream(
                 print(f"[chat] WARNING: LLM returned empty response (history={len(engine.history) if engine else 0})")
             rag_context = getattr(session["engine"], "_last_rag_context", "") or ""
 
-            # Determine retraction before persisting
+            # Determine retraction before persisting (session-level state machine)
+            retracted = await _decide_retraction(session.get("engine"), session, full_reply)
             engine = session.get("engine")
-            retracted = False
-            if engine and random.random() < 0.2:
-                try:
-                    retracted = await asyncio.to_thread(engine._should_retract, full_reply)
-                except Exception:
-                    retracted = False
 
             # If retracted, mark as retracted so LLM still knows it was said (annotation handled in _build_llm_messages)
             if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
