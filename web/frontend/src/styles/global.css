@@ -53,6 +53,7 @@
   --bg: var(--bg-page);
   --card-bg: var(--glass-bg);
   --card-border: var(--glass-border);
+  --avatar-radius: 12px;
   --card-radius: 24px;
   --btn-radius: 12px;
   --card-blur: blur(28px) saturate(200%);
@@ -3621,7 +3622,7 @@ html.theme-aurora::before {
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  border-radius: 50%;
+  border-radius: var(--avatar-radius);
   overflow: hidden;
 }
 .chat-topbar-mood-btn {
@@ -10764,7 +10765,7 @@ select.settings-input {
 }
 
 .group-avatar-stack { display: flex; flex-shrink: 0; }
-.group-avatar-stack > * { margin-left: -8px; border: 2px solid var(--sidebar-bg); border-radius: 50%; }
+.group-avatar-stack > * { margin-left: -8px; border: 2px solid var(--sidebar-bg); border-radius: var(--avatar-radius); }
 .group-avatar-stack > *:first-child { margin-left: 0; }
 
 .group-header-count { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
