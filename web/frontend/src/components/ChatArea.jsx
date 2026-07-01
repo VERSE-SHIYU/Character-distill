@@ -1037,10 +1037,13 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   // Push code-point diffs into the typewriter queue (emoji-safe).
   useEffect(() => {
+    console.log('[TW1] push effect: isStreaming=%s contentLen=%d lastCp=%d', isStreaming, content.length, lastCpCountRef.current)
     if (!isStreaming) return
     const cps = [...content]
     if (cps.length > lastCpCountRef.current) {
-      tw.push(cps.slice(lastCpCountRef.current).join(''))
+      const delta = cps.slice(lastCpCountRef.current).join('')
+      console.log('[TW2] PUSH: len=%d text="%s"', delta.length, delta)
+      tw.push(delta)
       lastCpCountRef.current = cps.length
     }
   }, [content, isStreaming, tw])
@@ -1050,7 +1053,11 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     return () => { tw.flush(); tw.reset() }
   }, [tw])
 
-  const displayContent = (isStreaming || !tw.isDone) ? tw.displayedText : content
+  const displayContent = (() => {
+    const v = (isStreaming || !tw.isDone) ? tw.displayedText : content
+    console.log('[TW3] displayContent: isStreaming=%s isDone=%s dispLen=%d contentLen=%d using=%s', isStreaming, tw.isDone, tw.displayedText.length, content.length, v === content ? 'raw' : 'typewriter')
+    return v
+  })()
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}

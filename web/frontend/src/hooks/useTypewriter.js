@@ -61,6 +61,7 @@ export default function useTypewriter() {
 
   const push = useCallback((text) => {
     if (!text) return
+    console.log('[TW4] useTypewriter.push: queueLen=%d (before) textLen=%d', queueRef.current.length, text.length)
     queueRef.current = queueRef.current.concat([...text])
     if (isDoneRef.current) {
       isDoneRef.current = false
