@@ -1022,46 +1022,35 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   const [showRetracted, setShowRetracted] = useState(false)
 
   // Typewriter: smooth code-point-by-code-point reveal for streaming messages.
-  // phase: 'idle' = show raw content; 'typing' = show typewriter output (streaming + drain tail)
   const tw = useTypewriter()
   const lastCpCountRef = useRef(0)
-  const [phase, setPhase] = useState('idle')
+  const prevStreamingRef = useRef(false)
 
-  // Enter typing mode exactly when streaming begins; seed any content already present.
+  // Rising edge of isStreaming: reset typewriter on streaming start.
   useEffect(() => {
-    if (isStreaming && phase === 'idle') {
+    if (isStreaming && !prevStreamingRef.current) {
       tw.reset()
       lastCpCountRef.current = 0
-      setPhase('typing')
     }
-  }, [isStreaming, phase, tw])
+    prevStreamingRef.current = isStreaming
+  }, [isStreaming, tw])
 
-  // While typing, push code-point diffs into the queue (emoji-safe).
+  // Push code-point diffs into the typewriter queue (emoji-safe).
   useEffect(() => {
-    if (phase !== 'typing' || !isStreaming) return
+    if (!isStreaming) return
     const cps = [...content]
     if (cps.length > lastCpCountRef.current) {
       tw.push(cps.slice(lastCpCountRef.current).join(''))
       lastCpCountRef.current = cps.length
     }
-  }, [content, isStreaming, phase, tw])
-
-  // On normal stream end: do NOT flush. Let rAF drain the queue naturally.
-  // Once drained (isDone) and the visible text equals content, leave typing mode.
-  useEffect(() => {
-    if (phase === 'typing' && !isStreaming && tw.isDone) {
-      setPhase('idle')
-    }
-  }, [phase, isStreaming, tw.isDone])
+  }, [content, isStreaming, tw])
 
   // Interrupt scenarios (revoke / cancel / unmount): finish immediately, no lost chars.
   useEffect(() => {
     return () => { tw.flush(); tw.reset() }
   }, [tw])
 
-  // During 'typing' show typewriter output; the drain tail keeps showing it until
-  // isDone flips, at which point phase→idle and we show raw content.
-  const displayContent = phase === 'typing' ? tw.displayedText : content
+  const displayContent = (isStreaming || !tw.isDone) ? tw.displayedText : content
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}
