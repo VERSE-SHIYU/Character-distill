@@ -54,6 +54,30 @@ def validate_jwt_secret() -> None:
     get_jwt_secret()
 
 
+def validate_fernet_key() -> None:
+    """Validate FERNET_KEY format at startup if set.
+
+    Fernet requires a 32-byte url-safe base64 key. If FERNET_KEY is not set,
+    the system falls back to JWT_SECRET (validated separately), so we only
+    check when it IS explicitly configured.
+    """
+    key = os.getenv("FERNET_KEY")
+    if not key:
+        return
+    try:
+        from cryptography.fernet import Fernet
+        Fernet(key.encode())
+    except Exception as exc:
+        raise RuntimeError(
+            "FERNET_KEY 格式错误：必须是 base64-urlsafe 编码的 32 字节 key。\n"
+            "当前 FERNET_KEY 无法初始化 Fernet 加密器。\n"
+            "请用以下命令生成正确格式的 key：\n"
+            "  python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"\n"
+            "或：\n"
+            "  openssl rand -base64 32"
+        ) from exc
+
+
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_DAYS = 30

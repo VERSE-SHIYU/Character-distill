@@ -61,6 +61,7 @@ from routers.auth import get_current_user, router as auth_router
 from routers.auth import (
     JWT_ALGORITHM,
     get_jwt_secret,
+    validate_fernet_key,
     validate_jwt_secret,
 )
 from inter_node_auth import validate_inter_node_secret
@@ -84,6 +85,7 @@ else:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    validate_fernet_key()
     validate_jwt_secret()
     validate_inter_node_secret()
     install_log_collector()
