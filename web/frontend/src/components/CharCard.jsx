@@ -177,6 +177,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const lastDistilledCardId = useAppStore((s) => s.lastDistilledCardId)
   const setLastDistilledCardId = useAppStore((s) => s.setLastDistilledCardId)
+  const viewCard = useAppStore((s) => s.viewCard)
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
