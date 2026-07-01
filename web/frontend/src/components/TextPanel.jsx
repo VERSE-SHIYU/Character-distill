@@ -15,19 +15,16 @@ const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
 
 function UploadProgressBanner({ task }) {
-  const displayPct = useSmoothProgress(task.progress_pct, false)
   const statusMap = {
     parsing: '正在读取文本…',
     identifying: '正在识别角色…',
     resolving: '正在识别角色…',
   }
   const message = statusMap[task.status] || '处理中…'
-  const pctText = displayPct > 0 ? `${Math.round(displayPct)}%` : ''
 
   return (
     <div className="upload-progress">
-      <div className="progress-bar" style={{ width: `${displayPct}%` }} />
-      <span>{message} {pctText}</span>
+      <span>{message}</span>
     </div>
   )
 }
