@@ -182,7 +182,7 @@ def _run_distill_task(
         full = ""
         full_format = ""
         cur_phase = None
-        EXPECT_CHARS = 1200
+        EXPECT_CHARS = 3500
         stream = distiller.distill_incremental_stream(content, name, aliases, text_type)
         for piece in stream:
             with _task_lock:
@@ -209,7 +209,7 @@ def _run_distill_task(
                         msg = f"合并角色信息 {current}/{total}"
                     elif status == "formatting":
                         full_format = ""
-                        pct = 92
+                        pct = 40
                         msg = "生成角色卡…"
                     else:
                         pct = 10
@@ -226,7 +226,7 @@ def _run_distill_task(
                 if cur_phase == "formatting":
                     full_format += piece
                     f_len = len(full_format)
-                    f_pct = 92 + min(int(f_len / EXPECT_CHARS * 7), 7)
+                    f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
                     with _task_lock:
                         _tasks[task_id].update({"progress_pct": f_pct})
                 full += piece
