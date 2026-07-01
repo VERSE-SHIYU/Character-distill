@@ -69,17 +69,8 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
                     _upload_tasks[task_id].update({"status": "error", "message": "文本未找到"})
                 return
 
-            content = text_rec.get("content", "")
-            text_type = text_rec.get("text_type", "story")
-
             # Check cancellation before proceeding
             if _check_upload_cancelled(task_id):
-                return
-
-            # Only story/classic need coref
-            if text_type not in ("story", "classic"):
-                with _upload_task_lock:
-                    _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成", "text_id": text_id})
                 return
 
             with _upload_task_lock:
