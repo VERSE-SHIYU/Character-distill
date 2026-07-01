@@ -318,3 +318,30 @@ class TestErrorSanitization:
         detail = r.json().get("detail", "")
         # ValueError message should be visible (it's a friendly business error)
         assert "xlsx" in detail, f"ValueError message not surfaced: {detail}"
+
+
+# ── FERNET_KEY format validation ──────────────────────────────────────────
+
+
+class TestFernetKeyValidation:
+    """Startup validation: bad FERNET_KEY format must be caught early."""
+
+    def test_hex_key_raises(self, monkeypatch):
+        """Hex-encoded 32-byte key (the SZ bug) must raise RuntimeError."""
+        monkeypatch.setenv("FERNET_KEY", "9b71" + "a" * 60)
+        from routers.auth import validate_fernet_key
+        with pytest.raises(RuntimeError, match="FERNET_KEY 格式错误"):
+            validate_fernet_key()
+
+    def test_valid_base64_key_passes(self, monkeypatch):
+        """Valid url-safe base64 key must pass without error."""
+        from cryptography.fernet import Fernet
+        monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
+        from routers.auth import validate_fernet_key
+        validate_fernet_key()  # should not raise
+
+    def test_no_key_passes(self, monkeypatch):
+        """Missing FERNET_KEY must pass (JWT_SECRET fallback valid separately)."""
+        monkeypatch.delenv("FERNET_KEY", raising=False)
+        from routers.auth import validate_fernet_key
+        validate_fernet_key()  # should not raise
