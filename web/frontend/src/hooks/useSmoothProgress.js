@@ -23,7 +23,8 @@ function resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDi
   setDisplayPct(0)
 }
 
-export default function useSmoothProgress(target, done) {
+export default function useSmoothProgress(target, done, options = {}) {
+  const { monotonic = false } = options
   const displayRef = useRef(0)
   const renderedRef = useRef(0)
   const targetRef = useRef(target)
@@ -37,7 +38,7 @@ export default function useSmoothProgress(target, done) {
     prevDoneRef.current = done
 
     // done true→false transition → retry, reset everything
-    if (prevDone && !done) {
+    if (!monotonic && prevDone && !done) {
       resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDisplayPct)
       return
     }
@@ -52,7 +53,7 @@ export default function useSmoothProgress(target, done) {
     }
 
     // target dropped significantly → new cycle with fresh progress
-    if (target != null && targetRef.current != null && target < targetRef.current - 1) {
+    if (!monotonic && target != null && targetRef.current != null && target < targetRef.current - 1) {
       resetCycle(displayRef, renderedRef, targetRef, lastTsRef, target, setDisplayPct)
       return
     }
@@ -61,7 +62,7 @@ export default function useSmoothProgress(target, done) {
     if (target != null && (targetRef.current == null || target > targetRef.current)) {
       targetRef.current = target
     }
-  }, [target, done])
+  }, [target, done, monotonic])
 
   useEffect(() => {
     if (done) return
