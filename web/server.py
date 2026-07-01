@@ -58,7 +58,11 @@ from routers.message import router as message_router
 from routers.inter_node import router as inter_node_router
 from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
-from routers.auth import JWT_ALGORITHM, get_jwt_secret, validate_jwt_secret
+from routers.auth import (
+    JWT_ALGORITHM,
+    get_jwt_secret,
+    validate_jwt_secret,
+)
 from inter_node_auth import validate_inter_node_secret
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
