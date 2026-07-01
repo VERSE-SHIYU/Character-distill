@@ -20,7 +20,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${PG_IMAGE_REGISTRY:-docker.io/library}/postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -111,7 +111,7 @@ services:
       - prod
 
   fail2ban:
-    image: crazymax/fail2ban:latest
+    image: ${FAIL2BAN_IMAGE_REGISTRY:-docker.io/crazymax}/fail2ban:1.1.0
     volumes:
       - nginx_logs:/var/log/openresty:ro
       - ./fail2ban/jail.local:/etc/fail2ban/jail.local:ro

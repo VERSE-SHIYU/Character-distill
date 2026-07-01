@@ -43,6 +43,9 @@ env:
   REGISTRY: ghcr.io
   APP_IMAGE: ghcr.io/verse-shiyu/character-distill-app
   NGINX_IMAGE: ghcr.io/verse-shiyu/character-distill-nginx
+  ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
+  ALIYUN_APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
+  ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
   # ── 解析目标镜像：digest / rollback tag / pinned run ────────
@@ -190,6 +193,8 @@ jobs:
             # Deploy with Aliyun registry (fast local pull)
             export APP_IMAGE_REGISTRY="${{ env.ALIYUN_APP_IMAGE }}"
             export NGINX_IMAGE_REGISTRY="${{ env.ALIYUN_NGINX_IMAGE }}"
+            export PG_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
+            export FAIL2BAN_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
             export APP_IMAGE_TAG=${COMMIT_SHA}
             export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans

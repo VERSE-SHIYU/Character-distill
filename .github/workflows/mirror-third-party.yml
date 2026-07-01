@@ -1,0 +1,43 @@
+# ============================================================
+# 一次性：镜像第三方镜像到阿里云 CR
+# SZ 节点无法访问 Docker Hub，需要 postgres 和 fail2ban
+# 通过阿里云 CR 加速拉取。
+#
+# 完成后删除本文件。
+# ============================================================
+name: Mirror third-party images
+
+on:
+  workflow_dispatch:
+
+env:
+  ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to Aliyun CR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Mirror postgres:16-alpine
+        run: |
+          docker pull postgres:16-alpine
+          docker tag postgres:16-alpine ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/postgres:16-alpine
+          docker push ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/postgres:16-alpine
+
+      - name: Mirror crazymax/fail2ban:1.1.0
+        run: |
+          docker pull crazymax/fail2ban:1.1.0
+          docker tag crazymax/fail2ban:1.1.0 ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/fail2ban:1.1.0
+          docker push ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/fail2ban:1.1.0
+
+      - name: Verify
+        run: |
+          echo "=== Mirrored images on Aliyun CR ==="
+          echo "  ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/postgres:16-alpine"
+          echo "  ${{ env.ALIYUN_REGISTRY }}/verse-shiyu/fail2ban:1.1.0"
