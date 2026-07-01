@@ -157,6 +157,7 @@ jobs:
           host: 47.107.42.111
           username: root
           key: ${{ secrets.SZ_DEPLOY_KEY }}
+          command_timeout: 30m
           envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA
           script: |
             set -e
