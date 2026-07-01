@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1075,10 +1076,11 @@ class SQLiteStore(StorageBase):
     async def delete_text(self, id: str) -> bool:
         """Soft-delete one text record."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "UPDATE texts SET deleted_at = datetime('now') WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')",
-                    (id,),
+                    "UPDATE texts SET deleted_at = ? WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')",
+                    (now, id),
                 )
                 await conn.commit()
                 return cursor.rowcount > 0
@@ -1726,6 +1728,7 @@ class SQLiteStore(StorageBase):
     async def delete_card(self, card_id: str) -> bool:
         """Soft delete: set deleted_at timestamp, enqueue outbox atomically."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     "SELECT visibility FROM cards WHERE id = ?", (card_id,),
@@ -1736,8 +1739,8 @@ class SQLiteStore(StorageBase):
                 visibility = row["visibility"]
 
                 await conn.execute(
-                    "UPDATE cards SET deleted_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
-                    (card_id,),
+                    "UPDATE cards SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
+                    (now, card_id),
                 )
 
                 if visibility == "public":
@@ -2026,8 +2029,7 @@ class SQLiteStore(StorageBase):
     async def delete_session(self, id: str) -> bool:
         """Soft-delete one session (set deleted_at timestamp)."""
         try:
-            from datetime import datetime
-            now = datetime.now().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     "UPDATE sessions SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
@@ -2042,8 +2044,7 @@ class SQLiteStore(StorageBase):
     async def clear_all_sessions(self, user_id: str = "") -> int:
         """Soft-delete all non-deleted sessions. Returns count of affected sessions."""
         try:
-            from datetime import datetime
-            now = datetime.now().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
@@ -2586,10 +2587,11 @@ class SQLiteStore(StorageBase):
 
     async def delete_group_session(self, id: str) -> None:
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE group_sessions SET deleted_at = datetime('now') WHERE id = ?",
-                    (id,),
+                    "UPDATE group_sessions SET deleted_at = ? WHERE id = ?",
+                    (now, id),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -2892,10 +2894,11 @@ class SQLiteStore(StorageBase):
     async def update_last_login(self, user_id: str) -> None:
         """Update the last_login_at timestamp for a user."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET last_login_at = datetime('now') WHERE id = ?",
-                    (user_id,),
+                    "UPDATE users SET last_login_at = ? WHERE id = ?",
+                    (now, user_id),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -2904,10 +2907,11 @@ class SQLiteStore(StorageBase):
     async def update_last_active(self, user_id: str) -> None:
         """Update the last_active_at timestamp for a user."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET last_active_at = datetime('now') WHERE id = ?",
-                    (user_id,),
+                    "UPDATE users SET last_active_at = ? WHERE id = ?",
+                    (now, user_id),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -3261,8 +3265,7 @@ class SQLiteStore(StorageBase):
             raise
 
     async def use_invite_code(self, code: str, used_by: str) -> None:
-        from datetime import datetime
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -4086,12 +4089,13 @@ class SQLiteStore(StorageBase):
     async def resolve_report(self, report_id: str, resolver_id: str) -> bool:
         """Dismiss a report (mark resolved, don't delete comment)."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
                     """UPDATE card_comment_reports
-                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
                        WHERE id = ? AND status = 'pending'""",
-                    (resolver_id, report_id),
+                    (now, resolver_id, report_id),
                 )
                 await conn.commit()
             return True
@@ -4103,12 +4107,13 @@ class SQLiteStore(StorageBase):
         """Delete the reported comment and resolve the report."""
         try:
             async with await self._connect() as conn:
+                now = datetime.now(timezone.utc).isoformat()
                 await conn.execute("DELETE FROM card_comments WHERE id = ?", (comment_id,))
                 await conn.execute(
                     """UPDATE card_comment_reports
-                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
                        WHERE id = ? AND status = 'pending'""",
-                    (resolver_id, report_id),
+                    (now, resolver_id, report_id),
                 )
                 await conn.commit()
             return True
@@ -4144,12 +4149,13 @@ class SQLiteStore(StorageBase):
     async def resolve_all_reports(self, comment_id: str, resolver_id: str) -> bool:
         """Resolve all pending reports for a specific comment."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
                     """UPDATE card_comment_reports
-                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
                        WHERE comment_id = ? AND status = 'pending'""",
-                    (resolver_id, comment_id),
+                    (now, resolver_id, comment_id),
                 )
                 await conn.commit()
             return True
@@ -4160,13 +4166,14 @@ class SQLiteStore(StorageBase):
     async def delete_comment_and_resolve_reports(self, comment_id: str, resolver_id: str) -> bool:
         """Delete a comment and resolve all its pending reports."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute("DELETE FROM card_comments WHERE id = ?", (comment_id,))
                 await conn.execute(
                     """UPDATE card_comment_reports
-                       SET status = 'resolved', resolved_at = datetime('now'), resolver_id = ?
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
                        WHERE comment_id = ? AND status = 'pending'""",
-                    (resolver_id, comment_id),
+                    (now, resolver_id, comment_id),
                 )
                 await conn.commit()
             return True
@@ -5179,6 +5186,7 @@ class SQLiteStore(StorageBase):
         visibility = 'public'), updates that fork in place instead — idempotent.
         """
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 # Check if a published fork already exists
                 cursor = await conn.execute(
@@ -5226,9 +5234,10 @@ class SQLiteStore(StorageBase):
                     """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data, user_id,
                                           visibility, forked_from, likes, voice_ref_json,
                                           market_description, market_tags, publish_message)
-                       VALUES (?, ?, ?, ?, datetime('now'), ?, ?, 'public', ?, 0, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, ?, ?)""",
                     (fork_id,
                      src["text_id"], src["name"], src["card_json"],
+                     now,
                      src["avatar_data"], user_id, card_id,
                      src["voice_ref_json"],
                      description, tags, message),
@@ -5438,15 +5447,16 @@ class SQLiteStore(StorageBase):
     async def save_reading_progress(self, user_id: str, text_id: str, progress: float, scroll_position: int) -> None:
         """UPSERT reading progress for a user+text pair."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
                     """INSERT INTO reading_progress (user_id, text_id, progress, scroll_position, updated_at)
-                       VALUES (?, ?, ?, ?, datetime('now'))
+                       VALUES (?, ?, ?, ?, ?)
                        ON CONFLICT(user_id, text_id) DO UPDATE SET
                            progress = excluded.progress,
                            scroll_position = excluded.scroll_position,
                            updated_at = excluded.updated_at""",
-                    (user_id, text_id, progress, scroll_position),
+                    (user_id, text_id, progress, scroll_position, now),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -5483,10 +5493,11 @@ class SQLiteStore(StorageBase):
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "UPDATE cards SET deleted_at = datetime('now') WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    (text_id, user_id),
+                    "UPDATE cards SET deleted_at = ? WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
+                    (now, text_id, user_id),
                 )
                 return cursor.rowcount
         except Exception as exc:

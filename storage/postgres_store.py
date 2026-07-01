@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -258,10 +259,11 @@ class PostgresStore(StorageBase):
     async def delete_text(self, id: str) -> bool:
         """Soft-delete one text record."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 tag = await conn.execute(
-                    "UPDATE texts SET deleted_at = CURRENT_TIMESTAMP::text WHERE id = $1 AND (deleted_at IS NULL OR deleted_at = '')",
-                    id,
+                    "UPDATE texts SET deleted_at = $2 WHERE id = $1 AND (deleted_at IS NULL OR deleted_at = '')",
+                    id, now,
                 )
                 return self._parse_rowcount(tag) > 0
         except Exception as exc:
@@ -408,9 +410,10 @@ class PostgresStore(StorageBase):
         """Update a card's JSON content by ID."""
         try:
             async with await self._connect() as conn:
+                now = datetime.now(timezone.utc).isoformat()
                 await conn.execute(
-                    "UPDATE cards SET card_json = $1, updated_at = CURRENT_TIMESTAMP::text WHERE id = $2",
-                    json.dumps(card_json, ensure_ascii=False), card_id,
+                    "UPDATE cards SET card_json = $1, updated_at = $3 WHERE id = $2",
+                    json.dumps(card_json, ensure_ascii=False), card_id, now,
                 )
                 return await self.get_card(card_id) or {}
         except Exception as exc:
@@ -897,10 +900,11 @@ class PostgresStore(StorageBase):
                     if row is None:
                         return False
                     visibility = row["visibility"]
+                    now = datetime.now(timezone.utc).isoformat()
 
                     await conn.execute(
-                        "UPDATE cards SET deleted_at = CURRENT_TIMESTAMP::text WHERE id = $1 AND deleted_at IS NULL",
-                        card_id,
+                        "UPDATE cards SET deleted_at = $2 WHERE id = $1 AND deleted_at IS NULL",
+                        card_id, now,
                     )
 
                     if visibility == "public":
@@ -1170,8 +1174,7 @@ class PostgresStore(StorageBase):
     async def delete_session(self, id: str) -> bool:
         """Soft-delete one session (set deleted_at timestamp)."""
         try:
-            from datetime import datetime
-            now = datetime.now().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 tag = await conn.execute(
                     "UPDATE sessions SET deleted_at = $1 WHERE id = $2 AND deleted_at IS NULL",
@@ -1185,8 +1188,7 @@ class PostgresStore(StorageBase):
     async def clear_all_sessions(self, user_id: str = "") -> int:
         """Soft-delete all non-deleted sessions. Returns count of affected sessions."""
         try:
-            from datetime import datetime
-            now = datetime.now().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 if user_id:
                     tag = await conn.execute(
@@ -1682,10 +1684,11 @@ class PostgresStore(StorageBase):
 
     async def delete_group_session(self, id: str) -> None:
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE group_sessions SET deleted_at = CURRENT_TIMESTAMP::text WHERE id = $1",
-                    id,
+                    "UPDATE group_sessions SET deleted_at = $2 WHERE id = $1",
+                    id, now,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Delete group session failed: {exc}")
@@ -1966,10 +1969,11 @@ class PostgresStore(StorageBase):
     async def update_last_login(self, user_id: str) -> None:
         """Update the last_login_at timestamp for a user."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET last_login_at = CURRENT_TIMESTAMP::text WHERE id = $1",
-                    user_id,
+                    "UPDATE users SET last_login_at = $2 WHERE id = $1",
+                    user_id, now,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update last_login failed: {exc}")
@@ -1977,10 +1981,11 @@ class PostgresStore(StorageBase):
     async def update_last_active(self, user_id: str) -> None:
         """Update the last_active_at timestamp for a user."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE users SET last_active_at = CURRENT_TIMESTAMP::text WHERE id = $1",
-                    user_id,
+                    "UPDATE users SET last_active_at = $2 WHERE id = $1",
+                    user_id, now,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update last_active failed: {exc}")
@@ -2304,8 +2309,7 @@ class PostgresStore(StorageBase):
             raise
 
     async def use_invite_code(self, code: str, used_by: str) -> None:
-        from datetime import datetime
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             async with await self._connect() as conn:
                 await conn.execute(
@@ -4289,10 +4293,11 @@ class PostgresStore(StorageBase):
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
         try:
+            now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
                 tag = await conn.execute(
-                    "UPDATE cards SET deleted_at = CURRENT_TIMESTAMP::text WHERE text_id = $1 AND user_id = $2 AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    text_id, user_id,
+                    "UPDATE cards SET deleted_at = $3 WHERE text_id = $1 AND user_id = $2 AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
+                    text_id, user_id, now,
                 )
                 return self._parse_rowcount(tag)
         except Exception as exc:
