@@ -595,7 +595,7 @@ async def broadcast_message(
                                     'speaker': r['speaker'],
                                     'reply': '',
                                     'role': 'silent',
-                                    'msg_id': msg_rec['id'],
+                                    'msg_id': msg_rec,
                                 }, ensure_ascii=False)}\n\n"
                     else:
                         msg_rec = await storage.save_group_message(
@@ -608,7 +608,7 @@ async def broadcast_message(
                                 'speaker': r['speaker'],
                                 'reply': r['reply'],
                                 'role': 'assistant',
-                                'msg_id': msg_rec['id'],
+                                'msg_id': msg_rec,
                             }, ensure_ascii=False)}\n\n"
 
             # Done — all replies sent
