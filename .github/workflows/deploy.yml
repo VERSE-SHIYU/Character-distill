@@ -163,7 +163,9 @@ jobs:
             set -e
             cd /opt/character-distill
 
+            # Login to both registries
             echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u verse-shiyu --password-stdin
+            echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ env.ALIYUN_REGISTRY }} -u "${{ secrets.ACR_USERNAME }}" --password-stdin
 
             # Record current version for rollback
             PREV_SHA=$(docker inspect --format='{{index .Config.Image}}' character-distill-app-1 2>/dev/null | grep -oE '[a-f0-9]{40}' || echo "")
@@ -175,21 +177,19 @@ jobs:
               exit 1
             fi
 
-            # Pull by digest (pin exact image), or by tag for rollback
-            if [ -n "${APP_DIGEST}" ]; then
-              docker pull ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST}
-              docker tag ghcr.io/verse-shiyu/character-distill-app@${APP_DIGEST} ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
-            else
-              docker pull ghcr.io/verse-shiyu/character-distill-app:${COMMIT_SHA}
-            fi
+            # Pull app — prefer Aliyun CR (fast), fallback to GHCR (slow but reliable)
+            ALIYUN_APP="${{ env.ALIYUN_APP_IMAGE }}:${COMMIT_SHA}"
+            GHCR_APP="${{ env.APP_IMAGE }}@${APP_DIGEST}"
+            docker pull ${ALIYUN_APP} 2>/dev/null || docker pull ${GHCR_APP}
 
-            if [ -n "${NGINX_DIGEST}" ]; then
-              docker pull ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST}
-              docker tag ghcr.io/verse-shiyu/character-distill-nginx@${NGINX_DIGEST} ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
-            else
-              docker pull ghcr.io/verse-shiyu/character-distill-nginx:${COMMIT_SHA}
-            fi
+            # Pull nginx — same strategy
+            ALIYUN_NGINX="${{ env.ALIYUN_NGINX_IMAGE }}:${COMMIT_SHA}"
+            GHCR_NGINX="${{ env.NGINX_IMAGE }}@${NGINX_DIGEST}"
+            docker pull ${ALIYUN_NGINX} 2>/dev/null || docker pull ${GHCR_NGINX}
 
+            # Deploy with Aliyun registry (fast local pull)
+            export APP_IMAGE_REGISTRY="${{ env.ALIYUN_APP_IMAGE }}"
+            export NGINX_IMAGE_REGISTRY="${{ env.ALIYUN_NGINX_IMAGE }}"
             export APP_IMAGE_TAG=${COMMIT_SHA}
             export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
@@ -211,8 +211,11 @@ jobs:
             if [ "$HEALTHY" -ne 1 ]; then
               echo "SZ health check FAILED, rolling back..."
               if [ -n "$PREV_SHA" ]; then
-                docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
-                docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
+                # Try Aliyun first for rollback, fallback to GHCR
+                docker pull ${ALIYUN_APP%:*}:"${PREV_SHA}" 2>/dev/null || \
+                  docker pull ghcr.io/verse-shiyu/character-distill-app:"${PREV_SHA}"
+                docker pull ${ALIYUN_NGINX%:*}:"${PREV_SHA}" 2>/dev/null || \
+                  docker pull ghcr.io/verse-shiyu/character-distill-nginx:"${PREV_SHA}"
                 export APP_IMAGE_TAG=${PREV_SHA}
                 export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
@@ -227,10 +230,17 @@ jobs:
             # 2. 清旧镜像：只保留当前版 COMMIT_SHA + 上一版 PREV_SHA + latest
             if [ -n "$PREV_SHA" ]; then
               for repo in character-distill-app character-distill-nginx; do
+                # GHCR cleanup
                 docker images "ghcr.io/verse-shiyu/${repo}" --format '{{.Tag}}' \
                   | grep -vE "^(${COMMIT_SHA}|${PREV_SHA}|latest|<none>)$" \
                   | while read tag; do
                       docker rmi "ghcr.io/verse-shiyu/${repo}:${tag}" 2>/dev/null || true
+                    done
+                # Aliyun CR cleanup
+                docker images "${{ env.ALIYUN_REGISTRY }}/verse-shiyu/${repo}" --format '{{.Tag}}' \
+                  | grep -vE "^(${COMMIT_SHA}|${PREV_SHA}|latest|<none>)$" \
+                  | while read tag; do
+                      docker rmi "${{ env.ALIYUN_REGISTRY }}/verse-shiyu/${repo}:${tag}" 2>/dev/null || true
                     done
               done
             else

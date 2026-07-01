@@ -58,7 +58,7 @@ services:
       - prod
 
   app:
-    image: ghcr.io/verse-shiyu/character-distill-app:${APP_IMAGE_TAG:-latest}
+    image: ${APP_IMAGE_REGISTRY:-ghcr.io/verse-shiyu}/character-distill-app:${APP_IMAGE_TAG:-latest}
     # 仅本机暴露，外网只能经 nginx 进来
     ports:
       - "127.0.0.1:7860:7860"
@@ -87,7 +87,7 @@ services:
       - prod
 
   nginx:
-    image: ghcr.io/verse-shiyu/character-distill-nginx:${NGINX_IMAGE_TAG:-latest}
+    image: ${NGINX_IMAGE_REGISTRY:-ghcr.io/verse-shiyu}/character-distill-nginx:${NGINX_IMAGE_TAG:-latest}
     environment:
       - PEER_NODE_IP=${PEER_NODE_IP}
     ports:

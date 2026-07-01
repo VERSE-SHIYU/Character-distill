@@ -14,6 +14,9 @@ env:
   REGISTRY: ghcr.io
   APP_IMAGE: ghcr.io/verse-shiyu/character-distill-app
   NGINX_IMAGE: ghcr.io/verse-shiyu/character-distill-nginx
+  ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
+  ALIYUN_APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
+  ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
   test:
@@ -71,6 +74,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to Aliyun CR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ALIYUN_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
       - name: Build and push app image
         id: build_app
         uses: docker/build-push-action@v5
@@ -83,6 +93,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Push app image to Aliyun CR
+        continue-on-error: true
+        run: |
+          docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:latest
+          docker push ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.ALIYUN_APP_IMAGE }}:latest
+
       - name: Build and push nginx image
         id: build_nginx
         uses: docker/build-push-action@v5
@@ -94,6 +113,15 @@ jobs:
             ${{ env.NGINX_IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Push nginx image to Aliyun CR
+        continue-on-error: true
+        run: |
+          docker pull ${{ env.NGINX_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
+          docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:latest
+          docker push ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
+          docker push ${{ env.ALIYUN_NGINX_IMAGE }}:latest
 
       - name: Write digest file
         run: |
