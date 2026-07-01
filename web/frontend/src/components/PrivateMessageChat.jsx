@@ -308,7 +308,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
             {!otherOnlineHidden && (
               <span className={`private-chat-header-status${otherOnline ? ' online' : ''}`}>
                 <span className="private-chat-header-status-dot" />
-                {otherOnline === null ? '' : otherOnline ? '当前在线' : `最后在线 ${formatChatTime(otherLastActive)}`}
+                {otherOnline === null ? '' : otherOnline ? '当前在线' : `最后在线 ${otherLastActive ? formatChatTime(otherLastActive) : '暂无记录'}`}
               </span>
             )}
           </div>
