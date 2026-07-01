@@ -5,6 +5,7 @@ import { postJSON, getAuthHeaders, fetchWithTimeout } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
+import useSmoothProgress from '../hooks/useSmoothProgress'
 import ErrorBox from './common/ErrorBox'
 import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
@@ -13,6 +14,16 @@ import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+
+function IdentifyProgress({ active }) {
+  const pct = useSmoothProgress(active ? 90 : 100, !active)
+  return (
+    <div className="identify-progress">
+      <div className="progress-bar" style={{ width: `${pct}%` }} />
+      <span>正在识别角色...{Math.round(pct)}%</span>
+    </div>
+  )
+}
 
 // ---- CharCard (top-level) ----
 
@@ -552,7 +563,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             开始蒸馏
           </button>
         )}
-        {identifying && <Loading text="正在识别角色…" />}
+        {identifying && <IdentifyProgress active={identifying} />}
         {distilling && distillingName && (
           <Loading text={[
             `正在蒸馏 ${distillingName}…`,
