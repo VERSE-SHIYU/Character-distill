@@ -261,15 +261,17 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
     }
   }, [currentCard?.id])
 
-  // Scroll newly distilled card into center view
+  // Scroll newly distilled card into center view and auto-select it
   useEffect(() => {
     if (lastDistilledCardId) {
+      const card = cards.find((c) => c.id === lastDistilledCardId)
+      if (card) viewCard(card)
       const el = document.querySelector(`[data-card-id="${lastDistilledCardId}"]`)
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' })
       }
     }
-  }, [lastDistilledCardId])
+  }, [lastDistilledCardId, cards, viewCard])
 
   // Load card avatars for the sidebar list
   const avatarRequestedRef = useRef(new Set())
