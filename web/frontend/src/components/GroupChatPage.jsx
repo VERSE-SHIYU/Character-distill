@@ -961,6 +961,18 @@ export default function GroupChatPage() {
                         <Avatar key={id} name={resolveCard(id)?.name || '?'} size={22} src={cardAvatars[id]} />
                       ))}
                     </div>
+                    <Avatar
+                      name={
+                        (currentGroup?.user_persona_type === 'character' || currentGroup?.user_persona_type === 'stranger')
+                          ? (currentGroup?.user_persona_name || displayName(authUser) || '我')
+                          : (displayName(authUser) || '我')
+                      }
+                      size={22}
+                      src={groupUserAvatar || userAvatar}
+                      onClick={() => userAvatarInputRef.current?.click()}
+                      className="group-header-my-avatar"
+                      title="更换我的头像"
+                    />
                     <span className="group-header-count">{currentGroup.card_ids?.length || 0} 个角色</span>
                   </div>
                 )}

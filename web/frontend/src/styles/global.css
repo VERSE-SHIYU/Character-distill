@@ -10988,6 +10988,8 @@ select.settings-input {
 .group-avatar-stack > *:first-child { margin-left: 0; }
 
 .group-header-count { font-size: 12px; color: var(--text-dim); margin-left: 8px; }
+.group-header-my-avatar { cursor: pointer; flex-shrink: 0; }
+.group-header-my-avatar:hover { opacity: 0.8; }
 
 /* ── Group Chat Header (refactored) ── */
 .group-header-left {
