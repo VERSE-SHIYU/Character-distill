@@ -908,14 +908,10 @@ function CardDetail({ card, textId }) {
               <p className="card-forked-from">{'\u{1F4CB}'} 基于他人角色卡</p>
             )}
           </div>
+          {data.awakening_message && (
+            <div className="card-awakening-bubble">{data.awakening_message}</div>
+          )}
         </div>
-
-        {/* Awakening line */}
-        {data.awakening_message && (
-          <CardSection label="苏醒台词">
-            <div className="card-awakening">{data.awakening_message}</div>
-          </CardSection>
-        )}
 
         {/* Personality traits */}
         {data.personality_traits?.length > 0 && (

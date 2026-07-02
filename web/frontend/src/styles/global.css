@@ -8696,11 +8696,53 @@ select.settings-input {
 }
 
 /* Card detail: awakening line */
-.card-awakening {
-  font-style: italic;
-  font-size: 0.95em;
-  color: var(--text-secondary, #666);
-  line-height: 1.6;
+/* Card detail: awakening bubble */
+.card-awakening-bubble {
+  position: relative;
+  background: var(--bubble-char-bg, #fff);
+  color: var(--text, #1a1a1a);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 0.92em;
+  line-height: 1.5;
+  max-width: 60%;
+  word-break: break-word;
+  white-space: pre-wrap;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  flex-shrink: 1;
+  align-self: center;
+}
+
+.card-awakening-bubble::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-right-color: var(--bubble-char-bg, #fff);
+  border-left: 0;
+}
+
+/* Mobile: bubble drops below hero, tail points up */
+@media (max-width: 768px) {
+  .card-hero {
+    flex-wrap: wrap;
+  }
+  .card-awakening-bubble {
+    max-width: 100%;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .card-awakening-bubble::before {
+    left: 16px;
+    top: -6px;
+    transform: none;
+    border: 6px solid transparent;
+    border-bottom-color: var(--bubble-char-bg, #fff);
+    border-top: 0;
+    border-right-color: transparent;
+  }
 }
 
 /* ---- Profile page ---- */
