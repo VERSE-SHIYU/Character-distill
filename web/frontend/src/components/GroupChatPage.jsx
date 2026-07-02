@@ -1589,29 +1589,32 @@ export default function GroupChatPage() {
 function GroupMessageText({ content, typing, onTypingDone }) {
   const tw = useTypewriter()
   const twRef = useRef(tw); twRef.current = tw
-  const phaseRef = useRef('idle')
+  const prevTypingRef = useRef(false)
   const firedRef = useRef(false)
 
+  // Rising edge of typing: reset + push entire content once
   useEffect(() => {
-    if (typing && phaseRef.current === 'idle') {
-      phaseRef.current = 'typing'
+    if (typing && !prevTypingRef.current) {
+      twRef.current.reset()
+      twRef.current.push([...content].join(''))
       firedRef.current = false
-      tw.reset()
-      tw.push([...content].join(''))
     }
-  }, [typing, content, tw])
+    prevTypingRef.current = typing
+  }, [typing, content])
 
+  // Done detection
   useEffect(() => {
-    if (phaseRef.current === 'typing' && tw.isDone && tw.displayedText === content) {
+    if (typing === false) return
+    if (tw.isDone && tw.displayedText === content) {
       if (firedRef.current) return
       firedRef.current = true
-      phaseRef.current = 'done'
       onTypingDone?.()
     }
   }, [tw.isDone, tw.displayedText, content, onTypingDone])
 
-  useEffect(() => () => { twRef.current.flush(); twRef.current.reset() }, [])
+  // Interrupt cleanup: reset only (content is immutable, no flush needed)
+  useEffect(() => () => { twRef.current.reset() }, [])
 
-  const display = (typing || phaseRef.current === 'typing') ? tw.displayedText : content
+  const display = (typing || !tw.isDone) ? tw.displayedText : content
   return <span className="messages-msg-text">{display}</span>
 }
