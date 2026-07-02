@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from core.affinity_service import AffinityService, calc_stage
+from core.affinity_service import AffinityService, calc_stage, AFFINITY_DELTA_UP, TRUST_DELTA_UP, GUARD_DELTA_DOWN
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext, EvalResult
 
 
@@ -155,7 +155,7 @@ class TestParseEvaluationReply:
         svc.trust = 30
         importance = svc.apply_evaluation({"affinity": 75}, "陌生")
         assert importance == 5  # importance 缺省默认为 5
-        assert svc.affinity == 75
+        assert svc.affinity == 50 + AFFINITY_DELTA_UP  # clamped, not raw 75
         assert svc.trust == 30  # 未提供，保持原值
 
 
@@ -178,14 +178,14 @@ class TestEvaluationPipeline:
 
         assert result.applied is True
         assert result.importance == 7
-        assert result.affinity == 65
+        assert result.affinity == 50 + AFFINITY_DELTA_UP
         assert result.in_character == 80  # default when LLM doesn't provide it
         assert result.ooc_reason == ""
         assert result.assertion_confidence == 50  # default when LLM doesn't provide it
-        assert svc.affinity == 65
-        assert svc.trust == 45
+        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.trust == 30 + TRUST_DELTA_UP
         assert svc.mood == "开心"
-        assert svc.guard == 35
+        assert svc.guard == 70 + GUARD_DELTA_DOWN
         # stage_upgraded: 65 → 认识阶段（默认 50 → 65 跨档）
         assert result.stage_upgraded is True
 
@@ -207,9 +207,9 @@ class TestEvaluationPipeline:
         assert result.applied is True
         assert result.in_character == 35
         assert result.ooc_reason == "对方施压后立刻妥协，不符合性格"
-        # in_character 不影响好感数值
-        assert svc.affinity == 55
-        assert svc.trust == 40
+        # in_character 不影响好感数值（仅 clamp 约束生效）
+        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.trust == 30 + TRUST_DELTA_UP
 
     def test_assertion_confidence_propagated(self, monkeypatch):
         """assertion_confidence 字段从 LLM data → EvalResult 正确传播，且与 in_character 正交。"""
@@ -229,9 +229,9 @@ class TestEvaluationPipeline:
         assert result.applied is True
         assert result.assertion_confidence == 30  # 低可信
         assert result.in_character == 85           # 高 in_character，正交
-        # assertion_confidence 不影响好感数值
-        assert svc.affinity == 60
-        assert svc.trust == 35
+        # assertion_confidence 不影响好感数值（仅 clamp 约束生效）
+        assert svc.affinity == 50 + AFFINITY_DELTA_UP
+        assert svc.trust == 30 + TRUST_DELTA_UP
 
     def test_core_layer_failure_returns_applied_false(self):
         """CORE 层 LLM 抛异常 → applied=False, importance=5，不触碰持久化。"""
@@ -280,14 +280,14 @@ class TestEvaluationPipeline:
         pipeline = EvaluationPipeline()
         result = pipeline.run(ctx)
 
-        # CORE 已落定
+        # CORE 已落定（但受 clamp 约束，非 LLM 原始值）
         assert result.applied is True
         assert result.importance == 8
-        assert result.affinity == 72
-        assert svc.affinity == 72
-        assert svc.trust == 55
+        assert result.affinity == 40 + AFFINITY_DELTA_UP
+        assert svc.affinity == 40 + AFFINITY_DELTA_UP
+        assert svc.trust == 30 + TRUST_DELTA_UP
         assert svc.mood == "开心"
-        assert svc.guard == 28
+        assert svc.guard == 70 + GUARD_DELTA_DOWN
         # time_event 虽然没写进去，但 CORE 状态不受影响
         assert len(memory.added) == 0  # 果然没写进去（raise_on_add_manual）
 
@@ -312,7 +312,7 @@ class TestEvaluationPipeline:
 
         assert result.applied is True
         assert result.importance == 7
-        assert svc.affinity == 65
+        assert svc.affinity == 50 + AFFINITY_DELTA_UP
         # 存储虽然炸了，但 storage.captured 不会被设置（因为 raise_on_update）
         assert storage.captured is None
 

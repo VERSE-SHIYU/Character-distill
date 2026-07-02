@@ -42,6 +42,16 @@ def _clamp_delta(old: int, new: int | None, up_max: int, down_max: int) -> int:
     return max(0, min(100, old + clamped_delta))
 
 
+# Per-turn delta limits — enforced by _clamp_delta so the prompt-level
+# "不超过 ±8" rule is backed by code-level hard caps.
+AFFINITY_DELTA_UP = 5
+AFFINITY_DELTA_DOWN = -8
+TRUST_DELTA_UP = 5
+TRUST_DELTA_DOWN = -8
+GUARD_DELTA_UP = 8
+GUARD_DELTA_DOWN = -5
+
+
 class AffinityService:
     """11个情感状态字段的容器 + load/get 方法。
 
@@ -237,11 +247,11 @@ class AffinityService:
         importance = max(1, min(10, int(data.get("importance", 5))))
 
         # Delta clamp enforces prompt-declared per-turn limits in code
-        self.affinity = _clamp_delta(old_affinity, data.get("affinity"), up_max=5, down_max=-8)
-        self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=5, down_max=-8)
+        self.affinity = _clamp_delta(old_affinity, data.get("affinity"), up_max=AFFINITY_DELTA_UP, down_max=AFFINITY_DELTA_DOWN)
+        self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=TRUST_DELTA_UP, down_max=TRUST_DELTA_DOWN)
         # Guard: rise fast (up +8/down -5), ease slow — symmetrical on rise but
         # extra conservative on drop (a character doesn't let their guard down quickly).
-        self.guard = _clamp_delta(old_guard, data.get("guard"), up_max=8, down_max=-5)
+        self.guard = _clamp_delta(old_guard, data.get("guard"), up_max=GUARD_DELTA_UP, down_max=GUARD_DELTA_DOWN)
         self.mood = data.get("mood", self.mood)
         self.inner_voice = data.get("inner_voice", self.inner_voice)
         self.mood_emoji = data.get("mood_emoji", self.mood_emoji)

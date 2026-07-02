@@ -846,6 +846,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Username_lower migration failed: {exc}")
 
+                    # Run 080_group_user_avatar migration (ALTER TABLE may fail if column exists)
+                    avatar_path = migrations_dir / "080_group_user_avatar.sql"
+                    if avatar_path.exists():
+                        try:
+                            await conn.executescript(avatar_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Group avatar migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
