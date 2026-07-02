@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useTypewriter from '../hooks/useTypewriter'
+import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
@@ -999,25 +1000,6 @@ function ChatView() {
   )
 }
 
-// ── Mood→typing-speed coefficient (pure frontend, no backend changes) ──
-const MOOD_SPEED = [
-  { keywords: ['生气', '愤怒', '急躁'], coeff: 0.55 },
-  { keywords: ['开心', '兴奋'], coeff: 0.75 },
-  { keywords: ['平静', '平和', '淡定'], coeff: 1.0 },
-  { keywords: ['警惕', '戒备', '紧张'], coeff: 1.2 },
-  { keywords: ['低落', '难过', '伤心'], coeff: 1.35 },
-  { keywords: ['慵懒', '困倦', '疲惫', '累'], coeff: 1.5 },
-]
-
-function _moodCoeff(mood) {
-  if (!mood) return 1.0
-  const low = mood.toLowerCase()
-  for (const entry of MOOD_SPEED) {
-    if (entry.keywords.some((k) => low.includes(k))) return entry.coeff
-  }
-  return 1.0
-}
-
 // ---- Message bubble ----
 
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
@@ -1029,15 +1011,13 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   const lastCpCountRef = useRef(0)
   const prevStreamingRef = useRef(false)
   const clearMessageTyping = useAppStore((s) => s.clearMessageTyping)
-  const affinity = useAppStore((s) => s.affinity)
 
   // Rising edge of isStreaming: reset typewriter on streaming start.
   useEffect(() => {
     if (isStreaming && !prevStreamingRef.current) {
       twRef.current.reset()
       lastCpCountRef.current = 0
-      const coeff = _moodCoeff(affinity.mood)
-      twRef.current.setCharInterval(Math.round(40 * coeff))
+      twRef.current.setCharInterval(moodCharInterval(useAppStore.getState().affinity.mood))
     }
     prevStreamingRef.current = isStreaming
   }, [isStreaming])
