@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 from chromadb.api.types import EmbeddingFunction
 
 _cache: dict[str, "DashScopeEmbedding"] = {}
@@ -12,9 +14,11 @@ class DashScopeEmbedding(EmbeddingFunction):
             "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         }[region]
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2)
         self._model = model
         self._dimensions = dimensions
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._CACHE_MAX = 512
 
     MAX_BATCH = 10        # 百炼 text-embedding-v4 单次最多 10 条
     MAX_CHARS = 3000       # 单条安全长度（~8192 token 的保守字符数）
@@ -33,11 +37,21 @@ class DashScopeEmbedding(EmbeddingFunction):
                 text = text[:self.MAX_CHARS]
             cleaned.append((idx, text))
 
-        # 分批
+        # 按缓存命中分流
         all_results: list[tuple[int, list[float]]] = []
+        uncached: list[tuple[int, str]] = []
+        for idx, text in cleaned:
+            cached = self._cache.get(text)
+            if cached is not None:
+                self._cache.move_to_end(text)
+                all_results.append((idx, cached))
+            else:
+                uncached.append((idx, text))
+
+        # 未命中的调 API
         batch_size = self.MAX_BATCH
-        for batch_start in range(0, len(cleaned), batch_size):
-            batch = cleaned[batch_start:batch_start + batch_size]
+        for batch_start in range(0, len(uncached), batch_size):
+            batch = uncached[batch_start:batch_start + batch_size]
             texts = [t for _, t in batch]
             try:
                 resp = self._client.embeddings.create(
@@ -51,7 +65,12 @@ class DashScopeEmbedding(EmbeddingFunction):
                     f"可能超长或超限: {exc}"
                 ) from exc
             for item in resp.data:
-                all_results.append((batch[item.index][0], item.embedding))
+                embedding = item.embedding
+                original_text = batch[item.index][1]
+                self._cache[original_text] = embedding
+                if len(self._cache) > self._CACHE_MAX:
+                    self._cache.popitem(last=False)
+                all_results.append((batch[item.index][0], embedding))
 
         # 按原始顺序恢复
         all_results.sort(key=lambda x: x[0])

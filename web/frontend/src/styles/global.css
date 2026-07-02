@@ -4121,6 +4121,15 @@ html.theme-aurora::before {
   gap: 4px;
   padding: 4px 0;
 }
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.typing-text {
+  font-size: 0.85em;
+  opacity: 0.7;
+}
 .typing-dots i {
   display: inline-block;
   width: 6px;

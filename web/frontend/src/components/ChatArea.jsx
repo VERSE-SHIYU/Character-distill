@@ -1090,7 +1090,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         ) : (
           <span className="chat-bubble-text">
             {isStreaming && !tw.displayedText ? (
-              <span className="typing-dots"><i/><i/><i/></span>
+              <span className="typing-indicator"><span className="typing-text">思考中</span><span className="typing-dots"><i/><i/><i/></span></span>
             ) : (
               <>{displayContent}{isStreaming && <span className="chat-cursor" />}</>
             )}
