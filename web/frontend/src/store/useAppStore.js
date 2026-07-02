@@ -1367,13 +1367,23 @@ const useAppStore = create((set, get) => ({
     try {
       const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz() })
       const session = data.session || {}
-      const messages = (data.messages || []).map((m) => ({
+      const messages = (data.messages || []).map((m) => withCid({
         role: m.role,
         content: m.content,
         id: m.id,
         timestamp: m.created_at,
         retracted: m.retracted || false,
       }))
+      if (data.reunion_greeting) {
+        messages.push(withCid({
+          role: 'char',
+          content: data.reunion_greeting,
+          id: data.reunion_greeting_id,
+          timestamp: data.reunion_greeting_created_at,
+          retracted: false,
+          _reunionTyping: true,
+        }))
+      }
       set({
         sessionId: session.id || sessionId,
         userRole: session.user_role ?? '',
@@ -1395,6 +1405,16 @@ const useAppStore = create((set, get) => ({
       throw err
     }
   },
+
+  clearMessageTyping: (cid) => set((s) => ({
+    messages: s.messages.map((m) => {
+      if (m._cid === cid && m._reunionTyping) {
+        const { _reunionTyping, ...rest } = m
+        return rest
+      }
+      return m
+    }),
+  })),
 
   updateCard: async (cardId, cardJson) => {
     try {

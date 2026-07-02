@@ -655,7 +655,7 @@ function ChatView() {
                 : false
 
               const isUser = msg.role === 'user'
-              const isStreaming = sending && !isUser && i === messages.length - 1
+              const isStreaming = (sending || !!msg._reunionTyping) && !isUser && i === messages.length - 1
               const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
               const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
               return (
@@ -667,6 +667,7 @@ function ChatView() {
                     index={i}
                     isUser={isUser}
                     isLastUserMsg={i === lastUserMsgIndex}
+                    msgCid={msg._cid ?? msg.id}
                     content={msg.content}
                     retracted={msg.retracted}
                     charName={charName}
@@ -1000,7 +1001,7 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
   const [showRetracted, setShowRetracted] = useState(false)
 
   // Typewriter: smooth code-point-by-code-point reveal for streaming messages.
@@ -1008,6 +1009,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   const twRef = useRef(tw); twRef.current = tw
   const lastCpCountRef = useRef(0)
   const prevStreamingRef = useRef(false)
+  const clearMessageTyping = useAppStore((s) => s.clearMessageTyping)
 
   // Rising edge of isStreaming: reset typewriter on streaming start.
   useEffect(() => {
@@ -1032,6 +1034,14 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   useEffect(() => {
     return () => { twRef.current.reset() }
   }, [])
+
+  // Reunion typing: clear _reunionTyping flag when typewriter finishes, so the
+  // cursor disappears and isStreaming returns to normal.
+  useEffect(() => {
+    if (tw.isDone && msgCid) {
+      clearMessageTyping(msgCid)
+    }
+  }, [tw.isDone, msgCid, clearMessageTyping])
 
   const displayContent = (isStreaming || !tw.isDone) ? tw.displayedText : content
   const userAvatarNode = (
