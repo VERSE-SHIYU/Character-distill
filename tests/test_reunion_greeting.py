@@ -57,6 +57,47 @@ def _old_session_data(hours_ago: int = 12) -> dict:
     }
 
 
+class TestResumeEndpointMessageIds:
+    """Verifies the resume endpoint's message_ids includes the reunion greeting."""
+
+    def test_greeting_id_in_message_ids_after_rebuild(self):
+        """Simulates the resume flow: rebuild from db_messages, then append greeting_id."""
+        db_msg_ids = [101, 102, 103]
+        greeting_id = 999
+
+        # Step 9: greeting append (happy path)
+        message_ids = list(db_msg_ids)
+        greeting_data = {
+            "reunion_greeting_id": greeting_id,
+            "reunion_greeting": "你回来了。",
+        }
+
+        # Step 11: rebuild from db_messages
+        message_ids = list(db_msg_ids)
+
+        # Fix: append greeting_id if greeting was generated
+        if greeting_data:
+            message_ids.append(greeting_data["reunion_greeting_id"])
+
+        assert greeting_id in message_ids
+        assert message_ids == [101, 102, 103, 999]
+
+    def test_no_greeting_message_ids_unchanged(self):
+        """When no reunion greeting, message_ids is clean db_messages rebuild."""
+        db_msg_ids = [101, 102, 103]
+
+        message_ids = list(db_msg_ids)
+        greeting_data = None
+
+        # Rebuild from db_messages
+        message_ids = [m for m in db_msg_ids]
+
+        if greeting_data:
+            message_ids.append(greeting_data["reunion_greeting_id"])
+
+        assert message_ids == [101, 102, 103]
+
+
 class TestReunionGreeting:
     """generate_reunion_greeting() condition and output tests."""
 

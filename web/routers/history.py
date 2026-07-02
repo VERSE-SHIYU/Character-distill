@@ -323,6 +323,8 @@ async def resume_session(
 
     # 11. Rebuild message_ids so revoke works after resume
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
+    if greeting_data:
+        sessions[session_id]["message_ids"].append(greeting_data["reunion_greeting_id"])
 
     return {"session": db_session, "messages": frontend_messages, **(greeting_data or {})}
 
