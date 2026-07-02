@@ -22,6 +22,11 @@ from core.affinity_service import AffinityService, calc_stage
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 
 
+# In-memory frequency control: session_id -> "YYYY-MM-DD" (user local tz)
+# Restart-safe: losing the dict just means one extra greeting per day, acceptable.
+_reunion_dates: dict[str, str] = {}
+
+
 class ChatEngine:
     """组合 LLM、向量检索与角色卡，维护多轮对话历史。"""
 
@@ -858,3 +863,85 @@ class ChatEngine:
             return "true" in result.strip().lower()
         except Exception:
             return False
+
+    def generate_reunion_greeting(self, session_data: dict | None = None) -> str:
+        """Generate a reunion greeting when user returns after 6+ hours.
+
+        Returns empty string if conditions not met or generation fails.
+        No side effects — does NOT modify self.history, does NOT trigger
+        affinity evaluation, retraction, or memory.
+
+        ``session_data`` may be passed directly (e.g. from tests) to avoid
+        an extra storage round-trip.
+        """
+        if not self.history:
+            return ""
+        if not self._storage or not self._session_id:
+            return ""
+
+        # Frequency gate: once per calendar day per session (user local time)
+        now_local = UserClock.now(self._user_tz)
+        today = now_local.strftime("%Y-%m-%d")
+        if _reunion_dates.get(self._session_id) == today:
+            return ""
+
+        try:
+            from deps import run_on_main_loop
+
+            if session_data is None:
+                session_data = run_on_main_loop(
+                    self._storage.get_session(self._session_id),
+                    timeout=5,
+                )
+            if not session_data:
+                return ""
+            updated_at = session_data.get("updated_at")
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at)
+            if not updated_at:
+                return ""
+
+            # Must be at least 6 hours since last activity
+            user_updated = UserClock.to_user_tz(updated_at, self._user_tz)
+            seconds_ago = (now_local - user_updated).total_seconds()
+            if seconds_ago <= 6 * 3600:
+                return ""
+
+            # Build system prompt identical to normal chat
+            system_prompt = self._ctx_engine.build(
+                "", self.user_role,
+                current_mood=self._mood,
+            )
+            system_prompt += self._build_all_enhancements()
+
+            # Time awareness block — naturally reflects the real interval
+            time_block = self._build_time_awareness_block()
+
+            instruction = (
+                "【重逢】对方离开了一段时间，刚刚重新出现在你面前"
+                "（间隔与时段见上方现实感知）。这次由你先开口。"
+                "你此刻的心境、你们关系的远近决定这句话的温度"
+                "——想念、揶揄、嗔怪、或淡淡一句都可以。"
+                "间隔和时间藏在语气里，绝不点明数字或「好久不见」这类套话。"
+                "上次聊的事若还挂在心里可不经意带到，不要复述。"
+                "就一句，不超过50字，是你忍不住先说的，不是欢迎词。"
+            )
+
+            messages = [{"role": "user", "content": instruction}]
+            if time_block:
+                messages[0] = {
+                    "role": "user",
+                    "content": time_block + "\n\n" + instruction,
+                }
+
+            response = self.llm.chat(system_prompt, messages)
+
+            greeting = response.strip().strip('"\'').strip('「」')
+            if not greeting or len(greeting) > 100:
+                return ""
+
+            _reunion_dates[self._session_id] = today
+            return greeting
+        except Exception:
+            return ""
+

@@ -20,8 +20,8 @@ router = APIRouter(prefix="/api/history", tags=["history"])
 
 
 class ResumeRequest(BaseModel):
-    """Empty body placeholder — session_id comes from the URL path."""
-    pass
+    """Resume a session after server restart."""
+    client_tz: str = ""
 
 
 # ---- Static-path routes first (before /{session_id} parameterized routes) ----
@@ -295,6 +295,25 @@ async def resume_session(
     except Exception as exc:
         print(f"[history] Restore affinity failed (non-fatal): {exc}")
 
+    # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
+    engine._storage = storage
+    if _body.client_tz:
+        engine._user_tz = _body.client_tz
+    greeting_data: dict[str, Any] | None = None
+    try:
+        greeting = await asyncio.to_thread(engine.generate_reunion_greeting)
+        if greeting:
+            msg_rec = await storage.save_message(session_id, "char", greeting, "")
+            engine.history.append({"role": "assistant", "content": greeting})
+            sessions[session_id].setdefault("message_ids", []).append(msg_rec["id"])
+            greeting_data = {
+                "reunion_greeting_id": msg_rec["id"],
+                "reunion_greeting_created_at": msg_rec["created_at"],
+                "reunion_greeting": greeting,
+            }
+    except Exception as exc:
+        print(f"[history] Reunion greeting failed (non-fatal): {exc}")
+
     # 10. Return session detail + messages (same shape as GET)
     frontend_messages = [
         {"role": m["role"], "content": m["content"], "id": m["id"], "created_at": m["created_at"],
@@ -305,7 +324,7 @@ async def resume_session(
     # 11. Rebuild message_ids so revoke works after resume
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
 
-    return {"session": db_session, "messages": frontend_messages}
+    return {"session": db_session, "messages": frontend_messages, **(greeting_data or {})}
 
 
 @router.post("/{session_id}/restore")
