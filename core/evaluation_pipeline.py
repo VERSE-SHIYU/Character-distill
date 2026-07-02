@@ -28,6 +28,7 @@ class EvalContext:
     reaction_service: Any
     llm: Any
     reaction_appraisal: str = ""
+    departure_notice: str = ""
 
 
 @dataclass
@@ -102,6 +103,7 @@ class EvaluationPipeline:
             prompt = ctx.affinity_service.build_evaluation_prompt(
                 ctx.card, ctx.user_message, ctx.assistant_reply,
                 ctx.user_role, ctx.reaction_appraisal,
+                departure_notice=ctx.departure_notice,
             )
             reply = ctx.llm.chat(
                 "你是精确的JSON输出器，只输出JSON。",

@@ -27,6 +27,11 @@ from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 # Restart-safe: losing the dict just means one extra greeting per day, acceptable.
 _reunion_dates: dict[str, str] = {}
 
+# Departure notice: session_id -> "YYYY-MM-DD" (same frequency gate pattern)
+_departure_notice_dates: dict[str, str] = {}
+WATCH_GAP_MIN_HOURS = 2
+WATCH_GAP_MAX_HOURS = 6
+
 # ── 沉默机制 ──────────────────────────────────────────────────
 SILENCE_GUARD_THRESHOLD = 85
 SILENCE_COOLDOWN_TURNS = 15
@@ -77,6 +82,7 @@ class ChatEngine:
         self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
         self._pipeline = EvaluationPipeline()
+        self._last_user_msg_at = None
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
         if not self._session_id:
@@ -355,6 +361,7 @@ class ChatEngine:
     def _post_turn(self, user_message: str, reply: str) -> None:
         """后处理四步：好感评估 → 事件标记 → 记忆入库 → 反思触发。"""
         self._evaluate_affinity(user_message, reply)
+        self._last_user_msg_at = datetime.utcnow()
         self._event_service.mark_asked()
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
@@ -461,6 +468,36 @@ class ChatEngine:
         old_stage = self._stage
         reaction_appraisal = self._reaction_service.build_appraisal()
 
+        # ── Departure notice: gap since last user message ──
+        departure_notice = ""
+        if self._last_user_msg_at is None and self.history and self._storage and self._session_id:
+            try:
+                from deps import run_on_main_loop
+                session_data = run_on_main_loop(
+                    self._storage.get_session(self._session_id), timeout=5,
+                )
+                if session_data:
+                    updated_at = session_data.get("updated_at")
+                    if isinstance(updated_at, str):
+                        updated_at = datetime.fromisoformat(updated_at)
+                    if updated_at:
+                        self._last_user_msg_at = updated_at
+            except Exception:
+                pass
+        if self._last_user_msg_at is not None:
+            gap_hours = (datetime.utcnow() - self._last_user_msg_at).total_seconds() / 3600
+            if WATCH_GAP_MIN_HOURS <= gap_hours < WATCH_GAP_MAX_HOURS:
+                today = UserClock.now(self._user_tz).strftime("%Y-%m-%d")
+                if _departure_notice_dates.get(self._session_id) != today:
+                    _departure_notice_dates[self._session_id] = today
+                    hours_str = f"{gap_hours:.1f}"
+                    departure_notice = (
+                        f"对方离开了约{hours_str}小时才回来。"
+                        "以你的性格决定是否在意——在意的话，让\"ta刚才是不是有事就走了\"的觉察自然融进内心独白，一笔带过即可；"
+                        "不在意就完全忽略，正常评估。\n\n"
+                    )
+                    print(f"[DepartureNotice] triggered session={self._session_id} gap={hours_str}h")
+
         # ── 组装 EvalContext → pipeline.run() ──
         ctx = EvalContext(
             card=self.card,
@@ -477,6 +514,7 @@ class ChatEngine:
             reaction_service=self._reaction_service,
             llm=self.llm,
             reaction_appraisal=reaction_appraisal,
+            departure_notice=departure_notice,
         )
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance

@@ -109,6 +109,7 @@ class AffinityService:
         assistant_reply: str,
         user_role: str,
         reaction_appraisal: str,
+        departure_notice: str = "",
     ) -> str:
         """构建情感评估 LLM prompt（纯函数：只读状态，无副作用/IO）。"""
         _values = getattr(card, 'values', []) or []
@@ -158,6 +159,7 @@ class AffinityService:
             f"对方刚才说：{user_message}\n"
             f"你回复了：{assistant_reply}\n\n"
             + reaction_appraisal
+            + departure_notice
             + "现在，用你自己的口吻写出你此刻真实的内心想法。\n\n"
             "如果你此刻感觉到对ta的心意悄悄越过了某道坎——比原来更近了一点——"
             "就让这份察觉自然融进内心独白里。"
