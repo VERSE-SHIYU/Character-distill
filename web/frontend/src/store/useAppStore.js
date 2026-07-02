@@ -1373,17 +1373,8 @@ const useAppStore = create((set, get) => ({
         id: m.id,
         timestamp: m.created_at,
         retracted: m.retracted || false,
+        ...(data.reunion_greeting_id && m.id === data.reunion_greeting_id ? { _reunionTyping: true } : {}),
       }))
-      if (data.reunion_greeting) {
-        messages.push(withCid({
-          role: 'char',
-          content: data.reunion_greeting,
-          id: data.reunion_greeting_id,
-          timestamp: data.reunion_greeting_created_at,
-          retracted: false,
-          _reunionTyping: true,
-        }))
-      }
       set({
         sessionId: session.id || sessionId,
         userRole: session.user_role ?? '',
