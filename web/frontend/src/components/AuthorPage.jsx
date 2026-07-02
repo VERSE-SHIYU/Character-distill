@@ -349,7 +349,9 @@ export default function AuthorPage({ embedded = false }) {
                     </div>
                   )}
                 </div>
-                <button
+                {!isOwnProfile && (
+                  <>
+                    <button
                       type="button"
                       className="btn-ghost"
                       style={{ marginLeft: 'auto' }}
@@ -364,6 +366,8 @@ export default function AuthorPage({ embedded = false }) {
                     >
                       {isFollowing ? '已关注' : '关注'}
                     </button>
+                  </>
+                )}
               </div>
 
               {/* ── Section 2: Bookshelf ── */}
