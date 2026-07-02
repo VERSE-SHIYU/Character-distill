@@ -1048,7 +1048,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   // Interrupt scenarios (revoke / cancel / unmount): finish immediately, no lost chars.
   useEffect(() => {
-    return () => { twRef.current.flush(); twRef.current.reset() }
+    return () => { twRef.current.reset() }
   }, [])
 
   const displayContent = tw.displayedText || content

@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 
-export const CHAR_INTERVAL_MS = 28
+export const CHAR_INTERVAL_MS = 20
 
 export function drainChars(queue, elapsedMs, intervalMs = CHAR_INTERVAL_MS) {
   const count = Math.floor(elapsedMs / intervalMs)
@@ -61,7 +61,12 @@ export default function useTypewriter() {
 
   const push = useCallback((text) => {
     if (!text) return
+    const wasEmpty = queueRef.current.length === 0
     queueRef.current = queueRef.current.concat([...text])
+    if (wasEmpty) {
+      lastTsRef.current = null
+      accumRef.current = 0
+    }
     if (isDoneRef.current) {
       isDoneRef.current = false
       setIsDone(false)
