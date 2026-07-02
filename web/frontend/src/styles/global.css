@@ -15,6 +15,7 @@
   --sidebar-bg: rgba(255, 255, 255, 0.85);
   --user-bubble: rgba(123,97,255,0.10);
   --bubble-user-bg: #e8e0ff;
+  --bubble-char-bg: #fff;
   --assistant-bubble: rgba(250,139,255,0.08);
   --blob-green: rgba(123,97,255,0.03);
   --blob-blue: rgba(43,210,255,0.05);
@@ -100,6 +101,7 @@
   --sidebar-bg: rgba(250,251,249,0.82);
   --user-bubble: rgba(212,234,216,0.28);
   --bubble-user-bg: #c8e6c9;
+  --bubble-char-bg: #fff;
   --assistant-bubble: rgba(242,218,196,0.25);
   --blob-green: rgba(242,218,196,0.12);
   --blob-blue: rgba(250,227,210,0.10);
@@ -172,6 +174,7 @@
   --secondary: rgba(106, 205, 198, 0.15);
   --user-bubble: rgba(29, 111, 127, 0.15);
   --bubble-user-bg: #b0e4ec;
+  --bubble-char-bg: #fff;
   --assistant-bubble: rgba(106, 205, 198, 0.2);
   --mint: #6ACDC6;
   --seafoam: #8FD8D0;
@@ -236,6 +239,7 @@
   --sidebar-bg: rgba(253,250,251,0.78);
   --user-bubble: rgba(242,213,213,0.28);
   --bubble-user-bg: #f8d8e0;
+  --bubble-char-bg: #fff;
   --assistant-bubble: rgba(226,213,235,0.28);
   --blob-green: rgba(242,213,213,0.12);
   --blob-blue: rgba(242,213,213,0.12);
@@ -317,6 +321,7 @@
   /* 气泡 */
   --user-bubble: rgba(196, 160, 176, 0.18);
   --bubble-user-bg: #4a4060;
+  --bubble-char-bg: rgba(56,56,66,0.95);
   --assistant-bubble: rgba(176, 168, 180, 0.12);
 
   /* pill/tag */
