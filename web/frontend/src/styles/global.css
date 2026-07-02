@@ -8497,6 +8497,29 @@ select.settings-input {
   text-overflow: ellipsis;
 }
 
+.distill-task-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.distill-task-awakening {
+  font-style: italic;
+  opacity: 0.8;
+  font-size: 0.92em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: distill-awakening-fade-in 0.4s ease forwards;
+}
+
+@keyframes distill-awakening-fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 0.8; transform: translateY(0); }
+}
+
 .distill-task-pct {
   flex-shrink: 0;
   font-size: 12px;

@@ -61,7 +61,14 @@ function DistillTaskItem({ task }) {
       <span className="distill-task-icon">
         {isDone ? '✅' : isError ? '❌' : '⚙'}
       </span>
-      <span className="distill-task-text">{statusText}</span>
+      <div className="distill-task-body">
+        <span className="distill-task-text">{statusText}</span>
+        {isDone && task.awakening && (
+          <div className="distill-task-awakening">
+            {task.character}：「{task.awakening}」
+          </div>
+        )}
+      </div>
       {!isDone && !isError && (
         <>
           <span className="distill-task-pct">{strPct}</span>
