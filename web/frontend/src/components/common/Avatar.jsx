@@ -8,13 +8,14 @@ function hashColor(name) {
   return COLORS[Math.abs(h) % COLORS.length]
 }
 
-export default function Avatar({ name = '?', src = null, size = 40, className = '', onClick, style }) {
+export default function Avatar({ name = '?', src = null, size = 40, className = '', onClick, style, title }) {
   const bg = hashColor(name)
   const letter = name[0] || '?'
 
   return (
     <div
       className={className}
+      title={title}
       onClick={onClick}
       style={{
         width: size,
