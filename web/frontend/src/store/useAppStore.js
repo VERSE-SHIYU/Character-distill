@@ -1365,7 +1365,7 @@ const useAppStore = create((set, get) => ({
   resumeSession: async (sessionId) => {
     set({ resumeLoading: true })
     try {
-      const data = await postJSON(`/api/history/${sessionId}/resume`, {})
+      const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz() })
       const session = data.session || {}
       const messages = (data.messages || []).map((m) => ({
         role: m.role,

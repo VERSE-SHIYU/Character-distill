@@ -314,12 +314,20 @@ async def resume_session(
     except Exception as exc:
         print(f"[history] Reunion greeting failed (non-fatal): {exc}")
 
-    # 10. Return session detail + messages (same shape as GET)
+    # 10. Build messages array for frontend (includes greeting as a regular message)
     frontend_messages = [
         {"role": m["role"], "content": m["content"], "id": m["id"], "created_at": m["created_at"],
          "retracted": m.get("retracted", False)}
         for m in db_messages
     ]
+    if greeting_data:
+        frontend_messages.append({
+            "role": "char",
+            "content": greeting_data["reunion_greeting"],
+            "id": greeting_data["reunion_greeting_id"],
+            "created_at": greeting_data["reunion_greeting_created_at"],
+            "retracted": False,
+        })
 
     # 11. Rebuild message_ids so revoke works after resume
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]

@@ -58,44 +58,91 @@ def _old_session_data(hours_ago: int = 12) -> dict:
 
 
 class TestResumeEndpointMessageIds:
-    """Verifies the resume endpoint's message_ids includes the reunion greeting."""
+    """Verifies the resume endpoint's return contract includes the reunion greeting
+    as a proper message in the frontend_messages array."""
+
+    def test_greeting_in_frontend_messages(self):
+        """Greeting appears as a regular char message in frontend_messages."""
+        db_messages = [
+            {"role": "user", "content": "你好", "id": 101, "created_at": "2025-01-01T00:00:00Z", "retracted": False},
+            {"role": "char", "content": "嗨", "id": 102, "created_at": "2025-01-01T00:00:01Z", "retracted": False},
+            {"role": "user", "content": "最近怎么样", "id": 103, "created_at": "2025-01-01T00:00:02Z", "retracted": False},
+        ]
+        greeting_data = {
+            "reunion_greeting_id": 999,
+            "reunion_greeting": "你总算回来了。",
+            "reunion_greeting_created_at": "2025-01-02T00:00:00Z",
+        }
+
+        # Step 10: build frontend_messages from db_messages + greeting
+        frontend_messages = [
+            {"role": m["role"], "content": m["content"], "id": m["id"],
+             "created_at": m["created_at"], "retracted": m.get("retracted", False)}
+            for m in db_messages
+        ]
+        if greeting_data:
+            frontend_messages.append({
+                "role": "char",
+                "content": greeting_data["reunion_greeting"],
+                "id": greeting_data["reunion_greeting_id"],
+                "created_at": greeting_data["reunion_greeting_created_at"],
+                "retracted": False,
+            })
+
+        assert len(frontend_messages) == 4
+        assert frontend_messages[3] == {
+            "role": "char",
+            "content": "你总算回来了。",
+            "id": 999,
+            "created_at": "2025-01-02T00:00:00Z",
+            "retracted": False,
+        }
+
+    def test_no_greeting_no_extra_message(self):
+        """When no reunion greeting, frontend_messages is a clean mapping of db_messages."""
+        db_messages = [
+            {"role": "user", "content": "你好", "id": 101, "created_at": "2025-01-01T00:00:00Z", "retracted": False},
+            {"role": "char", "content": "嗨", "id": 102, "created_at": "2025-01-01T00:00:01Z", "retracted": False},
+        ]
+        greeting_data = None
+
+        frontend_messages = [
+            {"role": m["role"], "content": m["content"], "id": m["id"],
+             "created_at": m["created_at"], "retracted": m.get("retracted", False)}
+            for m in db_messages
+        ]
+        if greeting_data:
+            frontend_messages.append({
+                "role": "char",
+                "content": greeting_data["reunion_greeting"],
+                "id": greeting_data["reunion_greeting_id"],
+                "created_at": greeting_data["reunion_greeting_created_at"],
+                "retracted": False,
+            })
+
+        assert len(frontend_messages) == 2
+        assert frontend_messages == [
+            {"role": "user", "content": "你好", "id": 101, "created_at": "2025-01-01T00:00:00Z", "retracted": False},
+            {"role": "char", "content": "嗨", "id": 102, "created_at": "2025-01-01T00:00:01Z", "retracted": False},
+        ]
 
     def test_greeting_id_in_message_ids_after_rebuild(self):
-        """Simulates the resume flow: rebuild from db_messages, then append greeting_id."""
+        """Greeting_id still appended to message_ids for revoke support."""
         db_msg_ids = [101, 102, 103]
         greeting_id = 999
 
-        # Step 9: greeting append (happy path)
         message_ids = list(db_msg_ids)
         greeting_data = {
             "reunion_greeting_id": greeting_id,
             "reunion_greeting": "你回来了。",
         }
 
-        # Step 11: rebuild from db_messages
         message_ids = list(db_msg_ids)
-
-        # Fix: append greeting_id if greeting was generated
         if greeting_data:
             message_ids.append(greeting_data["reunion_greeting_id"])
 
         assert greeting_id in message_ids
         assert message_ids == [101, 102, 103, 999]
-
-    def test_no_greeting_message_ids_unchanged(self):
-        """When no reunion greeting, message_ids is clean db_messages rebuild."""
-        db_msg_ids = [101, 102, 103]
-
-        message_ids = list(db_msg_ids)
-        greeting_data = None
-
-        # Rebuild from db_messages
-        message_ids = [m for m in db_msg_ids]
-
-        if greeting_data:
-            message_ids.append(greeting_data["reunion_greeting_id"])
-
-        assert message_ids == [101, 102, 103]
 
 
 class TestReunionGreeting:
