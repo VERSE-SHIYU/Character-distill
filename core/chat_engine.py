@@ -282,6 +282,7 @@ class ChatEngine:
         silence_reply = self._should_stay_silent(user_message)
         if silence_reply:
             self.history.append({"role": "assistant", "content": silence_reply})
+            self._post_turn(user_message, silence_reply)
             self._try_record_usage("chat", None)
             yield silence_reply
             return
@@ -889,11 +890,11 @@ class ChatEngine:
         if current_turn - last_turn < SILENCE_COOLDOWN_TURNS:
             return ""
 
-        # ── Gate 2: 状态阈值（高防御或低落情绪） ──
+        # ── Gate 2: 状态阈值（高防御或被冒犯情绪） ──
         # delta 条件因 affinity_service 未存上轮差值而降级
         guard_trigger = self._guard >= SILENCE_GUARD_THRESHOLD
         mood_trigger = any(
-            kw in self._mood for kw in ['低落', '难过', '伤心', '慵懒', '疲惫', '累']
+            kw in self._mood for kw in ['生气', '愤怒', '不悦', '恼', '烦']
         )
         if not guard_trigger and not mood_trigger:
             return ""
@@ -906,7 +907,7 @@ class ChatEngine:
 
         # ── Gate 3: LLM 人格判断 ──
         if not self.llm or not self.card:
-            return random.choice(SILENCE_REPLIES)
+            return ""
 
         prompt = (
             f"你是「{self.card.name}」，性格：{self.card.identity}\n"
@@ -919,8 +920,8 @@ class ChatEngine:
             result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
             should = "true" in result.strip().lower()
         except Exception as exc:
-            print(f"[Silence] LLM gate failed, defaulting to silent: {exc}")
-            should = True
+            print(f"[Silence] LLM gate failed, falling back to normal reply: {exc}")
+            return ""
 
         if not should:
             return ""
