@@ -1030,21 +1030,21 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
   // Rising edge of isStreaming: reset typewriter on streaming start.
   useEffect(() => {
     if (isStreaming && !prevStreamingRef.current) {
-      tw.reset()
+      twRef.current.reset()
       lastCpCountRef.current = 0
     }
     prevStreamingRef.current = isStreaming
-  }, [isStreaming, tw])
+  }, [isStreaming])
 
   // Push code-point diffs into the typewriter queue (emoji-safe).
   useEffect(() => {
     if (!isStreaming) return
     const cps = [...content]
     if (cps.length > lastCpCountRef.current) {
-      tw.push(cps.slice(lastCpCountRef.current).join(''))
+      twRef.current.push(cps.slice(lastCpCountRef.current).join(''))
       lastCpCountRef.current = cps.length
     }
-  }, [content, isStreaming, tw])
+  }, [content, isStreaming])
 
   // Interrupt scenarios (revoke / cancel / unmount): finish immediately, no lost chars.
   useEffect(() => {
