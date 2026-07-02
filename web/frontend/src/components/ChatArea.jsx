@@ -143,20 +143,6 @@ function ChatView() {
   const [addingMem, setAddingMem] = useState(false)
   const [addMemText, setAddMemText] = useState('')
   const [memoryToast, setMemoryToast] = useState(false)
-  const [stageToast, setStageToast] = useState(null) // { stage, stage_emoji }
-
-  // Stage upgrade toast detection
-  const prevStageRef = useRef(affinity.stage)
-  useEffect(() => {
-    const current = affinity.stage
-    const prev = prevStageRef.current
-    if (current && prev && current !== prev && affinity.affinity > 0) {
-      setStageToast({ stage: current, stage_emoji: affinity.stage_emoji || '' })
-      const t = setTimeout(() => setStageToast(null), 2500)
-      return () => clearTimeout(t)
-    }
-    prevStageRef.current = current
-  }, [affinity.stage, affinity.affinity, affinity.stage_emoji])
 
   // Reply-to state
   const [replyTo, setReplyTo] = useState(null) // { id, preview }
@@ -1008,10 +994,6 @@ function ChatView() {
         <div className="memory-toast">将记录到角色记忆</div>
       )}
 
-      {/* Stage upgrade toast */}
-      {stageToast && (
-        <div className="stage-toast">🎉 你和{charName}的关系变为「{stageToast.stage_emoji} {stageToast.stage}」</div>
-      )}
     </div>
   )
 }

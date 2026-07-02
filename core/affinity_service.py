@@ -140,6 +140,10 @@ class AffinityService:
             f"你回复了：{assistant_reply}\n\n"
             + reaction_appraisal
             + "现在，用你自己的口吻写出你此刻真实的内心想法。\n\n"
+            "如果你此刻感觉到对ta的心意悄悄越过了某道坎——比原来更近了一点——"
+            "就让这份察觉自然融进内心独白里。"
+            "不是宣告'我们关系变了'，而是那种突然发现自己不设防了、"
+            "想多说一句了的真实心里一动。用你的性格，一句就好。\n\n"
             "要求：\n"
             "1. 用第一人称，用你的性格说话。傲娇不会直说喜欢，内向会犹豫，暴躁会骂人。\n"
             "2. 写2-3句内心独白，要有情绪的微妙层次，不要笼统的'我觉得还行'。\n"
@@ -213,8 +217,6 @@ class AffinityService:
         self.stage, self.stage_emoji = calc_stage(self.affinity)
         self.stage_upgraded = self.stage != old_stage
         self.prev_stage = old_stage
-        if self.stage_upgraded:
-            self.inner_voice += f"\n（我们的关系似乎更近了…现在是「{self.stage}」阶段）"
         extended = {
             "inner_voice": self.inner_voice,
             "mood_emoji": self.mood_emoji,
