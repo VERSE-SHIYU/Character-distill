@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 
-export const CHAR_INTERVAL_MS = 24
+export const CHAR_INTERVAL_MS = 26
 
 export function drainChars(queue, elapsedMs, intervalMs = CHAR_INTERVAL_MS) {
   const count = Math.floor(elapsedMs / intervalMs)
@@ -35,14 +35,12 @@ export default function useTypewriter() {
       const queue = queueRef.current
       if (queue.length > 0) {
         accumRef.current += dtMs
-        const count = Math.floor(accumRef.current / CHAR_INTERVAL_MS)
-        if (count > 0) {
-          const n = Math.min(count, queue.length)
-          const chars = queue.slice(0, n).join('')
-          queueRef.current = queue.slice(n)
-          displayedRef.current += chars
+        accumRef.current = Math.min(accumRef.current, CHAR_INTERVAL_MS * 3)
+        if (accumRef.current >= CHAR_INTERVAL_MS) {
+          displayedRef.current += queue[0]
           setDisplayedText(displayedRef.current)
-          accumRef.current -= count * CHAR_INTERVAL_MS
+          queueRef.current = queue.slice(1)
+          accumRef.current -= CHAR_INTERVAL_MS
         }
         if (queueRef.current.length === 0 && !isDoneRef.current) {
           isDoneRef.current = true
