@@ -1,6 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 
-export const CHAR_INTERVAL_MS = 26
+export const CHAR_INTERVAL_MS = 40
 
 export function drainChars(queue, elapsedMs, intervalMs = CHAR_INTERVAL_MS) {
   const count = Math.floor(elapsedMs / intervalMs)
