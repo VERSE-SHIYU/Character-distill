@@ -374,6 +374,19 @@ def _run_distill_task(
         # Generate awakening line (non-fatal, outside lock)
         awakening = _generate_awakening(per_user_llm, card)
 
+        # Persist awakening_message to card (non-fatal)
+        if awakening:
+            try:
+                card.awakening_message = awakening
+                from deps import get_storage
+                run_on_main_loop(
+                    get_storage().update_card(result["card_id"], card.model_dump()),
+                    timeout=30,
+                )
+                print(f"[distill] Persisted awakening_message to card {result['card_id']}")
+            except Exception as exc:
+                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
+
         with _task_lock:
             update_dict = {
                 "status": "done",
@@ -758,6 +771,16 @@ async def distill_stream(
         awakening = ""
         if per_user_llm is not None:
             awakening = await asyncio.to_thread(_generate_awakening, per_user_llm, card)
+
+        # Persist awakening_message to card (non-fatal)
+        if awakening:
+            try:
+                from deps import get_storage
+                card.awakening_message = awakening
+                await get_storage().update_card(result.get("card_id", ""), card.model_dump())
+                print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
+            except Exception as exc:
+                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
 
         done_payload = {'done': True, 'awakening': awakening, **result}
         yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"

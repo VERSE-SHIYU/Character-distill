@@ -79,3 +79,4 @@ class CharacterCard(BaseModel):
     tags: list[str] = []                # AI 自动打的分类标签（蒸馏时填充）
     psyche: PsycheProfile = PsycheProfile()
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
+    awakening_message: str = ""  # 蒸馏完成时生成的苏醒台词
