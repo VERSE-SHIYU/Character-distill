@@ -209,6 +209,7 @@ class TestSessionCrud:
         got = await store.get_session(session_id)
         assert got is not None
         assert got["id"] == session_id
+        assert got.get("deleted_at") is not None, "deleted_at must be set after soft-delete"
 
     async def test_delete_nonexistent(self, store):
         assert await store.delete_session("no_such_session") is False
