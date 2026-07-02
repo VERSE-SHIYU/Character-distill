@@ -659,7 +659,7 @@ function ChatView() {
           <div className="chat-messages" ref={listRef} onScroll={handleScroll}>
             {messages.map((msg, i) => {
               if (msg.role === 'summary') {
-                return <SummaryBubble key={i} content={msg.content} />
+                return <SummaryBubble key={msg.id ?? msg._cid} content={msg.content} />
               }
 
               // Time divider: show if gap from previous message > 5 min
@@ -673,7 +673,7 @@ function ChatView() {
               const lastUserIdx = [...messages].reverse().findIndex((m) => m.role === 'user')
               const lastUserMsgIndex = lastUserIdx >= 0 ? messages.length - 1 - lastUserIdx : -1
               return (
-                <div key={i} data-msg-id={msg.id}>
+                <div key={msg.id ?? msg._cid} data-msg-id={msg.id}>
                   {showTime && (
                     <div className="time-divider">{formatChatTime(msg.timestamp)}</div>
                   )}

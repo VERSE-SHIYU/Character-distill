@@ -15,6 +15,9 @@ const INITIAL_AFFINITY = {
   mood_emoji: '😊', stage: '陌生', stage_emoji: '🫥',
 }
 
+let _cidSeq = 0
+const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })
+
 const useAppStore = create((set, get) => ({
   // ---- Auth ----
 
@@ -914,7 +917,7 @@ const useAppStore = create((set, get) => ({
     const abort = new AbortController()
     set({
       currentCard: card,
-      messages: card.first_message ? [{ role: 'char', content: card.first_message }] : [],
+      messages: card.first_message ? [withCid({ role: 'char', content: card.first_message })] : [],
       currentView: 'chat',
       resumeLoading: true,
       userAvatar: null,
@@ -1033,7 +1036,7 @@ const useAppStore = create((set, get) => ({
       currentSessionAvatar: null,
       sending: false,
       messages: data.first_message
-        ? [{ role: 'char', content: data.first_message }]
+        ? [withCid({ role: 'char', content: data.first_message })]
         : [],
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
@@ -1058,9 +1061,9 @@ const useAppStore = create((set, get) => ({
       currentView: 'chat',
       sending: false,
       messages: session.last_message
-        ? [{ role: 'char', content: session.last_message }]
+        ? [withCid({ role: 'char', content: session.last_message })]
         : data.first_message
-          ? [{ role: 'char', content: data.first_message }]
+          ? [withCid({ role: 'char', content: data.first_message })]
           : [],
       currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
@@ -1115,7 +1118,7 @@ const useAppStore = create((set, get) => ({
         sending: false,
         _pendingChatCardId: null,
         messages: data.first_message
-          ? [{ role: 'char', content: data.first_message }]
+          ? [withCid({ role: 'char', content: data.first_message })]
           : [],
         currentTextTitle: textTitle || get().currentTextTitle,
       })
@@ -1138,7 +1141,7 @@ const useAppStore = create((set, get) => ({
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return
 
-    const userMsg = { role: 'user', content: message }
+    const userMsg = withCid({ role: 'user', content: message })
     set({ messages: [...messages, userMsg], sending: true, error: null })
 
     try {
@@ -1151,9 +1154,9 @@ const useAppStore = create((set, get) => ({
         client_tz: clientTz(),
       })
       set((s) => {
-        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at })
+        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push(withCid({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at }))
         if (data.summary) {
-          msgs.splice(msgs.length - 2, 0, { role: 'summary', content: data.summary })
+          msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: data.summary }))
         }
         return { messages: msgs, sending: false }
       })
@@ -1169,7 +1172,7 @@ const useAppStore = create((set, get) => ({
       set((s) => ({
         messages: [
           ...s.messages,
-          { role: 'char', content: `[Error] ${err.message}` },
+          withCid({ role: 'char', content: `[Error] ${err.message}` }),
         ],
         sending: false,
         error: err.message,
@@ -1189,8 +1192,8 @@ const useAppStore = create((set, get) => ({
     }
 
     const streamSessionId = sessionId  // lock stream to this session
-    const userMsg = { role: 'user', content: message, reply_to_id, reply_to_preview }
-    const charMsg = { role: 'char', content: '' }
+    const userMsg = withCid({ role: 'user', content: message, reply_to_id, reply_to_preview })
+    const charMsg = withCid({ role: 'char', content: '' })
     set({ messages: [...messages, userMsg, charMsg], sending: true, error: null })
 
     let fullReply = ''
@@ -1223,7 +1226,7 @@ const useAppStore = create((set, get) => ({
           }
           if (payload.summary) {
             const userIdx = msgs.length - 2
-            msgs.splice(userIdx, 0, { role: 'summary', content: payload.summary })
+            msgs.splice(userIdx, 0, withCid({ role: 'summary', content: payload.summary }))
           }
           if (payload.retracted) {
             msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
@@ -1291,7 +1294,7 @@ const useAppStore = create((set, get) => ({
 
     const streamSessionId = sessionId  // lock stream to this session
     const hiddenMsg = '[系统提示：对方刚刚撤回了一条消息]'
-    const charMsg = { role: 'char', content: '' }
+    const charMsg = withCid({ role: 'char', content: '' })
     set((s) => ({ messages: [...s.messages, charMsg], sending: true }))
 
     let fullReply = ''
@@ -1338,7 +1341,7 @@ const useAppStore = create((set, get) => ({
       await postJSON('/api/chat/reset', { session_id: sessionId })
       set({
         messages: currentCard?.first_message
-          ? [{ role: 'char', content: currentCard.first_message }]
+          ? [withCid({ role: 'char', content: currentCard.first_message })]
           : [],
       })
     } catch (err) {
@@ -1402,7 +1405,7 @@ const useAppStore = create((set, get) => ({
               : s.currentCard,
           }
           if (s.sessionId && s.currentCard?.id === cardId) {
-            updated.messages = [...s.messages, { role: 'system', content: '角色卡已更新' }]
+            updated.messages = [...s.messages, withCid({ role: 'system', content: '角色卡已更新' })]
           }
           return updated
         })
