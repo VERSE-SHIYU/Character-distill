@@ -23,6 +23,25 @@ def calc_stage(affinity: int) -> tuple[str, str]:
     return "陌生", "🫥"
 
 
+def _clamp_delta(old: int, new: int | None, up_max: int, down_max: int) -> int:
+    """Asymmetric delta clamp, then 0-100 boundary.
+
+    Args:
+        old: Previous value (before this evaluation turn).
+        new: LLM-returned value, or None to keep old.
+        up_max:  Maximum allowed positive delta.
+        down_max: Maximum allowed negative delta (must be ≤ 0).
+
+    Returns:
+        Clamped value in [0, 100].
+    """
+    if new is None:
+        return old
+    delta = new - old
+    clamped_delta = max(down_max, min(up_max, delta))
+    return max(0, min(100, old + clamped_delta))
+
+
 class AffinityService:
     """11个情感状态字段的容器 + load/get 方法。
 
@@ -205,13 +224,23 @@ class AffinityService:
         return _json.loads(m.group())
 
     def apply_evaluation(self, data: dict, old_stage: str) -> int:
-        """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。"""
+        """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
+
+        LLM 返回的数值经过 delta clamp（旧值 ± 上限强制执行 prompt 声明的单轮变化约束），
+        LLM 自觉遵守规则再好不过，不遵守时由代码兜底。
+        """
         import json as _json
+        # Snapshot old values before applying LLM output
+        old_affinity, old_trust, old_guard = self.affinity, self.trust, self.guard
         importance = max(1, min(10, int(data.get("importance", 5))))
-        self.affinity = max(0, min(100, data.get("affinity", self.affinity)))
-        self.trust = max(0, min(100, data.get("trust", self.trust)))
+
+        # Delta clamp enforces prompt-declared per-turn limits in code
+        self.affinity = _clamp_delta(old_affinity, data.get("affinity"), up_max=5, down_max=-8)
+        self.trust = _clamp_delta(old_trust, data.get("trust"), up_max=5, down_max=-8)
+        # Guard: rise fast (up +8/down -5), ease slow — symmetrical on rise but
+        # extra conservative on drop (a character doesn't let their guard down quickly).
+        self.guard = _clamp_delta(old_guard, data.get("guard"), up_max=8, down_max=-5)
         self.mood = data.get("mood", self.mood)
-        self.guard = max(0, min(100, data.get("guard", self.guard)))
         self.inner_voice = data.get("inner_voice", self.inner_voice)
         self.mood_emoji = data.get("mood_emoji", self.mood_emoji)
         self.stage, self.stage_emoji = calc_stage(self.affinity)
