@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 
 export const CHAR_INTERVAL_MS = 28
 
@@ -61,7 +61,6 @@ export default function useTypewriter() {
 
   const push = useCallback((text) => {
     if (!text) return
-    console.log('[TW4] useTypewriter.push: queueLen=%d (before) textLen=%d', queueRef.current.length, text.length)
     queueRef.current = queueRef.current.concat([...text])
     if (isDoneRef.current) {
       isDoneRef.current = false
@@ -92,5 +91,5 @@ export default function useTypewriter() {
     setIsDone(true)
   }, [])
 
-  return { push, displayedText, flush, reset, isDone }
+  return useMemo(() => ({ push, displayedText, flush, reset, isDone }), [push, displayedText, flush, reset, isDone])
 }
