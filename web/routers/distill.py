@@ -99,6 +99,35 @@ def cancel_distill_tasks_by_text_id(text_id: str) -> int:
     return count
 
 
+def _generate_awakening(llm, card: CharacterCard) -> str:
+    """Generate an awakening line for a newly distilled character.
+
+    Returns the line text, or empty string on any failure.
+    Never raises — all exceptions are caught and logged.
+    """
+    if llm is None or not card.first_message:
+        return ""
+    try:
+        style = card.speaking_style
+        prompt = (
+            f"你现在是「{card.name}」。你刚从长梦中醒来，第一眼认出了眼前的人。\n"
+            f"你的身份：{card.identity}\n"
+            f"你的语气：{style.tone}\n\n"
+            f"你的原开场白是：「{card.first_message}」\n\n"
+            f"请基于原开场白的口吻，说一句「刚从长梦中醒来、第一眼认出眼前人」的话"
+            f"——带一点初醒的朦胧和「是你啊」的温度。\n"
+            f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
+        )
+        result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
+        result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
+        if not result or len(result) > 100:
+            return ""
+        return result
+    except Exception as exc:
+        print(f"[distill] Generate awakening failed (non-fatal): {exc}")
+        return ""
+
+
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
@@ -342,14 +371,20 @@ def _run_distill_task(
             return
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
+        # Generate awakening line (non-fatal, outside lock)
+        awakening = _generate_awakening(per_user_llm, card)
+
         with _task_lock:
-            _tasks[task_id].update({
+            update_dict = {
                 "status": "done",
                 "card_id": result.get("card_id", ""),
                 "character": name,
                 "progress_pct": 100,
                 "message": "蒸馏完成 ✓",
-            })
+            }
+            if awakening:
+                update_dict["awakening"] = awakening
+            _tasks[task_id].update(update_dict)
 
     except Exception as exc:
         import traceback
@@ -719,7 +754,13 @@ async def distill_stream(
             yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False, default=str)}\n\n"
             return
 
-        yield f"data: {json.dumps({'done': True, **result}, ensure_ascii=False, default=str)}\n\n"
+        # Generate awakening line (fails open, async context)
+        awakening = ""
+        if per_user_llm is not None:
+            awakening = await asyncio.to_thread(_generate_awakening, per_user_llm, card)
+
+        done_payload = {'done': True, 'awakening': awakening, **result}
+        yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
 
     return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
