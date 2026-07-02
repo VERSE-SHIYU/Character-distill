@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Generator
 from typing import Any
 
@@ -26,6 +26,31 @@ from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 # In-memory frequency control: session_id -> "YYYY-MM-DD" (user local tz)
 # Restart-safe: losing the dict just means one extra greeting per day, acceptable.
 _reunion_dates: dict[str, str] = {}
+
+
+def _to_aware_utc(dt: datetime | str | None) -> datetime | None:
+    """Normalise any datetime-like value to an aware UTC datetime.
+
+    Accepts:
+      - aware ``datetime`` → converted to UTC
+      - naive ``datetime``  → treated as UTC, tagged ``timezone.utc``
+      - ISO-8601 ``str``    → parsed via ``fromisoformat``, then to UTC
+      - ``None``            → returns ``None``
+
+    Guarantees consistent subtraction without TypeError regardless of
+    whether the source was PG (aware), SQLite (naive), or an internal
+    ``datetime.utcnow()`` call.
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt)
+        except (ValueError, TypeError):
+            return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # Departure notice: session_id -> "YYYY-MM-DD" (same frequency gate pattern)
 _departure_notice_dates: dict[str, str] = {}
@@ -361,7 +386,7 @@ class ChatEngine:
     def _post_turn(self, user_message: str, reply: str) -> None:
         """后处理四步：好感评估 → 事件标记 → 记忆入库 → 反思触发。"""
         self._evaluate_affinity(user_message, reply)
-        self._last_user_msg_at = datetime.utcnow()
+        self._last_user_msg_at = datetime.now(timezone.utc)
         self._event_service.mark_asked()
         if self._memory and self._memory.enabled and self._card_id:
             self._memory.add(
@@ -477,15 +502,11 @@ class ChatEngine:
                     self._storage.get_session(self._session_id), timeout=5,
                 )
                 if session_data:
-                    updated_at = session_data.get("updated_at")
-                    if isinstance(updated_at, str):
-                        updated_at = datetime.fromisoformat(updated_at)
-                    if updated_at:
-                        self._last_user_msg_at = updated_at
+                    self._last_user_msg_at = _to_aware_utc(session_data.get("updated_at"))
             except Exception:
                 pass
         if self._last_user_msg_at is not None:
-            gap_hours = (datetime.utcnow() - self._last_user_msg_at).total_seconds() / 3600
+            gap_hours = (datetime.now(timezone.utc) - self._last_user_msg_at).total_seconds() / 3600
             if WATCH_GAP_MIN_HOURS <= gap_hours < WATCH_GAP_MAX_HOURS:
                 today = UserClock.now(self._user_tz).strftime("%Y-%m-%d")
                 if _departure_notice_dates.get(self._session_id) != today:

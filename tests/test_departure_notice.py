@@ -1,7 +1,7 @@
 """Tests for departure notice — gap-aware inner_voice hint for resumed conversation."""
 
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from core.affinity_service import AffinityService
@@ -52,7 +52,7 @@ class TestGapLogic:
 
         if gap_hours is not None:
             from datetime import timedelta
-            engine._last_user_msg_at = datetime.utcnow() - timedelta(hours=gap_hours)
+            engine._last_user_msg_at = datetime.now(timezone.utc) - timedelta(hours=gap_hours)
         return engine
 
     @patch("core.chat_engine._departure_notice_dates", {})
@@ -121,6 +121,88 @@ class TestGapLogic:
         assert len(calls) == 2
         assert "对方离开了" in calls[0], f"First call should have notice: {calls[0]!r}"
         assert calls[1] == "", f"Second call should be suppressed: {calls[1]!r}"
+
+
+class TestToAwareUtc:
+    """_to_aware_utc type coercion — naive/aware/str/None → safe aware UTC."""
+
+    def test_naive_str_sqlite(self):
+        """Naive ISO string (SQLite style) parses correctly and gaps compute."""
+        from core.chat_engine import _to_aware_utc
+        result = _to_aware_utc("2026-07-02T10:00:00")
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.hour == 10
+        assert result.tzinfo is timezone.utc
+
+    def test_aware_str_pg(self):
+        """Aware ISO string with offset (PG style) parses correctly."""
+        from core.chat_engine import _to_aware_utc
+        result = _to_aware_utc("2026-07-02T10:00:00+00:00")
+        assert result is not None
+        assert result.tzinfo is not None
+        assert result.hour == 10  # already UTC
+
+    def test_aware_str_with_offset(self):
+        """Aware string with non-UTC offset normalises to UTC."""
+        from core.chat_engine import _to_aware_utc
+        result = _to_aware_utc("2026-07-02T18:00:00+08:00")
+        assert result is not None
+        assert result.hour == 10  # 18:00 +08:00 → 10:00 UTC
+
+    def test_naive_datetime(self):
+        """Naive datetime treated as UTC."""
+        from core.chat_engine import _to_aware_utc
+        dt = datetime(2026, 7, 2, 10, 0, 0)
+        result = _to_aware_utc(dt)
+        assert result.tzinfo is timezone.utc
+        assert result.hour == 10
+
+    def test_aware_datetime(self):
+        """Aware datetime stays aware."""
+        from core.chat_engine import _to_aware_utc
+        dt = datetime(2026, 7, 2, 10, 0, 0, tzinfo=timezone.utc)
+        result = _to_aware_utc(dt)
+        assert result == dt
+
+    def test_none(self):
+        """None returns None."""
+        from core.chat_engine import _to_aware_utc
+        assert _to_aware_utc(None) is None
+
+    def test_gap_with_aware_string(self):
+        """PG aware string as updated_at → gap_hours computed without TypeError."""
+        engine = TestGapLogic()._make_engine(gap_hours=None)
+        engine._last_user_msg_at = None
+        # Simulate session with PG-style timestamp
+        engine._storage.get_session.return_value = {"updated_at": "2026-07-02T10:00:00+00:00"}
+        ctx_arg = {}
+
+        def fake_run(ctx):
+            ctx_arg["departure_notice"] = ctx.departure_notice
+            from core.evaluation_pipeline import EvalResult
+            return EvalResult()
+
+        engine._pipeline.run = fake_run
+        engine._evaluate_affinity("你好吗", "我很好")
+        # Should not raise, gap is ~0, so no notice
+        assert ctx_arg["departure_notice"] == ""
+
+    def test_gap_with_naive_string(self):
+        """SQLite naive string as updated_at → gap_hours computed without TypeError."""
+        engine = TestGapLogic()._make_engine(gap_hours=None)
+        engine._last_user_msg_at = None
+        engine._storage.get_session.return_value = {"updated_at": "2026-07-02 10:00:00"}
+        ctx_arg = {}
+
+        def fake_run(ctx):
+            ctx_arg["departure_notice"] = ctx.departure_notice
+            from core.evaluation_pipeline import EvalResult
+            return EvalResult()
+
+        engine._pipeline.run = fake_run
+        engine._evaluate_affinity("你好吗", "我很好")
+        assert ctx_arg["departure_notice"] == ""
 
 
 class TestBuildEvaluationPrompt:
