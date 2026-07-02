@@ -18,8 +18,13 @@ export default function useTypewriter() {
   const accumRef = useRef(0)
   const rafRef = useRef(null)
   const isDoneRef = useRef(true)
+  const intervalRef = useRef(CHAR_INTERVAL_MS)
   const [displayedText, setDisplayedText] = useState('')
   const [isDone, setIsDone] = useState(true)
+
+  const setCharInterval = useCallback((ms) => {
+    intervalRef.current = ms
+  }, [])
 
   useEffect(() => {
     const loop = (timestamp) => {
@@ -35,12 +40,12 @@ export default function useTypewriter() {
       const queue = queueRef.current
       if (queue.length > 0) {
         accumRef.current += dtMs
-        accumRef.current = Math.min(accumRef.current, CHAR_INTERVAL_MS * 3)
-        if (accumRef.current >= CHAR_INTERVAL_MS) {
+        accumRef.current = Math.min(accumRef.current, intervalRef.current * 3)
+        if (accumRef.current >= intervalRef.current) {
           displayedRef.current += queue[0]
           setDisplayedText(displayedRef.current)
           queueRef.current = queue.slice(1)
-          accumRef.current -= CHAR_INTERVAL_MS
+          accumRef.current -= intervalRef.current
         }
         if (queueRef.current.length === 0 && !isDoneRef.current) {
           isDoneRef.current = true
@@ -94,5 +99,5 @@ export default function useTypewriter() {
     setIsDone(true)
   }, [])
 
-  return useMemo(() => ({ push, displayedText, flush, reset, isDone }), [push, displayedText, flush, reset, isDone])
+  return useMemo(() => ({ push, displayedText, flush, reset, isDone, setCharInterval }), [push, displayedText, flush, reset, isDone, setCharInterval])
 }
