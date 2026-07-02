@@ -1051,7 +1051,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     return () => { twRef.current.reset() }
   }, [])
 
-  const displayContent = tw.displayedText || content
+  const displayContent = (isStreaming || !tw.isDone) ? tw.displayedText : content
   const userAvatarNode = (
     <Avatar
       name={userRole || '我'}
