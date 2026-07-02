@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 from datetime import datetime
 from collections.abc import Generator
 from typing import Any
@@ -25,6 +26,16 @@ from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 # In-memory frequency control: session_id -> "YYYY-MM-DD" (user local tz)
 # Restart-safe: losing the dict just means one extra greeting per day, acceptable.
 _reunion_dates: dict[str, str] = {}
+
+# ── 沉默机制 ──────────────────────────────────────────────────
+SILENCE_GUARD_THRESHOLD = 85
+SILENCE_COOLDOWN_TURNS = 15
+SILENCE_MAX_PER_DAY = 1
+SILENCE_REPLIES = ["。", "呵。", "……"]
+
+# Silence state: session_id -> {"last_turn": int, "dates": list[str]}
+# Restart-safe: losing the dict means at most one extra silence per session.
+_silence_state: dict[str, dict] = {}
 
 
 class ChatEngine:
@@ -209,6 +220,13 @@ class ChatEngine:
 
         self.history.append({"role": "user", "content": user_message})
 
+        # ── 沉默闸门 ──
+        silence_reply = self._should_stay_silent(user_message)
+        if silence_reply:
+            self.history.append({"role": "assistant", "content": silence_reply})
+            self._post_turn(user_message, silence_reply)
+            return silence_reply
+
         try:
             response = self.llm.chat(system_prompt, llm_messages)
         except Exception as exc:
@@ -259,6 +277,14 @@ class ChatEngine:
             }
 
         self.history.append({"role": "user", "content": user_message})
+
+        # ── 沉默闸门 ──
+        silence_reply = self._should_stay_silent(user_message)
+        if silence_reply:
+            self.history.append({"role": "assistant", "content": silence_reply})
+            self._try_record_usage("chat", None)
+            yield silence_reply
+            return
 
         collected: list[str] = []
 
@@ -847,6 +873,67 @@ class ChatEngine:
     def reset(self) -> None:
         """清空对话历史。"""
         self.history = []
+
+    def _should_stay_silent(self, user_message: str) -> str:
+        """三闸沉默判断：冷却 → 状态 → LLM 人格。
+
+        返回沉默回复文本（"。" / "呵。" / "……"），空串表示继续正常对话。
+        """
+        if not self._session_id:
+            return ""
+
+        # ── Gate 1: 冷却（距上次沉默足够轮次） ──
+        state = _silence_state.get(self._session_id, {})
+        last_turn = state.get("last_turn", -999)
+        current_turn = len(self.history) // 2
+        if current_turn - last_turn < SILENCE_COOLDOWN_TURNS:
+            return ""
+
+        # ── Gate 2: 状态阈值（高防御或低落情绪） ──
+        # delta 条件因 affinity_service 未存上轮差值而降级
+        guard_trigger = self._guard >= SILENCE_GUARD_THRESHOLD
+        mood_trigger = any(
+            kw in self._mood for kw in ['低落', '难过', '伤心', '慵懒', '疲惫', '累']
+        )
+        if not guard_trigger and not mood_trigger:
+            return ""
+
+        # ── Gate 2.5: 每日限额 ──
+        today = UserClock.now(self._user_tz).strftime("%Y-%m-%d")
+        dates = state.get("dates", [])
+        if dates.count(today) >= SILENCE_MAX_PER_DAY:
+            return ""
+
+        # ── Gate 3: LLM 人格判断 ──
+        if not self.llm or not self.card:
+            return random.choice(SILENCE_REPLIES)
+
+        prompt = (
+            f"你是「{self.card.name}」，性格：{self.card.identity}\n"
+            f"你此刻心情：{self._mood}，防御值：{self._guard}/100（越高越抗拒）。\n"
+            f"对方说：「{user_message[:80]}」\n"
+            f"以你的性格，在此时此刻，你会完全沉默、只回一个「。」或「呵。」或「……」就不说话了吗？"
+            f"只回答 true 或 false，不要解释。"
+        )
+        try:
+            result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            should = "true" in result.strip().lower()
+        except Exception as exc:
+            print(f"[Silence] LLM gate failed, defaulting to silent: {exc}")
+            should = True
+
+        if not should:
+            return ""
+
+        # ── 记录沉默状态 ──
+        entry = _silence_state.setdefault(self._session_id, {"last_turn": -999, "dates": []})
+        entry["last_turn"] = current_turn
+        entry["dates"].append(today)
+
+        reply = random.choice(SILENCE_REPLIES)
+        print(f"[Silence] session={self._session_id} reply={repr(reply)} "
+              f"guard={self._guard} mood={self._mood} turn={current_turn}")
+        return reply
 
     def _should_retract(self, reply: str) -> bool:
         """轻量判断：角色是否会后悔说这句话。"""
