@@ -1,6 +1,7 @@
 """P5 Context Engine — 统一 token 预算调度器。"""
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from core.schema import CharacterCard
@@ -111,11 +112,16 @@ class ContextEngine:
 
         # ② 动态区（优先级：card_ext > scene > memory > web）
         card_ext = self._build_card_ext()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_scene = pool.submit(self._retrieve_scenes, user_message)
+            f_memory = pool.submit(self._retrieve_memories, user_message, current_mood=current_mood)
+            scene = f_scene.result()
+            memory = f_memory.result()
         sources = [
-            ("card_ext", card_ext, self.MAX_CARD_EXT),
-            ("scene", self._retrieve_scenes(user_message), self.MAX_SCENE),
-            ("memory", self._retrieve_memories(user_message, current_mood=current_mood), self.MAX_MEMORY),
-        ]
+	    ("card_ext", card_ext, self.MAX_CARD_EXT),
+	    ("scene", scene, self.MAX_SCENE),
+	    ("memory", memory, self.MAX_MEMORY),
+	]
         if self.web_search_enabled:
             sources.append(("web", self._search_web(user_message), self.MAX_WEB))
 

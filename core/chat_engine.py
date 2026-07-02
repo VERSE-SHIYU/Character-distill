@@ -224,6 +224,7 @@ class ChatEngine:
         self._last_rag_context = ""
 
         system_prompt = self._ctx_engine.build(
+
             user_message, self.user_role,
             current_mood=self._mood,
         )
