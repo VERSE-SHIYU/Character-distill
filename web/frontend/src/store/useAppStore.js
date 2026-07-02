@@ -917,7 +917,7 @@ const useAppStore = create((set, get) => ({
     const abort = new AbortController()
     set({
       currentCard: card,
-      messages: card.first_message ? [withCid({ role: 'char', content: card.first_message })] : [],
+      messages: [],
       currentView: 'chat',
       resumeLoading: true,
       userAvatar: null,
