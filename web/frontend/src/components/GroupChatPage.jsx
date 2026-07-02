@@ -1588,6 +1588,7 @@ export default function GroupChatPage() {
 
 function GroupMessageText({ content, typing, onTypingDone }) {
   const tw = useTypewriter()
+  const twRef = useRef(tw); twRef.current = tw
   const phaseRef = useRef('idle')
   const firedRef = useRef(false)
 
@@ -1609,7 +1610,7 @@ function GroupMessageText({ content, typing, onTypingDone }) {
     }
   }, [tw.isDone, tw.displayedText, content, onTypingDone])
 
-  useEffect(() => () => { tw.flush(); tw.reset() }, [tw])
+  useEffect(() => () => { twRef.current.flush(); twRef.current.reset() }, [])
 
   const display = (typing || phaseRef.current === 'typing') ? tw.displayedText : content
   return <span className="messages-msg-text">{display}</span>

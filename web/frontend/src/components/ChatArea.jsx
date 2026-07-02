@@ -1023,6 +1023,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   // Typewriter: smooth code-point-by-code-point reveal for streaming messages.
   const tw = useTypewriter()
+  const twRef = useRef(tw); twRef.current = tw
   const lastCpCountRef = useRef(0)
   const prevStreamingRef = useRef(false)
 
@@ -1047,8 +1048,8 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
 
   // Interrupt scenarios (revoke / cancel / unmount): finish immediately, no lost chars.
   useEffect(() => {
-    return () => { tw.flush(); tw.reset() }
-  }, [tw])
+    return () => { twRef.current.flush(); twRef.current.reset() }
+  }, [])
 
   const displayContent = (isStreaming || !tw.isDone) ? tw.displayedText : content
   const userAvatarNode = (
