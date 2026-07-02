@@ -1012,6 +1012,7 @@ const useAppStore = create((set, get) => ({
     })
 
     let sessionId = card.session_id || null
+    let openingText = null
     try {
       if (!sessionId) {
         if (!cardId) {
@@ -1025,11 +1026,10 @@ const useAppStore = create((set, get) => ({
           client_tz: clientTz(),
         }, undefined, abort.signal)
         sessionId = result.session_id
-        // Use dynamically generated opening line from API response
-        if (result.first_message) {
-          data.first_message = result.first_message
-        }
+        openingText = result?.first_message || data.first_message
       }
+      // when card.session_id already exists, openingText stays null
+      // and the opening line will come from history loading instead
     } catch (err) {
       if (err.name === 'AbortError' || err.status === 408) return
       console.error('[store] startChat create session failed:', err)
@@ -1047,8 +1047,8 @@ const useAppStore = create((set, get) => ({
       sessionId,
       currentSessionAvatar: null,
       sending: false,
-      messages: data.first_message
-        ? [withCid({ role: 'char', content: data.first_message })]
+      messages: openingText
+        ? [withCid({ role: 'char', content: openingText })]
         : [],
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
