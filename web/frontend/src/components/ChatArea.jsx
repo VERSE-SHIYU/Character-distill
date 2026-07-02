@@ -1089,8 +1089,11 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           </span>
         ) : (
           <span className="chat-bubble-text">
-            {displayContent}
-            {isStreaming && <span className="chat-cursor" />}
+            {isStreaming && !tw.displayedText ? (
+              <span className="typing-dots"><i/><i/><i/></span>
+            ) : (
+              <>{displayContent}{isStreaming && <span className="chat-cursor" />}</>
+            )}
           </span>
         )}
         {/* Voice bubble */}
