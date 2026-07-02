@@ -1078,6 +1078,19 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Update session avatar failed: {exc}")
             raise
 
+    async def update_group_avatar(self, group_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update group-level user avatar. Ownership check prevents cross-user writes."""
+        try:
+            async with await self._connect() as conn:
+                tag = await conn.execute(
+                    "UPDATE group_sessions SET user_avatar_data = $1 WHERE id = $2 AND user_id = $3",
+                    avatar_data, group_id, user_id,
+                )
+                return self._parse_rowcount(tag) > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Update group avatar failed: {exc}")
+            raise
+
     async def list_sessions(self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = "") -> dict:
         """List sessions with filters, pagination and total."""
         safe_page = max(page, 1)
@@ -1402,7 +1415,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc FROM group_sessions WHERE id = $1",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = $1",
                     id,
                 )
             if row is None:
@@ -1420,7 +1433,8 @@ class PostgresStore(StorageBase):
                 rows = await conn.fetch(
                     """SELECT id, name, card_ids, user_id, created_at,
                               user_persona_type, user_persona_card_id,
-                              user_persona_name, user_persona_desc
+                              user_persona_name, user_persona_desc,
+                              user_avatar_data
                        FROM group_sessions
                        WHERE user_id = $1 AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",

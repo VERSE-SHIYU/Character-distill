@@ -72,6 +72,10 @@ class StorageBase(ABC):
         """Update session-level user avatar. Returns False if ownership check fails."""
 
     @abstractmethod
+    async def update_group_avatar(self, group_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update group-level user avatar. Returns False if ownership check fails."""
+
+    @abstractmethod
     async def list_sessions(
         self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:

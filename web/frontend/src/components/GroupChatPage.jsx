@@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
+import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
 import ChatInputBar from './common/ChatInputBar'
@@ -50,6 +51,11 @@ export default function GroupChatPage() {
   const [error, setError] = useState(null)
   const [currentGroup, setCurrentGroup] = useState(null)
   const [groupAffinities, setGroupAffinities] = useState({})
+
+  // Per-group user avatar (not shared with 1-on-1 sessions)
+  const [groupUserAvatar, setGroupUserAvatar] = useState(null)
+  const [userCropFile, setUserCropFile] = useState(null)
+  const userAvatarInputRef = useRef(null)
   const [messages, setMessages] = useState([])
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
@@ -417,6 +423,7 @@ export default function GroupChatPage() {
     }
     autoAbortRef.current?.abort()
     setCurrentGroup({ ...group, card_ids: cardIds })
+    setGroupUserAvatar(group.user_avatar_data || null)
     loadHistory(group.id)
     fetchAffinities(group.id)
     ensureCardsLoaded(cardIds)
@@ -445,6 +452,33 @@ export default function GroupChatPage() {
     document.body.appendChild(a); a.click()
     document.body.removeChild(a); URL.revokeObjectURL(url)
   }, [currentGroup, messages, cardCache, allCards])
+
+  // ── User avatar upload (per-group, not global) ──
+  const handleUserAvatarChange = useCallback((e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUserCropFile(file)
+    e.target.value = ''
+  }, [])
+
+  const handleUserCropConfirm = useCallback(async (base64) => {
+    setUserCropFile(null)
+    if (!currentGroup) return
+    const prev = groupUserAvatar
+    setGroupUserAvatar(base64)
+    try {
+      await fetchWithTimeout(`/api/group/${currentGroup.id}/avatar`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ avatar_data: base64 }),
+      })
+    } catch (err) {
+      setGroupUserAvatar(prev)
+      setError('头像保存失败，请重试')
+    }
+  }, [currentGroup, groupUserAvatar])
+
+  const handleUserCropCancel = useCallback(() => setUserCropFile(null), [])
 
   async function handleRename() {
     const name = editNameValue.trim()
@@ -585,6 +619,7 @@ export default function GroupChatPage() {
         user_persona_card_id: data.user_persona_card_id,
         user_persona_name: data.user_persona_name,
       })
+      setGroupUserAvatar(null)
       // Also add to sidebar list so it appears immediately
       setGroups(prev => [{ id: data.group_id, name: data.name, card_ids: JSON.stringify(selectedCardIds), created_at: new Date().toISOString() }, ...prev])
       setMessages([])
@@ -1087,7 +1122,7 @@ export default function GroupChatPage() {
                             ) : (
                             <ChatBubble
                               side="right"
-                              avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={72} src={userAvatar} />}
+                              avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={72} src={groupUserAvatar || userAvatar} onClick={() => userAvatarInputRef.current?.click()} />}
                               name={personaSpeaker || undefined}
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
@@ -1580,6 +1615,22 @@ export default function GroupChatPage() {
         onCancel={() => setDeleteGroupId(null)}
         danger
       />
+
+      {/* ── User avatar upload (per-group) ── */}
+      <input
+        ref={userAvatarInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={handleUserAvatarChange}
+      />
+      {userCropFile && (
+        <ImageCropModal
+          file={userCropFile}
+          onConfirm={handleUserCropConfirm}
+          onCancel={handleUserCropCancel}
+        />
+      )}
     </div>
   )
 }

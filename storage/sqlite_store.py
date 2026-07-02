@@ -1926,6 +1926,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update session avatar failed: {exc}")
             raise
 
+    async def update_group_avatar(self, group_id: str, user_id: str, avatar_data: str) -> bool:
+        """Update group-level user avatar. Ownership check prevents cross-user writes."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE group_sessions SET user_avatar_data = ? WHERE id = ? AND user_id = ?",
+                    (avatar_data, group_id, user_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Update group avatar failed: {exc}")
+            raise
+
     async def list_sessions(
         self, keyword: str, character: str, text_id: str, page: int, page_size: int, user_id: str = "", card_id: str = ""
     ) -> dict:
@@ -2285,7 +2299,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc FROM group_sessions WHERE id = ?",
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -2304,7 +2318,8 @@ class SQLiteStore(StorageBase):
                 cursor = await conn.execute(
                     """SELECT id, name, card_ids, user_id, created_at,
                               user_persona_type, user_persona_card_id,
-                              user_persona_name, user_persona_desc
+                              user_persona_name, user_persona_desc,
+                              user_avatar_data
                        FROM group_sessions
                        WHERE user_id = ? AND (deleted_at IS NULL OR deleted_at = '')
                        ORDER BY created_at DESC""",

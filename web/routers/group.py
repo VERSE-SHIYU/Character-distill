@@ -59,6 +59,9 @@ class BroadcastRequest(BaseModel):
 class ReactRequest(BaseModel):
     emoji: str
 
+class UpdateGroupAvatarRequest(BaseModel):
+    avatar_data: str
+
 
 async def _rebuild_group_session(
     group_id: str,
@@ -700,7 +703,23 @@ async def get_history(
         raise HTTPException(410, "群聊已被删除")
 
     messages = await storage.get_group_messages(group_id)
-    return {"messages": messages}
+    return {"messages": messages, "user_avatar_data": session.get("user_avatar_data", "")}
+
+
+@router.put("/{group_id}/avatar")
+async def update_group_avatar(
+    group_id: str,
+    body: UpdateGroupAvatarRequest,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Update group-level user avatar (per-group, not global)."""
+    if len(body.avatar_data) > 150_000:
+        raise HTTPException(400, "头像数据过大")
+    ok = await storage.update_group_avatar(group_id, user["id"], body.avatar_data)
+    if not ok:
+        raise HTTPException(404, "群聊不存在或无权修改")
+    return {"ok": True}
 
 
 @router.patch("/{group_id}/rename")
