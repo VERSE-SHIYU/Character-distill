@@ -378,7 +378,6 @@ def _run_distill_task(
         if awakening:
             try:
                 card.awakening_message = awakening
-                from deps import get_storage
                 run_on_main_loop(
                     get_storage().update_card(result["card_id"], card.model_dump()),
                     timeout=30,
@@ -775,7 +774,6 @@ async def distill_stream(
         # Persist awakening_message to card (non-fatal)
         if awakening:
             try:
-                from deps import get_storage
                 card.awakening_message = awakening
                 await get_storage().update_card(result.get("card_id", ""), card.model_dump())
                 print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
