@@ -910,6 +910,13 @@ function CardDetail({ card, textId }) {
           </div>
         </div>
 
+        {/* Awakening line */}
+        {data.awakening_message && (
+          <CardSection label="苏醒台词">
+            <div className="card-awakening">{data.awakening_message}</div>
+          </CardSection>
+        )}
+
         {/* Personality traits */}
         {data.personality_traits?.length > 0 && (
           <CardSection label="性格特征">

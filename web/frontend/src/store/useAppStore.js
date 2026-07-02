@@ -184,6 +184,9 @@ const useAppStore = create((set, get) => ({
   distillIncrementalActive: false,
   distillTasks: [],
   lastDistilledCardId: null,
+  awakeningToast: null,
+  setAwakeningToast: (toast) => set({ awakeningToast: toast }),
+  dismissAwakeningToast: () => set({ awakeningToast: null }),
   identifying: false,
 
   messages: [],
@@ -706,6 +709,15 @@ const useAppStore = create((set, get) => ({
           }))
           get()._persistTasks()
           if (payload.status === 'done') {
+            // Show awakening toast (first done transition, once per task)
+            if (payload.awakening) {
+              set({ awakeningToast: {
+                character: characterName,
+                awakening: payload.awakening,
+                card_id: payload.card_id || '',
+                textId,
+              }})
+            }
             // only refresh cards when user is viewing this text, else leave it to selectText/loadCards
             const s = get()
             set((s2) => ({

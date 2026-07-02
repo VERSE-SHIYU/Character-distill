@@ -8600,6 +8600,109 @@ select.settings-input {
   color: #991b1b;
 }
 
+/* ==================== Awakening Toast ==================== */
+
+.awakening-toast {
+  position: fixed;
+  bottom: 70px;
+  right: 20px;
+  z-index: 1001;
+  background: var(--card-bg, #fff);
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 12px;
+  padding: 14px 18px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.14);
+  max-width: 360px;
+  pointer-events: auto;
+  animation: awakening-toast-in 0.5s ease-out forwards;
+}
+
+@keyframes awakening-toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.awakening-toast-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: var(--text-dim, #999);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all .15s;
+}
+
+.awakening-toast-close:hover {
+  background: var(--pill-bg, #eee);
+  color: var(--text, #333);
+}
+
+.awakening-toast-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.awakening-toast-avatar {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.awakening-toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.awakening-toast-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text, #333);
+  margin-bottom: 4px;
+}
+
+.awakening-toast-line {
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-secondary, #666);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+
+.awakening-toast-btn {
+  display: inline-block;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary, #6366f1);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity .15s;
+}
+
+.awakening-toast-btn:hover {
+  opacity: 0.85;
+}
+
+/* Card detail: awakening line */
+.card-awakening {
+  font-style: italic;
+  font-size: 0.95em;
+  color: var(--text-secondary, #666);
+  line-height: 1.6;
+}
+
 /* ---- Profile page ---- */
 
 .profile-page {

@@ -5,6 +5,7 @@ import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
 import DistillTaskBar from './components/DistillTaskBar'
+import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import Loading from './components/common/Loading'
@@ -258,6 +259,7 @@ export default function App() {
         <MainContent />
       </main>
       <DistillTaskBar />
+      <AwakeningToast />
       <ArchiveListModal />
       <CrossBorderConsentModal />
     </div>
