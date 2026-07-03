@@ -941,13 +941,17 @@ const useAppStore = create((set, get) => ({
 
   selectCard: async (card) => {
     const state = get()
+    const _selId = card.id || card.card_id
+    if (state._pendingChatCardId === _selId) return
+    set({ _pendingChatCardId: _selId })
+
     get().setPreviousView(get().currentView)
     if (state.lastDistilledCardId === card.id) {
       set({ lastDistilledCardId: null })
     }
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
-      set({ currentView: 'chat' })
+      set({ currentView: 'chat', _pendingChatCardId: null })
       return
     }
 
@@ -980,13 +984,13 @@ const useAppStore = create((set, get) => ({
         console.log('[session-trace] selectCard RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
         sessionId = result.session_id
       } catch (err) {
-        if (err.name === 'AbortError' || err.status === 408) return
-        set({ error: err.message, resumeLoading: false })
+        if (err.name === 'AbortError' || err.status === 408) { set({ _pendingChatCardId: null }); return }
+        set({ _pendingChatCardId: null, error: err.message, resumeLoading: false })
         return
       }
     }
     const _cardId = card.id || card.card_id
-    set({ sessionId, resumeLoading: false, sessionUserRole: get().getUserRole(_cardId) })
+    set({ _pendingChatCardId: null, sessionId, resumeLoading: false, sessionUserRole: get().getUserRole(_cardId) })
     get().loadVoiceRef(_cardId)
   },
 
@@ -1023,6 +1027,7 @@ const useAppStore = create((set, get) => ({
       const archiveData = await archiveRes.json()
       if (archiveData.total > 0) {
         set({
+          _pendingChatCardId: null,
           archiveModalOpen: true,
           archiveList: archiveData.items,
           pendingCard: card,
@@ -1099,6 +1104,10 @@ const useAppStore = create((set, get) => ({
     const { pendingCard } = get()
     if (!pendingCard) return
     const card = pendingCard
+    const cardId = card.id || card.card_id
+    if (get()._pendingChatCardId === cardId) return
+    set({ _pendingChatCardId: cardId })
+
     const data = parseCardJson(card)
 
     const _enterMsgs = session.last_message
@@ -1131,6 +1140,9 @@ const useAppStore = create((set, get) => ({
     if (!pendingCard) return
     const card = pendingCard
     const cardId = card.id || card.card_id
+    if (get()._pendingChatCardId === cardId) return
+    set({ _pendingChatCardId: cardId })
+
     const data = parseCardJson(card)
 
     if (!cardId) {
