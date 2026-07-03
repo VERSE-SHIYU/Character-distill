@@ -885,14 +885,15 @@ class ChatEngine:
         cognitive = self._build_cognitive_block()
         events = self._event_service.build_candidate_block()
         relationships = self._build_relationship_block()
+        life_exchange = self._build_life_exchange_block()
         boundary = self._build_boundary_block()
         catchphrase = self._build_catchphrase_block()
 
         if self._last_in_character < 40:
             # 出戏明显：边界块移至最末端，紧贴生成入口
-            return persona + cognitive + events + relationships + boundary + catchphrase
+            return persona + cognitive + events + relationships + life_exchange + boundary + catchphrase
         else:
-            return persona + boundary + cognitive + events + relationships + catchphrase
+            return persona + boundary + cognitive + events + relationships + life_exchange + catchphrase
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
@@ -1065,6 +1066,19 @@ class ChatEngine:
             "你心里——它意味着什么、你作何感受，由你的性格和你们的关系决定："
             "可以是甜、是嫌弃、是揶揄\"这么闲？\"，也可以只是心里一暖不说破。"
             "自然流露在这条回复里，不要复述次数本身。"
+        )
+
+    def _build_life_exchange_block(self) -> str:
+        """生活交换引导：熟悉档以上常驻提示（零结构改动，仅 prompt 段）。"""
+        if self._stage in ("陌生", "认识"):
+            return ""
+        return (
+            "\n\n当对方在分享TA的生活（今天做了什么、遇到什么事）时，"
+            "你除了回应TA，也可以随口交换一件你自己「今天／最近」的事——"
+            "必须从你的身份、职业和原著设定中合理生长（如艺人的通告、排练、后台琐事），"
+            "绝不虚构设定之外的经历，一两句带过，不抢对方的话头。"
+            "这是朋友之间的有来有往，不是每条都要给：十次里两三次，时机自然才给。"
+            "对方没在聊生活时，不要硬塞。"
         )
 
     # ── 口癖磨损与感染 ──────────────────────────────────────────
