@@ -1,4 +1,4 @@
-"""Tests for shared embedding cache and Mem0 bridge."""
+"""Tests for shared embedding cache, Mem0 bridge, and embed-stats."""
 
 from __future__ import annotations
 
@@ -11,26 +11,27 @@ from core.embeddings import (
     Mem0BridgeEmbedder,
     get_embed_stats,
     reset_embed_stats,
+    _is_moderation_error,
+    _SHARED_CACHE,
+    _SHARED_CACHE_LOCK,
 )
 
 
 @pytest.fixture(autouse=True)
 def clear_stats():
-    """Reset module-level counters before each test."""
+    """Reset module-level counters and shared cache before each test."""
     reset_embed_stats()
+    with _SHARED_CACHE_LOCK:
+        _SHARED_CACHE.clear()
 
 
 class _FakeEmbeddingData:
-    """Mimics the structure of an OpenAI embedding response item."""
-
     def __init__(self, index: int, embedding: list[float]):
         self.index = index
         self.embedding = embedding
 
 
 class _FakeEmbeddingResponse:
-    """Mimics the structure of an OpenAI embeddings.create response."""
-
     def __init__(self, embeddings: list[list[float]]):
         self.data = [
             _FakeEmbeddingData(i, emb) for i, emb in enumerate(embeddings)
@@ -39,10 +40,7 @@ class _FakeEmbeddingResponse:
 
 @pytest.fixture
 def mock_openai_client():
-    """Patch DashScopeEmbedding to use a mock OpenAI client.
-
-    Returns the mock so tests can inspect/assert call counts.
-    """
+    """Patch openai.OpenAI with a mock that returns fake embeddings."""
     fake_vec = [0.1] * 1024
 
     def _fake_create(*, model, input, dimensions, **_kwargs):
@@ -57,6 +55,32 @@ def mock_openai_client():
         yield mock_client
 
 
+# ── IsModerationError ────────────────────────────────────────
+
+
+class TestIsModerationError:
+    def test_detects_DataInspectionFailed(self):
+        assert _is_moderation_error("DataInspectionFailed: content risky")
+
+    def test_detects_contentFilter(self):
+        assert _is_moderation_error("contentFilter triggered")
+
+    def test_detects_content_filter(self):
+        assert _is_moderation_error("content_filter violation")
+
+    def test_detects_blocked(self):
+        assert _is_moderation_error("request blocked by risk control")
+
+    def test_rejects_normal_error(self):
+        assert not _is_moderation_error("rate limit exceeded")
+
+    def test_rejects_empty(self):
+        assert not _is_moderation_error("")
+
+
+# ── SharedCache ──────────────────────────────────────────────
+
+
 class TestSharedCache:
     """Shared module-level cache: same text embedded only once."""
 
@@ -64,13 +88,11 @@ class TestSharedCache:
         emb = DashScopeEmbedding(api_key="test_key")
         text = "今天天气真好"
 
-        # First call — should hit API
         vec1 = emb([text])
         assert len(vec1) == 1
         assert len(vec1[0]) == 1024
         assert mock_openai_client.embeddings.create.call_count == 1
 
-        # Second call with same text — cache hit, no API call
         vec2 = emb([text])
         assert len(vec2) == 1
         assert len(vec2[0]) == 1024
@@ -82,30 +104,28 @@ class TestSharedCache:
         emb(["hello"])
         assert mock_openai_client.embeddings.create.call_count == 1
 
-        emb(["world"])  # different → API call
+        emb(["world"])
         assert mock_openai_client.embeddings.create.call_count == 2
 
     def test_cache_shared_across_instances(self, mock_openai_client):
-        """Two instances share the same cache."""
         emb1 = DashScopeEmbedding(api_key="key_a")
         emb2 = DashScopeEmbedding(api_key="key_b")
 
         emb1(["共享文本"])
         assert mock_openai_client.embeddings.create.call_count == 1
 
-        emb2(["共享文本"])  # same text, different instance → cache hit
-        assert mock_openai_client.embeddings.create.call_count == 1  # no increase
+        emb2(["共享文本"])
+        assert mock_openai_client.embeddings.create.call_count == 1  # cache hit
 
     def test_cache_and_mem0_bridge_share_cache(self, mock_openai_client):
-        """RAG DashScopeEmbedding and Mem0 bridge share the same cache."""
         emb = DashScopeEmbedding(api_key="test_key")
         bridge = Mem0BridgeEmbedder(api_key="test_key")
 
         emb(["你好"])
         assert mock_openai_client.embeddings.create.call_count == 1
 
-        bridge.embed("你好")  # same text via Mem0 path → cache hit
-        assert mock_openai_client.embeddings.create.call_count == 1  # no increase
+        bridge.embed("你好")
+        assert mock_openai_client.embeddings.create.call_count == 1  # cache hit
 
     def test_empty_input_raises_chroma_error(self, mock_openai_client):
         """ChromaDB's EmbeddingFunction wrapper rejects empty returns."""
@@ -115,9 +135,10 @@ class TestSharedCache:
         assert mock_openai_client.embeddings.create.call_count == 0
 
 
-class TestMem0BridgeEmbedder:
-    """Mem0BridgeEmbedder implements the Mem0 duck-typed protocol."""
+# ── Mem0BridgeEmbedder ───────────────────────────────────────
 
+
+class TestMem0BridgeEmbedder:
     def test_embed_returns_correct_dimensions(self, mock_openai_client):
         bridge = Mem0BridgeEmbedder(api_key="test_key")
         vec = bridge.embed("测试文本")
@@ -134,9 +155,11 @@ class TestMem0BridgeEmbedder:
         assert all(len(v) == 1024 for v in vecs)
 
     def test_source_is_mem0(self, mock_openai_client):
-        """Bridge sets source='mem0' for stats bucketing."""
         bridge = Mem0BridgeEmbedder(api_key="test_key")
         assert bridge._dashscope.source == "mem0"
+
+
+# ── EmbedStats ───────────────────────────────────────────────
 
 
 class TestEmbedStats:
@@ -144,29 +167,105 @@ class TestEmbedStats:
 
     def test_basic_counting(self, mock_openai_client):
         emb = DashScopeEmbedding(api_key="test_key")
-        assert get_embed_stats()["calls"] == 0
+        assert get_embed_stats()["total"] == 0
 
         emb(["text_a"])
         stats = get_embed_stats()
-        assert stats["calls"] == 1
+        assert stats["total"] == 1
+        assert stats["api_calls"] == 1
+        assert stats["cache_hits"] == 0
         assert stats["by_source"].get("rag") == 1
+
+    def test_cache_hit_counts_separately(self, mock_openai_client):
+        emb = DashScopeEmbedding(api_key="test_key")
+        emb(["dup"])
+        assert get_embed_stats()["api_calls"] == 1
+        assert get_embed_stats()["cache_hits"] == 0
+
+        emb(["dup"])  # cache hit
+        stats = get_embed_stats()
+        assert stats["api_calls"] == 1  # unchanged
+        assert stats["cache_hits"] == 1  # incremented
+        assert stats["total"] == 2
+
+    def test_hit_rate(self, mock_openai_client):
+        emb = DashScopeEmbedding(api_key="test_key")
+        emb(["a"])
+        emb(["a"])  # cache hit
+        emb(["b"])
+        emb(["b"])  # cache hit
+        emb(["c"])
+
+        stats = get_embed_stats()
+        assert stats["total"] == 5
+        assert stats["api_calls"] == 3
+        assert stats["cache_hits"] == 2
+        assert stats["hit_rate"] == 40.0  # 2/5 = 40%
 
     def test_rag_and_mem0_separate_buckets(self, mock_openai_client):
         emb = DashScopeEmbedding(api_key="test_key")
         bridge = Mem0BridgeEmbedder(api_key="test_key")
 
         emb(["rag_text"])
-        bridge.embed("mem0_text")  # cache miss → calls API
+        bridge.embed("mem0_text")
 
         stats = get_embed_stats()
         assert stats["by_source"]["rag"] == 1
         assert stats["by_source"]["mem0"] == 1
+        assert stats["api_calls"] == 2
 
-    def test_cache_hit_does_not_double_count(self, mock_openai_client):
-        """Stats count API-bound texts, not cache hits."""
+    def test_moderation_blocked_initial_zero(self):
+        assert get_embed_stats()["moderation_blocked"] == 0
+
+
+# ── Moderation Interception ──────────────────────────────────
+
+
+class TestModerationInterception:
+    """DashScope content moderation: blocked chunk skipped, rest continue."""
+
+    def test_moderation_blocked_logged_and_counted(self, mock_openai_client):
+        """Single text triggers moderation → counted and zero-vector returned."""
+        fake_vec = [0.1] * 1024
+
+        def _side_effect(*, model, input, dimensions, **_kwargs):
+            texts = input if isinstance(input, list) else [input]
+            if any("blocked" in t for t in texts):
+                raise Exception("DataInspectionFailed: content risk detected")
+            return _FakeEmbeddingResponse([fake_vec] * len(texts))
+
+        mock_openai_client.embeddings.create.side_effect = _side_effect
+
         emb = DashScopeEmbedding(api_key="test_key")
-        emb(["once"])
-        assert get_embed_stats()["calls"] == 1
+        result = emb(["blocked_text"])
 
-        emb(["once"])  # cache hit — still counted in stats
-        assert get_embed_stats()["calls"] == 2  # the __call__ was made, even if cache
+        assert get_embed_stats()["moderation_blocked"] == 1
+        # batch(1) fails → per-item(1) fails → blocked
+        assert mock_openai_client.embeddings.create.call_count == 2
+
+    def test_moderation_skips_only_blocked_item(self, mock_openai_client):
+        """Batch with moderation: blocked item gets zero vector, rest succeed."""
+        fake_vec = [0.1] * 1024
+
+        def _side_effect(*, model, input, dimensions, **_kwargs):
+            texts = input if isinstance(input, list) else [input]
+            if any("bad" in t for t in texts):
+                raise Exception("DataInspectionFailed: content risk")
+            return _FakeEmbeddingResponse([fake_vec] * len(texts))
+
+        mock_openai_client.embeddings.create.side_effect = _side_effect
+
+        emb = DashScopeEmbedding(api_key="test_key")
+        texts = ["safe1", "bad", "safe2"]
+        result = emb(texts)
+
+        assert len(result) == 3
+        # "bad" gets zero vector (result is numpy array from ChromaDB wrapper)
+        assert all(v == 0.0 for v in result[1])
+        # safe texts get normal vectors
+        assert result[0][0] == 0.1
+        assert result[2][0] == 0.1
+
+        assert get_embed_stats()["moderation_blocked"] == 1
+        # batch(3 fails) → per-item: safe1 ✓, bad ✗, safe2 ✓ = 1+3 = 4
+        assert mock_openai_client.embeddings.create.call_count == 4
