@@ -287,9 +287,6 @@ class ChatEngine:
                 "content": llm_messages[-1]["content"] + time_block,
             }
 
-        if self.agent_mode:
-            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
-
         self.history.append({"role": "user", "content": user_message})
 
         # ── 沉默闸门 ──
@@ -298,6 +295,9 @@ class ChatEngine:
             self.history.append({"role": "assistant", "content": silence_reply})
             self._post_turn(user_message, silence_reply)
             return silence_reply
+
+        if self.agent_mode:
+            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
 
         try:
             response = self.llm.chat(system_prompt, llm_messages)
@@ -331,9 +331,6 @@ class ChatEngine:
                 "content": llm_messages[-1]["content"] + time_block,
             }
 
-        if self.agent_mode:
-            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
-
         self.history.append({"role": "user", "content": user_message})
 
         # ── 沉默闸门 ──
@@ -343,6 +340,9 @@ class ChatEngine:
             self._post_turn(user_message, silence_reply)
             yield silence_reply
             return
+
+        if self.agent_mode:
+            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
 
         collected: list[str] = []
 
