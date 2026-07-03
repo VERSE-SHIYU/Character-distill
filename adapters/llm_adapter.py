@@ -250,8 +250,10 @@ class LLMAdapter:
                     }
                 return msg
             except BadRequestError as exc:
-                err_msg = (exc.message or "").lower()
-                if "tool" in err_msg or "function" in err_msg:
+                err_text = " ".join(
+                    filter(None, [exc.message, str(exc), str(getattr(exc, "body", "") or "")])
+                ).lower()
+                if "tool" in err_text or "function" in err_text:
                     raise ToolsNotSupportedError(
                         f"Provider does not support tools/function-calling: {exc}"
                     ) from exc
