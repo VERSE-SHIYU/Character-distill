@@ -68,7 +68,7 @@ async def list_users_federated(
     """
     import os
 
-    # 1. Local users — explicit whitelist (no email/secrets)
+    # 1. Local users — full admin fields (no password_hash)
     local_users = await storage.get_all_users()
     now = time.time()
     for u in local_users:
