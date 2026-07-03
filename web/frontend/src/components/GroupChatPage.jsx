@@ -843,12 +843,6 @@ export default function GroupChatPage() {
     return () => document.removeEventListener('mousedown', handler)
   }, [dropOpen])
 
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 768)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
   // ── Render ──
 
   return (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
+import useIsMobile from '../hooks/useIsMobile'
 import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -77,7 +78,7 @@ export default function MarketCardDetail() {
   const [avatarSaving, setAvatarSaving] = useState(false)
   const avatarInputRef = useRef(null)
   const [bgExpanded, setBgExpanded] = useState(false)
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 960)
+  const isMobile = useIsMobile(960)
   const [collapsedSections, setCollapsedSections] = useState(new Set())
 
   useEffect(() => {
@@ -172,12 +173,6 @@ export default function MarketCardDetail() {
     if (activeTab === 'versions') loadVersions()
     if (activeTab === 'forks') loadForks()
   }, [activeTab, loadVersions, loadForks, card])
-
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 960)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
 
   const toggleSection = (key) => {
     setCollapsedSections(prev => {

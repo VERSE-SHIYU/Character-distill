@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import useIsMobile from '../hooks/useIsMobile'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -35,7 +36,7 @@ export default function MessagesPage() {
   const [activeOtherId, setActiveOtherId] = useState(null)
   const [activeUsername, setActiveUsername] = useState('')
   const [mobileView, setMobileView] = useState('list')
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  const isMobile = useIsMobile()
   const pollTimerRef = useRef(null)
 
   // Load conversations
@@ -60,14 +61,6 @@ export default function MessagesPage() {
     loadConversations()
   }, [])
 
-  // Track mobile vs desktop
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth <= 768)
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
-
-  // Handle messageTargetUserId from other pages
   useEffect(() => {
     if (messageTargetUserId) {
       setActiveOtherId(messageTargetUserId)
