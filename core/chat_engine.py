@@ -314,7 +314,6 @@ class ChatEngine:
         if silence_reply:
             self.history.append({"role": "assistant", "content": silence_reply})
             self._post_turn(user_message, silence_reply)
-            self._try_record_usage("chat", None)
             yield silence_reply
             return
 
