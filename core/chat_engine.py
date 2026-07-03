@@ -256,6 +256,8 @@ class ChatEngine:
         """Agent 决策阶段。返回（最终生成用的 system_prompt, messages）。
 
         degraded 时回退 legacy：重建含动态区的 system prompt，messages 原样返回。
+        正常时：用路由器 prompt + 截断角色背景做决策，检索结果拼为【检索参考】块
+        附加到角色 system prompt，返回的 messages 不携带 tool_calls/tool 消息。
         """
         from core.agent.tools import AgentToolkit
         from core.agent.agent_loop import AgentLoop
@@ -266,7 +268,37 @@ class ChatEngine:
             print("[ChatEngine] agent degraded → legacy context injection")
             legacy_sp = self._compose_system_prompt(user_message, voice_mode, include_dynamic=True)
             return legacy_sp, llm_messages
-        return system_prompt, result.messages
+
+        # 拼装检索参考块
+        tool_label = {
+            "search_memory": "记忆",
+            "search_scenes": "场景",
+            "web_search": "联网",
+        }
+        parts: list[str] = []
+        for tool_name, content in result.retrieved:
+            label = tool_label.get(tool_name, tool_name)
+            parts.append(f"[{label}]\n{content}")
+        retrieval_block = ""
+        if parts:
+            retrieval_block = "\n\n【检索参考】\n" + "\n\n".join(parts)
+
+            # Token 预算：超出 TOTAL_BUDGET 时按 retrieved 顺序截断
+            budget = getattr(self._ctx_engine, "TOTAL_BUDGET", 32000)
+            tok = _count_tokens(retrieval_block)
+            if tok > budget:
+                # 从末尾逐条移除
+                while _count_tokens(retrieval_block) > budget and len(parts) > 1:
+                    parts.pop()
+                    retrieval_block = "\n\n【检索参考】\n" + "\n\n".join(parts)
+                # 单条仍超出 → 硬截断
+                if _count_tokens(retrieval_block) > budget:
+                    ratio = budget / tok
+                    max_chars = int(len(retrieval_block) * ratio * 0.95)
+                    retrieval_block = retrieval_block[:max_chars] + "\n（检索结果过长已截断）"
+
+        final_sp = system_prompt + retrieval_block if retrieval_block else system_prompt
+        return final_sp, llm_messages  # 返回原始 messages（无 tool 消息）
 
     def chat(self, user_message: str, voice_mode: bool = False) -> str:
         """非流式对话一轮，返回模型回复。

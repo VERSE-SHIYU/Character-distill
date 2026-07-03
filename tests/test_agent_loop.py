@@ -178,6 +178,10 @@ def test_tool_call_then_answer():
     assert len(result.steps) == 1
     assert result.steps[0]["tool"] == "search_memory"
     assert result.degraded is False
+    # retrieved 应包含成功且有内容的工具结果
+    assert len(result.retrieved) == 1
+    assert result.retrieved[0][0] == "search_memory"
+    assert result.retrieved[0][1] == "fake result"
 
 
 def test_max_steps_cutoff():
@@ -225,6 +229,9 @@ def test_dedup_same_tool_same_args():
     assert len(tool_msgs) == 2
     assert "已用相同参数调用过" in tool_msgs[1]["content"]
     assert result.degraded is False
+    # retrieved 应只有一次有效结果（dedup 不重复收集）
+    assert len(result.retrieved) == 1
+    assert result.retrieved[0][0] == "search_scenes"
 
 
 def test_degraded_returns_original_messages():
@@ -255,6 +262,35 @@ def test_degraded_returns_original_messages():
     assert input_msgs == input_snapshot
     # first call happened, second raised
     assert llm.call_count == 2
+
+
+def test_retrieved_collection():
+    """仅成功且有内容的工具结果出现在 retrieved 中。"""
+    tcs = [
+        FakeToolCall("search_memory", {"query": "q1"}, id="call_1"),
+        FakeToolCall("search_scenes", {"query": "q2"}, id="call_2"),
+    ]
+    llm = FakeLLM([
+        FakeMessage(tool_calls=[tcs[0], tcs[1]]),
+        FakeMessage(content="done"),
+    ])
+
+    class _PickyToolkit:
+        """Returns ok=True with content for search_memory, empty for search_scenes."""
+        def get_schemas(self) -> list[dict]:
+            return []
+        def execute(self, name: str, arguments: dict) -> ToolResult:
+            if name == "search_memory":
+                return ToolResult(tool=name, ok=True, content="real memory", elapsed_ms=1)
+            return ToolResult(tool=name, ok=True, content="", elapsed_ms=1)
+
+    loop = AgentLoop(llm, _PickyToolkit())
+    result = loop.run("hint", [_make_msg(content="remember?")])
+
+    assert len(result.retrieved) == 1
+    assert result.retrieved[0] == ("search_memory", "real memory")
+    assert len(result.steps) == 2  # both tools executed
+    assert result.degraded is False
 
 
 def test_toolkit_timeout_and_exception(monkeypatch):
