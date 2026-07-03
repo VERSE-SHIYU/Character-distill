@@ -54,13 +54,19 @@ const tabs = [
   },
 ]
 
-const TAB_KEYS = ['home', 'market', 'text', 'messages', 'mine']
+const VIEW_GROUPS = {
+  home: ['home', 'feed'],
+  market: ['market', 'author', 'textDetail', 'marketCardDetail'],
+  text: ['text', 'character'],
+  messages: ['messages'],
+  mine: ['mine', 'admin', 'profile', 'settings', 'trash'],
+}
 
 export default function MobileTabBar() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
 
-  const activeKey = TAB_KEYS.includes(currentView) ? currentView : undefined
+  const activeKey = Object.keys(VIEW_GROUPS).find((k) => VIEW_GROUPS[k].includes(currentView))
 
   return (
     <div className="mobile-tabbar">
