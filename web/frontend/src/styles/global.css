@@ -16822,3 +16822,16 @@ select.settings-input {
   }
 }
 
+/* ===== Mobile Adaptation: Step 6 — perf ===== */
+@media (max-width: 768px) {
+  .ocean-particle.p4,
+  .ocean-particle.p5,
+  .ocean-particle.p6 { display: none; }
+
+  .bg-blob { animation: none; filter: blur(70px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ocean-particle, .bg-blob { animation: none !important; }
+}
+
