@@ -19,6 +19,10 @@ class ToolResult:
 class AgentToolkit:
     """把 ContextEngine 的三路检索注册为 OpenAI function-calling 工具。"""
 
+    SCENE_TIMEOUT = 5
+    MEMORY_TIMEOUT = 5
+    WEB_TIMEOUT = 15
+
     def __init__(self, ctx_engine, current_mood: str | None = None) -> None:
         self._ctx = ctx_engine
         self.current_mood = current_mood
@@ -91,9 +95,9 @@ class AgentToolkit:
         started = time.monotonic()
 
         dispatch = {
-            "search_scenes": (self._call_search_scenes, 5),
-            "search_memory": (self._call_search_memory, 5),
-            "web_search": (self._call_web_search, 15),
+            "search_scenes": (self._call_search_scenes, self.SCENE_TIMEOUT),
+            "search_memory": (self._call_search_memory, self.MEMORY_TIMEOUT),
+            "web_search": (self._call_web_search, self.WEB_TIMEOUT),
         }
 
         entry = dispatch.get(name)
