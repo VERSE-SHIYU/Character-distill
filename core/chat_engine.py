@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import random
+import re
 from datetime import datetime, timezone
 from collections.abc import Generator
 from typing import Any
@@ -66,6 +68,13 @@ SILENCE_REPLIES = ["。", "呵。", "……"]
 # Silence state: session_id -> {"last_turn": int, "dates": list[str]}
 # Restart-safe: losing the dict means at most one extra silence per session.
 _silence_state: dict[str, dict] = {}
+
+# ── 口癖磨损与感染 ──────────────────────────────────────────────
+STOP_WORDS = {'的', '了', '吗', '吧', '呢', '啊', '哦', '嗯', '我', '你',
+              '他', '这', '那', '是', '不', '在', '有', '和', '就', '都', '也', '很'}
+CATCHWORD_MIN_COUNT = 4
+CATCHWORD_HISTORY_SCAN = 40  # scan 40 msgs (last ~20 user msgs)
+CATCHWORD_MAX_WORDS = 2
 
 
 class ChatEngine:
@@ -403,7 +412,38 @@ class ChatEngine:
                 self._card_id,
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity, "assertion_confidence": self._last_assertion_confidence},
             )
-        self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
+        reflected = self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
+        if reflected:
+            self._extract_catchwords()
+            self._persist_catchwords()
+
+    def _persist_catchwords(self) -> None:
+        """将 user_catchwords 持久化到 DB（通过 affinity_reason 通道）。"""
+        if not self._storage or not self._session_id:
+            return
+        # Rebuild affinity_reason to include current catchwords
+        import json as _json
+        extended = {
+            "inner_voice": self._inner_voice,
+            "mood_emoji": self._mood_emoji,
+            "mood_word": self._mood,
+            "stage": self._stage,
+            "stage_emoji": self._stage_emoji,
+            "user_catchwords": self._affinity_service.user_catchwords,
+        }
+        self._affinity_service.affinity_reason = _json.dumps(extended, ensure_ascii=False)
+        try:
+            from deps import run_on_main_loop
+            run_on_main_loop(
+                self._storage.update_session_affinity(
+                    self._session_id,
+                    self._affinity, self._trust, self._mood, self._guard,
+                    self._affinity_service.affinity_reason,
+                ),
+                timeout=15,
+            )
+        except Exception as exc:
+            print(f"[Catchwords] Persist failed (non-fatal): {exc}")
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
@@ -775,12 +815,13 @@ class ChatEngine:
         events = self._event_service.build_candidate_block()
         relationships = self._build_relationship_block()
         boundary = self._build_boundary_block()
+        catchphrase = self._build_catchphrase_block()
 
         if self._last_in_character < 40:
             # 出戏明显：边界块移至最末端，紧贴生成入口
-            return persona + cognitive + events + relationships + boundary
+            return persona + cognitive + events + relationships + boundary + catchphrase
         else:
-            return persona + boundary + cognitive + events + relationships
+            return persona + boundary + cognitive + events + relationships + catchphrase
 
     # ── 时间感知构建 ────────────────────────────────────────────
 
@@ -953,6 +994,48 @@ class ChatEngine:
             "你心里——它意味着什么、你作何感受，由你的性格和你们的关系决定："
             "可以是甜、是嫌弃、是揶揄\"这么闲？\"，也可以只是心里一暖不说破。"
             "自然流露在这条回复里，不要复述次数本身。"
+        )
+
+    # ── 口癖磨损与感染 ──────────────────────────────────────────
+
+    def _extract_catchwords(self) -> None:
+        """从最近 user 消息提取高频特征词，存入好感状态。"""
+        # Collect last ~20 user messages
+        user_msgs = [
+            m["content"] for m in self.history[-CATCHWORD_HISTORY_SCAN:]
+            if m["role"] == "user"
+        ][-20:]
+
+        word_counts: dict[str, int] = {}
+        for msg in user_msgs:
+            # Chinese char sequences + alphanumeric tokens
+            tokens = re.findall(r'[一-鿿]+|[a-zA-Z0-9]+', msg)
+            for token in tokens:
+                if len(token) >= 2 and token not in STOP_WORDS:
+                    word_counts[token] = word_counts.get(token, 0) + 1
+
+        qualified = [(w, c) for w, c in word_counts.items() if c >= CATCHWORD_MIN_COUNT]
+        qualified.sort(key=lambda x: -x[1])
+        top_words = [w for w, _ in qualified[:CATCHWORD_MAX_WORDS]]
+
+        if top_words != self._affinity_service.user_catchwords:
+            self._affinity_service.user_catchwords = top_words
+            print(f"[Catchwords] Updated: {top_words}")
+
+    def _build_catchphrase_block(self) -> str:
+        """口癖磨损与感染：亲近/心意相通 + 有特征词 → 注入 persona 块。"""
+        catchwords = self._affinity_service.user_catchwords
+        if not catchwords:
+            return ""
+        if self._stage not in ("亲近", "心意相通"):
+            return ""
+        words_str = "、".join(catchwords)
+        return (
+            "\n\n【口癖渗透】你们相处久了，说话方式会互相渗透："
+            f"对方常说「{words_str}」"
+            "——极偶尔（十次里最多一次），你可以自然地用一次 TA 的说法，"
+            "像不自觉沾染的那种。同时你自己的口癖不必每句都端着——关系近了，"
+            "人设会松弛，偶尔一句不带口癖反而更真。绝不刻意，绝不密集。"
         )
 
     def reset(self) -> None:

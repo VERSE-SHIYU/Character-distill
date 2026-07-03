@@ -32,7 +32,7 @@ class ReflectionService:
         self._importance_acc: int = 0
         self._rounds_since_reflect: int = 0
 
-    def maybe_reflect(self, importance: int, llm, card_name: str) -> None:
+    def maybe_reflect(self, importance: int, llm, card_name: str) -> bool:
         """双条件（累计 + 轮数）触发反思，高质量素材不足时 defer 不归零。"""
         from core.memory_manager import REFLECTION_THRESHOLD, REFLECTION_MIN_ROUNDS, REFLECTION_MIN_QUALITY
 
@@ -42,11 +42,11 @@ class ReflectionService:
         # ── 双条件前置校验：任一不满足则不触发，累计持续 ──
         if not (self._importance_acc >= REFLECTION_THRESHOLD
                 and self._rounds_since_reflect >= REFLECTION_MIN_ROUNDS):
-            return
+            return False
         if not self._memory or not self._memory.enabled or not self._card_id:
-            return
+            return False
         if not llm:
-            return
+            return False
 
         print(f"[Reflection] Triggered: acc={self._importance_acc} >= {REFLECTION_THRESHOLD}, "
               f"rounds={self._rounds_since_reflect} >= {REFLECTION_MIN_ROUNDS}")
@@ -55,7 +55,7 @@ class ReflectionService:
             all_memories = self._memory.get_all(self._card_id)
         except Exception as exc:
             print(f"[Reflection] get_all failed: {exc}")
-            return
+            return False
 
         # 过滤：排除已有反思记忆，低可信不计入
         raw = []
@@ -79,7 +79,7 @@ class ReflectionService:
         if len(high_quality) < REFLECTION_MIN_QUALITY:
             print(f"[Reflection] Deferred: only {len(high_quality)} high-quality items "
                   f"(need {REFLECTION_MIN_QUALITY})")
-            return  # 不归零累加器，等素材攒够
+            return False  # 不归零累加器，等素材攒够
 
         # 按 importance 降序取 top-10
         raw.sort(key=lambda x: x["importance"], reverse=True)
@@ -87,7 +87,7 @@ class ReflectionService:
 
         if not recent:
             print("[Reflection] No raw memories to reflect on.")
-            return
+            return False
 
         # 真正执行反思 → 累加器归零
         self._importance_acc = 0
@@ -96,3 +96,4 @@ class ReflectionService:
         print(f"[Reflection] {len(raw)} raw memories, top-10 importance range: "
               f"{recent[-1]['importance']}-{recent[0]['importance']}")
         self._memory.reflect(self._card_id, llm, recent, card_name)
+        return True

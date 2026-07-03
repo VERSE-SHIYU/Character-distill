@@ -72,6 +72,7 @@ class AffinityService:
         self.stage: str = ""
         self.stage_emoji: str = ""
         self.stage_upgraded: bool = False
+        self.user_catchwords: list[str] = []
 
     def load(self, data: dict[str, Any]) -> None:
         """从存档 dict 加载11个情感字段。
@@ -87,6 +88,7 @@ class AffinityService:
         self.affinity_reason = data.get("reason", "")
         # 尝试 JSON 解析扩展数据（兼容旧格式纯文本 reason）
         _reason = self.affinity_reason or ""
+        _parsed: dict | None = None
         try:
             import json
             _parsed = json.loads(_reason)
@@ -95,6 +97,7 @@ class AffinityService:
         except (json.JSONDecodeError, TypeError):
             self.inner_voice = _reason
             self.mood_emoji = "😊"
+        self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
         self.stage, self.stage_emoji = calc_stage(self.affinity)
         self.prev_stage = self.stage
 
@@ -110,6 +113,7 @@ class AffinityService:
             "mood_emoji": self.mood_emoji,
             "stage": self.stage,
             "stage_emoji": self.stage_emoji,
+            "user_catchwords": self.user_catchwords,
         }
 
     def build_evaluation_prompt(
@@ -264,6 +268,7 @@ class AffinityService:
             "mood_word": self.mood,
             "stage": self.stage,
             "stage_emoji": self.stage_emoji,
+            "user_catchwords": self.user_catchwords,
         }
         self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
         return importance
