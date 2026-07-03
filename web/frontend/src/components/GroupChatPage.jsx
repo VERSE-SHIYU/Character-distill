@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useTypewriter from '../hooks/useTypewriter'
+import useIsMobile from '../hooks/useIsMobile'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON, streamSSE } from '../api/client'
 import Avatar from './common/Avatar'
@@ -59,7 +60,7 @@ export default function GroupChatPage() {
   const [messages, setMessages] = useState([])
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
+  const isMobile = useIsMobile()
   const [editingName, setEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState('')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
