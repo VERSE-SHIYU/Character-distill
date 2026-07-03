@@ -146,6 +146,7 @@ class ChatEngine:
             llm=llm,
             model=getattr(llm, "model", ""),
         )
+        self.agent_mode: bool = False
 
     # ── 11个情感字段透明转发（@property） ──────────────────────
     @property
@@ -225,23 +226,15 @@ class ChatEngine:
     def _stage_upgraded(self, v: bool) -> None:
         self._affinity_service.stage_upgraded = v
 
-    def chat(self, user_message: str, voice_mode: bool = False) -> str:
-        """非流式对话一轮，返回模型回复。
-
-        对话历史以 messages 数组传递（见 _build_llm_messages），
-        system prompt 只含角色卡、场景、记忆、增强项，不含逐条历史。
-        voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
+    def _compose_system_prompt(self, user_message: str, voice_mode: bool = False, include_dynamic: bool = True) -> str:
+        """拼装完整 system prompt：context engine build + 增强块 + 语音模式。"""
         system_prompt = self._ctx_engine.build(
             user_message, self.user_role,
             current_mood=self._mood,
+            include_dynamic=include_dynamic,
         )
-
-        # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
         system_prompt += self._build_all_enhancements()
-
-        # ── 今日到访觉察 ──
         system_prompt += self._build_visit_awareness_block()
-
         if voice_mode:
             system_prompt += (
                 "\n\n【语音模式——重要】\n"
@@ -251,6 +244,37 @@ class ChatEngine:
                 "3. 不要添加任何舞台指示、动作描写或表情描写\n"
                 "4. 直接说出角色想说的话，就像在真实语音通话中一样"
             )
+        return system_prompt
+
+    def _run_agent_phase(
+        self,
+        system_prompt: str,
+        llm_messages: list[dict],
+        user_message: str,
+        voice_mode: bool = False,
+    ) -> tuple[str, list[dict]]:
+        """Agent 决策阶段。返回（最终生成用的 system_prompt, messages）。
+
+        degraded 时回退 legacy：重建含动态区的 system prompt，messages 原样返回。
+        """
+        from core.agent.tools import AgentToolkit
+        from core.agent.agent_loop import AgentLoop
+
+        toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
+        result = AgentLoop(self.llm, toolkit).run(system_prompt, llm_messages)
+        if result.degraded:
+            print("[ChatEngine] agent degraded → legacy context injection")
+            legacy_sp = self._compose_system_prompt(user_message, voice_mode, include_dynamic=True)
+            return legacy_sp, llm_messages
+        return system_prompt, result.messages
+
+    def chat(self, user_message: str, voice_mode: bool = False) -> str:
+        """非流式对话一轮，返回模型回复。
+
+        对话历史以 messages 数组传递（见 _build_llm_messages），
+        system prompt 只含角色卡、场景、记忆、增强项，不含逐条历史。
+        voice_mode 为 True 时追加语音模式指令，禁止括号描写。"""
+        system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
 
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
@@ -262,6 +286,9 @@ class ChatEngine:
                 **llm_messages[-1],
                 "content": llm_messages[-1]["content"] + time_block,
             }
+
+        if self.agent_mode:
+            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
 
         self.history.append({"role": "user", "content": user_message})
 
@@ -291,27 +318,7 @@ class ChatEngine:
         """流式对话：逐块产出文本，结束后写入助手回复。"""
         self._last_rag_context = ""
 
-        system_prompt = self._ctx_engine.build(
-
-            user_message, self.user_role,
-            current_mood=self._mood,
-        )
-
-        # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
-        system_prompt += self._build_all_enhancements()
-
-        # ── 今日到访觉察 ──
-        system_prompt += self._build_visit_awareness_block()
-
-        if voice_mode:
-            system_prompt += (
-                "\n\n【语音模式——重要】\n"
-                "当前为语音模式。严格遵循：\n"
-                "1. 禁止使用任何括号（包括（）和「」等）描写动作、神态、心理活动或旁白\n"
-                "2. 禁止输出任何非对话内容，只输出角色直接说出口的话语\n"
-                "3. 不要添加任何舞台指示、动作描写或表情描写\n"
-                "4. 直接说出角色想说的话，就像在真实语音通话中一样"
-            )
+        system_prompt = self._compose_system_prompt(user_message, voice_mode, include_dynamic=not self.agent_mode)
 
         # 构造 messages 数组：历史（截断）+ 当前句
         llm_messages = self._build_llm_messages(self.history, user_message)
@@ -323,6 +330,9 @@ class ChatEngine:
                 **llm_messages[-1],
                 "content": llm_messages[-1]["content"] + time_block,
             }
+
+        if self.agent_mode:
+            system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
 
         self.history.append({"role": "user", "content": user_message})
 

@@ -94,11 +94,15 @@ class ContextEngine:
         user_message: str,
         user_role: str = "",
         current_mood: str | None = None,
+        include_dynamic: bool = True,
     ) -> str:
         """构建 system prompt，控制在 TOTAL_BUDGET token 内。
 
         对话历史已从 system prompt 中移出，改为通过 messages 数组传递
         （见 ChatEngine._build_llm_messages），由 role 字段天然区分说话人。
+
+        include_dynamic=False 时只输出 card_core + rules + card_ext，
+        跳过 RAG 场景检索／记忆检索／web 搜索（agent 模式下由工具按需调用）。
         """
         budget = self.TOTAL_BUDGET
         parts: list[str] = []
@@ -110,20 +114,21 @@ class ContextEngine:
         parts.append(card_core)
         parts.append(rules_block)
 
-        # ② 动态区（优先级：card_ext > scene > memory > web）
+        # ② card_ext 始终参与
         card_ext = self._build_card_ext()
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            f_scene = pool.submit(self._retrieve_scenes, user_message)
-            f_memory = pool.submit(self._retrieve_memories, user_message, current_mood=current_mood)
-            scene = f_scene.result()
-            memory = f_memory.result()
-        sources = [
-	    ("card_ext", card_ext, self.MAX_CARD_EXT),
-	    ("scene", scene, self.MAX_SCENE),
-	    ("memory", memory, self.MAX_MEMORY),
-	]
-        if self.web_search_enabled:
-            sources.append(("web", self._search_web(user_message), self.MAX_WEB))
+        sources: list[tuple[str, str, int]] = [("card_ext", card_ext, self.MAX_CARD_EXT)]
+
+        # ③ 动态区（仅 include_dynamic=True 时执行）
+        if include_dynamic:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                f_scene = pool.submit(self._retrieve_scenes, user_message)
+                f_memory = pool.submit(self._retrieve_memories, user_message, current_mood=current_mood)
+                scene = f_scene.result()
+                memory = f_memory.result()
+            sources.append(("scene", scene, self.MAX_SCENE))
+            sources.append(("memory", memory, self.MAX_MEMORY))
+            if self.web_search_enabled:
+                sources.append(("web", self._search_web(user_message), self.MAX_WEB))
 
         for _name, content, max_tok in sources:
             if not content or budget <= 0:
