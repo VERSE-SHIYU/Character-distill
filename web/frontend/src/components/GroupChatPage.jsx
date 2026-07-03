@@ -39,7 +39,6 @@ export default function GroupChatPage() {
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const resumeGroupId = useAppStore((s) => s.resumeGroupId)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
-  const userRole = localStorage.getItem('user_role') || ''
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
@@ -430,7 +429,7 @@ export default function GroupChatPage() {
     const personaName = (group.user_persona_type === 'character' || group.user_persona_type === 'stranger')
       ? (group.user_persona_name || '角色')
       : null
-    const who = personaName || userRole || displayName(authUser) || '用户'
+    const who = personaName || displayName(authUser) || '用户'
     setSystemMessage(`${who} 加入了群聊`)
   }
 
@@ -659,7 +658,7 @@ export default function GroupChatPage() {
       : (currentGroup?.user_persona_type === 'stranger' && currentGroup?.user_persona_name)
         ? currentGroup.user_persona_name
         : null
-    const speaker = personaSpeaker || userRole || displayName(authUser) || '我'
+    const speaker = personaSpeaker || displayName(authUser) || '我'
     setMessages(prev => [...prev, {
       id: `optimistic-${Date.now()}`,
       role: 'user',
