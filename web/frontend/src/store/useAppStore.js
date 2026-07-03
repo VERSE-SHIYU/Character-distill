@@ -193,10 +193,31 @@ const useAppStore = create((set, get) => ({
   loading: false,
   resumeLoading: false,
   sending: false,
-  userRole: localStorage.getItem('user_role') || '',
-  setUserRole: (role) => {
-    localStorage.setItem('user_role', role)
-    set({ userRole: role })
+  // Per-card user roles: {cardId: role}, persisted as JSON
+  userRolesByCard: (() => {
+    try { return JSON.parse(localStorage.getItem('user_roles_by_card') || '{}') }
+    catch { return {} }
+  })(),
+  setUserRole: (cardId, role) => {
+    if (!cardId) return
+    const { userRolesByCard } = get()
+    const updated = { ...userRolesByCard, [cardId]: role }
+    localStorage.setItem('user_roles_by_card', JSON.stringify(updated))
+    set({ userRolesByCard: updated })
+  },
+  getUserRole: (cardId) => {
+    const { userRolesByCard } = get()
+    if (!cardId) return ''
+    if (userRolesByCard[cardId]) return userRolesByCard[cardId]
+    // Fallback: migrate old global user_role on first per-card read
+    const oldGlobal = localStorage.getItem('user_role')
+    if (oldGlobal) {
+      const updated = { ...userRolesByCard, [cardId]: oldGlobal }
+      localStorage.setItem('user_roles_by_card', JSON.stringify(updated))
+      set({ userRolesByCard: updated })
+      return oldGlobal
+    }
+    return ''
   },
 
   error: null,
@@ -942,7 +963,7 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
           card_id: card.id || card.card_id,
-          user_role: get().userRole,
+          user_role: get().getUserRole(card.id || card.card_id),
           client_tz: clientTz(),
         }, 120000, abort.signal)
         sessionId = result.session_id
@@ -1022,7 +1043,7 @@ const useAppStore = create((set, get) => ({
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id || '',
           card_id: cardId,
-          user_role: get().userRole,
+          user_role: get().getUserRole(cardId),
           client_tz: clientTz(),
         }, undefined, abort.signal)
         sessionId = result.session_id
@@ -1113,7 +1134,7 @@ const useAppStore = create((set, get) => ({
       const result = await postJSON('/api/distill/start_session', {
         text_id: card.text_id || '',
         card_id: cardId,
-        user_role: get().userRole,
+        user_role: get().getUserRole(cardId),
         client_tz: clientTz(),
       })
       const sessionId = result.session_id
@@ -1160,7 +1181,7 @@ const useAppStore = create((set, get) => ({
       const data = await postJSON('/api/chat/send', {
         session_id: sessionId,
         message,
-        user_role: get().userRole,
+        user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id),
         web_search: get().webSearchEnabled,
         affinity_enabled: get().affinityEnabled,
         client_tz: clientTz(),
@@ -1210,7 +1231,7 @@ const useAppStore = create((set, get) => ({
 
     let fullReply = ''
 
-    const body = { session_id: sessionId, message, stream: true, user_role: get().userRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
+    const body = { session_id: sessionId, message, stream: true, user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id), web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
     const cancel = streamSSE(
@@ -1313,7 +1334,7 @@ const useAppStore = create((set, get) => ({
 
     const cancel = streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().userRole },
+      { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id) },
       (token) => {
         if (get().sessionId !== streamSessionId) return
         fullReply += token
@@ -1375,9 +1396,12 @@ const useAppStore = create((set, get) => ({
         retracted: m.retracted || false,
         ...(data.reunion_greeting_id && m.id === data.reunion_greeting_id ? { _reunionTyping: true } : {}),
       }))
+      const resumedCardId = session.card_id
+      if (resumedCardId && session.user_role) {
+        get().setUserRole(resumedCardId, session.user_role)
+      }
       set({
         sessionId: session.id || sessionId,
-        userRole: session.user_role ?? '',
         currentSessionAvatar: session.avatar_data ?? null,
         messages,
         currentCard: {

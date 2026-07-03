@@ -749,7 +749,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
 function CardDetail({ card, textId }) {
   const startChat = useAppStore((s) => s.startChat)
-  const userRole = useAppStore((s) => s.userRole)
+  const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const setView = useAppStore((s) => s.setView)
   const updateCard = useAppStore((s) => s.updateCard)
@@ -1005,8 +1005,8 @@ function CardDetail({ card, textId }) {
             type="text"
             className="card-user-role-input"
             placeholder='例如："你是他的旧时好友"'
-            value={userRole}
-            onChange={(e) => setUserRole(e.target.value)}
+            value={userRolesByCard[card.id || card.card_id] || localStorage.getItem('user_role') || ''}
+            onChange={(e) => setUserRole(card.id || card.card_id, e.target.value)}
           />
         </CardSection>
       </div>
@@ -1074,6 +1074,7 @@ function CardDetail({ card, textId }) {
       <RoleSetupModal
         isOpen={showRoleModal}
         characterName={name}
+        characterId={card.id || card.card_id}
         relationships={rels}
         onConfirm={handleRoleConfirm}
         onSkip={handleRoleSkip}

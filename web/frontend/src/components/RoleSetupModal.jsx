@@ -1,20 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 
-export default function RoleSetupModal({ isOpen, characterName, relationships, textType, onConfirm, onSkip }) {
-  const userRole = useAppStore((s) => s.userRole)
+export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, onConfirm, onSkip }) {
+  const getUserRole = useAppStore((s) => s.getUserRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
-  const [role, setRole] = useState(userRole || '')
+  const [role, setRole] = useState(characterId ? getUserRole(characterId) : '')
   const [step, setStep] = useState('input') // 'input' | 'confirm'
   const inputRef = useRef(null)
 
   useEffect(() => {
     if (isOpen) {
-      setRole(userRole || '')
+      setRole(characterId ? getUserRole(characterId) : '')
       setStep('input')
       setTimeout(() => inputRef.current?.focus(), 100)
     }
-  }, [isOpen, userRole])
+  }, [isOpen, characterId, getUserRole])
 
   if (!isOpen) return null
 
@@ -24,9 +24,12 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, t
 
   const trimmed = role.trim()
 
+  const isSelfIdentity = trimmed && characterName && trimmed === characterName
+    && !targets.includes(trimmed)
+
   const handleFirstConfirm = () => {
-    if (!trimmed) return
-    setUserRole(trimmed)
+    if (!trimmed || isSelfIdentity) return
+    setUserRole(characterId, trimmed)
     setStep('confirm')
   }
 
@@ -39,7 +42,7 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, t
   }
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && trimmed) {
+    if (e.key === 'Enter' && trimmed && !isSelfIdentity) {
       e.preventDefault()
       handleFirstConfirm()
     }
@@ -120,11 +123,14 @@ export default function RoleSetupModal({ isOpen, characterName, relationships, t
         )}
 
         <div className="modal-actions">
+          {isSelfIdentity && (
+            <p className="role-setup-warning">不能以角色自己的身份对话</p>
+          )}
           <button
             type="button"
             className="btn-primary"
             onClick={handleFirstConfirm}
-            disabled={!trimmed}
+            disabled={!trimmed || isSelfIdentity}
           >
             确认并开始对话
           </button>

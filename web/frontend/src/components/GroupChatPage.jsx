@@ -39,7 +39,7 @@ export default function GroupChatPage() {
   const setCardAvatar = useAppStore((s) => s.setCardAvatar)
   const resumeGroupId = useAppStore((s) => s.resumeGroupId)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
-  const userRole = useAppStore((s) => s.userRole)
+  const userRole = localStorage.getItem('user_role') || ''
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)

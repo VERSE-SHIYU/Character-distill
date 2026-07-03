@@ -94,7 +94,7 @@ function ChatView() {
   const messages = useAppStore((s) => s.messages)
   const sending = useAppStore((s) => s.sending)
   const currentCard = useAppStore((s) => s.currentCard)
-  const userRole = useAppStore((s) => s.userRole)
+  const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
   const voiceStatus = useAppStore((s) => s.voiceStatus)
@@ -120,6 +120,7 @@ function ChatView() {
   const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
+  const userRole = userRolesByCard[currentCard?.id || currentCard?.card_id] || localStorage.getItem('user_role') || ''
 
   const [cropFile, setCropFile] = useState(null)
 
@@ -602,8 +603,8 @@ function ChatView() {
               className="user-role-input"
               placeholder="输入你的角色名，如：江澄"
               value={userRole}
-              onChange={(e) => setUserRole(e.target.value)}
-              onBlur={() => setUserRole(userRole)}
+              onChange={(e) => setUserRole(cardId, e.target.value)}
+              onBlur={() => setUserRole(cardId, userRole)}
             />
             {cardData?.identity?.relationships && (
               <div className="user-role-presets">
@@ -612,7 +613,7 @@ function ChatView() {
                     key={name}
                     type="button"
                     className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
-                    onClick={() => setUserRole(name)}
+                    onClick={() => setUserRole(cardId, name)}
                   >
                     {name}
                   </button>
