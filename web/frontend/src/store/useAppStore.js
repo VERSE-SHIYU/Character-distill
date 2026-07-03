@@ -214,6 +214,7 @@ const useAppStore = create((set, get) => ({
     if (oldGlobal) {
       const updated = { ...userRolesByCard, [cardId]: oldGlobal }
       localStorage.setItem('user_roles_by_card', JSON.stringify(updated))
+      localStorage.removeItem('user_role')  // 迁移是一次性的，用完即焚
       set({ userRolesByCard: updated })
       return oldGlobal
     }

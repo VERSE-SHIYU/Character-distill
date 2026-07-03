@@ -4,7 +4,7 @@ import useAppStore from '../store/useAppStore'
 export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, onConfirm, onSkip }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
-  const [role, setRole] = useState(characterId ? getUserRole(characterId) : '')
+  const [role, setRole] = useState(() => characterId ? getUserRole(characterId) : '')
   const [step, setStep] = useState('input') // 'input' | 'confirm'
   const inputRef = useRef(null)
 

@@ -103,6 +103,7 @@ function ChatView() {
   const resetChat = useAppStore((s) => s.resetChat)
   const setView = useAppStore((s) => s.setView)
   const setUserRole = useAppStore((s) => s.setUserRole)
+  const getUserRole = useAppStore((s) => s.getUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const sessionId = useAppStore((s) => s.sessionId)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
@@ -120,7 +121,7 @@ function ChatView() {
   const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
-  const userRole = userRolesByCard[currentCard?.id || currentCard?.card_id] || localStorage.getItem('user_role') || ''
+  const userRole = userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
 
   const [cropFile, setCropFile] = useState(null)
 
@@ -191,6 +192,7 @@ function ChatView() {
   const cardAvatars = useAppStore((s) => s.cardAvatars)
 
   const cardId = currentCard?.id || currentCard?.card_id
+  useEffect(() => { if (cardId) getUserRole(cardId) }, [cardId])
   const avatarUrl = cardAvatars[cardId] || null
   const avatarInputRef = useRef(null)
 

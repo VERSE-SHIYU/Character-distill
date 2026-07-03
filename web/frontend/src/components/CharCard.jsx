@@ -751,6 +751,7 @@ function CardDetail({ card, textId }) {
   const startChat = useAppStore((s) => s.startChat)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
+  const getUserRole = useAppStore((s) => s.getUserRole)
   const setView = useAppStore((s) => s.setView)
   const updateCard = useAppStore((s) => s.updateCard)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
@@ -763,6 +764,10 @@ function CardDetail({ card, textId }) {
   const [publishTags, setPublishTags] = useState(card.market_tags || '')
   const [publishMessage, setPublishMessage] = useState('')
   const [publishSending, setPublishSending] = useState(false)
+
+  // 挂载时触发一次性迁移：把旧全局 user_role 搬进 userRolesByCard[cardId]
+  const _cardId = card.id || card.card_id
+  useEffect(() => { if (_cardId) getUserRole(_cardId) }, [_cardId])
 
   const data = parseCardJson(card)
   const name = data.name || card.name || '?'
@@ -1005,7 +1010,7 @@ function CardDetail({ card, textId }) {
             type="text"
             className="card-user-role-input"
             placeholder='例如："你是他的旧时好友"'
-            value={userRolesByCard[card.id || card.card_id] || localStorage.getItem('user_role') || ''}
+            value={userRolesByCard[card.id || card.card_id] || ''}
             onChange={(e) => setUserRole(card.id || card.card_id, e.target.value)}
           />
         </CardSection>
