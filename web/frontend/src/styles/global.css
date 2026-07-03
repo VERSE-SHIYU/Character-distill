@@ -16809,3 +16809,12 @@ select.settings-input {
   }
 }
 
+/* ===== Mobile Adaptation: Step 5 — single-column cards ===== */
+@media (max-width: 768px) {
+  .market-grid-v2,
+  .mine-page-v2 .market-grid-v2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
