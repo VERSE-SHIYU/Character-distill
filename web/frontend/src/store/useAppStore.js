@@ -1426,7 +1426,7 @@ const useAppStore = create((set, get) => ({
   resumeSession: async (sessionId) => {
     set({ resumeLoading: true })
     try {
-      const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz() })
+      const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz(), voice_mode: get().voiceEnabled })
       const session = data.session || {}
       const messages = (data.messages || []).map((m) => withCid({
         role: m.role,
