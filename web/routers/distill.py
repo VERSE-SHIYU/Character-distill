@@ -993,6 +993,8 @@ async def start_session(
         print(f"[distill] Parse card {req.card_id} failed: {exc}")
         raise HTTPException(500, "Card data is corrupted") from exc
 
+    print(f"[session-trace] start_session card={req.card_id} card_name={card.name} has_first_msg={bool(card.first_message)} user_role={req.user_role} text_id={req.text_id}")
+
     try:
         if req.text_id:
             text_rec = await storage.get_text(req.text_id)

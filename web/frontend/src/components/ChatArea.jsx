@@ -32,6 +32,7 @@ export default function ChatArea() {
   // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   useEffect(() => {
     if (currentView === 'chat' && currentCard && !sessionId && !resumeLoading && !chatSnapshot && !archiveModalOpen) {
+      console.log('[session-trace] auto-recovery fired', { cardId: currentCard.id || currentCard.card_id, ts: Date.now() })
       startChat(currentCard)
     }
   }, [currentView, currentCard?.id, sessionId, resumeLoading, chatSnapshot, archiveModalOpen])

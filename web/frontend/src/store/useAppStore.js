@@ -85,10 +85,12 @@ const useAppStore = create((set, get) => ({
   restoreChatSnapshot: () => {
     const snap = get().chatSnapshot
     if (snap?.sessionId) {
+      const _snapMsgs = snap.messages || []
+      console.log('[session-trace] restoreChatSnapshot overwrite messages', { count: _snapMsgs.length, first: (_snapMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
       set({
         currentView: 'chat',
         sessionId: snap.sessionId,
-        messages: snap.messages,
+        messages: _snapMsgs,
         currentCard: snap.currentCard,
         chatSnapshot: null,
         previousView: null,
@@ -954,6 +956,7 @@ const useAppStore = create((set, get) => ({
     get()._chatStreamCancel?.()
 
     const abort = new AbortController()
+    console.log('[session-trace] selectCard overwrite messages → []', { cardId: card.id || card.card_id, ts: Date.now() })
     set({
       currentCard: card,
       messages: [],
@@ -965,13 +968,16 @@ const useAppStore = create((set, get) => ({
 
     let sessionId = card.session_id || null
     if (!sessionId && card.text_id) {
+      const _cardId = card.id || card.card_id
+      console.log('[session-trace] selectCard POST start_session', { cardId: _cardId, ts: Date.now() })
       try {
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id,
-          card_id: card.id || card.card_id,
-          user_role: get().getUserRole(card.id || card.card_id),
+          card_id: _cardId,
+          user_role: get().getUserRole(_cardId),
           client_tz: clientTz(),
         }, 120000, abort.signal)
+        console.log('[session-trace] selectCard RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
         sessionId = result.session_id
       } catch (err) {
         if (err.name === 'AbortError' || err.status === 408) return
@@ -1029,6 +1035,7 @@ const useAppStore = create((set, get) => ({
 
     // Optimistic UI: switch to chat view immediately
     const abort = new AbortController()
+    console.log('[session-trace] startChat overwrite messages → [] (optimistic)', { cardId, ts: Date.now() })
     set({
       currentCard: card,
       currentView: 'chat',
@@ -1047,12 +1054,14 @@ const useAppStore = create((set, get) => ({
           set({ _pendingChatCardId: null, error: '缺少角色信息，无法创建会话', sending: false })
           return
         }
+        console.log('[session-trace] startChat POST start_session', { cardId, ts: Date.now() })
         const result = await postJSON('/api/distill/start_session', {
           text_id: card.text_id || '',
           card_id: cardId,
           user_role: get().getUserRole(cardId),
           client_tz: clientTz(),
         }, undefined, abort.signal)
+        console.log('[session-trace] startChat RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
         sessionId = result.session_id
         openingText = result?.first_message || data.first_message
       }
@@ -1069,6 +1078,8 @@ const useAppStore = create((set, get) => ({
       ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
       : get().currentTextTitle
 
+    const _startChatMsgs = openingText ? [withCid({ role: 'char', content: openingText })] : []
+    console.log('[session-trace] startChat overwrite messages (opening)', { count: _startChatMsgs.length, first: (_startChatMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
     set({
       _pendingChatCardId: null,
       currentCard: { ...card, session_id: sessionId },
@@ -1076,9 +1087,7 @@ const useAppStore = create((set, get) => ({
       currentSessionAvatar: null,
       sending: false,
       sessionUserRole: get().getUserRole(cardId),
-      messages: openingText
-        ? [withCid({ role: 'char', content: openingText })]
-        : [],
+      messages: _startChatMsgs,
       currentTextTitle: textTitle || get().currentTextTitle,
       userAvatar: null,
     })
@@ -1092,6 +1101,12 @@ const useAppStore = create((set, get) => ({
     const card = pendingCard
     const data = parseCardJson(card)
 
+    const _enterMsgs = session.last_message
+      ? [withCid({ role: 'char', content: session.last_message })]
+      : data.first_message
+        ? [withCid({ role: 'char', content: data.first_message })]
+        : []
+    console.log('[session-trace] enterArchive overwrite messages', { count: _enterMsgs.length, first: (_enterMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
     set({
       archiveModalOpen: false,
       archiveList: [],
@@ -1101,11 +1116,7 @@ const useAppStore = create((set, get) => ({
       sessionId: session.id,
       currentView: 'chat',
       sending: false,
-      messages: session.last_message
-        ? [withCid({ role: 'char', content: session.last_message })]
-        : data.first_message
-          ? [withCid({ role: 'char', content: data.first_message })]
-          : [],
+      messages: _enterMsgs,
       sessionUserRole: session.user_role || get().getUserRole(session.card_id),
       currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
@@ -1127,6 +1138,7 @@ const useAppStore = create((set, get) => ({
       return
     }
 
+    console.log('[session-trace] createNewArchive overwrite messages → [] (optimistic)', { cardId, ts: Date.now() })
     set({
       archiveModalOpen: false,
       archiveList: [],
@@ -1139,6 +1151,7 @@ const useAppStore = create((set, get) => ({
       userAvatar: null,
     })
 
+    console.log('[session-trace] createNewArchive POST start_session', { cardId, ts: Date.now() })
     try {
       const result = await postJSON('/api/distill/start_session', {
         text_id: card.text_id || '',
@@ -1146,6 +1159,7 @@ const useAppStore = create((set, get) => ({
         user_role: get().getUserRole(cardId),
         client_tz: clientTz(),
       })
+      console.log('[session-trace] createNewArchive RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
       const sessionId = result.session_id
       if (result.first_message) {
         data.first_message = result.first_message
@@ -1154,15 +1168,17 @@ const useAppStore = create((set, get) => ({
         ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
         : get().currentTextTitle
 
+      const _newArchiveMsgs = data.first_message
+        ? [withCid({ role: 'char', content: data.first_message })]
+        : []
+      console.log('[session-trace] createNewArchive overwrite messages (opening)', { count: _newArchiveMsgs.length, first: (_newArchiveMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
       set({
         currentCard: { ...card, session_id: sessionId },
         sessionId,
         sessionUserRole: get().getUserRole(cardId),
         sending: false,
         _pendingChatCardId: null,
-        messages: data.first_message
-          ? [withCid({ role: 'char', content: data.first_message })]
-          : [],
+        messages: _newArchiveMsgs,
         currentTextTitle: textTitle || get().currentTextTitle,
       })
       get().resetAffinity()
@@ -1382,11 +1398,11 @@ const useAppStore = create((set, get) => ({
     if (!sessionId) return
     try {
       await postJSON('/api/chat/reset', { session_id: sessionId })
-      set({
-        messages: currentCard?.first_message
-          ? [withCid({ role: 'char', content: currentCard.first_message })]
-          : [],
-      })
+      const _resetMsgs = currentCard?.first_message
+        ? [withCid({ role: 'char', content: currentCard.first_message })]
+        : []
+      console.log('[session-trace] resetChat overwrite messages', { count: _resetMsgs.length, first: (_resetMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
+      set({ messages: _resetMsgs })
     } catch (err) {
       console.error('[store] resetChat failed:', err)
       set({ error: err.message })
