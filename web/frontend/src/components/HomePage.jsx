@@ -405,35 +405,37 @@ export default function HomePage() {
               <div className="discover-empty">
                 <div className="discover-empty-stage" aria-hidden="true">
                   <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    {/* Stage arch */}
-                    <path d="M20 180V40a20 20 0 0120-20h160a20 20 0 0120 20v140" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" opacity="0.25" />
-                    {/* Curtain left */}
-                    <path d="M20 180V80l30 20-30 20v60" fill="var(--accent-soft)" opacity="0.15" />
-                    {/* Curtain right */}
-                    <path d="M220 180V80l-30 20 30 20v60" fill="var(--accent-soft)" opacity="0.15" />
-                    {/* Spotlight cone */}
-                    <path d="M120 30 L80 175 L160 175 Z" fill="url(#spotlight-grad)" opacity="0.12" />
-                    {/* Pedestal */}
-                    <rect x="88" y="160" width="64" height="8" rx="4" fill="var(--glass-border)" />
-                    <rect x="100" y="152" width="40" height="10" rx="3" fill="var(--glass-border)" opacity="0.6" />
-                    {/* Dotted character silhouette */}
-                    <path d="M120 58c-6 0-10 4.5-10 10s4 10 10 10 10-4.5 10-10-4-10-10-10z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M100 140c0-20 20-24 20-24s20 4 20 24" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M108 104 C108 92 120 88 120 88 C120 88 132 92 132 104 L132 118 L108 118 Z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    {/* Arms */}
-                    <path d="M108 108Q95 114 88 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M132 108Q145 114 152 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    {/* Sparkle */}
-                    <path d="M185 45l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="var(--accent)" opacity="0.6">
-                      <animateTransform attributeName="transform" type="rotate" from="0 185 45" to="360 185 45" dur="8s" repeatCount="indefinite" />
-                    </path>
-                    {/* Gradients */}
+                    {/* Open book */}
+                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--accent)" opacity="0.15" />
+                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--accent)" opacity="0.15" />
+                    <path d="M116 160L120 168L124 160Z" fill="var(--accent)" opacity="0.35" />
+                    <path d="M117 163L58 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M118 166L56 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M123 163L182 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M122 166L184 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    {/* Character rising from book */}
                     <defs>
-                      <linearGradient id="spotlight-grad" x1="120" y1="30" x2="120" y2="175">
-                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
+                      <linearGradient id="fig-fade" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.7" />
+                        <stop offset="50%" stopColor="var(--accent)" stopOpacity="0.35" />
                         <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
                       </linearGradient>
                     </defs>
+                    <circle cx="118" cy="50" r="11" fill="var(--accent)" opacity="0.7" />
+                    <path d="M107 61L104 140Q118 152 132 140L129 61Z" fill="url(#fig-fade)" />
+                    <path d="M107 75Q90 82 82 98" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M129 73Q148 78 155 88" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M112 135Q100 150 92 162" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
+                    <path d="M124 135Q128 148 130 158" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
+                    {/* Stars */}
+                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--accent)" opacity="0.5" />
+                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--accent)" opacity="0.5" />
+                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--accent)" opacity="0.4" />
+                    {/* Floating paper fragments */}
+                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--accent)" opacity="0.35" />
+                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--accent)" opacity="0.4" />
+                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--accent)" opacity="0.3" />
+                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--accent)" opacity="0.25" />
                   </svg>
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
@@ -452,26 +454,37 @@ export default function HomePage() {
               <div className="discover-empty">
                 <div className="discover-empty-stage" aria-hidden="true">
                   <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M20 180V40a20 20 0 0120-20h160a20 20 0 0120 20v140" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" opacity="0.25" />
-                    <path d="M20 180V80l30 20-30 20v60" fill="var(--accent-soft)" opacity="0.15" />
-                    <path d="M220 180V80l-30 20 30 20v60" fill="var(--accent-soft)" opacity="0.15" />
-                    <path d="M120 30 L80 175 L160 175 Z" fill="url(#spotlight-grad2)" opacity="0.12" />
-                    <rect x="88" y="160" width="64" height="8" rx="4" fill="var(--glass-border)" />
-                    <rect x="100" y="152" width="40" height="10" rx="3" fill="var(--glass-border)" opacity="0.6" />
-                    <path d="M120 58c-6 0-10 4.5-10 10s4 10 10 10 10-4.5 10-10-4-10-10-10z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M100 140c0-20 20-24 20-24s20 4 20 24" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M108 104 C108 92 120 88 120 88 C120 88 132 92 132 104 L132 118 L108 118 Z" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M108 108Q95 114 88 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M132 108Q145 114 152 128" stroke="var(--text-dim)" strokeWidth="1.5" strokeDasharray="3 3" fill="none" />
-                    <path d="M185 45l2 6 6 2-6 2-2 6-2-6-6-2 6-2z" fill="var(--accent)" opacity="0.6">
-                      <animateTransform attributeName="transform" type="rotate" from="0 185 45" to="360 185 45" dur="8s" repeatCount="indefinite" />
-                    </path>
+                    {/* Open book */}
+                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--accent)" opacity="0.15" />
+                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--accent)" opacity="0.15" />
+                    <path d="M116 160L120 168L124 160Z" fill="var(--accent)" opacity="0.35" />
+                    <path d="M117 163L58 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M118 166L56 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M123 163L182 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M122 166L184 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    {/* Character rising from book */}
                     <defs>
-                      <linearGradient id="spotlight-grad2" x1="120" y1="30" x2="120" y2="175">
-                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.4" />
+                      <linearGradient id="fig-fade" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.7" />
+                        <stop offset="50%" stopColor="var(--accent)" stopOpacity="0.35" />
                         <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
                       </linearGradient>
                     </defs>
+                    <circle cx="118" cy="50" r="11" fill="var(--accent)" opacity="0.7" />
+                    <path d="M107 61L104 140Q118 152 132 140L129 61Z" fill="url(#fig-fade)" />
+                    <path d="M107 75Q90 82 82 98" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M129 73Q148 78 155 88" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M112 135Q100 150 92 162" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
+                    <path d="M124 135Q128 148 130 158" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
+                    {/* Stars */}
+                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--accent)" opacity="0.5" />
+                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--accent)" opacity="0.5" />
+                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--accent)" opacity="0.4" />
+                    {/* Floating paper fragments */}
+                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--accent)" opacity="0.35" />
+                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--accent)" opacity="0.4" />
+                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--accent)" opacity="0.3" />
+                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--accent)" opacity="0.25" />
                   </svg>
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
