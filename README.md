@@ -309,14 +309,15 @@ adapters/llm_adapter.py         ← DeepSeek API（OpenAI 兼容）
 
 | 类别 | 指标 | legacy | agent |
 |------|------|--------|-------|
-| chitchat（15） | 零误触发率 | 15/15 | 15/15 |
-| memory（15） | 检索触发率 | 0/15 | **15/15** |
-| realtime（10） | 检索触发率 | 0/10 | **8/10** |
+| chitchat（15） | 零误触发率 | N/A | 15/15 |
+| memory（15） | 检索触发率 | N/A | **15/15** |
+| realtime（10） | 检索触发率 | N/A | **8/10** |
 | 总 Token 消耗 | — | 89,294 | **42,745（-48%）** |
 | 事实性（5 静态） | 关键词命中 | 20% | **60%** |
 
-memory 漏检率从 **100% → 0%**，realtime 从 **100% → 20%**，
-chitchat 零误触发。总 token 消耗降低 48%（角色 prompt 不再在工具决策轮完整注入）。
+Router 解耦修复前，角色 prompt 压制导致工具触发率为 0；
+解耦后 memory 15/15、realtime 8/10，chitchat 零误触发。
+总 token 消耗降低 48%（决策轮不再注入完整角色 prompt）。
 realtime 漏 2 条属用例措辞过简（"光速多少""现在几点"），非引擎缺陷。
 
 ## 安全架构
