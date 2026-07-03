@@ -193,12 +193,6 @@ function ChatView() {
   const cardAvatars = useAppStore((s) => s.cardAvatars)
 
   const cardId = currentCard?.id || currentCard?.card_id
-  // Mount-time migration: old global user_role → userRolesByCard[cardId]
-  useEffect(() => {
-    if (!cardId || userRolesByCard[cardId]) return
-    const oldGlobal = localStorage.getItem('user_role')
-    if (oldGlobal) setUserRole(cardId, oldGlobal)
-  }, [cardId])
   const avatarUrl = cardAvatars[cardId] || null
   const avatarInputRef = useRef(null)
 

@@ -1106,7 +1106,7 @@ const useAppStore = create((set, get) => ({
         : data.first_message
           ? [withCid({ role: 'char', content: data.first_message })]
           : [],
-      sessionUserRole: session.user_role || '',
+      sessionUserRole: session.user_role || get().getUserRole(session.card_id),
       currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
       error: null,
