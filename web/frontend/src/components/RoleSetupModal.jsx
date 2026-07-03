@@ -4,6 +4,7 @@ import useAppStore from '../store/useAppStore'
 export default function RoleSetupModal({ isOpen, characterName, characterId, relationships, textType, onConfirm, onSkip }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
   const setUserRole = useAppStore((s) => s.setUserRole)
+  const setSessionUserRole = useAppStore((s) => s.setSessionUserRole)
   const [role, setRole] = useState(() => characterId ? getUserRole(characterId) : '')
   const [step, setStep] = useState('input') // 'input' | 'confirm'
   const inputRef = useRef(null)
@@ -30,6 +31,7 @@ export default function RoleSetupModal({ isOpen, characterName, characterId, rel
   const handleFirstConfirm = () => {
     if (!trimmed || isSelfIdentity) return
     setUserRole(characterId, trimmed)
+    setSessionUserRole(trimmed)  // 同步更新会话身份（startChat 会再覆盖一次，但前置确保不遗漏）
     setStep('confirm')
   }
 

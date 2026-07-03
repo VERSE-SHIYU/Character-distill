@@ -95,6 +95,7 @@ function ChatView() {
   const sending = useAppStore((s) => s.sending)
   const currentCard = useAppStore((s) => s.currentCard)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
+  const sessionUserRole = useAppStore((s) => s.sessionUserRole)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
   const voiceStatus = useAppStore((s) => s.voiceStatus)
@@ -103,7 +104,7 @@ function ChatView() {
   const resetChat = useAppStore((s) => s.resetChat)
   const setView = useAppStore((s) => s.setView)
   const setUserRole = useAppStore((s) => s.setUserRole)
-  const getUserRole = useAppStore((s) => s.getUserRole)
+  const setSessionUserRole = useAppStore((s) => s.setSessionUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const sessionId = useAppStore((s) => s.sessionId)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
@@ -121,7 +122,7 @@ function ChatView() {
   const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
   const charIdentity = cardData.identity || ''
-  const userRole = userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
+  const userRole = sessionUserRole || userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
 
   const [cropFile, setCropFile] = useState(null)
 
@@ -192,7 +193,12 @@ function ChatView() {
   const cardAvatars = useAppStore((s) => s.cardAvatars)
 
   const cardId = currentCard?.id || currentCard?.card_id
-  useEffect(() => { if (cardId) getUserRole(cardId) }, [cardId])
+  // Mount-time migration: old global user_role → userRolesByCard[cardId]
+  useEffect(() => {
+    if (!cardId || userRolesByCard[cardId]) return
+    const oldGlobal = localStorage.getItem('user_role')
+    if (oldGlobal) setUserRole(cardId, oldGlobal)
+  }, [cardId])
   const avatarUrl = cardAvatars[cardId] || null
   const avatarInputRef = useRef(null)
 
@@ -605,8 +611,14 @@ function ChatView() {
               className="user-role-input"
               placeholder="输入你的角色名，如：江澄"
               value={userRole}
-              onChange={(e) => setUserRole(cardId, e.target.value)}
-              onBlur={() => setUserRole(cardId, userRole)}
+              onChange={(e) => {
+                setSessionUserRole(e.target.value)
+                setUserRole(cardId, e.target.value)
+              }}
+              onBlur={() => {
+                setSessionUserRole(userRole)
+                setUserRole(cardId, userRole)
+              }}
             />
             {cardData?.identity?.relationships && (
               <div className="user-role-presets">
@@ -615,7 +627,10 @@ function ChatView() {
                     key={name}
                     type="button"
                     className={`user-role-preset-btn${userRole === name ? ' active' : ''}`}
-                    onClick={() => setUserRole(cardId, name)}
+                    onClick={() => {
+                      setSessionUserRole(name)
+                      setUserRole(cardId, name)
+                    }}
                   >
                     {name}
                   </button>

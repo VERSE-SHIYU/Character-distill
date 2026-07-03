@@ -221,6 +221,11 @@ const useAppStore = create((set, get) => ({
     return ''
   },
 
+  // 会话身份：当前活跃会话实际使用的身份。随会话走，不回写卡片身份。
+  // 新会话创建时从卡片身份快照，恢复旧会话时从 session.user_role 取值。
+  sessionUserRole: '',
+  setSessionUserRole: (role) => set({ sessionUserRole: role }),
+
   error: null,
   setError: (err) => set({ error: err }),
 
@@ -974,8 +979,9 @@ const useAppStore = create((set, get) => ({
         return
       }
     }
-    set({ sessionId, resumeLoading: false })
-    get().loadVoiceRef(card?.id || card?.card_id || null)
+    const _cardId = card.id || card.card_id
+    set({ sessionId, resumeLoading: false, sessionUserRole: get().getUserRole(_cardId) })
+    get().loadVoiceRef(_cardId)
   },
 
   startChat: async (card) => {
@@ -1069,6 +1075,7 @@ const useAppStore = create((set, get) => ({
       sessionId,
       currentSessionAvatar: null,
       sending: false,
+      sessionUserRole: get().getUserRole(cardId),
       messages: openingText
         ? [withCid({ role: 'char', content: openingText })]
         : [],
@@ -1099,6 +1106,7 @@ const useAppStore = create((set, get) => ({
         : data.first_message
           ? [withCid({ role: 'char', content: data.first_message })]
           : [],
+      sessionUserRole: session.user_role || '',
       currentSessionAvatar: session.avatar_data ?? null,
       userAvatar: null,
       error: null,
@@ -1149,6 +1157,7 @@ const useAppStore = create((set, get) => ({
       set({
         currentCard: { ...card, session_id: sessionId },
         sessionId,
+        sessionUserRole: get().getUserRole(cardId),
         sending: false,
         _pendingChatCardId: null,
         messages: data.first_message
@@ -1182,7 +1191,7 @@ const useAppStore = create((set, get) => ({
       const data = await postJSON('/api/chat/send', {
         session_id: sessionId,
         message,
-        user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id),
+        user_role: get().sessionUserRole,
         web_search: get().webSearchEnabled,
         affinity_enabled: get().affinityEnabled,
         client_tz: clientTz(),
@@ -1232,7 +1241,7 @@ const useAppStore = create((set, get) => ({
 
     let fullReply = ''
 
-    const body = { session_id: sessionId, message, stream: true, user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id), web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
+    const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
     const cancel = streamSSE(
@@ -1335,7 +1344,7 @@ const useAppStore = create((set, get) => ({
 
     const cancel = streamSSE(
       '/api/chat/send',
-      { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().getUserRole(get().currentCard?.id || get().currentCard?.card_id) },
+      { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().sessionUserRole },
       (token) => {
         if (get().sessionId !== streamSessionId) return
         fullReply += token
@@ -1397,12 +1406,9 @@ const useAppStore = create((set, get) => ({
         retracted: m.retracted || false,
         ...(data.reunion_greeting_id && m.id === data.reunion_greeting_id ? { _reunionTyping: true } : {}),
       }))
-      const resumedCardId = session.card_id
-      if (resumedCardId && session.user_role) {
-        get().setUserRole(resumedCardId, session.user_role)
-      }
       set({
         sessionId: session.id || sessionId,
+        sessionUserRole: session.user_role || get().getUserRole(session.card_id),
         currentSessionAvatar: session.avatar_data ?? null,
         messages,
         currentCard: {
