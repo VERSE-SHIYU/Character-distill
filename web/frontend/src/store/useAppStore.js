@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { postJSON, streamSSE, fetchWithTimeout, getToken, setToken, removeToken, setRefreshToken, removeAuth } from '../api/client'
 import { parseCardJson } from '../utils/card'
+import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
 
@@ -1052,7 +1053,7 @@ const useAppStore = create((set, get) => ({
     })
 
     let sessionId = card.session_id || null
-    let openingText = null
+    let backendFirstMessage = null
     try {
       if (!sessionId) {
         if (!cardId) {
@@ -1068,9 +1069,9 @@ const useAppStore = create((set, get) => ({
         }, undefined, abort.signal)
         console.log('[session-trace] startChat RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
         sessionId = result.session_id
-        openingText = result?.first_message || data.first_message
+        backendFirstMessage = result?.first_message
       }
-      // when card.session_id already exists, openingText stays null
+      // when card.session_id already exists, backend stays null
       // and the opening line will come from history loading instead
     } catch (err) {
       if (err.name === 'AbortError' || err.status === 408) return
@@ -1083,7 +1084,10 @@ const useAppStore = create((set, get) => ({
       ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
       : get().currentTextTitle
 
-    const _startChatMsgs = openingText ? [withCid({ role: 'char', content: openingText })] : []
+    const _startChatMsgs = resolveOpeningMessages(
+      { backendFirstMessage, cardFirstMessage: data.first_message },
+      withCid,
+    )
     console.log('[session-trace] startChat overwrite messages (opening)', { count: _startChatMsgs.length, first: (_startChatMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
     set({
       _pendingChatCardId: null,
@@ -1110,11 +1114,10 @@ const useAppStore = create((set, get) => ({
 
     const data = parseCardJson(card)
 
-    const _enterMsgs = session.last_message
-      ? [withCid({ role: 'char', content: session.last_message })]
-      : data.first_message
-        ? [withCid({ role: 'char', content: data.first_message })]
-        : []
+    const _enterMsgs = resolveOpeningMessages(
+      { sessionLastMessage: session.last_message, cardFirstMessage: data.first_message },
+      withCid,
+    )
     console.log('[session-trace] enterArchive overwrite messages', { count: _enterMsgs.length, first: (_enterMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
     set({
       archiveModalOpen: false,
@@ -1173,16 +1176,14 @@ const useAppStore = create((set, get) => ({
       })
       console.log('[session-trace] createNewArchive RESP', { sessionId: result.session_id, first_message: (result.first_message||'').slice(0,30), ts: Date.now() })
       const sessionId = result.session_id
-      if (result.first_message) {
-        data.first_message = result.first_message
-      }
       const textTitle = card.text_id
         ? (get().texts.find((t) => t.id === card.text_id)?.title || get().currentTextTitle)
         : get().currentTextTitle
 
-      const _newArchiveMsgs = data.first_message
-        ? [withCid({ role: 'char', content: data.first_message })]
-        : []
+      const _newArchiveMsgs = resolveOpeningMessages(
+        { backendFirstMessage: result?.first_message, cardFirstMessage: data.first_message },
+        withCid,
+      )
       console.log('[session-trace] createNewArchive overwrite messages (opening)', { count: _newArchiveMsgs.length, first: (_newArchiveMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
       set({
         currentCard: { ...card, session_id: sessionId },
@@ -1410,9 +1411,10 @@ const useAppStore = create((set, get) => ({
     if (!sessionId) return
     try {
       await postJSON('/api/chat/reset', { session_id: sessionId })
-      const _resetMsgs = currentCard?.first_message
-        ? [withCid({ role: 'char', content: currentCard.first_message })]
-        : []
+      const _resetMsgs = resolveOpeningMessages(
+        { cardFirstMessage: currentCard?.first_message },
+        withCid,
+      )
       console.log('[session-trace] resetChat overwrite messages', { count: _resetMsgs.length, first: (_resetMsgs[0]?.content||'').slice(0,30), ts: Date.now() })
       set({ messages: _resetMsgs })
     } catch (err) {
