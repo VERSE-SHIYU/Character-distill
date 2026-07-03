@@ -853,30 +853,6 @@ async def update_card(
     return {"ok": True, "card": result}
 
 
-class GenerateOpeningRequest(BaseModel):
-    card_json: dict
-    user_role: str
-
-@router.post("/generate-opening")
-async def generate_opening(
-    req: GenerateOpeningRequest,
-    request: Request,
-    user: dict = Depends(get_current_user),
-    storage: StorageBase = Depends(get_storage),
-):
-    user_id = user["id"]
-    _client_ip = get_client_ip(request)
-    from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
-    distiller = get_distiller(llm=per_user_llm)
-    if distiller is None:
-        raise HTTPException(503, "请先在设置页配置 API Key")
-    opening = await asyncio.to_thread(
-        distiller.generate_opening, req.card_json, req.user_role
-    )
-    return {"opening": opening}
-
-
 @router.get("/cards/by-text/{text_id}")
 async def list_cards(
     text_id: str,
@@ -1045,52 +1021,45 @@ async def start_session(
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
-    # ── Inject opening line (seed message, not user-driven) ──────────
-    opening = card.first_message or ""
-    generated = False  # whether opening was LLM-generated (not from card.first_message)
-
-    if not opening and per_user_llm is not None:
+    # ── Inject opening line (always generate when LLM is available) ──
+    opening = ""
+    if per_user_llm is not None:
         try:
             style = card.speaking_style
             traits = "，".join(card.personality_traits[:3])
-            user_context = f"对方是「{req.user_role}」" if req.user_role else "对方是初次见面的陌生人"
+            seed = card.first_message or ""
+            user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
             from core.clock import UserClock, describe_time_period
             _now = UserClock.now(req.client_tz)
             _period = describe_time_period(_now.hour)
+            seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
             prompt = (
-                f"你将以「{card.name}」的身份说第一句话。\n"
+                f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
                 f"身份：{card.identity}\n"
                 f"性格：{traits}\n"
                 f"语气：{style.tone}\n"
                 f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
-                f"场景：{user_context}\n"
+                f"{seed_line}"
                 f"当前时段：{_period}（{_now.hour}点）\n\n"
-                f"请以{card.name}的口吻说一句自然简短的问候，可结合当前是「{_period}」的情境（但不必每次都点明时间），"
-                f"暗示{card.name}的性格或处境。只输出这句话本身，不要解释，不要加引号，不超过50个字。"
+                f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
+                f"时间藏在语气里不点明。\n"
+                f"(动作)台词，台词不超过50字。"
             )
             opening = await asyncio.to_thread(
                 per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
             )
             opening = opening.strip().strip('"').strip("'").strip("「」")
             if opening and len(opening) <= 100:
-                generated = True
                 print(f"[start_session] Generated opening: {opening}")
             else:
-                opening = ""
+                opening = card.first_message or ""
         except Exception as exc:
             print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
-            opening = ""
+            opening = card.first_message or ""
+    else:
+        opening = card.first_message or ""
 
-    # Persist generated opening back to card for future sessions
-    if generated and opening:
-        card.first_message = opening
-        try:
-            await storage.update_card(req.card_id, card.model_dump())
-            print(f"[start_session] Persisted first_message to card {req.card_id}")
-        except Exception as exc:
-            print(f"[start_session] Update card first_message failed (non-fatal): {exc}")
-
-    # Save opening to DB + engine.history (strictly as seed — no retraction, no affinity)
+    # Save opening to DB + engine.history (seed only, no backfill to card)
     first_created_at = ""
     if opening:
         engine_obj = sessions[session_id].get("engine") if sessions.get(session_id) else None

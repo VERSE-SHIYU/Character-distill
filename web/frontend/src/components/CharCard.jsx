@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import useAppStore from '../store/useAppStore'
-import { postJSON, getAuthHeaders, fetchWithTimeout } from '../api/client'
+import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -835,42 +835,7 @@ function CardDetail({ card, textId }) {
 
   const handleRoleConfirm = (role) => {
     setShowRoleModal(false)
-    const originalFirstMessage = data.first_message || ''
-
-    // Build a copy instead of mutating card (which came from Zustand store)
-    const chatCard = { ...card }
-    const updatedData = { ...data, first_message: '…' }
-    chatCard.card_json = typeof card.card_json === 'string'
-      ? JSON.stringify(updatedData)
-      : { ...card.card_json, first_message: '…' }
-    chatCard.first_message = '…'
-
-    startChat(chatCard).then(() => {
-      postJSON('/api/distill/generate-opening', {
-        card_json: data,
-        user_role: role || '',
-      }, 30000)
-        .then((res) => {
-          const opening = res.opening || originalFirstMessage
-          useAppStore.setState((s) => {
-            const msgs = [...s.messages]
-            if (msgs.length > 0 && msgs[0].role === 'char') {
-              msgs[0] = { ...msgs[0], content: opening }
-            }
-            return { messages: msgs }
-          })
-        })
-        .catch((err) => {
-          console.warn('[CharCard] generate-opening failed:', err)
-          useAppStore.setState((s) => {
-            const msgs = [...s.messages]
-            if (msgs.length > 0 && msgs[0].role === 'char') {
-              msgs[0] = { ...msgs[0], content: originalFirstMessage }
-            }
-            return { messages: msgs }
-          })
-        })
-    })
+    startChat(card)
   }
 
   const handleRoleSkip = () => {
