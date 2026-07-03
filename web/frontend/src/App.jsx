@@ -9,7 +9,7 @@ import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
-import MobileBackBar from './components/MobileBackBar'
+import MobileBackBar, { SECONDARY_VIEWS } from './components/MobileBackBar'
 import Loading from './components/common/Loading'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -222,7 +222,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}`}>
+    <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}${SECONDARY_VIEWS.includes(currentView) ? ' is-secondary-view' : ''}`}>
       {/* Trigger zone + visible toggle when collapsed */}
       {!isSidebarVisible && (
         <div className="sidebar-trigger" onMouseEnter={showSidebar}>

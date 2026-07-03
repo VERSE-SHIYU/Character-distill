@@ -1,6 +1,6 @@
 import useAppStore from '../store/useAppStore'
 
-const SECONDARY_VIEWS = [
+export const SECONDARY_VIEWS = [
   'chat', 'groupChat', 'character', 'author', 'textDetail',
   'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
 ]

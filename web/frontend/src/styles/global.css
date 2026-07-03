@@ -16791,8 +16791,12 @@ select.settings-input {
     z-index: 1;
   }
 
-  .chat-bubble {
+  .cbubble {
     max-width: 85%;
+  }
+
+  .app-shell.is-secondary-view .main-panel {
+    padding-bottom: 0;
   }
 
   .chat-textarea {
