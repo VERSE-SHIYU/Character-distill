@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -119,20 +119,19 @@ class AgentToolkit:
                 elapsed_ms=elapsed,
             )
 
+        pool = ThreadPoolExecutor(max_workers=1)
         try:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                fut = pool.submit(handler, query)
-                try:
-                    result = fut.result(timeout=timeout)
-                except TimeoutError:
-                    elapsed = int((time.monotonic() - started) * 1000)
-                    print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
-                    return ToolResult(
-                        tool=name,
-                        ok=False,
-                        content=f"工具执行超时（{timeout}s）",
-                        elapsed_ms=elapsed,
-                    )
+            fut = pool.submit(handler, query)
+            result = fut.result(timeout=timeout)
+        except TimeoutError:
+            elapsed = int((time.monotonic() - started) * 1000)
+            print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
+            return ToolResult(
+                tool=name,
+                ok=False,
+                content=f"工具执行超时（{timeout}s）",
+                elapsed_ms=elapsed,
+            )
         except Exception as exc:
             elapsed = int((time.monotonic() - started) * 1000)
             print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
@@ -142,6 +141,8 @@ class AgentToolkit:
                 content=f"执行异常: {exc}",
                 elapsed_ms=elapsed,
             )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         elapsed = int((time.monotonic() - started) * 1000)
         ok = bool(result)
