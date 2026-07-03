@@ -159,6 +159,7 @@
 
 /* Blue Ocean → Seascape Glass (海景玻璃) — real-photo background + frosted glass */
 .theme-ocean {
+  --bg-page: #f2fafb;
   --glass-bg: rgba(230, 245, 247, 0.35);
   --glass-border: rgba(255, 255, 255, 0.45);
   --sidebar-bg: rgba(230, 245, 247, 0.30);
