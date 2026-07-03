@@ -257,15 +257,14 @@ def test_degraded_returns_original_messages():
     assert llm.call_count == 2
 
 
-def test_toolkit_timeout_and_exception():
+def test_toolkit_timeout_and_exception(monkeypatch):
     """Real AgentToolkit: timeout and exception handling.
 
     a) _search_web that sleeps → times out → ok=False, content says 超时
     b) _retrieve_scenes that raises → ok=False, exception not propagated
     """
-    # Speed up timeouts for testing
-    AgentToolkit.WEB_TIMEOUT = 1
-    AgentToolkit.SCENE_TIMEOUT = 1
+    monkeypatch.setattr(AgentToolkit, "WEB_TIMEOUT", 1)
+    monkeypatch.setattr(AgentToolkit, "SCENE_TIMEOUT", 1)
 
     ctx = FakeCtxEngine()
     ctx.web_sleep = 5.0   # exceeds 1s timeout
