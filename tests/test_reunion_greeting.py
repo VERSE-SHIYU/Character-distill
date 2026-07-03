@@ -219,3 +219,58 @@ class TestReunionGreeting:
         engine = _make_engine()
         result = engine.generate_reunion_greeting(session_data=data)
         assert result == "你总算回来了。"
+
+    def test_offline_moment_injected_for_friend_stage(self):
+        """朋友档 + 有记忆 → prompt 含离线时刻素材。"""
+        engine = _make_engine()
+        engine._card_id = "card_test"
+        engine._memory = MagicMock()
+        engine._memory.enabled = True
+        engine._memory.get_all.return_value = [
+            {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
+            {"memory": "你们一起看了日出", "metadata": {"importance": 9}},
+        ]
+        engine._affinity_service.affinity = 60
+        engine._affinity_service.stage = "朋友"
+        engine._affinity_service.stage_emoji = "😄"
+
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "对方不在时你想起过" in instruction
+        assert "你们一起看了日出" in instruction
+
+    def test_low_stage_no_offline_moment(self):
+        """熟悉及以下 → prompt 不含离线时刻素材。"""
+        engine = _make_engine()
+        engine._card_id = "card_test"
+        engine._memory = MagicMock()
+        engine._memory.enabled = True
+        engine._memory.get_all.return_value = [
+            {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
+        ]
+        # Default stage is 陌生 (from initial_affinity with no relationships)
+
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "对方不在时你想起过" not in instruction
+
+    def test_empty_memory_falls_back(self):
+        """朋友档但记忆为空 → 退回现有 prompt。"""
+        engine = _make_engine()
+        engine._card_id = "card_test"
+        engine._memory = MagicMock()
+        engine._memory.enabled = True
+        engine._memory.get_all.return_value = []
+        engine._affinity_service.affinity = 60
+        engine._affinity_service.stage = "朋友"
+        engine._affinity_service.stage_emoji = "😄"
+
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "对方不在时你想起过" not in instruction

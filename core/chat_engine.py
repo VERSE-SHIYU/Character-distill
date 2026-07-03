@@ -1073,6 +1073,20 @@ class ChatEngine:
                 "就一句，不超过50字，是你忍不住先说的，不是欢迎词。"
             )
 
+            # ── 离线时刻门控：朋友档及以上 + 有高重要性记忆 ──
+            if self._stage in ("朋友", "亲近", "心意相通"):
+                memory_summary = self._build_reunion_memories()
+                if memory_summary:
+                    instruction += (
+                        f"\n\n你们之间有这些真实经历：{memory_summary}。"
+                        "如果符合你此刻的心境和性格，"
+                        '这句话里可以带一个"对方不在时你想起过 TA"的瞬间'
+                        "——必须由上述真实经历自然引出（比如看到某物想起上次聊的事），"
+                        "绝不虚构没发生过的共同经历。也完全可以不提："
+                        "欲言又止、只字不提但语气松动，同样是想念的形状。"
+                        "由你的性格决定。"
+                    )
+
             messages = [{"role": "user", "content": instruction}]
             if time_block:
                 messages[0] = {
@@ -1089,5 +1103,33 @@ class ChatEngine:
             _reunion_dates[self._session_id] = today
             return greeting
         except Exception:
+            return ""
+
+    def _build_reunion_memories(self) -> str:
+        """获取 top 1-2 条高重要度记忆摘要，供离线时刻 prompt 使用。
+
+        返回记忆文本（'；'分隔），无记忆或异常返回空串。
+        """
+        if not self._memory or not self._memory.enabled or not self._card_id:
+            return ""
+        try:
+            all_memories = self._memory.get_all(self._card_id)
+            if not all_memories:
+                return ""
+            scored = []
+            for m in all_memories:
+                text = (m.get("memory") or "").strip()
+                if not text:
+                    continue
+                meta = m.get("metadata") or {}
+                importance = int(meta.get("importance", 5)) if isinstance(meta, dict) else 5
+                scored.append((importance, text))
+            scored.sort(key=lambda x: -x[0])
+            top = scored[:2]
+            if not top:
+                return ""
+            return "；".join(t for _, t in top)
+        except Exception as exc:
+            print(f"[Reunion] Memory fetch failed (non-fatal): {exc}")
             return ""
 
