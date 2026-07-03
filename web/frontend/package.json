@@ -12,6 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "antd-mobile": "^5.42.3",
     "idb": "^8.0.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

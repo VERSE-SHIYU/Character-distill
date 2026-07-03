@@ -1,0 +1,27 @@
+/* ===== antd-mobile Theme Bridge =====
+ * Maps project CSS color variables to antd-mobile CSS variables.
+ * All themes (aurora/milktea/ocean/sakura/midnight) define the same
+ * variable names, so a single :root block follows whichever theme is active.
+ */
+:root {
+  /* Primary & status */
+  --adm-color-primary: var(--accent);
+
+  /* Background & surface */
+  --adm-color-background: var(--bg-page);
+  --adm-color-box: var(--card-bg);
+  --adm-color-light: var(--secondary);
+
+  /* Text */
+  --adm-color-text: var(--text-primary);
+  --adm-color-text-secondary: var(--text-secondary);
+  --adm-color-weak: var(--charcoal-light);
+
+  /* Border */
+  --adm-color-border: var(--glass-border);
+
+  /* Radius */
+  --adm-radius-m: var(--input-radius);
+  --adm-radius-l: var(--btn-radius);
+  --adm-radius-xl: var(--card-radius);
+}
