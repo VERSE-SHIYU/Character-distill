@@ -176,13 +176,6 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarPinned, setSidebarPinned] = useState(false)
   const leaveTimer = useRef(null)
-  const isMobile = useRef(window.innerWidth <= 768)
-
-  useEffect(() => {
-    const onResize = () => { isMobile.current = window.innerWidth <= 768 }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [])
 
   const isSidebarVisible = sidebarOpen || sidebarPinned
 
