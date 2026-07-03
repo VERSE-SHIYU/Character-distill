@@ -73,6 +73,33 @@ class AffinityService:
         self.stage_emoji: str = ""
         self.stage_upgraded: bool = False
         self.user_catchwords: list[str] = []
+        # ── P1 影子模式：8 轮 delta 历史环形缓冲（纯内存，不落库） ──
+        self._delta_ring: list[dict] = []
+        self._ring_maxlen: int = 8
+
+    def _record_delta_ring(self, *, affinity_delta: int, trust_delta: int,
+                           guard_delta: int, trigger_hit: bool,
+                           in_story_conflict: bool,
+                           repair_signal: str) -> None:
+        """Record one evaluation turn into the 8-entry ring buffer."""
+        self._delta_ring.append({
+            "affinity_delta": affinity_delta,
+            "trust_delta": trust_delta,
+            "guard_delta": guard_delta,
+            "trigger_hit": trigger_hit,
+            "in_story_conflict": in_story_conflict,
+            "repair_signal": repair_signal,
+        })
+        if len(self._delta_ring) > self._ring_maxlen:
+            self._delta_ring.pop(0)
+
+    def get_estrangement_window(self) -> list[dict]:
+        """Return current ring buffer contents for shadow judgment (read-only)."""
+        return list(self._delta_ring)
+
+    def clear_delta_ring(self) -> None:
+        """Reset ring buffer (used when loading affinity from DB)."""
+        self._delta_ring.clear()
 
     def load(self, data: dict[str, Any]) -> None:
         """从存档 dict 加载11个情感字段。
@@ -81,6 +108,7 @@ class AffinityService:
         """
         if not data:
             return
+        self.clear_delta_ring()  # ring buffer is per-session, clear on load
         self.affinity = data.get("affinity", 50)
         self.trust = data.get("trust", 30)
         self.mood = data.get("mood", "平静")
@@ -215,6 +243,14 @@ class AffinityService:
             "- 平实陈述自身真实信息（我叫X/我在Y上班/我明天面试）→ 高分（70-100）\n"
             "- 无法判断或介于之间 → 中性（50）\n"
             "- 这是判断「该不该把这句话当事实记进长期记忆」，不是判断好感，也不是判断角色是否出戏\n\n"
+            "雷点命中判定规则（用于 trigger_hit / in_story_conflict 字段）：\n"
+            "- trigger_hit：本轮用户言行是否戳中了你的雷点（pshche.triggers），让你感到被冒犯、不被尊重或触及底线\n"
+            "- 关键区分：若冲突明显属于角色扮演剧情内的戏剧冲突（如小说式旁白、剧情动作描写包裹的争吵），"
+            "标记 in_story_conflict 而非 trigger_hit——角色在演戏，不是在真的生气\n"
+            "- 简单判断：用户以玩家身份说话 → 可能 trigger_hit；用户以角色身份演冲突剧情 → in_story_conflict\n\n"
+            "修复信号判定规则（用于 repair_signal 字段）：\n"
+            "- 对方本轮是否做出了「修复关系」的行为？取值：空字符串（无）/ apology（道歉）/ explanation（解释）/ action（行动补偿）/ soft_spot（戳中你的软肋）\n"
+            "- 简单的「对不起」算 apology；详细解释原因算 explanation；用行动表示改变算 action；戳中 psyche.soft_spots 的内容算 soft_spot\n\n"
             "输出严格JSON格式（只输出JSON，不要任何其他内容）：\n"
             "{\n"
             '  "affinity": 0-100整数,\n'
@@ -227,7 +263,10 @@ class AffinityService:
             '  "time_event": null 或 {"event":"事件名","when_text":"用户原话描述","due_at":"ISO时间"},\n'
             '  "in_character": 0-100整数,  // 刚才的回复有多符合这张卡片此刻该有的姿态\n'
             '  "ooc_reason": "一句话说明哪里出戏，符合人设则空字符串",\n'
-            '  "assertion_confidence": 0-100整数  // 对方刚才的话作为事实陈述有多可信\n'
+            '  "assertion_confidence": 0-100整数,  // 对方刚才的话作为事实陈述有多可信\n'
+            '  "trigger_hit": true或false,  // 本轮是否戳中你的雷点（默认 false）\n'
+            '  "in_story_conflict": true或false,  // 本轮冲突是否属于剧情内演戏（默认 false）\n'
+            '  "repair_signal": "",  // 修复信号：空/"apology"/"explanation"/"action"/"soft_spot"（默认 ""）\n'
         )
         return prompt
 
@@ -262,6 +301,17 @@ class AffinityService:
         self.stage, self.stage_emoji = calc_stage(self.affinity)
         self.stage_upgraded = self.stage != old_stage
         self.prev_stage = old_stage
+
+        # ── P1 影子模式：记录本轮 delta 到环形缓冲 ──
+        self._record_delta_ring(
+            affinity_delta=self.affinity - old_affinity,
+            trust_delta=self.trust - old_trust,
+            guard_delta=self.guard - old_guard,
+            trigger_hit=bool(data.get("trigger_hit", False)),
+            in_story_conflict=bool(data.get("in_story_conflict", False)),
+            repair_signal=str(data.get("repair_signal", "") or ""),
+        )
+
         extended = {
             "inner_voice": self.inner_voice,
             "mood_emoji": self.mood_emoji,

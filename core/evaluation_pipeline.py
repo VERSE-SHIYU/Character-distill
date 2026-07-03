@@ -41,6 +41,10 @@ class EvalResult:
     in_character: int = 80  # 瞬时信号，不入库，不跨 session
     ooc_reason: str = ""
     assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
+    # ── P1 影子模式字段（向后兼容，缺省 False/""） ──
+    trigger_hit: bool = False
+    in_story_conflict: bool = False
+    repair_signal: str = ""  # "" / apology / explanation / action / soft_spot
 
 
 class EvaluationPipeline:
@@ -88,6 +92,10 @@ class EvaluationPipeline:
             in_character=in_character,
             ooc_reason=ooc_reason,
             assertion_confidence=assertion_confidence,
+            # P1 影子模式：从 LLM JSON 提取，缺键容忍（False/""），不改变行为
+            trigger_hit=bool(data.get("trigger_hit", False)),
+            in_story_conflict=bool(data.get("in_story_conflict", False)),
+            repair_signal=str(data.get("repair_signal", "") or ""),
             applied=True,
         )
 

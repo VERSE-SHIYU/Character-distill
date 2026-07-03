@@ -596,7 +596,77 @@ class ChatEngine:
         else:
             print(f"[Affinity] SKIP: pipeline returned applied=False (importance={result.importance})")
 
+        # ── P1 影子模式：静默判定，只记录不动作 ──
+        if result.applied:
+            self._shadow_estrangement_check()
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
+
+    def _shadow_estrangement_check(self) -> None:
+        """P1 影子模式：按 §2.1 三条件判定疏远进入，只打日志不改变行为。"""
+        window = self._affinity_service.get_estrangement_window()
+        if not window:
+            return
+
+        neg_rounds = sum(1 for e in window if e["affinity_delta"] < 0)
+        neg_sum = sum(e["affinity_delta"] for e in window if e["affinity_delta"] < 0)
+        neg_sum_abs = abs(neg_sum)
+
+        # 条件 2：雷点命中（排除剧情内冲突）
+        raw_trigger_hits = sum(1 for e in window if e["trigger_hit"])
+        in_story = sum(1 for e in window if e["in_story_conflict"])
+        trigger_hits = raw_trigger_hits - in_story  # 剧情冲突不计入
+        if trigger_hits < 0:
+            trigger_hits = 0
+
+        # 条件 3：急降（单轮被 clamp 到 -8，说明原始判定更狠）
+        sharp_drop = any(e["affinity_delta"] <= -8 for e in window)
+
+        # 条件 2：雷点命中（排除剧情内冲突），仅当角色有 triggers 定义
+        psyche = getattr(self.card, "psyche", None)
+        has_triggers = bool(getattr(psyche, "triggers", None) if psyche else False)
+        has_trigger_hits = trigger_hits >= 2
+        condition_trigger = has_trigger_hits and has_triggers
+
+        # 条件 1：累计
+        condition_cumulative = neg_rounds >= 4 and neg_sum_abs >= 12
+
+        # 条件 3：急降（需要 guard 高，用当前 guard 近似）
+        condition_sharp = sharp_drop and self._guard >= 75
+
+        # 判定进入
+        active_hit = condition_cumulative or condition_trigger or condition_sharp
+
+        # 酝酿态：半阈值
+        brewing_hit = (neg_rounds >= 2 or neg_sum_abs >= 6) and not active_hit
+
+        if active_hit:
+            would_enter = "active"
+            reasons = []
+            if condition_cumulative:
+                reasons.append(f"cumulative({neg_rounds}r/{neg_sum_abs}pts)")
+            if condition_trigger:
+                reasons.append(f"trigger({trigger_hits}hits)")
+            if condition_sharp:
+                reasons.append("sharp_drop")
+            reason = "+".join(reasons)
+        elif brewing_hit:
+            would_enter = "brewing"
+            reason = f"half_threshold({neg_rounds}r/{neg_sum_abs}pts)"
+        else:
+            would_enter = "none"
+            reason = ""
+
+        # 修复信号
+        repair_signals = [e["repair_signal"] for e in window if e["repair_signal"]]
+        repair_summary = ",".join(repair_signals[-3:]) if repair_signals else "none"
+
+        print(
+            f"[estrangement-shadow] session={self._session_id} "
+            f"would_enter={would_enter} reason={reason} "
+            f"trigger_hits={trigger_hits} in_story={in_story} "
+            f"neg_rounds={neg_rounds} neg_sum={neg_sum_abs} "
+            f"guard={self._guard} repair={repair_summary}"
+        )
 
     # ── 好感人格注入 ──────────────────────────────────────────────
 
