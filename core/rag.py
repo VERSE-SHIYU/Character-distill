@@ -172,6 +172,7 @@ class RAGEngine:
             ]
         try:
             collection.add(**add_kwargs)
+            print(f"[embed-stats] RAG index text chunks={len(filtered)} collection={name}")
         except Exception as exc:
             print(f"向 Chroma collection 写入文档失败：{exc}")
             raise

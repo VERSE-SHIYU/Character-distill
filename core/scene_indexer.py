@@ -78,6 +78,7 @@ class SceneIndexer:
             })
 
         collection.add(documents=docs, ids=ids, metadatas=metas)
+        print(f"[embed-stats] Scene index scenes={len(docs)} collection={name}")
 
         rag.collection = collection
         rag.collection_name = name

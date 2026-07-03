@@ -192,7 +192,16 @@ class MemoryManager:
                 },
             }
             self._mem = Memory.from_config(mem0_config)
-            print("[MemoryManager] Mem0 initialized (DeepSeek LLM + DashScope Embedding)")
+            # Replace embedder with shared-cache bridge so RAG and Mem0
+            # share the module-level LRU cache (identical texts embedded once).
+            from core.embeddings import Mem0BridgeEmbedder
+            self._mem.embedding_model = Mem0BridgeEmbedder(
+                api_key=dashscope_key,
+                region="cn",
+                model="text-embedding-v4",
+                dimensions=1024,
+            )
+            print("[MemoryManager] Mem0 initialized (DeepSeek LLM + DashScope Embedding via shared cache)")
         except Exception as exc:
             print(f"[MemoryManager] Mem0 init failed: {exc}")
             self._enabled = False
@@ -216,6 +225,8 @@ class MemoryManager:
         if not self.enabled:
             return []
         try:
+            query_est_tok = len(query) // 2
+            print(f"[embed-stats] Mem0 search query_len={len(query)} est_tok={query_est_tok} card={card_id}")
             results = self._mem.search(
                 query, filters={"user_id": card_id}, limit=self._search_top_k
             )
@@ -305,6 +316,8 @@ class MemoryManager:
                 kwargs = {"user_id": card_id}
                 if metadata:
                     kwargs["metadata"] = metadata
+                total_chars = sum(len(m.get("content", "")) for m in messages if isinstance(m, dict))
+                print(f"[embed-stats] Mem0 add est_tok={total_chars // 2} card={card_id}")
                 result = self._mem.add(messages, **kwargs)
                 print(f"[MemoryManager] add OK: card={card_id} result_len={len(result) if isinstance(result, list) else 'N/A'}")
             except Exception as exc:
@@ -338,6 +351,7 @@ class MemoryManager:
             kwargs = {"user_id": card_id, "infer": False}
             if metadata:
                 kwargs["metadata"] = metadata
+            print(f"[embed-stats] Mem0 add_manual est_tok={len(text) // 2} card={card_id}")
             result = self._mem.add(text, **kwargs)
             print(f"[MemoryManager] manual add result: {result}")
             return True
