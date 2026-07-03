@@ -30,7 +30,8 @@ class AgentLoop:
         self._toolkit = toolkit
 
     def run(self, system_prompt: str, messages: list[dict]) -> AgentLoopResult:
-        saved = list(messages)  # degraded 时返回原始未污染的消息
+        original = messages
+        messages = list(messages)  # 工作副本，所有 append 只发生在副本上
         steps: list[dict] = []
         executed: set[tuple[str, str]] = set()
 
@@ -40,10 +41,10 @@ class AgentLoop:
                     system_prompt, messages, self._toolkit.get_schemas()
                 )
             except ToolsNotSupportedError:
-                return AgentLoopResult(messages=saved, steps=steps, degraded=True)
+                return AgentLoopResult(messages=original, steps=steps, degraded=True)
             except Exception as exc:
                 print(f"[AgentLoop] chat_with_tools error: {exc}")
-                return AgentLoopResult(messages=saved, steps=steps, degraded=True)
+                return AgentLoopResult(messages=original, steps=steps, degraded=True)
 
             if not msg.tool_calls:
                 break
