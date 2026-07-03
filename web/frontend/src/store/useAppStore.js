@@ -148,7 +148,18 @@ const useAppStore = create((set, get) => ({
   },
   popView: () => {
     const { viewHistory } = get()
-    if (viewHistory.length === 0) return
+    if (viewHistory.length === 0) {
+      const FALLBACK = {
+        chat: 'text', groupChat: 'text', character: 'text', reader: 'text',
+        author: 'market', textDetail: 'market', marketCardDetail: 'market',
+        profile: 'mine', settings: 'mine', trash: 'mine', admin: 'mine',
+        legal: 'mine', voice: 'mine',
+      }
+      const fb = FALLBACK[get().currentView] || 'home'
+      set({ currentView: fb, error: null })
+      localStorage.setItem('nav_view', fb)
+      return
+    }
     const prevView = viewHistory[viewHistory.length - 1]
     set({
       currentView: prevView,
