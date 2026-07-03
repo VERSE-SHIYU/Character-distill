@@ -357,6 +357,19 @@ function ChatView() {
   // Smart auto-scroll
   const { handleScroll } = useAutoScroll(listRef, bottomRef, [messages])
 
+  // Mobile: scroll messages to bottom when keyboard opens (visualViewport resize)
+  useEffect(() => {
+    if (!window.visualViewport) return
+    const handler = () => {
+      if (window.visualViewport.height < window.screen.height * 0.8) {
+        const el = listRef.current
+        if (el) el.scrollTop = el.scrollHeight
+      }
+    }
+    window.visualViewport.addEventListener('resize', handler)
+    return () => window.visualViewport.removeEventListener('resize', handler)
+  }, [])
+
   const loadMemories = useCallback(async () => {
     if (!cardId) return
     setMemoriesLoading(true)
