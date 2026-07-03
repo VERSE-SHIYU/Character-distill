@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react'
+import { Popup } from 'antd-mobile'
 import useAppStore from '../store/useAppStore'
 import { formatChatTime } from '../utils/time'
 
@@ -28,50 +30,79 @@ export default function ArchiveListModal() {
   const enterArchive = useAppStore((s) => s.enterArchive)
   const createNewArchive = useAppStore((s) => s.createNewArchive)
   const close = useAppStore((s) => s.closeArchiveModal)
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)')
+    setIsMobile(mq.matches)
+    const handler = (e) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   if (!archiveModalOpen) return null
+
+  const content = (
+    <>
+      <div className="modal-title">选择存档 — {pendingCard?.name || '?'}</div>
+
+      <button
+        type="button"
+        className="archive-new-btn"
+        onClick={createNewArchive}
+      >
+        + 新建存档
+      </button>
+
+      <div className="archive-list-scroll">
+        {archiveList.map((s) => {
+          const stage = affinityStage(s.affinity)
+          return (
+            <button
+              key={s.id}
+              type="button"
+              className="history-item archive-slot-item"
+              onClick={() => enterArchive(s)}
+            >
+              <div className="history-item-body">
+                <div className="history-item-head">
+                  <div className="history-item-name-row">
+                    <span className={`archive-stage-tag ${stage.cls}`}>{stage.label}</span>
+                    <span className="archive-affinity-nums">
+                      <span title="好感">♡{s.affinity ?? 50}</span>
+                      <span title="信任">信任{s.trust ?? 30}</span>
+                      <span title="防御">防御{s.guard ?? 70}</span>
+                    </span>
+                  </div>
+                  <span className="history-item-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
+                </div>
+                <p className="history-item-preview">{previewText(s.last_message)}</p>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </>
+  )
+
+  if (isMobile) {
+    return (
+      <Popup
+        visible
+        onMaskClick={close}
+        bodyStyle={{ borderTopLeftRadius: 16, borderTopRightRadius: 16 }}
+      >
+        <div style={{ padding: '24px 20px 20px' }}>
+          {content}
+        </div>
+      </Popup>
+    )
+  }
 
   return (
     <div className="modal-overlay" onClick={close}>
       <div className="modal-card archive-list-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">选择存档 — {pendingCard?.name || '?'}</div>
-
-        <button
-          type="button"
-          className="archive-new-btn"
-          onClick={createNewArchive}
-        >
-          + 新建存档
-        </button>
-
-        <div className="archive-list-scroll">
-          {archiveList.map((s) => {
-            const stage = affinityStage(s.affinity)
-            return (
-              <button
-                key={s.id}
-                type="button"
-                className="history-item archive-slot-item"
-                onClick={() => enterArchive(s)}
-              >
-                <div className="history-item-body">
-                  <div className="history-item-head">
-                    <div className="history-item-name-row">
-                      <span className={`archive-stage-tag ${stage.cls}`}>{stage.label}</span>
-                      <span className="archive-affinity-nums">
-                        <span title="好感">♡{s.affinity ?? 50}</span>
-                        <span title="信任">信任{s.trust ?? 30}</span>
-                        <span title="防御">防御{s.guard ?? 70}</span>
-                      </span>
-                    </div>
-                    <span className="history-item-time">{fmtTime(s.last_message_at || s.updated_at)}</span>
-                  </div>
-                  <p className="history-item-preview">{previewText(s.last_message)}</p>
-                </div>
-              </button>
-            )
-          })}
-        </div>
+        {content}
       </div>
     </div>
   )
