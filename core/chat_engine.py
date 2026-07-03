@@ -6,7 +6,6 @@ import asyncio
 import collections
 import json
 import random
-import re
 from datetime import datetime, timezone
 from collections.abc import Generator
 from typing import Any
@@ -71,7 +70,9 @@ _silence_state: dict[str, dict] = {}
 
 # ── 口癖磨损与感染 ──────────────────────────────────────────────
 STOP_WORDS = {'的', '了', '吗', '吧', '呢', '啊', '哦', '嗯', '我', '你',
-              '他', '这', '那', '是', '不', '在', '有', '和', '就', '都', '也', '很'}
+              '他', '这', '那', '是', '不', '在', '有', '和', '就', '都', '也', '很',
+              '什么', '怎么', '那个', '这个', '就是',
+              '然后', '所以', '但是', '可以', '没有', '知道'}
 CATCHWORD_MIN_COUNT = 4
 CATCHWORD_HISTORY_SCAN = 40  # scan 40 msgs (last ~20 user msgs)
 CATCHWORD_MAX_WORDS = 2
@@ -999,7 +1000,17 @@ class ChatEngine:
     # ── 口癖磨损与感染 ──────────────────────────────────────────
 
     def _extract_catchwords(self) -> None:
-        """从最近 user 消息提取高频特征词，存入好感状态。"""
+        """从最近 user 消息提取高频特征词，存入好感状态。
+
+        使用 jieba 中文分词（lazy import + 模块级缓存避免每次重加载），
+        正确提取中文口头禅（如"真的""绝了"）而非按连续汉字整段切 token。
+        """
+        # Lazy import jieba with module-level cache
+        if not hasattr(self, '_jieba'):
+            import jieba as _j
+            self.__class__._jieba = _j
+            _j.setLogLevel(60)  # suppress jieba info messages
+
         # Collect last ~20 user messages
         user_msgs = [
             m["content"] for m in self.history[-CATCHWORD_HISTORY_SCAN:]
@@ -1008,11 +1019,16 @@ class ChatEngine:
 
         word_counts: dict[str, int] = {}
         for msg in user_msgs:
-            # Chinese char sequences + alphanumeric tokens
-            tokens = re.findall(r'[一-鿿]+|[a-zA-Z0-9]+', msg)
+            tokens = self._jieba.lcut(msg)
             for token in tokens:
-                if len(token) >= 2 and token not in STOP_WORDS:
-                    word_counts[token] = word_counts.get(token, 0) + 1
+                token = token.strip()
+                if len(token) < 2:
+                    continue
+                if token.isdigit():  # pure numbers like "666666"
+                    continue
+                if token in STOP_WORDS:
+                    continue
+                word_counts[token] = word_counts.get(token, 0) + 1
 
         qualified = [(w, c) for w, c in word_counts.items() if c >= CATCHWORD_MIN_COUNT]
         qualified.sort(key=lambda x: -x[1])

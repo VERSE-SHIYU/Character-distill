@@ -40,83 +40,116 @@ def _set_stage(engine: ChatEngine, stage: str, affinity: int) -> None:
 
 
 class TestCatchwordExtraction:
-    """_extract_catchwords() — 停用词过滤 + 频次阈值 + top N。"""
+    """_extract_catchwords() — 中文分词 + 停用词过滤 + 频次阈值 + top N。"""
 
-    def test_stop_words_filtered(self):
-        """仅停用词和短词 → 空列表。"""
+    def test_single_char_filtered(self):
+        """单字词不提取（len<2）。"""
         engine = _make_engine()
-        msgs = ["的", "了", "吗"] * 10  # all stop words, all len 1
+        msgs = ["好", "的", "了"] * 10
         _fill_history(engine, msgs)
         engine._extract_catchwords()
         assert engine._affinity_service.user_catchwords == []
 
-    def test_multi_char_phrases_extracted(self):
-        """多字词组频次 >=4 → 被提取。"""
+    def test_stop_words_filtered(self):
+        """停用词表中的词（含双字虚词）不提取。"""
         engine = _make_engine()
-        msgs = ["好的呀"] * 5 + ["知道了"] * 5 + ["哈哈"] * 3
+        msgs = ["什么"] * 5 + ["怎么"] * 5 + ["但是"] * 5
         _fill_history(engine, msgs)
         engine._extract_catchwords()
-        assert "好的呀" in engine._affinity_service.user_catchwords
-        assert "知道了" in engine._affinity_service.user_catchwords
+        assert engine._affinity_service.user_catchwords == []
+
+    def test_chinese_catchphrase_extracted(self):
+        """连续中文句中 jieba 正确切出"真的"等口头禅。"""
+        engine = _make_engine()
+        # jieba.lcut('真的假的你也太牛了真的服了')
+        # → ['真的假', '的', '你', '也', '太', '牛', '了', '真的', '服', '了']
+        # "真的" appears as standalone word once per message
+        msg = "真的假的你也太牛了真的服了"
+        _fill_history(engine, [msg] * 5)
+        engine._extract_catchwords()
+        assert "真的" in engine._affinity_service.user_catchwords
+
+    def test_continuous_text_does_not_become_token(self):
+        """整句连续中文不被当作一个词，jieba 正确切分。"""
+        engine = _make_engine()
+        # jieba.lcut('没事没事真的没事')
+        # → ['没事', '没事', '真的', '没事']
+        msg = "没事没事真的没事"
+        _fill_history(engine, [msg] * 5)
+        engine._extract_catchwords()
+        # "没事" should appear as a word, and it has count >= 4
+        assert "没事" in engine._affinity_service.user_catchwords
+        # The full sentence should NOT appear as a catchword
+        assert msg not in engine._affinity_service.user_catchwords
 
     def test_below_threshold_not_extracted(self):
         """频次 <4 → 不提取。"""
         engine = _make_engine()
-        msgs = ["好的"] * 3 + ["没事"] * 2
-        _fill_history(engine, msgs)
+        msg = "真的麻烦你了"
+        _fill_history(engine, [msg] * 3)
         engine._extract_catchwords()
         assert engine._affinity_service.user_catchwords == []
 
     def test_above_threshold_extracted(self):
         """刚好 4 次 → 提取。"""
         engine = _make_engine()
-        msgs = ["好的"] * 4
-        _fill_history(engine, msgs)
+        msg = "真的麻烦你了"
+        _fill_history(engine, [msg] * 4)
         engine._extract_catchwords()
-        assert "好的" in engine._affinity_service.user_catchwords
+        assert "真的" in engine._affinity_service.user_catchwords or \
+               "麻烦" in engine._affinity_service.user_catchwords
 
     def test_only_top_2_words(self):
         """最多返回 top 2。"""
         engine = _make_engine()
-        msgs = (["好的"] * 5 + ["没事"] * 5 + ["真的"] * 5 +
-                ["知道"] * 5 + ["谢谢"] * 5)
+        msgs = (["真的假的"] * 5 + ["没事没事"] * 5 + ["谢谢谢谢"] * 5 +
+                ["知道知道"] * 5 + ["不行不行"] * 5)
         _fill_history(engine, msgs)
         engine._extract_catchwords()
         assert len(engine._affinity_service.user_catchwords) <= 2
 
-    def test_scans_last_20_user_msgs(self):
-        """只扫描最近 20 条 user 消息。"""
+    def test_pure_numbers_excluded(self):
+        """纯数字 token 如 "666666" 不提取。"""
         engine = _make_engine()
-        # 30 user msgs: first 10 say "旧词", last 20 say "新的"
-        early = ["旧词"] * 10
-        late = ["新的"] * 20
-        msgs = []
-        for i in range(10):
-            msgs.append(early[i] if i < len(early) else "新的")
-            msgs.append("assistant filler")
-        # Wait, _fill_history does alternating user/assistant.
-        # Let me just fill manually.
-        pass
+        msgs = ["666666"] * 5 + ["888888"] * 5
+        _fill_history(engine, msgs)
+        engine._extract_catchwords()
+        assert engine._affinity_service.user_catchwords == []
 
-    # More direct test for scan window
+    def test_english_tokens_preserved(self):
+        """英文词保持提取能力。"""
+        engine = _make_engine()
+        msgs = ["lol"] * 5
+        _fill_history(engine, msgs)
+        engine._extract_catchwords()
+        assert "lol" in engine._affinity_service.user_catchwords
+
     def test_old_words_beyond_20_not_counted(self):
         """超出最近 20 条 user 消息的历史词不被计入。"""
         engine = _make_engine()
-        # 30 user messages: first 10 say "旧词", last 20 include "新的" * 4
         history = []
         for i in range(10):
             history.append({"role": "user", "content": "旧词"})
             history.append({"role": "assistant", "content": f"r{i}"})
         for i in range(20):
-            word = "新的" if i < 4 else "别的"
+            word = "不行" if i < 4 else "放心"  # jieba keeps both as 2-char words
             history.append({"role": "user", "content": word})
             history.append({"role": "assistant", "content": f"r{i+10}"})
         engine.history = history
         engine._extract_catchwords()
         # "旧词" appeared 10 times but only in first 10 msgs (outside 20-window)
         assert "旧词" not in engine._affinity_service.user_catchwords
-        # "新的" appeared 4 times in last 20
-        assert "新的" in engine._affinity_service.user_catchwords
+        # "不行" appeared 4 times in last 20
+        assert "不行" in engine._affinity_service.user_catchwords
+
+    def test_mixed_chinese_english(self):
+        """中英混合消息中各自正确分词。"""
+        engine = _make_engine()
+        msgs = ["lol 真的服了"] * 5
+        _fill_history(engine, msgs)
+        engine._extract_catchwords()
+        assert "lol" in engine._affinity_service.user_catchwords
+        assert "真的" in engine._affinity_service.user_catchwords
 
 
 class TestCatchphraseBlock:
