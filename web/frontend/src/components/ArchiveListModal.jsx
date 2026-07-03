@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import useIsMobile from '../hooks/useIsMobile'
 import { Popup } from 'antd-mobile'
 import useAppStore from '../store/useAppStore'
 import { formatChatTime } from '../utils/time'
@@ -30,15 +30,7 @@ export default function ArchiveListModal() {
   const enterArchive = useAppStore((s) => s.enterArchive)
   const createNewArchive = useAppStore((s) => s.createNewArchive)
   const close = useAppStore((s) => s.closeArchiveModal)
-  const [isMobile, setIsMobile] = useState(false)
-
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 768px)')
-    setIsMobile(mq.matches)
-    const handler = (e) => setIsMobile(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
+  const isMobile = useIsMobile()
 
   if (!archiveModalOpen) return null
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import useIsMobile from '../hooks/useIsMobile'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders, exportCard } from '../api/client'
 import Avatar from './common/Avatar'
@@ -148,9 +149,7 @@ export default function MinePage() {
   const [followingCount, setFollowingCount] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const [deletePostId, setDeletePostId] = useState(null)
-  const [isMobile, setIsMobile] = useState(false)
-
-  // Mobile detection
+  const isMobile = useIsMobile()
   const [posts, setPosts] = useState([])
   const [postsLoading, setPostsLoading] = useState(false)
   const [postContent, setPostContent] = useState('')
@@ -245,15 +244,6 @@ export default function MinePage() {
     return () => {
       if (locSearchTimer.current) clearTimeout(locSearchTimer.current)
     }
-  }, [])
-
-  // Mobile detection
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 768px)')
-    setIsMobile(mq.matches)
-    const handler = (e) => setIsMobile(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
   }, [])
 
   // Following state
