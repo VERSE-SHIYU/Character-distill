@@ -103,6 +103,7 @@ class ChatEngine:
         self._last_reaction_id: int = 0  # 已消化点赞游标，只增
         self._last_importance: int = 5  # 本轮对话重要性评分（1-10），供 memory metadata
         self._last_in_character: int = 80  # 瞬时纠偏信号，不入库，不跨 session
+        self._visit_count: int = 0  # 本次 resume 后第一条消息消费（>=3 注入觉察）
         self._last_assertion_confidence: int = 50  # 用户输入可信度，用于记忆写入过滤
         self._reflection_service = ReflectionService(memory_manager, card_id)
         self._event_service = EventService(self._memory, self._card_id)
@@ -228,6 +229,9 @@ class ChatEngine:
         # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
         system_prompt += self._build_all_enhancements()
 
+        # ── 今日到访觉察 ──
+        system_prompt += self._build_visit_awareness_block()
+
         if voice_mode:
             system_prompt += (
                 "\n\n【语音模式——重要】\n"
@@ -285,6 +289,9 @@ class ChatEngine:
 
         # ── 好感人格 + 认知画像 + 事件提醒注入（时间感知已移至当前消息末尾）──
         system_prompt += self._build_all_enhancements()
+
+        # ── 今日到访觉察 ──
+        system_prompt += self._build_visit_awareness_block()
 
         if voice_mode:
             system_prompt += (
@@ -928,6 +935,25 @@ class ChatEngine:
 
     def get_affinity(self) -> dict[str, Any]:
         return self._affinity_service.get()
+
+    def set_daily_visits(self, count: int) -> None:
+        """从 resume 端点接收今日到访次数，消费语义：首条消息注入后清除。"""
+        self._visit_count = count
+
+    def _build_visit_awareness_block(self) -> str:
+        """今日到访觉察：count>=3 + stage>=朋友 → 一次性注入。"""
+        if self._visit_count < 3:
+            return ""
+        count = self._visit_count
+        self._visit_count = 0  # consume — 无论是否注入，本次 resume 机会用完
+        if self._stage not in ("朋友", "亲近", "心意相通"):
+            return ""
+        return (
+            f"\n\n【觉察】这是对方今天第 {count} 次来找你。这个事实此刻浮现在"
+            "你心里——它意味着什么、你作何感受，由你的性格和你们的关系决定："
+            "可以是甜、是嫌弃、是揶揄\"这么闲？\"，也可以只是心里一暖不说破。"
+            "自然流露在这条回复里，不要复述次数本身。"
+        )
 
     def reset(self) -> None:
         """清空对话历史。"""

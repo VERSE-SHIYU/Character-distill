@@ -13,10 +13,16 @@ from pydantic import BaseModel
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard
+from core.clock import UserClock
 from storage.base import StorageBase
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/history", tags=["history"])
+
+
+# In-memory daily visit counter: session_id -> (date_str, count)
+# Separate from _reunion_dates (reunion frequency gate in chat_engine).
+_daily_visits: dict[str, tuple[str, int]] = {}
 
 
 class ResumeRequest(BaseModel):
@@ -299,6 +305,13 @@ async def resume_session(
     engine._storage = storage
     if _body.client_tz:
         engine._user_tz = _body.client_tz
+
+    # ── 今日到访计数 ──
+    _daily_visit_today = UserClock.now(engine._user_tz).strftime("%Y-%m-%d")
+    _prev_date, _prev_count = _daily_visits.get(session_id, ("", 0))
+    _visit_count = _prev_count + 1 if _prev_date == _daily_visit_today else 1
+    _daily_visits[session_id] = (_daily_visit_today, _visit_count)
+
     greeting_data: dict[str, Any] | None = None
     try:
         greeting = await asyncio.to_thread(engine.generate_reunion_greeting)
@@ -313,6 +326,10 @@ async def resume_session(
             }
     except Exception as exc:
         print(f"[history] Reunion greeting failed (non-fatal): {exc}")
+
+    # ── 今日到访觉察：count>=3 且当次未触发重逢问候 → 传给 engine ──
+    if _visit_count >= 3 and not greeting_data:
+        engine.set_daily_visits(_visit_count)
 
     # 10. Build messages array for frontend (includes greeting as a regular message)
     frontend_messages = [

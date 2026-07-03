@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.chat_engine import ChatEngine, _reunion_dates
+from core.affinity_service import calc_stage
 from core.schema import CharacterCard
 
 
@@ -274,3 +275,72 @@ class TestReunionGreeting:
 
         instruction = engine.llm.chat.call_args[0][1][0]["content"]
         assert "对方不在时你想起过" not in instruction
+
+
+class TestDailyVisitAwareness:
+    """今日到访觉察：engine._visit_count → system prompt 注入。"""
+
+    @staticmethod
+    def _set_stage(engine: ChatEngine, stage: str, affinity: int) -> None:
+        engine._affinity_service.affinity = affinity
+        engine._affinity_service.stage = stage
+        engine._affinity_service.stage_emoji = calc_stage(affinity)[1]
+
+    def test_visit_3_injects(self):
+        """第3次到访 → system prompt 含觉察块。"""
+        engine = _make_engine()
+        self._set_stage(engine, "朋友", 60)
+        engine._visit_count = 3
+        engine.chat("你好")
+        sys_prompt = engine.llm.chat.call_args_list[1][0][0]
+        assert "【觉察】" in sys_prompt
+        assert "第 3 次" in sys_prompt
+
+    def test_visit_4_injects(self):
+        """第4次到访 → 同样注入。"""
+        engine = _make_engine()
+        self._set_stage(engine, "朋友", 60)
+        engine._visit_count = 4
+        engine.chat("你好")
+        sys_prompt = engine.llm.chat.call_args_list[1][0][0]
+        assert "【觉察】" in sys_prompt
+        assert "第 4 次" in sys_prompt
+
+    def test_visit_2_does_not_inject(self):
+        """第2次不到 3，不注入。"""
+        engine = _make_engine()
+        self._set_stage(engine, "朋友", 60)
+        engine._visit_count = 2
+        engine.chat("你好")
+        sys_prompt = engine.llm.chat.call_args_list[1][0][0]
+        assert "【觉察】" not in sys_prompt
+
+    def test_visit_consumed_after_injection(self):
+        """注入后 _visit_count 归零，第二条消息不再注入。"""
+        engine = _make_engine()
+        self._set_stage(engine, "朋友", 60)
+        engine._visit_count = 3
+        engine.chat("你好")
+        assert engine._visit_count == 0  # consumed
+
+        engine.llm.chat.reset_mock()
+        engine.chat("再聊")
+        sys_prompt = engine.llm.chat.call_args_list[1][0][0]
+        assert "【觉察】" not in sys_prompt
+
+    def test_low_stage_no_injection(self):
+        """熟悉及以下即使 count>=3 也不注入。"""
+        engine = _make_engine()
+        self._set_stage(engine, "熟悉", 50)
+        engine._visit_count = 3
+        engine.chat("你好")
+        sys_prompt = engine.llm.chat.call_args_list[1][0][0]
+        assert "【觉察】" not in sys_prompt
+
+    def test_visit_consumed_on_low_stage(self):
+        """低档位时 count 仍然被消费（本轮 resume 机会用完）。"""
+        engine = _make_engine()
+        self._set_stage(engine, "陌生", 10)
+        engine._visit_count = 3
+        engine.chat("你好")
+        assert engine._visit_count == 0
