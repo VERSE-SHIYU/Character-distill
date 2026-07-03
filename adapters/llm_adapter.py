@@ -12,7 +12,11 @@ import os
 
 import yaml
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, OpenAI
+from openai import AsyncOpenAI, BadRequestError, OpenAI
+
+
+class ToolsNotSupportedError(RuntimeError):
+    """Provider 不支持 tools 参数时抛出，上层据此降级到 legacy 路径。"""
 
 
 class LLMAdapter:
@@ -207,3 +211,57 @@ class LLMAdapter:
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
+
+    def chat_with_tools(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int | None = None,
+    ) -> Any:
+        """非流式 function-calling 对话，返回完整 message 对象（含 tool_calls）。
+
+        网络/临时错误与 chat() 相同的 3 次重试；
+        provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
+        其他 400 → 原样抛出，不重试。
+        """
+        payload = self._build_messages(system_prompt, messages)
+        _mt = max_tokens if max_tokens is not None else self._max_tokens
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                completion = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=payload,
+                    tools=tools,
+                    temperature=self._temperature,
+                    max_tokens=_mt,
+                    presence_penalty=self._presence_penalty,
+                    extra_body={"enable_thinking": False},
+                )
+                choices = completion.choices
+                if not choices:
+                    raise RuntimeError("API returned empty choices")
+                msg = choices[0].message
+                if completion.usage:
+                    self.last_usage = {
+                        "prompt_tokens": completion.usage.prompt_tokens or 0,
+                        "completion_tokens": completion.usage.completion_tokens or 0,
+                    }
+                return msg
+            except BadRequestError as exc:
+                err_msg = (exc.message or "").lower()
+                if "tool" in err_msg or "function" in err_msg:
+                    raise ToolsNotSupportedError(
+                        f"Provider does not support tools/function-calling: {exc}"
+                    ) from exc
+                raise  # 其他 400：不重试，原样抛出
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    wait = (attempt + 1) * 5
+                    print(f"[LLMAdapter] chat_with_tools attempt {attempt+1} failed: {exc}, retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"[LLMAdapter] chat_with_tools all 3 attempts failed: {exc}")
+        raise RuntimeError(f"chat_with_tools failed after 3 attempts: {last_error}")
