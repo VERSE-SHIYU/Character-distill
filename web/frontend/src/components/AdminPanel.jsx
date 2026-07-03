@@ -137,12 +137,18 @@ function fmtTimeAgo(iso) {
   if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
   const then = new Date(s).getTime()
   const now = Date.now()
-  if (isNaN(then)) return iso.slice(0, 16).replace('T', ' ')
+  if (isNaN(then)) {
+    const d = new Date(s)
+    if (!isNaN(d.getTime())) return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    return iso
+  }
   const diff = Math.floor((now - then) / 1000)
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-  return iso.slice(0, 16).replace('T', ' ')
+  const d = new Date(s)
+  if (!isNaN(d.getTime())) return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return iso
 }
 
 const STAT_CARD_STYLES = {
