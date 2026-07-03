@@ -66,6 +66,7 @@ function ImageGrid({ images, onImageClick }) {
 /* ── PostCard ── */
 export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDelete = false, showAuthor = true }) {
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const [showComments, setShowComments] = useState(false)
   const [comments, setComments] = useState([])
@@ -150,7 +151,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
         return (
           <button type="button" className="post-card-ref" onClick={() => {
             useAppStore.getState().setCurrentMarketCardId(post.card_id)
-            setView('marketCardDetail')
+            pushView('marketCardDetail')
           }}>
             <Avatar name={cardName} src={post.card_avatar_data || null} size={24} />
             <span className="post-card-ref-name">{cardName}</span>
@@ -204,7 +205,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                 <button
                   type="button"
                   className="post-card-comment-avatar-btn avatar-shape"
-                  onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                  onClick={() => { setAuthorUserId(c.user_id); pushView('author') }}
                 >
                   <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={28} />
                 </button>
@@ -213,7 +214,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
                     <button
                       type="button"
                       className="post-card-comment-user"
-                      onClick={() => { setAuthorUserId(c.user_id); setView('author') }}
+                      onClick={() => { setAuthorUserId(c.user_id); pushView('author') }}
                     >
                       {displayName(c)}
                     </button>

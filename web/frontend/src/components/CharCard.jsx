@@ -31,6 +31,7 @@ export default function CharCard() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const previousView = useAppStore((s) => s.previousView)
   const previousViewContext = useAppStore((s) => s.previousViewContext)
   const clearPreviousView = useAppStore((s) => s.clearPreviousView)
@@ -749,6 +750,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
 function CardDetail({ card, textId }) {
   const startChat = useAppStore((s) => s.startChat)
+  const pushView = useAppStore((s) => s.pushView)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const getUserRole = useAppStore((s) => s.getUserRole)
@@ -835,11 +837,13 @@ function CardDetail({ card, textId }) {
 
   const handleRoleConfirm = (role) => {
     setShowRoleModal(false)
+    pushView('chat')
     startChat(card)
   }
 
   const handleRoleSkip = () => {
     setShowRoleModal(false)
+    pushView('chat')
     startChat(card)
   }
 

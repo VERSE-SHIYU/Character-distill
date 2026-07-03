@@ -15,6 +15,7 @@ import { formatRelativeTime } from '../utils/time'
 
 export default function MarketCardDetail() {
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const cardId = useAppStore((s) => s.currentMarketCardId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
@@ -94,7 +95,7 @@ export default function MarketCardDetail() {
         useAppStore.getState().setCurrentMarketCardId(null)
         if (previousView === 'groupChat') {
           clearPreviousView()
-          setView('groupChat')
+          pushView('groupChat')
         } else {
           setView('market')
         }
@@ -601,7 +602,7 @@ export default function MarketCardDetail() {
               <button
                 type="button"
                 className="market-detail-author-name"
-                onClick={(e) => { e.stopPropagation(); setAuthorUserId(card.user_id); setView('author') }}
+                onClick={(e) => { e.stopPropagation(); setAuthorUserId(card.user_id); pushView('author') }}
               >
                 {card.author_name || '匿名'}
               </button>
@@ -776,12 +777,12 @@ export default function MarketCardDetail() {
                       {batchMode && card.user_id === authUser?.id && (
                         <input type="checkbox" className="comment-checkbox" checked={selectedCommentIds.has(c.id)} onChange={() => toggleSelectComment(c.id)} />
                       )}
-                      <button type="button" className="market-detail-comment-avatar-btn avatar-shape" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>
+                      <button type="button" className="market-detail-comment-avatar-btn avatar-shape" onClick={() => { setAuthorUserId(c.user_id); pushView('author') }}>
                         <Avatar name={displayName(c) || '?'} src={c.avatar_data} size={32} />
                       </button>
                       <div className="market-detail-comment-body">
                         <div className="market-detail-comment-head">
-                          <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); setView('author') }}>{displayName(c)}</button>
+                          <button type="button" className="market-detail-comment-name" onClick={() => { setAuthorUserId(c.user_id); pushView('author') }}>{displayName(c)}</button>
                           <span className="market-detail-comment-time">{formatRelativeTime(c.created_at)}</span>
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>

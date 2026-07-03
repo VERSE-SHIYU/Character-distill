@@ -24,6 +24,7 @@ export default function HomePage() {
   const loadTexts = useAppStore((s) => s.loadTexts)
   const resumeSession = useAppStore((s) => s.resumeSession)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const viewCard = useAppStore((s) => s.viewCard)
   const apiConfigured = useAppStore((s) => s.apiConfigured)
   const authUser = useAppStore((s) => s.authUser)
@@ -148,7 +149,7 @@ export default function HomePage() {
 
   const handleDiscoverCardClick = (c) => {
     setCurrentMarketCardId(c.id)
-    setView('marketCardDetail')
+    pushView('marketCardDetail')
   }
 
   // 时段问候
@@ -174,7 +175,7 @@ export default function HomePage() {
     <div className="home-page panel">
       {/* API Key alert */}
       {!apiConfigured && authUser && (
-        <div className="api-config-alert" style={{ marginBottom: 16, cursor: 'pointer' }} onClick={() => setView('settings')}>
+        <div className="api-config-alert" style={{ marginBottom: 16, cursor: 'pointer' }} onClick={() => pushView('settings')}>
           请先配置 API Key 才能开始对话
         </div>
       )}
@@ -262,7 +263,7 @@ export default function HomePage() {
           <div className="home-welcome">
             <div className="home-greeting">{greeting}，{username}</div>
             <div className="home-stats-bar">
-              <div className="home-stats-item" onClick={() => setView('character')}>
+              <div className="home-stats-item" onClick={() => pushView('character')}>
                 <span className="home-stats-num">{cardCount}</span>
                 <span className="home-stats-label">角色</span>
               </div>
@@ -328,7 +329,7 @@ export default function HomePage() {
                       key={fc.id}
                       type="button"
                       className="home-featured-card"
-                      onClick={() => { setCurrentMarketCardId(fc.card_id); setView('marketCardDetail') }}
+                      onClick={() => { setCurrentMarketCardId(fc.card_id); pushView('marketCardDetail') }}
                     >
                       <div className="home-featured-cover">
                         {fc.avatar_data ? (

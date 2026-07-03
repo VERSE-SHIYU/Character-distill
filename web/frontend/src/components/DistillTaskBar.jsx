@@ -4,6 +4,7 @@ import useSmoothProgress from '../hooks/useSmoothProgress'
 
 function DistillTaskItem({ task }) {
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const loadCards = useAppStore((s) => s.loadCards)
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
@@ -24,10 +25,11 @@ function DistillTaskItem({ task }) {
     const s = useAppStore.getState()
     const { card_id } = task
     if (task.textId && s.currentTextId !== task.textId) {
+      s.pushView('character')
       await s.selectText(task.textId)
     } else {
       if (task.textId) await loadCards(task.textId)
-      setView('character')
+      pushView('character')
     }
     // After navigation, select the newly generated card
     if (card_id) {

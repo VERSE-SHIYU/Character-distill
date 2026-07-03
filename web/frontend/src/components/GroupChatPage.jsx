@@ -42,6 +42,7 @@ export default function GroupChatPage() {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const clearPreviousView = useAppStore((s) => s.clearPreviousView)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
@@ -1297,7 +1298,7 @@ export default function GroupChatPage() {
                             const raw = selectedCharCardInfo.rawCard
                             setCurrentMarketCardId(raw?.id || raw?.card_id)
                             setPreviousView('groupChat', { groupId: currentGroup?.id })
-                            setView('marketCardDetail')
+                            pushView('marketCardDetail')
                             setSelectedCharCardInfo(null)
                           }}>
                             查看完整卡片
@@ -1390,7 +1391,7 @@ export default function GroupChatPage() {
                               if (!card) return
                               setCurrentMarketCardId(card.id || card.card_id)
                               setPreviousView('groupChat', { groupId: currentGroup?.id })
-                              setView('marketCardDetail')
+                              pushView('marketCardDetail')
                             }
                             return (
                               <div key={cardId} className="group-member-item" style={{ cursor: 'pointer' }} onClick={handleMemberClick}>

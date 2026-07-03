@@ -9,6 +9,7 @@ import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
+import MobileBackBar from './components/MobileBackBar'
 import Loading from './components/common/Loading'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -79,6 +80,7 @@ function MainContent() {
 export default function App() {
   const checkVoiceStatus = useAppStore((s) => s.checkVoiceStatus)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const currentView = useAppStore((s) => s.currentView)
   const isLoggedIn = useAppStore((s) => s.isLoggedIn)
   const logout = useAppStore((s) => s.logout)
@@ -136,7 +138,7 @@ export default function App() {
         const configured = !!user.has_api_key
         useAppStore.setState({ apiConfigured: configured })
         if (!configured) {
-          setView('settings')
+          pushView('settings')
         }
         // Fetch active announcement
         try {
@@ -251,6 +253,7 @@ export default function App() {
       />
 
       <main className="main-panel">
+        <MobileBackBar />
         {announcement && !annDismissed && (
           <div className="announcement-banner">
             <span className="announcement-banner-text" style={{ whiteSpace: 'pre-wrap', textAlign: announcement.align || 'left' }}>{announcement.content}</span>

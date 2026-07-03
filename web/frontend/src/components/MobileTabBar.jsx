@@ -62,9 +62,16 @@ const VIEW_GROUPS = {
   mine: ['mine', 'admin', 'profile', 'settings', 'trash'],
 }
 
+const SECONDARY_VIEWS = [
+  'chat', 'groupChat', 'character', 'author', 'textDetail',
+  'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
+]
+
 export default function MobileTabBar() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+
+  if (SECONDARY_VIEWS.includes(currentView)) return null
 
   const activeKey = Object.keys(VIEW_GROUPS).find((k) => VIEW_GROUPS[k].includes(currentView))
 

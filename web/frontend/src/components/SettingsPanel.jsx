@@ -30,6 +30,7 @@ export default function SettingsPanel() {
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
 
   // ---- Load config ----
   useEffect(() => {
@@ -77,7 +78,7 @@ export default function SettingsPanel() {
   return (
     <div className="settings-panel panel">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('profile')} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>
+        <button type="button" className="chat-back-btn" onClick={() => pushView('profile')} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>
         <h1 className="panel-title">设置</h1>
         <p className="panel-desc">API 配置与系统设置</p>
       </header>

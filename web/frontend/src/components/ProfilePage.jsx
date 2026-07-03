@@ -14,6 +14,7 @@ export default function ProfilePage() {
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
   const updateNickname = useAppStore((s) => s.updateNickname)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
 
   const [cropFile, setCropFile] = useState(null)
   const avatarInputRef = useRef(null)
@@ -363,7 +364,7 @@ export default function ProfilePage() {
 
       {/* 3项网格：音色/密码/邮箱 */}
       <div className="profile-grid profile-grid-3">
-        <button className="profile-grid-item" onClick={() => setView('voice')}>
+        <button className="profile-grid-item" onClick={() => pushView('voice')}>
           <span className="profile-grid-icon"><Mic size={16} /></span>
           <span className="profile-grid-label">音色管理</span>
         </button>

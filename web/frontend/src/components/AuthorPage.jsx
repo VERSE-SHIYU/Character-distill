@@ -13,6 +13,7 @@ import { displayName } from '../utils/displayName'
 
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
@@ -272,7 +273,7 @@ export default function AuthorPage({ embedded = false }) {
                           <div className="stat-follow-modal-list">
                             {followersList.map((f) => (
                               <div key={f.id || f.user_id} className="stat-follow-modal-item">
-                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowers(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
+                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowers(false); setAuthorUserId(f.id || f.user_id); pushView('author') }}>
                                   <Avatar name={displayName(f) || '?'} src={f.avatar_data || null} size={36} />
                                   <div className="stat-follow-modal-info">
                                     <span className="stat-follow-modal-name">{displayName(f)}</span>
@@ -319,7 +320,7 @@ export default function AuthorPage({ embedded = false }) {
                           <div className="stat-follow-modal-list">
                             {followingList.map((f) => (
                               <div key={f.id || f.user_id} className="stat-follow-modal-item">
-                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowing(false); setAuthorUserId(f.id || f.user_id); setView('author') }}>
+                                <button type="button" className="stat-follow-modal-user" onClick={() => { setShowFollowing(false); setAuthorUserId(f.id || f.user_id); pushView('author') }}>
                                   <Avatar name={displayName(f) || '?'} src={f.avatar_data || null} size={36} />
                                   <div className="stat-follow-modal-info">
                                     <span className="stat-follow-modal-name">{displayName(f)}</span>
@@ -380,7 +381,7 @@ export default function AuthorPage({ embedded = false }) {
                 ) : (
                   texts.map((t) => (
                     <button key={t.id} className="author-book-card"
-                      onClick={() => { setCurrentTextDetailId(t.id); setView('textDetail') }}>
+                      onClick={() => { setCurrentTextDetailId(t.id); pushView('textDetail') }}>
                       <span style={{ fontSize: 28, lineHeight: 1 }}><Book size={28} /></span>
                       <div className="author-book-info">
                         <div className="author-book-title">{t.title || '未命名'}</div>
@@ -409,7 +410,7 @@ export default function AuthorPage({ embedded = false }) {
                         key={p.id}
                         post={p}
                         onLike={handleLike}
-                        onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+                        onAuthorClick={(userId) => { setAuthorUserId(userId); pushView('author') }}
                         onDelete={(id) => setDeleteConfirmId(id)}
                         showDelete={false}
                       />

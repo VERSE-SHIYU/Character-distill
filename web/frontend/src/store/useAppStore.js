@@ -62,6 +62,7 @@ const useAppStore = create((set, get) => ({
       authUser: null,
       isLoggedIn: false,
       currentView: 'home',
+      viewHistory: [],
       texts: [],
       cards: [],
       standaloneCards: [],
@@ -132,6 +133,29 @@ const useAppStore = create((set, get) => ({
     if (view === 'home' || view === 'text') updates.currentTextTitle = ''
     set(updates)
     localStorage.setItem('nav_view', view)
+  },
+
+  // Multi-level back stack for mobile navigation
+  viewHistory: [],
+  pushView: (view) => {
+    const { currentView, viewHistory } = get()
+    set({
+      viewHistory: [...viewHistory, currentView],
+      currentView: view,
+      error: null,
+    })
+    localStorage.setItem('nav_view', view)
+  },
+  popView: () => {
+    const { viewHistory } = get()
+    if (viewHistory.length === 0) return
+    const prevView = viewHistory[viewHistory.length - 1]
+    set({
+      currentView: prevView,
+      viewHistory: viewHistory.slice(0, -1),
+      error: null,
+    })
+    localStorage.setItem('nav_view', prevView)
   },
 
   goBack: () => {

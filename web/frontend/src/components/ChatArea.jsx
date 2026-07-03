@@ -27,6 +27,7 @@ export default function ChatArea() {
   const archiveModalOpen = useAppStore((s) => s.archiveModalOpen)
   const pendingChatCardId = useAppStore((s) => s._pendingChatCardId)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
 
@@ -72,7 +73,7 @@ export default function ChatArea() {
               onClick={() => {
                 const tid = currentTextId || currentCard?.text_id
                 if (tid) selectText(tid)
-                else setView('character')
+                else pushView('character')
               }}
             >
               <User size={16} /> 选择已有角色
@@ -486,7 +487,7 @@ function ChatView() {
           <button type="button" className="chat-topbar-back" onClick={() => {
             const tid = currentCard?.text_id || currentTextId
             if (tid) selectText(tid)
-            else setView('character')
+            else pushView('character')
           }} title="返回">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
@@ -578,7 +579,7 @@ function ChatView() {
           <button type="button" className="chat-more-item" onClick={() => {
             const tid = currentCard?.text_id || currentTextId
             if (tid) { openCharacterList(tid) }
-            else { setView('character') }
+            else { pushView('character') }
             setShowMore(false)
           }}>
             <User size={16} />
@@ -649,7 +650,7 @@ function ChatView() {
               onClick={() => {
                 const tid = currentCard?.text_id || currentTextId
                 if (tid) selectText(tid)
-                else setView('character')
+                else pushView('character')
               }}
             >
               {textLabel}

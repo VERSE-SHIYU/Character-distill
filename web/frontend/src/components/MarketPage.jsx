@@ -19,6 +19,7 @@ export default function MarketPage() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
 
   const [cards, setCards] = useState([])
@@ -268,7 +269,7 @@ export default function MarketPage() {
               const charName = cardData.name || c.name || '?'
               const identity = cardData.identity || ''
               return (
-                <div key={c.id} className="market-card-v2 anim-item" style={{ animationDelay: `${idx * 50}ms` }} onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); setView('marketCardDetail') }}>
+                <div key={c.id} className="market-card-v2 anim-item" style={{ animationDelay: `${idx * 50}ms` }} onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); pushView('marketCardDetail') }}>
                   <div className="market-card-v2-cover">
                     {c.avatar_data ? (
                       <>

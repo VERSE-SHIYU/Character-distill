@@ -438,6 +438,7 @@ export default function HistoryPanel({ initialTrash = false }) {
   }
 
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
 
   async function loadBooks() {
@@ -474,7 +475,7 @@ export default function HistoryPanel({ initialTrash = false }) {
 
   const handleResumeGroup = (groupId) => {
     setResumeGroupId(groupId)
-    setView('groupChat')
+    pushView('groupChat')
   }
 
   const bodyContent = detail ? (

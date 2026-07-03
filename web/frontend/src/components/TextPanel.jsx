@@ -99,6 +99,7 @@ export default function TextPanel() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
   const startChat = useAppStore((s) => s.startChat)
 
@@ -337,7 +338,7 @@ export default function TextPanel() {
                       onClick={(e) => {
                         e.stopPropagation()
                         useAppStore.getState().setReaderTextId(t.id)
-                        useAppStore.getState().setView('reader')
+                        useAppStore.getState().pushView('reader')
                       }}
                       title="阅读"
                     >
@@ -348,6 +349,7 @@ export default function TextPanel() {
                       className="btn-ghost btn-sm"
                       onClick={(e) => {
                         e.stopPropagation()
+                        pushView('character')
                         selectText(t.id)
                       }}
                       title="蒸馏角色"
@@ -708,6 +710,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                         </button>
                         <button type="button" onClick={async () => {
                           setMenuOpen(null)
+                          pushView('chat')
                           try {
                             await startChat(c)
                           } catch {}
@@ -717,7 +720,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                         <button type="button" onClick={() => {
                           setMenuOpen(null)
                           setCurrentMarketCardId(c.id)
-                          setView('marketCardDetail')
+                          pushView('marketCardDetail')
                         }}>
                           发布到市场
                         </button>
@@ -771,6 +774,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                                 </button>
                                 <button type="button" onClick={async () => {
                                   setMenuOpen(null)
+                                  pushView('chat')
                                   try { await startChat(vc) } catch {}
                                 }}>
                                   聊天
@@ -778,7 +782,7 @@ function CharacterManagement({ setView, selectText, startChat, setCurrentMarketC
                                 <button type="button" onClick={() => {
                                   setMenuOpen(null)
                                   setCurrentMarketCardId(vc.id)
-                                  setView('marketCardDetail')
+                                  pushView('marketCardDetail')
                                 }}>
                                   发布到市场
                                 </button>

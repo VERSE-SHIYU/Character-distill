@@ -8,6 +8,7 @@ export default function AwakeningToast() {
   const loadCards = useAppStore((s) => s.loadCards)
   const selectText = useAppStore((s) => s.selectText)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
 
   if (!toast) return null
 
@@ -23,7 +24,7 @@ export default function AwakeningToast() {
         || cards.find((c) => c.name === toast.character)
       if (card) {
         viewCard(card)
-        setView('character')
+        pushView('character')
       }
     }
     dismiss()

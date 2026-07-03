@@ -70,7 +70,7 @@ function MineCardMenu({ card, onRefresh }) {
             <button type="button" onClick={(e) => {
               e.stopPropagation()
               useAppStore.getState().setCurrentMarketCardId(card.id)
-              useAppStore.getState().setView('marketCardDetail')
+              useAppStore.getState().pushView('marketCardDetail')
               setOpen(false)
             }}>编辑</button>
             <button type="button" onClick={(e) => {
@@ -105,6 +105,7 @@ export default function MinePage() {
   const fetchUserBanner = useAppStore((s) => s.fetchUserBanner)
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const pushView = useAppStore((s) => s.pushView)
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
@@ -569,7 +570,7 @@ export default function MinePage() {
                   </span>
                 )}
               </h2>
-              {isMe && <button className="mine-edit-icon" onClick={() => setView('settings')} title="编辑资料">✏️</button>}
+              {isMe && <button className="mine-edit-icon" onClick={() => pushView('settings')} title="编辑资料">✏️</button>}
             </div>
             {isMe ? (
               bioEditing ? (
@@ -705,7 +706,7 @@ export default function MinePage() {
                 return (
                   <div key={card.id} className="market-card-v2" onClick={() => {
                     useAppStore.getState().setCurrentMarketCardId(card.id)
-                    setView('marketCardDetail')
+                    pushView('marketCardDetail')
                   }}>
                     <div className="market-card-v2-cover">
                       {card.avatar_data ? (
@@ -966,7 +967,7 @@ export default function MinePage() {
                       const data = await res.json()
                       setPosts(data.posts || [])
                     }}
-                    onAuthorClick={(userId) => { setAuthorUserId(userId); setView('author') }}
+                    onAuthorClick={(userId) => { setAuthorUserId(userId); pushView('author') }}
                     onDelete={(id) => setDeletePostId(id)}
                     showDelete={isMe}
                   />
@@ -990,7 +991,7 @@ export default function MinePage() {
             <div className="mine-follow-list">
               {followers.map(f => (
                 <div key={f.id} className="mine-follow-card">
-                  <button type="button" className="mine-follow-card-main" onClick={() => { setAuthorUserId(f.id); setView('author') }}>
+                  <button type="button" className="mine-follow-card-main" onClick={() => { setAuthorUserId(f.id); pushView('author') }}>
                     <Avatar name={displayName(f) || '?'} size={44} src={f.avatar_data} />
                     <div className="mine-follow-info">
                       <span className="mine-follow-name">{displayName(f)}</span>
@@ -1055,7 +1056,7 @@ export default function MinePage() {
                         <button
                           type="button"
                           className="mine-following-name"
-                          onClick={() => { setAuthorUserId(u.id); setView('author') }}
+                          onClick={() => { setAuthorUserId(u.id); pushView('author') }}
                         >
                           {displayName(u)}
                         </button>
