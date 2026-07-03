@@ -283,7 +283,7 @@ class ChatEngine:
         if parts:
             retrieval_block = "\n\n【检索参考】\n" + "\n\n".join(parts)
 
-            # Token 预算：超出 TOTAL_BUDGET 时按 retrieved 顺序截断
+            # Token 预算：超出动态区预算时按 retrieved 顺序截断
             budget = (
                 getattr(self._ctx_engine, "MAX_SCENE", 0)
                 + getattr(self._ctx_engine, "MAX_MEMORY", 0)
