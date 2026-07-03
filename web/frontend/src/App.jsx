@@ -8,6 +8,7 @@ import DistillTaskBar from './components/DistillTaskBar'
 import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
+import MobileTabBar from './components/MobileTabBar'
 import Loading from './components/common/Loading'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -258,6 +259,7 @@ export default function App() {
         )}
         <MainContent />
       </main>
+      <MobileTabBar />
       <DistillTaskBar />
       <AwakeningToast />
       <ArchiveListModal />

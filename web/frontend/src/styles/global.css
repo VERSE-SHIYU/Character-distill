@@ -16678,3 +16678,33 @@ select.settings-input {
   right: auto;
 }
 
+/* ===== Mobile Adaptation: Step 2 ===== */
+.mobile-tabbar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .sidebar,
+  .sidebar-trigger,
+  .sidebar-overlay {
+    display: none !important;
+  }
+
+  .mobile-tabbar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--card-bg);
+    backdrop-filter: var(--card-blur);
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .main-panel {
+    padding-bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
