@@ -184,8 +184,8 @@ class TestReunionGreeting:
         assert engine.generate_reunion_greeting(session_data=_old_session_data()) == ""
 
     def test_llm_returns_long_text_returns_empty(self):
-        """Greeting longer than 100 chars is discarded."""
-        engine = _make_engine(mock_llm_return="a" * 101)
+        """Greeting longer than 130 chars is discarded."""
+        engine = _make_engine(mock_llm_return="a" * 131)
         assert engine.generate_reunion_greeting(session_data=_old_session_data()) == ""
 
     def test_no_storage_returns_empty(self):
@@ -275,6 +275,62 @@ class TestReunionGreeting:
 
         instruction = engine.llm.chat.call_args[0][1][0]["content"]
         assert "对方不在时你想起过" not in instruction
+
+    def test_scene_anchor_in_instruction(self):
+        """场景锚指令出现在 prompt 中。"""
+        engine = _make_engine()
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "括号动作" in instruction
+        assert "不超过15字" in instruction
+
+    def test_scene_anchor_voice_mode(self):
+        """语音模式下场景锚替换为融进话里。"""
+        engine = _make_engine()
+        result = engine.generate_reunion_greeting(
+            session_data=_old_session_data(), voice_mode=True,
+        )
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "不用括号" in instruction
+        assert "括号动作" not in instruction  # text mode anchor absent
+        assert "刚洗完澡呢，你就来了" in instruction
+
+    def test_offline_life_share_for_friend_stage(self):
+        """朋友档及以上 → prompt 含离线生活分享段。"""
+        engine = _make_engine()
+        engine._card_id = "card_test"
+        engine._memory = MagicMock()
+        engine._memory.enabled = True
+        engine._memory.get_all.return_value = [
+            {"memory": "对方说喜欢下雨天", "metadata": {"importance": 8}},
+        ]
+        engine._affinity_service.affinity = 60
+        engine._affinity_service.stage = "朋友"
+        engine._affinity_service.stage_emoji = "😄"
+
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "你这几天做的事" in instruction
+        assert "三选一" in instruction
+
+    def test_no_offline_life_share_below_friend(self):
+        """熟悉及以下 → 不含离线生活分享段。"""
+        engine = _make_engine()
+        engine._card_id = "card_test"
+        engine._affinity_service.affinity = 50
+        engine._affinity_service.stage = "熟悉"
+
+        result = engine.generate_reunion_greeting(session_data=_old_session_data())
+        assert result == "你总算回来了。"
+
+        instruction = engine.llm.chat.call_args[0][1][0]["content"]
+        assert "你这几天做的事" not in instruction
 
 
 class TestDailyVisitAwareness:

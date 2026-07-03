@@ -28,6 +28,7 @@ _daily_visits: dict[str, tuple[str, int]] = {}
 class ResumeRequest(BaseModel):
     """Resume a session after server restart."""
     client_tz: str = ""
+    voice_mode: bool = False
 
 
 # ---- Static-path routes first (before /{session_id} parameterized routes) ----
@@ -314,7 +315,9 @@ async def resume_session(
 
     greeting_data: dict[str, Any] | None = None
     try:
-        greeting = await asyncio.to_thread(engine.generate_reunion_greeting)
+        greeting = await asyncio.to_thread(
+            engine.generate_reunion_greeting, None, _body.voice_mode,
+        )
         if greeting:
             msg_rec = await storage.save_message(session_id, "char", greeting, "")
             engine.history.append({"role": "assistant", "content": greeting})

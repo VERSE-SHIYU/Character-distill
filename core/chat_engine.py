@@ -1219,7 +1219,9 @@ class ChatEngine:
         except Exception:
             return False
 
-    def generate_reunion_greeting(self, session_data: dict | None = None) -> str:
+    def generate_reunion_greeting(
+        self, session_data: dict | None = None, voice_mode: bool = False,
+    ) -> str:
         """Generate a reunion greeting when user returns after 6+ hours.
 
         Returns empty string if conditions not met or generation fails.
@@ -1272,17 +1274,29 @@ class ChatEngine:
             # Time awareness block — naturally reflects the real interval
             time_block = self._build_time_awareness_block()
 
+            scene_anchor = (
+                "开口前，先用一个不超过15字的括号动作/状态把自己放进具体场景"
+                "——此刻你在做什么、什么姿态，由当前时段、你的身份和性格决定"
+                "（深夜可能窝着刷手机，清晨可能刚醒）。格式：(动作)台词。"
+            )
+            if voice_mode:
+                scene_anchor = (
+                    "不用括号，把此刻状态融进话里说出来"
+                    "（如「刚洗完澡呢，你就来了」）。"
+                )
+
             instruction = (
-                "【重逢】对方离开了一段时间，刚刚重新出现在你面前"
+                f"【重逢】对方离开了一段时间，刚刚重新出现在你面前"
                 "（间隔与时段见上方现实感知）。这次由你先开口。"
                 "你此刻的心境、你们关系的远近决定这句话的温度"
                 "——想念、揶揄、嗔怪、或淡淡一句都可以。"
                 "间隔和时间藏在语气里，绝不点明数字或「好久不见」这类套话。"
                 "上次聊的事若还挂在心里可不经意带到，不要复述。"
-                "就一句，不超过50字，是你忍不住先说的，不是欢迎词。"
+                f"\n\n{scene_anchor}"
+                "\n\n就一句，不超过50字，是你忍不住先说的，不是欢迎词。"
             )
 
-            # ── 离线时刻门控：朋友档及以上 + 有高重要性记忆 ──
+            # ── 离线时刻门控：朋友档及以上 ──
             if self._stage in ("朋友", "亲近", "心意相通"):
                 memory_summary = self._build_reunion_memories()
                 if memory_summary:
@@ -1296,6 +1310,13 @@ class ChatEngine:
                         "由你的性格决定。"
                     )
 
+                instruction += (
+                    "\n\n你也可以随口提一件你这几天做的事——"
+                    "必须从你的身份、职业和原著设定中合理生长，"
+                    "绝不虚构设定之外的经历。像递一个对方接得住的话头。"
+                    "分享生活、想起对方、或什么都不提，三选一，由性格和心情决定。"
+                )
+
             messages = [{"role": "user", "content": instruction}]
             if time_block:
                 messages[0] = {
@@ -1306,7 +1327,7 @@ class ChatEngine:
             response = self.llm.chat(system_prompt, messages)
 
             greeting = response.strip().strip('"\'').strip('「」')
-            if not greeting or len(greeting) > 100:
+            if not greeting or len(greeting) > 130:
                 return ""
 
             _reunion_dates[self._session_id] = today
