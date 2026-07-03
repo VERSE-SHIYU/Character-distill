@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from adapters.llm_adapter import ToolsNotSupportedError
+from core.agent.tools import EMPTY_RESULT
 
 ROUTER_SYSTEM_PROMPT = (
     "你是一个对话系统的检索决策器。你的唯一职责是判断："
@@ -111,7 +112,7 @@ class AgentLoop:
                         "elapsed_ms": result.elapsed_ms,
                     })
                     # 收集成功且非空的结果
-                    if ok and result_content and result_content != "未找到相关内容":
+                    if ok and result_content and result_content != EMPTY_RESULT:
                         retrieved.append((name, result_content))
 
                 messages.append({

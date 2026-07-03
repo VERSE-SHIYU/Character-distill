@@ -284,7 +284,11 @@ class ChatEngine:
             retrieval_block = "\n\n【检索参考】\n" + "\n\n".join(parts)
 
             # Token 预算：超出 TOTAL_BUDGET 时按 retrieved 顺序截断
-            budget = getattr(self._ctx_engine, "TOTAL_BUDGET", 32000)
+            budget = (
+                getattr(self._ctx_engine, "MAX_SCENE", 0)
+                + getattr(self._ctx_engine, "MAX_MEMORY", 0)
+                + getattr(self._ctx_engine, "MAX_WEB", 0)
+            ) or 4000
             tok = _count_tokens(retrieval_block)
             if tok > budget:
                 # 从末尾逐条移除

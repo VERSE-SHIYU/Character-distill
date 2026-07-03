@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import Any
 
 
+EMPTY_RESULT = "未找到相关内容"
+
+
 @dataclass
 class ToolResult:
     tool: str
@@ -154,6 +157,6 @@ class AgentToolkit:
         return ToolResult(
             tool=name,
             ok=ok,
-            content=result or "未找到相关内容",
+            content=result or EMPTY_RESULT,
             elapsed_ms=elapsed,
         )
