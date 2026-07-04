@@ -17062,5 +17062,14 @@ select.settings-input {
   .creation-text-actions {
     margin-left: auto;
   }
+
+  .mine-tab-bar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mine-tab-bar::-webkit-scrollbar { display: none; }
+  .mine-tab { white-space: nowrap; flex-shrink: 0; }
 }
 
