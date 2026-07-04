@@ -12991,6 +12991,8 @@ select.settings-input {
 /* ── Profile Header ── */
 .mine-profile-section {
   padding: 16px 24px;
+  position: relative;
+  z-index: 3;
 }
 .mine-profile-row {
   display: flex;
@@ -17447,6 +17449,49 @@ select.settings-input {
   .mobile-backbar-placeholder {
     display: block;
     height: var(--mobile-backbar-h);
+  }
+
+  /* ── CharCard mobile: detail view sticky header ── */
+  .mobile-char-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 44px;
+    padding: 0 12px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--glass-border);
+    flex-shrink: 0;
+  }
+  .mobile-char-detail-back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .mobile-char-detail-back:active {
+    background: var(--accent-soft);
+  }
+  .mobile-char-detail-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .char-body {
+    flex-direction: column;
   }
 }
 

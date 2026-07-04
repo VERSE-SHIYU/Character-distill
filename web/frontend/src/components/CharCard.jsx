@@ -112,7 +112,9 @@ function CharPanelBody({ textId }) {
   const error = useAppStore((s) => s.error)
   const setError = useAppStore((s) => s.setError)
   const viewCard = useAppStore((s) => s.viewCard)
+  const navigateBack = useAppStore((s) => s.navigateBack)
   const [detailLoading, setDetailLoading] = useState(false)
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     loadCards(textId)
@@ -120,6 +122,33 @@ function CharPanelBody({ textId }) {
 
   const handleSelectCard = (card) => {
     viewCard(card)
+  }
+
+  // Mobile single-column: show list or detail, not both
+  if (isMobile && currentCard) {
+    return (
+      <div className="char-body">
+        {/* Sticky back-to-list header */}
+        <div className="mobile-char-detail-header">
+          <button
+            type="button"
+            className="mobile-char-detail-back"
+            onClick={() => viewCard(null)}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5m7-7-7 7 7 7" />
+            </svg>
+          </button>
+          <span className="mobile-char-detail-title">{currentCard.name || '角色详情'}</span>
+        </div>
+        {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
+        {detailLoading ? (
+          <Loading text="加载角色…" />
+        ) : currentCard ? (
+          <CardDetail card={currentCard} textId={textId} />
+        ) : null}
+      </div>
+    )
   }
 
   return (
@@ -740,6 +769,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 // ---- Right: card detail view ----
 
 function CardDetail({ card, textId }) {
+  const isMobile = useIsMobile()
   const startChat = useAppStore((s) => s.startChat)
   const pushView = useAppStore((s) => s.pushView)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
@@ -978,14 +1008,14 @@ function CardDetail({ card, textId }) {
 
       {/* Bottom: export + start chat + back */}
       <div className="card-footer">
-        <button
+        {!isMobile && <button
           type="button"
           className="chat-back-btn"
           onClick={() => navigateTo('text')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回文本列表
-        </button>
+        </button>}
         <button
           type="button"
           className="btn-secondary"
