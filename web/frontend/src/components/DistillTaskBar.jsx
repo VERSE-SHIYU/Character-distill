@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
@@ -32,7 +33,6 @@ function DistillTaskItem({ task }) {
       if (task.textId) await loadCards(task.textId)
       pushView('character')
     }
-    // After navigation, select the newly generated card
     if (card_id) {
       const state = useAppStore.getState()
       const card = state.cards.find(c => c.id === card_id)
@@ -96,13 +96,66 @@ function DistillTaskItem({ task }) {
 export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
 
+  const [collapsed, setCollapsed] = useState(true)
+  const [shake, setShake] = useState(false)
+  const prevCountRef = useRef(tasks.length)
+  const panelRef = useRef(null)
+
+  // Track task count changes to trigger shake on new arrivals
+  useEffect(() => {
+    if (tasks.length > prevCountRef.current && tasks.length > 0 && collapsed) {
+      setShake(true)
+    }
+    prevCountRef.current = tasks.length
+  }, [tasks.length, collapsed])
+
+  // Dismiss panel on outside mousedown
+  useEffect(() => {
+    if (collapsed) return
+    const handler = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        setCollapsed(true)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [collapsed])
+
   if (tasks.length === 0) return null
 
+  const runningCount = tasks.filter((t) => t.status !== 'done' && t.status !== 'error').length
+  const hasQueued = tasks.some((t) => t.status === 'queued')
+  const allTerminal = tasks.every((t) => t.status === 'done' || t.status === 'error')
+
+  const fabClass = `distill-fab${shake ? ' shake' : ''}`
+
   return (
-    <div className="distill-task-bar">
-      {tasks.map((t) => (
-        <DistillTaskItem key={t.id} task={t} />
-      ))}
-    </div>
+    <>
+      {collapsed ? (
+        <button
+          className={fabClass}
+          onClick={() => setCollapsed(false)}
+          onAnimationEnd={() => setShake(false)}
+          title="蒸馏任务"
+        >
+          <span className="distill-fab-icon">{allTerminal ? '✅' : '⚙'}</span>
+          <span className={`distill-fab-badge${hasQueued ? ' badge-pulse' : ''}`}>
+            {allTerminal ? '✓' : runningCount}
+          </span>
+        </button>
+      ) : (
+        <div className="distill-panel" ref={panelRef}>
+          <div className="distill-panel-header">
+            <span className="distill-panel-title">蒸馏任务 ({tasks.length})</span>
+            <button className="distill-panel-close" onClick={() => setCollapsed(true)}>✕</button>
+          </div>
+          <div className="distill-panel-body">
+            {tasks.map((t) => (
+              <DistillTaskItem key={t.id} task={t} />
+            ))}
+          </div>
+        </div>
+      )}
+    </>
   )
 }

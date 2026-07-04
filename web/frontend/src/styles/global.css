@@ -8684,19 +8684,145 @@ select.settings-input {
 
 /* ==================== Distill Task Bar ==================== */
 
-.distill-task-bar {
+/* ── Collapsed: FAB ── */
+.distill-fab {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  right: 16px;
+  bottom: 16px;
   z-index: 1000;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--card-bg);
+  backdrop-filter: var(--card-blur);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: box-shadow 0.2s;
+}
+.distill-fab:hover {
+  box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+}
+
+.distill-fab-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.distill-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent, #667eea);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.distill-fab-badge.badge-pulse {
+  animation: badge-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.2); }
+}
+
+/* Shake animation for new task arrival */
+.distill-fab.shake {
+  animation: distill-shake 0.5s ease;
+}
+
+@keyframes distill-shake {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-4px) rotate(-4deg); }
+  40%      { transform: translateX(4px) rotate(4deg); }
+  60%      { transform: translateX(-3px) rotate(-3deg); }
+  80%      { transform: translateX(3px) rotate(3deg); }
+}
+
+/* ── Expanded: Panel ── */
+.distill-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 72px;
+  z-index: 1000;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: var(--card-blur);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.distill-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.distill-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.distill-panel-close {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.distill-panel-close:hover {
+  background: var(--pill-bg);
+  color: var(--text);
+}
+
+.distill-panel-body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 6px 12px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  pointer-events: none;
+  padding: 8px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+@media (max-width: 768px) {
+  .distill-fab {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .distill-panel {
+    left: 12px;
+    right: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+  }
 }
 
 .distill-task-item {
