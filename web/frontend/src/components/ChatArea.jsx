@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useTypewriter from '../hooks/useTypewriter'
+import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
@@ -30,6 +31,7 @@ export default function ChatArea() {
   const pushView = useAppStore((s) => s.pushView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
+  const isMobile = useIsMobile()
 
   // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   // and no session-creation is already in-flight (_pendingChatCardId guard)
@@ -1079,7 +1081,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     <Avatar
       name={userRole || '我'}
       src={userAvatarUrl}
-      size={68}
+      size={isMobile ? 40 : 68}
       onClick={onUserAvatarClick}
     />
   )
@@ -1092,7 +1094,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         side={isUser ? 'right' : 'left'}
         avatar={
           !isUser
-            ? <Avatar name={charName} src={avatarUrl} size={68} />
+            ? <Avatar name={charName} src={avatarUrl} size={isMobile ? 40 : 68} />
             : userAvatarNode
         }
         time={timestamp ? formatChatTime(timestamp) : undefined}

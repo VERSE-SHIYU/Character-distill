@@ -16990,12 +16990,16 @@ select.settings-input {
     z-index: 1;
   }
 
-  .cbubble {
+  .app-shell.is-secondary-view .main-panel {
+    padding-bottom: 0;
+  }
+
+  .cbubble-col {
     max-width: 85%;
   }
 
-  .app-shell.is-secondary-view .main-panel {
-    padding-bottom: 0;
+  .cbubble-time {
+    white-space: nowrap;
   }
 
   .chat-textarea {
