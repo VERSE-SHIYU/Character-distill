@@ -224,7 +224,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
   }
 
   return (
-    <div className="chat-input-bar">
+    <div className={`chat-input-bar${!text.trim() ? ' is-empty' : ''}`}>
       {voice && (
         funasrReady ? (
           <button

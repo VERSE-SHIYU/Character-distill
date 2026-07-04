@@ -25,7 +25,7 @@ export default function MobileBackBar() {
   const currentView = useAppStore((s) => s.currentView)
   const popView = useAppStore((s) => s.popView)
 
-  if (!SECONDARY_VIEWS.includes(currentView)) return null
+  if (!SECONDARY_VIEWS.includes(currentView) || currentView === 'chat') return null
 
   return (
     <>

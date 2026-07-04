@@ -17074,48 +17074,116 @@ select.settings-input {
   }
 }
 
-/* ===== Mobile Adaptation: Step 4 ===== */
+/* ===== Mobile Adaptation: Step 4 — WeChat-style compact chat ===== */
 @media (max-width: 768px) {
-  .chat-area {
-    height: calc(100vh - var(--mobile-backbar-h));
-    height: calc(100dvh - var(--mobile-backbar-h));
+  /* ── Input area: thin bar, sticky bottom ── */
+  .chat-input-bar {
+    position: sticky;
+    bottom: 0;
+    padding: 6px 10px;
+    padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    align-items: center;
+    background: var(--glass-bg);
+    border-top: 0.5px solid var(--glass-border);
   }
 
+  /* ── Emoji button: bare icon, 40px hit area ── */
+  .chat-input-bar [data-emoji-btn] {
+    width: 40px;
+    height: 40px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    align-self: center;
+  }
+  .chat-input-bar [data-emoji-btn] svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  /* ── Textarea: 36px, pill shape, no border/shadow ── */
+  .chat-textarea {
+    min-height: 36px;
+    height: 36px;
+    border-radius: 18px;
+    border: none;
+    padding: 4px 14px;
+  }
+  .chat-textarea:focus {
+    border: none;
+    box-shadow: none;
+  }
+
+  /* ── Send button: hidden when empty, compact accent pill ── */
+  .chat-input-bar.is-empty .chat-send-btn {
+    display: none;
+  }
+  .chat-send-btn {
+    width: 56px;
+    min-width: 56px;
+    height: 32px;
+    min-height: 32px;
+    border-radius: 16px;
+    font-size: 13px;
+    background: var(--accent);
+  }
+  .chat-send-btn:not(:disabled) {
+    animation: chat-send-fadein 0.15s ease;
+  }
+
+  /* ── Chat area: full height (no backbar) ── */
+  .chat-area {
+    height: 100dvh;
+  }
+
+  /* ── Header: compact ── */
+  .chat-topbar-avatar-btn.avatar-shape > div {
+    width: 36px !important;
+    height: 36px !important;
+  }
+  .chat-topbar-compact-name {
+    font-size: 15px;
+  }
+
+  /* ── User role bar: thin strip ── */
+  .user-role-bar {
+    height: 28px;
+    padding: 2px 16px;
+  }
+
+  /* ── Messages area: tighter padding ── */
+  .chat-messages {
+    padding: 8px 12px 48px;
+  }
+
+  /* ── Bubble max-width: relax to 78% ── */
+  .cbubble-col {
+    max-width: 78%;
+  }
+
+  /* ── Group chat messages: edge-to-edge ── */
+  .group-chat-layout .group-chat-messages-area {
+    padding: 12px 0 48px;
+    gap: 12px;
+  }
+
+  /* ── Existing mobile chat styles kept ── */
   .chat-messages,
   .group-chat-messages-area {
     -webkit-overflow-scrolling: touch;
   }
-
-  .chat-input-bar {
-    position: sticky;
-    bottom: 0;
-    padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
-    background: var(--card-bg);
-    backdrop-filter: blur(20px) saturate(180%);
-    -webkit-backdrop-filter: blur(20px) saturate(180%);
-    z-index: 1;
-  }
-
   .app-shell.is-secondary-view .main-panel {
     padding-bottom: 0;
   }
-
-  .cbubble-col {
-    max-width: 85%;
-  }
-
   .cbubble-time {
     white-space: nowrap;
   }
+}
 
-  .chat-textarea {
-    min-height: 44px;
-  }
-
-  .chat-send-btn {
-    min-width: 44px;
-    min-height: 44px;
-  }
+@keyframes chat-send-fadein {
+  from { opacity: 0; transform: scale(0.9); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* ===== Mobile Adaptation: Step 5 ===== */
