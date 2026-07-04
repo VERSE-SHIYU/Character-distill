@@ -364,3 +364,17 @@ export const Moon = (props) => (
     <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
   </Svg>
 )
+
+export const Clock = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </Svg>
+)
+
+export const Palette = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
+  </Svg>
+)

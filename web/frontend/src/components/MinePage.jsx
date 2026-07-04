@@ -10,8 +10,11 @@ import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
-import { List, Popup } from 'antd-mobile'
+import { Popup } from 'antd-mobile'
 import { Theater, Book, MessageSquare } from './common/Icon'
+import EntryGrid from './common/EntryGrid'
+import EntryList from './common/EntryList'
+import { QUICK_ENTRIES, CONTENT_ENTRIES, ABOUT_ENTRIES } from '../config/mineEntries'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -119,6 +122,17 @@ export default function MinePage() {
   // Theme drawer state
   const [themeOpen, setThemeOpen] = useState(false)
   const [currentTheme, setCurrentTheme] = useState(() => getTheme())
+
+  const handleEntryAction = useCallback((key, view) => {
+    if (key === 'messages') {
+      setPreviousView('mine')
+      setView('messages')
+    } else if (key === 'theme') {
+      setThemeOpen(true)
+    } else if (view) {
+      pushView(view)
+    }
+  }, [setPreviousView, setView, pushView])
 
   // Store fetched author data when viewing others
   const [profileAuthor, setProfileAuthor] = useState(null)
@@ -557,7 +571,7 @@ export default function MinePage() {
         <div className="mine-profile-row">
           <div className="mine-profile-left">
             <div className="mine-avatar-wrap">
-              <Avatar name={username} src={avatarSrc} size={60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
+              <Avatar name={username} src={avatarSrc} size={isMobile ? 56 : 60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
               {isMe && (
                 <>
                   <div className="mine-avatar-overlay avatar-shape" onClick={() => avatarInputRef.current?.click()}>
@@ -1108,72 +1122,11 @@ export default function MinePage() {
 
       {isMobile && (
         <div className="mine-mobile-nav">
-          <List mode="card" header="常用">
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>}
-              onClick={() => { setPreviousView('mine'); setView('messages') }}
-              arrow
-              extra={unreadTotal > 0 ? (
-                <span className="mine-unread-badge">{unreadTotal > 99 ? '99+' : unreadTotal}</span>
-              ) : null}
-            >消息</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}
-              onClick={() => pushView('settings')}
-              arrow
-            >设置</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
-              onClick={() => setThemeOpen(true)}
-              arrow
-            >主题</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
-              onClick={() => pushView('market')}
-              arrow
-            >市场</List.Item>
-          </List>
-          <List mode="card" header="内容">
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
-              onClick={() => pushView('history')}
-              arrow
-            >历史会话</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>}
-              onClick={() => pushView('feed')}
-              arrow
-            >动态</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
-              onClick={() => pushView('profile')}
-              arrow
-            >个人资料</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>}
-              onClick={() => pushView('voice')}
-              arrow
-            >语音</List.Item>
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>}
-              onClick={() => pushView('trash')}
-              arrow
-            >回收站</List.Item>
-          </List>
-          <List mode="card" header="关于">
-            <List.Item
-              prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}
-              onClick={() => pushView('legal')}
-              arrow
-            >法律条款</List.Item>
-            {authUser?.is_admin && (
-              <List.Item
-                prefix={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}
-                onClick={() => pushView('admin')}
-                arrow
-              >管理面板</List.Item>
-            )}
-          </List>
+          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} />
+          <div className="entry-group-gap" />
+          <EntryList entries={CONTENT_ENTRIES} onAction={handleEntryAction} />
+          <div className="entry-group-gap" />
+          <EntryList entries={ABOUT_ENTRIES} flags={{ isAdmin: authUser?.is_admin }} onAction={handleEntryAction} />
         </div>
       )}
 

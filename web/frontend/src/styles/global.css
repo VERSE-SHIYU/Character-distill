@@ -13239,10 +13239,12 @@ select.settings-input {
 
 /* ── Mobile ── */
 @media (max-width: 640px) {
-  .mine-banner { max-height: 160px; }
-  .mine-profile-section { padding: 12px 16px; }
-  .mine-profile-row { flex-wrap: wrap; }
-  .mine-profile-stats { width: 100%; padding-top: 8px; }
+  .mine-banner { max-height: 120px; }
+  .mine-profile-section { padding: 8px 16px; }
+  .mine-profile-row { flex-wrap: wrap; gap: 8px; }
+  .mine-profile-name { font-size: 16px; }
+  .mine-bio-display { font-size: 12px; }
+  .mine-profile-stats { width: 100%; padding-top: 4px; }
   .mine-profile-actions { width: 100%; justify-content: flex-end; padding-top: 8px; }
   .mine-tab-bar { padding: 0 16px; }
   .mine-tab-content { padding: 16px 16px 20px; }
@@ -17011,6 +17013,131 @@ select.settings-input {
   font-size: 10px;
   color: var(--accent);
   font-weight: 700;
+}
+
+/* ── EntryGrid (mobile mine page quick actions) ── */
+.entry-grid {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+}
+.entry-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 12px;
+  transition: background 0.15s;
+  font-family: inherit;
+}
+.entry-grid-item:hover {
+  background: var(--accent-soft);
+}
+.entry-grid-item:active {
+  background: var(--accent-soft);
+  transform: scale(0.96);
+}
+.entry-grid-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  color: var(--text-primary);
+}
+.entry-grid-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 99px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1.5px solid var(--card-bg);
+}
+.entry-grid-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* ── EntryList (mobile mine page grouped list) ── */
+.entry-list {
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.entry-list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.15s;
+  border-bottom: 0.5px solid var(--glass-border);
+}
+.entry-list-item:last-child {
+  border-bottom: none;
+}
+.entry-list-item:hover {
+  background: var(--accent-soft);
+}
+.entry-list-item:active {
+  background: var(--accent-soft);
+}
+.entry-list-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+.entry-list-badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 99px;
+  background: #ff3b30;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1.5px solid var(--card-bg);
+}
+.entry-list-label {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.entry-list-arrow {
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.entry-group-gap {
+  height: 8px;
 }
 
 /* ===== Mobile Adaptation: Step 3 ===== */
