@@ -457,13 +457,7 @@ function ChatView() {
           <div style={{ position: 'relative', flexShrink: 0 }}>
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
-          <button type="button" className="chat-topbar-back" onClick={() => {
-            const { viewHistory, popView } = useAppStore.getState()
-            if (viewHistory.length > 0) { popView(); return }
-            const tid = currentCard?.text_id || currentTextId
-            if (tid) selectText(tid)
-            else pushView('character')
-          }} title="返回">
+          <button type="button" className="chat-topbar-back" onClick={handleChatBack} title="返回">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
           <button
