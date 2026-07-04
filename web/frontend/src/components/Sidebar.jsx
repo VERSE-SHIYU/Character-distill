@@ -365,6 +365,7 @@ const THEMES = [
   { key: 'ocean',    emoji: '\u{1F30A}', label: '海盐' },
   { key: 'sakura',   emoji: '\u{1F338}', label: '樱花' },
   { key: 'midnight', emoji: '\u{1F311}', label: '午夜' },
+  { key: 'galaxy',   emoji: '\u{1F30C}', label: '银河' },
 ]
 
 function ThemePopup({ onClose }) {

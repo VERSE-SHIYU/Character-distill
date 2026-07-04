@@ -1076,7 +1076,7 @@ html.theme-aurora::before {
 }
 .theme-ocean .ocean-bg {
   opacity: 1;
-  background: url('/seascape-bg.jpg') center / cover no-repeat;
+  background: url('/seascape-bg.webp') center / cover no-repeat;
   filter: blur(4px) brightness(0.85);
   transform: scale(1.03);
 }
