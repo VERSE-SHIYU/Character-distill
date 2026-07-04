@@ -6,6 +6,7 @@ import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
 import { avatarGradient } from '../utils/avatarColor'
 import { SkeletonCard } from './common/Skeleton'
+import GlobalSearchBox from './common/GlobalSearchBox'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import useIsMobile from '../hooks/useIsMobile'
@@ -176,6 +177,7 @@ export default function HomePage() {
 
   return (
     <div className="home-page panel">
+      <GlobalSearchBox className="home-global-search" />
       {/* API Key alert */}
       {!apiConfigured && authUser && (
         <div className="api-config-alert" style={{ marginBottom: 16, cursor: 'pointer' }} onClick={() => pushView('settings')}>

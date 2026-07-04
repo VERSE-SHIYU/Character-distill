@@ -1711,8 +1711,11 @@ html.theme-aurora::before {
     height: 28px;
   }
 
-  .feed-global-search {
+  .home-global-search {
     display: block;
+  }
+  .home-page.panel {
+    overflow-y: auto;
   }
 }
 
@@ -14643,8 +14646,8 @@ select.settings-input {
   color: var(--text-dim);
 }
 
-/* ---- GlobalSearchBox in FeedPage (mobile only) ---- */
-.feed-global-search {
+/* ---- GlobalSearchBox on HomePage (mobile only) ---- */
+.home-global-search {
   display: none;
 }
 
