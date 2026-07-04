@@ -8,6 +8,8 @@ import Loading from './common/Loading'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import ErrorBox from './common/ErrorBox'
 import useIsMobile from '../hooks/useIsMobile'
+import useSwipeBack from '../hooks/useSwipeBack'
+import PageHeader from './PageHeader'
 import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
@@ -33,12 +35,13 @@ export default function CharCard() {
   const texts = useAppStore((s) => s.texts)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
-  const isMobile = useIsMobile()
 
   const goBack = useCallback(() => {
     if (useAppStore.getState().restoreChatSnapshot()) return
     navigateBack()
   }, [navigateBack])
+
+  const swipeBack = useSwipeBack(goBack)
 
   if (!currentTextId) {
     return (
@@ -68,32 +71,9 @@ export default function CharCard() {
   const filename = currentText?.filename || currentTextId.slice(0, 8)
 
   return (
-    <div className="char-panel panel">
-      {/* Breadcrumb */}
-      <nav className="breadcrumb">
-        <button type="button" className="breadcrumb-item" onClick={goBack}>
-          文本管理
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <button
-          type="button"
-          className="breadcrumb-item breadcrumb-current"
-          onClick={goBack}
-        >
-          {filename}
-        </button>
-        <span className="breadcrumb-sep">›</span>
-        <span className="breadcrumb-item breadcrumb-current">角色管理</span>
-      </nav>
-
+    <div className="char-panel panel" {...swipeBack}>
       <header className="panel-header">
-        {!isMobile && <button type="button" className="chat-back-btn" onClick={goBack} title="返回">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
-        </button>}
-        <h1 className="panel-title">
-          角色管理
-        </h1>
+        <PageHeader title="角色管理" onBack={goBack} />
         <p className="panel-desc">
           当前文本：{filename}
         </p>
