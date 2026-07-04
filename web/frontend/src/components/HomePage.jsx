@@ -8,6 +8,7 @@ import { avatarGradient } from '../utils/avatarColor'
 import { SkeletonCard } from './common/Skeleton'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
+import useIsMobile from '../hooks/useIsMobile'
 
 function previewText(text, max = 60) {
   if (!text) return ''
@@ -37,6 +38,7 @@ export default function HomePage() {
   const [cardsLoading, setCardsLoading] = useState(true)
   const [recentSessions, setRecentSessions] = useState([])
   const [resumingId, setResumingId] = useState(null)
+  const isMobile = useIsMobile()
 
   // ---- 标签 & 推荐角色 ----
   const [tags, setTags] = useState([])
@@ -585,7 +587,7 @@ export default function HomePage() {
                       className="home-char-card"
                       onClick={() => handleCardClick(card)}
                     >
-                      <Avatar name={name} size={56} src={cardAvatars[card.id || card.card_id]} />
+                      <Avatar name={name} size={isMobile ? 44 : 56} src={cardAvatars[card.id || card.card_id]} />
                       <div className="home-char-card-text">
                         <span className="home-char-name">{name}</span>
                         {identity && <span className="home-char-identity">{truncate(identity, 20)}</span>}

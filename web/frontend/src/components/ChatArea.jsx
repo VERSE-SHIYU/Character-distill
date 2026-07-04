@@ -31,8 +31,6 @@ export default function ChatArea() {
   const pushView = useAppStore((s) => s.pushView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
-  const isMobile = useIsMobile()
-
   // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   // and no session-creation is already in-flight (_pendingChatCardId guard)
   useEffect(() => {
@@ -1034,6 +1032,7 @@ function ChatView() {
 // ---- Message bubble ----
 
 function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
+  const isMobile = useIsMobile()
   const [showRetracted, setShowRetracted] = useState(false)
 
   // Typewriter: smooth code-point-by-code-point reveal for streaming messages.
@@ -1081,7 +1080,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     <Avatar
       name={userRole || '我'}
       src={userAvatarUrl}
-      size={isMobile ? 40 : 68}
+      size={isMobile ? 36 : 68}
       onClick={onUserAvatarClick}
     />
   )
@@ -1094,7 +1093,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         side={isUser ? 'right' : 'left'}
         avatar={
           !isUser
-            ? <Avatar name={charName} src={avatarUrl} size={isMobile ? 40 : 68} />
+            ? <Avatar name={charName} src={avatarUrl} size={isMobile ? 36 : 68} />
             : userAvatarNode
         }
         time={timestamp ? formatChatTime(timestamp) : undefined}

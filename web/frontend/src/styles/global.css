@@ -7197,7 +7197,7 @@ select.settings-input {
   gap: 12px;
 }
 
-@media (max-width: 480px) {
+@media (max-width: 768px) {
   .home-char-grid {
     grid-template-columns: 1fr;
   }
@@ -17076,5 +17076,14 @@ select.settings-input {
   .market-search-form { flex: 1 1 100%; }
   .market-sort-tabs { flex-shrink: 0; }
   .market-sort-btn { white-space: nowrap; }
+
+  .home-char-card { padding: 12px 14px; gap: 10px; }
+  .home-char-card-text .home-char-identity {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: normal;
+  }
 }
 

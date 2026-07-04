@@ -1129,7 +1129,7 @@ export default function GroupChatPage() {
                             ) : (
                             <ChatBubble
                               side="right"
-                              avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={isMobile ? 40 : 72} src={groupUserAvatar || userAvatar} onClick={() => userAvatarInputRef.current?.click()} />}
+                              avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={isMobile ? 36 : 72} src={groupUserAvatar || userAvatar} onClick={() => userAvatarInputRef.current?.click()} />}
                               name={personaSpeaker || undefined}
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
@@ -1154,7 +1154,7 @@ export default function GroupChatPage() {
                             <>
                               <ChatBubble
                                 side="left"
-                                avatar={<Avatar name={m.speaker || '?'} size={isMobile ? 40 : 72} src={cardAvatars[m.card_id || m.speaker_card_id]} />}
+                                avatar={<Avatar name={m.speaker || '?'} size={isMobile ? 36 : 72} src={cardAvatars[m.card_id || m.speaker_card_id]} />}
                                 name={m.speaker || '?'}
                                 onNameClick={() => {
                                   const cardId = m.card_id || m.speaker_card_id
