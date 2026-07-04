@@ -17,7 +17,8 @@ import { formatRelativeTime } from '../utils/time'
 export default function MarketCardDetail() {
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
-  const setPreviousView = useAppStore((s) => s.setPreviousView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
+  const navigateBack = useAppStore((s) => s.navigateBack)
   const cardId = useAppStore((s) => s.currentMarketCardId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
@@ -26,9 +27,6 @@ export default function MarketCardDetail() {
   const startChat = useAppStore((s) => s.startChat)
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
-  const previousView = useAppStore((s) => s.previousView)
-  const previousViewContext = useAppStore((s) => s.previousViewContext)
-  const clearPreviousView = useAppStore((s) => s.clearPreviousView)
 
   const [card, setCard] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -94,15 +92,10 @@ export default function MarketCardDetail() {
       .catch((err) => {
         console.error('[MarketCardDetail] load failed:', err)
         useAppStore.getState().setCurrentMarketCardId(null)
-        if (previousView === 'groupChat') {
-          clearPreviousView()
-          pushView('groupChat')
-        } else {
-          setView('market')
-        }
+        useAppStore.getState().navigateBack()
       })
       .finally(() => setLoading(false))
-  }, [cardId, setView])
+  }, [cardId])
 
   const loadComments = useCallback(async () => {
     if (!cardId) return
@@ -502,13 +495,7 @@ export default function MarketCardDetail() {
     <div className="panel market-detail-page">
       <header className="market-detail-header">
         <div className="market-detail-header-left">
-          <button type="button" className="chat-back-btn" onClick={() => {
-            if (previousView === 'groupChat' && previousViewContext?.groupId) {
-              useAppStore.getState().setResumeGroupId(previousViewContext.groupId)
-            }
-            clearPreviousView()
-            setView(previousView === 'groupChat' ? 'groupChat' : 'market')
-          }} title="返回">
+          <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
             返回
           </button>
@@ -608,10 +595,7 @@ export default function MarketCardDetail() {
                     className="btn-sm btn-outline"
                     onClick={(e) => {
                       e.stopPropagation()
-                      setPreviousView('marketCardDetail')
-                      setMessageTargetUserId(card.user_id)
-                      setMessageTargetUsername(card.author_name || '匿名')
-                      setView('messages')
+                      navigateTo('messages', { messageTargetUserId: card.user_id, messageTargetUsername: card.author_name || '匿名' })
                     }}
                   >
                     私信

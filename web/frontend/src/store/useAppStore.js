@@ -79,64 +79,54 @@ const useAppStore = create((set, get) => ({
   // ---- Navigation ----
 
   currentView: localStorage.getItem('nav_view') || 'home',
-  previousView: null,        // for returning after viewCard etc.
-  previousViewContext: null, // e.g. { groupId } for groupChat
-  chatSnapshot: null,         // { sessionId, messages, currentCard } — independent of navigation
-  setPreviousView: (view, context) => set({ previousView: view, previousViewContext: context }),
-  clearPreviousView: () => set({ previousView: null, previousViewContext: null }),
+  viewHistory: [],
+  chatSnapshot: null,     // { sessionId, messages, currentCard } for restoring chat after character list detour
+
+  // Unified navigation: push current view onto stack, switch to new view,
+  // and apply optional context (authorUserId, marketCardId, etc.)
+  navigateTo: (view, context) => {
+    const { currentView, viewHistory } = get()
+    set({
+      viewHistory: [...viewHistory, currentView],
+      currentView: view,
+      error: null,
+    })
+    localStorage.setItem('nav_view', view)
+
+    // Apply context side-effects
+    if (context) {
+      if (context.authorUserId !== undefined) get().setAuthorUserId(context.authorUserId)
+      if (context.marketCardId !== undefined) get().setCurrentMarketCardId(context.marketCardId)
+      if (context.textDetailId !== undefined) get().setCurrentTextDetailId(context.textDetailId)
+      if (context.messageTargetUserId !== undefined) get().setMessageTargetUserId(context.messageTargetUserId)
+      if (context.messageTargetUsername !== undefined) get().setMessageTargetUsername(context.messageTargetUsername)
+      if (context.groupId !== undefined) get().setResumeGroupId(context.groupId)
+      if (context.readerTextId !== undefined) get().setReaderTextId(context.readerTextId)
+    }
+  },
+
+  // Back: pop from history stack (with FALLBACK for empty stack)
+  navigateBack: () => {
+    get().popView()
+  },
+
+  // Restore a saved chat snapshot
   restoreChatSnapshot: () => {
     const snap = get().chatSnapshot
     if (snap?.sessionId) {
-      const _snapMsgs = snap.messages || []
-
       set({
         currentView: 'chat',
         sessionId: snap.sessionId,
-        messages: _snapMsgs,
+        messages: snap.messages || [],
         currentCard: snap.currentCard,
         chatSnapshot: null,
-        previousView: null,
-        previousViewContext: null,
       })
       return true
     }
     return false
   },
-  authorUserId: null,
-  setAuthorUserId: (userId) => {
-    set({ authorUserId: userId })
-    if (userId) localStorage.setItem('nav_author_user_id', userId)
-    else localStorage.removeItem('nav_author_user_id')
-  },
-  currentTextDetailId: null,
-  setCurrentTextDetailId: (id) => {
-    set({ currentTextDetailId: id })
-    if (id) localStorage.setItem('nav_text_detail_id', id)
-    else localStorage.removeItem('nav_text_detail_id')
-  },
-  currentMarketCardId: null,
-  setCurrentMarketCardId: (id) => {
-    set({ currentMarketCardId: id })
-    if (id) localStorage.setItem('nav_market_card_id', id)
-    else localStorage.removeItem('nav_market_card_id')
-  },
-  messageTargetUserId: null,
-  setMessageTargetUserId: (id) => {
-    set({ messageTargetUserId: id })
-    if (id) localStorage.setItem('nav_msg_target_user_id', id)
-    else localStorage.removeItem('nav_msg_target_user_id')
-  },
-  messageTargetUsername: null,
-  setMessageTargetUsername: (name) => set({ messageTargetUsername: name }),
-  setView: (view) => {
-    const updates = { currentView: view, error: null }
-    if (view === 'home' || view === 'text') updates.currentTextTitle = ''
-    set(updates)
-    localStorage.setItem('nav_view', view)
-  },
 
-  // Multi-level back stack for mobile navigation
-  viewHistory: [],
+  // Legacy push/pop stack — used internally by navigateTo, selectCard, startChat
   pushView: (view) => {
     const { currentView, viewHistory } = get()
     set({
@@ -168,21 +158,37 @@ const useAppStore = create((set, get) => ({
     })
     localStorage.setItem('nav_view', prevView)
   },
-
-  goBack: () => {
-    if (get().chatSnapshot?.sessionId) { get().restoreChatSnapshot(); return }
-    const { previousView, previousViewContext } = get()
-    if (previousView) {
-      const restore = { currentView: previousView, previousView: null, previousViewContext: null }
-      if (previousViewContext?.authorUserId) restore.authorUserId = previousViewContext.authorUserId
-      if (previousViewContext?.cardId) restore.currentMarketCardId = previousViewContext.cardId
-      if (previousViewContext?.groupId) restore.resumeGroupId = previousViewContext.groupId
-      set(restore)
-      return
-    }
-    const { currentView } = get()
-    const backMap = { chat: 'character', character: 'text', text: 'home' }
-    set({ currentView: backMap[currentView] || 'home' })
+  authorUserId: null,
+  setAuthorUserId: (userId) => {
+    set({ authorUserId: userId })
+    if (userId) localStorage.setItem('nav_author_user_id', userId)
+    else localStorage.removeItem('nav_author_user_id')
+  },
+  currentTextDetailId: null,
+  setCurrentTextDetailId: (id) => {
+    set({ currentTextDetailId: id })
+    if (id) localStorage.setItem('nav_text_detail_id', id)
+    else localStorage.removeItem('nav_text_detail_id')
+  },
+  currentMarketCardId: null,
+  setCurrentMarketCardId: (id) => {
+    set({ currentMarketCardId: id })
+    if (id) localStorage.setItem('nav_market_card_id', id)
+    else localStorage.removeItem('nav_market_card_id')
+  },
+  messageTargetUserId: null,
+  setMessageTargetUserId: (id) => {
+    set({ messageTargetUserId: id })
+    if (id) localStorage.setItem('nav_msg_target_user_id', id)
+    else localStorage.removeItem('nav_msg_target_user_id')
+  },
+  messageTargetUsername: null,
+  setMessageTargetUsername: (name) => set({ messageTargetUsername: name }),
+  setView: (view) => {
+    const updates = { currentView: view, error: null, viewHistory: [] }
+    if (view === 'home' || view === 'text') updates.currentTextTitle = ''
+    set(updates)
+    localStorage.setItem('nav_view', view)
   },
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
@@ -700,27 +706,29 @@ const useAppStore = create((set, get) => ({
     const text = get().texts.find((t) => t.id === textId)
     set({
       currentTextId: textId,
-      currentView: 'character',
       currentTextTitle: text?.title || text?.filename || '',
       identifiedChars: [],
       currentCard: null,
       sessionId: null,
       messages: [],
     })
+    get().pushView('character')
     return get().loadCards(textId)
   },
 
   openCharacterList: (textId) => {
-    const { sessionId, messages, currentCard, currentView } = get()
+    const { sessionId, messages, currentCard } = get()
     const text = get().texts.find((t) => t.id === textId)
+    // Save chat snapshot before switching to character view
+    if (sessionId) {
+      set({ chatSnapshot: { sessionId, messages, currentCard } })
+    }
+    // Push character onto view stack so back returns to chat
+    get().pushView('character')
     set({
       currentTextId: textId,
-      currentView: 'character',
       currentTextTitle: text?.title || text?.filename || '',
       identifiedChars: [],
-      ...(sessionId
-        ? { chatSnapshot: { sessionId, messages, currentCard }, previousView: currentView }
-        : {}),
     })
     get().loadCards(textId)
   },
@@ -983,7 +991,6 @@ const useAppStore = create((set, get) => ({
     get()._chatStreamCancel?.()
     set({
       currentCard: card,
-      currentView: 'character',
       sessionId: null,
     })
   },
@@ -1004,7 +1011,7 @@ const useAppStore = create((set, get) => ({
     if (state._pendingChatCardId === _selId) return
     set({ _pendingChatCardId: _selId })
 
-    get().setPreviousView(get().currentView)
+    get().pushView('chat')
     if (state.lastDistilledCardId === card.id) {
       set({ lastDistilledCardId: null })
     }
@@ -1066,7 +1073,7 @@ const useAppStore = create((set, get) => ({
     if (state._pendingChatCardId === card.id) return
     set({ _pendingChatCardId: card.id })
 
-    get().setPreviousView(get().currentView)
+    get().pushView('chat')
     // Reuse existing session if same card
     if (state.currentCard?.id === card.id && state.sessionId) {
       set({ _pendingChatCardId: null, currentView: 'chat' })

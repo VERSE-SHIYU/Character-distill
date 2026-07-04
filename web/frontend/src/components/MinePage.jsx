@@ -113,7 +113,7 @@ export default function MinePage() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
-  const setPreviousView = useAppStore((s) => s.setPreviousView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const unreadTotal = useAppStore((s) => s.unreadTotal)
@@ -136,10 +136,7 @@ export default function MinePage() {
   const isMe = currentView === 'mine' || (!!authorUserId && authorUserId === authUser?.id)
 
   const goToMessages = (userId, username) => {
-    setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId })
-    setMessageTargetUserId(userId)
-    if (username) setMessageTargetUsername(username)
-    setView('messages')
+    navigateTo('messages', { messageTargetUserId: userId, messageTargetUsername: username })
   }
   const userId = isMe ? authUser?.id : authorUserId
   const prof = isMe ? authUser : profileAuthor
@@ -685,7 +682,7 @@ export default function MinePage() {
             key={t.key}
             type="button"
             className={`mine-tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => t.key === 'messages' ? (setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId }), setView('messages'))
+            onClick={() => t.key === 'messages' ? pushView('messages')
               : t.key === 'history' ? pushView('history')
               : t.key === 'trash' ? pushView('trash')
               : setTab(t.key)}

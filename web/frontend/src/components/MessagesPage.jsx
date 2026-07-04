@@ -24,8 +24,7 @@ function formatTime(dateStr) {
 
 export default function MessagesPage() {
   const setView = useAppStore((s) => s.setView)
-  const goBack = useAppStore((s) => s.goBack)
-  const previousView = useAppStore((s) => s.previousView)
+  const navigateBack = useAppStore((s) => s.navigateBack)
   const messageTargetUserId = useAppStore((s) => s.messageTargetUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
@@ -110,11 +109,7 @@ export default function MessagesPage() {
       setMobileView('list')
       return
     }
-    if (previousView) {
-      goBack()
-      return
-    }
-    setView('home')
+    navigateBack()
   }
 
   // ── Render ──

@@ -32,22 +32,12 @@ export default function CharCard() {
   const texts = useAppStore((s) => s.texts)
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
-  const previousView = useAppStore((s) => s.previousView)
-  const previousViewContext = useAppStore((s) => s.previousViewContext)
-  const clearPreviousView = useAppStore((s) => s.clearPreviousView)
-  const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+  const navigateBack = useAppStore((s) => s.navigateBack)
 
   const goBack = useCallback(() => {
     if (useAppStore.getState().restoreChatSnapshot()) return
-    if (previousView === 'groupChat' && previousViewContext?.groupId) {
-      setResumeGroupId(previousViewContext.groupId)
-      setView('groupChat')
-      clearPreviousView()
-    } else {
-      setView(previousView || 'text')
-      clearPreviousView()
-    }
-  }, [previousView, previousViewContext, setView, setResumeGroupId, clearPreviousView])
+    navigateBack()
+  }, [navigateBack])
 
   if (!currentTextId) {
     return (

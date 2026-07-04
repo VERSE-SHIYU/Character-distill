@@ -14,7 +14,7 @@ import { displayName } from '../utils/displayName'
 export default function AuthorPage({ embedded = false }) {
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
-  const setPreviousView = useAppStore((s) => s.setPreviousView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
@@ -25,10 +25,7 @@ export default function AuthorPage({ embedded = false }) {
   const startChat = useAppStore((s) => s.startChat)
 
   const goToMessages = (userId, username) => {
-    setPreviousView('author', { authorUserId })
-    setMessageTargetUserId(userId)
-    setMessageTargetUsername(username)
-    setView('messages')
+    navigateTo('messages', { messageTargetUserId: userId, messageTargetUsername: username })
   }
 
   const [author, setAuthor] = useState(null)
