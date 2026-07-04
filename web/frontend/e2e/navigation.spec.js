@@ -60,8 +60,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('messages')
 
-    // click back button in messages page → navigateBack via MobileBackBar
-    await page.locator('.mobile-backbar-btn').click()
+    // click back button in messages page → navigateBack via PageHeader
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
@@ -84,8 +84,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('marketCardDetail')
 
-    // back → market (MobileBackBar on marketCardDetail)
-    await page.locator('.mobile-backbar-btn').click()
+    // back → market (PageHeader on marketCardDetail)
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('market')
 
@@ -144,13 +144,13 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('profile')
 
-    // back → settings (profile has MobileBackBar)
-    await page.locator('.mobile-backbar-btn').click()
+    // back → settings (PageHeader on profile)
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('settings')
 
-    // back → mine (settings has MobileBackBar)
-    await page.locator('.mobile-backbar-btn').click()
+    // back → mine (PageHeader on settings)
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
@@ -213,8 +213,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('groupChat')
 
-    // verify MobileBackBar is shown on group chat list (secondary view)
-    await expect(page.locator('.mobile-backbar')).toBeVisible()
+    // verify PageHeader is shown on group chat list (secondary view)
+    await expect(page.locator('.page-header-back')).toBeVisible()
 
     // push a secondary view to test back behavior from groupChat
     await storeAction(page, 'pushView', 'settings')
@@ -222,12 +222,12 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     expect(await getView(page)).toBe('settings')
 
     // back → groupChat list
-    await page.locator('.mobile-backbar-btn').click()
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('groupChat')
 
-    // MobileBackBar visible again on groupChat
-    await expect(page.locator('.mobile-backbar')).toBeVisible()
+    // PageHeader visible again on groupChat
+    await expect(page.locator('.page-header-back')).toBeVisible()
   })
 
   // ─── Chain 9: Tab 连切 首页→创作→我的 后按返回：不得穿越 ───
@@ -240,7 +240,7 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await tab(page, '我的')
     expect(await getView(page)).toBe('mine')
 
-    // mine is tab-level — no MobileBackBar. Stack is empty.
+    // mine is tab-level — no PageHeader. Stack is empty.
     // Verify: navigate into a sub-view and back returns to mine (NOT creation)
     await storeAction(page, 'pushView', 'settings')
     await settle(page)
@@ -248,7 +248,7 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     expect(await page.evaluate(() => window.__appStore.getState().viewHistory)).toEqual(['mine'])
 
     // back → mine
-    await page.locator('.mobile-backbar-btn').click()
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
@@ -266,8 +266,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     const hist = await page.evaluate(() => window.__appStore.getState().viewHistory)
     expect(hist).toEqual(['mine'])
 
-    // back → mine (MobileBackBar on messages page)
-    await page.locator('.mobile-backbar-btn').click()
+    // back → mine (PageHeader on messages page)
+    await page.locator('.page-header-back').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
