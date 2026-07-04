@@ -47,6 +47,7 @@ export default function GroupChatPage() {
   const setPreviousView = useAppStore((s) => s.setPreviousView)
   const clearPreviousView = useAppStore((s) => s.clearPreviousView)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
+  const setInConversation = useAppStore((s) => s.setInConversation)
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
@@ -295,6 +296,12 @@ export default function GroupChatPage() {
   useEffect(() => {
     currentGroupRef.current = currentGroup?.id
   }, [currentGroup?.id])
+
+  // Sync conversation immersion: hide TabBar when in a group
+  useEffect(() => {
+    setInConversation(!!currentGroup)
+    return () => setInConversation(false)
+  }, [currentGroup, setInConversation])
 
   useEffect(() => {
     loadGroups()

@@ -187,6 +187,11 @@ const useAppStore = create((set, get) => ({
 
   setResumeGroupId: (groupId) => set({ resumeGroupId: groupId }),
 
+  // ---- Conversation immersion ----
+
+  inConversation: false,
+  setInConversation: (val) => set({ inConversation: val }),
+
   // Legal
   legalTab: 'terms',
   setLegalTab: (tab) => set({ legalTab: tab }),

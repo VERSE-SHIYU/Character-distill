@@ -1,7 +1,7 @@
 import useAppStore from '../store/useAppStore'
 
 export const SECONDARY_VIEWS = [
-  'chat', 'groupChat', 'character', 'author', 'textDetail',
+  'chat', 'character', 'author', 'textDetail',
   'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
 ]
 

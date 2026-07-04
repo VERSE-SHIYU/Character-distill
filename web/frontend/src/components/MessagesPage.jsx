@@ -30,6 +30,7 @@ export default function MessagesPage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
+  const setInConversation = useAppStore((s) => s.setInConversation)
 
   const [conversations, setConversations] = useState([])
   const [convLoading, setConvLoading] = useState(true)
@@ -70,6 +71,12 @@ export default function MessagesPage() {
       setMessageTargetUsername(null)
     }
   }, [messageTargetUserId, messageTargetUsername, setMessageTargetUserId, setMessageTargetUsername])
+
+  // Sync conversation immersion: hide TabBar when in a DM
+  useEffect(() => {
+    setInConversation(!!activeOtherId)
+    return () => setInConversation(false)
+  }, [activeOtherId, setInConversation])
 
   // When activeOtherId changes, update username from conversations
   useEffect(() => {

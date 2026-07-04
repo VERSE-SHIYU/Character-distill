@@ -13,17 +13,6 @@ const tabs = [
     ),
   },
   {
-    key: 'market',
-    title: '市场',
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={22} height={22}>
-        <circle cx="12" cy="12" r="10" />
-        <path d="M2 12h20" />
-        <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
-      </svg>
-    ),
-  },
-  {
     key: 'text',
     title: '创作',
     icon: (
@@ -33,12 +22,14 @@ const tabs = [
     ),
   },
   {
-    key: 'messages',
-    title: '消息',
+    key: 'groupChat',
+    title: '群聊',
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width={22} height={22}>
-        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-        <polyline points="22,6 12,13 2,6" />
+        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 00-3-3.87" />
+        <path d="M16 3.13a4 4 0 010 7.75" />
       </svg>
     ),
   },
@@ -56,22 +47,22 @@ const tabs = [
 
 const VIEW_GROUPS = {
   home: ['home', 'feed'],
-  market: ['market', 'author', 'textDetail', 'marketCardDetail'],
   text: ['text', 'character'],
-  messages: ['messages'],
-  mine: ['mine', 'admin', 'profile', 'settings', 'trash'],
+  groupChat: ['groupChat'],
+  mine: ['mine', 'messages', 'market', 'author', 'textDetail', 'marketCardDetail', 'admin', 'profile', 'settings', 'trash', 'legal', 'voice', 'reader'],
 }
 
 const SECONDARY_VIEWS = [
-  'chat', 'groupChat', 'character', 'author', 'textDetail',
+  'chat', 'character', 'author', 'textDetail',
   'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
 ]
 
 export default function MobileTabBar() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const inConversation = useAppStore((s) => s.inConversation)
 
-  if (SECONDARY_VIEWS.includes(currentView)) return null
+  if (SECONDARY_VIEWS.includes(currentView) || inConversation) return null
 
   const activeKey = Object.keys(VIEW_GROUPS).find((k) => VIEW_GROUPS[k].includes(currentView))
 
