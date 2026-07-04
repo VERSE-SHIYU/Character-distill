@@ -94,6 +94,7 @@ function CharPanelBody({ textId }) {
   const viewCard = useAppStore((s) => s.viewCard)
   const [detailLoading, setDetailLoading] = useState(false)
   const isMobile = useIsMobile()
+  const swipeBack = useSwipeBack(() => viewCard(null))
 
   useEffect(() => {
     loadCards(textId)
@@ -106,19 +107,9 @@ function CharPanelBody({ textId }) {
   // Mobile single-column: show list or detail, not both
   if (isMobile && currentCard) {
     return (
-      <div className="char-body">
-        {/* Sticky back-to-list header */}
-        <div className="mobile-char-detail-header">
-          <button
-            type="button"
-            className="mobile-char-detail-back"
-            onClick={() => viewCard(null)}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5m7-7-7 7 7 7" />
-            </svg>
-          </button>
-          <span className="mobile-char-detail-title">{currentCard.name || '角色详情'}</span>
+      <div className="char-body" {...swipeBack}>
+        <div className="page-header-sticky">
+          <PageHeader title={currentCard.name || '角色详情'} onBack={() => viewCard(null)} />
         </div>
         {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
         {detailLoading ? (
