@@ -5015,18 +5015,8 @@ html.theme-aurora::before {
   gap: 12px;
 }
 
-.history-detail-top {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
 /* ===== Back buttons ===== */
-.chat-back-btn,
-.history-back-btn {
+.chat-back-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -5045,18 +5035,15 @@ html.theme-aurora::before {
   line-height: 1;
 }
 
-.chat-back-btn:hover,
-.history-back-btn:hover {
+.chat-back-btn:hover {
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-.chat-back-btn svg,
-.history-back-btn svg {
+.chat-back-btn svg {
   flex-shrink: 0;
 }
 
-.chat-back-btn:active,
-.history-back-btn:active {
+.chat-back-btn:active {
   transform: scale(0.96);
 }
 

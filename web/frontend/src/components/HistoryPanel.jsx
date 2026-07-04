@@ -548,7 +548,7 @@ export default function HistoryPanel({ initialTrash = false }) {
         {/* Trash toggle */}
         <button
           type="button"
-          className={trashMode ? 'history-back-btn' : 'btn-secondary btn-sm'}
+          className="btn-secondary btn-sm"
           onClick={() => switchTrashMode(!trashMode)}
         >
           {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '回收站'}
@@ -890,23 +890,21 @@ function GroupHistoryDetail({ detail, loading, onBack, onResume, onDelete }) {
 
   return (
     <div className="history-panel panel history-detail-view">
-      <div className="history-detail-top">
-        <button type="button" className="history-back-btn" onClick={onBack}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回列表
-        </button>
-        <div className="history-detail-actions">
-          <button type="button" className="btn-primary history-action-sm" onClick={onResume}>
-            继续群聊
-          </button>
-          <button
-            type="button"
-            className="history-action-sm history-action-danger"
-            onClick={onDelete}
-          >
-            <Trash2 size={14} />删除群聊
-          </button>
-        </div>
+      <div className="page-header-sticky">
+        <PageHeader title={groupName} onBack={onBack} actions={
+          <div className="history-detail-actions">
+            <button type="button" className="btn-primary history-action-sm" onClick={onResume}>
+              继续群聊
+            </button>
+            <button
+              type="button"
+              className="history-action-sm history-action-danger"
+              onClick={onDelete}
+            >
+              <Trash2 size={14} />删除群聊
+            </button>
+          </div>
+        } />
       </div>
 
       <header className="history-detail-header">
@@ -945,13 +943,10 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
 
   return (
     <div className="history-panel panel history-detail-view">
-      <div className="history-detail-top">
-        <button type="button" className="history-back-btn" onClick={onBack}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回列表
-        </button>
-        <div className="history-detail-actions">
-          {!trashMode && (
+      <div className="page-header-sticky">
+        <PageHeader title={charName} onBack={onBack} actions={
+          <div className="history-detail-actions">
+            {!trashMode && (
             <>
               <button type="button" className="btn-primary history-action-sm" disabled={resumeLoading} onClick={onContinue}>
                 {resumeLoading ? '加载中…' : '继续对话'}
@@ -994,6 +989,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
             </>
           )}
         </div>
+      } />
       </div>
 
       <header className="history-detail-header">
