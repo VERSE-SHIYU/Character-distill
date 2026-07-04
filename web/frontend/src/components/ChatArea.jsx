@@ -498,6 +498,8 @@ function ChatView() {
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
           <button type="button" className="chat-topbar-back" onClick={() => {
+            const { viewHistory, popView } = useAppStore.getState()
+            if (viewHistory.length > 0) { popView(); return }
             const tid = currentCard?.text_id || currentTextId
             if (tid) selectText(tid)
             else pushView('character')
