@@ -99,6 +99,8 @@ class LLMAdapter:
         self.last_usage: dict | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
+        self._api_key = resolved_key
+
         if not resolved_key:
             raise RuntimeError("missing API key — configure in Settings or set DEEPSEEK_API_KEY")
 
@@ -108,6 +110,21 @@ class LLMAdapter:
         except Exception as exc:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise
+
+    def _make_async_client(self) -> AsyncOpenAI:
+        """Create a standalone AsyncOpenAI for a single asyncio.run cycle."""
+        return AsyncOpenAI(api_key=self._api_key, base_url=self._base_url, timeout=600.0)
+
+    async def aclose(self) -> None:
+        """幂等关闭异步客户端。"""
+        client = getattr(self, "_async_client", None)
+        if client is None:
+            return
+        self._async_client = None
+        try:
+            await client.close()
+        except Exception:
+            pass
 
     @property
     def model(self) -> str:

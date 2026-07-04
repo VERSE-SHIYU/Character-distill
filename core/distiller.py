@@ -1062,8 +1062,15 @@ class Distiller:
         ]
 
         async def _concurrent() -> list[str]:
-            results = await self._run_reduce_concurrent(batches, character_name)
-            return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
+            old_client = self._llm._async_client
+            self._llm._async_client = self._llm._make_async_client()
+            try:
+                results = await self._run_reduce_concurrent(batches, character_name)
+                return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
+            finally:
+                temp = self._llm._async_client
+                self._llm._async_client = old_client
+                await temp.close()
 
         try:
             asyncio.get_running_loop()
@@ -1151,8 +1158,15 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_wrapper():
-            results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
-            q.put(("done", results, failures))
+            old_client = self._llm._async_client
+            self._llm._async_client = self._llm._make_async_client()
+            try:
+                results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
+                q.put(("done", results, failures))
+            finally:
+                temp = self._llm._async_client
+                self._llm._async_client = old_client
+                await temp.close()
 
         def _thread_run():
             try:
@@ -1346,34 +1360,40 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_with_progress() -> None:
-            sem = asyncio.Semaphore(self._map_concurrency)
-            done_count = [0]
-            lock = asyncio.Lock()
-            failures: list[tuple[int, Exception]] = []
-            map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
+            old_client = self._llm._async_client
+            self._llm._async_client = self._llm._make_async_client()
+            try:
+                sem = asyncio.Semaphore(self._map_concurrency)
+                done_count = [0]
+                lock = asyncio.Lock()
+                failures: list[tuple[int, Exception]] = []
 
-            async def _one(i: int, chunk: str) -> tuple[int, str]:
-                async with sem:
-                    system = map_system(character_name)
-                    user = map_user(chunk, character_name)
-                    try:
-                        result, _ = await self._llm.async_chat(
-                            system, [{"role": "user", "content": user}]
-                        )
-                    except Exception as exc:
-                        print(f"[distiller] Map chunk {i} failed: {exc}")
-                        async with lock:
-                            failures.append((i, exc))
-                        result = ""
-                async with lock:
-                    done_count[0] += 1
-                    current = done_count[0]
-                q.put(("chunk", current, i, result))
-                return (i, result)
+                async def _one(i: int, chunk: str) -> tuple[int, str]:
+                    async with sem:
+                        system = map_system(character_name)
+                        user = map_user(chunk, character_name)
+                        try:
+                            result, _ = await self._llm.async_chat(
+                                system, [{"role": "user", "content": user}]
+                            )
+                        except Exception as exc:
+                            print(f"[distiller] Map chunk {i} failed: {exc}")
+                            async with lock:
+                                failures.append((i, exc))
+                            result = ""
+                    async with lock:
+                        done_count[0] += 1
+                        current = done_count[0]
+                    q.put(("chunk", current, i, result))
+                    return (i, result)
 
-            tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
-            await asyncio.gather(*tasks)
-            q.put(("done", failures))
+                tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
+                await asyncio.gather(*tasks)
+                q.put(("done", failures))
+            finally:
+                temp = self._llm._async_client
+                self._llm._async_client = old_client
+                await temp.close()
 
         def _thread_run() -> None:
             try:
@@ -1452,9 +1472,16 @@ class Distiller:
                 rq.put(("batch", done_count, idx, result))
 
             async def _reduce_batches() -> list[tuple[int, str]]:
-                return await self._run_reduce_concurrent(
-                    batches, character_name, _on_batch_done
-                )
+                old_client = self._llm._async_client
+                self._llm._async_client = self._llm._make_async_client()
+                try:
+                    return await self._run_reduce_concurrent(
+                        batches, character_name, _on_batch_done
+                    )
+                finally:
+                    temp = self._llm._async_client
+                    self._llm._async_client = old_client
+                    await temp.close()
 
             def _reduce_thread() -> None:
                 try:
