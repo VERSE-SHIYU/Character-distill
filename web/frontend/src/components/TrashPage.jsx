@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
+import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import HistoryPanel from './HistoryPanel'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 function formatTime(iso) {
   if (!iso) return '—'
@@ -22,6 +25,8 @@ function formatTime(iso) {
 }
 
 export default function TrashPage() {
+  const popView = useAppStore((s) => s.popView)
+  const swipeBack = useSwipeBack(popView)
   const [tab, setTab] = useState('chat')
   const [cards, setCards] = useState([])
   const [cardsLoading, setCardsLoading] = useState(false)
@@ -136,9 +141,9 @@ export default function TrashPage() {
   }
 
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }} {...swipeBack}>
       <header className="panel-header">
-        <h1 className="panel-title">回收站</h1>
+        <PageHeader title="回收站" onBack={popView} />
         <p className="panel-desc">管理已删除的对话、角色卡和群聊</p>
       </header>
 

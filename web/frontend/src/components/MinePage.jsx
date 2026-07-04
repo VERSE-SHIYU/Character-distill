@@ -13,6 +13,8 @@ import ConfirmModal from './common/ConfirmModal'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -108,6 +110,7 @@ export default function MinePage() {
   const uploadUserBanner = useAppStore((s) => s.uploadUserBanner)
   const fetchUserBanner = useAppStore((s) => s.fetchUserBanner)
   const currentView = useAppStore((s) => s.currentView)
+  const popView = useAppStore((s) => s.popView)
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
@@ -153,6 +156,7 @@ export default function MinePage() {
   const [followingCount, setFollowingCount] = useState(0)
   const [refreshKey, setRefreshKey] = useState(0)
   const [deletePostId, setDeletePostId] = useState(null)
+  const swipeBack = useSwipeBack(popView)
   const isMobile = useIsMobile()
   const [posts, setPosts] = useState([])
   const [postsLoading, setPostsLoading] = useState(false)
@@ -526,7 +530,8 @@ export default function MinePage() {
   )
 
   return (
-    <div className="mine-page-v2">
+    <div className="mine-page-v2" {...swipeBack}>
+      {currentView !== 'mine' && <PageHeader title={username} onBack={popView} />}
       {/* ── Banner ── */}
       <div className="mine-banner" style={isMobile ? { maxHeight: 110 } : undefined}>
         {(isMe ? userBanner : profileAuthor?.banner_data) ? (
