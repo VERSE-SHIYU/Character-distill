@@ -60,8 +60,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('messages')
 
-    // click back button in messages page → navigateBack
-    await page.locator('.chat-back-btn').click()
+    // click back button in messages page → navigateBack via MobileBackBar
+    await page.locator('.mobile-backbar-btn').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
@@ -84,8 +84,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('marketCardDetail')
 
-    // back → market (marketCardDetail has chat-back-btn → navigateBack)
-    await page.locator('.chat-back-btn').click()
+    // back → market (MobileBackBar on marketCardDetail)
+    await page.locator('.mobile-backbar-btn').click()
     await settle(page)
     expect(await getView(page)).toBe('market')
 
@@ -213,8 +213,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('groupChat')
 
-    // verify TabBar is shown on group chat list
-    await expect(page.locator('.mobile-tabbar')).toBeVisible()
+    // verify MobileBackBar is shown on group chat list (secondary view)
+    await expect(page.locator('.mobile-backbar')).toBeVisible()
 
     // push a secondary view to test back behavior from groupChat
     await storeAction(page, 'pushView', 'settings')
@@ -226,8 +226,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     await settle(page)
     expect(await getView(page)).toBe('groupChat')
 
-    // TabBar visible again
-    await expect(page.locator('.mobile-tabbar')).toBeVisible()
+    // MobileBackBar visible again on groupChat
+    await expect(page.locator('.mobile-backbar')).toBeVisible()
   })
 
   // ─── Chain 9: Tab 连切 首页→创作→我的 后按返回：不得穿越 ───
@@ -266,8 +266,8 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     const hist = await page.evaluate(() => window.__appStore.getState().viewHistory)
     expect(hist).toEqual(['mine'])
 
-    // back → mine (messages page has its own back button)
-    await page.locator('.messages-page .chat-back-btn').click()
+    // back → mine (MobileBackBar on messages page)
+    await page.locator('.mobile-backbar-btn').click()
     await settle(page)
     expect(await getView(page)).toBe('mine')
   })
@@ -297,8 +297,13 @@ test.describe('Desktop navigation', () => {
         await page.waitForTimeout(800)
       }
     } catch { /* no modal */ }
+    // Wait for login to complete (app-shell renders on desktop without mobile-tabbar)
+    await page.waitForFunction(() => {
+      const el = document.querySelector('.app-shell')
+      return el && el.classList.contains('is-secondary-view') === false
+    }, { timeout: 20000 })
     // On desktop, sidebar is collapsed. Wait for the sidebar trigger, then open sidebar.
-    await page.waitForSelector('.sidebar-trigger', { timeout: 20000 })
+    await page.waitForSelector('.sidebar-trigger', { timeout: 15000 })
     await page.waitForTimeout(1000)
 
     // open the sidebar by clicking the trigger button

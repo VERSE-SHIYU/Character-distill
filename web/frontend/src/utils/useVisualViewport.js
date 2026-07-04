@@ -14,22 +14,34 @@ export default function useVisualViewport() {
     if (!vv) return
 
     const SYNC_EVENT = 'vvchange'
+    let prevHeight = vv.height
 
-    const sync = () => {
-      const h = vv.height
+    const updateVvh = (h) => {
       document.documentElement.style.setProperty('--vvh', `${h}px`)
-      window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { height: h } }))
     }
 
-    const onChange = () => sync()
+    const onResize = () => {
+      const h = vv.height
+      updateVvh(h)
+      // Dispatch vvchange only when keyboard opens (height shrinks)
+      if (h < prevHeight - 1) {
+        window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { height: h } }))
+      }
+      prevHeight = h
+    }
 
-    vv.addEventListener('resize', onChange)
-    vv.addEventListener('scroll', onChange)
-    sync() // initial
+    const onScroll = () => {
+      updateVvh(vv.height)
+      // Scroll events (toolbar show/hide) never trigger auto-scroll
+    }
+
+    updateVvh(prevHeight) // initial
+    vv.addEventListener('resize', onResize)
+    vv.addEventListener('scroll', onScroll)
 
     return () => {
-      vv.removeEventListener('resize', onChange)
-      vv.removeEventListener('scroll', onChange)
+      vv.removeEventListener('resize', onResize)
+      vv.removeEventListener('scroll', onScroll)
       document.documentElement.style.removeProperty('--vvh')
     }
   }, [])

@@ -21,6 +21,7 @@ export function useAutoScroll(listRef, bottomRef, deps) {
   // Scroll to bottom when keyboard opens (--vvh shrinks)
   useEffect(() => {
     const onVVChange = () => {
+      if (userScrolledUp.current) return
       const el = listRef.current
       if (!el) return
       el.scrollTop = el.scrollHeight

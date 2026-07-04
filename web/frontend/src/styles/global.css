@@ -17348,7 +17348,7 @@ select.settings-input {
   /* ── Chat area: full height — keyboard-aware via --vvh ── */
   .chat-area,
   .private-chat,
-  .private-chat.group-chat-layout {
+  .group-chat-page {
     height: var(--vvh, 100dvh);
   }
 
