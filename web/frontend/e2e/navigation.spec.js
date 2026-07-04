@@ -21,7 +21,6 @@ async function storeAction(page, action, ...args) {
 test.describe('Navigation migration: setView → navigateTo/navigateBack', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      window.__E2E = true
       localStorage.clear()
       sessionStorage.clear()
     })
@@ -282,11 +281,22 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
 test.describe('Desktop navigation', () => {
   test('sidebar market → detail → back', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
-    await page.addInitScript(() => { window.__E2E = true; localStorage.clear() })
+    await page.addInitScript(() => localStorage.clear())
+    await page.context().clearCookies()
     await page.goto(BASE)
+    await page.waitForSelector('.login-submit', { timeout: 15000 })
     await page.fill('#login-username', 'testadmin')
     await page.fill('#login-password', 'test1234')
-    await page.click('.login-submit')
+    await page.locator('.login-submit').click()
+    // dismiss cross-border consent modal if it appears
+    try {
+      const chk = page.locator('.legal-consent-label input[type="checkbox"]')
+      if (await chk.isVisible({ timeout: 3000 })) {
+        await chk.check()
+        await page.locator('.modal-card .btn-primary').click()
+        await page.waitForTimeout(800)
+      }
+    } catch { /* no modal */ }
     // On desktop, sidebar is collapsed. Wait for the sidebar trigger, then open sidebar.
     await page.waitForSelector('.sidebar-trigger', { timeout: 20000 })
     await page.waitForTimeout(1000)

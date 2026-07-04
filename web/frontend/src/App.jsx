@@ -35,7 +35,7 @@ const LegalPage = lazy(() => import('./components/LegalPage'))
 
 // E2E test aid: expose store for programmatic navigation verification
 // Guard: dev mode OR Playwright addInitScript sets window.__E2E
-if (typeof window !== 'undefined' && (import.meta.env.DEV || window.__E2E)) {
+if (typeof window !== 'undefined' && import.meta.env.DEV) {
   window.__appStore = useAppStore
 }
 

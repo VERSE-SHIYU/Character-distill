@@ -12,7 +12,10 @@ export default defineConfig({
   webServer: {
     command: 'npx vite --port 7860',
     port: 7860,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 15000,
+    env: {
+      VITE_PROXY_TARGET: 'http://localhost:7861',
+    },
   },
 })
