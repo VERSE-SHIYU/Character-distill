@@ -192,6 +192,21 @@ const useAppStore = create((set, get) => ({
   inConversation: false,
   setInConversation: (val) => set({ inConversation: val }),
 
+  // ---- Global unread count ----
+
+  unreadTotal: 0,
+  setUnreadTotal: (val) => set({ unreadTotal: val }),
+  refreshUnread: async () => {
+    try {
+      const res = await fetchWithTimeout('/api/messages/conversations')
+      const data = await res.json()
+      const total = (data.conversations || []).reduce((sum, c) => sum + (c.unread || 0), 0)
+      set({ unreadTotal: total })
+    } catch {
+      set({ unreadTotal: 0 })
+    }
+  },
+
   // Legal
   legalTab: 'terms',
   setLegalTab: (tab) => set({ legalTab: tab }),

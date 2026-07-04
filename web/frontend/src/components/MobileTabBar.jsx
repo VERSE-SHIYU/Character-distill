@@ -61,6 +61,7 @@ export default function MobileTabBar() {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
   const inConversation = useAppStore((s) => s.inConversation)
+  const unreadTotal = useAppStore((s) => s.unreadTotal)
 
   if (SECONDARY_VIEWS.includes(currentView) || inConversation) return null
 
@@ -70,7 +71,12 @@ export default function MobileTabBar() {
     <div className="mobile-tabbar">
       <TabBar activeKey={activeKey} onChange={(key) => setView(key)}>
         {tabs.map(({ key, title, icon }) => (
-          <TabBar.Item key={key} icon={icon} title={title} />
+          <TabBar.Item key={key} icon={key === 'mine' && unreadTotal > 0 ? (
+            <div className="tab-badge-wrap">
+              {icon}
+              <span className="tab-badge-dot" />
+            </div>
+          ) : icon} title={title} />
         ))}
       </TabBar>
       <SafeArea position="bottom" />

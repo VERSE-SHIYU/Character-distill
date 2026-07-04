@@ -172,6 +172,15 @@ export default function App() {
     return () => window.removeEventListener('auth:expired', handler)
   }, [logout])
 
+  // Poll unread count while logged in
+  const refreshUnread = useAppStore((s) => s.refreshUnread)
+  useEffect(() => {
+    if (!isLoggedIn) return
+    refreshUnread()
+    const timer = setInterval(refreshUnread, 60000)
+    return () => clearInterval(timer)
+  }, [isLoggedIn, refreshUnread])
+
   // Sidebar auto-hide state
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarPinned, setSidebarPinned] = useState(false)

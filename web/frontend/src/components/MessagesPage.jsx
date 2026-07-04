@@ -31,6 +31,7 @@ export default function MessagesPage() {
   const messageTargetUsername = useAppStore((s) => s.messageTargetUsername)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const setInConversation = useAppStore((s) => s.setInConversation)
+  const setUnreadTotal = useAppStore((s) => s.setUnreadTotal)
 
   const [conversations, setConversations] = useState([])
   const [convLoading, setConvLoading] = useState(true)
@@ -45,9 +46,11 @@ export default function MessagesPage() {
     try {
       const res = await fetchWithTimeout('/api/messages/conversations')
       const data = await res.json()
-      setConversations(data.conversations || [])
+      const convs = data.conversations || []
+      setConversations(convs)
+      setUnreadTotal(convs.reduce((sum, c) => sum + (c.unread || 0), 0))
       if (activeOtherId) {
-        const conv = (data.conversations || []).find((c) => c.other_id === activeOtherId)
+        const conv = convs.find((c) => c.other_id === activeOtherId)
         if (conv) setActiveUsername(conv.username)
       }
     } catch {
@@ -55,7 +58,7 @@ export default function MessagesPage() {
     } finally {
       setConvLoading(false)
     }
-  }, [activeOtherId])
+  }, [activeOtherId, setUnreadTotal])
 
   // Initial load
   useEffect(() => {

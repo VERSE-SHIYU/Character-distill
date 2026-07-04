@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
 import { fetchWithTimeout, globalSearch } from '../api/client'
 import { displayName } from '../utils/displayName'
+import { THEMES } from '../utils/themes'
 
 function Svg({ d, viewBox = '0 0 24 24', children, size = 20 }) {
   return (
@@ -358,15 +359,6 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     </aside>
   )
 }
-
-const THEMES = [
-  { key: 'aurora',   emoji: '\u{1F4AB}', label: '极光紫' },
-  { key: 'milktea',  emoji: '\u{1F375}', label: '抹茶' },
-  { key: 'ocean',    emoji: '\u{1F30A}', label: '海盐' },
-  { key: 'sakura',   emoji: '\u{1F338}', label: '樱花' },
-  { key: 'midnight', emoji: '\u{1F311}', label: '午夜' },
-  { key: 'galaxy',   emoji: '\u{1F30C}', label: '银河' },
-]
 
 function ThemePopup({ onClose }) {
   const [current, setCurrent] = useState(() => {
