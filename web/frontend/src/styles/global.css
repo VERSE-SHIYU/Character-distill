@@ -1944,6 +1944,57 @@ html.theme-aurora::before {
   color: var(--text);
 }
 
+/* ── PageHeader (title + actions + back, unified secondary page header) ── */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.page-header-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.page-header-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 8px;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+.page-header-back:hover {
+  background: var(--accent-soft);
+}
+@media (max-width: 768px) {
+  .page-header-back {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (max-width: 768px) {
+  .page-header-title {
+    font-size: 18px;
+  }
+}
+
 .panel-desc {
   margin-top: 6px;
   font-size: 13.5px;
