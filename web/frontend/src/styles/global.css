@@ -1684,6 +1684,11 @@ html.theme-aurora::before {
   .app-shell.has-sidebar-open .main-panel {
     margin-left: 0;
   }
+
+  .messages-layout {
+    border-radius: 0;
+    border: none;
+  }
 }
 
 /* ===== View Transition ===== */

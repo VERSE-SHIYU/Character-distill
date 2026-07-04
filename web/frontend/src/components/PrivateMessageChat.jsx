@@ -3,7 +3,8 @@ import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import { formatChatTime } from '../utils/time'
-import { Calendar } from './common/ChatHistoryPanel'
+import SplitOrFullscreen from './common/SplitOrFullscreen'
+import ChatHistoryPanel from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
 import ChatBubble from './common/ChatBubble'
 import { displayName } from '../utils/displayName'
@@ -33,27 +34,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [otherLastActive, setOtherLastActive] = useState('')
   const [reactions, setReactions] = useState({})
 
-  // ── Sidebar history splitter ──
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [splitRatio, setSplitRatio] = useState(0.65)
-  const splitContainerRef = useRef(null)
-
-  const onSplitterMouseDown = useCallback((e) => {
-    e.preventDefault()
-    const container = splitContainerRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    const onMove = (moveE) => {
-      const ratio = (moveE.clientX - rect.left) / rect.width
-      setSplitRatio(Math.min(0.8, Math.max(0.4, ratio)))
-    }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [])
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -115,41 +96,15 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     }
   }, [otherUserId])
 
-  // ── 历史面板（平铺当前对话消息） ──
-  const [historyFilterDate, setHistoryFilterDate] = useState('')
-  const [historySearchKeyword, setHistorySearchKeyword] = useState('')
-  const [historyTab, setHistoryTab] = useState('history')
-  const [historyFilterSpeaker, setHistoryFilterSpeaker] = useState('all')
-
-  const filteredHistoryMessages = useMemo(() => {
-    let result = messages
-    if (historyFilterDate) {
-      result = result.filter(m => {
-        const d = m.created_at ? new Date(m.created_at).toISOString().slice(0, 10) : ''
-        return d === historyFilterDate
-      })
-    }
-    if (historySearchKeyword) {
-      const q = historySearchKeyword.toLowerCase()
-      result = result.filter(m => (m.content || '').toLowerCase().includes(q))
-    }
-    if (historyFilterSpeaker === 'other') {
-      result = result.filter(m => m.sender_id !== authUser?.id)
-    } else if (historyFilterSpeaker === 'me') {
-      result = result.filter(m => m.sender_id === authUser?.id)
-    }
-    return result
-  }, [messages, historyFilterDate, historySearchKeyword, historyFilterSpeaker, authUser?.id])
-
-  const historyDateGroups = useMemo(() => {
-    const dates = new Set()
-    for (const m of messages) {
-      if (m.created_at) {
-        try { dates.add(new Date(m.created_at).toISOString().slice(0, 10)) } catch {}
-      }
-    }
-    return [...dates].sort().reverse()
-  }, [messages])
+  // Normalize messages for ChatHistoryPanel (add role field for speaker filter)
+  const normalizedHistoryMessages = useMemo(() =>
+    messages.map(m => ({
+      ...m,
+      role: m.sender_id === authUser?.id ? 'user' : 'other',
+      timestamp: m.created_at,
+    })),
+    [messages, authUser?.id]
+  )
 
   // ── Online status ──
   const fetchOnlineStatus = useCallback(async () => {
@@ -299,8 +254,12 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   return (
     <div className="private-chat">
-      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
-        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <SplitOrFullscreen
+        open={historyOpen}
+        splitRatio={0.65}
+        onSplitRatioChange={() => {}}
+        main={
+          <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           {/* Header */}
           <div className="private-chat-header">
         <div className="private-chat-header-left">
@@ -401,100 +360,19 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
             placeholder="输入消息…"
           />
         </div>
-
-        {historyOpen && (
-          <>
-            <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-            <div className="history-sidebar" style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
-              <div className="history-sidebar-content">
-                <div className="history-sidebar-header">
-                  <div className="chat-history-search-bar" style={{ flex: 1 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
-                    <input type="text" className="chat-history-search-input" placeholder="搜索消息…"
-                      value={historySearchKeyword}
-                      onChange={(e) => setHistorySearchKeyword(e.target.value)} />
-                  </div>
-                  <button type="button" className="history-sidebar-close" onClick={() => setHistoryOpen(false)}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
-                </div>
-
-                <div className="history-date-tabs">
-                  <button type="button" className={`history-date-tab${historyTab === 'history' ? ' active' : ''}`}
-                    onClick={() => setHistoryTab('history')}>历史</button>
-                  <button type="button" className={`history-date-tab${historyTab === 'date' ? ' active' : ''}`}
-                    onClick={() => setHistoryTab('date')}>日期</button>
-                </div>
-
-                <div className="history-speaker-tabs">
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'all' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('all')}>全部</button>
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'other' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('other')}>{otherUsername || '对方'}</button>
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'me' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('me')}>我</button>
-                </div>
-
-                {historyTab === 'date' ? (
-                  <div className="history-sidebar-body">
-                    <Calendar dateGroups={historyDateGroups} selectedDate={historyFilterDate}
-                      onSelectDate={(iso) => { setHistoryFilterDate(iso || ''); if (iso) setHistoryTab('history') }} />
-                  </div>
-                ) : (
-                  <div className="history-sidebar-body">
-                    {(historyFilterDate || historyFilterSpeaker !== 'all') && (
-                      <div className="group-history-filter-bar">
-                        <span className="group-history-filter-label">筛选：</span>
-                        {historyFilterDate && (
-                          <span className="group-history-filter-chip">
-                            {historyFilterDate}
-                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>
-                          </span>
-                        )}
-                        {historyFilterSpeaker !== 'all' && (
-                          <span className="group-history-filter-chip">
-                            {historyFilterSpeaker === 'other' ? (otherUsername || '对方') : '我'}
-                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterSpeaker('all')}>
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {filteredHistoryMessages.length === 0 ? (
-                      <div className="group-history-empty">暂无消息</div>
-                    ) : (
-                      <div className="group-history-list">
-                        {filteredHistoryMessages.map((m, i) => {
-                          const isMe = m.sender_id === authUser?.id
-                          const speakerName = isMe ? (displayName(authUser) || '我') : (otherUsername || '对方')
-                          return (
-                            <div key={m.id || i} className="group-history-item">
-                              <Avatar name={speakerName} size={28}
-                                src={isMe ? userAvatar : otherAvatar} />
-                              <div className="group-history-item-body">
-                                <div className="group-history-item-head">
-                                  <span className="group-history-item-speaker">{speakerName}</span>
-                                  <span className="group-history-item-time">{m.created_at ? formatChatTime(m.created_at) : ''}</span>
-                                </div>
-                                <p className="group-history-item-text">{m.content}</p>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      }
+      panel={
+        <ChatHistoryPanel
+          messages={normalizedHistoryMessages}
+          speakers={[{key:'other', label: otherUsername || '对方'}, {key:'me', label:'我'}]}
+          onClose={() => setHistoryOpen(false)}
+          resolveSpeaker={(msg) => {
+            const isMe = msg.sender_id === authUser?.id
+            return { name: isMe ? (displayName(authUser) || '我') : (otherUsername || '对方'), src: isMe ? userAvatar : otherAvatar }
+          }}
+        />
+      }
+    />
     </div>
   )
 }

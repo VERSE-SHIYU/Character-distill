@@ -168,8 +168,8 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
 export default function ChatHistoryPanel({
   messages = [],
   speakers = [],
-  dateGroups = [],
-  selectedDate,
+  dateGroups: externalDateGroups,
+  selectedDate: controlledDate,
   onSelectDate,
   onJumpTo,
   onClose,
@@ -180,6 +180,24 @@ export default function ChatHistoryPanel({
   const [searchKeyword, setSearchKeyword] = useState('')
   const [historyTab, setHistoryTab] = useState('history')
   const [historyFilterSpeaker, setHistoryFilterSpeaker] = useState('all')
+  const [internalDate, setInternalDate] = useState('')
+
+  // Allow controlled or internal date management
+  const selectedDate = controlledDate !== undefined ? controlledDate : internalDate
+  const setSelectedDate = onSelectDate || setInternalDate
+
+  // Compute date groups from messages if not provided externally
+  const defaultDateGroups = useMemo(() => {
+    const dates = new Set()
+    for (const m of messages) {
+      const ts = m.timestamp || m.created_at
+      if (ts) {
+        try { dates.add(new Date(ts).toISOString().slice(0, 10)) } catch {}
+      }
+    }
+    return [...dates].sort().reverse()
+  }, [messages])
+  const dateGroups = externalDateGroups || defaultDateGroups
 
   const filteredMessages = useMemo(() => {
     let result = messages
@@ -203,7 +221,7 @@ export default function ChatHistoryPanel({
   }, [messages, selectedDate, searchKeyword, historyFilterSpeaker])
 
   const handleCalendarSelect = (iso) => {
-    onSelectDate?.(iso || '')
+    setSelectedDate(iso || '')
     if (iso) setHistoryTab('history')
   }
 
@@ -259,7 +277,7 @@ export default function ChatHistoryPanel({
               {selectedDate && (
                 <span className="group-history-filter-chip">
                   {selectedDate}
-                  <button type="button" className="group-history-filter-chip-x" onClick={() => onSelectDate?.('')}>
+                  <button type="button" className="group-history-filter-chip-x" onClick={() => setSelectedDate('')}>
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </span>

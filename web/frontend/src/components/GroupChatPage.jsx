@@ -15,6 +15,7 @@ import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
+import SplitOrFullscreen from './common/SplitOrFullscreen'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
@@ -43,7 +44,6 @@ export default function GroupChatPage() {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
-  const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
   const setInConversation = useAppStore((s) => s.setInConversation)
@@ -92,32 +92,7 @@ export default function GroupChatPage() {
   const [selectedCharCardInfo, setSelectedCharCardInfo] = useState(null)
   const charInfoPanelRef = useRef(null)
 
-  // ── History sidebar split layout ──
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [splitRatio, setSplitRatio] = useState(0.7)
-  const splitContainerRef = useRef(null)
-
-  const onSplitterMouseDown = useCallback((e) => {
-    e.preventDefault()
-    const container = splitContainerRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    const startX = e.clientX
-    const startRatio = splitRatio
-    const onMove = (ev) => {
-      const dx = ev.clientX - startX
-      const totalW = rect.width
-      let ratio = (totalW * startRatio + dx) / totalW
-      ratio = Math.min(0.8, Math.max(0.4, ratio))
-      setSplitRatio(ratio)
-    }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [splitRatio])
 
   // ── 引用回复 ──
   const [replyTo, setReplyTo] = useState(null) // { id, speaker, preview }
@@ -936,8 +911,13 @@ export default function GroupChatPage() {
           {!currentGroup ? (
             <div className="messages-empty-chat">选择一个群聊或创建新群聊</div>
           ) : (
-            <div className={`private-chat group-chat-layout`} ref={historyOpen ? splitContainerRef : undefined}>
-              <div className="group-chat-main" style={historyOpen ? { flex: splitRatio, minWidth: 0 } : undefined}>
+            <SplitOrFullscreen
+              open={historyOpen}
+              splitRatio={0.7}
+              onSplitRatioChange={() => {}}
+              panelClassName="group-right-panel history-sidebar-mode"
+              main={
+                <div className="group-chat-main">
               {/* Header */}
               <div className="private-chat-header">
                 {isMobile && (
@@ -1246,14 +1226,10 @@ export default function GroupChatPage() {
                 ) : null}
               />
             </div>
-              {/* 右侧栏：tab 切换 — 历史记录 / 成员 */}
-              {historyOpen && (
+              }
+              panel={
                 <>
-                  <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-                  <div className="group-right-panel history-sidebar-mode"
-                       style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw', width: 'auto', transition: 'none' }}>
-                    {/* Tab bar */}
-                    <div className="group-right-tab-bar">
+                  <div className="group-right-tab-bar">
                       <button
                         type="button"
                         className={`group-right-tab${rightTab === 'members' ? ' active' : ''}`}
@@ -1420,10 +1396,9 @@ export default function GroupChatPage() {
                         </div>
                       </div>
                     )}
-                  </div>
                 </>
-              )}
-            </div>
+              }
+            />
           )}
         </div>
       </div>

@@ -17,7 +17,8 @@ import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
-import { Calendar } from './common/ChatHistoryPanel'
+import SplitOrFullscreen from './common/SplitOrFullscreen'
+import ChatHistoryPanel from './common/ChatHistoryPanel'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -27,7 +28,7 @@ export default function ChatArea() {
   const chatSnapshot = useAppStore((s) => s.chatSnapshot)
   const archiveModalOpen = useAppStore((s) => s.archiveModalOpen)
   const pendingChatCardId = useAppStore((s) => s._pendingChatCardId)
-  const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
@@ -81,7 +82,7 @@ export default function ChatArea() {
             <button
               type="button"
               className="home-action-btn"
-              onClick={() => setView('text')}
+              onClick={() => navigateTo('text')}
             >
               <File size={16} /> 上传新文本
             </button>
@@ -106,7 +107,6 @@ function ChatView() {
   const isRecording = useAppStore((s) => s.isRecording)
   const recordingDuration = useAppStore((s) => s.recordingDuration)
   const resetChat = useAppStore((s) => s.resetChat)
-  const setView = useAppStore((s) => s.setView)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const setSessionUserRole = useAppStore((s) => s.setSessionUserRole)
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
@@ -432,70 +432,17 @@ function ChatView() {
     el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [])
 
-  // ── Sidebar history splitter ──
+  // ── Sidebar history ──
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [splitRatio, setSplitRatio] = useState(0.65)
-  const splitContainerRef = useRef(null)
-
-  const onSplitterMouseDown = useCallback((e) => {
-    e.preventDefault()
-    const container = splitContainerRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-    const onMove = (moveE) => {
-      const ratio = (moveE.clientX - rect.left) / rect.width
-      setSplitRatio(Math.min(0.8, Math.max(0.4, ratio)))
-    }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [])
-
-  // ── History panel state ──
-  const [historyFilterDate, setHistoryFilterDate] = useState('')
-  const [historySearchKeyword, setHistorySearchKeyword] = useState('')
-  const [historyTab, setHistoryTab] = useState('history')
-  const [historyFilterSpeaker, setHistoryFilterSpeaker] = useState('all')
-
-  const filteredHistoryMessages = useMemo(() => {
-    let result = messages.filter(m => m.role !== 'summary')
-    if (historyFilterDate) {
-      result = result.filter(m => {
-        const ts = m.timestamp || m.created_at
-        const d = ts ? new Date(ts).toISOString().slice(0, 10) : ''
-        return d === historyFilterDate
-      })
-    }
-    if (historySearchKeyword) {
-      const q = historySearchKeyword.toLowerCase()
-      result = result.filter(m => (m.content || '').toLowerCase().includes(q))
-    }
-    if (historyFilterSpeaker === 'other') {
-      result = result.filter(m => m.role !== 'user')
-    } else if (historyFilterSpeaker === 'me') {
-      result = result.filter(m => m.role === 'user')
-    }
-    return result
-  }, [messages, historyFilterDate, historySearchKeyword, historyFilterSpeaker])
-
-  const historyDateGroups = useMemo(() => {
-    const dates = new Set()
-    for (const m of messages) {
-      const ts = m.timestamp || m.created_at
-      if (ts) {
-        try { dates.add(new Date(ts).toISOString().slice(0, 10)) } catch {}
-      }
-    }
-    return [...dates].sort().reverse()
-  }, [messages])
 
   return (
     <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
-      <div className="chat-with-history" ref={splitContainerRef} style={{ flex: 1, minHeight: 0 }}>
-        <div className="chat-main-content" style={historyOpen ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <SplitOrFullscreen
+        open={historyOpen}
+        splitRatio={0.65}
+        onSplitRatioChange={() => {}}
+        main={
+          <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
@@ -764,105 +711,27 @@ function ChatView() {
             onCancelReply={() => setReplyTo(null)}
           />
         </div>
-
-        {historyOpen && (
-          <>
-            <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-            <div className="history-sidebar" style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
-              <div className="history-sidebar-content">
-                <div className="history-sidebar-header">
-                  <div className="chat-history-search-bar" style={{ flex: 1 }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                      <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-                    </svg>
-                    <input type="text" className="chat-history-search-input" placeholder="搜索消息…"
-                      value={historySearchKeyword}
-                      onChange={(e) => setHistorySearchKeyword(e.target.value)} />
-                  </div>
-                  <button type="button" className="chat-history-export-btn" onClick={handleExport} title="导出对话">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button type="button" className="history-sidebar-close" onClick={() => setHistoryOpen(false)}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
-                </div>
-
-                <div className="history-date-tabs">
-                  <button type="button" className={`history-date-tab${historyTab === 'history' ? ' active' : ''}`}
-                    onClick={() => setHistoryTab('history')}>历史</button>
-                  <button type="button" className={`history-date-tab${historyTab === 'date' ? ' active' : ''}`}
-                    onClick={() => setHistoryTab('date')}>日期</button>
-                </div>
-
-                <div className="history-speaker-tabs">
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'all' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('all')}>全部</button>
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'other' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('other')}>{charName}</button>
-                  <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'me' ? ' active' : ''}`}
-                    onClick={() => setHistoryFilterSpeaker('me')}>我</button>
-                </div>
-
-                {historyTab === 'date' ? (
-                  <div className="history-sidebar-body">
-                    <Calendar dateGroups={historyDateGroups} selectedDate={historyFilterDate}
-                      onSelectDate={(iso) => { setHistoryFilterDate(iso || ''); if (iso) setHistoryTab('history') }} />
-                  </div>
-                ) : (
-                  <div className="history-sidebar-body">
-                    {(historyFilterDate || historyFilterSpeaker !== 'all') && (
-                      <div className="group-history-filter-bar">
-                        <span className="group-history-filter-label">筛选：</span>
-                        {historyFilterDate && (
-                          <span className="group-history-filter-chip">
-                            {historyFilterDate}
-                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>
-                          </span>
-                        )}
-                        {historyFilterSpeaker !== 'all' && (
-                          <span className="group-history-filter-chip">
-                            {historyFilterSpeaker === 'other' ? charName : '我'}
-                            <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterSpeaker('all')}>
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                            </button>
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {filteredHistoryMessages.length === 0 ? (
-                      <div className="group-history-empty">暂无消息</div>
-                    ) : (
-                      <div className="group-history-list">
-                        {filteredHistoryMessages.map((m, i) => {
-                          const isUser = m.role === 'user'
-                          const speakerName = isUser ? (userRole || '我') : charName
-                          return (
-                            <div key={m.id || i} className="group-history-item">
-                              <Avatar name={speakerName} size={28}
-                                src={isUser ? userAvatarUrl : avatarUrl} />
-                              <div className="group-history-item-body">
-                                <div className="group-history-item-head">
-                                  <span className="group-history-item-speaker">{speakerName}</span>
-                                  <span className="group-history-item-time">{m.timestamp ? formatChatTime(m.timestamp) : ''}</span>
-                                </div>
-                                <p className="group-history-item-text">{m.content}</p>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </div>
+      }
+      panel={
+        <ChatHistoryPanel
+          messages={messages}
+          speakers={[{key:'other', label: charName}, {key:'me', label:'我'}]}
+          onJumpTo={scrollToMessage}
+          onClose={() => setHistoryOpen(false)}
+          extraActions={
+            <button type="button" className="chat-history-export-btn" onClick={handleExport} title="导出对话">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </button>
+          }
+          resolveSpeaker={(msg) => {
+            const isUser = msg.role === 'user'
+            return { name: isUser ? (userRole || '我') : charName, src: isUser ? userAvatarUrl : avatarUrl }
+          }}
+        />
+      }
+    />
 
       <ImageCropModal
         file={cropFile}

@@ -18,6 +18,7 @@ export default function SplitOrFullscreen({
   panel,
   splitRatio = 0.65,
   onSplitRatioChange,
+  panelClassName = 'history-sidebar',
 }) {
   const isMobile = useIsMobile()
   const containerRef = useRef(null)
@@ -56,7 +57,7 @@ export default function SplitOrFullscreen({
       {open && (
         <>
           <div className="chat-splitter" onMouseDown={onSplitterMouseDown} />
-          <div className="history-sidebar" style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
+          <div className={panelClassName} style={{ flex: 1 - splitRatio, minWidth: 280, maxWidth: '50vw' }}>
             {panel}
           </div>
         </>
