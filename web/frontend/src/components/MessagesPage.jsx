@@ -185,12 +185,8 @@ export default function MessagesPage() {
             style={{ display: !isMobile || mobileView === 'chat' ? 'flex' : 'none' }}
           >
             {isMobile && activeOtherId && (
-              <div className="mobile-chat-header">
-                <button type="button" className="chat-back-btn" onClick={() => setMobileView('list')}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-                  返回
-                </button>
-                <span className="mobile-chat-username">{activeUsername}</span>
+              <div className="page-header-sticky">
+                <PageHeader title={activeUsername} onBack={() => setMobileView('list')} />
               </div>
             )}
             {!activeOtherId ? (

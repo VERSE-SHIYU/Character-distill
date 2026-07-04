@@ -11324,29 +11324,6 @@ select.settings-input {
   .messages-layout {
     flex-direction: column;
   }
-  .mobile-chat-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 52px;
-    padding: 0 16px;
-    padding-top: env(safe-area-inset-top, 0px);
-    border-bottom: 1px solid var(--glass-border);
-    flex-shrink: 0;
-    box-sizing: border-box;
-    background: var(--sidebar-bg);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-  }
-  .mobile-chat-username {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 }
 
 /* ── Empty state ── */
