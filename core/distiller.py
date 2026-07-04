@@ -150,7 +150,6 @@ class Distiller:
     """基于 LLM 的角色识别与角色卡蒸馏。"""
 
     SAFE_SINGLE_REDUCE = 80
-    MAP_CONCURRENCY = 30
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
 
     def __init__(
@@ -188,6 +187,7 @@ class Distiller:
         self._chunk_size: int = int(distill_cfg.get("chunk_size", 3000))
         self._max_profile_len: int = int(distill_cfg.get("max_profile_len", 2000))
         self._longctx_threshold: int = int(distill_cfg.get("longctx_threshold", 150000))
+        self._map_concurrency: int = max(1, int(distill_cfg.get("map_concurrency", 30)))
 
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
         try_record_usage(
@@ -959,7 +959,7 @@ class Distiller:
         ``on_chunk_done(index, result)`` is called synchronously within the
         async loop each time a chunk finishes.
         """
-        sem = asyncio.Semaphore(self.MAP_CONCURRENCY)
+        sem = asyncio.Semaphore(self._map_concurrency)
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
@@ -1346,10 +1346,11 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_with_progress() -> None:
-            sem = asyncio.Semaphore(self.MAP_CONCURRENCY)
+            sem = asyncio.Semaphore(self._map_concurrency)
             done_count = [0]
             lock = asyncio.Lock()
             failures: list[tuple[int, Exception]] = []
+            map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
 
             async def _one(i: int, chunk: str) -> tuple[int, str]:
                 async with sem:

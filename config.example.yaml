@@ -1,6 +1,7 @@
 distill:
   chunk_size: 5000
   max_profile_len: 8000
+  map_concurrency: 30  # Map 阶段并发数。免费档/低限额 API key 建议降到 3-5
 llm:
   # api_key 请在 .env 中设置 DEEPSEEK_API_KEY，或在 Web 设置页填写
   base_url: https://api.deepseek.com
