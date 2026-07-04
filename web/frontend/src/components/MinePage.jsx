@@ -10,16 +10,14 @@ import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
-import { Popup } from 'antd-mobile'
-import { Theater, Book, MessageSquare, Clock, Trash2 } from './common/Icon'
+import ThemeDrawer from './common/ThemeDrawer'
+import { Theater, Book, MessageSquare } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import { getCoverGradient } from './BookReader'
-import { THEMES } from '../utils/themes'
-import { applyTheme, getTheme } from '../utils/theme'
 
 /* ── MineCardMenu ── */
 function MineCardMenu({ card, onRefresh }) {
@@ -119,10 +117,8 @@ export default function MinePage() {
 
   // Theme drawer state
   const [themeOpen, setThemeOpen] = useState(false)
-  const [currentTheme, setCurrentTheme] = useState(() => getTheme())
 
-  const handleEntryAction = useCallback((key, view) => {
-    if (key === 'theme') { setThemeOpen(true); return }
+  const handleEntryAction = useCallback((_key, view) => {
     if (view) pushView(view)
   }, [pushView])
 
@@ -522,11 +518,6 @@ export default function MinePage() {
     { key: 'posts', label: '动态', icon: <MessageSquare size={15} /> },
     { key: 'followers', label: '粉丝', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> },
     { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-    { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> },
-    ...(isMobile ? [
-      { key: 'history', label: '历史', icon: <Clock size={15} /> },
-      { key: 'trash', label: '回收站', icon: <Trash2 size={15} /> },
-    ] : []),
   ]
 
   if (loading) return (
@@ -667,24 +658,18 @@ export default function MinePage() {
 
       {isMobile && (
         <div className="mine-profile-entries">
-          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={4} />
+          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={3} />
         </div>
       )}
 
       {/* ── Tab 栏 ── */}
       <div className="mine-tab-bar">
-        {tabs.filter(t => {
-          if (!isMe && (t.key === 'messages' || t.key === 'history' || t.key === 'trash')) return false
-          return true
-        }).map(t => (
+        {tabs.map(t => (
           <button
             key={t.key}
             type="button"
             className={`mine-tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => t.key === 'messages' ? pushView('messages')
-              : t.key === 'history' ? pushView('history')
-              : t.key === 'trash' ? pushView('trash')
-              : setTab(t.key)}
+            onClick={() => setTab(t.key)}
           >
             {t.icon} {t.label}
           </button>
@@ -1125,36 +1110,7 @@ export default function MinePage() {
       </div>
 
       {/* Theme drawer */}
-      <Popup
-        visible={themeOpen}
-        onMaskClick={() => setThemeOpen(false)}
-        position="bottom"
-        bodyClassName="mine-theme-drawer"
-      >
-        <div className="mine-theme-drawer-header">
-          <span>选择主题</span>
-          <button type="button" className="mine-theme-drawer-close" onClick={() => setThemeOpen(false)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
-        <div className="mine-theme-grid">
-          {THEMES.map(t => (
-            <button
-              key={t.key}
-              type="button"
-              className={`mine-theme-item${currentTheme === t.key ? ' active' : ''}`}
-              onClick={() => {
-                applyTheme(t.key)
-                setCurrentTheme(t.key)
-              }}
-            >
-              <span className="mine-theme-emoji">{t.emoji}</span>
-              <span className="mine-theme-label">{t.label}</span>
-              {currentTheme === t.key && <span className="mine-theme-check">✓</span>}
-            </button>
-          ))}
-        </div>
-      </Popup>
+      <ThemeDrawer open={themeOpen} onClose={() => setThemeOpen(false)} />
 
       <BannerCropModal
         file={bannerCropFile}

@@ -2,7 +2,7 @@
 // Secondary views get the MobileBackBar and should hide the MobileTabBar.
 export const SECONDARY_VIEWS = [
   'chat', 'character', 'author', 'textDetail',
-  'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
+  'marketCardDetail', 'profile', 'settings', 'apiConfig', 'trash', 'admin', 'legal', 'voice', 'reader',
   'messages', 'history', 'groupChat',
 ]
 
@@ -16,6 +16,7 @@ export const TITLE_MAP = {
   marketCardDetail: '详情',
   profile: '个人资料',
   settings: '设置',
+  apiConfig: 'API 配置',
   trash: '回收站',
   admin: '管理面板',
   legal: '协议',
@@ -29,7 +30,7 @@ export const TITLE_MAP = {
 export const FALLBACK = {
   chat: 'text', groupChat: 'text', character: 'text', reader: 'text',
   author: 'market', textDetail: 'market', marketCardDetail: 'market',
-  profile: 'mine', settings: 'mine', trash: 'mine', admin: 'mine',
+  profile: 'mine', settings: 'mine', apiConfig: 'settings', trash: 'mine', admin: 'mine',
   legal: 'mine', voice: 'mine',
   messages: 'mine', history: 'mine', feed: 'home', market: 'mine',
 }

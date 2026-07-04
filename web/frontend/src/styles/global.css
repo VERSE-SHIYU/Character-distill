@@ -17188,6 +17188,19 @@ select.settings-input {
 .entry-list-item:active {
   background: var(--accent-soft);
 }
+.settings-logout-btn {
+  color: #ef4444;
+  border-radius: 0;
+}
+.settings-logout-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+.settings-logout-btn:active {
+  background: rgba(239, 68, 68, 0.12);
+}
+.settings-logout-btn .entry-list-icon-wrap {
+  color: #ef4444;
+}
 .entry-list-icon-wrap {
   position: relative;
   display: inline-flex;

@@ -27,5 +27,3 @@ export default function MobileBackBar() {
     </>
   )
 }
-
-export { SECONDARY_VIEWS }

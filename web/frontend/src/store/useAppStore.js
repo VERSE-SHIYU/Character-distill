@@ -4,6 +4,7 @@ import { parseCardJson } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
+import { FALLBACK } from '../config/navigation'
 
 const clientTz = () => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone }
@@ -139,13 +140,6 @@ const useAppStore = create((set, get) => ({
   popView: () => {
     const { viewHistory } = get()
     if (viewHistory.length === 0) {
-      const FALLBACK = {
-        chat: 'text', groupChat: 'text', character: 'text', reader: 'text',
-        author: 'market', textDetail: 'market', marketCardDetail: 'market',
-        profile: 'mine', settings: 'mine', trash: 'mine', admin: 'mine',
-        legal: 'mine', voice: 'mine',
-        messages: 'mine', history: 'mine', feed: 'home', market: 'mine',
-      }
       const fb = FALLBACK[get().currentView] || 'home'
       set({ currentView: fb, error: null })
       localStorage.setItem('nav_view', fb)

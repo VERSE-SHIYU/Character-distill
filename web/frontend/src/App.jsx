@@ -19,6 +19,7 @@ const CharCard = lazy(() => import('./components/CharCard'))
 const ChatArea = lazy(() => import('./components/ChatArea'))
 const HistoryPanel = lazy(() => import('./components/HistoryPanel'))
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
+const ApiConfigPanel = lazy(() => import('./components/ApiConfigPanel'))
 const HomePage = lazy(() => import('./components/HomePage'))
 const VoicePanel = lazy(() => import('./components/VoicePanel'))
 const AdminPanel = lazy(() => import('./components/AdminPanel'))
@@ -63,6 +64,7 @@ const PANELS = {
   reader: BookReader,
   trash: TrashPage,
   legal: LegalPage,
+  apiConfig: ApiConfigPanel,
 }
 
 function MainContent() {
@@ -149,7 +151,7 @@ export default function App() {
         const configured = !!user.has_api_key
         useAppStore.setState({ apiConfigured: configured })
         if (!configured) {
-          pushView('settings')
+          pushView('apiConfig')
         }
         // Fetch active announcement
         try {

@@ -391,6 +391,8 @@ const ICON_MAP = {
   trash: Trash2,
   shield: Shield,
   dashboard: Dashboard,
+  terminal: Terminal,
+  megaphone: Megaphone,
 }
 
 export function getIcon(name) {
