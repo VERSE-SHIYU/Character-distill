@@ -17038,3 +17038,29 @@ select.settings-input {
   .ocean-particle, .bg-blob { animation: none !important; }
 }
 
+/* ===== Mobile Adaptation: Step 7 — creation page card wrap ===== */
+@media (max-width: 768px) {
+  .creation-text-card {
+    flex-wrap: wrap;
+  }
+  .creation-text-info {
+    flex: 1 1 100%;
+    min-width: 0;
+    order: -1;
+  }
+  .creation-text-title,
+  .creation-text-filename {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  .creation-text-meta {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .creation-text-actions {
+    margin-left: auto;
+  }
+}
+
