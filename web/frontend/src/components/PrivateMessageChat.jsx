@@ -15,6 +15,7 @@ const PAGE_SIZE = 30
 export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
+  const refreshUnread = useAppStore((s) => s.refreshUnread)
 
   const [messages, setMessages] = useState([])
   const [loading, setLoading] = useState(true)
@@ -108,6 +109,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         method: 'POST',
         headers: { ...getAuthHeaders() },
       })
+      refreshUnread()
     } catch {
       // ignore
     }
