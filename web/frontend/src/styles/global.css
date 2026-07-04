@@ -16728,6 +16728,8 @@ select.settings-input {
   font-family: inherit;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .reader-page-btn:hover:not(:disabled) {
   background: rgba(128,128,128,0.08);
@@ -16742,6 +16744,8 @@ select.settings-input {
   color: var(--text-dim, #888);
   min-width: 60px;
   text-align: center;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .reader-bottom-group {
