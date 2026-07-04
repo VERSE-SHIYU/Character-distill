@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
+import { avatarGradient } from '../utils/avatarColor'
 import { SkeletonCard } from './common/Skeleton'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -338,7 +339,7 @@ export default function HomePage() {
                             <img className="home-featured-img" src={fc.avatar_data} alt={fc.name || '角色'} />
                           </>
                         ) : (
-                          <div className="home-featured-fallback">
+                          <div className="home-featured-fallback" style={{ background: avatarGradient(fc.name || '?') }}>
                             <span className="home-featured-letter">{(fc.name || '?')[0]}</span>
                           </div>
                         )}
@@ -519,7 +520,7 @@ export default function HomePage() {
                             <img className="market-card-v2-cover-img" src={c.avatar_data} alt={c.name || '角色'} />
                           </>
                         ) : (
-                          <div className="market-card-v2-cover-fallback">
+                          <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(c.name || '?') }}>
                             <span className="market-card-v2-fallback-letter">
                               {(c.name || '?')[0]}
                             </span>

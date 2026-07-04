@@ -5,6 +5,7 @@ import { fetchWithTimeout, getAuthHeaders, exportCard } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
+import { avatarGradient } from '../utils/avatarColor'
 import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
@@ -716,7 +717,7 @@ export default function MinePage() {
                           <img src={card.avatar_data} alt={name} className="market-card-v2-cover-img" />
                         </>
                       ) : (
-                        <div className="market-card-v2-cover-fallback">
+                        <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(name) }}>
                           <span className="market-card-v2-fallback-letter">{name.charAt(0).toUpperCase()}</span>
                         </div>
                       )}

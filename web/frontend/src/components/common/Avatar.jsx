@@ -1,15 +1,7 @@
-const COLORS = ['#C9D8F5', '#E8D87A', '#7EC8C8', '#A8D878', '#D4A0D0', '#F5B87A']
-
-function hashColor(name) {
-  let h = 0
-  for (let i = 0; i < name.length; i++) {
-    h = ((h << 5) - h + name.charCodeAt(i)) | 0
-  }
-  return COLORS[Math.abs(h) % COLORS.length]
-}
+import { avatarGradient } from '../../utils/avatarColor'
 
 export default function Avatar({ name = '?', src = null, size = 40, className = '', onClick, style, title }) {
-  const bg = hashColor(name)
+  const bg = src ? 'transparent' : avatarGradient(name)
   const letter = name[0] || '?'
 
   return (
@@ -21,7 +13,7 @@ export default function Avatar({ name = '?', src = null, size = 40, className = 
         width: size,
         height: size,
         borderRadius: 'var(--avatar-radius)',
-        background: src ? 'transparent' : bg,
+        background: bg,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

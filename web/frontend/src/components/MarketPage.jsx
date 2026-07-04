@@ -9,6 +9,7 @@ import ConfirmModal from './common/ConfirmModal'
 import { Heart, Book } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
+import { avatarGradient } from '../utils/avatarColor'
 
 const PAGE_SIZE = 20
 
@@ -277,7 +278,7 @@ export default function MarketPage() {
                         <img src={c.avatar_data} alt={charName} className="market-card-v2-cover-img" />
                       </>
                     ) : (
-                      <div className="market-card-v2-cover-fallback">
+                      <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(charName) }}>
                         <span className="market-card-v2-fallback-letter">{charName.charAt(0).toUpperCase()}</span>
                       </div>
                     )}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
+import { avatarGradient } from '../utils/avatarColor'
 import ChatBubble from './common/ChatBubble'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -1033,7 +1034,7 @@ function HistoryDetail({ data, loading, onBack, onContinue, onDelete, onRestore,
                 name={isUser ? undefined : charName}
                 avatar={
                   isUser
-                    ? <div className="user-avatar-circle avatar-shape" style={session.avatar_data ? { backgroundImage: `url(${session.avatar_data})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}>{!session.avatar_data && userInitial}</div>
+                    ? <div className="user-avatar-circle avatar-shape" style={session.avatar_data ? { backgroundImage: `url(${session.avatar_data})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: avatarGradient(session.user_role || '我') }}>{!session.avatar_data && userInitial}</div>
                     : <Avatar name={charName} size={68} src={cardAvatars?.[session.card_id]} />
                 }
                 time={msg.created_at ? formatChatTime(msg.created_at) : undefined}
