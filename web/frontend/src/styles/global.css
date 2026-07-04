@@ -17375,7 +17375,12 @@ select.settings-input {
     animation: chat-send-fadein 0.15s ease;
   }
 
-  /* ── Chat area: full height — keyboard-aware via --vvh ── */
+  /* ── App shell: keyboard-aware via --vvh (set by useVisualViewport) ── */
+  .app-shell {
+    height: var(--vvh, 100dvh);
+  }
+
+  /* Chat containers fill the app-shell chain */
   .chat-area,
   .private-chat,
   .group-chat-page {
@@ -17383,11 +17388,18 @@ select.settings-input {
   }
 
   /* ── Topbar: sticky, always reachable ── */
-  .chat-topbar-compact,
+  .chat-topbar-compact {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding-top: env(safe-area-inset-top, 0px);
+  }
   .private-chat-header {
     position: sticky;
     top: 0;
     z-index: 10;
+  }
+  .group-chat-main .private-chat-header {
     padding-top: env(safe-area-inset-top, 0px);
   }
 
