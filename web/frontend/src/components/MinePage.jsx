@@ -124,15 +124,9 @@ export default function MinePage() {
   const [currentTheme, setCurrentTheme] = useState(() => getTheme())
 
   const handleEntryAction = useCallback((key, view) => {
-    if (key === 'messages') {
-      setPreviousView('mine')
-      setView('messages')
-    } else if (key === 'theme') {
-      setThemeOpen(true)
-    } else if (view) {
-      pushView(view)
-    }
-  }, [setPreviousView, setView, pushView])
+    if (key === 'theme') { setThemeOpen(true); return }
+    if (view) pushView(view)
+  }, [pushView])
 
   // Store fetched author data when viewing others
   const [profileAuthor, setProfileAuthor] = useState(null)

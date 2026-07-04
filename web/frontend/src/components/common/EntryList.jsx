@@ -1,20 +1,4 @@
-import * as Icons from './Icon'
-
-const ICON_MAP = {
-  mail: Icons.Mail,
-  settings: Icons.Settings,
-  palette: Icons.Palette,
-  globe: Icons.Globe,
-  clock: Icons.Clock,
-  heart: Icons.Heart,
-  user: Icons.User,
-  mic: Icons.Mic,
-  trash: Icons.Trash2,
-  shield: Icons.Shield,
-  dashboard: Icons.Dashboard,
-}
-
-const FALLBACK_ICON = Icons.Bookmark
+import { getIcon } from './Icon'
 
 export default function EntryList({ entries, flags = {}, badge, onAction }) {
   return (
@@ -22,7 +6,7 @@ export default function EntryList({ entries, flags = {}, badge, onAction }) {
       {entries
         .filter((entry) => !entry.requires || flags[entry.requires])
         .map((entry) => {
-          const IconComp = ICON_MAP[entry.icon] || FALLBACK_ICON
+          const IconComp = getIcon(entry.icon)
           const count = entry.badge && badge ? badge : null
           return (
             <button

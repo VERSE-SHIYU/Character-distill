@@ -378,3 +378,21 @@ export const Palette = (props) => (
     <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
   </Svg>
 )
+
+const ICON_MAP = {
+  mail: Mail,
+  settings: Settings,
+  palette: Palette,
+  globe: Globe,
+  clock: Clock,
+  heart: Heart,
+  user: User,
+  mic: Mic,
+  trash: Trash2,
+  shield: Shield,
+  dashboard: Dashboard,
+}
+
+export function getIcon(name) {
+  return ICON_MAP[name] || Bookmark
+}
