@@ -15,14 +15,15 @@ export default function useVisualViewport() {
 
     const SYNC_EVENT = 'vvchange'
     let prevHeight = vv.height
+    let rafId = null
 
-    const updateVvh = (h) => {
-      document.documentElement.style.setProperty('--vvh', `${h}px`)
-    }
-
-    const onResize = () => {
+    const sync = () => {
+      rafId = null
       const h = vv.height
-      updateVvh(h)
+      const off = vv.offsetTop
+      const root = document.documentElement
+      root.style.setProperty('--vvh', `${h}px`)
+      root.style.setProperty('--vv-offset', `${off}px`)
       // Dispatch vvchange only when keyboard opens (height shrinks)
       if (h < prevHeight - 1) {
         window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { height: h } }))
@@ -30,19 +31,21 @@ export default function useVisualViewport() {
       prevHeight = h
     }
 
-    const onScroll = () => {
-      updateVvh(vv.height)
-      // Scroll events (toolbar show/hide) never trigger auto-scroll
+    const schedule = () => {
+      if (rafId === null) rafId = requestAnimationFrame(sync)
     }
 
-    updateVvh(prevHeight) // initial
-    vv.addEventListener('resize', onResize)
-    vv.addEventListener('scroll', onScroll)
+    sync() // initial
+    vv.addEventListener('resize', schedule)
+    vv.addEventListener('scroll', schedule)
 
     return () => {
-      vv.removeEventListener('resize', onResize)
-      vv.removeEventListener('scroll', onScroll)
-      document.documentElement.style.removeProperty('--vvh')
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      vv.removeEventListener('resize', schedule)
+      vv.removeEventListener('scroll', schedule)
+      const root = document.documentElement
+      root.style.removeProperty('--vvh')
+      root.style.removeProperty('--vv-offset')
     }
   }, [])
 }
