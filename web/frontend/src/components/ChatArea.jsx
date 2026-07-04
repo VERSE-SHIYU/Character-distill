@@ -19,6 +19,7 @@ import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -435,8 +436,18 @@ function ChatView() {
   // ── Sidebar history ──
   const [historyOpen, setHistoryOpen] = useState(false)
 
+  const handleChatBack = useCallback(() => {
+    const { viewHistory, popView } = useAppStore.getState()
+    if (viewHistory.length > 0) { popView(); return }
+    const tid = currentCard?.text_id || currentTextId
+    if (tid) selectText(tid)
+    else pushView('character')
+  }, [currentCard, currentTextId, selectText, pushView])
+
+  const chatSwipeBack = useSwipeBack(handleChatBack)
+
   return (
-    <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`}>
+    <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
       <SplitOrFullscreen
         open={historyOpen}
         splitRatio={0.65}
