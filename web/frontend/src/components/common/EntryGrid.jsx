@@ -14,7 +14,7 @@ export default function EntryGrid({ entries, columns = 4, badge, onAction, compa
             onClick={() => onAction?.(entry.key, entry.view)}
           >
             <span className="entry-grid-icon-wrap">
-              <IconComp size={compact ? 24 : 26} />
+              <IconComp size={compact ? 20 : 26} />
               {count != null && count > 0 && (
                 <span className="entry-grid-badge">{count > 99 ? '99+' : count}</span>
               )}

@@ -655,7 +655,7 @@ export default function MinePage() {
 
       {isMobile && (
         <div className="mine-profile-entries">
-          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={3} />
+          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={6} />
         </div>
       )}
 

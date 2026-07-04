@@ -17300,12 +17300,24 @@ select.settings-input {
 }
 
 .entry-grid-compact .entry-grid-item {
-  min-height: 56px;
-  padding: 8px 4px;
+  min-height: 64px;
+  padding: 14px 4px;
   gap: 4px;
+  border-radius: 0;
+  background: transparent;
+}
+.entry-grid-compact .entry-grid-item:hover,
+.entry-grid-compact .entry-grid-item:active {
+  background: transparent;
+  transform: none;
 }
 .entry-grid-compact .entry-grid-label {
-  font-size: 11px;
+  font-size: 12px;
+}
+@media (max-width: 360px) {
+  .entry-grid-compact { gap: 4px; }
+  .entry-grid-compact .entry-grid-item { padding: 12px 2px; }
+  .entry-grid-compact .entry-grid-label { font-size: 11px; }
 }
 
 /* ── EntryList (mobile mine page grouped list) ── */
