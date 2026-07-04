@@ -20,6 +20,8 @@ import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 function parseCardIds(raw) {
   if (Array.isArray(raw)) return raw
@@ -44,6 +46,7 @@ export default function GroupChatPage() {
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setView = useAppStore((s) => s.setView)
+  const popView = useAppStore((s) => s.popView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
   const setInConversation = useAppStore((s) => s.setInConversation)
@@ -61,6 +64,7 @@ export default function GroupChatPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
   const isMobile = useIsMobile()
+  const swipeBack = useSwipeBack(backToList)
   const [editingName, setEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState('')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
@@ -827,7 +831,7 @@ export default function GroupChatPage() {
   // ── Render ──
 
   return (
-    <div className="panel group-chat-page">
+    <div className="panel group-chat-page" {...swipeBack}>
       <div className="messages-layout">
         {/* ── 左栏：群聊列表 ── */}
         <div
@@ -918,13 +922,9 @@ export default function GroupChatPage() {
               panelClassName="group-right-panel history-sidebar-mode"
               main={
                 <div className="group-chat-main">
+              <PageHeader title="群聊" onBack={backToList} />
               {/* Header */}
               <div className="private-chat-header">
-                {isMobile && (
-                  <button type="button" className="chat-back-btn" onClick={backToList}>
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-                  </button>
-                )}
                 {editingName ? (
                   <input
                     className="private-chat-title-input"

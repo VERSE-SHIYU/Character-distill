@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 const FONT_SIZES = [14, 16, 18, 20, 22]
 const LS_FONT_KEY = 'reader_font_size'
@@ -323,8 +325,9 @@ export default function BookReader() {
     })
   }
 
-  const navigateBack = useAppStore((s) => s.navigateBack)
-  const goBack = () => navigateBack()
+  const popView = useAppStore((s) => s.popView)
+  const swipeBack = useSwipeBack(popView)
+  const goBack = () => popView()
 
   const goToPage = (page) => {
     setCurrentPage(Math.max(0, Math.min(totalPages - 1, page)))
@@ -356,7 +359,7 @@ export default function BookReader() {
 
   if (loading) {
     return (
-      <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`}>
+      <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`} {...swipeBack}>
         <div className="reader-loading">加载中…</div>
       </div>
     )
@@ -364,7 +367,7 @@ export default function BookReader() {
 
   if (error) {
     return (
-      <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`}>
+      <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`} {...swipeBack}>
         <div className="reader-error">
           <p>{error}</p>
           <button className="btn-primary" onClick={goBack}>返回</button>
@@ -374,19 +377,16 @@ export default function BookReader() {
   }
 
   return (
-    <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`}>
-      {/* Top bar */}
-      <div className="reader-top-bar">
-        <button className="reader-top-btn" onClick={goBack} title="返回">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <span className="reader-title">{title || '阅读'}</span>
-        {toc.length > 0 && (
+    <div className={`reader-container${darkMode ? ' reader-dark' : ' reader-light'}`} {...swipeBack}>
+      <PageHeader
+        title={title || '阅读'}
+        onBack={goBack}
+        actions={toc.length > 0 ? (
           <button className="reader-top-btn" onClick={() => setShowTOC(!showTOC)} title="目录">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           </button>
-        )}
-      </div>
+        ) : undefined}
+      />
 
       {/* TOC drawer */}
       <div className={`reader-toc-drawer-overlay${showTOC ? ' open' : ''}`} onClick={() => setShowTOC(false)} />
