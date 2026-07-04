@@ -3,7 +3,7 @@
 export const SECONDARY_VIEWS = [
   'chat', 'character', 'author', 'textDetail',
   'marketCardDetail', 'profile', 'settings', 'apiConfig', 'trash', 'admin', 'legal', 'voice', 'reader',
-  'messages', 'history', 'groupChat',
+  'messages', 'history', 'groupChat', 'feed', 'market',
 ]
 
 // Map of secondary view → display title shown in MobileBackBar
@@ -24,6 +24,8 @@ export const TITLE_MAP = {
   reader: '阅读',
   messages: '私信',
   history: '历史会话',
+  feed: '动态',
+  market: '市场',
 }
 
 // Fallback view when popView is called with an empty history stack
