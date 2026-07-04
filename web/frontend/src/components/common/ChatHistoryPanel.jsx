@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatChatTime } from '../../utils/time'
-import Loading from './Loading'
+import Avatar from './Avatar'
 
 // ── Calendar picker (also exported for external tab use) ──
 
-// ── Year/Month picker dropdown ──
 function PickerDropdown({ options, selected, onSelect, onClose, suffix = '' }) {
   const ref = useRef(null)
   useEffect(() => {
@@ -56,11 +55,10 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
 
   const [viewYear, setViewYear] = useState(defaultYear)
   const [viewMonth, setViewMonth] = useState(defaultMonth)
-  const [openPicker, setOpenPicker] = useState(null) // 'year' | 'month' | null
+  const [openPicker, setOpenPicker] = useState(null)
 
   const daysInMonth = new Date(viewYear, viewMonth, 0).getDate()
-  const firstDayOfWeek = new Date(viewYear, viewMonth - 1, 1).getDay() // 0=Sun
-
+  const firstDayOfWeek = new Date(viewYear, viewMonth - 1, 1).getDay()
   const todayStr = now.toISOString().slice(0, 10)
 
   const handlePrevMonth = () => {
@@ -150,271 +148,157 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
   )
 }
 
-// ── ChatHistoryPanel ──
+// ── Message-level history panel ──
 
 /**
- * Shared in-chat history panel.
- *
- * Modes:
- *   "dropdown" — toggle button shows floating panel below it (default)
- *   "overlay"  — toggle button opens full-screen overlay
- *   "sidebar"  — parent controls open/close via `open` prop; panel
- *                fills its container (no toggle button rendered).
+ * Inline message-history panel for 1v1 chat / DM.
  *
  * Props:
- *   fetchSessions:   (keyword) => Promise<Array<{id, title, preview, time}>>
- *   onSelectSession: (session) => void
- *   placeholder:     string
- *   mode:            "dropdown" | "overlay" | "sidebar"
- *   open:            boolean (sidebar mode only)
- *   onClose:         () => void (sidebar mode only)
- *   onExport:        () => void
- *   selectedDate:    string (controlled from parent, for group-chat date-tab)
- *   onSelectDate:    (isoDate) => void (controlled from parent)
+ *   messages        raw message array (filtered internally)
+ *   speakers        [{key, label}] — speaker filter tab defs
+ *   dateGroups      [isoString] — pre-computed dates that have messages
+ *   selectedDate    iso string — currently selected date (controlled)
+ *   onSelectDate    fn(iso) — date selection callback
+ *   onJumpTo        fn(msgId) — scroll chat to this message
+ *   onClose         fn() — close the panel
+ *   extraActions    ReactNode — slot for export button etc.
+ *   renderMessage   fn(msg, i, speakerLabel) => ReactNode — custom message row
+ *   resolveSpeaker  fn(msg) => { name, src } — resolve speaker avatar/name per msg
  */
 export default function ChatHistoryPanel({
-  fetchSessions, onSelectSession, placeholder = '搜索历史消息…',
-  mode = 'dropdown', open: externalOpen, onClose, onExport,
-  selectedDate: controlledDate, onSelectDate: controlledOnSelectDate,
-  hideTabs = false,
+  messages = [],
+  speakers = [],
+  dateGroups = [],
+  selectedDate,
+  onSelectDate,
+  onJumpTo,
+  onClose,
+  extraActions,
+  renderMessage,
+  resolveSpeaker,
 }) {
-  const [internalOpen, setInternalOpen] = useState(false)
-  const [keyword, setKeyword] = useState('')
-  const [sessions, setSessions] = useState([])
-  const [loading, setLoading] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [panelStyle, setPanelStyle] = useState({})
-  const [internalSelectedDate, setInternalSelectedDate] = useState('')
-  const [internalTab, setInternalTab] = useState('history') // 'history' | 'date'
-  const toggleRef = useRef(null)
-  const panelRef = useRef(null)
-  const inputRef = useRef(null)
-  const autoSelectDate = useRef(false)
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [historyTab, setHistoryTab] = useState('history')
+  const [historyFilterSpeaker, setHistoryFilterSpeaker] = useState('all')
 
-  // Use controlled or internal date
-  const selectedDate = controlledDate !== undefined ? controlledDate : internalSelectedDate
-  const setSelectedDate = controlledOnSelectDate || setInternalSelectedDate
-
-  const open = mode === 'sidebar' ? externalOpen : internalOpen
-
-  const doFetch = useCallback(async (kw) => {
-    setLoading(true)
-    try {
-      const data = await fetchSessions(kw)
-      setSessions(data || [])
-    } catch {
-      setSessions([])
-    } finally {
-      setLoading(false)
+  const filteredMessages = useMemo(() => {
+    let result = messages
+    if (selectedDate) {
+      result = result.filter(m => {
+        const ts = m.timestamp || m.created_at
+        const d = ts ? new Date(ts).toISOString().slice(0, 10) : ''
+        return d === selectedDate
+      })
     }
-  }, [fetchSessions])
-
-  useEffect(() => {
-    if (open && !loaded) {
-      doFetch('')
-      setLoaded(true)
+    if (searchKeyword) {
+      const q = searchKeyword.toLowerCase()
+      result = result.filter(m => (m.content || '').toLowerCase().includes(q))
     }
-  }, [open, loaded, doFetch])
-
-  useEffect(() => {
-    if (!open) return
-    const timer = setTimeout(() => doFetch(keyword), 300)
-    return () => clearTimeout(timer)
-  }, [keyword, open, doFetch])
-
-  const closePanel = useCallback(() => {
-    setKeyword('')
-    setLoaded(false)
-    if (!controlledDate) setInternalSelectedDate('')
-    setInternalTab('history')
-    autoSelectDate.current = false
-    if (mode === 'sidebar') onClose?.()
-    else setInternalOpen(false)
-  }, [mode, onClose, controlledDate])
-
-  // ── Toggle (dropdown/overlay) ──
-  const toggle = () => {
-    const next = !internalOpen
-    setInternalOpen(next)
-    if (!next) { setKeyword(''); setLoaded(false); if (!controlledDate) setInternalSelectedDate(''); setInternalTab('history'); autoSelectDate.current = false }
-    else {
-      if (toggleRef.current) {
-        const rect = toggleRef.current.getBoundingClientRect()
-        setPanelStyle({
-          position: 'fixed',
-          top: rect.bottom + 4,
-          right: document.documentElement.clientWidth - rect.right,
-        })
-      }
-      setTimeout(() => inputRef.current?.focus(), 100)
+    if (historyFilterSpeaker === 'other') {
+      result = result.filter(m => m.role !== 'user')
+    } else if (historyFilterSpeaker === 'me') {
+      result = result.filter(m => m.role === 'user')
     }
+    return result
+  }, [messages, selectedDate, searchKeyword, historyFilterSpeaker])
+
+  const handleCalendarSelect = (iso) => {
+    onSelectDate?.(iso || '')
+    if (iso) setHistoryTab('history')
   }
 
-  // Click outside (dropdown only)
-  useEffect(() => {
-    if (mode !== 'dropdown' || !internalOpen) return
-    const handler = (e) => {
-      if (panelRef.current && !panelRef.current.contains(e.target) &&
-          toggleRef.current && !toggleRef.current.contains(e.target)) {
-        closePanel()
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [mode, internalOpen, closePanel])
-
-  // ── Date grouping ──
-  const dateGroups = useMemo(() => {
-    const dates = new Set()
-    for (const s of sessions) {
-      if (s.time) {
-        try { dates.add(new Date(s.time).toISOString().slice(0, 10)) } catch {}
-      }
-    }
-    return [...dates].sort().reverse()
-  }, [sessions])
-
-  // Auto-select most recent date after data loads
-  useEffect(() => {
-    if (dateGroups.length > 0 && !autoSelectDate.current && loaded && !controlledDate) {
-      setInternalSelectedDate(dateGroups[0])
-      autoSelectDate.current = true
-    }
-  }, [dateGroups, loaded, controlledDate])
-
-  const filteredSessions = useMemo(() => {
-    if (!selectedDate) return sessions
-    return sessions.filter(s => {
-      if (!s.time) return false
-      try { return new Date(s.time).toISOString().slice(0, 10) === selectedDate } catch { return false }
-    })
-  }, [sessions, selectedDate])
-
-  const handleCalendarSelect = (isoDate) => {
-    setSelectedDate(isoDate || '')
-    if (isoDate) setInternalTab('history')
+  const speakerLabel = (key) => {
+    const found = speakers.find(s => s.key === key)
+    return found?.label || key
   }
 
-  // ── Render panel content ──
-  const renderPanelContent = (isSidebar) => {
-    const showTabBar = !hideTabs
-    return (
-    <>
-      <div className={isSidebar ? 'history-sidebar-header' : 'chat-history-overlay-header'}>
+  return (
+    <div className="history-sidebar-content">
+      <div className="history-sidebar-header">
         <div className="chat-history-search-bar" style={{ flex: 1 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <circle cx="11" cy="11" r="8" />
-            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
-          <input
-            ref={inputRef}
-            type="text"
-            className="chat-history-search-input"
-            placeholder={placeholder}
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
+          <input type="text" className="chat-history-search-input" placeholder="搜索消息…"
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)} />
         </div>
-        {onExport && (
-          <button type="button" className="chat-history-export-btn" onClick={onExport} title="导出对话">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-          </button>
-        )}
-        {isSidebar ? (
-          <button type="button" className="history-sidebar-close" onClick={closePanel}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        ) : (
-          <button type="button" className="chat-history-overlay-close" onClick={closePanel}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        )}
+        {extraActions}
+        <button type="button" className="history-sidebar-close" onClick={onClose}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
 
-      {/* Date tabs: 历史 | 日期 */}
-      {showTabBar && (
-        <div className="history-date-tabs">
-          <button
-            type="button"
-            className={`history-date-tab${internalTab === 'history' ? ' active' : ''}`}
-            onClick={() => setInternalTab('history')}
-          >历史</button>
-          <button
-            type="button"
-            className={`history-date-tab${internalTab === 'date' ? ' active' : ''}`}
-            onClick={() => setInternalTab('date')}
-          >日期</button>
-        </div>
-      )}
+      <div className="history-date-tabs">
+        <button type="button" className={`history-date-tab${historyTab === 'history' ? ' active' : ''}`}
+          onClick={() => setHistoryTab('history')}>历史</button>
+        <button type="button" className={`history-date-tab${historyTab === 'date' ? ' active' : ''}`}
+          onClick={() => setHistoryTab('date')}>日期</button>
+      </div>
 
-      {internalTab === 'date' ? (
-        <div className={isSidebar ? 'history-sidebar-body' : 'chat-history-overlay-body'}>
-          <Calendar dateGroups={dateGroups} selectedDate={selectedDate} onSelectDate={handleCalendarSelect} />
-        </div>
-      ) : (
-        <div className={isSidebar ? 'history-sidebar-body' : 'chat-history-overlay-body'}>
-          {loading && <Loading text="搜索中…" />}
-          {!loading && filteredSessions.length === 0 && (
-            <div className="chat-history-empty">{keyword ? '无匹配结果' : selectedDate ? '该日期无记录' : '暂无历史记录'}</div>
-          )}
-          {!loading && filteredSessions.map((s, i) => (
-            <button
-              key={s.id || i}
-              type="button"
-              className="chat-history-item"
-              onClick={() => { onSelectSession(s); closePanel() }}
-            >
-              <div className="chat-history-item-title">{s.title || '会话'}</div>
-              <div className="chat-history-item-preview">{s.preview || ''}</div>
-              <div className="chat-history-item-time">{formatChatTime(s.time)}</div>
-            </button>
+      {speakers.length > 0 && (
+        <div className="history-speaker-tabs">
+          <button type="button" className={`history-speaker-tab${historyFilterSpeaker === 'all' ? ' active' : ''}`}
+            onClick={() => setHistoryFilterSpeaker('all')}>全部</button>
+          {speakers.map(s => (
+            <button key={s.key} type="button" className={`history-speaker-tab${historyFilterSpeaker === s.key ? ' active' : ''}`}
+              onClick={() => setHistoryFilterSpeaker(s.key)}>{s.label}</button>
           ))}
         </div>
       )}
-    </>
-    )
-  }
 
-  // ── Sidebar mode: content only, no toggle ──
-  if (mode === 'sidebar') {
-    if (!open) return null
-    return (
-      <div className="history-sidebar-content" ref={panelRef}>
-        {renderPanelContent(true)}
-      </div>
-    )
-  }
-
-  // ── Dropdown / Overlay mode ──
-  return (
-    <div className="chat-history-panel" ref={panelRef}>
-      <button
-        ref={toggleRef}
-        type="button"
-        className={`chat-history-toggle${internalOpen ? ' active' : ''}`}
-        onClick={toggle}
-        title="历史记录"
-      >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-        历史
-      </button>
-
-      {internalOpen && mode === 'dropdown' && (
-        <div className="chat-history-panel-body" style={panelStyle}>
-          {renderPanelContent(false)}
+      {historyTab === 'date' ? (
+        <div className="history-sidebar-body">
+          <Calendar dateGroups={dateGroups} selectedDate={selectedDate} onSelectDate={handleCalendarSelect} />
         </div>
-      )}
+      ) : (
+        <div className="history-sidebar-body">
+          {(selectedDate || historyFilterSpeaker !== 'all') && (
+            <div className="group-history-filter-bar">
+              <span className="group-history-filter-label">筛选：</span>
+              {selectedDate && (
+                <span className="group-history-filter-chip">
+                  {selectedDate}
+                  <button type="button" className="group-history-filter-chip-x" onClick={() => onSelectDate?.('')}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </span>
+              )}
+              {historyFilterSpeaker !== 'all' && (
+                <span className="group-history-filter-chip">
+                  {speakerLabel(historyFilterSpeaker)}
+                  <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterSpeaker('all')}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
 
-      {internalOpen && mode === 'overlay' && (
-        <div className="chat-history-overlay">
-          {renderPanelContent(false)}
+          {filteredMessages.length === 0 ? (
+            <div className="group-history-empty">暂无消息</div>
+          ) : (
+            <div className="group-history-list">
+              {filteredMessages.map((m, i) => {
+                if (renderMessage) return renderMessage(m, i, speakerLabel)
+                const ts = m.timestamp || m.created_at
+                const time = ts ? formatChatTime(ts) : ''
+                const speaker = resolveSpeaker?.(m) || { name: '?', src: null }
+                return (
+                  <div key={m.id || i} className="group-history-item" onClick={() => onJumpTo?.(m.id)}>
+                    <Avatar name={speaker.name} size={28} src={speaker.src} />
+                    <div className="group-history-item-body">
+                      <div className="group-history-item-head">
+                        <span className="group-history-item-speaker">{speaker.name}</span>
+                        <span className="group-history-item-time">{time}</span>
+                      </div>
+                      <p className="group-history-item-text">{m.content}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
