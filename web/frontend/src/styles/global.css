@@ -1689,6 +1689,27 @@ html.theme-aurora::before {
     border-radius: 0;
     border: none;
   }
+
+  .reader-bottom-bar {
+    gap: 4px;
+    padding: 6px 10px;
+    padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  .reader-page-btn {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+  .reader-page-info {
+    min-width: 44px;
+    font-size: 12px;
+  }
+  .reader-bottom-group {
+    gap: 2px;
+  }
+  .reader-bottom-btn {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 /* ===== View Transition ===== */
