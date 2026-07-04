@@ -16905,7 +16905,13 @@ select.settings-input {
   }
 
   .main-panel {
+    margin: 0;
+    border-radius: 0;
+    border: none;
     padding-bottom: calc(50px + env(safe-area-inset-bottom, 0px));
+  }
+  .app-shell.has-sidebar-open .main-panel {
+    margin-left: 0;
   }
 }
 
