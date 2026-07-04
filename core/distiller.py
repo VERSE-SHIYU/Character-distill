@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import queue
 import re
 import threading
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 import collections.abc as _cabc
@@ -18,6 +21,12 @@ from adapters.llm_adapter import LLMAdapter
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import try_record_usage
+
+# ── identify_characters TTL cache ───────────────────────────────────────
+IDENTIFY_CACHE_TTL_SECONDS = 600
+IDENTIFY_CACHE_MAX_ENTRIES = 100
+_IDENTIFY_CACHE: OrderedDict[str, tuple[list[dict[str, Any]], float]] = OrderedDict()
+_IDENTIFY_CACHE_LOCK = threading.Lock()
 
 
 IDENTIFY_SYSTEM_PROMPT = (
@@ -508,6 +517,20 @@ class Distiller:
             角色信息字典列表；解析反复失败时返回空列表并打印警告。
         """
         excerpt = text[:10000]
+        key = hashlib.sha256(excerpt.encode()).hexdigest() + ":" + self._llm.model
+
+        # Check cache
+        with _IDENTIFY_CACHE_LOCK:
+            cached = _IDENTIFY_CACHE.get(key)
+            if cached is not None:
+                result, ts = cached
+                if time.time() - ts < IDENTIFY_CACHE_TTL_SECONDS:
+                    print("[distill] identify cache hit")
+                    # Deep copy to prevent caller mutation from polluting cache
+                    return json.loads(json.dumps(result))
+                else:
+                    del _IDENTIFY_CACHE[key]
+
         messages: list[dict[str, Any]] = [{"role": "user", "content": excerpt}]
 
         def _parse_list(raw: str) -> list[dict[str, Any]]:
@@ -536,7 +559,7 @@ class Distiller:
             raise
 
         try:
-            return _parse_list(reply)
+            result = _parse_list(reply)
         except Exception:
             retry_prompt = IDENTIFY_SYSTEM_PROMPT + "请只返回JSON数组"
             try:
@@ -545,10 +568,17 @@ class Distiller:
                 print(f"角色识别重试调用 LLM 失败：{exc}")
                 raise
             try:
-                return _parse_list(reply_retry)
+                result = _parse_list(reply_retry)
             except Exception as exc:
                 print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
                 return []
+
+        # Cache on success (deep copy to isolate from caller mutation)
+        with _IDENTIFY_CACHE_LOCK:
+            _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
+            if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
+                _IDENTIFY_CACHE.popitem(last=False)
+        return result
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:

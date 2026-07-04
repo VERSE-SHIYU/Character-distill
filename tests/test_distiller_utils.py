@@ -139,3 +139,110 @@ class TestSplitChunksChat:
         text = "[2024-01-01] A: lone message"
         result = Distiller._split_chunks_chat(text, 100)
         assert result == [text]
+
+
+# ── identify_characters TTL cache ──────────────────────────────────────
+
+import copy
+import json
+from unittest.mock import MagicMock
+
+from core.distiller import (
+    _IDENTIFY_CACHE,
+    IDENTIFY_CACHE_MAX_ENTRIES,
+    IDENTIFY_CACHE_TTL_SECONDS,
+)
+
+
+def _make_mock_llm(model="test-model", return_value=None, side_effect=None):
+    llm = MagicMock()
+    llm.model = model
+    llm.chat = MagicMock(return_value=return_value, side_effect=side_effect)
+    return llm
+
+
+SAMPLE_TEXT = "张三是个沉默寡言的人。李四是他唯一的朋友。"
+SAMPLE_RESULT = [
+    {"name": "张三", "aliases": [], "importance": "主要", "reason": "有言行描写"},
+    {"name": "李四", "aliases": [], "importance": "次要", "reason": "有对话"},
+]
+
+
+class TestIdentifyCharactersCache:
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_same_text_caches_and_reuses(self):
+        """同一文本调两次，LLM.chat 只调用 1 次，两次返回相等。"""
+        llm = _make_mock_llm(return_value=json.dumps(SAMPLE_RESULT))
+        d = Distiller(llm)
+
+        r1 = d.identify_characters(SAMPLE_TEXT)
+        r2 = d.identify_characters(SAMPLE_TEXT)
+
+        assert llm.chat.call_count == 1
+        assert r1 == r2 == SAMPLE_RESULT
+
+    def test_cache_not_polluted_by_caller_mutation(self):
+        """返回值原地修改后再查缓存，缓存内容不受污染。"""
+        llm = _make_mock_llm(return_value=json.dumps(SAMPLE_RESULT))
+        d = Distiller(llm)
+
+        r1 = d.identify_characters(SAMPLE_TEXT)
+        r1.append({"name": "污染", "aliases": []})
+
+        r2 = d.identify_characters(SAMPLE_TEXT)
+        assert len(r2) == 2
+        assert r2 == SAMPLE_RESULT
+
+    def test_different_text_different_miss(self):
+        """不同文本各自独立 miss。"""
+        llm = _make_mock_llm(return_value=json.dumps(SAMPLE_RESULT))
+        d = Distiller(llm)
+
+        d.identify_characters(SAMPLE_TEXT)
+        d.identify_characters("完全不同的文本内容")
+
+        assert llm.chat.call_count == 2
+
+    def test_different_model_different_miss(self):
+        """不同 model 各自独立 miss。"""
+        text = SAMPLE_TEXT
+        llm1 = _make_mock_llm(model="model-a", return_value=json.dumps(SAMPLE_RESULT))
+        llm2 = _make_mock_llm(model="model-b", return_value=json.dumps(SAMPLE_RESULT))
+
+        d1 = Distiller(llm1)
+        d2 = Distiller(llm2)
+
+        d1.identify_characters(text)
+        d2.identify_characters(text)
+
+        assert llm1.chat.call_count == 1
+        assert llm2.chat.call_count == 1
+
+    def test_llm_exception_not_cached(self):
+        """LLM 抛异常时不写缓存，下次调用重新请求。"""
+        llm = _make_mock_llm(side_effect=RuntimeError("LLM down"))
+        d = Distiller(llm)
+
+        try:
+            d.identify_characters(SAMPLE_TEXT)
+        except RuntimeError:
+            pass
+        try:
+            d.identify_characters(SAMPLE_TEXT)
+        except RuntimeError:
+            pass
+
+        assert llm.chat.call_count == 2
+
+    def test_parse_failure_not_cached(self):
+        """解析失败（非 JSON）不写缓存，下次调用重新请求。"""
+        llm = _make_mock_llm(return_value="不是 JSON")
+        d = Distiller(llm)
+
+        result = d.identify_characters(SAMPLE_TEXT)
+        assert result == []
+        result2 = d.identify_characters(SAMPLE_TEXT)
+        assert result2 == []
+        assert llm.chat.call_count >= 2
