@@ -5015,38 +5015,6 @@ html.theme-aurora::before {
   gap: 12px;
 }
 
-/* ===== Back buttons ===== */
-.chat-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 16px 0 12px;
-  border: none;
-  border-radius: 20px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-  font-family: inherit;
-  line-height: 1;
-}
-
-.chat-back-btn:hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-}
-
-.chat-back-btn svg {
-  flex-shrink: 0;
-}
-
-.chat-back-btn:active {
-  transform: scale(0.96);
-}
-
 .history-detail-actions {
   display: flex;
   flex-wrap: wrap;
