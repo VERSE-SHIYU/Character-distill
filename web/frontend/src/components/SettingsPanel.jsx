@@ -4,6 +4,8 @@ import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { AlertTriangle } from './common/Icon'
+import EntryList from './common/EntryList'
+import { SETTINGS_ENTRIES } from '../config/mineEntries'
 
 const APP_VERSION = '1.0.0'
 const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
@@ -31,6 +33,7 @@ export default function SettingsPanel() {
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
+  const authUser = useAppStore((s) => s.authUser)
 
   // ---- Load config ----
   useEffect(() => {
@@ -84,6 +87,9 @@ export default function SettingsPanel() {
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
+
+      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: authUser?.is_admin }} onAction={(_key, view) => { if (view) pushView(view) }} />
+      <div className="entry-group-gap" />
 
       <section className="settings-section">
         <h2 className="settings-section-title">API 配置</h2>

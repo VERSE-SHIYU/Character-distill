@@ -183,6 +183,14 @@ export default function HomePage() {
         </div>
       )}
 
+      {/* Mobile segment: 发现 | 动态 */}
+      {isMobile && (
+        <div className="home-segment-bar">
+          <button type="button" className="home-segment-btn active">发现</button>
+          <button type="button" className="home-segment-btn" onClick={() => pushView('feed')}>动态</button>
+        </div>
+      )}
+
       {isNewUser ? (
         /* ── 新用户引导视图 ── */
         <div className="home-onboard-container">

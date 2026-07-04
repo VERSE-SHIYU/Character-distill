@@ -7088,6 +7088,35 @@ select.settings-input {
   padding: 16px 28px 32px;
 }
 
+/* ── Home segment bar ── */
+.home-segment-bar {
+  display: flex;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 3px;
+  margin-bottom: 18px;
+  gap: 3px;
+}
+.home-segment-btn {
+  flex: 1;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+.home-segment-btn.active {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
 .home-page .panel-title {
   font-size: 16px;
   margin-bottom: 12px;
@@ -12854,6 +12883,13 @@ select.settings-input {
   margin: 0 2px;
 }
 
+/* ── Profile entries (mobile EntryGrid inside profile card) ── */
+.mine-profile-entries {
+  padding: 12px 0 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--glass-border);
+}
+
 .mine-profile-header .mine-avatar {
   border: 3px solid var(--bg-card, var(--bg-page));
   border-radius: 50%;
@@ -13239,7 +13275,7 @@ select.settings-input {
 
 /* ── Mobile ── */
 @media (max-width: 640px) {
-  .mine-banner { max-height: 120px; }
+  .mine-banner { max-height: 110px; }
   .mine-profile-section { padding: 8px 16px; }
   .mine-profile-row { flex-wrap: wrap; gap: 8px; }
   .mine-profile-name { font-size: 16px; }
@@ -13251,7 +13287,7 @@ select.settings-input {
   .mine-onboard-steps { flex-direction: column; gap: 12px; }
   .mine-page-v2 .market-grid-v2 {
     grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    gap: 10px;
   }
 }
 
@@ -17076,6 +17112,15 @@ select.settings-input {
   white-space: nowrap;
 }
 
+.entry-grid-compact .entry-grid-item {
+  min-height: 56px;
+  padding: 8px 4px;
+  gap: 4px;
+}
+.entry-grid-compact .entry-grid-label {
+  font-size: 11px;
+}
+
 /* ── EntryList (mobile mine page grouped list) ── */
 .entry-list {
   display: flex;
@@ -17321,14 +17366,22 @@ select.settings-input {
 
 /* ===== Mobile Adaptation: Step 5 ===== */
 @media (max-width: 768px) {
-  .market-grid-v2,
+  .market-grid-v2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
   .mine-page-v2 .market-grid-v2 {
     grid-template-columns: 1fr;
     gap: 12px;
   }
-
-  .mine-mobile-nav {
-    padding: 12px 16px 24px;
+  /* 2-column character grid inside mine tab content */
+  .mine-tab-content .market-grid-v2 {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .mine-tab-content .market-card-v2 {
+    aspect-ratio: 3/4;
+    max-height: 340px;
   }
 }
 

@@ -1,8 +1,8 @@
 import { getIcon } from './Icon'
 
-export default function EntryGrid({ entries, columns = 4, badge, onAction }) {
+export default function EntryGrid({ entries, columns = 4, badge, onAction, compact }) {
   return (
-    <div className="entry-grid" style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}>
+    <div className={`entry-grid${compact ? ' entry-grid-compact' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}>
       {entries.map((entry) => {
         const IconComp = getIcon(entry.icon)
         const count = entry.badge && badge ? badge : null
@@ -14,7 +14,7 @@ export default function EntryGrid({ entries, columns = 4, badge, onAction }) {
             onClick={() => onAction?.(entry.key, entry.view)}
           >
             <span className="entry-grid-icon-wrap">
-              <IconComp size={26} />
+              <IconComp size={compact ? 24 : 26} />
               {count != null && count > 0 && (
                 <span className="entry-grid-badge">{count > 99 ? '99+' : count}</span>
               )}

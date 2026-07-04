@@ -11,10 +11,9 @@ import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { Popup } from 'antd-mobile'
-import { Theater, Book, MessageSquare } from './common/Icon'
+import { Theater, Book, MessageSquare, Clock, Trash2 } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
-import EntryList from './common/EntryList'
-import { QUICK_ENTRIES, CONTENT_ENTRIES, ABOUT_ENTRIES } from '../config/mineEntries'
+import { QUICK_ENTRIES } from '../config/mineEntries'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -528,6 +527,10 @@ export default function MinePage() {
     { key: 'followers', label: '粉丝', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> },
     { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
     { key: 'messages', label: '私信', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg> },
+    ...(isMobile ? [
+      { key: 'history', label: '历史', icon: <Clock size={15} /> },
+      { key: 'trash', label: '回收站', icon: <Trash2 size={15} /> },
+    ] : []),
   ]
 
   if (loading) return (
@@ -541,7 +544,7 @@ export default function MinePage() {
   return (
     <div className="mine-page-v2">
       {/* ── Banner ── */}
-      <div className="mine-banner">
+      <div className="mine-banner" style={isMobile ? { maxHeight: 110 } : undefined}>
         {(isMe ? userBanner : profileAuthor?.banner_data) ? (
           <>
             <img src={isMe ? userBanner : profileAuthor?.banner_data} alt="" className="mine-banner-blur" aria-hidden="true" />
@@ -564,7 +567,7 @@ export default function MinePage() {
       <div className="mine-profile-section">
         <div className="mine-profile-row">
           <div className="mine-profile-left">
-            <div className="mine-avatar-wrap">
+            <div className="mine-avatar-wrap" style={isMobile ? { marginTop: -40 } : undefined}>
               <Avatar name={username} src={avatarSrc} size={isMobile ? 56 : 60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
               {isMe && (
                 <>
@@ -666,14 +669,26 @@ export default function MinePage() {
         </div>
       </div>
 
+      {isMobile && (
+        <div className="mine-profile-entries">
+          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={4} />
+        </div>
+      )}
+
       {/* ── Tab 栏 ── */}
       <div className="mine-tab-bar">
-        {tabs.filter(t => isMe || t.key !== 'messages').map(t => (
+        {tabs.filter(t => {
+          if (!isMe && (t.key === 'messages' || t.key === 'history' || t.key === 'trash')) return false
+          return true
+        }).map(t => (
           <button
             key={t.key}
             type="button"
             className={`mine-tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => t.key === 'messages' ? (setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId }), setView('messages')) : setTab(t.key)}
+            onClick={() => t.key === 'messages' ? (setPreviousView(isMe ? 'mine' : 'author', isMe ? null : { authorUserId }), setView('messages'))
+              : t.key === 'history' ? pushView('history')
+              : t.key === 'trash' ? pushView('trash')
+              : setTab(t.key)}
           >
             {t.icon} {t.label}
           </button>
@@ -1113,16 +1128,6 @@ export default function MinePage() {
           )
         )}
       </div>
-
-      {isMobile && (
-        <div className="mine-mobile-nav">
-          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} />
-          <div className="entry-group-gap" />
-          <EntryList entries={CONTENT_ENTRIES} onAction={handleEntryAction} />
-          <div className="entry-group-gap" />
-          <EntryList entries={ABOUT_ENTRIES} flags={{ isAdmin: authUser?.is_admin }} onAction={handleEntryAction} />
-        </div>
-      )}
 
       {/* Theme drawer */}
       <Popup
