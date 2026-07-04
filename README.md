@@ -179,7 +179,6 @@ Character-distill/
 │           │   ├── AdminPanel.jsx      # 管理员后台
 │           │   ├── EditCardModal.jsx   # 角色卡编辑模态框
 │           │   ├── DistillTaskBar.jsx  # 蒸馏进度条
-│           │   ├── ThemeSwitcher.jsx   # 六主题切换
 │           │   ├── RoleSetupModal.jsx  # 对话前身份设定
 │           │   └── common/             # Avatar, Loading, ErrorBox
 │           ├── store/
