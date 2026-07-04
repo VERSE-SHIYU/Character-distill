@@ -17315,9 +17315,11 @@ select.settings-input {
     animation: chat-send-fadein 0.15s ease;
   }
 
-  /* ── Chat area: full height (no backbar) ── */
-  .chat-area {
-    height: 100dvh;
+  /* ── Chat area: full height — keyboard-aware via --vvh ── */
+  .chat-area,
+  .private-chat,
+  .private-chat.group-chat-layout {
+    height: var(--vvh, 100dvh);
   }
 
   /* ── Header: compact ── */
@@ -17356,7 +17358,8 @@ select.settings-input {
   .group-chat-messages-area {
     -webkit-overflow-scrolling: touch;
   }
-  .app-shell.is-secondary-view .main-panel {
+  .app-shell.is-secondary-view .main-panel,
+  .app-shell.in-conversation .main-panel {
     padding-bottom: 0;
   }
   .cbubble-time {

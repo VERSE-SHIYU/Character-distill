@@ -9,8 +9,10 @@ import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
-import MobileBackBar, { SECONDARY_VIEWS } from './components/MobileBackBar'
+import MobileBackBar from './components/MobileBackBar'
+import { SECONDARY_VIEWS } from './config/navigation'
 import Loading from './components/common/Loading'
+import useVisualViewport from './utils/useVisualViewport'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
 const CharCard = lazy(() => import('./components/CharCard'))
@@ -90,6 +92,7 @@ export default function App() {
   const currentView = useAppStore((s) => s.currentView)
   const isLoggedIn = useAppStore((s) => s.isLoggedIn)
   const logout = useAppStore((s) => s.logout)
+  const inConversation = useAppStore((s) => s.inConversation)
   const [authChecking, setAuthChecking] = useState(true)
   const [announcement, setAnnouncement] = useState(null)
   const [annDismissed, setAnnDismissed] = useState(false)
@@ -97,6 +100,8 @@ export default function App() {
   useEffect(() => {
     initTheme()
   }, [])
+
+  useVisualViewport()
 
   useEffect(() => {
     checkVoiceStatus()
@@ -230,7 +235,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}${SECONDARY_VIEWS.includes(currentView) ? ' is-secondary-view' : ''}`}>
+    <div className={`app-shell${isSidebarVisible ? ' has-sidebar-open' : ''}${SECONDARY_VIEWS.includes(currentView) ? ' is-secondary-view' : ''}${inConversation ? ' in-conversation' : ''}`}>
       {/* Trigger zone + visible toggle when collapsed */}
       {!isSidebarVisible && (
         <div className="sidebar-trigger" onMouseEnter={showSidebar}>
