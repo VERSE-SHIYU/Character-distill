@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { adminAPI, fetchWithTimeout } from '../api/client'
 import useAppStore from '../store/useAppStore'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import ConfirmModal from './common/ConfirmModal'
 import Modal from './common/Modal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
@@ -50,6 +52,8 @@ function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
 }
 
 export default function AdminPanel() {
+  const popView = useAppStore((s) => s.popView)
+  const swipeBack = useSwipeBack(popView)
   const [tab, setTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [theme, setTheme] = useState(() => {
@@ -81,7 +85,9 @@ export default function AdminPanel() {
   }
 
   return (
-    <div className="admin-layout">
+    <div className="panel admin-panel-wrapper" {...swipeBack}>
+      <PageHeader title="管理后台" onBack={popView} />
+      <div className="admin-layout">
       <button className="admin-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
 
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
@@ -111,6 +117,7 @@ export default function AdminPanel() {
       <main className="admin-main">
         {renderTab()}
       </main>
+    </div>
     </div>
   )
 }
