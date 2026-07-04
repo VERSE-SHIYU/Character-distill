@@ -446,6 +446,9 @@ const useAppStore = create((set, get) => ({
   webSearchEnabled: false,
   setWebSearchEnabled: (val) => set({ webSearchEnabled: val }),
 
+  agentMode: false,
+  setAgentMode: (val) => set({ agentMode: val }),
+
   affinity: { ...INITIAL_AFFINITY },
   affinityOpen: localStorage.getItem('affinity_open') !== 'false',
   setAffinityOpen: (val) => {
@@ -1277,6 +1280,7 @@ const useAppStore = create((set, get) => ({
         message,
         user_role: get().sessionUserRole,
         web_search: get().webSearchEnabled,
+        agent_mode: get().agentMode,
         affinity_enabled: get().affinityEnabled,
         client_tz: clientTz(),
       })
@@ -1325,7 +1329,7 @@ const useAppStore = create((set, get) => ({
 
     let fullReply = ''
 
-    const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
+    const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, agent_mode: get().agentMode, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
     const cancel = streamSSE(

@@ -4,7 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -116,6 +116,8 @@ function ChatView() {
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
   const webSearchEnabled = useAppStore((s) => s.webSearchEnabled)
   const setWebSearchEnabled = useAppStore((s) => s.setWebSearchEnabled)
+  const agentMode = useAppStore((s) => s.agentMode)
+  const setAgentMode = useAppStore((s) => s.setAgentMode)
   const affinity = useAppStore((s) => s.affinity)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
@@ -582,6 +584,10 @@ function ChatView() {
           <button type="button" className={`chat-more-item${webSearchEnabled ? ' active' : ''}`} onClick={() => { setWebSearchEnabled(!webSearchEnabled); setShowMore(false) }}>
             <Globe size={16} />
             <span>现实增强</span>
+          </button>
+          <button type="button" className={`chat-more-item${agentMode ? ' active' : ''}`} onClick={() => { setAgentMode(!agentMode); setShowMore(false) }}>
+            <Zap size={16} />
+            <span>智能检索（Agent）</span>
           </button>
           <button type="button" className="chat-more-item" onClick={() => { setFontLevel(Math.max(0, fontLevel - 1)); setShowMore(false) }} disabled={fontLevel === 0}>
             <FontDecrease size={16} />
