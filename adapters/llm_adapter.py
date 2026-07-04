@@ -194,13 +194,18 @@ class LLMAdapter:
                     print(f"[LLMAdapter] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
                 time.sleep(wait)
 
-    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> tuple[str, dict | None]:
+    async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
+
+        Args:
+            client: 可选的自定义 AsyncOpenAI，用于 per-asyncio-run 场景；
+                    不传时使用 self._async_client（默认共享实例）。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
         "completion_tokens": N}`` or *None*.  Callers are responsible for
         aggregating usage across concurrent calls instead of relying on the
         shared ``last_usage`` attribute.  """
+        _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         normal_budget = 3
@@ -209,7 +214,7 @@ class LLMAdapter:
         last_error = None
         while True:
             try:
-                completion = await self._async_client.chat.completions.create(
+                completion = await _c.chat.completions.create(
                     model=self._model,
                     messages=payload,
                     temperature=self._temperature,

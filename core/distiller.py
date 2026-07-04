@@ -17,6 +17,8 @@ import collections.abc as _cabc
 import yaml
 from pydantic import ValidationError
 
+from openai import AsyncOpenAI
+
 from adapters.llm_adapter import LLMAdapter
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
@@ -952,6 +954,7 @@ class Distiller:
         character_name: str,
         on_chunk_done: "callable | None" = None,
         is_chat: bool = False,
+        client: AsyncOpenAI | None = None,
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
 
@@ -972,7 +975,7 @@ class Distiller:
                 user = map_user_fn(chunk, character_name)
                 try:
                     result, _ = await self._llm.async_chat(
-                        system, [{"role": "user", "content": user}]
+                        system, [{"role": "user", "content": user}], client=client
                     )
                 except Exception as exc:
                     print(f"[distiller] Map chunk {i} failed: {exc}")
@@ -995,6 +998,7 @@ class Distiller:
         character_name: str,
         on_batch_done: "callable | None" = None,
         sem_size: int = 6,
+        client: AsyncOpenAI | None = None,
     ) -> list[tuple[int, str]]:
         """Run multiple Reduce batches concurrently with a semaphore."""
         sem = asyncio.Semaphore(sem_size)
@@ -1004,7 +1008,7 @@ class Distiller:
         async def _one(i: int, batch: list[str]) -> tuple[int, str]:
             async with sem:
                 try:
-                    result = await self._single_reduce_async(batch, character_name)
+                    result = await self._single_reduce_async(batch, character_name, client=client)
                 except Exception as exc:
                     print(f"[distiller] Reduce batch {i} failed: {exc}")
                     result = ""
@@ -1029,12 +1033,13 @@ class Distiller:
         self._try_record_usage("distill_reduce", usage)
         return result
 
-    async def _single_reduce_async(self, raw_analyses: list[str], character_name: str) -> str:
+    async def _single_reduce_async(self, raw_analyses: list[str], character_name: str, client: AsyncOpenAI | None = None) -> str:
         """Merge independent chunk analyses into a single profile (async, for concurrent batches)."""
         combined = self._reduce_user_prompt(raw_analyses, character_name)
         result, usage = await self._llm.async_chat(
             self._reduce_system_prompt(character_name),
             [{"role": "user", "content": combined}],
+            client=client,
         )
         self._try_record_usage("distill_reduce", usage)
         return result
@@ -1062,15 +1067,12 @@ class Distiller:
         ]
 
         async def _concurrent() -> list[str]:
-            old_client = self._llm._async_client
-            self._llm._async_client = self._llm._make_async_client()
+            run_client = self._llm._make_async_client()
             try:
-                results = await self._run_reduce_concurrent(batches, character_name)
+                results = await self._run_reduce_concurrent(batches, character_name, client=run_client)
                 return [r[1] for r in sorted(results, key=lambda x: x[0]) if r[1].strip()]
             finally:
-                temp = self._llm._async_client
-                self._llm._async_client = old_client
-                await temp.close()
+                await run_client.close()
 
         try:
             asyncio.get_running_loop()
@@ -1158,15 +1160,12 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_wrapper():
-            old_client = self._llm._async_client
-            self._llm._async_client = self._llm._make_async_client()
+            run_client = self._llm._make_async_client()
             try:
-                results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
+                results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat, client=run_client)
                 q.put(("done", results, failures))
             finally:
-                temp = self._llm._async_client
-                self._llm._async_client = old_client
-                await temp.close()
+                await run_client.close()
 
         def _thread_run():
             try:
@@ -1360,8 +1359,7 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_with_progress() -> None:
-            old_client = self._llm._async_client
-            self._llm._async_client = self._llm._make_async_client()
+            run_client = self._llm._make_async_client()
             try:
                 sem = asyncio.Semaphore(self._map_concurrency)
                 done_count = [0]
@@ -1374,7 +1372,7 @@ class Distiller:
                         user = map_user(chunk, character_name)
                         try:
                             result, _ = await self._llm.async_chat(
-                                system, [{"role": "user", "content": user}]
+                                system, [{"role": "user", "content": user}], client=run_client
                             )
                         except Exception as exc:
                             print(f"[distiller] Map chunk {i} failed: {exc}")
@@ -1391,9 +1389,7 @@ class Distiller:
                 await asyncio.gather(*tasks)
                 q.put(("done", failures))
             finally:
-                temp = self._llm._async_client
-                self._llm._async_client = old_client
-                await temp.close()
+                await run_client.close()
 
         def _thread_run() -> None:
             try:
@@ -1472,16 +1468,13 @@ class Distiller:
                 rq.put(("batch", done_count, idx, result))
 
             async def _reduce_batches() -> list[tuple[int, str]]:
-                old_client = self._llm._async_client
-                self._llm._async_client = self._llm._make_async_client()
+                run_client = self._llm._make_async_client()
                 try:
                     return await self._run_reduce_concurrent(
-                        batches, character_name, _on_batch_done
+                        batches, character_name, _on_batch_done, client=run_client
                     )
                 finally:
-                    temp = self._llm._async_client
-                    self._llm._async_client = old_client
-                    await temp.close()
+                    await run_client.close()
 
             def _reduce_thread() -> None:
                 try:

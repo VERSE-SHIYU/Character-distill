@@ -1,5 +1,7 @@
 """Tests for long-context routing: token estimation + threshold branching."""
 
+import asyncio
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -65,6 +67,7 @@ class TestRouting:
                 pass
             mock_long.assert_not_called()
 
+
     # ── distill_incremental_stream ────────────────────────────────────
 
     def test_stream_below_threshold_calls_longcontext(self):
@@ -89,6 +92,42 @@ class TestRouting:
             mock_long.assert_not_called()
 
 
+class TestAsyncChatClientParam:
+    """async_chat(client=...) uses the right client without affecting the default."""
+
+    async def test_custom_client_isolation(self):
+        """Concurrent calls: one with custom client, one without — each uses the correct client."""
+        from unittest.mock import AsyncMock
+
+        from adapters.llm_adapter import LLMAdapter
+
+        llm = LLMAdapter(api_key="test-key", base_url="http://localhost:0", model="test")
+
+        default_client = MagicMock()
+        default_client.chat.completions.create = AsyncMock(return_value=MagicMock(
+            choices=[MagicMock(message=MagicMock(content="from-default"))], usage=None
+        ))
+        llm._async_client = default_client
+
+        custom_client = MagicMock()
+        custom_client.chat.completions.create = AsyncMock(return_value=MagicMock(
+            choices=[MagicMock(message=MagicMock(content="from-custom"))], usage=None
+        ))
+
+        async def call_custom():
+            return await llm.async_chat("sys", [{"role": "user", "content": "a"}], client=custom_client)
+
+        async def call_default():
+            return await llm.async_chat("sys", [{"role": "user", "content": "b"}])
+
+        r1, r2 = await asyncio.gather(call_custom(), call_default())
+
+        assert r1[0] == "from-custom", f"expected custom result, got {r1[0]}"
+        assert r2[0] == "from-default", f"expected default result, got {r2[0]}"
+        assert custom_client.chat.completions.create.await_count == 1
+        assert default_client.chat.completions.create.await_count == 1
+
+
 class TestMapPhaseFailureHandling:
     """>50% Map chunk failures → early bail with clear error message."""
 
@@ -98,7 +137,7 @@ class TestMapPhaseFailureHandling:
         """Return async_chat that succeeds for first `fail_after` calls, then raises 429."""
         call_count = [0]
 
-        async def fake(system, messages, max_tokens=None):
+        async def fake(system, messages, max_tokens=None, **kwargs):
             call_count[0] += 1
             if call_count[0] > fail_after:
                 raise RuntimeError("rate limited (429) after 5 attempts: req-abc123")
@@ -110,7 +149,7 @@ class TestMapPhaseFailureHandling:
         """Return async_chat that succeeds first, then raises generic error."""
         call_count = [0]
 
-        async def fake(system, messages, max_tokens=None):
+        async def fake(system, messages, max_tokens=None, **kwargs):
             call_count[0] += 1
             if call_count[0] > fail_after:
                 raise RuntimeError("connection timeout")
