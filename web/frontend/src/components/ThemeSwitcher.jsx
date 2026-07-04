@@ -6,6 +6,7 @@ const themes = [
   { key: 'ocean',    label: '\u{1F30A} 海盐' },
   { key: 'sakura',   label: '\u{1F338} 樱花' },
   { key: 'midnight', label: '\u{1F319} 午夜' },
+  { key: 'galaxy',   label: '\u{1F30C} 银河' },
 ]
 
 export default function ThemeSwitcher() {

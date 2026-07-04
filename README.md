@@ -41,7 +41,7 @@
 - **地域合规分流**：按请求 IP 区分境内/境外（XdbSearchIP 离线 IP 库），配合双地域分库存储
 - **邮箱验证**：Resend 邮件服务，注册/重置密码需邮箱验证码
 - **用户同意与隐私**：注册同意记录、资料可见性、隐私字段、版本化的隐私政策/服务条款
-- **五套精炼主题**：极光紫（默认）、抹茶（暖杏）、海盐（实景毛玻璃）、樱花·春霞（花瓣粉×新叶绿）、午夜（墨×玫瑰灰），侧边栏和设置面板一键切换，刷新保持
+- **六套精炼主题**：极光紫（默认）、抹茶（暖杏）、海盐（实景毛玻璃）、樱花·春霞（花瓣粉×新叶绿）、午夜（墨×玫瑰灰）、银河（极夜蓝黑×雾极光青），侧边栏和设置面板一键切换，刷新保持
 - **PWA 支持**：manifest + Service Worker，可安装到桌面
 - **面包屑导航**：侧边栏实时显示当前位置路径
 - **文件缓存**：TTS 合成结果 MD5 缓存，命中 0.01s（110x 加速）
@@ -179,7 +179,7 @@ Character-distill/
 │           │   ├── AdminPanel.jsx      # 管理员后台
 │           │   ├── EditCardModal.jsx   # 角色卡编辑模态框
 │           │   ├── DistillTaskBar.jsx  # 蒸馏进度条
-│           │   ├── ThemeSwitcher.jsx   # 五主题切换
+│           │   ├── ThemeSwitcher.jsx   # 六主题切换
 │           │   ├── RoleSetupModal.jsx  # 对话前身份设定
 │           │   └── common/             # Avatar, Loading, ErrorBox
 │           ├── store/
@@ -620,7 +620,7 @@ memory:
 | 内容审核 | 关键词分级过滤 + 预处理 + 决策引擎 + 人工复审 |
 | 容器化 | Docker + Docker Compose |
 | 入侵防御 | Fail2Ban + OpenResty CC 限流 |
-| 设计 | 毛玻璃 glassmorphism，五套主题 |
+| 设计 | 毛玻璃 glassmorphism，六套主题 |
 
 ## 路线图
 
@@ -653,7 +653,7 @@ memory:
 - [x] FunASR 语音输入
 - [x] 会话垃圾桶 + 导出
 - [x] 毛玻璃 UI + 面包屑导航
-- [x] 五套精炼主题 + ThemeSwitcher
+- [x] 六套精炼主题 + ThemeSwitcher
 - [x] PWA 可安装
 - [x] Meta tensor 三层防御
 - [x] 嵌入模型单例 + ChromaDB 持久化（冷启动 15s → 1-2s）

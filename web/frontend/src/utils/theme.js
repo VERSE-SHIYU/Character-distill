@@ -1,6 +1,6 @@
 const STORAGE_KEY = 'charsim-theme'
 
-/** @returns {'aurora' | 'milktea' | 'ocean' | 'sakura' | 'midnight'} */
+/** @returns {'aurora' | 'milktea' | 'ocean' | 'sakura' | 'midnight' | 'galaxy'} */
 export function getTheme() {
   try {
     const v = localStorage.getItem(STORAGE_KEY)
@@ -8,15 +8,16 @@ export function getTheme() {
     if (v === 'ocean') return 'ocean'
     if (v === 'sakura') return 'sakura'
     if (v === 'midnight') return 'midnight'
+    if (v === 'galaxy') return 'galaxy'
     return 'aurora'
   } catch {
     return 'aurora'
   }
 }
 
-/** @param {'aurora' | 'milktea' | 'ocean' | 'sakura' | 'midnight'} theme */
+/** @param {'aurora' | 'milktea' | 'ocean' | 'sakura' | 'midnight' | 'galaxy'} theme */
 export function applyTheme(theme) {
-  const valid = ['aurora', 'milktea', 'ocean', 'sakura', 'midnight'].includes(theme) ? theme : 'aurora'
+  const valid = ['aurora', 'milktea', 'ocean', 'sakura', 'midnight', 'galaxy'].includes(theme) ? theme : 'aurora'
   document.documentElement.className = `theme-${valid}`
   try {
     localStorage.setItem(STORAGE_KEY, valid)
