@@ -1,5 +1,6 @@
 import { TabBar, SafeArea } from 'antd-mobile'
 import useAppStore from '../store/useAppStore'
+import { SECONDARY_VIEWS } from '../config/navigation'
 
 const tabs = [
   {
@@ -49,13 +50,8 @@ const VIEW_GROUPS = {
   home: ['home', 'feed'],
   text: ['text', 'character'],
   groupChat: ['groupChat'],
-  mine: ['mine', 'messages', 'market', 'author', 'textDetail', 'marketCardDetail', 'admin', 'profile', 'settings', 'trash', 'legal', 'voice', 'reader'],
+  mine: ['mine', 'messages', 'market', 'author', 'textDetail', 'marketCardDetail', 'admin', 'profile', 'settings', 'trash', 'legal', 'voice', 'reader', 'history'],
 }
-
-const SECONDARY_VIEWS = [
-  'chat', 'character', 'author', 'textDetail',
-  'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
-]
 
 export default function MobileTabBar() {
   const currentView = useAppStore((s) => s.currentView)

@@ -495,10 +495,10 @@ export default function MarketCardDetail() {
     <div className="panel market-detail-page">
       <header className="market-detail-header">
         <div className="market-detail-header-left">
-          <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
+          {!isMobile && <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
             返回
-          </button>
+          </button>}
         </div>
         <div className="market-detail-header-title">{charName}</div>
         <div className="market-detail-header-actions">

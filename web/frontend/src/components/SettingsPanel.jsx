@@ -6,6 +6,7 @@ import ErrorBox from './common/ErrorBox'
 import { AlertTriangle } from './common/Icon'
 import EntryList from './common/EntryList'
 import { SETTINGS_ENTRIES } from '../config/mineEntries'
+import useIsMobile from '../hooks/useIsMobile'
 
 const APP_VERSION = '1.0.0'
 const GITHUB_URL = 'https://github.com/VERSE-SHIYU/Character-distill'
@@ -13,6 +14,8 @@ const MASKED_KEY = '••••••••'
 export default function SettingsPanel() {
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
+  const popView = useAppStore((s) => s.popView)
+  const isMobile = useIsMobile()
   const [error, setError] = useState(null)
   const [apiForm, setApiForm] = useState({ base_url: '', model: '', api_key: '' })
   const [provider, setProvider] = useState('deepseek')
@@ -80,7 +83,7 @@ export default function SettingsPanel() {
   return (
     <div className="settings-panel panel">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => pushView('profile')} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>
+        {!isMobile && <button type="button" className="chat-back-btn" onClick={popView} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>}
         <h1 className="panel-title">设置</h1>
         <p className="panel-desc">API 配置与系统设置</p>
       </header>

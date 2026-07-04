@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PostCard from './common/PostCard'
+import GlobalSearchBox from './common/GlobalSearchBox'
 import Loading from './common/Loading'
 
 const PAGE_SIZE = 20
@@ -130,6 +131,7 @@ export default function FeedPage() {
 
   return (
     <div className="panel feed-page">
+      <GlobalSearchBox className="feed-global-search" />
       <header className="panel-header">
         <div className="feed-header-row">
           <h1 className="panel-title">动态</h1>

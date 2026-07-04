@@ -1,31 +1,12 @@
 import useAppStore from '../store/useAppStore'
-
-export const SECONDARY_VIEWS = [
-  'chat', 'character', 'author', 'textDetail',
-  'marketCardDetail', 'profile', 'settings', 'trash', 'admin', 'legal', 'voice', 'reader',
-]
-
-const TITLE_MAP = {
-  chat: '聊天',
-  groupChat: '群聊',
-  character: '角色选择',
-  author: '用户',
-  textDetail: '文本详情',
-  marketCardDetail: '详情',
-  profile: '个人资料',
-  settings: '设置',
-  trash: '回收站',
-  admin: '管理面板',
-  legal: '协议',
-  voice: '语音',
-  reader: '阅读',
-}
+import { SECONDARY_VIEWS, TITLE_MAP } from '../config/navigation'
 
 export default function MobileBackBar() {
   const currentView = useAppStore((s) => s.currentView)
   const popView = useAppStore((s) => s.popView)
+  const inConversation = useAppStore((s) => s.inConversation)
 
-  if (!SECONDARY_VIEWS.includes(currentView) || currentView === 'chat') return null
+  if (!SECONDARY_VIEWS.includes(currentView) || currentView === 'chat' || inConversation) return null
 
   return (
     <>
@@ -46,3 +27,5 @@ export default function MobileBackBar() {
     </>
   )
 }
+
+export { SECONDARY_VIEWS }

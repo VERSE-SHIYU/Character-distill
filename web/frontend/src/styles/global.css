@@ -1710,6 +1710,10 @@ html.theme-aurora::before {
     width: 28px;
     height: 28px;
   }
+
+  .feed-global-search {
+    display: block;
+  }
 }
 
 /* ===== View Transition ===== */
@@ -14494,6 +14498,11 @@ select.settings-input {
   padding: 16px;
   font-size: 13px;
   color: var(--text-dim);
+}
+
+/* ---- GlobalSearchBox in FeedPage (mobile only) ---- */
+.feed-global-search {
+  display: none;
 }
 
 /* ===== PostCard (shared by FeedPage + AuthorPage) ===== */

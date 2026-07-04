@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
+import useIsMobile from '../hooks/useIsMobile'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import { MessageSquare, Theater, Book, Lock } from './common/Icon'
@@ -16,6 +17,7 @@ export default function AuthorPage({ embedded = false }) {
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
+  const isMobile = useIsMobile()
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const authorUserId = useAppStore((s) => s.authorUserId)
@@ -216,7 +218,7 @@ export default function AuthorPage({ embedded = false }) {
   return (
     <div className="panel author-page">
       <header className="panel-header">
-        {!embedded && (
+        {!embedded && !isMobile && (
           <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回

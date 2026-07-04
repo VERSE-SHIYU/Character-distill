@@ -7,6 +7,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import ErrorBox from './common/ErrorBox'
+import useIsMobile from '../hooks/useIsMobile'
 import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
@@ -32,6 +33,7 @@ export default function CharCard() {
   const texts = useAppStore((s) => s.texts)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
+  const isMobile = useIsMobile()
 
   const goBack = useCallback(() => {
     if (useAppStore.getState().restoreChatSnapshot()) return
@@ -85,10 +87,10 @@ export default function CharCard() {
       </nav>
 
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={goBack} title="返回">
+        {!isMobile && <button type="button" className="chat-back-btn" onClick={goBack} title="返回">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回
-        </button>
+        </button>}
         <h1 className="panel-title">
           角色管理
         </h1>

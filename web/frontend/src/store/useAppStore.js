@@ -144,6 +144,7 @@ const useAppStore = create((set, get) => ({
         author: 'market', textDetail: 'market', marketCardDetail: 'market',
         profile: 'mine', settings: 'mine', trash: 'mine', admin: 'mine',
         legal: 'mine', voice: 'mine',
+        messages: 'mine', history: 'mine', feed: 'home', market: 'mine',
       }
       const fb = FALLBACK[get().currentView] || 'home'
       set({ currentView: fb, error: null })
