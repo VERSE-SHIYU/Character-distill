@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -13,7 +14,6 @@ import { displayName } from '../utils/displayName'
 export default function TextDetailPage() {
   const setView = useAppStore((s) => s.setView)
   const navigateBack = useAppStore((s) => s.navigateBack)
-  const isMobile = useIsMobile()
   const currentTextDetailId = useAppStore((s) => s.currentTextDetailId)
   const authUser = useAppStore((s) => s.authUser)
 
@@ -195,14 +195,12 @@ export default function TextDetailPage() {
     setExpandedReplies((prev) => ({ ...prev, [commentId]: !prev[commentId] }))
   }
 
+  const swipeBack = useSwipeBack(navigateBack)
+
   return (
-    <div className="panel">
+    <div className="panel" {...swipeBack}>
       <header className="panel-header">
-        {!isMobile && <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
-        </button>}
-        <h1 className="panel-title">书籍详情</h1>
+        <PageHeader title="书籍详情" onBack={navigateBack} />
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import { MessageSquare, Theater, Book, Lock } from './common/Icon'
@@ -17,7 +18,6 @@ export default function AuthorPage({ embedded = false }) {
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
-  const isMobile = useIsMobile()
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
   const authorUserId = useAppStore((s) => s.authorUserId)
@@ -215,16 +215,15 @@ export default function AuthorPage({ embedded = false }) {
     el?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  const swipeBack = embedded ? null : useSwipeBack(navigateBack)
+
   return (
-    <div className="panel author-page">
+    <div className="panel author-page" {...(swipeBack || {})}>
       <header className="panel-header">
-        {!embedded && !isMobile && (
-          <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-          返回
-        </button>
-        )}
-        <h1 className="panel-title">{embedded || isOwnProfile ? '我的主页' : '作者主页'}</h1>
+        <PageHeader
+          title={embedded || isOwnProfile ? '我的主页' : '作者主页'}
+          onBack={embedded ? undefined : navigateBack}
+        />
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
