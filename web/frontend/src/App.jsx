@@ -1,11 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
 import { initTheme } from './utils/theme'
-
-// E2E test aid: expose store for programmatic navigation verification
-if (typeof window !== 'undefined') {
-  window.__appStore = useAppStore
-}
 import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
@@ -37,6 +32,12 @@ const MarketCardDetail = lazy(() => import('./components/MarketCardDetail'))
 const FeedPage = lazy(() => import('./components/FeedPage'))
 const BookReader = lazy(() => import('./components/BookReader'))
 const LegalPage = lazy(() => import('./components/LegalPage'))
+
+// E2E test aid: expose store for programmatic navigation verification
+// Guard: dev mode OR Playwright addInitScript sets window.__E2E
+if (typeof window !== 'undefined' && (import.meta.env.DEV || window.__E2E)) {
+  window.__appStore = useAppStore
+}
 
 const PANELS = {
   home: HomePage,

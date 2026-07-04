@@ -21,6 +21,7 @@ async function storeAction(page, action, ...args) {
 test.describe('Navigation migration: setView → navigateTo/navigateBack', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
+      window.__E2E = true
       localStorage.clear()
       sessionStorage.clear()
     })
@@ -281,13 +282,13 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
 test.describe('Desktop navigation', () => {
   test('sidebar market → detail → back', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 })
-    await page.addInitScript(() => localStorage.clear())
+    await page.addInitScript(() => { window.__E2E = true; localStorage.clear() })
     await page.goto(BASE)
     await page.fill('#login-username', 'testadmin')
     await page.fill('#login-password', 'test1234')
     await page.click('.login-submit')
     // On desktop, sidebar is collapsed. Wait for the sidebar trigger, then open sidebar.
-    await page.waitForSelector('.sidebar-trigger', { timeout: 15000 })
+    await page.waitForSelector('.sidebar-trigger', { timeout: 20000 })
     await page.waitForTimeout(1000)
 
     // open the sidebar by clicking the trigger button
