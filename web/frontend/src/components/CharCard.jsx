@@ -112,7 +112,6 @@ function CharPanelBody({ textId }) {
   const error = useAppStore((s) => s.error)
   const setError = useAppStore((s) => s.setError)
   const viewCard = useAppStore((s) => s.viewCard)
-  const navigateBack = useAppStore((s) => s.navigateBack)
   const [detailLoading, setDetailLoading] = useState(false)
   const isMobile = useIsMobile()
 
