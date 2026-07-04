@@ -17071,5 +17071,10 @@ select.settings-input {
   }
   .mine-tab-bar::-webkit-scrollbar { display: none; }
   .mine-tab { white-space: nowrap; flex-shrink: 0; }
+
+  .market-toolbar { flex-wrap: wrap; row-gap: 10px; }
+  .market-search-form { flex: 1 1 100%; }
+  .market-sort-tabs { flex-shrink: 0; }
+  .market-sort-btn { white-space: nowrap; }
 }
 
