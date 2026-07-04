@@ -1,6 +1,11 @@
 import { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
 import { initTheme } from './utils/theme'
+
+// E2E test aid: expose store for programmatic navigation verification
+if (typeof window !== 'undefined') {
+  window.__appStore = useAppStore
+}
 import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
