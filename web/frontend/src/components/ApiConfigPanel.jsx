@@ -4,13 +4,13 @@ import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import { AlertTriangle } from './common/Icon'
-import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 const MASKED_KEY = '••••••••'
 
 export default function ApiConfigPanel() {
   const popView = useAppStore((s) => s.popView)
-  const isMobile = useIsMobile()
   const [error, setError] = useState(null)
   const [config, setConfig] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -72,11 +72,12 @@ export default function ApiConfigPanel() {
     return () => { cancelled = true }
   }, [])
 
+  const swipeBack = useSwipeBack(popView)
+
   return (
-    <div className="settings-panel panel">
+    <div className="settings-panel panel" {...swipeBack}>
       <header className="panel-header">
-        {!isMobile && <button type="button" className="chat-back-btn" onClick={popView} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>}
-        <h1 className="panel-title">API 配置</h1>
+        <PageHeader title="API 配置" onBack={popView} />
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}

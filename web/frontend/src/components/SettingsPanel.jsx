@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import useAppStore from '../store/useAppStore'
-import useIsMobile from '../hooks/useIsMobile'
 import EntryList from './common/EntryList'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import ThemeDrawer from './common/ThemeDrawer'
 import ConfirmModal from './common/ConfirmModal'
 import { SETTINGS_ENTRIES } from '../config/mineEntries'
@@ -11,8 +12,6 @@ export default function SettingsPanel() {
   const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
   const logout = useAppStore((s) => s.logout)
-  const isMobile = useIsMobile()
-
   const [themeOpen, setThemeOpen] = useState(false)
   const [logoutConfirm, setLogoutConfirm] = useState(false)
 
@@ -21,11 +20,12 @@ export default function SettingsPanel() {
     if (view) pushView(view)
   }
 
+  const swipeBack = useSwipeBack(popView)
+
   return (
-    <div className="settings-panel panel">
+    <div className="settings-panel panel" {...swipeBack}>
       <header className="panel-header">
-        {!isMobile && <button type="button" className="chat-back-btn" onClick={popView} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>}
-        <h1 className="panel-title">设置</h1>
+        <PageHeader title="设置" onBack={popView} />
       </header>
 
       <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: authUser?.is_admin }} onAction={handleAction} />

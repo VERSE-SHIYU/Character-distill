@@ -3,7 +3,8 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import ConfirmModal from './common/ConfirmModal'
 import { Folder, Music, Mic } from './common/Icon'
-import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 const PRESET_VOICES = [
   { id: 'xiaoxiao', label: '晓晓（女，活泼）' },
@@ -22,7 +23,6 @@ export default function VoicePanel() {
   const currentCard = useAppStore((s) => s.currentCard)
   const pushView = useAppStore((s) => s.pushView)
   const popView = useAppStore((s) => s.popView)
-  const isMobile = useIsMobile()
   const voiceRefInfo = useAppStore((s) => s.voiceRefInfo)
   const loadVoiceRef = useAppStore((s) => s.loadVoiceRef)
   const uploadRefAudio = useAppStore((s) => s.uploadRefAudio)
@@ -241,12 +241,12 @@ export default function VoicePanel() {
   }
 
   const hasRef = voiceRefInfo && voiceRefInfo.exists
+  const swipeBack = useSwipeBack(popView)
 
   return (
-    <div className="voice-panel panel">
+    <div className="voice-panel panel" {...swipeBack}>
       <header className="panel-header">
-        {!isMobile && <button type="button" className="chat-back-btn" onClick={popView} title="返回"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>返回</button>}
-        <h1 className="panel-title">语音设置</h1>
+        <PageHeader title="语音设置" onBack={popView} />
         <p className="panel-desc">TTS 音色管理、音色克隆与语音服务状态</p>
       </header>
 
