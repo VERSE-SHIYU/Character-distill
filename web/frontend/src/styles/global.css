@@ -17559,10 +17559,9 @@ select.settings-input {
     width: 100%;
   }
 
-  /* ── App shell: keyboard-aware via --vvh / --vv-offset (set by useVisualViewport) ── */
+  /* ── App shell: keyboard-aware via --vvh (set by useVisualViewport) ── */
   .app-shell {
     height: var(--vvh, 100dvh);
-    transform: translateY(var(--vv-offset, 0px));
   }
 
   /* Chat containers fill the app-shell chain */

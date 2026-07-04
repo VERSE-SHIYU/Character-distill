@@ -23,7 +23,11 @@ export default function useVisualViewport() {
       const off = vv.offsetTop
       const root = document.documentElement
       root.style.setProperty('--vvh', `${h}px`)
-      root.style.setProperty('--vv-offset', `${off}px`)
+      // When keyboard opens (offsetTop > 0), lock visual viewport to top
+      // so the input field stays at the bottom of the visible area
+      if (off > 0) {
+        window.scrollTo(0, 0)
+      }
       // Dispatch vvchange only when keyboard opens (height shrinks)
       if (h < prevHeight - 1) {
         window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { height: h } }))
@@ -45,7 +49,6 @@ export default function useVisualViewport() {
       vv.removeEventListener('scroll', schedule)
       const root = document.documentElement
       root.style.removeProperty('--vvh')
-      root.style.removeProperty('--vv-offset')
     }
   }, [])
 }
