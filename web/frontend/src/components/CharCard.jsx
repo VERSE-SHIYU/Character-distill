@@ -30,8 +30,7 @@ function IdentifyProgress({ active }) {
 export default function CharCard() {
   const currentTextId = useAppStore((s) => s.currentTextId)
   const texts = useAppStore((s) => s.texts)
-  const setView = useAppStore((s) => s.setView)
-  const pushView = useAppStore((s) => s.pushView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
 
   const goBack = useCallback(() => {
@@ -54,7 +53,7 @@ export default function CharCard() {
             type="button"
             className="btn-primary"
             style={{ marginTop: 16 }}
-            onClick={() => setView('text')}
+            onClick={() => navigateTo('text')}
           >
             前往文本管理
           </button>
@@ -744,7 +743,7 @@ function CardDetail({ card, textId }) {
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const getUserRole = useAppStore((s) => s.getUserRole)
-  const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const updateCard = useAppStore((s) => s.updateCard)
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showRoleModal, setShowRoleModal] = useState(false)
@@ -980,7 +979,7 @@ function CardDetail({ card, textId }) {
         <button
           type="button"
           className="chat-back-btn"
-          onClick={() => setView('text')}
+          onClick={() => navigateTo('text')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回文本列表

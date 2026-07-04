@@ -19,7 +19,6 @@ export default function MarketPage() {
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
 

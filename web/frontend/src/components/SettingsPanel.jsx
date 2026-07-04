@@ -31,7 +31,6 @@ export default function SettingsPanel() {
 
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
 

@@ -87,6 +87,7 @@ const NAV_ITEMS = [
 export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentView = useAppStore((s) => s.currentView)
   const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const startChat = useAppStore((s) => s.startChat)
   const authUser = useAppStore((s) => s.authUser)
   const logout = useAppStore((s) => s.logout)
@@ -135,14 +136,11 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     setSearchQuery('')
     setSearchResults(null)
     if (type === 'card') {
-      useAppStore.getState().setCurrentMarketCardId(item.id)
-      useAppStore.getState().setView('marketCardDetail')
+      navigateTo('marketCardDetail', { marketCardId: item.id })
     } else if (type === 'text') {
-      useAppStore.getState().setCurrentTextDetailId(item.id)
-      useAppStore.getState().setView('textDetail')
+      navigateTo('textDetail', { textDetailId: item.id })
     } else if (type === 'user') {
-      useAppStore.getState().setAuthorUserId(item.id)
-      useAppStore.getState().setView('author')
+      navigateTo('author', { authorUserId: item.id })
     }
   }
 
@@ -174,10 +172,10 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
 
   const handleNav = useCallback((id) => {
     switch (id) {
-      case 'workbench': setView('text'); break
-      case 'trash': setView('trash'); break
-      case 'mine': setView('mine'); break
-      default: setView(id)
+      case 'workbench': setView('text'); break   // tab-level: sidebar nav
+      case 'trash': setView('trash'); break       // tab-level: sidebar nav
+      case 'mine': setView('mine'); break          // tab-level: sidebar nav
+      default: setView(id)                         // tab-level: sidebar nav
     }
   }, [setView])
 
@@ -286,7 +284,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
           {isActive('workbench') && (
             <>
               {currentView !== 'chat' && currentCard && sessionId && (
-                <button type="button" className="sidebar-item sidebar-chat-resume" onClick={() => setView('chat')}>
+                <button type="button" className="sidebar-item sidebar-chat-resume" onClick={() => navigateTo('chat')}>
                   <span className="sidebar-item-icon"><Svg size={20} d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></span>
                   <span className="sidebar-item-label">继续对话</span>
                 </button>
@@ -302,7 +300,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             <button
               type="button"
               className="sidebar-user-link"
-              onClick={() => setView('profile')}
+              onClick={() => navigateTo('profile')}
               title="个人设置"
             >
               <Avatar name={displayName(authUser) || '?'} src={useAppStore.getState().userAvatar} size={60} />
@@ -324,7 +322,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             <button
               type="button"
               className="sidebar-action-btn"
-              onClick={() => setView('voice')}
+              onClick={() => navigateTo('voice')}
               title="音色管理"
             >
               <Svg size={16}><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></Svg> 音色
@@ -332,7 +330,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             <button
               type="button"
               className="sidebar-action-btn"
-              onClick={() => setView('settings')}
+              onClick={() => navigateTo('settings')}
               title="设置"
             >
               <Svg size={16}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" /></Svg> 设置
@@ -340,7 +338,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
             <button
               type="button"
               className="sidebar-action-btn"
-              onClick={() => setView('legal')}
+              onClick={() => navigateTo('legal')}
               title="法律条款"
             >
               <Svg size={16}><path d="M12 2l9 4v6c0 5.55-3.84 10.74-9 12-5.16-1.26-9-6.45-9-12V6l9-4z" /><line x1="12" y1="6" x2="12" y2="12" /><line x1="9" y1="9" x2="15" y2="9" /></Svg> 条款

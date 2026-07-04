@@ -8,11 +8,11 @@ export default function LegalPage() {
   const legalTab = useAppStore((s) => s.legalTab)
   const setLegalTab = useAppStore((s) => s.setLegalTab)
   const isLoggedIn = useAppStore((s) => s.isLoggedIn)
-  const setView = useAppStore((s) => s.setView)
+  const navigateBack = useAppStore((s) => s.navigateBack)
   const [termsContent] = useState(termsMd)
   const [privacyContent] = useState(privacyMd)
 
-  const handleBack = () => setView(isLoggedIn ? 'home' : 'login')
+  const handleBack = () => navigateBack()
 
   return (
     <div className="legal-page">

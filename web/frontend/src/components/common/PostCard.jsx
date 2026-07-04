@@ -65,7 +65,6 @@ function ImageGrid({ images, onImageClick }) {
 
 /* ── PostCard ── */
 export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDelete = false, showAuthor = true }) {
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const [showComments, setShowComments] = useState(false)

@@ -25,7 +25,7 @@ export default function HomePage() {
   const texts = useAppStore((s) => s.texts)
   const loadTexts = useAppStore((s) => s.loadTexts)
   const resumeSession = useAppStore((s) => s.resumeSession)
-  const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
   const viewCard = useAppStore((s) => s.viewCard)
   const apiConfigured = useAppStore((s) => s.apiConfigured)
@@ -216,7 +216,7 @@ export default function HomePage() {
             <button
               type="button"
               className="home-onboard-btn"
-              onClick={() => setView('text')}
+              onClick={() => navigateTo('text')}
             >
               去上传
             </button>
@@ -263,7 +263,7 @@ export default function HomePage() {
             type="button"
             className="btn-primary"
             style={{ width: '100%' }}
-            onClick={() => setView('market')}
+            onClick={() => navigateTo('market')}
           >
             浏览角色市场
           </button>
@@ -284,7 +284,7 @@ export default function HomePage() {
                 <span className="home-stats-label">对话</span>
               </div>
               <div className="home-stats-divider" />
-              <div className="home-stats-item" onClick={() => setView('text')}>
+              <div className="home-stats-item" onClick={() => navigateTo('text')}>
                 <span className="home-stats-num">{textCount}</span>
                 <span className="home-stats-label">文本</span>
               </div>
@@ -380,7 +380,7 @@ export default function HomePage() {
                 >
                   🏷️筛选
                 </button>
-                <button type="button" className="home-view-all-btn" onClick={() => setView('market')}>
+                <button type="button" className="home-view-all-btn" onClick={() => navigateTo('market')}>
                   查看更多 &gt;
                 </button>
               </div>
@@ -451,7 +451,7 @@ export default function HomePage() {
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
                 <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
-                <button className="discover-empty-cta" onClick={() => setView('text')}>
+                <button className="discover-empty-cta" onClick={() => navigateTo('text')}>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
                   开始创作
                 </button>
@@ -500,7 +500,7 @@ export default function HomePage() {
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
                 <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
-                <button className="discover-empty-cta" onClick={() => setView('text')}>
+                <button className="discover-empty-cta" onClick={() => navigateTo('text')}>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
                   开始创作
                 </button>
@@ -550,7 +550,7 @@ export default function HomePage() {
                   )
                 })}
                 {validDiscoverCards.length < 4 && Array.from({ length: 4 - validDiscoverCards.length }).map((_, i) => (
-                  <button key={`guide-${i}`} className="market-card-v2 home-guide-card" onClick={() => setView('text')}>
+                  <button key={`guide-${i}`} className="market-card-v2 home-guide-card" onClick={() => navigateTo('text')}>
                     <div className="home-guide-card-inner">
                       <span className="home-guide-card-plus">+</span>
                       <span className="home-guide-card-text">创建角色</span>
@@ -568,7 +568,7 @@ export default function HomePage() {
             <div className="home-section-header">
               <h2 className="home-section-title">我的角色</h2>
               {allCards.length > 4 && (
-                <button type="button" className="home-view-all-btn" onClick={() => setView('text')}>
+                <button type="button" className="home-view-all-btn" onClick={() => navigateTo('text')}>
                   查看全部 ({allCards.length})
                 </button>
               )}
@@ -578,7 +578,7 @@ export default function HomePage() {
             ) : allCards.length === 0 ? (
               <div className="home-no-chars">
                 <p style={{ fontSize: 14, marginBottom: 12, color: 'var(--text-dim)' }}>还没有角色，去蒸馏一个</p>
-                <button type="button" className="btn-primary" onClick={() => setView('text')}>
+                <button type="button" className="btn-primary" onClick={() => navigateTo('text')}>
                   上传文本开始蒸馏
                 </button>
               </div>

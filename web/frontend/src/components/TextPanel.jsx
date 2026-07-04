@@ -98,7 +98,7 @@ export default function TextPanel() {
   const selectText = useAppStore((s) => s.selectText)
   const currentTextId = useAppStore((s) => s.currentTextId)
   const setCurrentTextDetailId = useAppStore((s) => s.setCurrentTextDetailId)
-  const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
   const setCurrentMarketCardId = useAppStore((s) => s.setCurrentMarketCardId)
   const startChat = useAppStore((s) => s.startChat)
@@ -520,7 +520,7 @@ export default function TextPanel() {
         </>
       ) : (
         <CharacterManagement
-          setView={setView}
+          setView={navigateTo}
           selectText={selectText}
           startChat={startChat}
           setCurrentMarketCardId={setCurrentMarketCardId}

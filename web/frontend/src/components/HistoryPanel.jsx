@@ -438,7 +438,7 @@ export default function HistoryPanel({ initialTrash = false }) {
     }
   }
 
-  const setView = useAppStore((s) => s.setView)
+  const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
 
@@ -844,8 +844,7 @@ export default function HistoryPanel({ initialTrash = false }) {
                               type="button"
                               className="btn-primary btn-sm"
                               onClick={() => {
-                                useAppStore.getState().setReaderTextId(t.id)
-                                setView('reader')
+                                navigateTo('reader', { readerTextId: t.id })
                               }}
                             >
                               阅读

@@ -386,12 +386,12 @@ export default function LoginPage() {
                     <button
                       type="button"
                       className="legal-link-btn"
-                      onClick={(e) => { e.preventDefault(); setLegalTab('terms'); useAppStore.getState().setView('legal') }}
+                      onClick={(e) => { e.preventDefault(); setLegalTab('terms'); useAppStore.getState().navigateTo('legal') }}
                     >《用户协议》</button>
                     <button
                       type="button"
                       className="legal-link-btn"
-                      onClick={(e) => { e.preventDefault(); setLegalTab('privacy'); useAppStore.getState().setView('legal') }}
+                      onClick={(e) => { e.preventDefault(); setLegalTab('privacy'); useAppStore.getState().navigateTo('legal') }}
                     >《隐私政策》</button>
                   </span>
                 </label>

@@ -257,7 +257,7 @@ export default function MarketCardDetail() {
         method: 'DELETE',
         headers: { ...getAuthHeaders() },
       })
-      setView('market')
+      navigateBack()
     } catch (err) {
       setError(err.message || '删除失败')
     }

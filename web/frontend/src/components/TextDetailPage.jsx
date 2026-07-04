@@ -11,6 +11,7 @@ import { displayName } from '../utils/displayName'
 
 export default function TextDetailPage() {
   const setView = useAppStore((s) => s.setView)
+  const navigateBack = useAppStore((s) => s.navigateBack)
   const currentTextDetailId = useAppStore((s) => s.currentTextDetailId)
   const authUser = useAppStore((s) => s.authUser)
 
@@ -195,7 +196,7 @@ export default function TextDetailPage() {
   return (
     <div className="panel">
       <header className="panel-header">
-        <button type="button" className="chat-back-btn" onClick={() => setView('text')} title="返回文本列表">
+        <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
           返回
         </button>

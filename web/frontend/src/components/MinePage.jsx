@@ -111,7 +111,6 @@ export default function MinePage() {
   const uploadUserBanner = useAppStore((s) => s.uploadUserBanner)
   const fetchUserBanner = useAppStore((s) => s.fetchUserBanner)
   const currentView = useAppStore((s) => s.currentView)
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
@@ -714,7 +713,7 @@ export default function MinePage() {
                     <span>公开分享到角色市场</span>
                   </div>
                 </div>
-                <button type="button" className="btn-primary" onClick={() => setView('text')}>
+                <button type="button" className="btn-primary" onClick={() => navigateTo('text')}>
                   去上传文本
                 </button>
               </div>
@@ -785,7 +784,7 @@ export default function MinePage() {
             <div className="mine-onboard-card">
               <h3 className="mine-onboard-title">{isMe ? '还没有上传文本' : '暂无公开书籍'}</h3>
               <p className="mine-onboard-desc">{isMe ? '上传小说或聊天记录，AI 会自动识别并蒸馏角色' : '该用户还没有公开的书籍'}</p>
-              {isMe && <button type="button" className="btn-primary" onClick={() => setView('text')}>
+              {isMe && <button type="button" className="btn-primary" onClick={() => navigateTo('text')}>
                 去上传
               </button>}
             </div>
@@ -801,8 +800,7 @@ export default function MinePage() {
                     key={text.id}
                     className="mine-book-cover-card"
                     onClick={() => {
-                      useAppStore.getState().setReaderTextId(text.id)
-                      setView('reader')
+                      navigateTo('reader', { readerTextId: text.id })
                     }}
                   >
                     <div className="mine-book-cover-bg">
@@ -1055,7 +1053,7 @@ export default function MinePage() {
             <div className="mine-onboard-card">
               <h3 className="mine-onboard-title">还没有关注任何人</h3>
               <p className="mine-onboard-desc">去角色市场发现有趣的创作者</p>
-              <button type="button" className="btn-primary" onClick={() => setView('market')}>
+              <button type="button" className="btn-primary" onClick={() => navigateTo('market')}>
                 去市场看看
               </button>
             </div>

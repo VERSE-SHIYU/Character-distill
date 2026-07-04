@@ -38,7 +38,6 @@ function getDateLabel(iso) {
 }
 
 export default function FeedPage() {
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
 

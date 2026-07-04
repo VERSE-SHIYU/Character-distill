@@ -13,7 +13,6 @@ export default function ProfilePage() {
   const loadUserAvatar = useAppStore((s) => s.loadUserAvatar)
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
   const updateNickname = useAppStore((s) => s.updateNickname)
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
 
   const [cropFile, setCropFile] = useState(null)

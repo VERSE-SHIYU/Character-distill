@@ -6,7 +6,6 @@ export default function CrossBorderConsentModal() {
   const pending = useAppStore((s) => s.pendingCrossBorderConsent)
   const grantConsent = useAppStore((s) => s.grantCrossBorderConsent)
   const setLegalTab = useAppStore((s) => s.setLegalTab)
-  const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const [checked, setChecked] = useState(false)
 

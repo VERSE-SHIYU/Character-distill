@@ -224,7 +224,6 @@ export { renderMarkdown, extractTOC, getCoverGradient }
 
 export default function BookReader() {
   const readerTextId = useAppStore((s) => s.readerTextId)
-  const setView = useAppStore((s) => s.setView)
   const texts = useAppStore((s) => s.texts)
 
   const [content, setContent] = useState('')
@@ -324,9 +323,8 @@ export default function BookReader() {
     })
   }
 
-  const goBack = () => {
-    setView('mine')
-  }
+  const navigateBack = useAppStore((s) => s.navigateBack)
+  const goBack = () => navigateBack()
 
   const goToPage = (page) => {
     setCurrentPage(Math.max(0, Math.min(totalPages - 1, page)))

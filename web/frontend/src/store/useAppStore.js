@@ -184,6 +184,7 @@ const useAppStore = create((set, get) => ({
   },
   messageTargetUsername: null,
   setMessageTargetUsername: (name) => set({ messageTargetUsername: name }),
+  // tab-level: reset stack for bottom-tab switches (home/text/market/mine/chat)
   setView: (view) => {
     const updates = { currentView: view, error: null, viewHistory: [] }
     if (view === 'home' || view === 'text') updates.currentTextTitle = ''
