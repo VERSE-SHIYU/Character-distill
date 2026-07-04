@@ -76,7 +76,8 @@ class DistillRequest(BaseModel):
 
 _tasks: dict[str, dict[str, Any]] = {}
 _task_lock = threading.Lock()
-_DISTILL_SEMAPHORE = threading.Semaphore(3)  # 最多同时3个蒸馏任务
+DISTILL_MAX_CONCURRENT = 3
+_DISTILL_SEMAPHORE = threading.Semaphore(DISTILL_MAX_CONCURRENT)  # 最多同时3个蒸馏任务
 
 
 class DistillTaskRequest(BaseModel):
@@ -573,7 +574,8 @@ async def distill_start(
     task_id = _uuid.uuid4().hex[:12]
 
     with _task_lock:
-        _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id}
+        _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
+                           "message": f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)"}
 
     thread = threading.Thread(
         target=_run_distill_task,

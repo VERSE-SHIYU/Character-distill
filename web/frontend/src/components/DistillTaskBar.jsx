@@ -12,6 +12,7 @@ function DistillTaskItem({ task }) {
 
   const isDone = task.status === 'done'
   const isError = task.status === 'error'
+  const isQueued = task.status === 'queued' && (task.progress_pct == null || task.progress_pct === 0)
   const statusText = isDone
     ? `${task.character} 蒸馏完成，点击查看`
     : isError
@@ -55,13 +56,13 @@ function DistillTaskItem({ task }) {
 
   return (
     <div
-      className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}`}
+      className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}${isQueued ? ' is-queued' : ''}`}
       onClick={isDone ? handleDoneClick : undefined}
       role={isDone ? 'button' : undefined}
       tabIndex={isDone ? 0 : undefined}
     >
       <span className="distill-task-icon">
-        {isDone ? '✅' : isError ? '❌' : '⚙'}
+        {isDone ? '✅' : isError ? '❌' : isQueued ? '⏳' : '⚙'}
       </span>
       <div className="distill-task-body">
         <span className="distill-task-text">{statusText}</span>

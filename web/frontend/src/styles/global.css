@@ -8842,6 +8842,19 @@ select.settings-input {
   color: #991b1b;
 }
 
+.distill-task-item.is-queued {
+  opacity: 0.7;
+}
+.distill-task-item.is-queued .distill-task-bar-fill {
+  background: var(--text-dim);
+  animation: distill-queued-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes distill-queued-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%      { opacity: 0.8; }
+}
+
 /* ==================== Awakening Toast ==================== */
 
 .awakening-toast {
