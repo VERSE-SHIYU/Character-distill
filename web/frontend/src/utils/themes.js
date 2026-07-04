@@ -1,3 +1,4 @@
+// 新增主题时同步更新 index.html 内联脚本 valid 数组
 export const THEMES = [
   { key: 'aurora',   emoji: '\u{1F4AB}', label: '极光紫' },
   { key: 'milktea',  emoji: '\u{1F375}', label: '抹茶' },

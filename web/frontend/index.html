@@ -10,6 +10,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
+    <script>
+      try {
+        var t = localStorage.getItem('charsim-theme') || 'ocean';
+        var valid = ['aurora','milktea','ocean','sakura','midnight','galaxy'];
+        document.documentElement.className = 'theme-' + (valid.indexOf(t) >= 0 ? t : 'ocean');
+      } catch (e) { document.documentElement.className = 'theme-ocean'; }
+    </script>
   </head>
   <body>
     <div class="ocean-bg"></div>
