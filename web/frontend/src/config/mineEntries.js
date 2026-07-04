@@ -1,5 +1,5 @@
 export const QUICK_ENTRIES = [
-  { key: 'messages', label: '消息',   icon: 'mail',     badge: 'unread' },
+  { key: 'messages', label: '消息',   icon: 'mail',     view: 'messages', badge: 'unread' },
   { key: 'history', label: '历史',   icon: 'clock',    view: 'history' },
   { key: 'trash',   label: '回收站', icon: 'trash',    view: 'trash' },
   { key: 'feed',    label: '动态',   icon: 'megaphone', view: 'feed' },

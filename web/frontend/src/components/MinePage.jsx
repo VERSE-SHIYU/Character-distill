@@ -10,7 +10,6 @@ import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
-import ThemeDrawer from './common/ThemeDrawer'
 import { Theater, Book, MessageSquare } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
@@ -115,8 +114,6 @@ export default function MinePage() {
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const unreadTotal = useAppStore((s) => s.unreadTotal)
 
-  // Theme drawer state
-  const [themeOpen, setThemeOpen] = useState(false)
 
   const handleEntryAction = useCallback((_key, view) => {
     if (view) pushView(view)
@@ -1108,9 +1105,6 @@ export default function MinePage() {
           )
         )}
       </div>
-
-      {/* Theme drawer */}
-      <ThemeDrawer open={themeOpen} onClose={() => setThemeOpen(false)} />
 
       <BannerCropModal
         file={bannerCropFile}
