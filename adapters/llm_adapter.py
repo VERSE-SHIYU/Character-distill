@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from collections.abc import Generator
 from pathlib import Path
@@ -13,6 +14,42 @@ import os
 import yaml
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI
+
+
+def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
+    """返回 (是否为429限流, Retry-After秒数或None)。"""
+    is_429 = False
+    # openai.RateLimitError may not be importable everywhere, check by name
+    if type(exc).__name__ == "RateLimitError" and "openai" in type(exc).__module__:
+        is_429 = True
+    else:
+        is_429 = getattr(exc, "status_code", None) == 429 or "429" in str(exc)
+
+    retry_after = None
+    if is_429:
+        try:
+            headers = getattr(exc, "response", None).headers if hasattr(exc, "response") else None
+            if headers:
+                val = headers.get("Retry-After", "")
+                if val and val.isdigit():
+                    retry_after = min(float(val), 60.0)
+        except Exception:
+            pass
+    return is_429, retry_after
+
+
+def _backoff_delay(attempt: int, is_rate_limit: bool, retry_after: float | None) -> float:
+    """Calculate backoff delay in seconds.
+
+    * With *retry-after*: retry_after + small jitter.
+    * 429 without retry-after: exponential backoff min(2**attempt*2, 30) + jitter.
+    * Non-429: linear (attempt+1)*5 (unchanged from original).
+    """
+    if retry_after is not None:
+        return retry_after + random.uniform(0, 1)
+    if is_rate_limit:
+        return min(2 ** attempt * 2, 30.0) + random.uniform(0, 2)
+    return float((attempt + 1) * 5)
 
 
 class ToolsNotSupportedError(RuntimeError):
@@ -88,11 +125,14 @@ class LLMAdapter:
         return result
 
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
-        """非流式对话，返回完整文本回复。最多重试3次。"""
+        """非流式对话，返回完整文本回复。最多重试3次（非429）或5次（429限流）。"""
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
+        normal_budget = 3
+        rate_limit_budget = 5
+        attempt = 0
         last_error = None
-        for attempt in range(3):
+        while True:
             try:
                 completion = self._client.chat.completions.create(
                     model=self._model,
@@ -113,17 +153,32 @@ class LLMAdapter:
                     }
                 return content
             except Exception as exc:
+                attempt += 1
                 last_error = exc
-                if attempt < 2:
-                    wait = (attempt + 1) * 5
-                    print(f"[LLMAdapter] Attempt {attempt+1} failed: {exc}, retrying in {wait}s...")
-                    time.sleep(wait)
+                is_429, retry_after = _classify_retry(exc)
+
+                if is_429:
+                    rate_limit_budget -= 1
                 else:
-                    print(f"[LLMAdapter] All 3 attempts failed: {exc}")
-        raise RuntimeError(f"LLM API failed after 3 attempts: {last_error}")
+                    normal_budget -= 1
+
+                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
+                if exhausted:
+                    if is_429:
+                        print(f"[LLMAdapter] Rate limited (429): all {attempt} attempts exhausted")
+                        raise RuntimeError(f"LLM API rate limited (429) after {attempt} attempts")
+                    print(f"[LLMAdapter] All {attempt} attempts failed: {last_error}")
+                    raise RuntimeError(f"LLM API failed after {attempt} attempts: {last_error}")
+
+                wait = _backoff_delay(attempt - 1, is_429, retry_after)
+                if is_429:
+                    print(f"[LLMAdapter] Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
+                else:
+                    print(f"[LLMAdapter] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
+                time.sleep(wait)
 
     async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> tuple[str, dict | None]:
-        """异步非流式对话，用于 Map 阶段并发。最多重试3次。
+        """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
 
         Returns ``(result, usage)`` where *usage* is ``{"prompt_tokens": N,
         "completion_tokens": N}`` or *None*.  Callers are responsible for
@@ -131,8 +186,11 @@ class LLMAdapter:
         shared ``last_usage`` attribute.  """
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
+        normal_budget = 3
+        rate_limit_budget = 5
+        attempt = 0
         last_error = None
-        for attempt in range(3):
+        while True:
             try:
                 completion = await self._async_client.chat.completions.create(
                     model=self._model,
@@ -153,14 +211,29 @@ class LLMAdapter:
                     }
                 return result, usage
             except Exception as exc:
+                attempt += 1
                 last_error = exc
-                if attempt < 2:
-                    wait = (attempt + 1) * 5
-                    print(f"[LLMAdapter async] Attempt {attempt+1} failed: {exc}, retrying in {wait}s...")
-                    await asyncio.sleep(wait)
+                is_429, retry_after = _classify_retry(exc)
+
+                if is_429:
+                    rate_limit_budget -= 1
                 else:
-                    print(f"[LLMAdapter async] All 3 attempts failed: {exc}")
-        raise RuntimeError(f"Async LLM failed after 3 attempts: {last_error}")
+                    normal_budget -= 1
+
+                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
+                if exhausted:
+                    if is_429:
+                        print(f"[LLMAdapter async] Rate limited (429): all {attempt} attempts exhausted")
+                        raise RuntimeError(f"Async LLM rate limited (429) after {attempt} attempts")
+                    print(f"[LLMAdapter async] All {attempt} attempts failed: {last_error}")
+                    raise RuntimeError(f"Async LLM failed after {attempt} attempts: {last_error}")
+
+                wait = _backoff_delay(attempt - 1, is_429, retry_after)
+                if is_429:
+                    print(f"[LLMAdapter async] Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
+                else:
+                    print(f"[LLMAdapter async] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
+                await asyncio.sleep(wait)
 
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
@@ -221,14 +294,17 @@ class LLMAdapter:
     ) -> Any:
         """非流式 function-calling 对话，返回完整 message 对象（含 tool_calls）。
 
-        网络/临时错误与 chat() 相同的 3 次重试；
+        网络/临时错误重试（非429最多3次，429限流最多5次）；
         provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
         其他 400 → 原样抛出，不重试。
         """
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
+        normal_budget = 3
+        rate_limit_budget = 5
+        attempt = 0
         last_error: Exception | None = None
-        for attempt in range(3):
+        while True:
             try:
                 completion = self._client.chat.completions.create(
                     model=self._model,
@@ -259,11 +335,26 @@ class LLMAdapter:
                     ) from exc
                 raise  # 其他 400：不重试，原样抛出
             except Exception as exc:
+                attempt += 1
                 last_error = exc
-                if attempt < 2:
-                    wait = (attempt + 1) * 5
-                    print(f"[LLMAdapter] chat_with_tools attempt {attempt+1} failed: {exc}, retrying in {wait}s...")
-                    time.sleep(wait)
+                is_429, retry_after = _classify_retry(exc)
+
+                if is_429:
+                    rate_limit_budget -= 1
                 else:
-                    print(f"[LLMAdapter] chat_with_tools all 3 attempts failed: {exc}")
-        raise RuntimeError(f"chat_with_tools failed after 3 attempts: {last_error}")
+                    normal_budget -= 1
+
+                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
+                if exhausted:
+                    if is_429:
+                        print(f"[LLMAdapter] chat_with_tools: Rate limited (429), all {attempt} attempts exhausted")
+                        raise RuntimeError(f"chat_with_tools rate limited (429) after {attempt} attempts")
+                    print(f"[LLMAdapter] chat_with_tools: all {attempt} attempts failed: {last_error}")
+                    raise RuntimeError(f"chat_with_tools failed after {attempt} attempts: {last_error}")
+
+                wait = _backoff_delay(attempt - 1, is_429, retry_after)
+                if is_429:
+                    print(f"[LLMAdapter] chat_with_tools: Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
+                else:
+                    print(f"[LLMAdapter] chat_with_tools attempt {attempt} failed: {last_error}, retrying in {wait}s...")
+                time.sleep(wait)
