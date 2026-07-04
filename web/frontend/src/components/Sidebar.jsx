@@ -369,7 +369,7 @@ const THEMES = [
 
 function ThemePopup({ onClose }) {
   const [current, setCurrent] = useState(() => {
-    try { return localStorage.getItem('charsim-theme') || 'aurora' } catch { return 'aurora' }
+    try { return localStorage.getItem('charsim-theme') || 'ocean' } catch { return 'ocean' }
   })
   const ref = useRef(null)
 

@@ -11,8 +11,8 @@ const themes = [
 
 export default function ThemeSwitcher() {
   const [current, setCurrent] = useState(() => {
-    try { return localStorage.getItem('charsim-theme') || 'aurora' }
-    catch { return 'aurora' }
+    try { return localStorage.getItem('charsim-theme') || 'ocean' }
+    catch { return 'ocean' }
   })
 
   useEffect(() => {

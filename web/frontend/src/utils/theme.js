@@ -9,15 +9,15 @@ export function getTheme() {
     if (v === 'sakura') return 'sakura'
     if (v === 'midnight') return 'midnight'
     if (v === 'galaxy') return 'galaxy'
-    return 'aurora'
+    return 'ocean'
   } catch {
-    return 'aurora'
+    return 'ocean'
   }
 }
 
 /** @param {'aurora' | 'milktea' | 'ocean' | 'sakura' | 'midnight' | 'galaxy'} theme */
 export function applyTheme(theme) {
-  const valid = ['aurora', 'milktea', 'ocean', 'sakura', 'midnight', 'galaxy'].includes(theme) ? theme : 'aurora'
+  const valid = ['aurora', 'milktea', 'ocean', 'sakura', 'midnight', 'galaxy'].includes(theme) ? theme : 'ocean'
   document.documentElement.className = `theme-${valid}`
   try {
     localStorage.setItem(STORAGE_KEY, valid)
