@@ -9,7 +9,6 @@ import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
-import MobileBackBar from './components/MobileBackBar'
 import { SECONDARY_VIEWS } from './config/navigation'
 import Loading from './components/common/Loading'
 import useVisualViewport from './utils/useVisualViewport'
@@ -268,7 +267,6 @@ export default function App() {
       />
 
       <main className="main-panel">
-        <MobileBackBar />
         {announcement && !annDismissed && (
           <div className="announcement-banner">
             <span className="announcement-banner-text" style={{ whiteSpace: 'pre-wrap', textAlign: announcement.align || 'left' }}>{announcement.content}</span>
