@@ -3,6 +3,8 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 
 const PAGE_SIZE = 20
 
@@ -40,6 +42,7 @@ function getDateLabel(iso) {
 export default function FeedPage() {
   const pushView = useAppStore((s) => s.pushView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
+  const popView = useAppStore((s) => s.popView)
 
   const [posts, setPosts] = useState([])
   const [page, setPage] = useState(1)
@@ -116,6 +119,8 @@ export default function FeedPage() {
     } catch {}
   }
 
+  const swipeBack = useSwipeBack(popView)
+
   // Build rendered list interleaving date dividers
   let lastDateKey = null
   const rendered = []
@@ -129,14 +134,17 @@ export default function FeedPage() {
   })
 
   return (
-    <div className="panel feed-page">
+    <div className="panel feed-page" {...swipeBack}>
       <header className="panel-header">
-        <div className="feed-header-row">
-          <h1 className="panel-title">动态</h1>
-          <button type="button" className="feed-refresh-btn" onClick={handleRefresh} disabled={loading}>
-            刷新
-          </button>
-        </div>
+        <PageHeader
+          title="动态"
+          onBack={popView}
+          actions={
+            <button type="button" className="feed-refresh-btn" onClick={handleRefresh} disabled={loading}>
+              刷新
+            </button>
+          }
+        />
       </header>
 
       {error && <div className="error-box">{error}</div>}

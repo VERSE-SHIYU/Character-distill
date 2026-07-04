@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout } from '../api/client'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
@@ -21,6 +23,7 @@ export default function MarketPage() {
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
+  const popView = useAppStore((s) => s.popView)
 
   const [cards, setCards] = useState([])
   const [total, setTotal] = useState(0)
@@ -189,10 +192,12 @@ export default function MarketPage() {
     }
   }
 
+  const swipeBack = useSwipeBack(popView)
+
   return (
-    <div className="panel">
+    <div className="panel" {...swipeBack}>
       <header className="panel-header">
-        <h1 className="panel-title">角色市场</h1>
+        <PageHeader title="角色市场" onBack={popView} />
         <p className="panel-desc">浏览其他用户分享的角色卡</p>
       </header>
 
