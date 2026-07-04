@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { fetchWithTimeout } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -112,20 +114,18 @@ export default function MessagesPage() {
     navigateBack()
   }
 
+  const swipeBack = useSwipeBack(handleBackFromChat)
+
   // ── Render ──
   return (
-    <div className="panel messages-page">
+    <div className="panel messages-page" {...swipeBack}>
 
       {!convLoading && conversations.length === 0 && !activeOtherId ? (
         /* ── Empty state ── */
         <div className="messages-layout">
           <div className="messages-sidebar messages-sidebar-empty">
             <div className="messages-sidebar-header">
-              <h2 className="messages-sidebar-title">私信</h2>
-              {!isMobile && <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-                  返回
-                </button>}
+              <PageHeader title="私信" onBack={handleBackFromChat} />
             </div>
             <div className="messages-empty-state">
               <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
@@ -147,11 +147,7 @@ export default function MessagesPage() {
             style={{ display: !isMobile || mobileView === 'list' ? 'flex' : 'none' }}
           >
             <div className="messages-sidebar-header">
-              <h2 className="messages-sidebar-title">私信</h2>
-              {!isMobile && <button type="button" className="chat-back-btn" onClick={handleBackFromChat}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-                  返回
-                </button>}
+              <PageHeader title="私信" onBack={handleBackFromChat} />
             </div>
             {convLoading ? (
               <Loading text="加载中…" />

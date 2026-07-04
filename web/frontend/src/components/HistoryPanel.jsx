@@ -9,6 +9,8 @@ import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
 import { SkeletonRow } from './common/Skeleton'
 import { loadCardAvatar } from '../store/db'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { Book, Clipboard, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
@@ -438,9 +440,11 @@ export default function HistoryPanel({ initialTrash = false }) {
     }
   }
 
+  const popView = useAppStore((s) => s.popView)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
   const setResumeGroupId = useAppStore((s) => s.setResumeGroupId)
+  const swipeBack = useSwipeBack(popView)
 
   async function loadBooks() {
     setTextsLoading(true)
@@ -504,9 +508,9 @@ export default function HistoryPanel({ initialTrash = false }) {
       onDelete={() => requestConfirm('deleteGroup', { run: () => handleDeleteGroup(groupDetail.id) })}
     />
   ) : (
-    <div className="history-panel panel">
+    <div className="history-panel panel" {...swipeBack}>
       <header className="panel-header">
-        <h1 className="panel-title">历史记录</h1>
+        <PageHeader title="历史记录" onBack={popView} />
         <p className="panel-desc">{trashMode ? '回收站 — 已删除的会话' : '搜索、筛选并管理过往对话'}</p>
       </header>
 
