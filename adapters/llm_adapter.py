@@ -166,7 +166,7 @@ class LLMAdapter:
                 if exhausted:
                     if is_429:
                         print(f"[LLMAdapter] Rate limited (429): all {attempt} attempts exhausted")
-                        raise RuntimeError(f"LLM API rate limited (429) after {attempt} attempts")
+                        raise RuntimeError(f"LLM API rate limited (429) after {attempt} attempts: {last_error}")
                     print(f"[LLMAdapter] All {attempt} attempts failed: {last_error}")
                     raise RuntimeError(f"LLM API failed after {attempt} attempts: {last_error}")
 
@@ -224,7 +224,7 @@ class LLMAdapter:
                 if exhausted:
                     if is_429:
                         print(f"[LLMAdapter async] Rate limited (429): all {attempt} attempts exhausted")
-                        raise RuntimeError(f"Async LLM rate limited (429) after {attempt} attempts")
+                        raise RuntimeError(f"Async LLM rate limited (429) after {attempt} attempts: {last_error}")
                     print(f"[LLMAdapter async] All {attempt} attempts failed: {last_error}")
                     raise RuntimeError(f"Async LLM failed after {attempt} attempts: {last_error}")
 
@@ -348,7 +348,7 @@ class LLMAdapter:
                 if exhausted:
                     if is_429:
                         print(f"[LLMAdapter] chat_with_tools: Rate limited (429), all {attempt} attempts exhausted")
-                        raise RuntimeError(f"chat_with_tools rate limited (429) after {attempt} attempts")
+                        raise RuntimeError(f"chat_with_tools rate limited (429) after {attempt} attempts: {last_error}")
                     print(f"[LLMAdapter] chat_with_tools: all {attempt} attempts failed: {last_error}")
                     raise RuntimeError(f"chat_with_tools failed after {attempt} attempts: {last_error}")
 

@@ -952,16 +952,17 @@ class Distiller:
         character_name: str,
         on_chunk_done: "callable | None" = None,
         is_chat: bool = False,
-    ) -> list[tuple[int, str]]:
+    ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
 
-        Returns ordered (index, analysis_text) tuples.
+        Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
         ``on_chunk_done(index, result)`` is called synchronously within the
         async loop each time a chunk finishes.
         """
         sem = asyncio.Semaphore(self.MAP_CONCURRENCY)
         done_count = [0]
         lock = asyncio.Lock()
+        failures: list[tuple[int, Exception]] = []
         map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
         map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
@@ -975,6 +976,8 @@ class Distiller:
                     )
                 except Exception as exc:
                     print(f"[distiller] Map chunk {i} failed: {exc}")
+                    async with lock:
+                        failures.append((i, exc))
                     result = ""
             async with lock:
                 done_count[0] += 1
@@ -983,7 +986,8 @@ class Distiller:
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        return results, failures
 
     async def _run_reduce_concurrent(
         self,
@@ -1147,8 +1151,8 @@ class Distiller:
         q: queue.Queue = queue.Queue()
 
         async def _map_wrapper():
-            results = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
-            q.put(("done", results))
+            results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat)
+            q.put(("done", results, failures))
 
         def _thread_run():
             try:
@@ -1160,19 +1164,39 @@ class Distiller:
         t.start()
 
         map_results: list[tuple[int, str]] = []
+        map_failures: list[tuple[int, Exception]] = []
         while True:
-            kind, payload = q.get()
+            item = q.get()
+            kind = item[0]
             if kind == "done":
-                map_results = payload
+                map_results = item[1]
+                map_failures = item[2]
                 break
             if kind == "error":
-                raise RuntimeError(f"Map 阶段失败：{payload}")
+                raise RuntimeError(f"Map 阶段失败：{item[1]}")
             # else: progress is handled via _on_done callback already
 
         t.join(timeout=5)
 
         if on_progress:
             on_progress(total, total)
+
+        # Failure rate check: if >50% chunks failed, bail with clear error
+        total_chunks = len(relevant)
+        failed = len(map_failures)
+        if failed / total_chunks > 0.5:
+            err_text = str(map_failures[-1][1])
+            if "rate limited (429)" in err_text or "429" in err_text:
+                raise ValueError(
+                    f"蒸馏失败：API 限流（429），{failed}/{total_chunks} 个分片失败。"
+                    "请稍后重试，或更换限额更高的 API key"
+                )
+            raise ValueError(
+                f"蒸馏失败：{failed}/{total_chunks} 个分片处理失败，"
+                f"最后错误：{map_failures[-1][1]}"
+            )
+        if failed > 0:
+            print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
 
         raw_analyses = [
             r[1] for r in map_results if r[1].strip() and r[1].strip() != "无"
@@ -1325,6 +1349,7 @@ class Distiller:
             sem = asyncio.Semaphore(self.MAP_CONCURRENCY)
             done_count = [0]
             lock = asyncio.Lock()
+            failures: list[tuple[int, Exception]] = []
 
             async def _one(i: int, chunk: str) -> tuple[int, str]:
                 async with sem:
@@ -1336,6 +1361,8 @@ class Distiller:
                         )
                     except Exception as exc:
                         print(f"[distiller] Map chunk {i} failed: {exc}")
+                        async with lock:
+                            failures.append((i, exc))
                         result = ""
                 async with lock:
                     done_count[0] += 1
@@ -1345,7 +1372,7 @@ class Distiller:
 
             tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
             await asyncio.gather(*tasks)
-            q.put(("done", None, None, None))
+            q.put(("done", failures))
 
         def _thread_run() -> None:
             try:
@@ -1357,20 +1384,40 @@ class Distiller:
         t.start()
 
         map_results: list[tuple[int, str]] = []
+        map_failures: list[tuple[int, Exception]] = []
         while True:
-            kind, a, b, c = q.get()
+            item = q.get()
+            kind = item[0]
             if kind == "done":
+                map_failures = item[1]
                 break
             if kind == "error":
-                yield {"error": f"Map 阶段失败：{a}"}
+                yield {"error": f"Map 阶段失败：{item[1]}"}
                 return
             if kind == "chunk":
-                map_results.append((b, c))
-                yield {"status": "analyzing", "current": a, "total": total}
+                map_results.append((item[2], item[3]))
+                yield {"status": "analyzing", "current": item[1], "total": total}
 
         t.join(timeout=5)
 
         map_results.sort(key=lambda x: x[0])
+
+        # Failure rate check: if >50% chunks failed, bail
+        total_chunks = len(relevant)
+        failed = len(map_failures)
+        if failed / total_chunks > 0.5:
+            err_text = str(map_failures[-1][1])
+            if "rate limited (429)" in err_text or "429" in err_text:
+                yield {"error": "蒸馏失败：API 限流（429），"
+                       f"{failed}/{total_chunks} 个分片失败。"
+                       "请稍后重试，或更换限额更高的 API key"}
+            else:
+                yield {"error": f"蒸馏失败：{failed}/{total_chunks} 个分片处理失败，"
+                       f"最后错误：{map_failures[-1][1]}"}
+            return
+        if failed > 0:
+            print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
+
         raw_analyses = [
             r[1] for r in map_results if r[1].strip() and r[1].strip() != "无"
         ]

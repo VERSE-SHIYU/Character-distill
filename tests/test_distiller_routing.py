@@ -1,5 +1,6 @@
 """Tests for long-context routing: token estimation + threshold branching."""
 
+import pytest
 from unittest.mock import MagicMock, patch
 
 from core.distiller import Distiller
@@ -86,3 +87,102 @@ class TestRouting:
             except Exception:
                 pass
             mock_long.assert_not_called()
+
+
+class TestMapPhaseFailureHandling:
+    """>50% Map chunk failures → early bail with clear error message."""
+
+    # ── helpers ──────────────────────────────────────────────────────────
+
+    def _make_429_failing_async(self, fail_after: int = 1):
+        """Return async_chat that succeeds for first `fail_after` calls, then raises 429."""
+        call_count = [0]
+
+        async def fake(system, messages, max_tokens=None):
+            call_count[0] += 1
+            if call_count[0] > fail_after:
+                raise RuntimeError("rate limited (429) after 5 attempts: req-abc123")
+            return ("分析结果", {"prompt_tokens": 10, "completion_tokens": 5})
+
+        return fake
+
+    def _make_generic_failing_async(self, fail_after: int = 1):
+        """Return async_chat that succeeds first, then raises generic error."""
+        call_count = [0]
+
+        async def fake(system, messages, max_tokens=None):
+            call_count[0] += 1
+            if call_count[0] > fail_after:
+                raise RuntimeError("connection timeout")
+            return ("分析结果", {"prompt_tokens": 10, "completion_tokens": 5})
+
+        return fake
+
+    def _make_distiller(self, mock_llm) -> Distiller:
+        d = Distiller(llm=mock_llm, config_path=None)
+        d._longctx_threshold = 0  # Force Map-Reduce chunked path
+        d._chunk_size = 3000
+        return d
+
+    # With chunk_size=3000, "AB" * 5000 = 10000 chars → 4 chunks (range(0,10000,3000))
+
+    # ── sync path (distill_incremental) ──────────────────────────────────
+
+    def test_sync_429_bail(self):
+        """>50% fail with 429 → ValueError with 'API 限流'."""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = self._make_429_failing_async(fail_after=1)  # 3/4 fail = 75%
+
+        d = self._make_distiller(mock_llm)
+
+        with pytest.raises(ValueError, match="API 限流"):
+            d.distill_incremental("AB" * 5000, "AB")
+
+    def test_sync_generic_bail(self):
+        """>50% fail with non-429 → ValueError describing failures."""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = self._make_generic_failing_async(fail_after=1)
+
+        d = self._make_distiller(mock_llm)
+
+        with pytest.raises(ValueError) as excinfo:
+            d.distill_incremental("AB" * 5000, "AB")
+
+        msg = str(excinfo.value)
+        assert "API 限流" not in msg
+        assert "connection timeout" in msg
+
+    # ── stream path (distill_incremental_stream) ─────────────────────────
+
+    def test_stream_429_bail(self):
+        """>50% fail with 429 → yields {'error': 'API 限流'}."""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = self._make_429_failing_async(fail_after=1)
+
+        d = self._make_distiller(mock_llm)
+
+        gen = d.distill_incremental_stream("AB" * 5000, "AB")
+        results = list(gen)
+
+        errors = [r for r in results if isinstance(r, dict) and "error" in r]
+        assert len(errors) == 1
+        assert "API 限流" in errors[0]["error"]
+
+    def test_stream_generic_bail(self):
+        """>50% fail with non-429 → yields {'error': describing failures}."""
+        mock_llm = MagicMock()
+        mock_llm.last_usage = None
+        mock_llm.async_chat = self._make_generic_failing_async(fail_after=1)
+
+        d = self._make_distiller(mock_llm)
+
+        gen = d.distill_incremental_stream("AB" * 5000, "AB")
+        results = list(gen)
+
+        errors = [r for r in results if isinstance(r, dict) and "error" in r]
+        assert len(errors) == 1
+        assert "API 限流" not in errors[0]["error"]
+        assert "connection timeout" in errors[0]["error"]
