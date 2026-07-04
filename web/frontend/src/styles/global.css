@@ -17640,9 +17640,9 @@ select.settings-input {
     padding: 2px 16px;
   }
 
-  /* ── Messages area: tighter padding ── */
+  /* ── Messages area: tighter padding; extra bottom for sticky input bar ── */
   .chat-messages {
-    padding: 8px 12px 12px;
+    padding: 8px 12px 80px;
   }
 
   /* ── Bubble max-width: relax to 78% ── */
@@ -17652,8 +17652,13 @@ select.settings-input {
 
   /* ── Group chat messages: edge-to-edge ── */
   .group-chat-layout .group-chat-messages-area {
-    padding: 12px 0 12px;
+    padding: 12px 0 80px;
     gap: 12px;
+  }
+
+  /* ── Private message body: extra bottom for sticky input bar ── */
+  .private-chat-body {
+    padding: 12px 12px 80px;
   }
 
   /* ── Existing mobile chat styles kept ── */

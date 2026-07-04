@@ -74,11 +74,11 @@ export default function MessagesPage() {
     }
   }, [messageTargetUserId, messageTargetUsername, setMessageTargetUserId, setMessageTargetUsername])
 
-  // Sync conversation immersion: hide TabBar when in a DM
+  // Sync conversation immersion: hide TabBar only when actually in the chat view
   useEffect(() => {
-    setInConversation(!!activeOtherId)
+    setInConversation(isMobile && mobileView === 'chat')
     return () => setInConversation(false)
-  }, [activeOtherId, setInConversation])
+  }, [isMobile, mobileView, setInConversation])
 
   // When activeOtherId changes, update username from conversations
   useEffect(() => {
