@@ -3,6 +3,8 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import useIsMobile from '../hooks/useIsMobile'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -491,40 +493,41 @@ export default function MarketCardDetail() {
   const rels = cardData.relationships || []
   const isMarketCard = card?.visibility === 'public'
 
+  const swipeBack = useSwipeBack(navigateBack)
+
   return (
-    <div className="panel market-detail-page">
+    <div className="panel market-detail-page" {...swipeBack}>
       <header className="market-detail-header">
-        <div className="market-detail-header-left">
-          {!isMobile && <button type="button" className="chat-back-btn" onClick={navigateBack} title="返回">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
-            返回
-          </button>}
-        </div>
-        <div className="market-detail-header-title">{charName}</div>
-        <div className="market-detail-header-actions">
-          <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-              <polyline points="16 6 12 2 8 6" />
-              <line x1="12" y1="2" x2="12" y2="15" />
-            </svg>
-          </button>
-          {card.user_id !== authUser?.id && authUser?.id && (
-            <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
-              <Flag size={16} />
-            </button>
-          )}
-          {card.user_id === authUser?.id && (
-            <button type="button" className="btn-icon" onClick={() => setShowEditModal(true)} title="编辑">
-              <Edit size={16} />
-            </button>
-          )}
-          {(authUser?.is_admin || card.user_id === authUser?.id) && (
-            <button type="button" className="btn-icon" onClick={() => setDeleteConfirmId(card.id)} title="删除">
-              <Trash2 size={16} />
-            </button>
-          )}
-        </div>
+        <PageHeader
+          title={charName}
+          onBack={navigateBack}
+          actions={
+            <>
+              <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                  <polyline points="16 6 12 2 8 6" />
+                  <line x1="12" y1="2" x2="12" y2="15" />
+                </svg>
+              </button>
+              {card.user_id !== authUser?.id && authUser?.id && (
+                <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
+                  <Flag size={16} />
+                </button>
+              )}
+              {card.user_id === authUser?.id && (
+                <button type="button" className="btn-icon" onClick={() => setShowEditModal(true)} title="编辑">
+                  <Edit size={16} />
+                </button>
+              )}
+              {(authUser?.is_admin || card.user_id === authUser?.id) && (
+                <button type="button" className="btn-icon" onClick={() => setDeleteConfirmId(card.id)} title="删除">
+                  <Trash2 size={16} />
+                </button>
+              )}
+            </>
+          }
+        />
       </header>
 
       {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}

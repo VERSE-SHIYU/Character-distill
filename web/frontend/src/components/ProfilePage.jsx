@@ -3,6 +3,8 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import { displayName } from '../utils/displayName'
 import Avatar from './common/Avatar'
+import PageHeader from './PageHeader'
+import useSwipeBack from '../hooks/useSwipeBack'
 import ImageCropModal from './common/ImageCropModal'
 import { Heart, Star, Theater, Book, Mic, Lock, Mail } from './common/Icon'
 
@@ -13,6 +15,7 @@ export default function ProfilePage() {
   const loadUserAvatar = useAppStore((s) => s.loadUserAvatar)
   const saveUserAvatar = useAppStore((s) => s.saveUserAvatar)
   const updateNickname = useAppStore((s) => s.updateNickname)
+  const popView = useAppStore((s) => s.popView)
   const pushView = useAppStore((s) => s.pushView)
 
   const [cropFile, setCropFile] = useState(null)
@@ -274,8 +277,11 @@ export default function ProfilePage() {
     { key: 'books_visible', icon: <Book size={14} />, label: '书籍', count: stats.texts_count },
   ]
 
+  const swipeBack = useSwipeBack(popView)
+
   return (
-    <div className="profile-page">
+    <div className="profile-page" {...swipeBack}>
+      <PageHeader title="个人资料" onBack={popView} />
       {/* 个人资料卡 */}
       <div className="profile-card">
         <div className="profile-avatar-section">
