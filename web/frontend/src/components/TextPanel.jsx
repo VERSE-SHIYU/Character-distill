@@ -523,6 +523,7 @@ export default function TextPanel() {
           setView={navigateTo}
           selectText={selectText}
           startChat={startChat}
+          pushView={pushView}
           setCurrentMarketCardId={setCurrentMarketCardId}
         />
       )}
@@ -534,7 +535,7 @@ export default function TextPanel() {
    角色管理 Tab（全部角色卡网格）
    ============================== */
 
-function CharacterManagement({ setView, selectText, startChat, setCurrentMarketCardId }) {
+function CharacterManagement({ setView, selectText, startChat, pushView, setCurrentMarketCardId }) {
   const texts = useAppStore((s) => s.texts)
   const loadTexts = useAppStore((s) => s.loadTexts)
   const [allCards, setAllCards] = useState([])
