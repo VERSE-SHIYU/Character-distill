@@ -120,7 +120,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} />
+          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
         ) : null}
       </div>
     )
@@ -134,7 +134,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} />
+          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
         ) : (
           <div className="char-detail-empty">
             <div className="char-detail-empty-icon"><User size={28} /></div>
@@ -744,16 +744,14 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
 // ---- Right: card detail view ----
 
-function CardDetail({ card, textId }) {
+function CardDetail({ card, textId, goBack }) {
   const isMobile = useIsMobile()
   const startChat = useAppStore((s) => s.startChat)
   const pushView = useAppStore((s) => s.pushView)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
   const setUserRole = useAppStore((s) => s.setUserRole)
   const getUserRole = useAppStore((s) => s.getUserRole)
-  const navigateTo = useAppStore((s) => s.navigateTo)
   const updateCard = useAppStore((s) => s.updateCard)
-  const goBack = useCallback(() => navigateTo('text'), [navigateTo])
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
