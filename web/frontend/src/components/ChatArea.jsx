@@ -19,6 +19,7 @@ import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
+import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 
 export default function ChatArea() {
@@ -31,6 +32,7 @@ export default function ChatArea() {
   const pendingChatCardId = useAppStore((s) => s._pendingChatCardId)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const pushView = useAppStore((s) => s.pushView)
+  const popView = useAppStore((s) => s.popView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
   const currentTextId = useAppStore((s) => s.currentTextId)
@@ -61,6 +63,7 @@ export default function ChatArea() {
     }
     return (
       <div className="shell-placeholder">
+        <PageHeader title="聊天" onBack={popView} />
         <div className="shell-placeholder-inner">
           <div className="shell-placeholder-icon"><MessageSquare size={20} /></div>
           <div className="shell-placeholder-title">

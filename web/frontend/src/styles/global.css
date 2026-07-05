@@ -4247,6 +4247,7 @@ html.theme-aurora::before {
 .chat-messages {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -11058,6 +11059,7 @@ select.settings-input {
 
 .private-chat-body {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -11069,6 +11071,7 @@ select.settings-input {
 
 .group-chat-messages-area {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -12245,10 +12248,12 @@ select.settings-input {
   position: relative;
   width: fit-content;
   max-width: 100%;
+  min-width: 0;
   padding: 11px 14px;
   font-size: 14px;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   overflow: visible;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
@@ -17489,7 +17494,8 @@ select.settings-input {
     overflow: hidden;
     height: 100%;
     overscroll-behavior: none;
-    touch-action: pan-x pan-y;
+    /* Mobile has no legitimate horizontal scrolling use-case */
+    touch-action: pan-y;
   }
   body {
     position: fixed;
@@ -17522,10 +17528,13 @@ select.settings-input {
     z-index: 10;
   }
 
-  /* Parent .app-shell provides --safe-top padding, reset on children to avoid double */
+  /* Sticky headers: each handles its own safe-area so the notch/status-bar
+     area is always filled with the header's background (not body bg). */
   .chat-topbar-compact,
-  .group-chat-main .private-chat-header {
-    padding-top: 0;
+  .group-chat-main .private-chat-header,
+  .page-header-sticky {
+    padding-top: env(safe-area-inset-top);
+    background-clip: padding-box;
   }
   .chat-topbar-avatar-btn.avatar-shape > div {
     width: 36px !important;
@@ -17544,6 +17553,7 @@ select.settings-input {
   /* ── Messages area: tighter padding; extra bottom for sticky input bar ── */
   .chat-messages {
     padding: 8px 12px 80px;
+    overflow-x: hidden;
   }
 
   /* ── Bubble max-width: relax to 78% ── */
@@ -17555,11 +17565,13 @@ select.settings-input {
   .group-chat-layout .group-chat-messages-area {
     padding: 12px 0 80px;
     gap: 12px;
+    overflow-x: hidden;
   }
 
   /* ── Private message body: extra bottom for sticky input bar ── */
   .private-chat-body {
     padding: 12px 12px 80px;
+    overflow-x: hidden;
   }
 
   /* ── Existing mobile chat styles kept ── */
