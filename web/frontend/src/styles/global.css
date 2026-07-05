@@ -17515,15 +17515,11 @@ select.settings-input {
     position: sticky;
     top: 0;
     z-index: 10;
-    padding-top: var(--safe-top);
   }
   .private-chat-header {
     position: sticky;
     top: 0;
     z-index: 10;
-  }
-  .group-chat-main .private-chat-header {
-    padding-top: var(--safe-top);
   }
 
   /* Parent .app-shell provides --safe-top padding, reset on children to avoid double */
