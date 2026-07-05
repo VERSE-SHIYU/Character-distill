@@ -324,7 +324,7 @@ test.describe('Desktop navigation', () => {
     await page.waitForTimeout(600)
     expect(await getView(page)).toBe('marketCardDetail')
 
-    await page.locator('.chat-back-btn').click()
+    await page.locator('.page-header-back').click()
     await page.waitForTimeout(600)
     expect(await getView(page)).toBe('market')
   })

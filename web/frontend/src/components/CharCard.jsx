@@ -83,14 +83,14 @@ export default function CharCard() {
           </p>
         </header>
       )}
-      <CharPanelBody textId={currentTextId} />
+      <CharPanelBody textId={currentTextId} goBack={goBack} />
     </div>
   )
 }
 
 // ---- Body: cards list + detail pane ----
 
-function CharPanelBody({ textId }) {
+function CharPanelBody({ textId, goBack }) {
   const cards = useAppStore((s) => s.cards)
   const currentCard = useAppStore((s) => s.currentCard)
   const loadCards = useAppStore((s) => s.loadCards)
@@ -120,7 +120,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} />
+          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
         ) : null}
       </div>
     )
@@ -134,7 +134,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} />
+          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
         ) : (
           <div className="char-detail-empty">
             <div className="char-detail-empty-icon"><User size={28} /></div>
