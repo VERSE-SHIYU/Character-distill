@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Playwright screenshots (repro scripts output)
+e2e/*.png
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

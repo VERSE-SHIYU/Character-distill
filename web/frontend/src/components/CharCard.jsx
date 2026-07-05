@@ -174,6 +174,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const lastDistilledCardId = useAppStore((s) => s.lastDistilledCardId)
   const setLastDistilledCardId = useAppStore((s) => s.setLastDistilledCardId)
   const viewCard = useAppStore((s) => s.viewCard)
+  const loadCards = useAppStore((s) => s.loadCards)
 
   const [distillingName, setDistillingName] = useState(null)
   const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
@@ -752,6 +753,7 @@ function CardDetail({ card, textId }) {
   const getUserRole = useAppStore((s) => s.getUserRole)
   const navigateTo = useAppStore((s) => s.navigateTo)
   const updateCard = useAppStore((s) => s.updateCard)
+  const goBack = useCallback(() => navigateTo('text'), [navigateTo])
   const [showShareConfirm, setShowShareConfirm] = useState(false)
   const [showRoleModal, setShowRoleModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)

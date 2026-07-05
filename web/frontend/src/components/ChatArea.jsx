@@ -126,6 +126,7 @@ function ChatView() {
   const authUser = useAppStore((s) => s.authUser)
   const selectText = useAppStore((s) => s.selectText)
   const openCharacterList = useAppStore((s) => s.openCharacterList)
+  const pushView = useAppStore((s) => s.pushView)
 
   const cardData = parseCardJson(currentCard)
   const charName = cardData.name || currentCard.name || '?'
