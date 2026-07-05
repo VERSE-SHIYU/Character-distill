@@ -120,7 +120,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
+          <CardDetail card={currentCard} textId={textId} />
         ) : null}
       </div>
     )
@@ -134,7 +134,7 @@ function CharPanelBody({ textId }) {
         {detailLoading ? (
           <Loading text="加载角色…" />
         ) : currentCard ? (
-          <CardDetail card={currentCard} textId={textId} goBack={goBack} />
+          <CardDetail card={currentCard} textId={textId} />
         ) : (
           <div className="char-detail-empty">
             <div className="char-detail-empty-icon"><User size={28} /></div>

@@ -77,7 +77,7 @@ jobs:
       - name: Frontend lint (no-undef gate)
         run: |
           npm ci
-          npx eslint src --rule '{"no-undef":"error"}' --quiet
+          npx eslint src -c eslint.ci.config.js --quiet
         working-directory: web/frontend
 
       - name: Login to GHCR
