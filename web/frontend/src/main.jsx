@@ -4,12 +4,13 @@ import './styles/global.css'
 import './styles/adm-theme.css'
 import { initTheme } from './utils/theme'
 import App from './App.jsx'
+import ErrorBoundary from './components/common/ErrorBoundary'
 
 initTheme()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary><App /></ErrorBoundary>
   </StrictMode>,
 )
 

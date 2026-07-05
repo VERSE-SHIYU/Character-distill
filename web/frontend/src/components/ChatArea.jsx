@@ -33,6 +33,7 @@ export default function ChatArea() {
   const pushView = useAppStore((s) => s.pushView)
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
+  const currentTextId = useAppStore((s) => s.currentTextId)
   // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   // and no session-creation is already in-flight (_pendingChatCardId guard)
   useEffect(() => {
