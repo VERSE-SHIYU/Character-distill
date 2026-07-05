@@ -15,7 +15,14 @@ export default class ErrorBoundary extends Component {
   }
 
   handleReset = () => {
-    try { localStorage.removeItem('nav_view') } catch { /* noop */ }
+    const keys = [
+      'nav_view',
+      'nav_author_user_id',
+      'nav_text_detail_id',
+      'nav_market_card_id',
+      'nav_msg_target_user_id',
+    ]
+    keys.forEach((k) => { try { localStorage.removeItem(k) } catch { /* noop */ } })
     location.reload()
   }
 
@@ -49,41 +56,45 @@ export default class ErrorBoundary extends Component {
             应用遇到了一个意外错误，请尝试返回首页重新进入。
           </p>
 
-          <pre style={{
-            fontSize: 12,
-            color: '#c00',
-            background: '#fef2f2',
-            padding: 12,
-            borderRadius: 8,
-            overflow: 'auto',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-all',
-            margin: '0 0 16px',
-            maxHeight: 200,
-          }}>
-            {e.message || String(e)}
-          </pre>
-
-          {this.state.stack && (
-            <details style={{ marginBottom: 16 }}>
-              <summary style={{ fontSize: 13, color: '#888', cursor: 'pointer' }}>
-                技术细节
-              </summary>
+          {import.meta.env.DEV && (
+            <>
               <pre style={{
-                fontSize: 11,
-                color: '#555',
-                background: '#f8f8f8',
-                padding: 8,
-                borderRadius: 6,
+                fontSize: 12,
+                color: '#c00',
+                background: '#fef2f2',
+                padding: 12,
+                borderRadius: 8,
                 overflow: 'auto',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-all',
-                margin: '8px 0 0',
-                maxHeight: 300,
+                margin: '0 0 16px',
+                maxHeight: 200,
               }}>
-                {this.state.stack}
+                {e.message || String(e)}
               </pre>
-            </details>
+
+              {this.state.stack && (
+                <details style={{ marginBottom: 16 }}>
+                  <summary style={{ fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                    技术细节
+                  </summary>
+                  <pre style={{
+                    fontSize: 11,
+                    color: '#555',
+                    background: '#f8f8f8',
+                    padding: 8,
+                    borderRadius: 6,
+                    overflow: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    margin: '8px 0 0',
+                    maxHeight: 300,
+                  }}>
+                    {this.state.stack}
+                  </pre>
+                </details>
+              )}
+            </>
           )}
 
           <button
