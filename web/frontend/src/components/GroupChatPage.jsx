@@ -923,7 +923,7 @@ export default function GroupChatPage() {
               panelClassName="group-right-panel history-sidebar-mode"
               main={
                 <div className="group-chat-main">
-              <PageHeader title="群聊" onBack={backToList} />
+              {isMobile && <PageHeader title="群聊" onBack={backToList} />}
               {/* Header */}
               <div className="private-chat-header">
                 {editingName ? (

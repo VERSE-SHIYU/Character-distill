@@ -1300,7 +1300,7 @@ html.theme-aurora::before {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 20px;
+  width: 24px;
   z-index: 200;
   cursor: default;
   transition: background 0.25s;
@@ -4248,6 +4248,7 @@ html.theme-aurora::before {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -11060,6 +11061,7 @@ select.settings-input {
 .private-chat-body {
   flex: 1;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -11072,6 +11074,7 @@ select.settings-input {
 .group-chat-messages-area {
   flex: 1;
   min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
@@ -12190,7 +12193,7 @@ select.settings-input {
 .group-chat-layout .group-chat-messages-area {
   padding: 16px 20px 48px;
   gap: 18px;
-  overflow-x: visible;
+  overflow-x: hidden;
   overflow-y: auto;
   flex: 1;
   min-width: 0;
@@ -17553,7 +17556,6 @@ select.settings-input {
   /* ── Messages area: tighter padding; extra bottom for sticky input bar ── */
   .chat-messages {
     padding: 8px 12px 80px;
-    overflow-x: hidden;
   }
 
   /* ── Bubble max-width: relax to 78% ── */
@@ -17565,13 +17567,11 @@ select.settings-input {
   .group-chat-layout .group-chat-messages-area {
     padding: 12px 0 80px;
     gap: 12px;
-    overflow-x: hidden;
   }
 
   /* ── Private message body: extra bottom for sticky input bar ── */
   .private-chat-body {
     padding: 12px 12px 80px;
-    overflow-x: hidden;
   }
 
   /* ── Existing mobile chat styles kept ── */
