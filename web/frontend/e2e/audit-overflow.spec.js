@@ -15,6 +15,8 @@ import { test, expect } from '@playwright/test'
 import * as fs from 'fs'
 
 const AUDIT_LOG = 'e2e/audit-overflow-results.txt'
+const SCREENSHOT_DIR = 'e2e/screenshots'
+fs.mkdirSync(SCREENSHOT_DIR, { recursive: true })
 const CONTAINER_SELECTORS = '.chat-messages, .private-chat-body, .group-chat-messages-area, .messages-chat-area'
 
 const OVERFLOW_SCAN = `
@@ -130,6 +132,11 @@ async function ensureContainer(page, label) {
 
 async function auditAndAssert(page, label) {
   await page.waitForTimeout(1000)
+
+  // Screenshot for visual regression review
+  const vp = page.viewportSize()
+  const prefix = vp && vp.width >= 1024 ? 'desktop' : 'mobile'
+  await page.screenshot({ path: `${SCREENSHOT_DIR}/${prefix}-${label}.png`, fullPage: false })
 
   // Scroll check on message containers
   const containerBad = await page.evaluate(CONTAINER_SCROLL_CHECK)
