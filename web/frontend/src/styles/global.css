@@ -17666,3 +17666,14 @@ select.settings-input {
   }
 }
 
+/* ── Mobile: card detail layout fixes ── */
+@media (max-width: 768px) {
+  .card-rel-row { flex-wrap: wrap; }
+  .card-rel-type { flex-shrink: 1; white-space: normal; min-width: 0; word-break: break-all; }
+}
+
+@media (max-width: 768px) {
+  .card-footer { flex-wrap: wrap; }
+  .card-footer > button { flex: 1 1 auto; white-space: nowrap; }
+}
+

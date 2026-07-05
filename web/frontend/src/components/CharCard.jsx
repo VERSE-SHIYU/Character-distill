@@ -36,6 +36,9 @@ export default function CharCard() {
   const navigateTo = useAppStore((s) => s.navigateTo)
   const navigateBack = useAppStore((s) => s.navigateBack)
 
+  const isMobile = useIsMobile()
+  const currentCard = useAppStore((s) => s.currentCard)
+
   const goBack = useCallback(() => {
     if (useAppStore.getState().restoreChatSnapshot()) return
     navigateBack()
@@ -72,12 +75,14 @@ export default function CharCard() {
 
   return (
     <div className="char-panel panel" {...swipeBack}>
-      <header className="panel-header">
-        <PageHeader title="角色管理" onBack={goBack} />
-        <p className="panel-desc">
-          当前文本：{filename}
-        </p>
-      </header>
+      {!(isMobile && currentCard) && (
+        <header className="panel-header">
+          <PageHeader title="角色管理" onBack={goBack} />
+          <p className="panel-desc">
+            当前文本：{filename}
+          </p>
+        </header>
+      )}
       <CharPanelBody textId={currentTextId} />
     </div>
   )
