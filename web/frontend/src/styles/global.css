@@ -17500,6 +17500,7 @@ select.settings-input {
   /* ── App shell: keyboard-aware via --vvh (set by useVisualViewport) ── */
   .app-shell {
     height: var(--vvh, 100dvh);
+    padding-top: var(--safe-top);
   }
 
   /* Chat containers fill the app-shell chain */
@@ -17525,7 +17526,11 @@ select.settings-input {
     padding-top: var(--safe-top);
   }
 
-  /* ── Header: compact ── */
+  /* Parent .app-shell provides --safe-top padding, reset on children to avoid double */
+  .chat-topbar-compact,
+  .group-chat-main .private-chat-header {
+    padding-top: 0;
+  }
   .chat-topbar-avatar-btn.avatar-shape > div {
     width: 36px !important;
     height: 36px !important;
