@@ -64,7 +64,7 @@ export default function GroupChatPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [sending, setSending] = useState(false)
   const isMobile = useIsMobile()
-  const swipeBack = useSwipeBack(backToList)
+  const swipeBack = useSwipeBack(currentGroup ? backToList : popView)
   const [editingName, setEditingName] = useState(false)
   const [editNameValue, setEditNameValue] = useState('')
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
@@ -838,10 +838,11 @@ export default function GroupChatPage() {
           className={`messages-sidebar hide-scrollbar${isMobile && currentGroup ? ' group-sidebar-hidden' : ''}`}
         >
           <div className="messages-sidebar-header">
-            <h2 className="messages-sidebar-title">群聊</h2>
-            <button type="button" className="btn-sm btn-primary" onClick={openCreate}>
-              + 新建
-            </button>
+            <PageHeader title="群聊" onBack={popView} actions={
+              <button type="button" className="btn-sm btn-primary" onClick={openCreate}>
+                + 新建
+              </button>
+            } />
           </div>
 
           {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
