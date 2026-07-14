@@ -51,7 +51,7 @@ export default function SplitOrFullscreen({
 
   return (
     <div ref={containerRef} style={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-      <div style={open ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column' } : { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div style={open ? { flex: splitRatio, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: 0 } : { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
         {main}
       </div>
       {open && (

@@ -458,7 +458,7 @@ function ChatView() {
         splitRatio={0.65}
         onSplitRatioChange={() => {}}
         main={
-          <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
           <div className="chat-topbar-compact">
         <div className="chat-topbar-compact-left">
