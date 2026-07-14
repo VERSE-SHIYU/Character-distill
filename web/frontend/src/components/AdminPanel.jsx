@@ -91,7 +91,6 @@ export default function AdminPanel() {
       <button className="admin-hamburger" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
 
       <aside className={`admin-sidebar${sidebarOpen ? ' open' : ''}`}>
-        <div className="admin-sidebar-title">管理后台</div>
         {NAV_GROUPS.map(g => (
           <div key={g.label} className="admin-nav-group">
             <div className="admin-nav-group-label">{g.label}</div>
