@@ -318,7 +318,7 @@ async def register(request: Request, req: AuthRequest, storage: StorageBase = De
         user["is_admin"] = True
 
     access_token = _create_access_token(user["id"], user["username"])
-    refresh_token = await _create_refresh_token(user["id"], storage)
+    refresh_token, _ = await _create_refresh_token(user["id"], storage)
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -366,7 +366,7 @@ async def login(request: Request, req: AuthRequest, storage: StorageBase = Depen
         raise HTTPException(403, "账号已被禁用")
 
     access_token = _create_access_token(user["id"], user["username"])
-    refresh_token = await _create_refresh_token(user["id"], storage)
+    refresh_token, _ = await _create_refresh_token(user["id"], storage)
     await storage.update_last_login(user["id"])
     return {
         "access_token": access_token,
