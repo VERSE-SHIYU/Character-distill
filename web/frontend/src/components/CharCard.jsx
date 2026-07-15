@@ -815,9 +815,9 @@ function CardDetail({ card, textId, goBack }) {
       const cid = card.id || card.card_id
       if (cid) {
         try {
-          await fetch(`/api/cards/${cid}/avatar`, {
+          await fetchWithTimeout(`/api/cards/${cid}/avatar`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: base64 }),
           })
         } catch { /* non-fatal */ }

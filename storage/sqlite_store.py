@@ -856,6 +856,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Group avatar migration failed: {exc}")
 
+                    # Run 081_refresh_token_grace migration (ALTER TABLE may fail if column exists)
+                    grace_path = migrations_dir / "081_refresh_token_grace.sql"
+                    if grace_path.exists():
+                        try:
+                            await conn.executescript(grace_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Refresh token grace migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3340,12 +3350,12 @@ class SQLiteStore(StorageBase):
 
     # ---- Refresh tokens ----
 
-    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
+    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str, replaced_by: str = "") -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                    (token_hash, user_id, expires_at),
+                    "INSERT INTO refresh_tokens (token_hash, user_id, expires_at, replaced_by) VALUES (?, ?, ?, ?)",
+                    (token_hash, user_id, expires_at, replaced_by),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -3356,7 +3366,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT token_hash, user_id, expires_at, used FROM refresh_tokens WHERE token_hash = ?",
+                    "SELECT token_hash, user_id, expires_at, used, used_at, replaced_by FROM refresh_tokens WHERE token_hash = ?",
                     (token_hash,),
                 )
                 row = await cursor.fetchone()
@@ -3365,12 +3375,12 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get refresh token failed: {exc}")
             raise
 
-    async def mark_refresh_token_used(self, token_hash: str) -> None:
+    async def mark_refresh_token_used(self, token_hash: str, replaced_by: str = "") -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE refresh_tokens SET used = 1 WHERE token_hash = ?",
-                    (token_hash,),
+                    "UPDATE refresh_tokens SET used = 1, used_at = ?, replaced_by = ? WHERE token_hash = ?",
+                    (datetime.now(timezone.utc).isoformat(), replaced_by, token_hash),
                 )
                 await conn.commit()
         except Exception as exc:

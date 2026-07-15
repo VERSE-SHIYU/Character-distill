@@ -206,7 +206,7 @@ class StorageBase(ABC):
         """Delete all used invite codes, return count deleted."""
 
     @abstractmethod
-    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
+    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str, replaced_by: str = "") -> None:
         """Save a refresh token hash."""
 
     @abstractmethod
@@ -214,8 +214,8 @@ class StorageBase(ABC):
         """Get a refresh token record by hash."""
 
     @abstractmethod
-    async def mark_refresh_token_used(self, token_hash: str) -> None:
-        """Mark a refresh token as used (rotation)."""
+    async def mark_refresh_token_used(self, token_hash: str, replaced_by: str = "") -> None:
+        """Mark a refresh token as used (rotation) and record the replacing token hash."""
 
     @abstractmethod
     async def delete_user_refresh_tokens(self, user_id: str) -> None:

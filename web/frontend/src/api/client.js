@@ -42,13 +42,37 @@ export function getAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-let _refreshPromise = null
+const getP = () => globalThis.__authRefreshPromise || null
+const setP = (p) => { globalThis.__authRefreshPromise = p }
+const clearP = () => { globalThis.__authRefreshPromise = null }
 
 async function tryRefresh() {
   const rt = getRefreshToken()
   if (!rt) return null
-  if (_refreshPromise) return _refreshPromise
-  _refreshPromise = (async () => {
+
+  // Cross-tab mutex via localStorage
+  const lockKey = 'auth_refresh_lock'
+  try {
+    const lock = localStorage.getItem(lockKey)
+    if (lock) {
+      const { ts } = JSON.parse(lock)
+      if (Date.now() - ts < 5000) {
+        // Another tab is refreshing — poll for new token
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 500))
+          const nt = getToken()
+          if (nt) return nt
+        }
+        localStorage.removeItem(lockKey)
+      }
+    }
+  } catch { /* stale/corrupt lock */ }
+
+  const existing = getP()
+  if (existing) return existing
+
+  const p = (async () => {
+    localStorage.setItem(lockKey, JSON.stringify({ ts: Date.now() }))
     try {
       const res = await fetch('/api/auth/refresh', {
         method: 'POST',
@@ -64,10 +88,13 @@ async function tryRefresh() {
       removeAuth()
       return null
     } finally {
-      _refreshPromise = null
+      clearP()
+      localStorage.removeItem(lockKey)
     }
   })()
-  return _refreshPromise
+
+  setP(p)
+  return p
 }
 
 export async function fetchWithTimeout(url, opts = {}, ms = 600000, externalSignal = null) {
@@ -93,6 +120,11 @@ export async function fetchWithTimeout(url, opts = {}, ms = 600000, externalSign
         const newHeaders = { ...headers, Authorization: `Bearer ${newToken}` }
         const retryRes = await fetch(url, { ...opts, headers: newHeaders, signal: controller.signal })
         if (!retryRes.ok) {
+          if (retryRes.status === 401) {
+            removeAuth()
+            window.dispatchEvent(new CustomEvent('auth:expired'))
+            throw new AppError('请重新登录', 401)
+          }
           let detail = `HTTP ${retryRes.status}`
           try { const b = await retryRes.json(); if (b.detail) detail = b.detail } catch {}
           throw new AppError(detail, retryRes.status)

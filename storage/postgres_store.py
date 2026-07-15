@@ -2369,12 +2369,12 @@ class PostgresStore(StorageBase):
 
     # ---- Refresh tokens ----
 
-    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str) -> None:
+    async def save_refresh_token(self, token_hash: str, user_id: str, expires_at: str, replaced_by: str = "") -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)",
-                    token_hash, user_id, expires_at,
+                    "INSERT INTO refresh_tokens (token_hash, user_id, expires_at, replaced_by) VALUES ($1, $2, $3, $4)",
+                    token_hash, user_id, expires_at, replaced_by,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save refresh token failed: {exc}")
@@ -2384,7 +2384,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT token_hash, user_id, expires_at, used FROM refresh_tokens WHERE token_hash = $1",
+                    "SELECT token_hash, user_id, expires_at, used, used_at, replaced_by FROM refresh_tokens WHERE token_hash = $1",
                     token_hash,
                 )
             return self._row_to_dict(row)
@@ -2392,12 +2392,12 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get refresh token failed: {exc}")
             raise
 
-    async def mark_refresh_token_used(self, token_hash: str) -> None:
+    async def mark_refresh_token_used(self, token_hash: str, replaced_by: str = "") -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE refresh_tokens SET used = 1 WHERE token_hash = $1",
-                    token_hash,
+                    "UPDATE refresh_tokens SET used = 1, used_at = NOW(), replaced_by = $2 WHERE token_hash = $1",
+                    token_hash, replaced_by,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Mark refresh token used failed: {exc}")

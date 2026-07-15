@@ -383,11 +383,32 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
     record = await storage.get_refresh_token(token_hash)
     if not record:
         raise HTTPException(401, "Refresh token 无效")
+    now = datetime.now(timezone.utc)
     if record.get("used"):
-        # Token reuse detected — revoke all tokens for this user (breach protection)
+        used_at = record.get("used_at")
+        replaced_by = record.get("replaced_by", "")
+        if used_at and replaced_by:
+            try:
+                used_dt = datetime.fromisoformat(used_at)
+                if (now - used_dt).total_seconds() < 30:
+                    # Grace window: issue a new pair, chain replaced_by forward
+                    user = await storage.get_user_by_id(record["user_id"])
+                    if user and not user.get("is_disabled"):
+                        access_token = _create_access_token(user["id"], user["username"])
+                        new_refresh_token = await _create_refresh_token(user["id"], storage, replaced_by=replaced_by)
+                        await storage.update_last_login(user["id"])
+                        return {
+                            "access_token": access_token,
+                            "refresh_token": new_refresh_token,
+                            "token_type": "bearer",
+                            "user": _user_response(user),
+                        }
+            except (ValueError, TypeError):
+                pass
+        # Outside grace window — revoke all tokens (breach protection)
         await storage.delete_user_refresh_tokens(record["user_id"])
         raise HTTPException(401, "Refresh token 已被使用")
-    if record.get("expires_at", "") < datetime.now(timezone.utc).isoformat():
+    if record.get("expires_at", "") < now.isoformat():
         raise HTTPException(401, "Refresh token 已过期")
 
     # Mark old token as used (rotation)
@@ -722,11 +743,11 @@ def _create_access_token(user_id: str, username: str) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-async def _create_refresh_token(user_id: str, storage: StorageBase) -> str:
+async def _create_refresh_token(user_id: str, storage: StorageBase, replaced_by: str = "") -> str:
     raw = secrets.token_urlsafe(64)
     token_hash = _hash_token(raw)
     expires_at = (datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)).isoformat()
-    await storage.save_refresh_token(token_hash, user_id, expires_at)
+    await storage.save_refresh_token(token_hash, user_id, expires_at, replaced_by=replaced_by)
     return raw
 
 

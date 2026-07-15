@@ -276,9 +276,9 @@ function ChatView() {
       await saveAvatar(cardId, blob)
     } catch { /* non-fatal */ }
     try {
-      await fetch(`/api/cards/${cardId}/avatar`, {
+      await fetchWithTimeout(`/api/cards/${cardId}/avatar`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: base64 }),
       })
     } catch { /* non-fatal */ }
@@ -334,8 +334,8 @@ function ChatView() {
       const isCustom = voiceList.some((v) => v.voice_id === selectedVoice)
       try {
         const res = isCustom
-          ? await fetch(`/api/voice/preview-audio/${selectedVoice}`, { headers: { ...getAuthHeaders() } })
-          : await fetch('/api/voice/synthesize', {
+          ? await fetchWithTimeout(`/api/voice/preview-audio/${selectedVoice}`, { headers: { ...getAuthHeaders() } })
+          : await fetchWithTimeout('/api/voice/synthesize', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify({ text, voice: selectedVoice, card_id: currentCard?.id || '' }),

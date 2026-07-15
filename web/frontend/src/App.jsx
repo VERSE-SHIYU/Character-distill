@@ -158,9 +158,12 @@ export default function App() {
           const annData = await annRes.json()
           if (annData && annData.content) setAnnouncement(annData)
         } catch {}
-      } catch {
-        logout()
-        setView('login')
+      } catch (e) {
+        if (e?.status === 401) {
+          logout()
+          setView('login')
+        }
+        // Network errors (status 0) and other errors: don't log out
       } finally {
         setAuthChecking(false)
       }

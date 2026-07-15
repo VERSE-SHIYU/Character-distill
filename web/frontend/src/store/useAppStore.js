@@ -355,6 +355,10 @@ const useAppStore = create((set, get) => ({
         if (xhr.status === 200) {
           await get().loadVoiceRef(cardId)
           resolve(JSON.parse(xhr.responseText))
+        } else if (xhr.status === 401) {
+          removeAuth()
+          window.dispatchEvent(new CustomEvent('auth:expired'))
+          reject(new Error('请重新登录'))
         } else {
           try {
             const err = JSON.parse(xhr.responseText)
@@ -418,6 +422,10 @@ const useAppStore = create((set, get) => ({
         if (xhr.status === 200) {
           get().loadVoices()
           resolve(JSON.parse(xhr.responseText))
+        } else if (xhr.status === 401) {
+          removeAuth()
+          window.dispatchEvent(new CustomEvent('auth:expired'))
+          reject(new Error('请重新登录'))
         } else {
           try {
             const err = JSON.parse(xhr.responseText)
@@ -661,7 +669,10 @@ const useAppStore = create((set, get) => ({
 
           resolve(data)
         } else {
-          if (xhr.status === 401) removeAuth()
+          if (xhr.status === 401) {
+            removeAuth()
+            window.dispatchEvent(new CustomEvent('auth:expired'))
+          }
           try {
             const errData = JSON.parse(xhr.responseText)
             reject(new Error(errData.detail || '上传失败'))
