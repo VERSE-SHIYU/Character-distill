@@ -2396,8 +2396,8 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE refresh_tokens SET used = 1, used_at = NOW(), replaced_by = $2 WHERE token_hash = $1",
-                    token_hash, replaced_by,
+                    "UPDATE refresh_tokens SET used = 1, used_at = $2, replaced_by = $3 WHERE token_hash = $1",
+                    token_hash, datetime.now(timezone.utc).isoformat(), replaced_by,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Mark refresh token used failed: {exc}")

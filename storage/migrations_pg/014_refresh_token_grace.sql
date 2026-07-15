@@ -1,0 +1,2 @@
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS used_at TEXT DEFAULT '';
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS replaced_by TEXT DEFAULT '';

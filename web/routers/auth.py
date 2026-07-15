@@ -395,7 +395,9 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
                     user = await storage.get_user_by_id(record["user_id"])
                     if user and not user.get("is_disabled"):
                         access_token = _create_access_token(user["id"], user["username"])
-                        new_refresh_token = await _create_refresh_token(user["id"], storage, replaced_by=replaced_by)
+                        new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
+                        # Chain forward: update already-used row's replaced_by
+                        await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
                         await storage.update_last_login(user["id"])
                         return {
                             "access_token": access_token,
@@ -411,9 +413,6 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
     if record.get("expires_at", "") < now.isoformat():
         raise HTTPException(401, "Refresh token 已过期")
 
-    # Mark old token as used (rotation)
-    await storage.mark_refresh_token_used(token_hash)
-
     user = await storage.get_user_by_id(record["user_id"])
     if not user:
         raise HTTPException(401, "用户不存在")
@@ -421,7 +420,9 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
         raise HTTPException(403, "账号已被禁用")
 
     access_token = _create_access_token(user["id"], user["username"])
-    new_refresh_token = await _create_refresh_token(user["id"], storage)
+    new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
+    # Chain: mark old token as used, pointing to the new token
+    await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
     await storage.update_last_login(user["id"])
     return {
         "access_token": access_token,
@@ -743,12 +744,12 @@ def _create_access_token(user_id: str, username: str) -> str:
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-async def _create_refresh_token(user_id: str, storage: StorageBase, replaced_by: str = "") -> str:
+async def _create_refresh_token(user_id: str, storage: StorageBase, replaced_by: str = "") -> tuple[str, str]:
     raw = secrets.token_urlsafe(64)
     token_hash = _hash_token(raw)
     expires_at = (datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_DAYS)).isoformat()
     await storage.save_refresh_token(token_hash, user_id, expires_at, replaced_by=replaced_by)
-    return raw
+    return raw, token_hash
 
 
 def _hash_token(token: str) -> str:

@@ -50,6 +50,10 @@ async function tryRefresh() {
   const rt = getRefreshToken()
   if (!rt) return null
 
+  // Same-tab dedup first (globalThis survives HMR)
+  const existing = getP()
+  if (existing) return existing
+
   // Cross-tab mutex via localStorage
   const lockKey = 'auth_refresh_lock'
   try {
@@ -58,18 +62,17 @@ async function tryRefresh() {
       const { ts } = JSON.parse(lock)
       if (Date.now() - ts < 5000) {
         // Another tab is refreshing — poll for new token
+        const oldToken = getToken()
         for (let i = 0; i < 10; i++) {
           await new Promise(r => setTimeout(r, 500))
           const nt = getToken()
-          if (nt) return nt
+          if (nt && nt !== oldToken) return nt
         }
         localStorage.removeItem(lockKey)
       }
     }
   } catch { /* stale/corrupt lock */ }
-
-  const existing = getP()
-  if (existing) return existing
+  // Lock expired or no lock — fall through to create own refresh
 
   const p = (async () => {
     localStorage.setItem(lockKey, JSON.stringify({ ts: Date.now() }))
