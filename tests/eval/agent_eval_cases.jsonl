@@ -1,0 +1,40 @@
+{"id": "chitchat_01", "category": "chitchat", "input": "今天好累啊", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_02", "category": "chitchat", "input": "你笑起来一定很好看", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_03", "category": "chitchat", "input": "陪我说说话吧", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_04", "category": "chitchat", "input": "你在做什么呢", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_05", "category": "chitchat", "input": "今天天气真好", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_06", "category": "chitchat", "input": "给你讲个笑话", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_07", "category": "chitchat", "input": "最近在忙什么", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_08", "category": "chitchat", "input": "你饿不饿，我们去吃点东西", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_09", "category": "chitchat", "input": "早点休息，记得睡觉", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_10", "category": "chitchat", "input": "你说人为什么要长大呢", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_11", "category": "chitchat", "input": "今天心情不太好", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_12", "category": "chitchat", "input": "要是能一直这样就好了", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_13", "category": "chitchat", "input": "周末想出去走走", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_14", "category": "chitchat", "input": "你觉得什么最珍贵", "expected_tools": [], "expected_keyword": null}
+{"id": "chitchat_15", "category": "chitchat", "input": "我回来了", "expected_tools": [], "expected_keyword": null}
+{"id": "memory_01", "category": "memory", "input": "还记得我上次跟你说的那件事吗", "expected_tools": ["search_memory", "search_scenes"], "expected_keyword": null}
+{"id": "memory_02", "category": "memory", "input": "我之前告诉过你我喜欢什么吗", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_03", "category": "memory", "input": "你小时候经历过什么", "expected_tools": ["search_scenes"], "expected_keyword": null}
+{"id": "memory_04", "category": "memory", "input": "我们上次聊到哪儿了", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_05", "category": "memory", "input": "你还记得我养了一只猫吗", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_06", "category": "memory", "input": "你以前认识我吗", "expected_tools": ["search_memory", "search_scenes"], "expected_keyword": null}
+{"id": "memory_07", "category": "memory", "input": "我跟你讲过我去海边的事吗", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_08", "category": "memory", "input": "你记得我上次为什么生气吗", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_09", "category": "memory", "input": "在你的故事里，你最好的朋友是谁", "expected_tools": ["search_scenes"], "expected_keyword": null}
+{"id": "memory_10", "category": "memory", "input": "我们之前是不是见过", "expected_tools": ["search_memory", "search_scenes"], "expected_keyword": null}
+{"id": "memory_11", "category": "memory", "input": "你曾经做过最后悔的一件事是什么", "expected_tools": ["search_scenes"], "expected_keyword": null}
+{"id": "memory_12", "category": "memory", "input": "我最喜欢吃什么你还记得吗", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_13", "category": "memory", "input": "我们上次一起去的地方是哪里来着", "expected_tools": ["search_memory"], "expected_keyword": null}
+{"id": "memory_14", "category": "memory", "input": "你认识路明非吗", "expected_tools": ["search_scenes"], "expected_keyword": null}
+{"id": "memory_15", "category": "memory", "input": "在你的世界里，你是什么身份", "expected_tools": ["search_scenes"], "expected_keyword": null}
+{"id": "realtime_01", "category": "realtime", "input": "珠穆朗玛峰有多高", "expected_tools": ["web_search"], "expected_keyword": "8848"}
+{"id": "realtime_02", "category": "realtime", "input": "中国有多少个省级行政区", "expected_tools": ["web_search"], "expected_keyword": "34"}
+{"id": "realtime_03", "category": "realtime", "input": "光的速度是多少", "expected_tools": ["web_search"], "expected_keyword": "299792"}
+{"id": "realtime_04", "category": "realtime", "input": "地球上最大的海洋是什么", "expected_tools": ["web_search"], "expected_keyword": "太平洋"}
+{"id": "realtime_05", "category": "realtime", "input": "人体有多少块骨头", "expected_tools": ["web_search"], "expected_keyword": "206"}
+{"id": "realtime_06", "category": "realtime", "input": "今天几号", "expected_tools": ["web_search"], "expected_keyword": null}
+{"id": "realtime_07", "category": "realtime", "input": "现在几点了", "expected_tools": ["web_search"], "expected_keyword": null}
+{"id": "realtime_08", "category": "realtime", "input": "今天有什么新闻", "expected_tools": ["web_search"], "expected_keyword": null}
+{"id": "realtime_09", "category": "realtime", "input": "最近有什么电影上映", "expected_tools": ["web_search"], "expected_keyword": null}
+{"id": "realtime_10", "category": "realtime", "input": "明天天气怎么样", "expected_tools": ["web_search"], "expected_keyword": null}

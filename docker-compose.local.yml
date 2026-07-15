@@ -1,0 +1,79 @@
+# ============================================================
+# 本地开发测试编排 — 现场构建，不拉 GHCR 镜像
+#
+# 与 prod 编排的关键区别：
+#   1. app 用 build: . 而非 image: ghcr.io/...（跑本地最新代码）
+#   2. 去掉 nginx / fail2ban，直连 app:7860
+#   3. 端口不绑 127.0.0.1，方便 Windows 浏览器直接访问
+#
+# 启动：docker compose -f docker-compose.local.yml up -d --build
+# 重建（仅 app）：docker compose -f docker-compose.local.yml up -d --build app
+# 注意：这份文件不要提交 git！
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      LANG: C.UTF-8
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c max_connections=50
+      -c effective_cache_size=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    oom_score_adj: -500
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks:
+      - prod
+
+  app:
+    build: .
+    ports:
+      - "7861:7860"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    oom_score_adj: 300
+    mem_limit: 768m
+    mem_reservation: 384m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks:
+      - prod
+
+networks:
+  prod:
+
+volumes:
+  pg_data:
