@@ -1232,3 +1232,91 @@ class TestGetAllUsersAdminFields:
         """Empty DB returns empty list, not None or error."""
         rows = await store.get_all_users_admin_fields()
         assert isinstance(rows, list)
+
+
+# ── Refresh token grace window (replaced_by chain) ───────────────────────
+
+class TestRefreshTokenGraceWindow:
+    """mark_refresh_token_used must correctly set replaced_by for the grace window."""
+
+    async def _make_user(self, store):
+        import hashlib
+        uid = f"u_{uuid.uuid4().hex}"
+        await store.create_user(uid, f"grace_{uuid.uuid4().hex[:8]}", hashlib.sha256(b"p").hexdigest())
+        return uid
+
+    async def test_mark_used_sets_replaced_by(self, store):
+        """mark_refresh_token_used stores replaced_by correctly (normal path)."""
+        uid = await self._make_user(store)
+        t1_hash = "t1_hash_abc"
+        t2_hash = "t2_hash_def"
+        expires = "2099-01-01T00:00:00"
+
+        await store.save_refresh_token(t1_hash, uid, expires)
+        await store.mark_refresh_token_used(t1_hash, replaced_by=t2_hash)
+
+        record = await store.get_refresh_token(t1_hash)
+        assert record is not None
+        assert record["used"] == 1
+        assert record["used_at"] != ""
+        assert record["replaced_by"] == t2_hash
+
+    async def test_grace_window_rechain(self, store):
+        """Calling mark_refresh_token_used again updates replaced_by (grace window)."""
+        uid = await self._make_user(store)
+        t1_hash = "t1_grace_rechain"
+        t2_hash = "t2_first_replacement"
+        t3_hash = "t3_grace_replacement"
+        expires = "2099-01-01T00:00:00"
+
+        # First rotation: T1 → T2
+        await store.save_refresh_token(t1_hash, uid, expires)
+        await store.mark_refresh_token_used(t1_hash, replaced_by=t2_hash)
+
+        # Grace window replay: T1 → T3 (chain forward)
+        await store.mark_refresh_token_used(t1_hash, replaced_by=t3_hash)
+
+        record = await store.get_refresh_token(t1_hash)
+        assert record is not None
+        assert record["used"] == 1
+        assert record["replaced_by"] == t3_hash, \
+            f"replaced_by should be updated to T3 hash, got {record['replaced_by']}"
+
+    async def test_concurrent_replay_within_30s(self, store):
+        """Simulate the production scenario that was broken:
+        login → refresh once (T1→T2) → replay T1 within 30s → chain moves forward,
+        user's other tokens are NOT deleted."""
+        from datetime import datetime, timezone, timedelta
+        uid = await self._make_user(store)
+        t1_hash = "t1_concurrent"
+        t2_hash = "t2_normal"
+        t3_hash = "t3_replay"
+        expires = "2099-01-01T00:00:00"
+
+        # Save T1 (the original refresh token)
+        await store.save_refresh_token(t1_hash, uid, expires)
+
+        # Save T2 as a previous replacement (simulating first successful refresh)
+        await store.save_refresh_token(t2_hash, uid, expires)
+
+        # Mark T1 as used with replaced_by=T2 (simulating normal rotation)
+        await store.mark_refresh_token_used(t1_hash, replaced_by=t2_hash)
+
+        # Save T3 (the grace window replacement token, created before mark)
+        await store.save_refresh_token(t3_hash, uid, expires)
+
+        # Grace window: another request uses T1 within 30s
+        await store.mark_refresh_token_used(t1_hash, replaced_by=t3_hash)
+
+        # Verify: T1 chain points to T3 now
+        t1_record = await store.get_refresh_token(t1_hash)
+        assert t1_record["replaced_by"] == t3_hash
+
+        # Verify: T2 and T3 still exist (not deleted)
+        t2_record = await store.get_refresh_token(t2_hash)
+        assert t2_record is not None
+        assert t2_record["used"] == 0  # T2 hasn't been used yet
+
+        t3_record = await store.get_refresh_token(t3_hash)
+        assert t3_record is not None
+        assert t3_record["used"] == 0  # T3 hasn't been used yet
