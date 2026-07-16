@@ -3918,6 +3918,35 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get session affinity failed: {exc}")
             return None
 
+    async def save_affinity_state(self, session_id: str, state_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE sessions
+                       SET affinity_state = ?, affinity_initialized = 1,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = ?""",
+                    (state_json, session_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save affinity state failed: {exc}")
+
+    async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT affinity_state, affinity_initialized FROM sessions WHERE id = ?",
+                    (session_id,),
+                )
+                row = await cursor.fetchone()
+            if row is None:
+                return "", False
+            return row[0] or "", bool(row[1])
+        except Exception as exc:
+            print(f"[SQLiteStore] Load affinity state failed: {exc}")
+            return "", False
+
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:

@@ -248,6 +248,18 @@ class StorageBase(ABC):
         """Get affinity scores for a session."""
 
     @abstractmethod
+    async def save_affinity_state(self, session_id: str, state_json: str) -> None:
+        """Persist full affinity state JSON and set affinity_initialized=1."""
+
+    @abstractmethod
+    async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
+        """Return (state_json, initialized) for a session.
+
+        state_json may be empty if never persisted in new format.
+        initialized is True if affinity_initialized=1.
+        """
+
+    @abstractmethod
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:

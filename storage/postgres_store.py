@@ -2858,6 +2858,33 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get session affinity failed: {exc}")
             return None
 
+    async def save_affinity_state(self, session_id: str, state_json: str) -> None:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE sessions
+                       SET affinity_state = $1, affinity_initialized = 1,
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE id = $2""",
+                    state_json, session_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save affinity state failed: {exc}")
+
+    async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT affinity_state, affinity_initialized FROM sessions WHERE id = $1",
+                    session_id,
+                )
+            if row is None:
+                return "", False
+            return row[0] or "", bool(row[1])
+        except Exception as exc:
+            print(f"[PostgresStore] Load affinity state failed: {exc}")
+            return "", False
+
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
     ) -> None:
