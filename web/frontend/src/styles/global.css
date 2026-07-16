@@ -4546,24 +4546,24 @@ html.theme-aurora::before {
   animation: fade-up 0.2s var(--ease-out);
 }
 
-/* Input bar — WeChat style */
-.chat-input-bar {
+/* Unified composer bar — single source for all chat scenarios.
+   safe-area bottom padding written once here (0 on non-notch devices). */
+.composer-bar {
   flex-shrink: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  padding: 10px 16px 14px;
+  padding: 10px 16px calc(14px + var(--safe-bottom));
   background: var(--glass-bg);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-top: 1px solid rgba(var(--accent-rgb), 0.08);
   min-width: 0;
-  position: relative;
 }
 
-/* Outer wrapper for ChatInputBar (holds banner + reply preview +
+/* Outer wrapper for ComposerBar (holds banner + reply preview +
    the resizable bar). Must NOT grow, or the bar/textarea stretch to fill. */
-.chat-input-bar-wrap {
+.composer-bar-wrap {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -6473,11 +6473,11 @@ select.settings-input {
   50% { box-shadow: 0 0 0 8px rgba(255, 68, 68, 0); }
 }
 
-.chat-input-bar.recording-bar {
+.composer-bar.recording-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 18px;
+  padding: 12px 18px calc(12px + var(--safe-bottom));
   justify-content: center;
 }
 
@@ -10711,15 +10711,6 @@ select.settings-input {
 .messages-status.queued {
   opacity: 0.5;
   font-size: 12px;
-}
-
-/* ── Input — WeChat large area ── */
-.private-chat-input-bar {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  border-top: 1px solid var(--glass-border);
-  background: var(--glass-bg);
 }
 
 /* ── Resizable input area drag handle ── */
@@ -17429,27 +17420,31 @@ select.settings-input {
 /* ===== Mobile Adaptation: Step 4 — WeChat-style compact chat ===== */
 @media (max-width: 768px) {
   /* ── Input area: thin bar, sticky bottom ── */
-  .chat-input-bar {
+  .composer-bar {
     position: sticky;
     bottom: 0;
     padding: 6px 10px;
     padding-bottom: calc(8px + var(--safe-bottom));
     gap: 8px;
-    align-items: center;
     background: var(--glass-bg);
     border-top: 0.5px solid var(--glass-border);
   }
 
-  /* ── Emoji button: bare icon, 40px hit area ── */
-  .chat-input-bar [data-emoji-btn] {
-    width: 40px;
-    height: 40px;
+  /* Voice button: center-align with siblings in the flex bar */
+  .chat-input-voice-btn {
+    align-self: center;
+  }
+
+  /* ── Emoji button: bare icon, 36px hit area ── */
+  .composer-bar [data-emoji-btn] {
+    width: 36px;
+    height: 36px;
     background: transparent;
     border: none;
     border-radius: 0;
     align-self: center;
   }
-  .chat-input-bar [data-emoji-btn] svg {
+  .composer-bar [data-emoji-btn] svg {
     width: 28px;
     height: 28px;
   }
@@ -17468,15 +17463,15 @@ select.settings-input {
   }
 
   /* ── Send button: hidden when empty, compact accent pill ── */
-  .chat-input-bar.is-empty .chat-send-btn {
+  .composer-bar.is-empty .chat-send-btn {
     display: none;
   }
   .chat-send-btn {
     width: 56px;
     min-width: 56px;
-    height: 32px;
-    min-height: 32px;
-    border-radius: 16px;
+    height: 36px;
+    min-height: 36px;
+    border-radius: 18px;
     font-size: 13px;
     background: var(--accent);
   }
@@ -17501,7 +17496,6 @@ select.settings-input {
   /* ── App shell: keyboard-aware via --vvh (set by useVisualViewport) ── */
   .app-shell {
     height: var(--vvh, 100dvh);
-    padding-top: var(--safe-top);
   }
 
   /* Chat containers fill the app-shell chain */

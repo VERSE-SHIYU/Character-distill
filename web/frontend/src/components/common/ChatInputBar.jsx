@@ -48,7 +48,7 @@ const ChatInputBar = forwardRef(function ChatInputBar(props, ref) {
   const isRecording = !!voice?.isRecording
 
   return (
-    <div className="chat-input-bar-wrap">
+    <div className="composer-bar-wrap">
       {topSlot}
       {replyTo && !isRecording && (
         <div className="reply-preview-bar">
@@ -214,7 +214,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
 
   if (isRecording) {
     return (
-      <div className="chat-input-bar recording-bar">
+      <div className="composer-bar recording-bar">
         <span className="recording-dot" />
         <span className="recording-text">{`录音中 ${recordingDuration}s`}</span>
         <button type="button" className="recording-cancel-btn" onClick={cancelRecording}>取消</button>
@@ -224,7 +224,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
   }
 
   return (
-    <div className={`chat-input-bar${!text.trim() ? ' is-empty' : ''}`}>
+    <div className={`composer-bar${!text.trim() ? ' is-empty' : ''}`}>
       {voice && (
         funasrReady ? (
           <button
