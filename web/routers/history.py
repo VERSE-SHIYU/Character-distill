@@ -296,9 +296,15 @@ async def resume_session(
     # 8. Restore affinity from DB — each session has independent scores
     engine._session_id = session_id
     try:
-        affinity_data = await storage.get_session_affinity(session_id)
-        if affinity_data:
-            engine.load_affinity(affinity_data)
+        state_json, initialized = await storage.load_affinity_state(session_id)
+        if initialized and state_json:
+            parsed = engine._affinity_service.from_persist(state_json)
+            if parsed:
+                engine.load_affinity(parsed, initialized=True)
+        else:
+            affinity_data = await storage.get_session_affinity(session_id)
+            if affinity_data:
+                engine.load_affinity(affinity_data)
     except Exception as exc:
         print(f"[history] Restore affinity failed (non-fatal): {exc}")
 

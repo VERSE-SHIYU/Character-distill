@@ -179,9 +179,15 @@ async def _ensure_session(
     engine._session_id = session_id
     engine._user_id = user_id
     try:
-        affinity_data = await storage.get_session_affinity(session_id)
-        if affinity_data:
-            engine.load_affinity(affinity_data)
+        state_json, initialized = await storage.load_affinity_state(session_id)
+        if initialized and state_json:
+            parsed = engine._affinity_service.from_persist(state_json)
+            if parsed:
+                engine.load_affinity(parsed, initialized=True)
+        else:
+            affinity_data = await storage.get_session_affinity(session_id)
+            if affinity_data:
+                engine.load_affinity(affinity_data)
     except Exception as exc:
         print(f"[chat] Restore affinity failed (non-fatal): {exc}")
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]

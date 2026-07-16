@@ -491,39 +491,22 @@ class ChatEngine:
             source="ChatEngine",
         )
 
-    def load_affinity(self, data: dict[str, Any]) -> None:
+    def load_affinity(self, data: dict[str, Any] | None = None, *, initialized: bool = False) -> None:
+        """加载情感状态。
+
+        Args:
+            data: 情感字段 dict。新格式时来自 from_persist 解析结果，
+                  旧格式来自 get_session_affinity 的 {affinity,trust,mood,guard,reason}。
+            initialized: 是否已标记 affinity_initialized=1。
+                         False 时（前所未有评估/旧数据）→ 计算初始值并落库。
+        """
         if not data:
             return
-        # Determine whether this session was genuinely evaluated before.
-        # Two signals (either is sufficient):
-        #   1. affinity_reason is a JSON with inner_voice (post-fix eval writes this)
-        #   2. numeric values differ from hardcoded defaults (old data with plain-text reason)
-        _raw_reason = data.get("reason", "") or ""
-        _evaluated = False
-        try:
-            _p = json.loads(_raw_reason)
-            if isinstance(_p, dict) and _p.get("inner_voice"):
-                _evaluated = True
-        except (json.JSONDecodeError, TypeError):
-            pass
-        if not _evaluated:
-            # Fallback: non-default values imply a prior evaluation (old data compat)
-            _is_default = (
-                data.get("affinity") == 50
-                and data.get("trust") == 30
-                and data.get("mood") == "平静"
-                and data.get("guard") == 70
-            )
-            if not _is_default:
-                _evaluated = True
-        if (not _evaluated) and self.card and self.user_role:
-            # __init__ 已计算过则跳过，避免二次冗余 LLM 调用
-            _already_init = (
-                self._affinity != 50 or self._trust != 30
-                or self._mood != "平静" or self._guard != 70
-            )
-            if _already_init:
-                return
+        if initialized:
+            self._affinity_service.load(data)
+            return
+        # 未初始化：计算初始好感度并立即持久化
+        if self.card and self.user_role:
             try:
                 init = self._compute_initial_affinity(self.card, self.user_role)
                 self._affinity = max(0, min(100, init.get("affinity", 50)))
@@ -535,9 +518,11 @@ class ChatEngine:
                 self._mood_emoji = init.get("mood_emoji", "😊")
                 self._stage, self._stage_emoji = calc_stage(self._affinity)
                 self._prev_stage = self._stage
+                self._save_affinity_state()
                 return
             except Exception:
                 pass
+        # 旧格式兜底：直接加载 DB 数据（兼容旧数据行）
         self._affinity_service.load(data)
 
     def _save_affinity_state(self) -> None:
