@@ -21,6 +21,7 @@ export default defineConfig([
           .map((r) => [r, 'off']),
       ),
       'no-undef': 'error',
+      'react-hooks/rules-of-hooks': 'error',
     },
   },
 ])

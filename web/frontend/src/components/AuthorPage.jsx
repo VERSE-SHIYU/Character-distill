@@ -62,8 +62,6 @@ export default function AuthorPage({ embedded = false }) {
     }
   }, [isOwnProfile, embedded, setView])
 
-  if (isOwnProfile && !embedded) return null
-
   const loadPosts = useCallback(async () => {
     if (!authorUserId) return
     setPostsLoading(true)
@@ -109,6 +107,40 @@ export default function AuthorPage({ embedded = false }) {
   useEffect(() => {
     loadPosts()
   }, [loadPosts])
+
+  const toggleFollowers = useCallback(async () => {
+    if (showFollowers) { setShowFollowers(false); return }
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/followers`, {
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      setFollowersList(data.followers || data.users || [])
+      setShowFollowers(true)
+    } catch { /* ignore */ }
+  }, [authorUserId, showFollowers])
+
+  const toggleFollowing = useCallback(async () => {
+    if (showFollowing) { setShowFollowing(false); return }
+    try {
+      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/following`, {
+        headers: { ...getAuthHeaders() },
+      })
+      const data = await res.json()
+      if (data.locked) {
+        setFollowingLocked(true)
+        setFollowingList([])
+      } else {
+        setFollowingLocked(false)
+        setFollowingList(data.following || [])
+      }
+      setShowFollowing(true)
+    } catch { /* ignore */ }
+  }, [authorUserId, showFollowing])
+
+  const swipeBack = useSwipeBack(navigateBack)
+
+  if (isOwnProfile && !embedded) return null
 
   const handleFollow = async () => {
     try {
@@ -180,45 +212,13 @@ export default function AuthorPage({ embedded = false }) {
     return cd.background || ''
   }
 
-  const toggleFollowers = useCallback(async () => {
-    if (showFollowers) { setShowFollowers(false); return }
-    try {
-      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/followers`, {
-        headers: { ...getAuthHeaders() },
-      })
-      const data = await res.json()
-      setFollowersList(data.followers || data.users || [])
-      setShowFollowers(true)
-    } catch { /* ignore */ }
-  }, [authorUserId, showFollowers])
-
-  const toggleFollowing = useCallback(async () => {
-    if (showFollowing) { setShowFollowing(false); return }
-    try {
-      const res = await fetchWithTimeout(`/api/market/author/${authorUserId}/following`, {
-        headers: { ...getAuthHeaders() },
-      })
-      const data = await res.json()
-      if (data.locked) {
-        setFollowingLocked(true)
-        setFollowingList([])
-      } else {
-        setFollowingLocked(false)
-        setFollowingList(data.following || [])
-      }
-      setShowFollowing(true)
-    } catch { /* ignore */ }
-  }, [authorUserId, showFollowing])
-
   const scrollToChars = () => {
     const el = document.querySelector('.author-chars-widget') || document.querySelector('.author-cards-grid')?.closest('.author-section')
     el?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  const swipeBack = embedded ? null : useSwipeBack(navigateBack)
-
   return (
-    <div className="panel author-page" {...(swipeBack || {})}>
+    <div className="panel author-page" {...(embedded ? {} : swipeBack)}>
       <header className="panel-header">
         <PageHeader
           title={embedded || isOwnProfile ? '我的主页' : '作者主页'}

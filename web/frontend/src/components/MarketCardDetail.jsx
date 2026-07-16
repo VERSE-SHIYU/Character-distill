@@ -80,6 +80,7 @@ export default function MarketCardDetail() {
   const [bgExpanded, setBgExpanded] = useState(false)
   const isMobile = useIsMobile(960)
   const [collapsedSections, setCollapsedSections] = useState(new Set())
+  const swipeBack = useSwipeBack(navigateBack)
 
   useEffect(() => {
     if (!cardId) { setView('market'); return }
@@ -492,8 +493,6 @@ export default function MarketCardDetail() {
   const cardStyle = cardData.speaking_style || {}
   const rels = cardData.relationships || []
   const isMarketCard = card?.visibility === 'public'
-
-  const swipeBack = useSwipeBack(navigateBack)
 
   return (
     <div className="panel market-detail-page" {...swipeBack}>
