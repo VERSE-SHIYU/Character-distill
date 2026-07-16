@@ -17487,6 +17487,9 @@ select.settings-input {
     /* Mobile has no legitimate horizontal scrolling use-case */
     touch-action: pan-y;
   }
+  html {
+    background: var(--bg);
+  }
   body {
     position: fixed;
     inset: 0;
