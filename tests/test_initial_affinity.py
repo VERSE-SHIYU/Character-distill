@@ -194,3 +194,86 @@ def test_load_affinity_uninitialized_computes_and_saves():
     engine.load_affinity({"affinity": 50, "trust": 30, "mood": "平静", "guard": 70})
 
     assert called, "_compute_initial_affinity SHOULD be called on default data"
+
+
+# ── D. Roundtrip: to_persist → from_persist → load（新格式）────────
+
+
+def test_affinity_service_roundtrip():
+    """全 11 字段非默认值 → to_persist → from_persist → 新实例 load → 逐字段一致。"""
+    from core.affinity_service import AffinityService
+
+    # 1. 构造非默认状态（affinity=80 → stage="亲近"/"🥰"）
+    svc = AffinityService()
+    svc.affinity = 80
+    svc.trust = 60
+    svc.mood = "心软"
+    svc.guard = 20
+    svc.inner_voice = "这家伙今天有点不一样……"
+    svc.mood_emoji = "🫣"
+    svc.stage = "亲近"
+    svc.stage_emoji = "🥰"
+    svc.user_catchwords = ["好吧", "随便你"]
+    svc.affinity_reason = '{"legacy":"compat"}'
+
+    # 2. 序列化 → 反序列化
+    raw = svc.to_persist()
+    parsed = AffinityService.from_persist(raw)
+    assert parsed is not None
+
+    # 3. 新实例 load
+    svc2 = AffinityService()
+    svc2.load(parsed)
+
+    # 4. 逐字段断言
+    assert svc2.affinity == 80
+    assert svc2.trust == 60
+    assert svc2.mood == "心软"
+    assert svc2.guard == 20
+    assert svc2.inner_voice == "这家伙今天有点不一样……"
+    assert svc2.mood_emoji == "🫣"
+    assert svc2.stage == "亲近"
+    assert svc2.stage_emoji == "🥰"
+    assert svc2.user_catchwords == ["好吧", "随便你"]
+    assert svc2.affinity_reason == '{"legacy":"compat"}'
+
+
+def test_affinity_engine_roundtrip():
+    """engine 全字段 → _save_affinity_state → 新 engine load_affinity(initialized=True) → get_affinity 一致。"""
+    from core.affinity_service import AffinityService
+
+    card = _make_card(ABU_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    engine._session_id = "roundtrip_engine"
+    engine._storage = MagicMock()
+
+    # 设非默认值
+    engine._affinity = 80
+    engine._trust = 60
+    engine._mood = "心软"
+    engine._guard = 20
+    engine._inner_voice = "这家伙今天有点不一样……"
+    engine._mood_emoji = "🫣"
+    engine._affinity_service.user_catchwords = ["好吧", "随便你"]
+
+    # 保存前快照
+    before = engine.get_affinity()
+
+    # 模拟持久化
+    engine._save_affinity_state()
+    assert engine._storage.save_affinity_state.called
+    state_json = engine._storage.save_affinity_state.call_args[0][1]
+
+    # 新引擎加载
+    parsed = AffinityService.from_persist(state_json)
+    assert parsed is not None
+
+    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    engine2._session_id = "roundtrip_engine"
+    engine2._storage = MagicMock()
+    engine2.load_affinity(parsed, initialized=True)
+
+    after = engine2.get_affinity()
+
+    for key in before:
+        assert before[key] == after[key], f"Roundtrip mismatch for {key!r}: {before[key]!r} != {after[key]!r}"

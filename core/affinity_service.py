@@ -105,7 +105,10 @@ class AffinityService:
     def load(self, data: dict[str, Any]) -> None:
         """从存档 dict 加载11个情感字段。
 
-        *注意*：仅设置情感状态字段，不涉及 affinity_enabled 等开关。
+        *输入格式*：
+        - 新格式（affinity_state 列 → from_persist）：所有 11 字段在顶层
+        - 旧格式（独立列 → get_session_affinity）：只有 affinity/trust/mood/guard/reason，
+          inner_voice/mood_emoji/user_catchwords 从 reason 内嵌 JSON 解析
         """
         if not data:
             return
@@ -115,19 +118,26 @@ class AffinityService:
         self.mood = data.get("mood", "平静")
         self.guard = data.get("guard", 70)
         self.affinity_reason = data.get("reason", "")
-        # 尝试 JSON 解析扩展数据（兼容旧格式纯文本 reason）
-        _reason = self.affinity_reason or ""
-        _parsed: dict | None = None
-        try:
-            import json
-            _parsed = json.loads(_reason)
-            self.inner_voice = _parsed.get("inner_voice", "")
-            self.mood_emoji = _parsed.get("mood_emoji", "😊")
-        except (json.JSONDecodeError, TypeError):
-            self.inner_voice = _reason
-            self.mood_emoji = "😊"
-        self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
-        self.stage, self.stage_emoji = calc_stage(self.affinity)
+
+        # 新格式：11 字段在顶层；旧格式：从 reason 内嵌 JSON 解析
+        if "inner_voice" in data:
+            self.inner_voice = data["inner_voice"]
+            self.mood_emoji = data.get("mood_emoji", "😊")
+            self.user_catchwords = data.get("user_catchwords", [])
+            self.stage = data.get("stage", "")
+            self.stage_emoji = data.get("stage_emoji", "")
+        else:
+            _reason = self.affinity_reason or ""
+            _parsed: dict | None = None
+            try:
+                _parsed = json.loads(_reason)
+                self.inner_voice = _parsed.get("inner_voice", "")
+                self.mood_emoji = _parsed.get("mood_emoji", "😊")
+            except (json.JSONDecodeError, TypeError):
+                self.inner_voice = _reason
+                self.mood_emoji = "😊"
+            self.user_catchwords = _parsed.get("user_catchwords", []) if isinstance(_parsed, dict) else []
+            self.stage, self.stage_emoji = calc_stage(self.affinity)
         self.prev_stage = self.stage
 
     def get(self) -> dict[str, Any]:
