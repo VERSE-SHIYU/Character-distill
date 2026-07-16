@@ -866,6 +866,16 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Refresh token grace migration failed: {exc}")
 
+                    # Run 082_affinity_state migration (ALTER TABLE — may fail if columns exist)
+                    aff_state_path = migrations_dir / "082_affinity_state.sql"
+                    if aff_state_path.exists():
+                        try:
+                            await conn.executescript(aff_state_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            if "duplicate column" not in str(exc).lower():
+                                print(f"[SQLiteStore] Affinity state migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:

@@ -278,6 +278,26 @@ class AffinityService:
             return None
         return _json.loads(m.group())
 
+    def to_persist(self) -> str:
+        """序列化全部 11 个情感字段为 JSON 字符串（唯一持久化出口）。"""
+        import json as _json
+        return _json.dumps(self.get(), ensure_ascii=False)
+
+    @staticmethod
+    def from_persist(raw: str) -> dict[str, Any] | None:
+        """解析 affinity_state JSON 字符串，返回完整字段 dict。
+
+        新格式（affinity_state 列）→ 所有 11 字段完整解析。
+        raw 为空或非 JSON 时返回 None，由调用方回退旧格式加载。
+        """
+        if not raw:
+            return None
+        import json as _json
+        try:
+            return _json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     def apply_evaluation(self, data: dict, old_stage: str) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
 
@@ -312,6 +332,7 @@ class AffinityService:
             repair_signal=str(data.get("repair_signal", "") or ""),
         )
 
+        # 旧列兼容：构建扩展 reason JSON（同时为旧格式读端提供数据）
         extended = {
             "inner_voice": self.inner_voice,
             "mood_emoji": self.mood_emoji,

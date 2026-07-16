@@ -1,0 +1,2 @@
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS affinity_state TEXT DEFAULT '';
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS affinity_initialized SMALLINT DEFAULT 0;
