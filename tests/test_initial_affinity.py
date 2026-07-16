@@ -100,7 +100,22 @@ class TestChatEnginePropagatesUserRole:
         assert affinity["stage"] == "陌生", affinity
 
 
-# ── C. Regression: load_affinity 短路 + 路由层兜底守卫 ─────────────────
+# ── C. Regression: affinity_state 序列化 + 存量升级路径 ─────────────
+
+
+def test_from_persist_error_handling():
+    """from_persist 对空/非法/合法输入均不抛异常。"""
+    from core.affinity_service import AffinityService
+
+    # 空字符串 → None
+    assert AffinityService.from_persist("") is None
+    # 非 JSON → None
+    assert AffinityService.from_persist("not json") is None
+    # 合法 JSON → dict
+    result = AffinityService.from_persist('{"affinity":65,"inner_voice":"你好"}')
+    assert isinstance(result, dict)
+    assert result["affinity"] == 65
+    assert result["inner_voice"] == "你好"
 
 
 def test_load_affinity_initialized_flag_skips_recompute():
@@ -129,10 +144,38 @@ def test_load_affinity_initialized_flag_skips_recompute():
     assert not called, "_compute_initial_affinity should NOT be called when initialized=True"
 
 
-def test_load_affinity_uninitialized_computes_and_saves():
-    """load_affinity(默认数据, initialized=False) 计算初始值并落库。
+def test_load_affinity_legacy_upgrade():
+    """旧格式已评估数据（affinity=72, reason 含 inner_voice）→ 加载 + 升级写入。
 
-    新架构：affinity_initialized=0 的会话 → 计算初始好感度并立即 _save_affinity_state。
+    存量行 affinity_initialized=0 但实际有评估 → 启发式判断+load → _save_affinity_state 升级。
+    """
+    card = _make_card(ABU_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    engine._session_id = "legacy_upgrade"
+    engine._storage = MagicMock()
+
+    old_data = {
+        "affinity": 72, "trust": 55, "mood": "开心", "guard": 28,
+        "reason": '{"inner_voice":"测试","mood_emoji":"😊","user_catchwords":[]}',
+    }
+    engine.load_affinity(old_data)
+
+    assert engine._affinity == 72
+    assert engine._trust == 55
+    assert engine._mood == "开心"
+    assert engine._inner_voice == "测试"
+    # 升级落库被调用
+    engine._storage.save_affinity_state.assert_called_once()
+    # state_json 包含关键字段
+    state_json = engine._storage.save_affinity_state.call_args[0][1]
+    assert '"inner_voice"' in state_json
+    assert '"affinity": 72' in state_json or '"affinity":72' in state_json
+
+
+def test_load_affinity_uninitialized_computes_and_saves():
+    """load_affinity(默认数据) → 计算初始值并落库。
+
+    纯默认值行 → _compute_initial_affinity 被调用一次。
     """
     card = _make_card(ABU_REL)
     engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
@@ -150,4 +193,4 @@ def test_load_affinity_uninitialized_computes_and_saves():
     engine._compute_initial_affinity = _spy
     engine.load_affinity({"affinity": 50, "trust": 30, "mood": "平静", "guard": 70})
 
-    assert called, "_compute_initial_affinity SHOULD be called when initialized=False"
+    assert called, "_compute_initial_affinity SHOULD be called on default data"

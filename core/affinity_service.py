@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 
@@ -292,9 +293,8 @@ class AffinityService:
         """
         if not raw:
             return None
-        import json as _json
         try:
-            return _json.loads(raw)
+            return json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return None
 

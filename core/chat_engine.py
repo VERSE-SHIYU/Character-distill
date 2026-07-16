@@ -498,14 +498,42 @@ class ChatEngine:
             data: 情感字段 dict。新格式时来自 from_persist 解析结果，
                   旧格式来自 get_session_affinity 的 {affinity,trust,mood,guard,reason}。
             initialized: 是否已标记 affinity_initialized=1。
-                         False 时（前所未有评估/旧数据）→ 计算初始值并落库。
         """
         if not data:
             return
         if initialized:
             self._affinity_service.load(data)
             return
-        # 未初始化：计算初始好感度并立即持久化
+
+        # ── 存量旧格式升级路径 ──────────────────────────────
+        # 启发式判断旧格式行是否"已评估"（affinity_initialized 尚为 0）：
+        #   ① reason 可解析为含 inner_voice 的 JSON
+        #   ② 数值非硬编码默认（50/30/平静/70）
+        _raw_reason = data.get("reason", "") or ""
+        _legacy_evaluated = False
+        try:
+            _p = json.loads(_raw_reason)
+            if isinstance(_p, dict) and _p.get("inner_voice"):
+                _legacy_evaluated = True
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if not _legacy_evaluated:
+            _is_default = (
+                data.get("affinity") == 50
+                and data.get("trust") == 30
+                and data.get("mood") == "平静"
+                and data.get("guard") == 70
+            )
+            if not _is_default:
+                _legacy_evaluated = True
+
+        if _legacy_evaluated:
+            # 已评估旧数据：加载旧进度 → 升级为 affinity_state 新格式
+            self._affinity_service.load(data)
+            self._save_affinity_state()
+            return
+
+        # ── 全新会话 / 纯默认行 ─────────────────────────────
         if self.card and self.user_role:
             try:
                 init = self._compute_initial_affinity(self.card, self.user_role)
@@ -522,7 +550,7 @@ class ChatEngine:
                 return
             except Exception:
                 pass
-        # 旧格式兜底：直接加载 DB 数据（兼容旧数据行）
+        # 兜底：直接加载 DB 数据
         self._affinity_service.load(data)
 
     def _save_affinity_state(self) -> None:
