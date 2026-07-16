@@ -967,7 +967,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     <Avatar
       name={userRole || '我'}
       src={userAvatarUrl}
-      size={isMobile ? 36 : 68}
+      size={isMobile ? 40 : 68}
       onClick={onUserAvatarClick}
     />
   )
@@ -980,7 +980,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
         side={isUser ? 'right' : 'left'}
         avatar={
           !isUser
-            ? <Avatar name={charName} src={avatarUrl} size={isMobile ? 36 : 68} />
+            ? <Avatar name={charName} src={avatarUrl} size={isMobile ? 40 : 68} />
             : userAvatarNode
         }
         time={timestamp ? formatChatTime(timestamp) : undefined}

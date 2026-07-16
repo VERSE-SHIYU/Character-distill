@@ -4571,9 +4571,12 @@ html.theme-aurora::before {
 }
 
 .chat-textarea {
+  --field-h: 38px;
+  --field-line: 21px;
   flex: 1;
-  min-height: 38px;
-  padding: 8px 14px;
+  min-height: var(--field-h);
+  padding-block: calc((var(--field-h) - var(--field-line)) / 2);
+  padding-inline: 14px;
   border: 1px solid var(--input-border);
   border-radius: 8px;
   background: var(--input-bg);
@@ -4584,7 +4587,7 @@ html.theme-aurora::before {
   color: var(--text);
   resize: none;
   outline: none;
-  line-height: 1.5;
+  line-height: var(--field-line);
   transition: border-color 0.2s, box-shadow 0.2s;
   width: 100%;
   box-sizing: border-box;
@@ -17451,11 +17454,10 @@ select.settings-input {
 
   /* ── Textarea: 36px, pill shape, no border/shadow ── */
   .chat-textarea {
-    min-height: 36px;
-    height: 36px;
+    --field-h: 36px;
+    min-height: var(--field-h);
     border-radius: 18px;
     border: none;
-    padding: 4px 14px;
   }
   .chat-textarea:focus {
     border: none;

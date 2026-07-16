@@ -10,6 +10,7 @@ import ChatBubble from './common/ChatBubble'
 import { displayName } from '../utils/displayName'
 import MessageReactions from './common/MessageReactions'
 import ChatInputBar from './common/ChatInputBar'
+import useIsMobile from '../hooks/useIsMobile'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 
@@ -35,6 +36,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [reactions, setReactions] = useState({})
 
   const [historyOpen, setHistoryOpen] = useState(false)
+  const isMobile = useIsMobile()
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -321,7 +323,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                         <Avatar
                           name={isMe ? (displayName(authUser) || '?') : (otherUsername || '?')}
                           src={isMe ? userAvatar : otherAvatar}
-                          size={52}
+                          size={isMobile ? 57 : 52}
                         />
                       }
                       time={msg.created_at ? formatChatTime(msg.created_at) : undefined}

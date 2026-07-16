@@ -238,6 +238,28 @@ def test_affinity_service_roundtrip():
     assert svc2.affinity_reason == '{"legacy":"compat"}'
 
 
+def test_affinity_service_roundtrip_empty_stage():
+    """存入的 stage 为空字符串 → load 后自动 calc_stage 补算。"""
+    from core.affinity_service import AffinityService, calc_stage
+
+    svc = AffinityService()
+    svc.affinity = 42                   # 落在 "熟悉" (36-55)
+    svc.stage = ""                       # 模拟旧数据遗留
+    svc.stage_emoji = ""
+
+    raw = svc.to_persist()
+    parsed = AffinityService.from_persist(raw)
+    assert parsed is not None
+
+    svc2 = AffinityService()
+    svc2.load(parsed)
+
+    expected_stage, expected_emoji = calc_stage(42)
+    assert svc2.stage == expected_stage
+    assert svc2.stage_emoji == expected_emoji
+    assert svc2.affinity == 42           # 其他字段不受影响
+
+
 def test_affinity_engine_roundtrip():
     """engine 全字段 → _save_affinity_state → 新 engine load_affinity(initialized=True) → get_affinity 一致。"""
     from core.affinity_service import AffinityService

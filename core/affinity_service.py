@@ -126,6 +126,8 @@ class AffinityService:
             self.user_catchwords = data.get("user_catchwords", [])
             self.stage = data.get("stage", "")
             self.stage_emoji = data.get("stage_emoji", "")
+            if not self.stage:
+                self.stage, self.stage_emoji = calc_stage(self.affinity)
         else:
             _reason = self.affinity_reason or ""
             _parsed: dict | None = None
