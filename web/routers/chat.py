@@ -184,6 +184,18 @@ async def _ensure_session(
             engine.load_affinity(affinity_data)
     except Exception as exc:
         print(f"[chat] Restore affinity failed (non-fatal): {exc}")
+        affinity_data = None
+    # [P7-兜底] DB 中无评估数据（reason 为空）→ 立即落库当前引擎值，保证初始人格化持久
+    if affinity_data is None or not affinity_data.get("reason", ""):
+        try:
+            await storage.update_session_affinity(
+                session_id, engine._affinity, engine._trust,
+                engine._mood, engine._guard,
+                engine._affinity_service.affinity_reason,
+            )
+            print(f"[affinity-fallback] Initial affinity persisted for session {session_id}")
+        except Exception as exc:
+            print(f"[affinity-fallback] Persist failed (non-fatal): {exc}")
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
     sessions[session_id].setdefault("lock", asyncio.Lock())
     sessions[session_id].setdefault("retract_state", {

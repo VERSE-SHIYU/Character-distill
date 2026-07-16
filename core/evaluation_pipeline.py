@@ -6,6 +6,7 @@ SIDE-EFFECT 层每步独立 try/except，互不影响，永不回滚 CORE 状态
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +68,7 @@ class EvaluationPipeline:
         # ── CORE layer ─────────────────────────────────────────
         data = self._core_evaluate(ctx)
         if data is None:
+            print(f"[EvaluationPipeline] RUN SKIP session={ctx.session_id}: _core_evaluate returned None")
             return EvalResult(importance=5, applied=False)
 
         importance = ctx.affinity_service.apply_evaluation(data, ctx.old_stage)
@@ -102,7 +104,7 @@ class EvaluationPipeline:
     # ── CORE ──────────────────────────────────────────────────
 
     def _core_evaluate(self, ctx: EvalContext) -> dict | None:
-        """CORE 子步骤：构建 prompt → LLM 调用 → JSON 解析。
+        """CORE 子步骤：构建 prompt → LLM 调用（1次重试）→ JSON 解析。
 
         返回解析后的 data dict，或 None（表示跳过/失败）。
         任何异常在此层捕获，不泄露到外层。
@@ -113,17 +115,29 @@ class EvaluationPipeline:
                 ctx.user_role, ctx.reaction_appraisal,
                 departure_notice=ctx.departure_notice,
             )
-            reply = ctx.llm.chat(
-                "你是精确的JSON输出器，只输出JSON。",
-                [{"role": "user", "content": prompt}],
-            )
+            # 1次自动重试（间隔2s），应对瞬时 LLM 连接故障
+            reply = None
+            for attempt in range(2):
+                try:
+                    reply = ctx.llm.chat(
+                        "你是精确的JSON输出器，只输出JSON。",
+                        [{"role": "user", "content": prompt}],
+                    )
+                    break
+                except Exception as exc:
+                    if attempt == 0:
+                        print(f"[EvaluationPipeline] LLM call failed (attempt 1/2), retrying in 2s session={ctx.session_id}: {exc}")
+                        time.sleep(2)
+                    else:
+                        raise
             data = ctx.affinity_service.parse_evaluation_reply(reply)
             if data is None:
-                print("[EvaluationPipeline] FAIL: no JSON object found in LLM reply")
+                print(f"[EvaluationPipeline] EVAL FAILED session={ctx.session_id}: "
+                      f"no JSON object found in LLM reply (first 200 chars): {reply[:200]!r}")
                 return None
             return data
         except Exception as exc:
-            print(f"[EvaluationPipeline] CORE layer failed: {exc}")
+            print(f"[EvaluationPipeline] EVAL FAILED session={ctx.session_id}: {exc}")
             import traceback
             traceback.print_exc()
             return None
