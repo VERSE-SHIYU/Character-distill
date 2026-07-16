@@ -465,10 +465,10 @@ class ChatEngine:
             self._persist_catchwords()
 
     def _persist_catchwords(self) -> None:
-        """将 user_catchwords 持久化到 DB（通过 affinity_reason 通道）。"""
+        """将 user_catchwords 持久化到 DB（通过单一保存点）。"""
         if not self._storage or not self._session_id:
             return
-        # Rebuild affinity_reason to include current catchwords
+        # Rebuild affinity_reason to include current catchwords (旧列兼容)
         import json as _json
         extended = {
             "inner_voice": self._inner_voice,
@@ -479,18 +479,7 @@ class ChatEngine:
             "user_catchwords": self._affinity_service.user_catchwords,
         }
         self._affinity_service.affinity_reason = _json.dumps(extended, ensure_ascii=False)
-        try:
-            from deps import run_on_main_loop
-            run_on_main_loop(
-                self._storage.update_session_affinity(
-                    self._session_id,
-                    self._affinity, self._trust, self._mood, self._guard,
-                    self._affinity_service.affinity_reason,
-                ),
-                timeout=15,
-            )
-        except Exception as exc:
-            print(f"[Catchwords] Persist failed (non-fatal): {exc}")
+        self._save_affinity_state()
 
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
@@ -550,6 +539,21 @@ class ChatEngine:
             except Exception:
                 pass
         self._affinity_service.load(data)
+
+    def _save_affinity_state(self) -> None:
+        """单一保存点：将当前完整情感状态写入 DB（仅单聊，需有 storage + session_id）。"""
+        if not self._storage or not self._session_id:
+            return
+        try:
+            from deps import run_on_main_loop
+            run_on_main_loop(
+                self._storage.save_affinity_state(
+                    self._session_id, self._affinity_service.to_persist(),
+                ),
+                timeout=15,
+            )
+        except Exception as exc:
+            print(f"[Affinity] Save state failed (non-fatal): {exc}")
 
     def ingest_reaction_signals(self, signals: list[dict]) -> None:
         """对外接口：转发给 ReactionService（保持群聊等外部调用不破）。"""
@@ -652,6 +656,8 @@ class ChatEngine:
         # ── P1 影子模式：静默判定，只记录不动作 ──
         if result.applied:
             self._shadow_estrangement_check()
+        # 单一保存点：每次评估后持久化完整情感状态
+        self._save_affinity_state()
         print(f"[Affinity] Evaluation complete for session={self._session_id}")
 
     def _shadow_estrangement_check(self) -> None:
