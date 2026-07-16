@@ -204,13 +204,11 @@ class EvaluationPipeline:
                 import time as _t
                 _t0 = _t.time()
                 run_on_main_loop(
-                    ctx.storage.update_session_affinity(
-                        ctx.session_id,
-                        svc.affinity, svc.trust,
-                        svc.mood, svc.guard, svc.affinity_reason,
+                    ctx.storage.save_affinity_state(
+                        ctx.session_id, svc.to_persist(),
                     ),
                     timeout=15,
                 )
-                print(f"[EvaluationPipeline] Session affinity saved ({_t.time()-_t0:.2f}s)")
+                print(f"[EvaluationPipeline] Session affinity state saved ({_t.time()-_t0:.2f}s)")
             except Exception as exc:
-                print(f"[EvaluationPipeline] Session affinity save failed (session={ctx.session_id}): {exc}")
+                print(f"[EvaluationPipeline] Session affinity state save failed (session={ctx.session_id}): {exc}")
