@@ -3837,8 +3837,8 @@ html.theme-aurora::before {
   position: relative;
 }
 
-/* Chat background gradient — shared across single, group, and private-message chats */
-.main-panel:has(:is(.chat-area, .private-chat, .group-chat-page)) {
+/* Chat background gradient — .chat-view is the shared class across all three chat types */
+.main-panel:has(.chat-view) {
   background: linear-gradient(180deg, var(--bg-page) 0%, var(--sidebar-bg) 100%);
 }
 

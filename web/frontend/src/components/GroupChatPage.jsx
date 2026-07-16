@@ -831,7 +831,7 @@ export default function GroupChatPage() {
   // ── Render ──
 
   return (
-    <div className="panel group-chat-page" {...swipeBack}>
+    <div className="chat-view panel group-chat-page" {...swipeBack}>
       <div className="messages-layout">
         {/* ── 左栏：群聊列表 ── */}
         <div

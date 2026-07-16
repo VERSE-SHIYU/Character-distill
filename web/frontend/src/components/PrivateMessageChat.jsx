@@ -253,7 +253,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   }
 
   return (
-    <div className="private-chat">
+    <div className="chat-view private-chat">
       <SplitOrFullscreen
         open={historyOpen}
         splitRatio={0.65}

@@ -452,7 +452,7 @@ function ChatView() {
   const chatSwipeBack = useSwipeBack(handleChatBack)
 
   return (
-    <div className={`chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
+    <div className={`chat-view chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
       <SplitOrFullscreen
         open={historyOpen}
         splitRatio={0.65}
