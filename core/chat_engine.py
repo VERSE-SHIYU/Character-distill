@@ -528,6 +528,13 @@ class ChatEngine:
             if not _is_default:
                 _evaluated = True
         if (not _evaluated) and self.card and self.user_role:
+            # __init__ 已计算过则跳过，避免二次冗余 LLM 调用
+            _already_init = (
+                self._affinity != 50 or self._trust != 30
+                or self._mood != "平静" or self._guard != 70
+            )
+            if _already_init:
+                return
             try:
                 init = self._compute_initial_affinity(self.card, self.user_role)
                 self._affinity = max(0, min(100, init.get("affinity", 50)))
