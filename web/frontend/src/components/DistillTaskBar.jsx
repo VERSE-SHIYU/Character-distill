@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
-import { Check, Close, RefreshCw, Settings } from './common/Icon'
+import { Check, Close, Clock, RefreshCw, Settings, Zap } from './common/Icon'
 
 function DistillTaskItem({ task }) {
   const setView = useAppStore((s) => s.setView)
@@ -63,7 +63,7 @@ function DistillTaskItem({ task }) {
       tabIndex={isDone ? 0 : undefined}
     >
       <span className="distill-task-icon">
-        {isDone ? '✅' : isError ? '❌' : isQueued ? '⏳' : '⚙'}
+        {isDone ? <Check size={16} /> : isError ? <Close size={16} /> : isQueued ? <Clock size={16} /> : <Zap size={16} />}
       </span>
       <div className="distill-task-body">
         <span className="distill-task-text">{statusText}</span>

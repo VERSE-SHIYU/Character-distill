@@ -406,6 +406,23 @@ export const Inbox = (props) => (
   </Svg>
 )
 
+export const ExternalLink = (props) => (
+  <Svg {...props}>
+    <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
+  </Svg>
+)
+
+export const Wifi = (props) => (
+  <Svg {...props}>
+    <path d="M5 12.55a11 11 0 0114.08 0" />
+    <path d="M1.42 9a16 16 0 0121.16 0" />
+    <path d="M8.53 16.11a6 6 0 016.95 0" />
+    <line x1="12" y1="20" x2="12.01" y2="20" />
+  </Svg>
+)
+
 const ICON_MAP = {
   mail: Mail,
   settings: Settings,
@@ -424,6 +441,8 @@ const ICON_MAP = {
   close: Close,
   camera: Camera,
   inbox: Inbox,
+  external: ExternalLink,
+  wifi: Wifi,
 }
 
 export function getIcon(name) {

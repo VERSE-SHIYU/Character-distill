@@ -8,7 +8,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
-import { Check } from './common/Icon'
+import { Check, Theater } from './common/Icon'
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
@@ -1219,7 +1219,7 @@ export default function GroupChatPage() {
                 onCancelReply={() => setReplyTo(null)}
                 topSlot={autoRunning ? (
                   <div className="group-auto-banner">
-                    <span>🎬 自动对话中… (第 {autoTurn}/{autoTotal} 轮)</span>
+                    <span><Theater size={14} /> 自动对话中… (第 {autoTurn}/{autoTotal} 轮)</span>
                     {generatingForName && <span className="group-auto-generating"> • {generatingForName} 生成中…</span>}
                     <button type="button" className="group-auto-banner-stop" onClick={stopAutoConversation}>
                       停止

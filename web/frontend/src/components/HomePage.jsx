@@ -7,6 +7,7 @@ import { parseCardJson } from '../utils/card'
 import { avatarGradient } from '../utils/avatarColor'
 import { SkeletonCard } from './common/Skeleton'
 import GlobalSearchBox from './common/GlobalSearchBox'
+import { Tag, Heart, Book, Sparkles, MessageSquare } from './common/Icon'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import useIsMobile from '../hooks/useIsMobile'
@@ -218,12 +219,7 @@ export default function HomePage() {
           {/* 步骤 1 — 激活 */}
           <div className="home-onboard-card home-onboard-card-active">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-                <path d="M12 6v7" />
-                <path d="M9 9l3 3 3-3" />
-              </svg>
+              <Book size={32} style={{ color: 'var(--accent)' }} />
             </div>
             <div className="home-onboard-body">
               <div className="home-onboard-step-title">上传你的小说或聊天记录</div>
@@ -241,12 +237,7 @@ export default function HomePage() {
           {/* 步骤 2 — 未激活 */}
           <div className="home-onboard-card">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5z" />
-                <circle cx="18" cy="5" r="1" fill="var(--text-dim)" stroke="none" />
-                <circle cx="6" cy="19" r="1.2" fill="var(--text-dim)" stroke="none" />
-                <path d="M20 15l-1 3 3 1" />
-              </svg>
+              <Sparkles size={32} style={{ color: 'var(--text-dim)' }} />
             </div>
             <div className="home-onboard-body">
               <div className="home-onboard-step-title">AI 自动蒸馏角色卡</div>
@@ -257,12 +248,7 @@ export default function HomePage() {
           {/* 步骤 3 — 未激活 */}
           <div className="home-onboard-card">
             <div className="home-onboard-icon">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                <path d="M8 10h.01" strokeWidth="2.5" />
-                <path d="M12 10h.01" strokeWidth="2.5" />
-                <path d="M16 10h.01" strokeWidth="2.5" />
-              </svg>
+              <MessageSquare size={32} style={{ color: 'var(--text-dim)' }} />
             </div>
             <div className="home-onboard-body">
               <div className="home-onboard-step-title">和角色沉浸式对话</div>
@@ -409,7 +395,7 @@ export default function HomePage() {
                   className="home-tags-toggle-btn"
                   onClick={() => setShowTags(prev => !prev)}
                 >
-                  🏷️筛选
+                  <Tag size={12} /> 筛选
                 </button>
                 <button type="button" className="home-section-more" onClick={() => navigateTo('market')}>
                   查看更多 ›
@@ -573,7 +559,7 @@ export default function HomePage() {
                         <div className="market-card-v2-identity">{cData.identity || ''}</div>
                         <div className="market-card-v2-bottom">
                           <div className="market-card-v2-stats">
-                            <span>{'❤'} {c.likes ?? 0}</span>
+                            <span><Heart size={12} /> {c.likes ?? 0}</span>
                           </div>
                         </div>
                       </div>

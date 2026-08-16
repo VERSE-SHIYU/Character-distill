@@ -11501,7 +11501,7 @@ select.settings-input {
 }
 
 .messages-status.failed {
-  color: #e53935;
+  color: var(--danger);
   cursor: pointer;
   background: none;
   border: none;
@@ -11512,7 +11512,7 @@ select.settings-input {
 }
 
 .messages-status.failed:hover {
-  background: rgba(229, 57, 53, 0.1);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
 @keyframes pulse-fade {
@@ -13223,7 +13223,7 @@ select.settings-input {
   50% { opacity: 0.7; }
 }
 .group-auto-banner-stop {
-  background: #e74c3c;
+  background: var(--danger);
   color: #fff;
   border: none;
   border-radius: 999px;
@@ -13231,11 +13231,12 @@ select.settings-input {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: filter 0.15s;
   font-family: inherit;
 }
 .group-auto-banner-stop:hover {
-  background: #c0392b;
+  background: var(--danger);
+  filter: brightness(0.92);
 }
 .group-auto-generating {
   font-size: 12px;

@@ -4,7 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard, Clock } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -1047,7 +1047,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           onClick={() => onRevoke()}
           title={revokeCooldown ? '冷却中…' : '撤回'}
         >
-          {revokeCooldown ? '⏳' : <Close size={14} />}
+          {revokeCooldown ? <Clock size={14} /> : <Close size={14} />}
         </button>
       )}
       {!isUser && (

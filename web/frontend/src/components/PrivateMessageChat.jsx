@@ -6,6 +6,7 @@ import { formatChatTime } from '../utils/time'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
+import { AlertTriangle, Clock, Wifi } from './common/Icon'
 import ChatBubble from './common/ChatBubble'
 import { displayName } from '../utils/displayName'
 import MessageReactions from './common/MessageReactions'
@@ -330,11 +331,11 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                       status={isMe && msg._status ? (
                         msg._status === 'failed' ? (
                           <button type="button" className="messages-status failed"
-                            onClick={() => handleResend(msg)} title="发送失败，点击重试">⚠</button>
+                            onClick={() => handleResend(msg)} title="发送失败，点击重试"><AlertTriangle size={14} /></button>
                         ) : msg._status === 'sending' ? (
-                          <span className="messages-status sending" title="发送中">⏳</span>
+                          <span className="messages-status sending" title="发送中"><Clock size={12} /></span>
                         ) : (
-                          <span className="messages-status queued" title="等待网络恢复">📶</span>
+                          <span className="messages-status queued" title="等待网络恢复"><Wifi size={12} /></span>
                         )
                       ) : undefined}
                     >

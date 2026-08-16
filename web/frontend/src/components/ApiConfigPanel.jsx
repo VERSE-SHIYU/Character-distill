@@ -3,7 +3,7 @@ import { fetchWithTimeout, getMyUsage, updateApiConfig } from '../api/client'
 import useAppStore from '../store/useAppStore'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
-import { AlertTriangle } from './common/Icon'
+import { AlertTriangle, ExternalLink } from './common/Icon'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 
@@ -142,7 +142,7 @@ export default function ApiConfigPanel() {
                   </div>
                 </label>
                 <p className="settings-hint">
-                  🔗 <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer" className="settings-link">前往 DeepSeek 官网获取 API Key</a>
+                  <ExternalLink size={14} /> <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener noreferrer" className="settings-link">前往 DeepSeek 官网获取 API Key</a>
                 </p>
               </>
             )}
@@ -270,7 +270,7 @@ export default function ApiConfigPanel() {
         </label>
 
         <p className="settings-hint">
-          🔗 <a href="https://bailian.aliyun.com" target="_blank" rel="noopener noreferrer" className="settings-link">
+          <ExternalLink size={14} /> <a href="https://bailian.aliyun.com" target="_blank" rel="noopener noreferrer" className="settings-link">
             前往阿里云百炼注册并获取 API Key
           </a>
           {embeddingRegion === 'cn' && '（中国内地用户注册后有免费额度）'}
