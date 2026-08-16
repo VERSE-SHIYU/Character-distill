@@ -43,16 +43,16 @@ export default class ErrorBoundary extends Component {
         <div style={{
           maxWidth: 420,
           width: '100%',
-          background: '#fff',
+          background: 'var(--card-bg)',
           borderRadius: 12,
           padding: 32,
           boxShadow: '0 4px 24px rgba(0,0,0,0.1)',
         }}>
-          <div style={{ fontSize: 28, marginBottom: 8, color: '#c00' }}>!</div>
-          <h1 style={{ fontSize: 18, fontWeight: 600, margin: '0 0 4px', color: '#1a1a1a' }}>
+          <div style={{ fontSize: 28, marginBottom: 8, color: 'var(--danger)' }}>!</div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, margin: '0 0 4px', color: 'var(--text)' }}>
             页面出错了
           </h1>
-          <p style={{ fontSize: 14, color: '#666', margin: '0 0 16px' }}>
+          <p style={{ fontSize: 14, color: 'var(--text-sec)', margin: '0 0 16px' }}>
             应用遇到了一个意外错误，请尝试返回首页重新进入。
           </p>
 
@@ -60,7 +60,7 @@ export default class ErrorBoundary extends Component {
             <>
               <pre style={{
                 fontSize: 12,
-                color: '#c00',
+                color: 'var(--danger)',
                 background: '#fef2f2',
                 padding: 12,
                 borderRadius: 8,
@@ -75,13 +75,13 @@ export default class ErrorBoundary extends Component {
 
               {this.state.stack && (
                 <details style={{ marginBottom: 16 }}>
-                  <summary style={{ fontSize: 13, color: '#888', cursor: 'pointer' }}>
+                  <summary style={{ fontSize: 13, color: 'var(--text-dim)', cursor: 'pointer' }}>
                     技术细节
                   </summary>
                   <pre style={{
-                    fontSize: 11,
-                    color: '#555',
-                    background: '#f8f8f8',
+                    fontSize: 12,
+                    color: 'var(--text-sec)',
+                    background: 'var(--card-bg)',
                     padding: 8,
                     borderRadius: 6,
                     overflow: 'auto',

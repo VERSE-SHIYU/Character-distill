@@ -1,16 +1,18 @@
 import { lazy, Suspense, useEffect, useRef, useState, useCallback } from 'react'
 import useAppStore from './store/useAppStore'
-import { initTheme } from './utils/theme'
+import { initTheme, initFontDisplay } from './utils/theme'
 import { fetchWithTimeout, getToken } from './api/client'
 import Sidebar from './components/Sidebar'
 import LoginPage from './components/LoginPage'
 import DistillTaskBar from './components/DistillTaskBar'
+import DistillWorkbench from './components/DistillWorkbench'
 import AwakeningToast from './components/AwakeningToast'
 import ArchiveListModal from './components/ArchiveListModal'
 import CrossBorderConsentModal from './components/CrossBorderConsentModal'
 import MobileTabBar from './components/MobileTabBar'
 import { SECONDARY_VIEWS } from './config/navigation'
 import Loading from './components/common/Loading'
+import { Close } from './components/common/Icon'
 import useVisualViewport from './utils/useVisualViewport'
 
 const TextPanel = lazy(() => import('./components/TextPanel'))
@@ -37,7 +39,7 @@ const LegalPage = lazy(() => import('./components/LegalPage'))
 
 // E2E test aid: expose store for programmatic navigation verification
 // Guard: dev mode OR Playwright addInitScript sets window.__E2E
-if (typeof window !== 'undefined' && import.meta.env.DEV) {
+if (typeof window !== 'undefined' && (import.meta.env.DEV || window.__E2E)) {
   window.__appStore = useAppStore
 }
 
@@ -64,6 +66,7 @@ const PANELS = {
   trash: TrashPage,
   legal: LegalPage,
   apiConfig: ApiConfigPanel,
+  distillWorkbench: DistillWorkbench,
 }
 
 function MainContent() {
@@ -100,6 +103,7 @@ export default function App() {
 
   useEffect(() => {
     initTheme()
+    initFontDisplay()
   }, [])
 
   useVisualViewport()
@@ -273,7 +277,7 @@ export default function App() {
         {announcement && !annDismissed && (
           <div className="announcement-banner">
             <span className="announcement-banner-text" style={{ whiteSpace: 'pre-wrap', textAlign: announcement.align || 'left' }}>{announcement.content}</span>
-            <button className="announcement-banner-close" onClick={() => setAnnDismissed(true)}>✕</button>
+            <button className="announcement-banner-close" onClick={() => setAnnDismissed(true)}><Close size={14} /></button>
           </div>
         )}
         <MainContent />

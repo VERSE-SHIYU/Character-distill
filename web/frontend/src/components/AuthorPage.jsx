@@ -4,7 +4,7 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
-import { MessageSquare, Theater, Book, Lock } from './common/Icon'
+import { MessageSquare, Theater, Book, Lock, Close, Heart } from './common/Icon'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -240,8 +240,8 @@ export default function AuthorPage({ embedded = false }) {
                   <h2 className="author-name">
                     {displayName(author)}
                     {!authorPresenceHidden && authorOnline !== null && (
-                      <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: authorOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: authorOnline ? 'var(--success)' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: authorOnline ? 'var(--success)' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
                         {authorOnline ? '在线' : formatChatTime(authorLastActive)}
                       </span>
                     )}
@@ -262,7 +262,7 @@ export default function AuthorPage({ embedded = false }) {
                       <div className="stat-follow-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="stat-follow-modal-header">
                           <h3>{followersCount} 粉丝</h3>
-                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowers(false)}>✕</button>
+                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowers(false)}><Close size={14} /></button>
                         </div>
                         {followersList.length === 0 ? (
                           <div className="stat-follow-empty">暂无粉丝</div>
@@ -304,7 +304,7 @@ export default function AuthorPage({ embedded = false }) {
                       <div className="stat-follow-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="stat-follow-modal-header">
                           <h3>{followingCount} 关注</h3>
-                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowing(false)}>✕</button>
+                          <button type="button" className="stat-follow-modal-close" onClick={() => setShowFollowing(false)}><Close size={14} /></button>
                         </div>
                         {followingLocked ? (
                           <div className="stat-follow-locked">
@@ -436,7 +436,7 @@ export default function AuthorPage({ embedded = false }) {
                             <ExpandableText text={background} maxLines={3} />
                           )}
                           <div className="author-char-footer">
-                            <span className="author-char-likes">{'\u{2764}'} {card.likes || 0}</span>
+                            <span className="author-char-likes"><Heart size={12} /> {card.likes || 0}</span>
                             <button type="button" className="btn-primary btn-sm" onClick={async () => {
                               const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
                                 method: 'POST',

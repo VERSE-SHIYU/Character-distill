@@ -241,7 +241,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
           </button>
         ) : (
           <button type="button" className="chat-input-voice-btn" title="需要配置语音识别服务" disabled>
-            {'\u{1F399}'}
+            <Mic size={14} />
           </button>
         )
       )}

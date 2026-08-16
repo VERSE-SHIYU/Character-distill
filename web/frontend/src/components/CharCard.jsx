@@ -10,7 +10,7 @@ import ErrorBox from './common/ErrorBox'
 import useIsMobile from '../hooks/useIsMobile'
 import useSwipeBack from '../hooks/useSwipeBack'
 import PageHeader from './PageHeader'
-import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard } from './common/Icon'
+import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard, Camera, Download, Lock } from './common/Icon'
 import { MessageSquare, Edit, Trash2 } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import RoleSetupModal from './RoleSetupModal'
@@ -853,14 +853,15 @@ function CardDetail({ card, textId, goBack }) {
       <div className="card-detail-scroll">
         {/* Header: avatar + name + identity */}
         <div className="card-hero">
+          <div className="stage-glow" />
           <button
             type="button"
             className="card-avatar-btn avatar-shape"
             onClick={() => avatarInputRef.current?.click()}
             title="点击上传头像"
           >
-            <Avatar name={name} src={avatarUrl} size={72} />
-            <div className="card-avatar-overlay avatar-shape">{'\u{1F4F7}'}</div>
+            <Avatar name={name} src={avatarUrl} size={84} />
+            <div className="card-avatar-overlay avatar-shape"><Camera size={16} /></div>
           </button>
           <input
             ref={avatarInputRef}
@@ -875,7 +876,7 @@ function CardDetail({ card, textId, goBack }) {
               <p className="card-identity">{data.identity}</p>
             )}
             {card.forked_from && (
-              <p className="card-forked-from">{'\u{1F4CB}'} 基于他人角色卡</p>
+              <p className="card-forked-from"><Clipboard size={12} /> 基于他人角色卡</p>
             )}
           </div>
           {data.awakening_message && (
@@ -886,9 +887,9 @@ function CardDetail({ card, textId, goBack }) {
         {/* Personality traits */}
         {data.personality_traits?.length > 0 && (
           <CardSection label="性格特征">
-            <div className="pill-list">
+            <div className="card-trait-list">
               {data.personality_traits.map((t, i) => (
-                <span key={i} className="pill">{t}</span>
+                <span key={i} className="pill pill-trait"><i className="pill-trait-dot" />{t}</span>
               ))}
             </div>
           </CardSection>
@@ -1017,7 +1018,7 @@ function CardDetail({ card, textId, goBack }) {
             }
           }}
         >
-          {'\u{1F4E5}'} 导出角色卡
+          <><Download size={14} /> 导出角色卡</>
         </button>
         <button
           type="button"
@@ -1030,7 +1031,7 @@ function CardDetail({ card, textId, goBack }) {
             setShowShareConfirm(true)
           }}
         >
-          {shared ? '\u{1F30D} 已分享' : '\u{1F512} 分享到市场'}
+          {shared ? <><Globe size={14} /> 已分享</> : <><Lock size={14} /> 分享到市场</>}
         </button>
         <button
           type="button"

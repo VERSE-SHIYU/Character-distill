@@ -5,6 +5,8 @@ import GlobalSearchBox from './common/GlobalSearchBox'
 import { fetchWithTimeout } from '../api/client'
 import { displayName } from '../utils/displayName'
 import { THEMES } from '../utils/themes'
+import { applyFontDisplay, getFontDisplay } from '../utils/theme'
+import { Check } from './common/Icon'
 
 function Svg({ d, viewBox = '0 0 24 24', children, size = 20 }) {
   return (
@@ -264,6 +266,12 @@ function ThemePopup({ onClose }) {
     setCurrent(key)
   }
 
+  const [fontMode, setFontMode] = useState(() => getFontDisplay())
+  const applyFont = (mode) => {
+    applyFontDisplay(mode)
+    setFontMode(mode)
+  }
+
   return (
     <div className="theme-popup" ref={ref}>
       {THEMES.map(t => (
@@ -272,9 +280,17 @@ function ThemePopup({ onClose }) {
           onClick={() => apply(t.key)}>
           <span className="theme-popup-emoji">{t.emoji}</span>
           <span className="theme-popup-label">{t.label}</span>
-          {current === t.key && <span className="theme-popup-check">✓</span>}
+          {current === t.key && <span className="theme-popup-check"><Check size={12} /></span>}
         </button>
       ))}
+      <div className="theme-popup-divider" />
+      <div className="theme-popup-fontrow">
+        <span className="theme-popup-fontlabel">标题字体</span>
+        <div className="theme-popup-fontbtns">
+          <button type="button" className={`theme-popup-fontbtn${fontMode === 'sans' ? ' active' : ''}`} onClick={() => applyFont('sans')}>系统黑体</button>
+          <button type="button" className={`theme-popup-fontbtn${fontMode === 'serif' ? ' active' : ''}`} onClick={() => applyFont('serif')}>宋体标题</button>
+        </div>
+      </div>
     </div>
   )
 }

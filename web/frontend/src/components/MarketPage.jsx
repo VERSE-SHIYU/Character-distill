@@ -8,7 +8,7 @@ import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
-import { Heart, Book } from './common/Icon'
+import { Heart, Book, Close, Globe } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import { avatarGradient } from '../utils/avatarColor'
@@ -30,6 +30,7 @@ export default function MarketPage() {
   const [page, setPage] = useState(1)
   const [sort, setSort] = useState('new')
   const [query, setQuery] = useState('')
+  const [tag, setTag] = useState('')
   const [searchInput, setSearchInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -42,13 +43,15 @@ export default function MarketPage() {
   const [commentText, setCommentText] = useState('')
   const [commentSending, setCommentSending] = useState(false)
   const [hasMore, setHasMore] = useState(true)
+  const [tags, setTags] = useState([])
   const sentinelRef = useRef(null)
 
-  const fetchCards = useCallback(async (p, s, q, append = false) => {
+  const fetchCards = useCallback(async (p, s, q, t = '', append = false) => {
     setLoading(true)
     setError(null)
     try {
       const params = new URLSearchParams({ page: p, page_size: PAGE_SIZE, sort: s })
+      if (t && !q) params.set('tag', t)
       const url = q
         ? `/api/market/search?q=${encodeURIComponent(q)}&${params}`
         : `/api/market/list?${params}`
@@ -70,8 +73,15 @@ export default function MarketPage() {
   }, [])
 
   useEffect(() => {
-    fetchCards(1, sort, '')
-  }, [sort, fetchCards])
+    fetchCards(1, sort, '', tag)
+  }, [sort, tag, fetchCards])
+
+  useEffect(() => {
+    fetchWithTimeout('/api/market/tags')
+      .then((r) => r.json())
+      .then((d) => setTags(Array.isArray(d.tags) ? d.tags : []))
+      .catch(() => {})
+  }, [])
 
   // Infinite scroll: monitor sentinel
   useEffect(() => {
@@ -87,13 +97,21 @@ export default function MarketPage() {
 
   // Fetch next page when page > 1
   useEffect(() => {
-    if (page > 1) fetchCards(page, sort, query, true)
+    if (page > 1) fetchCards(page, sort, query, tag, true)
   }, [page]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectTag = (t) => {
+    setTag(t)
+    setQuery('')
+    setSearchInput('')
+    setPage(1)
+  }
 
   const handleSearch = (e) => {
     e.preventDefault()
     const q = searchInput.trim()
     setQuery(q)
+    setTag('')
     setPage(1)
     fetchCards(1, sort, q)
   }
@@ -102,7 +120,7 @@ export default function MarketPage() {
     setSearchInput('')
     setQuery('')
     setPage(1)
-    fetchCards(1, sort, '')
+    fetchCards(1, sort, '', tag)
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
@@ -201,21 +219,60 @@ export default function MarketPage() {
         <p className="panel-desc">浏览其他用户分享的角色卡</p>
       </header>
 
-      {/* Search + sort toolbar */}
-      <div className="market-toolbar">
-        <form className="market-search-form" onSubmit={handleSearch}>
-          <input
-            type="text"
-            className="market-search-input"
-            placeholder="搜索角色名…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-          <button type="submit" className="btn-primary market-search-btn">搜索</button>
-          {query && (
-            <button type="button" className="btn-ghost" onClick={handleClearSearch}>清除</button>
-          )}
-        </form>
+      <div className="market-layout">
+        {/* ── 桌面侧栏：分类过滤（真实 /api/market/tags，无后端计数故不画） ── */}
+        <aside className="market-side">
+          <button type="button" className={`mkt-cat${tag === '' ? ' is-active' : ''}`} onClick={() => selectTag('')}>全部</button>
+          {tags.map((t) => (
+            <button key={t} type="button" className={`mkt-cat${tag === t ? ' is-active' : ''}`} onClick={() => selectTag(t)}>{t}</button>
+          ))}
+        </aside>
+
+        <div className="market-main">
+          {/* ── 桌面头部：display 字体标题 + 真实总数 + 搜索 ── */}
+          <div className="mkt-head">
+            <div className="mkt-head-text">
+              <h2 className="mkt-head-title">{tag || '全部角色'}</h2>
+              <p className="mkt-head-sub">共 {total} 张角色卡</p>
+            </div>
+            <form className="market-search-form mkt-head-search" onSubmit={handleSearch}>
+              <input
+                type="text"
+                className="market-search-input"
+                placeholder="搜索角色名…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+              <button type="submit" className="btn-primary market-search-btn">搜索</button>
+              {query && (
+                <button type="button" className="btn-ghost" onClick={handleClearSearch}>清除</button>
+              )}
+            </form>
+          </div>
+
+          {/* ── 移动 chips：分类过滤（同一 tag 状态） ── */}
+          <div className="market-chips">
+            <button type="button" className={`market-chip${tag === '' ? ' is-active' : ''}`} onClick={() => selectTag('')}>全部</button>
+            {tags.map((t) => (
+              <button key={t} type="button" className={`market-chip${tag === t ? ' is-active' : ''}`} onClick={() => selectTag(t)}>{t}</button>
+            ))}
+          </div>
+
+          {/* Search + sort toolbar */}
+          <div className="market-toolbar">
+            <form className="market-search-form market-toolbar-search" onSubmit={handleSearch}>
+              <input
+                type="text"
+                className="market-search-input"
+                placeholder="搜索角色名…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+              />
+              <button type="submit" className="btn-primary market-search-btn">搜索</button>
+              {query && (
+                <button type="button" className="btn-ghost" onClick={handleClearSearch}>清除</button>
+              )}
+            </form>
         <div className="market-sort-tabs">
           <button
             type="button"
@@ -286,6 +343,7 @@ export default function MarketPage() {
                         <span className="market-card-v2-fallback-letter">{charName.charAt(0).toUpperCase()}</span>
                       </div>
                     )}
+                    <div className="stage-glow" />
                   </div>
                   <div className="market-card-v2-glass-info">
                     <div className="market-card-v2-name">{charName}</div>
@@ -317,6 +375,8 @@ export default function MarketPage() {
           {loading && cards.length > 0 && <div className="market-loading-more">加载更多…</div>}
         </>
       )}
+        </div>
+      </div>
 
       {/* Comment drawer */}
       {commentCardId && (
@@ -324,7 +384,7 @@ export default function MarketPage() {
           <div className="modal-card" style={{ maxWidth: 480, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-title" style={{ flexShrink: 0 }}>
               评论
-              <button type="button" className="btn-ghost fr" onClick={() => setCommentCardId(null)}>✕</button>
+              <button type="button" className="btn-ghost fr" onClick={() => setCommentCardId(null)}><Close size={14} /></button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '0 20px', minHeight: 0 }}>
               {commentsLoading ? (
@@ -337,7 +397,7 @@ export default function MarketPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <Avatar name={displayName(c) || '?'} size={24} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{displayName(c)}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at ? new Date(c.created_at.includes('T') && !c.created_at.endsWith('Z') && !c.created_at.includes('+') ? c.created_at + 'Z' : c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at ? new Date(c.created_at.includes('T') && !c.created_at.endsWith('Z') && !c.created_at.includes('+') ? c.created_at + 'Z' : c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
                     </div>
                     <p style={{ fontSize: 13, margin: 0, lineHeight: 1.5 }}>{c.content}</p>
                   </div>
@@ -384,7 +444,7 @@ export default function MarketPage() {
                   setForkCard(null)
                   doFork(card, '')
                 }}>
-                  {'\u{1F30D}'} 新建独立空间
+                  <><Globe size={14} /> 新建独立空间</>
                 </button>
               </div>
               <button className="btn-ghost mt-12 w-full" onClick={() => setForkCard(null)}>

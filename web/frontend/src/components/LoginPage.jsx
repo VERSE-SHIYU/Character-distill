@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import { Check } from './common/Icon'
 
 function PasswordInput({ id, value, onChange, placeholder, autoComplete, name, autoFocus }) {
   const [visible, setVisible] = useState(false)
@@ -33,14 +34,43 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete, name, a
   )
 }
 
+// 剧光登录 hero：舞台光 + 品牌（角色蒸馏）+ 诚实功能点（桌面双栏才展示功能列表）
+function LoginHero({ subtitle }) {
+  return (
+    <div className="login-hero">
+      <span className="stage-glow" />
+      <h1 className="login-brand">角色<em>蒸馏</em></h1>
+      {subtitle ? (
+        <p className="login-subtitle">{subtitle}</p>
+      ) : (
+        <p className="login-tagline">与角色 · 隔幕对谈</p>
+      )}
+      <div className="login-features">
+        <div className="dl-feature">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4" /><circle cx="12" cy="12" r="3.5" /></svg>
+          六套主题 · 亮暗自由切换
+        </div>
+        <div className="dl-feature">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8L20 9l-4.9 3.9 1.8 5.9L12 15l-4.9 3.8 1.8-5.9L4 9l6.1-.2L12 3z" /></svg>
+          蒸馏你的专属角色
+        </div>
+        <div className="dl-feature">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.25-3.5-.7L3 21l1.2-6A8.5 8.5 0 1 1 21 12z" /></svg>
+          群聊 · 私信 · 沉浸式对话
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function passwordStrength(pw) {
   if (!pw) return { level: 0, label: '', color: '' }
   const hasLetter = /[a-zA-Z]/.test(pw)
   const hasDigit = /[0-9]/.test(pw)
   const longEnough = pw.length >= 8
-  if (longEnough && hasLetter && hasDigit) return { level: 3, label: '强', color: '#22c55e' }
-  if (pw.length >= 6 && hasLetter && hasDigit) return { level: 2, label: '中', color: '#f59e0b' }
-  return { level: 1, label: '弱', color: '#ef4444' }
+  if (longEnough && hasLetter && hasDigit) return { level: 3, label: '强', color: 'var(--success)' }
+  if (pw.length >= 6 && hasLetter && hasDigit) return { level: 2, label: '中', color: 'var(--warning)' }
+  return { level: 1, label: '弱', color: 'var(--danger)' }
 }
 
 export default function LoginPage() {
@@ -175,13 +205,12 @@ export default function LoginPage() {
   if (tab === 'forgot') {
     return (
       <div className="login-page">
+        <LoginHero subtitle="重置密码" />
         <div className="login-card">
-          <h1 className="login-title">Character Distill</h1>
-          <p className="login-subtitle">重置密码</p>
 
           {forgotStep === 'done' ? (
             <div className="login-form">
-              <div style={{ textAlign: 'center', padding: '24px 0', color: '#22c55e' }}>
+              <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--success)' }}>
                 <p style={{ fontSize: 18, marginBottom: 12 }}>密码已重置</p>
                 <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>请使用新密码重新登录</p>
               </div>
@@ -257,9 +286,8 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
+      <LoginHero />
       <div className="login-card">
-        <h1 className="login-title">Character Distill</h1>
-        <p className="login-subtitle">角色蒸馏与沉浸式对话</p>
 
         <div className="login-tabs">
           <button
@@ -325,8 +353,8 @@ export default function LoginPage() {
                 />
               </div>
               {confirmPassword !== '' && (
-                <div style={{ fontSize: 13, margin: '4px 0 10px', color: password === confirmPassword ? '#22c55e' : '#ef4444' }}>
-                  {password === confirmPassword ? '✓ 密码一致' : '两次密码不一致'}
+                <div style={{ fontSize: 13, margin: '4px 0 10px', color: password === confirmPassword ? 'var(--success)' : 'var(--danger)' }}>
+                  {password === confirmPassword ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Check size={13} />密码一致</span> : '两次密码不一致'}
                 </div>
               )}
 
@@ -342,22 +370,24 @@ export default function LoginPage() {
                   autoComplete="email"
                 />
               </div>
-              <div className="login-field login-code-field">
-                <input
-                  type="text"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="邮箱验证码"
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="login-code-btn"
-                  disabled={codeSent && countdown > 0}
-                  onClick={() => sendCode(email, 'register')}
-                >
-                  {countdown > 0 ? `${countdown}s` : codeSent ? '重新发送' : '获取验证码'}
-                </button>
+              <div className="login-field">
+                <div className="login-code-wrap">
+                  <input
+                    type="text"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    placeholder="邮箱验证码"
+                    autoComplete="off"
+                  />
+                  <button
+                    type="button"
+                    className="login-code-btn"
+                    disabled={codeSent && countdown > 0}
+                    onClick={() => sendCode(email, 'register')}
+                  >
+                    {countdown > 0 ? `${countdown}s` : codeSent ? '重新发送' : '获取验证码'}
+                  </button>
+                </div>
               </div>
 
               <div className="login-field">

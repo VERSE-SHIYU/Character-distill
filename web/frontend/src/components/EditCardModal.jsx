@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Close } from './common/Icon'
 
 function splitLines(val) {
   return (Array.isArray(val) ? val.join('\n') : val || '')
@@ -236,7 +237,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
                 <input className="modal-input edit-rel-input" placeholder="对方名字" value={r.target} onChange={(e) => updateRel(i, 'target', e.target.value)} maxLength={REL_LIMITS.target} />
                 <input className="modal-input edit-rel-input" placeholder="关系" value={r.relation} onChange={(e) => updateRel(i, 'relation', e.target.value)} maxLength={REL_LIMITS.relation} />
                 <input className="modal-input edit-rel-input" placeholder="态度" value={r.attitude} onChange={(e) => updateRel(i, 'attitude', e.target.value)} maxLength={REL_LIMITS.attitude} />
-                <button type="button" className="btn-secondary edit-rel-del" onClick={() => removeRel(i)}>✕</button>
+                <button type="button" className="btn-secondary edit-rel-del" onClick={() => removeRel(i)}><Close size={12} /></button>
               </div>
             ))}
             <button type="button" className="btn-secondary mt-6" onClick={addRelationship} disabled={relationships.length >= REL_LIMITS.maxCount}>+ 添加关系</button>

@@ -5,7 +5,7 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ConfirmModal from './common/ConfirmModal'
 import Modal from './common/Modal'
-import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon } from './common/Icon'
+import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon, Close } from './common/Icon'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -38,7 +38,7 @@ function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
   const r = (size - strokeWidth) / 2
   const circ = r * 2 * Math.PI
   const offset = circ - (Math.min(percent, 100) / 100) * circ
-  const color = percent > 80 ? '#ef4444' : percent > 60 ? '#f59e0b' : 'var(--primary)'
+  const color = percent > 80 ? 'var(--danger)' : percent > 60 ? 'var(--warning)' : 'var(--primary)'
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--pill-bg)" strokeWidth={strokeWidth} />
@@ -485,13 +485,13 @@ function UsersTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {actionError && (
         <div className="admin-error-banner">
           <span>{actionError}</span>
-          <button className="admin-error-close" onClick={() => setActionError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setActionError('')}><Close size={12} /></button>
         </div>
       )}
       {peerUnreachable && (
@@ -624,7 +624,7 @@ function UsersTab() {
               />
             </label>
             {emailError && <div className="login-error" style={{ marginTop: 8 }}>{emailError}</div>}
-            {emailOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{emailOk}</div>}
+            {emailOk && <div style={{ color: 'var(--success)', marginTop: 8, fontSize: 13 }}>{emailOk}</div>}
           </div>
           <div className="modal-actions">
             <button className="btn-ghost" onClick={() => setEmailTarget(null)}>取消</button>
@@ -652,7 +652,7 @@ function UsersTab() {
               />
             </label>
             {resetError && <div className="login-error" style={{ marginTop: 8 }}>{resetError}</div>}
-            {resetOk && <div style={{ color: '#22c55e', marginTop: 8, fontSize: 13 }}>{resetOk}</div>}
+            {resetOk && <div style={{ color: 'var(--success)', marginTop: 8, fontSize: 13 }}>{resetOk}</div>}
           </div>
           <div className="modal-actions">
             <button className="btn-ghost" onClick={() => setResetTarget(null)}>取消</button>
@@ -697,7 +697,7 @@ function UsersTab() {
       {batchDeleteResult && (
         <div className="admin-success-banner">
           <span>已删除 {batchDeleteResult.deleted} 个用户{batchDeleteResult.failed > 0 && `，${batchDeleteResult.failed} 个失败`}</span>
-          <button className="admin-error-close" onClick={() => setBatchDeleteResult(null)}>✕</button>
+          <button className="admin-error-close" onClick={() => setBatchDeleteResult(null)}><Close size={12} /></button>
         </div>
       )}
 
@@ -1128,7 +1128,7 @@ function UsageTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {loading ? (
@@ -1235,7 +1235,7 @@ function ReportsTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {loading ? (
@@ -1262,7 +1262,7 @@ function ReportsTab() {
                     {r.comment_content}
                   </td>
                   <td>{r.comment_author_name}</td>
-                  <td><span className="admin-status" style={r.report_count > 1 ? { color: '#ef4444' } : {}}>{r.report_count}</span></td>
+                  <td><span className="admin-status" style={r.report_count > 1 ? { color: 'var(--danger)' } : {}}>{r.report_count}</span></td>
                   <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.reasons}>
                     {r.reasons}
                   </td>
@@ -1372,7 +1372,7 @@ function ContentAuditTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {actionMsg && <div className="admin-success-banner">{actionMsg}</div>}
@@ -1531,7 +1531,7 @@ function SystemLogTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       <div className="admin-subtabs">
@@ -1723,7 +1723,7 @@ function AnnouncementsTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {actionMsg && <div className="admin-success-banner">{actionMsg}</div>}
@@ -1896,7 +1896,7 @@ function ConfigTab() {
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
-          <button className="admin-error-close" onClick={() => setError('')}>✕</button>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
         </div>
       )}
       {msg && <div className={`${msg.includes('失败') ? 'admin-error-banner' : 'admin-success-banner'}`}>{msg}</div>}
@@ -2213,7 +2213,7 @@ function FeaturedTab() {
             <div className="admin-featured-actions">
               <button className="btn-ghost btn-sm admin-featured-btn" onClick={() => handleMoveUp(idx)} disabled={idx === 0} title="上移">↑</button>
               <button className="btn-ghost btn-sm admin-featured-btn" onClick={() => handleMoveDown(idx)} disabled={idx === items.length - 1} title="下移">↓</button>
-              <button className="btn-ghost-danger btn-sm" onClick={() => handleRemove(fc.id)} title="删除">✕</button>
+              <button className="btn-ghost-danger btn-sm" onClick={() => handleRemove(fc.id)} title="删除"><Close size={12} /></button>
             </div>
           </div>
         ))

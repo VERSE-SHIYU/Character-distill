@@ -17,6 +17,49 @@
         document.documentElement.className = 'theme-' + (valid.indexOf(t) >= 0 ? t : 'ocean');
       } catch (e) { document.documentElement.className = 'theme-ocean'; }
     </script>
+    <script>
+      // 低端设备 backdrop-filter 降级：只按设备能力判定，不按 UA。能力不足时把已生效的
+      // 玻璃模糊（>16px）夹到 blur(8px)，省掉 20-32px 大半径模糊的每帧开销。
+      // 现代 iPhone 无 deviceMemory 且 6 核 → 天然豁免，雾感不变。
+      try {
+        (function () {
+          var dm = navigator.deviceMemory;
+          var hc = navigator.hardwareConcurrency;
+          var low = (typeof dm === 'number' && dm > 0 && dm <= 4) ||
+                    (typeof dm === 'undefined' && typeof hc === 'number' && hc > 0 && hc <= 2);
+          if (!low) return;
+          var blurRe = /blur\((\d+(?:\.\d+)?)px\)/g;
+          function clamp(el) {
+            if (el.nodeType !== 1) return;
+            var cs = getComputedStyle(el);
+            var cur = cs.backdropFilter !== 'none' ? cs.backdropFilter : cs.webkitBackdropFilter;
+            if (!cur || cur === 'none') return;
+            var hit = false;
+            var next = cur.replace(blurRe, function (m, r) {
+              if (parseFloat(r) > 16) { hit = true; return 'blur(8px)'; }
+              return m;
+            });
+            if (hit) { el.style.webkitBackdropFilter = next; el.style.backdropFilter = next; }
+          }
+          function scan(root) {
+            clamp(root);
+            var list = root.querySelectorAll ? root.querySelectorAll('*') : [];
+            for (var i = 0; i < list.length; i++) clamp(list[i]);
+          }
+          function onReady() {
+            scan(document);
+            new MutationObserver(function (records) {
+              for (var r = 0; r < records.length; r++) {
+                var nodes = records[r].addedNodes;
+                for (var n = 0; n < nodes.length; n++) if (nodes[n].nodeType === 1) scan(nodes[n]);
+              }
+            }).observe(document.documentElement, { childList: true, subtree: true });
+          }
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', onReady);
+          else onReady();
+        })();
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div class="ocean-bg"></div>
@@ -26,6 +69,8 @@
     <div class="ocean-particle p4"></div>
     <div class="ocean-particle p5"></div>
     <div class="ocean-particle p6"></div>
+    <div class="ocean-particle p7"></div>
+    <div class="ocean-particle p8"></div>
     <div class="bg-gradient-pastel"></div>
     <div class="bg-blob blue"></div>
     <div class="bg-blob green"></div>

@@ -5,7 +5,7 @@ import Avatar from './common/Avatar'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag } from './common/Icon'
+import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag, Globe, Camera } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
@@ -560,6 +560,7 @@ export default function MarketCardDetail() {
           <aside className="market-detail-sidebar">
             {/* Hero */}
             <div className="market-detail-hero">
+              <div className="stage-glow" />
               {card.user_id === authUser?.id ? (
                 <>
                   <button type="button" className="card-avatar-btn avatar-shape" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
@@ -567,7 +568,7 @@ export default function MarketCardDetail() {
                       ? <Avatar name={charName} src={card.avatar_data} size={96} />
                       : <Avatar name={charName} size={96} />
                     }
-                    <div className="card-avatar-overlay avatar-shape">{avatarSaving ? '…' : '\u{1F4F7}'}</div>
+                    <div className="card-avatar-overlay avatar-shape">{avatarSaving ? '…' : <Camera size={16} />}</div>
                   </button>
                   <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
                 </>
@@ -643,9 +644,9 @@ export default function MarketCardDetail() {
               {cardData.personality_traits?.length > 0 && (
                 <div className={`card-section${isMobile && collapsedSections.has('personality') ? ' collapsed' : ''}`} onClick={() => isMobile && toggleSection('personality')}>
                   <h3>性格特征</h3>
-                  <div className="pill-list">
+                  <div className="card-trait-list">
                     {cardData.personality_traits.map((t, i) => (
-                      <span key={i} className="pill">{t}</span>
+                      <span key={i} className="pill pill-trait"><i className="pill-trait-dot" />{t}</span>
                     ))}
                   </div>
                 </div>
@@ -838,7 +839,7 @@ export default function MarketCardDetail() {
                               {f.author_name || '匿名'}
                             </span>
                           </div>
-                          <span className="fork-likes">{'\u{2764}\u{FE0F}'} {f.likes || 0}</span>
+                          <span className="fork-likes"><Heart size={12} /> {f.likes || 0}</span>
                         </div>
                       )
                     })}
@@ -949,7 +950,7 @@ export default function MarketCardDetail() {
                   <Book size={14} /> 挂载到当前文本
                 </button>
                 <button className="btn-secondary" onClick={() => doFork('')}>
-                  {'\u{1F30D}'} 新建独立空间
+                  <><Globe size={14} /> 新建独立空间</>
                 </button>
               </div>
               <button className="btn-ghost mt-12 w-full" onClick={() => setShowForkChoice(false)}>

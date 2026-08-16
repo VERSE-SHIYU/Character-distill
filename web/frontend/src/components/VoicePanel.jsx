@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import ConfirmModal from './common/ConfirmModal'
-import { Folder, Music, Mic } from './common/Icon'
+import { Folder, Music, Mic, Close, Check } from './common/Icon'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 
@@ -325,7 +325,7 @@ export default function VoicePanel() {
                       disabled={deletingId === v.voice_id}
                       onClick={() => handleCustomDelete(v.voice_id)}
                     >
-                      {deletingId === v.voice_id ? '…' : '✕'}
+                      {deletingId === v.voice_id ? '…' : <Close size={14} />}
                     </button>
                   </div>
                 </li>
@@ -396,7 +396,7 @@ export default function VoicePanel() {
           音色克隆
           {voiceStatus.gptsovits
             ? <span className="voice-guide-badge"> GPT-SoVITS 已连接</span>
-            : <span className="voice-guide-badge" style={{ color: '#999' }}> GPT-SoVITS 未连接</span>
+            : <span className="voice-guide-badge" style={{ color: 'var(--text-dim)' }}> GPT-SoVITS 未连接</span>
           }
         </h3>
 
@@ -411,13 +411,13 @@ export default function VoicePanel() {
           /* Already has ref audio */
           <div className="voice-configured-card">
             <div className="voice-configured-header">
-              <span>{'\u{2705}'}</span>
+              <span><Check size={14} /></span>
               <div className="voice-list-info">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className="voice-list-name">
                     {currentCard?.name || '当前角色'}
                   </span>
-                  <span className="voice-guide-badge" style={{ fontSize: 11, padding: '1px 6px' }}>已绑定</span>
+                  <span className="voice-guide-badge" style={{ fontSize: 12, padding: '1px 6px' }}>已绑定</span>
                 </div>
                 <span className="voice-list-meta">
                   {voiceRefInfo.filename || '参考音频'}

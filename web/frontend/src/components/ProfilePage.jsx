@@ -6,7 +6,7 @@ import Avatar from './common/Avatar'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ImageCropModal from './common/ImageCropModal'
-import { Heart, Star, Theater, Book, Mic, Lock, Mail } from './common/Icon'
+import { Heart, Star, Theater, Book, Mic, Lock, Mail, Check, Camera } from './common/Icon'
 
 export default function ProfilePage() {
   const authUser = useAppStore((s) => s.authUser)
@@ -294,7 +294,7 @@ export default function ProfilePage() {
           >
             <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
             <span className="profile-avatar-overlay avatar-shape">
-              {avatarSaving ? '…' : '\u{1F4F7}'}
+              {avatarSaving ? '…' : <Camera size={16} />}
             </span>
           </button>
           <input
@@ -380,7 +380,7 @@ export default function ProfilePage() {
         <button className="profile-grid-item" onClick={() => togglePanel('bind')}>
           <span className="profile-grid-icon"><Mail size={16} /></span>
           <span className="profile-grid-label">{email ? '换绑邮箱' : '绑定邮箱'}</span>
-          {emailVerified && <span className="profile-grid-badge-ok">✓</span>}
+          {emailVerified && <span className="profile-grid-badge-ok"><Check size={12} /></span>}
         </button>
       </div>
 
@@ -590,7 +590,7 @@ function PresenceVisibilitySetting() {
           <span style={{ fontSize: 14, color: 'var(--text)' }}>{opt.label}</span>
         </label>
       ))}
-      {msg && <span style={{ fontSize: 13, color: msg.includes('失败') ? '#ef4444' : '#22c55e' }}>{msg}</span>}
+      {msg && <span style={{ fontSize: 13, color: msg.includes('失败') ? 'var(--danger)' : 'var(--success)' }}>{msg}</span>}
     </div>
   )
 }

@@ -333,7 +333,7 @@ function CommentItem({
         <div className="market-card-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
             <span style={{ fontWeight: 600, fontSize: 13 }}>{displayName(comment)}</span>
-            <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(comment.created_at)}</span>
+            <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{formatRelativeTime(comment.created_at)}</span>
           </div>
           <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 6 }}>
             {comment.content}
@@ -342,7 +342,7 @@ function CommentItem({
             <button
               type="button"
               className="btn-ghost"
-              style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? '#e53e3e' : 'var(--text-dim)' }}
+              style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
               onClick={() => onLike(comment.id)}
             >
               {comment.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {comment.likes || 0}
@@ -406,7 +406,7 @@ function CommentItem({
                 <div className="market-card-body">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                     <span style={{ fontWeight: 600, fontSize: 12 }}>{displayName(reply)}</span>
-                    <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{formatRelativeTime(reply.created_at)}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{formatRelativeTime(reply.created_at)}</span>
                   </div>
                   <p style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
                     {reply.content}
@@ -415,7 +415,7 @@ function CommentItem({
                     <button
                       type="button"
                       className="btn-ghost"
-                      style={{ padding: '1px 4px', fontSize: 11, color: reply.liked_by_me ? '#e53e3e' : 'var(--text-dim)' }}
+                      style={{ padding: '1px 4px', fontSize: 12, color: reply.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
                       onClick={() => onLike(reply.id)}
                     >
                       {reply.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {reply.likes || 0}
@@ -424,7 +424,7 @@ function CommentItem({
                       <button
                         type="button"
                         className="btn-ghost"
-                        style={{ padding: '1px 4px', fontSize: 11, color: 'var(--text-dim)' }}
+                        style={{ padding: '1px 4px', fontSize: 12, color: 'var(--text-dim)' }}
                         onClick={() => onDelete(reply.id)}
                       >
                         删除

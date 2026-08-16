@@ -4,7 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -21,6 +21,7 @@ import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import ChatSessionList from './common/ChatSessionList'
 
 export default function ChatArea() {
   const currentCard = useAppStore((s) => s.currentCard)
@@ -36,6 +37,7 @@ export default function ChatArea() {
   const selectText = useAppStore((s) => s.selectText)
   const startChat = useAppStore((s) => s.startChat)
   const currentTextId = useAppStore((s) => s.currentTextId)
+  const isMobile = useIsMobile()
   // Auto-recover: only create session when user is on chat view and no snapshot/archive modal is blocking
   // and no session-creation is already in-flight (_pendingChatCardId guard)
   useEffect(() => {
@@ -97,7 +99,16 @@ export default function ChatArea() {
     )
   }
 
-  return <ChatView />
+  if (isMobile) return <ChatView />
+  // 桌面端双栏：左侧历史会话列表 + 右侧对话区
+  return (
+    <div className="chat-desktop">
+      <ChatSessionList />
+      <div className="conv-panel">
+        <ChatView />
+      </div>
+    </div>
+  )
 }
 
 function ChatView() {
@@ -477,6 +488,7 @@ function ChatView() {
           <input ref={userAvatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleUserAvatarChange} />
           <div className="chat-topbar-compact-name-row">
             <span className="chat-topbar-compact-name">{charName}</span>
+            <span className="ai-online" title="在线"><i className="ai-online-dot" aria-hidden="true" /><span>在线</span></span>
             {charIdentity && <span className="chat-topbar-badge-compact">{charIdentity}</span>}
             {affinityEnabled && (
               <button
@@ -526,7 +538,7 @@ function ChatView() {
           <div className="inner-voice-mood"><Heart size={14} /> {affinity.mood}</div>
           <div className="inner-voice-footer">
             <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
-            <span className="inner-voice-stats">♡{affinity.affinity} 🤝{affinity.trust} 🛡{affinity.guard}</span>
+            <span className="inner-voice-stats"><Heart size={12} /> {affinity.affinity} <Handshake size={12} /> {affinity.trust} <Shield size={12} /> {affinity.guard}</span>
           </div>
         </div>
       )}
@@ -806,7 +818,7 @@ function ChatView() {
           <div className="memory-panel" onClick={e => e.stopPropagation()}>
             <div className="memory-panel-header">
               <h3>角色记忆</h3>
-              <button type="button" className="btn-ghost" onClick={() => setShowMemoryPanel(false)}>✕</button>
+              <button type="button" className="btn-ghost" onClick={() => setShowMemoryPanel(false)}><Close size={14} /></button>
             </div>
             <div className="memory-panel-body">
               {/* Add memory row */}
@@ -882,11 +894,11 @@ function ChatView() {
                           <button type="button" className="memory-action-btn" onClick={() => {
                             setEditingMemId(m.id)
                             setEditMemText(m.memory)
-                          }} title="编辑">✎</button>
+                          }} title="编辑"><Edit size={14} /></button>
                           <button type="button" className="memory-action-btn" onClick={async () => {
                             await fetchWithTimeout(`/api/memory/delete/${m.id}?card_id=${cardId}`, { method: 'DELETE' })
                             setMemories(prev => prev.filter(x => x.id !== m.id))
-                          }} title="删除">✕</button>
+                          }} title="删除"><Close size={14} /></button>
                         </div>
                       </>
                     )}
@@ -1035,7 +1047,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           onClick={() => onRevoke()}
           title={revokeCooldown ? '冷却中…' : '撤回'}
         >
-          {revokeCooldown ? '⏳' : '✕'}
+          {revokeCooldown ? '⏳' : <Close size={14} />}
         </button>
       )}
       {!isUser && (
@@ -1046,7 +1058,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
           onClick={() => playTTS(content, index)}
           title={isPlaying ? '合成中' : '播放语音'}
         >
-          {isPlaying ? '\u{23F3} 合成中' : '\u{1F50A} 听'}
+          {isPlaying ? '\u{23F3} 合成中' : <><Speaker size={14} /> 听</>}
         </button>
       )}
     </div>
@@ -1064,7 +1076,7 @@ function SummaryBubble({ content }) {
         className="chat-summary-toggle"
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="chat-summary-icon">{'\u{1F4CB}'}</span>
+        <span className="chat-summary-icon"><Clipboard size={14} /></span>
         <span>对话摘要</span>
         <span className="chat-summary-arrow">{open ? '▲' : '▼'}</span>
       </button>

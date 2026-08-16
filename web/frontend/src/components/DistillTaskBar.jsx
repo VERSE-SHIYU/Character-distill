@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
+import { Check, Close, RefreshCw, Settings } from './common/Icon'
 
 function DistillTaskItem({ task }) {
   const setView = useAppStore((s) => s.setView)
@@ -78,15 +79,15 @@ function DistillTaskItem({ task }) {
           <span className="distill-task-bar-track">
             <span className={`distill-task-bar-fill${showIndeterminate ? ' indeterminate' : ''}`} style={{ width: `${displayPct}%` }} />
           </span>
-          <span className="distill-task-close" onClick={handleCancel} title="取消蒸馏">✕</span>
+          <span className="distill-task-close" onClick={handleCancel} title="取消蒸馏"><Close size={12} /></span>
         </>
       )}
       {(isDone || isError) && (
         <>
           {isError && task.textId && (
-            <span className="distill-task-retry" onClick={handleRetry} title="重新蒸馏">↻</span>
+            <span className="distill-task-retry" onClick={handleRetry} title="重新蒸馏"><RefreshCw size={12} /></span>
           )}
-          <span className="distill-task-close" onClick={handleCancel} title="关闭">✕</span>
+          <span className="distill-task-close" onClick={handleCancel} title="关闭"><Close size={12} /></span>
         </>
       )}
     </div>
@@ -95,6 +96,7 @@ function DistillTaskItem({ task }) {
 
 export default function DistillTaskBar() {
   const tasks = useAppStore((s) => s.distillTasks)
+  const pushView = useAppStore((s) => s.pushView)
 
   const [collapsed, setCollapsed] = useState(true)
   const [shake, setShake] = useState(false)
@@ -138,16 +140,19 @@ export default function DistillTaskBar() {
           onAnimationEnd={() => setShake(false)}
           title="蒸馏任务"
         >
-          <span className="distill-fab-icon">{allTerminal ? '✅' : '⚙'}</span>
+          <span className="distill-fab-icon">{allTerminal ? <Check size={16} /> : <Settings size={16} />}</span>
           <span className={`distill-fab-badge${hasQueued ? ' badge-pulse' : ''}`}>
-            {allTerminal ? '✓' : runningCount}
+            {allTerminal ? <Check size={11} /> : runningCount}
           </span>
         </button>
       ) : (
         <div className="distill-panel" ref={panelRef}>
           <div className="distill-panel-header">
             <span className="distill-panel-title">蒸馏任务 ({tasks.length})</span>
-            <button className="distill-panel-close" onClick={() => setCollapsed(true)}>✕</button>
+            <div className="distill-panel-actions">
+              <button className="distill-panel-wb" onClick={() => { setCollapsed(true); pushView('distillWorkbench') }}>工作台</button>
+              <button className="distill-panel-close" onClick={() => setCollapsed(true)}><Close size={14} /></button>
+            </div>
           </div>
           <div className="distill-panel-body">
             {tasks.map((t) => (

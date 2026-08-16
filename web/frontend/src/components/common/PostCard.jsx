@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
-import { Heart, MessageSquare, Trash2 } from './Icon'
+import { Heart, MessageSquare, Trash2, Close, Lock } from './Icon'
 import { parseCardJson } from '../../utils/card'
 import { formatRelativeTime } from '../../utils/time'
 import { displayName } from '../../utils/displayName'
@@ -127,7 +127,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
             <Avatar name={post.author_name || '?'} src={post.author_avatar || null} size={36} />
             <span className="post-card-author-name">{post.author_name || '匿名'}</span>
           </button>
-          {post.visibility === 'private' && <span className="post-card-private">{'\u{1F512}'} 私密</span>}
+          {post.visibility === 'private' && <span className="post-card-private"><Lock size={12} /> 私密</span>}
           <span className="post-card-time">{formatRelativeTime(post.created_at)}</span>
         </div>
       )}
@@ -249,7 +249,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       {previewImg && (
         <div className="img-preview-overlay" onClick={() => setPreviewImg(null)}>
           <img src={previewImg} alt="" className="img-preview-full" />
-          <button type="button" className="img-preview-close" onClick={(e) => { e.stopPropagation(); setPreviewImg(null) }}>{'✕'}</button>
+          <button type="button" className="img-preview-close" onClick={(e) => { e.stopPropagation(); setPreviewImg(null) }}><Close size={18} /></button>
         </div>
       )}
     </div>

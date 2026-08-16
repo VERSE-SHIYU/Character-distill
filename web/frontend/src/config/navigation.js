@@ -3,7 +3,7 @@
 export const SECONDARY_VIEWS = [
   'chat', 'character', 'author', 'textDetail',
   'marketCardDetail', 'profile', 'settings', 'apiConfig', 'trash', 'admin', 'legal', 'voice', 'reader',
-  'messages', 'history', 'groupChat', 'feed', 'market',
+  'messages', 'history', 'groupChat', 'feed', 'market', 'distillWorkbench',
 ]
 
 // Fallback view when popView is called with an empty history stack
@@ -13,4 +13,5 @@ export const FALLBACK = {
   profile: 'mine', settings: 'mine', apiConfig: 'settings', trash: 'mine', admin: 'mine',
   legal: 'mine', voice: 'mine',
   messages: 'mine', history: 'mine', feed: 'home', market: 'mine',
+  distillWorkbench: 'text',
 }

@@ -313,7 +313,7 @@ export default function TextPanel() {
           <div className="creation-text-grid">
             {texts.map((t) => {
               const ext = extOf(t.filename || '')
-              const iconColor = ext === '.txt' ? '#4a90d9' : ext === '.md' ? '#4caf50' : '#999'
+              const iconColor = ext === '.txt' ? '#4a90d9' : ext === '.md' ? '#4caf50' : 'var(--text-dim)'
               const statusClass = cardCounts[t.id] > 0 ? 'done' : 'pending'
               const statusLabel = cardCounts[t.id] > 0 ? '已完成' : '待蒸馏'
               return (
@@ -508,7 +508,7 @@ export default function TextPanel() {
               <button
                 type="button"
                 className="btn-primary"
-                style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: '#fff' }}
+                style={{ background: 'var(--danger)', borderColor: 'var(--danger)', color: 'var(--on-danger)' }}
                 onClick={handleConfirmDelete}
               >
                 删除
@@ -620,8 +620,11 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
   return (
     <div className="creation-char-section">
       <header className="panel-header">
-        <h1 className="panel-title">角色管理</h1>
-        <p className="panel-desc">管理所有蒸馏角色卡，点击 ⋯ 进行操作</p>
+        <div className="panel-header-main">
+          <h1 className="panel-title">角色管理</h1>
+          <p className="panel-desc">管理所有蒸馏角色卡，点击 ⋯ 进行操作</p>
+        </div>
+        <button type="button" className="dw-entry-btn" onClick={() => pushView('distillWorkbench')}>蒸馏工作台</button>
       </header>
 
       {/* Source filter */}

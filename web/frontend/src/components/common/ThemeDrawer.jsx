@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Popup } from 'antd-mobile'
 import { THEMES } from '../../utils/themes'
 import { applyTheme, getTheme } from '../../utils/theme'
+import { Check } from './Icon'
 
 export default function ThemeDrawer({ open, onClose }) {
   const [currentTheme, setCurrentTheme] = useState(() => getTheme())
@@ -32,7 +33,7 @@ export default function ThemeDrawer({ open, onClose }) {
           >
             <span className="mine-theme-emoji">{t.emoji}</span>
             <span className="mine-theme-label">{t.label}</span>
-            {currentTheme === t.key && <span className="mine-theme-check">✓</span>}
+            {currentTheme === t.key && <span className="mine-theme-check"><Check size={12} /></span>}
           </button>
         ))}
       </div>

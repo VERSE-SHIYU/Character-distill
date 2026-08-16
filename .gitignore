@@ -247,3 +247,6 @@ config.yaml
 funasr_models/
 web/static/
 logs/
+
+# graphify knowledge graph artifacts (generated)
+graphify-out/

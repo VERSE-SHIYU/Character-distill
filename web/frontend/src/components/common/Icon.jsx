@@ -379,6 +379,33 @@ export const Palette = (props) => (
   </Svg>
 )
 
+export const Check = (props) => (
+  <Svg {...props}>
+    <polyline points="20 6 9 17 4 12" />
+  </Svg>
+)
+
+export const Close = (props) => (
+  <Svg {...props}>
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </Svg>
+)
+
+export const Camera = (props) => (
+  <Svg {...props}>
+    <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
+    <circle cx="12" cy="13" r="4" />
+  </Svg>
+)
+
+export const Inbox = (props) => (
+  <Svg {...props}>
+    <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+    <path d="M5.45 5.11L2 12v6a2 2 0 002 2h16a2 2 0 002-2v-6l-3.45-6.89A2 2 0 0016.76 4H7.24a2 2 0 00-1.79 1.11z" />
+  </Svg>
+)
+
 const ICON_MAP = {
   mail: Mail,
   settings: Settings,
@@ -393,6 +420,10 @@ const ICON_MAP = {
   dashboard: Dashboard,
   terminal: Terminal,
   megaphone: Megaphone,
+  check: Check,
+  close: Close,
+  camera: Camera,
+  inbox: Inbox,
 }
 
 export function getIcon(name) {

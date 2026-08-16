@@ -345,7 +345,7 @@ export default function ApiConfigPanel() {
 
         {testResult && (
           <p className="settings-hint" style={{
-            color: testResult === 'ok' ? '#22c55e' : '#ef4444',
+            color: testResult === 'ok' ? 'var(--success)' : 'var(--danger)',
             fontWeight: 600,
             marginTop: 8,
           }}>

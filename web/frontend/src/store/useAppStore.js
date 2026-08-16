@@ -237,6 +237,8 @@ const useAppStore = create((set, get) => ({
   currentCard: null,
   sessionId: null,
   resumeGroupId: null,
+  sessionList: [],
+  sessionListLoading: false,
   identifiedChars: [],
   distilling: false,
   distillTokenCount: 0,
@@ -1493,6 +1495,20 @@ const useAppStore = create((set, get) => ({
     } catch (err) {
       console.error('[store] resetChat failed:', err)
       set({ error: err.message })
+    }
+  },
+
+  loadHistory: async ({ keyword, page = 1, page_size = 100 } = {}) => {
+    set({ sessionListLoading: true })
+    try {
+      const params = new URLSearchParams({ page: String(page), page_size: String(page_size) })
+      if (keyword) params.set('keyword', keyword)
+      const res = await fetchWithTimeout(`/api/history/list?${params.toString()}`)
+      const data = await res.json()
+      set({ sessionList: data.items || [], sessionListLoading: false })
+    } catch (err) {
+      console.error('[store] loadHistory failed:', err)
+      set({ error: err.message, sessionListLoading: false })
     }
   },
 

@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import useAppStore from '../../store/useAppStore'
 import { globalSearch } from '../../api/client'
 import Avatar from './Avatar'
+import { Book } from './Icon'
 import { displayName } from '../../utils/displayName'
 
 export default function GlobalSearchBox({ className = '' }) {
@@ -95,7 +96,7 @@ export default function GlobalSearchBox({ className = '' }) {
                   <div className="sidebar-search-group-title">文本</div>
                   {searchResults.texts.map((t) => (
                     <button key={t.id} className="sidebar-search-item" onClick={() => handleResultClick('text', t)}>
-                      <span style={{ fontSize: 20, width: 28, textAlign: 'center' }}>📖</span>
+                      <span style={{ fontSize: 20, width: 28, textAlign: 'center', color: 'var(--text-dim)' }}><Book size={18} /></span>
                       <div className="sidebar-search-item-text">
                         <span className="sidebar-search-item-name">{t.title || t.filename}</span>
                       </div>

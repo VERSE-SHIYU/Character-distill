@@ -8,6 +8,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
+import { Check } from './common/Icon'
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
@@ -977,7 +978,7 @@ export default function GroupChatPage() {
                               onClick={() => { setRounds(n); setDropOpen(false) }}
                             >
                               {n}轮
-                              {rounds === n && <span className="group-round-check">✓</span>}
+                              {rounds === n && <span className="group-round-check"><Check size={12} /></span>}
                             </div>
                           ))}
                         </div>
@@ -1478,7 +1479,7 @@ export default function GroupChatPage() {
                           {identity && <span className="group-create-card-identity">{identity}</span>}
                         </div>
                         <div className={`group-create-card-checkbox${selected ? ' checked' : ''}`}>
-                          {selected ? '✓' : ''}
+                          {selected ? <Check size={12} /> : ''}
                         </div>
                       </div>
                     )

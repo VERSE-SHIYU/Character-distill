@@ -8,6 +8,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import PrivateMessageChat from './PrivateMessageChat'
 import { displayName } from '../utils/displayName'
+import { Inbox } from './common/Icon'
 
 const POLL_INTERVAL = 30000
 
@@ -52,7 +53,7 @@ export default function MessagesPage() {
       setUnreadTotal(convs.reduce((sum, c) => sum + (c.unread || 0), 0))
       if (activeOtherId) {
         const conv = convs.find((c) => c.other_id === activeOtherId)
-        if (conv) setActiveUsername(conv.username)
+        if (conv) setActiveUsername(displayName(conv))
       }
     } catch {
       // ignore
@@ -86,7 +87,7 @@ export default function MessagesPage() {
   useEffect(() => {
     if (activeOtherId) {
       const conv = conversations.find((c) => c.other_id === activeOtherId)
-      if (conv) setActiveUsername(conv.username)
+      if (conv) setActiveUsername(displayName(conv))
       loadConversations()
     }
   }, [activeOtherId])
@@ -128,7 +129,7 @@ export default function MessagesPage() {
               <PageHeader title="私信" onBack={handleBackFromChat} />
             </div>
             <div className="messages-empty-state">
-              <span className="messages-empty-icon">{'\u{1F4E8}'}</span>
+              <span className="messages-empty-icon"><Inbox size={28} /></span>
               <p className="messages-empty-title">暂无私信</p>
               <p className="messages-empty-desc">
                 去角色市场关注感兴趣的作者，发送你的第一条私信吧
@@ -157,7 +158,7 @@ export default function MessagesPage() {
                   key={conv.other_id}
                   type="button"
                   className={`messages-conv-item${activeOtherId === conv.other_id ? ' active' : ''}`}
-                  onClick={() => handleSelectConversation(conv.other_id, conv.username)}
+                  onClick={() => handleSelectConversation(conv.other_id, displayName(conv))}
                 >
                   <Avatar name={displayName(conv) || '?'} src={conv.avatar_data} size={44} />
                   <div className="messages-conv-body">

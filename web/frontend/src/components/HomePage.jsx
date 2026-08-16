@@ -170,6 +170,20 @@ export default function HomePage() {
   const cardCount = allCards.length
   const textCount = texts.length
   const isNewUser = allCards.length === 0 && recentSessions.length === 0 && !cardsLoading
+
+  // Hero 副标题与主动作：全部来自真实数据，不造假
+  const lastSession = recentSessions[0]
+  const heroSub = lastSession
+    ? `上次与「${lastSession.character_name}」聊到 ${formatRelativeTime(lastSession.last_message_at || lastSession.updated_at)}，要继续吗？`
+    : allCards.length > 0
+      ? `已有 ${allCards.length} 个角色在等你开场`
+      : '上传小说或聊天记录，AI 会蒸馏出属于你的角色'
+  const heroPrimaryLabel = lastSession ? '继续上次对话' : allCards.length > 0 ? '去和角色聊聊' : '上传文本，开始蒸馏'
+  const handleHeroPrimary = () => {
+    if (lastSession) handleResume(lastSession.id)
+    else if (allCards.length > 0) pushView('character')
+    else navigateTo('text')
+  }
   const validDiscoverCards = discoverCards.filter(c => {
     let d = {}; try { if (c.card_json) d = JSON.parse(c.card_json) } catch {}
     return d.name || c.character_name
@@ -274,7 +288,16 @@ export default function HomePage() {
         <>
           {/* A. 欢迎区 */}
           <div className="home-welcome">
-            <div className="home-greeting">{greeting}，{username}</div>
+            <div className="home-hero">
+              <span className="stage-glow" />
+              <p className="home-hero-kicker">与角色 · 隔幕对谈</p>
+              <h1 className="home-hero-title">{greeting}，{username}</h1>
+              <p className="home-hero-sub">{heroSub}</p>
+              <div className="home-hero-actions">
+                <button type="button" className="btn-primary" onClick={handleHeroPrimary}>{heroPrimaryLabel}</button>
+                <button type="button" className="btn-ghost" onClick={() => navigateTo('market')}>浏览角色市场</button>
+              </div>
+            </div>
             <div className="home-stats-bar">
               <div className="home-stats-item" onClick={() => pushView('character')}>
                 <span className="home-stats-num">{cardCount}</span>
@@ -296,7 +319,11 @@ export default function HomePage() {
           {/* E. 最近对话 */}
           {recentSessions.length > 0 && (
             <div className="home-recent-section">
-              <h2 className="home-section-title">最近对话</h2>
+              <div className="home-section-head">
+                <span className="home-section-tick" />
+                <h2 className="home-section-title">最近对话</h2>
+                <button type="button" className="home-section-more" onClick={() => navigateTo('history')}>查看全部 ›</button>
+              </div>
               <div className="home-recent-container">
                 <div className="home-recent-list">
                   {recentSessions.map((s) => {
@@ -332,7 +359,11 @@ export default function HomePage() {
           {/* A1. 编辑推荐 */}
           {featuredCards.length > 0 && (
             <div className="home-featured-section">
-              <h2 className="home-section-title">编辑推荐</h2>
+              <div className="home-section-head">
+                <span className="home-section-tick" />
+                <h2 className="home-section-title">编辑推荐</h2>
+                <button type="button" className="home-section-more" onClick={() => navigateTo('market')}>全部 ›</button>
+              </div>
               <div className="home-featured-bar">
                 {featuredCards.map((fc) => {
                   let fcData = {}
@@ -369,12 +400,10 @@ export default function HomePage() {
 
           {/* C. 发现角色区 */}
           <div className="home-discover-section">
-            <div className="home-section-header">
-              <h2 className="home-section-title">
-                <svg className="home-section-title-sparkle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l2 7 7 2-7 2-2 7-2-7-7-2 7-2z"/></svg>
-                发现角色
-              </h2>
-              <div className="home-section-header-actions">
+            <div className="home-section-head">
+              <span className="home-section-tick" />
+              <h2 className="home-section-title">发现角色</h2>
+              <div className="home-section-actions">
                 <button
                   type="button"
                   className="home-tags-toggle-btn"
@@ -382,8 +411,8 @@ export default function HomePage() {
                 >
                   🏷️筛选
                 </button>
-                <button type="button" className="home-view-all-btn" onClick={() => navigateTo('market')}>
-                  查看更多 &gt;
+                <button type="button" className="home-section-more" onClick={() => navigateTo('market')}>
+                  查看更多 ›
                 </button>
               </div>
             </div>
@@ -567,11 +596,12 @@ export default function HomePage() {
 
           {/* F. 我的角色 */}
           <div className="home-card-section">
-            <div className="home-section-header">
+            <div className="home-section-head">
+              <span className="home-section-tick" />
               <h2 className="home-section-title">我的角色</h2>
               {allCards.length > 4 && (
-                <button type="button" className="home-view-all-btn" onClick={() => navigateTo('text')}>
-                  查看全部 ({allCards.length})
+                <button type="button" className="home-section-more" onClick={() => navigateTo('text')}>
+                  查看全部 ({allCards.length}) ›
                 </button>
               )}
             </div>

@@ -67,12 +67,21 @@ export default function MobileTabBar() {
     <div className="mobile-tabbar">
       <TabBar activeKey={activeKey} onChange={(key) => setView(key)}>
         {tabs.map(({ key, title, icon }) => (
-          <TabBar.Item key={key} icon={key === 'mine' && unreadTotal > 0 ? (
-            <div className="tab-badge-wrap">
-              {icon}
-              <span className="tab-badge-dot" />
-            </div>
-          ) : icon} title={title} />
+          <TabBar.Item
+            key={key}
+            icon={(
+              <div className="tab-icon-wrap">
+                {key === 'mine' && unreadTotal > 0 ? (
+                  <span className="tab-badge-wrap">
+                    {icon}
+                    <span className="tab-badge-dot" />
+                  </span>
+                ) : icon}
+                <i className="tab-dot" aria-hidden="true" />
+              </div>
+            )}
+            title={title}
+          />
         ))}
       </TabBar>
       <SafeArea position="bottom" />

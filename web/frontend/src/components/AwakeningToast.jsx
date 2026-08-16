@@ -1,5 +1,6 @@
 import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
+import { Close } from './common/Icon'
 
 export default function AwakeningToast() {
   const toast = useAppStore((s) => s.awakeningToast)
@@ -31,7 +32,7 @@ export default function AwakeningToast() {
 
   return (
     <div className="awakening-toast">
-      <button className="awakening-toast-close" onClick={dismiss} aria-label="关闭">✕</button>
+      <button className="awakening-toast-close" onClick={dismiss} aria-label="关闭"><Close size={14} /></button>
       <div className="awakening-toast-body">
         <div className="awakening-toast-avatar">
           <Avatar name={toast.character} size={40} />

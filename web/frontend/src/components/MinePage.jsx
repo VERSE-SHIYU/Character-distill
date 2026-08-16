@@ -554,6 +554,7 @@ export default function MinePage() {
 
       {/* ── Profile Section ── */}
       <div className="mine-profile-section">
+        <div className="stage-glow" aria-hidden="true" />
         <div className="mine-profile-row">
           <div className="mine-profile-left">
             <div className="mine-avatar-wrap" style={isMobile ? { marginTop: -40 } : undefined}>
@@ -573,14 +574,19 @@ export default function MinePage() {
               <h2 className="mine-profile-name">
                 {username}
                 {selfOnline !== null && (
-                  <span style={{ fontSize: 12, fontWeight: 400, marginLeft: 8, color: selfOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: selfOnline ? '#22c55e' : 'var(--text-dim)', display: 'inline-block', flexShrink: 0 }} />
+                  <span className={`mine-online${selfOnline ? '' : ' off'}`}>
+                    <span className="mine-online-dot" />
                     {selfOnline ? '在线' : formatChatTime(selfLastActive)}
                   </span>
                 )}
               </h2>
-              {isMe && <button className="mine-edit-icon" onClick={() => pushView('settings')} title="编辑资料">✏️</button>}
+              {isMe && (
+                <button className="mine-edit-icon" onClick={() => pushView('profile')} title="编辑资料">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                </button>
+              )}
             </div>
+            <div className="mine-id">@{username}</div>
             {isMe ? (
               bioEditing ? (
                 <input
@@ -620,23 +626,6 @@ export default function MinePage() {
               </div>
             )}
           </div>
-          <div className="mine-profile-stats">
-            <button type="button" className="mine-stat-btn" onClick={() => setTab('characters')}>
-              <span className="mine-stat-num">{cards.length}</span>角色
-            </button>
-            <span className="mine-stat-dot">·</span>
-            <button type="button" className="mine-stat-btn" onClick={() => setTab('books')}>
-              <span className="mine-stat-num">{texts.length}</span>书籍
-            </button>
-            <span className="mine-stat-dot">·</span>
-            <button type="button" className="mine-stat-btn" onClick={() => setTab('followers')}>
-              <span className="mine-stat-num">{followersCount}</span>粉丝
-            </button>
-            <span className="mine-stat-dot">·</span>
-            <button type="button" className="mine-stat-btn" onClick={() => setTab('following')}>
-              <span className="mine-stat-num">{followingCount}</span>关注
-            </button>
-          </div>
           {!isMe && (
             <div className="mine-profile-actions">
               <button
@@ -655,6 +644,20 @@ export default function MinePage() {
               </button>
             </div>
           )}
+        </div>
+        <div className="mine-stat-grid">
+          <button type="button" className="mine-stat-card" onClick={() => setTab('characters')}>
+            <b>{cards.length}</b><span>角色</span>
+          </button>
+          <button type="button" className="mine-stat-card" onClick={() => setTab('books')}>
+            <b>{texts.length}</b><span>书籍</span>
+          </button>
+          <button type="button" className="mine-stat-card" onClick={() => setTab('followers')}>
+            <b>{followersCount}</b><span>粉丝</span>
+          </button>
+          <button type="button" className="mine-stat-card" onClick={() => setTab('following')}>
+            <b>{followingCount}</b><span>关注</span>
+          </button>
         </div>
       </div>
 

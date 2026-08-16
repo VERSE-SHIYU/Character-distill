@@ -2,6 +2,7 @@ import useIsMobile from '../hooks/useIsMobile'
 import { Popup } from 'antd-mobile'
 import useAppStore from '../store/useAppStore'
 import { formatChatTime } from '../utils/time'
+import { Heart } from './common/Icon'
 
 function fmtTime(iso) {
   if (!iso) return '—'
@@ -61,7 +62,7 @@ export default function ArchiveListModal() {
                   <div className="history-item-name-row">
                     <span className={`archive-stage-tag ${stage.cls}`}>{stage.label}</span>
                     <span className="archive-affinity-nums">
-                      <span title="好感">♡{s.affinity ?? 50}</span>
+                      <span title="好感"><Heart size={12} /> {s.affinity ?? 50}</span>
                       <span title="信任">信任{s.trust ?? 30}</span>
                       <span title="防御">防御{s.guard ?? 70}</span>
                     </span>
