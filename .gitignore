@@ -229,6 +229,7 @@ docker-compose.override.yml
 CLAUDE.md
 
 # Frontend build artifacts
+node_modules/
 web/frontend/node_modules/
 web/frontend/dist/
 data/*
