@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
-import { Heart, MessageSquare, Trash2, Close, Lock } from './Icon'
+import { Heart, MessageSquare, Trash2, Close, Lock, MapPin } from './Icon'
 import { parseCardJson } from '../../utils/card'
 import { formatRelativeTime } from '../../utils/time'
 import { displayName } from '../../utils/displayName'
@@ -163,7 +163,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       {/* Location */}
       {post.location && (
         <div className="post-card-location">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <MapPin size={13} />
           {post.location}
         </div>
       )}

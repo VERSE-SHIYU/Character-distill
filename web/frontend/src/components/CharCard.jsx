@@ -10,8 +10,8 @@ import ErrorBox from './common/ErrorBox'
 import useIsMobile from '../hooks/useIsMobile'
 import useSwipeBack from '../hooks/useSwipeBack'
 import PageHeader from './PageHeader'
-import { Book, User, Pin, Tag, Bookmark, Globe, Clipboard, Camera, Download, Lock } from './common/Icon'
-import { MessageSquare, Edit, Trash2 } from './common/Icon'
+import { User, Globe, Clipboard, Camera, Download, Lock } from './common/Icon'
+import { MessageSquare, Edit, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import RoleSetupModal from './RoleSetupModal'
 import EditCardModal from './EditCardModal'
@@ -148,17 +148,6 @@ function CharPanelBody({ textId, goBack }) {
 
 // ---- Left: character list + identify/distill flow ----
 
-function loadPinnedCards() {
-  try {
-    const raw = localStorage.getItem('pinnedCards')
-    return raw ? JSON.parse(raw) : []
-  } catch { return [] }
-}
-
-function savePinnedCards(ids) {
-  localStorage.setItem('pinnedCards', JSON.stringify(ids))
-}
-
 function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
@@ -177,9 +166,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const loadCards = useAppStore((s) => s.loadCards)
 
   const [distillingName, setDistillingName] = useState(null)
-  const [pinnedCards, setPinnedCards] = useState(loadPinnedCards)
-  const [sharedCards, setSharedCards] = useState(new Set())
-  const [shareConfirmTarget, setShareConfirmTarget] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [trashMode, setTrashMode] = useState(false)
   const [deletedCards, setDeletedCards] = useState([])
@@ -187,51 +173,11 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
   const [purgeConfirmTarget, setPurgeConfirmTarget] = useState(null)
   const [purgeAllConfirm, setPurgeAllConfirm] = useState(false)
   const [localError, setLocalError] = useState(null)
-  const [publishDescription, setPublishDescription] = useState('')
-  const [publishTags, setPublishTags] = useState('')
-  const [publishMessage, setPublishMessage] = useState('')
-  const [publishSending, setPublishSending] = useState(false)
-
-  const togglePin = (e, cardId) => {
-    e.stopPropagation()
-    setPinnedCards((prev) => {
-      const next = prev.includes(cardId)
-        ? prev.filter((id) => id !== cardId)
-        : [...prev, cardId]
-      savePinnedCards(next)
-      return next
-    })
-  }
-
-  const handleShareToggle = async (e, cardId) => {
-    e.stopPropagation()
-    const isPublic = sharedCards.has(cardId)
-    if (isPublic) {
-      // Unshare: target the published fork, not the draft
-      const card = cards.find(c => c.id === cardId)
-      const targetId = card?.published_id || cardId
-      try {
-        await fetchWithTimeout(`/api/market/${targetId}/visibility`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({ visibility: 'private' }),
-        })
-        setSharedCards((prev) => { const n = new Set(prev); n.delete(cardId); return n })
-      } catch (err) { console.error('Unshare failed:', err) }
-    }
-  }
-
-  // Sort: pinned first, then unpinned (stable order within groups)
-  const sortedCards = [...cards].sort((a, b) => {
-    const aPinned = pinnedCards.includes(a.id) ? 0 : 1
-    const bPinned = pinnedCards.includes(b.id) ? 0 : 1
-    return aPinned - bPinned
-  })
 
   // Deduplicate by character name — no duplicate names in the list
   const uniqueCards = (() => {
     const seen = new Set()
-    return sortedCards.filter((c) => {
+    return cards.filter((c) => {
       const d = parseCardJson(c)
       const name = d.name || c.name
       if (!name || seen.has(name)) return false
@@ -239,16 +185,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       return true
     })
   })()
-
-  useEffect(() => {
-    // Initialize sharedCards from published_id (fork exists = card is published)
-    const publicIds = cards.filter((c) => c.published_id).map((c) => c.id)
-    setSharedCards((prev) => {
-      const next = new Set(prev)
-      publicIds.forEach((id) => next.add(id))
-      return next
-    })
-  }, [cards])
 
   useEffect(() => {
     if (currentCard?.id) {
@@ -358,7 +294,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           style={{ marginLeft: 'auto', fontSize: 12 }}
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : <><Trash2 size={14} /> 回收站</>}
+          {trashMode ? <><ArrowLeft size={16} /> 返回列表</> : <><Trash2 size={14} /> 回收站</>}
         </button>
       </div>
 
@@ -419,8 +355,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
             const identity = cardData.identity || ''
             const isActive = currentCard?.id === c.id
             const textInfo = texts.find((t) => t.id === c.text_id)
-            const isShared = sharedCards.has(c.id)
-            const createdAt = c.created_at || ''
+            const isShared = !!c.published_id
             return (
               <div
                 key={c.id}
@@ -583,80 +518,6 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         )}
       </div>
 
-      {/* Share confirm modal for sidebar — portal to body */}
-      {shareConfirmTarget && createPortal(
-        <div className="modal-overlay" onClick={() => setShareConfirmTarget(null)}>
-          <div className="modal-card" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
-            <h3 className="modal-title">分享到市场</h3>
-            <div className="modal-body publish-form-body">
-              <div className="publish-field">
-                <label className="publish-label">角色描述</label>
-                <textarea
-                  className="publish-textarea"
-                  value={publishDescription}
-                  onChange={(e) => setPublishDescription(e.target.value)}
-                  placeholder="简单描述这个角色…"
-                  rows={3}
-                />
-              </div>
-              <div className="publish-field">
-                <label className="publish-label">标签（逗号分隔）</label>
-                <input
-                  className="publish-input"
-                  value={publishTags}
-                  onChange={(e) => setPublishTags(e.target.value)}
-                  placeholder="古风, 玄幻, 治愈"
-                />
-              </div>
-              <div className="publish-field">
-                <label className="publish-label">发布说明</label>
-                <textarea
-                  className="publish-textarea"
-                  value={publishMessage}
-                  onChange={(e) => setPublishMessage(e.target.value)}
-                  placeholder="这次更新了什么？"
-                  rows={2}
-                />
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button className="btn-ghost" onClick={() => setShareConfirmTarget(null)}>取消</button>
-              <button
-                className="btn-primary"
-                disabled={publishSending || !publishMessage.trim()}
-                onClick={async () => {
-                  const cid = shareConfirmTarget.id || shareConfirmTarget.card_id
-                  setPublishSending(true)
-                  try {
-                    await fetchWithTimeout(`/api/market/${cid}/publish`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                      body: JSON.stringify({
-                        market_description: publishDescription.trim(),
-                        market_tags: publishTags.trim(),
-                        publish_message: publishMessage.trim(),
-                      }),
-                    })
-                    setSharedCards((prev) => { const n = new Set(prev); n.add(cid); return n })
-                    setShareConfirmTarget(null)
-                    setPublishDescription('')
-                    setPublishTags('')
-                    setPublishMessage('')
-                  } catch (err) {
-                    console.error('Publish failed:', err)
-                  } finally {
-                    setPublishSending(false)
-                  }
-                }}
-              >
-                {publishSending ? '发布中…' : '确认发布'}
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
-
       {/* Delete confirm modal — portal to body */}
       {deleteTarget && createPortal(
         <div className="modal-overlay" onClick={() => setDeleteTarget(null)}>
@@ -700,7 +561,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
         onConfirm={async () => {
           const id = purgeConfirmTarget
           try {
-            await fetchWithTimeout(`/api/cards/${id}/purge`, {
+            await fetchWithTimeout(`/api/cards/${id}/permanent`, {
               method: 'DELETE',
               headers: { ...getAuthHeaders() },
             })
@@ -723,7 +584,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
           setPurgeAllConfirm(false)
           try {
             await Promise.all(deletedCards.map((c) =>
-              fetchWithTimeout(`/api/cards/${c.id}/purge`, {
+              fetchWithTimeout(`/api/cards/${c.id}/permanent`, {
                 method: 'DELETE',
                 headers: { ...getAuthHeaders() },
               }),
@@ -989,7 +850,7 @@ function CardDetail({ card, textId, goBack }) {
           className="btn-ghost"
           onClick={goBack}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          <ArrowLeft size={16} />
           返回文本列表
         </button>}
         <button

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { RefreshCw } from './Icon'
 
 const MIN_SCALE = 1.2
 const MAX_SCALE = 3.0
@@ -337,10 +338,7 @@ export default function BannerCropModal({ file, onConfirm, onCancel, aspect = 3 
             disabled={!ready}
             style={{ fontSize: 13, gap: 4 }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-            </svg>
+            <RefreshCw size={16} />
             旋转
           </button>
         </div>

@@ -200,10 +200,9 @@ const useAppStore = create((set, get) => ({
   setUnreadTotal: (val) => set({ unreadTotal: val }),
   refreshUnread: async () => {
     try {
-      const res = await fetchWithTimeout('/api/messages/conversations')
+      const res = await fetchWithTimeout('/api/messages/unread-count')
       const data = await res.json()
-      const total = (data.conversations || []).reduce((sum, c) => sum + (c.unread || 0), 0)
-      set({ unreadTotal: total })
+      set({ unreadTotal: data.count ?? 0 })
     } catch {
       set({ unreadTotal: 0 })
     }

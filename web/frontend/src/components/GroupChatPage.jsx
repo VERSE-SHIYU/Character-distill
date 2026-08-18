@@ -8,7 +8,7 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ConfirmModal from './common/ConfirmModal'
-import { Check, Theater } from './common/Icon'
+import { Check, Theater, Users, Trash2, ChevronDown, Square, Play, Clock, MoreHorizontal, Edit, Upload, Filter, Close, AlertTriangle } from './common/Icon'
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
@@ -639,6 +639,7 @@ export default function GroupChatPage() {
     if (autoRunning) stopAutoConversation()
 
     const sendGroupId = currentGroup.id
+    const tempId = `optimistic-${Date.now()}`
     setSending(true)
     setError(null)
     const personaSpeaker = (currentGroup?.user_persona_type === 'character' && currentGroup?.user_persona_name)
@@ -648,7 +649,7 @@ export default function GroupChatPage() {
         : null
     const speaker = personaSpeaker || displayName(authUser) || '我'
     setMessages(prev => [...prev, {
-      id: `optimistic-${Date.now()}`,
+      id: tempId,
       role: 'user',
       speaker,
       content,
@@ -674,25 +675,20 @@ export default function GroupChatPage() {
         fetchAffinities(sendGroupId)
       },
       (err) => {
-        // onError
+        // onError — mark this send's optimistic message as failed so the
+        // draft isn't silently lost; retry restores it into the input bar.
         if (currentGroupRef.current !== sendGroupId) return
         setError(err.message)
         setSending(false)
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
       },
       null, // onStatus
       (payload) => {
         // onEvent: user/reply SSE events
         if (currentGroupRef.current !== sendGroupId) return
         if (payload.type === 'user') {
-          // Replace optimistic user message ID with real one from server
-          setMessages(prev => {
-            const msgs = [...prev]
-            const last = msgs[msgs.length - 1]
-            if (last && last.role === 'user' && last.id?.startsWith('optimistic-')) {
-              msgs[msgs.length - 1] = { ...last, id: payload.msg_id }
-            }
-            return msgs
-          })
+          // Replace this optimistic user message ID with the real one from server
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: payload.msg_id } : m))
         } else if (payload.type === 'reply') {
           // Append character reply as it comes in
           const role = payload.role || 'assistant'
@@ -712,6 +708,14 @@ export default function GroupChatPage() {
 
   function clearTyping(msgId) {
     setMessages(prev => prev.map(x => x.id === msgId ? { ...x, _typing: false } : x))
+  }
+
+  // A failed send's draft is restored into the composer (and the failed
+  // placeholder removed) so the user can review/edit before retrying.
+  function restoreDraftFromFailed(failedMsg) {
+    setMessageText(failedMsg.content)
+    setMessages(prev => prev.filter(m => m.id !== failedMsg.id))
+    inputBarRef.current?.focus()
   }
 
   async function reactToMessage(messageId, emoji) {
@@ -853,12 +857,7 @@ export default function GroupChatPage() {
           {!loading && groups.length === 0 && (
             <div className="messages-empty-state">
               <span className="messages-empty-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" width="48" height="48">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 00-3-3.87" />
-                  <path d="M16 3.13a4 4 0 010 7.75" />
-                </svg>
+                <Users size={48} />
               </span>
               <p className="messages-empty-title">还没有群聊</p>
               <p className="messages-empty-desc">创建群聊开始多角色导演模式</p>
@@ -900,10 +899,7 @@ export default function GroupChatPage() {
                   onClick={(e) => { e.stopPropagation(); setDeleteGroupId(g.id) }}
                   title="删除群聊"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                  </svg>
+                  <Trash2 size={14} />
                 </button>
               </div>
             )
@@ -966,9 +962,7 @@ export default function GroupChatPage() {
                         onClick={() => setDropOpen(!dropOpen)}
                       >
                         <span>{rounds}轮</span>
-                        <svg className="drop-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                          <path d="M3 5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
+                        <ChevronDown size={12} className="drop-chevron" />
                       </button>
                       {dropOpen && (
                         <div className="group-round-menu">
@@ -998,9 +992,9 @@ export default function GroupChatPage() {
                       title={autoMode ? '停止自动对话' : '自动对话'}
                     >
                       {autoMode ? (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        <Square size={16} />
                       ) : (
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" opacity="0.9"/></svg>
+                        <Play size={16} />
                       )}
                     </button>
                     <button
@@ -1009,10 +1003,7 @@ export default function GroupChatPage() {
                       onClick={() => setHistoryOpen(prev => !prev)}
                       title={historyOpen ? '收起历史' : '历史记录'}
                     >
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10" />
-                        <polyline points="12 6 12 12 16 14" />
-                      </svg>
+                      <Clock size={22} />
                     </button>
                     <div className="group-more-menu" ref={moreMenuRef}>
                       <button
@@ -1021,24 +1012,20 @@ export default function GroupChatPage() {
                         onClick={() => setMoreMenuOpen(prev => !prev)}
                         title="更多"
                       >
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="1" />
-                          <circle cx="19" cy="12" r="1" />
-                          <circle cx="5" cy="12" r="1" />
-                        </svg>
+                        <MoreHorizontal size={22} />
                       </button>
                       {moreMenuOpen && (
                         <div className="group-more-menu-dropdown">
                           <button type="button" className="group-more-menu-item" onClick={() => { setMoreMenuOpen(false); startEditing() }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            <Edit size={16} />
                             重命名
                           </button>
                           <button type="button" className="group-more-menu-item" onClick={() => { setMoreMenuOpen(false); handleExport() }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            <Upload size={16} />
                             导出对话
                           </button>
                           <button type="button" className="group-more-menu-item group-more-menu-item-danger" onClick={() => { setMoreMenuOpen(false); setDeleteGroupId(currentGroup.id) }}>
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                            <Trash2 size={16} />
                             删除群聊
                           </button>
                         </div>
@@ -1051,7 +1038,7 @@ export default function GroupChatPage() {
               {/* Filter bar */}
               <div className="group-filter-bar">
                 <button type="button" className={`group-filter-toggle${showFilter ? ' active' : ''}`} onClick={() => setShowFilter(!showFilter)}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                  <Filter size={16} />
                   筛选
                   {(filterDate || filterSpeaker) && <span className="group-filter-active-dot" />}
                 </button>
@@ -1119,6 +1106,12 @@ export default function GroupChatPage() {
                               side="right"
                               avatar={<Avatar name={personaSpeaker || displayName(authUser) || '我'} size={isMobile ? 40 : 72} src={groupUserAvatar || userAvatar} onClick={() => userAvatarInputRef.current?.click()} />}
                               name={personaSpeaker || undefined}
+                              status={m._status === 'failed' ? (
+                                <button type="button" className="messages-status failed"
+                                  onClick={() => restoreDraftFromFailed(m)} title="发送失败，点击恢复草稿重试">
+                                  <AlertTriangle size={14} />
+                                </button>
+                              ) : undefined}
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                               <span className="messages-msg-text">{m.content}</span>
@@ -1249,7 +1242,7 @@ export default function GroupChatPage() {
                       >日期</button>
                       <div className="group-right-tab-spacer" />
                       <button type="button" className="group-right-tab-btn" onClick={() => setHistoryOpen(false)} title="关闭">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        <Close size={16} />
                       </button>
                     </div>
 
@@ -1257,7 +1250,7 @@ export default function GroupChatPage() {
                     {selectedCharCardInfo && (
                       <div className="group-char-info-overlay">
                         <button type="button" className="group-char-info-close" onClick={() => setSelectedCharCardInfo(null)}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          <Close size={16} />
                         </button>
                         <Avatar name={selectedCharCardInfo.name} size={56} src={selectedCharCardInfo.avatar_data} />
                         <div className="group-char-info-name">{selectedCharCardInfo.name}</div>
@@ -1311,7 +1304,7 @@ export default function GroupChatPage() {
                                 <span className="group-history-filter-chip">
                                   {card?.name || historyFilterMember}
                                   <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterMember('')}>
-                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                    <Close size={10} />
                                   </button>
                                 </span>
                               )
@@ -1320,7 +1313,7 @@ export default function GroupChatPage() {
                               <span className="group-history-filter-chip">
                                 {historyFilterDate}
                                 <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterDate('')}>
-                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                                  <Close size={10} />
                                 </button>
                               </span>
                             )}
@@ -1390,7 +1383,7 @@ export default function GroupChatPage() {
                                     setRightTab('history')
                                   }}
                                 >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                  <Clock size={14} />
                                 </button>
                               </div>
                             )

@@ -1,4 +1,31 @@
 const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+const pad2 = (n) => String(n).padStart(2, '0')
+
+// Accepts ISO 8601, "YYYY-MM-DD HH:mm" or "YYYY-MM-DDTHH:mm[:ss]" (no TZ) → Date, else null.
+function parseISO(ts) {
+  if (!ts) return null
+  try {
+    let s = ts
+    if (!s.includes('T')) s = s.replace(' ', 'T')
+    if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? null : d
+  } catch {
+    return null
+  }
+}
+
+export function formatShortTime(ts) {
+  const d = parseISO(ts)
+  if (!d) return ts || '—'
+  return `${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+export function formatDateTime(ts) {
+  const d = parseISO(ts)
+  if (!d) return ts || '—'
+  return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
 
 export function formatChatTime(ts) {
   if (!ts) return ''

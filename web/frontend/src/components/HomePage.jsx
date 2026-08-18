@@ -7,7 +7,7 @@ import { parseCardJson } from '../utils/card'
 import { avatarGradient } from '../utils/avatarColor'
 import { SkeletonCard } from './common/Skeleton'
 import GlobalSearchBox from './common/GlobalSearchBox'
-import { Tag, Heart, Book, Sparkles, MessageSquare } from './common/Icon'
+import { Tag, Heart, Book, Sparkles, MessageSquare, Plus, AlertCircle } from './common/Icon'
 import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import useIsMobile from '../hooks/useIsMobile'
@@ -434,48 +434,48 @@ export default function HomePage() {
                 <div className="discover-empty-stage" aria-hidden="true">
                   <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
                     {/* Open book */}
-                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--accent)" opacity="0.15" />
-                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--accent)" opacity="0.15" />
-                    <path d="M116 160L120 168L124 160Z" fill="var(--accent)" opacity="0.35" />
-                    <path d="M117 163L58 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
-                    <path d="M118 166L56 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
-                    <path d="M123 163L182 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
-                    <path d="M122 166L184 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--text-dim)" opacity="0.15" />
+                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--text-dim)" opacity="0.15" />
+                    <path d="M116 160L120 168L124 160Z" fill="var(--text-dim)" opacity="0.35" />
+                    <path d="M117 163L58 184" stroke="var(--text-dim)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M118 166L56 187" stroke="var(--text-dim)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M123 163L182 184" stroke="var(--text-dim)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M122 166L184 187" stroke="var(--text-dim)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
                     {/* Character rising from book */}
                     <defs>
                       <linearGradient id="fig-fade" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.7" />
-                        <stop offset="50%" stopColor="var(--accent)" stopOpacity="0.35" />
-                        <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                        <stop offset="0%" stopColor="var(--text-dim)" stopOpacity="0.7" />
+                        <stop offset="50%" stopColor="var(--text-dim)" stopOpacity="0.35" />
+                        <stop offset="100%" stopColor="var(--text-dim)" stopOpacity="0" />
                       </linearGradient>
                     </defs>
-                    <circle cx="118" cy="50" r="11" fill="var(--accent)" opacity="0.7" />
+                    <circle cx="118" cy="50" r="11" fill="var(--text-dim)" opacity="0.7" />
                     <path d="M107 61L104 140Q118 152 132 140L129 61Z" fill="url(#fig-fade)" />
-                    <path d="M107 75Q90 82 82 98" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
-                    <path d="M129 73Q148 78 155 88" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
-                    <path d="M112 135Q100 150 92 162" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
-                    <path d="M124 135Q128 148 130 158" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
+                    <path d="M107 75Q90 82 82 98" stroke="var(--text-dim)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M129 73Q148 78 155 88" stroke="var(--text-dim)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M112 135Q100 150 92 162" stroke="var(--text-dim)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
+                    <path d="M124 135Q128 148 130 158" stroke="var(--text-dim)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
                     {/* Stars */}
-                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--accent)" opacity="0.5" />
-                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--accent)" opacity="0.5" />
-                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--accent)" opacity="0.4" />
+                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--text-dim)" opacity="0.5" />
+                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--text-dim)" opacity="0.5" />
+                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--text-dim)" opacity="0.4" />
                     {/* Floating paper fragments */}
-                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--accent)" opacity="0.35" />
-                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--accent)" opacity="0.4" />
-                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--accent)" opacity="0.3" />
-                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--accent)" opacity="0.25" />
+                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--text-dim)" opacity="0.35" />
+                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--text-dim)" opacity="0.4" />
+                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--text-dim)" opacity="0.3" />
+                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--text-dim)" opacity="0.25" />
                   </svg>
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
                 <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
                 <button className="discover-empty-cta" onClick={() => navigateTo('text')}>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
+                  <Plus size={16} />
                   开始创作
                 </button>
               </div>
             ) : discoverCards.length === 0 ? (
               <div className="discover-empty-sm">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                <AlertCircle size={20} stroke="var(--text-dim)" strokeWidth="1.5" />
                 <span>该分类暂无推荐角色</span>
               </div>
             ) : validDiscoverCards.length === 0 && selectedTag === '' ? (
@@ -483,48 +483,48 @@ export default function HomePage() {
                 <div className="discover-empty-stage" aria-hidden="true">
                   <svg className="discover-empty-svg" viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg">
                     {/* Open book */}
-                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--accent)" opacity="0.15" />
-                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--accent)" opacity="0.15" />
-                    <path d="M116 160L120 168L124 160Z" fill="var(--accent)" opacity="0.35" />
-                    <path d="M117 163L58 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
-                    <path d="M118 166L56 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
-                    <path d="M123 163L182 184" stroke="var(--accent)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
-                    <path d="M122 166L184 187" stroke="var(--accent)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M120 168L55 190Q48 188 50 178L116 160Z" fill="var(--text-dim)" opacity="0.15" />
+                    <path d="M120 168L185 190Q192 188 190 178L124 160Z" fill="var(--text-dim)" opacity="0.15" />
+                    <path d="M116 160L120 168L124 160Z" fill="var(--text-dim)" opacity="0.35" />
+                    <path d="M117 163L58 184" stroke="var(--text-dim)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M118 166L56 187" stroke="var(--text-dim)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
+                    <path d="M123 163L182 184" stroke="var(--text-dim)" strokeWidth="1.5" opacity="0.2" strokeLinecap="round" />
+                    <path d="M122 166L184 187" stroke="var(--text-dim)" strokeWidth="1" opacity="0.12" strokeLinecap="round" />
                     {/* Character rising from book */}
                     <defs>
                       <linearGradient id="fig-fade" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.7" />
-                        <stop offset="50%" stopColor="var(--accent)" stopOpacity="0.35" />
-                        <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+                        <stop offset="0%" stopColor="var(--text-dim)" stopOpacity="0.7" />
+                        <stop offset="50%" stopColor="var(--text-dim)" stopOpacity="0.35" />
+                        <stop offset="100%" stopColor="var(--text-dim)" stopOpacity="0" />
                       </linearGradient>
                     </defs>
-                    <circle cx="118" cy="50" r="11" fill="var(--accent)" opacity="0.7" />
+                    <circle cx="118" cy="50" r="11" fill="var(--text-dim)" opacity="0.7" />
                     <path d="M107 61L104 140Q118 152 132 140L129 61Z" fill="url(#fig-fade)" />
-                    <path d="M107 75Q90 82 82 98" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
-                    <path d="M129 73Q148 78 155 88" stroke="var(--accent)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
-                    <path d="M112 135Q100 150 92 162" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
-                    <path d="M124 135Q128 148 130 158" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
+                    <path d="M107 75Q90 82 82 98" stroke="var(--text-dim)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M129 73Q148 78 155 88" stroke="var(--text-dim)" strokeWidth="4.5" strokeLinecap="round" fill="none" opacity="0.55" />
+                    <path d="M112 135Q100 150 92 162" stroke="var(--text-dim)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.45" />
+                    <path d="M124 135Q128 148 130 158" stroke="var(--text-dim)" strokeWidth="4" strokeLinecap="round" fill="none" opacity="0.35" />
                     {/* Stars */}
-                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--accent)" opacity="0.5" />
-                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--accent)" opacity="0.5" />
-                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--accent)" opacity="0.4" />
+                    <path d="M195 35l2.5 7 7 2.5-7 2.5-2.5 7-2.5-7-7-2.5 7-2.5z" fill="var(--text-dim)" opacity="0.5" />
+                    <path d="M52 70l2 5.5 5.5 2-5.5 2-2 5.5-2-5.5-5.5-2 5.5-2z" fill="var(--text-dim)" opacity="0.5" />
+                    <path d="M80 28l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="var(--text-dim)" opacity="0.4" />
                     {/* Floating paper fragments */}
-                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--accent)" opacity="0.35" />
-                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--accent)" opacity="0.4" />
-                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--accent)" opacity="0.3" />
-                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--accent)" opacity="0.25" />
+                    <path d="M66 130l8 2-2 7-8-2z" fill="var(--text-dim)" opacity="0.35" />
+                    <path d="M162 118l6-1 2 5-6 1z" fill="var(--text-dim)" opacity="0.4" />
+                    <path d="M60 100l5 1-1 5-5-1z" fill="var(--text-dim)" opacity="0.3" />
+                    <path d="M170 150l5 2-1 4-5-2z" fill="var(--text-dim)" opacity="0.25" />
                   </svg>
                 </div>
                 <h3 className="discover-empty-title">舞台已就绪，等你的角色登场</h3>
                 <p className="discover-empty-desc">上传小说或聊天记录，AI 会从中提取出角色卡，成为市场的第一位创作者</p>
                 <button className="discover-empty-cta" onClick={() => navigateTo('text')}>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v10M3 8h10"/></svg>
+                  <Plus size={16} />
                   开始创作
                 </button>
               </div>
             ) : validDiscoverCards.length === 0 ? (
               <div className="discover-empty-sm">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+                <AlertCircle size={20} stroke="var(--text-dim)" strokeWidth="1.5" />
                 <span>该分类暂无推荐角色</span>
               </div>
             ) : (
@@ -542,10 +542,7 @@ export default function HomePage() {
                     >
                       <div className="market-card-v2-cover">
                         {c.avatar_data ? (
-                          <>
-                            <img className="market-card-v2-cover-blur" src={c.avatar_data} alt="" />
-                            <img className="market-card-v2-cover-img" src={c.avatar_data} alt={c.name || '角色'} />
-                          </>
+                          <img className="market-card-v2-cover-img" src={c.avatar_data} alt={c.name || '角色'} />
                         ) : (
                           <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(c.name || '?') }}>
                             <span className="market-card-v2-fallback-letter">

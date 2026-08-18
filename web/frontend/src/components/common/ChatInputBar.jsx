@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import { Mic } from './Icon'
+import { Mic, MessageSquare, Close, Smile } from './Icon'
 import { useAutoResizeTextarea } from '../../utils/useAutoResizeTextarea'
 import { useMention } from '../../utils/useMention'
 import useAppStore from '../../store/useAppStore'
@@ -53,12 +53,12 @@ const ChatInputBar = forwardRef(function ChatInputBar(props, ref) {
       {replyTo && !isRecording && (
         <div className="reply-preview-bar">
           <div className="reply-preview-info">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" /></svg>
+            <MessageSquare size={14} />
             <span className="reply-preview-label">{replyTo.speaker ? `回复 ${replyTo.speaker}:` : '回复:'}</span>
             <span className="reply-preview-text">{replyTo.preview}</span>
           </div>
           <button type="button" className="reply-preview-close" onClick={onCancelReply}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+            <Close size={16} />
           </button>
         </div>
       )}
@@ -254,7 +254,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
         onClick={() => setShowEmoji((v) => !v)}
         style={{ fontSize: 18, lineHeight: 1 }}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></svg>
+        <Smile size={18} />
       </button>
 
       <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>

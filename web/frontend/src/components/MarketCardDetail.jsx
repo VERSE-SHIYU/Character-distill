@@ -5,7 +5,7 @@ import Avatar from './common/Avatar'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag, Globe, Camera } from './common/Icon'
+import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag, Globe, Camera, Share, Sparkles, Clock, Lightbulb, Lock } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
@@ -246,6 +246,7 @@ export default function MarketCardDetail() {
   }
 
   const handleFork = () => {
+    if (card?.visibility !== 'public') return
     if (currentTextId) {
       setShowForkChoice(true)
     } else {
@@ -503,11 +504,7 @@ export default function MarketCardDetail() {
           actions={
             <>
               <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
-                  <polyline points="16 6 12 2 8 6" />
-                  <line x1="12" y1="2" x2="12" y2="15" />
-                </svg>
+                <Share size={16} />
               </button>
               {card.user_id !== authUser?.id && authUser?.id && (
                 <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
@@ -520,7 +517,7 @@ export default function MarketCardDetail() {
                 </button>
               )}
               {(authUser?.is_admin || card.user_id === authUser?.id) && (
-                <button type="button" className="btn-icon" onClick={() => setDeleteConfirmId(card.id)} title="删除">
+                <button type="button" className="btn-icon danger" onClick={() => setDeleteConfirmId(card.id)} title="删除">
                   <Trash2 size={16} />
                 </button>
               )}
@@ -560,7 +557,6 @@ export default function MarketCardDetail() {
           <aside className="market-detail-sidebar">
             {/* Hero */}
             <div className="market-detail-hero">
-              <div className="stage-glow" />
               {card.user_id === authUser?.id ? (
                 <>
                   <button type="button" className="card-avatar-btn avatar-shape" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
@@ -633,9 +629,15 @@ export default function MarketCardDetail() {
               )}
               {isMarketCard && <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>}
             </div>
-            <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
-              {forking ? '添加中…' : '使用角色'}
-            </button>
+            {isMarketCard ? (
+              <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
+                {forking ? '添加中…' : '使用角色'}
+              </button>
+            ) : (
+              <div className="market-detail-private-note">
+                <Lock size={14} /> 仅作者可见，暂未公开
+              </div>
+            )}
           </aside>
 
           {/* ── Right main: property sections grid + tabs ── */}
@@ -752,7 +754,7 @@ export default function MarketCardDetail() {
                     <div key={c.id} className="market-detail-comment-item">
                       {c.is_ai_reply ? (
                         <div className="market-detail-ai-reply">
-                          <span className="ai-reply-label">🤖 由 {c.ai_version_label} 生成</span>
+                          <span className="ai-reply-label"><Sparkles size={12} /> 由 {c.ai_version_label} 生成</span>
                           <p className="market-detail-comment-text">{c.content}</p>
                         </div>
                       ) : (<>
@@ -781,7 +783,7 @@ export default function MarketCardDetail() {
                     </div>
                   ))}
                 </div>
-                {atReplying && <div className="market-detail-at-loading">⏳ AI 正在回应中…</div>}
+                {atReplying && <div className="market-detail-at-loading"><Clock size={14} /> AI 正在回应中…</div>}
                 </>)}
             </div>}
 
@@ -883,7 +885,7 @@ export default function MarketCardDetail() {
           >@</button>
           {showAtPicker && (
             <div className="market-detail-at-picker">
-              <div className="market-detail-at-tip">💡 想问他其他看法？把那些评论内容转述给他即可</div>
+              <div className="market-detail-at-tip"><Lightbulb size={14} /> 想问他其他看法？把那些评论内容转述给他即可</div>
               {atVersions.length === 0
                 ? <div className="market-detail-at-empty">本书暂无其他公开版本</div>
                 : atVersions.map(v => (
@@ -938,7 +940,7 @@ export default function MarketCardDetail() {
 
       {/* Fork choice modal */}
       {showForkChoice && (
-        <div className="modal-overlay" onClick={() => setShowForkChoice(false)}>
+        <div className="modal-overlay modal-sheet" onClick={() => setShowForkChoice(false)}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">选择使用方式</h3>
             <div className="modal-body">
@@ -996,7 +998,7 @@ export default function MarketCardDetail() {
 
       {/* Edit version modal */}
       {editVersionId && (
-        <div className="modal-overlay" onClick={() => { setEditVersionId(null); setEditVersionMessage('') }}>
+        <div className="modal-overlay modal-sheet" onClick={() => { setEditVersionId(null); setEditVersionMessage('') }}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">编辑版本说明</h3>
             <div className="modal-body">
@@ -1019,7 +1021,7 @@ export default function MarketCardDetail() {
 
       {/* Report modal */}
       {reportCommentId && (
-        <div className="modal-overlay" onClick={() => setReportCommentId(null)}>
+        <div className="modal-overlay modal-sheet" onClick={() => setReportCommentId(null)}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">举报评论</h3>
             <div className="modal-body">
@@ -1051,7 +1053,7 @@ export default function MarketCardDetail() {
 
       {/* Report card modal */}
       {showReportCardModal && (
-        <div className="modal-overlay" onClick={() => { setShowReportCardModal(false); setReportCardReason(''); setReportCardError('') }}>
+        <div className="modal-overlay modal-sheet" onClick={() => { setShowReportCardModal(false); setReportCardReason(''); setReportCardError('') }}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">举报角色</h3>
             <div className="modal-body">

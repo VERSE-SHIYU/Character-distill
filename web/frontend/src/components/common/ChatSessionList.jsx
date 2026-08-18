@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import useAppStore from '../../store/useAppStore'
 import Avatar from './Avatar'
 import { formatChatTime } from '../../utils/time'
+import { Search } from './Icon'
 
 function previewText(text, max = 72) {
   if (!text) return '暂无消息'
@@ -56,7 +57,7 @@ export default function ChatSessionList() {
           </button>
         </div>
         <div className="tl-search">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+          <Search size={14} />
           <input placeholder="搜索会话" value={q} onChange={(e) => setQ(e.target.value)} aria-label="搜索会话" />
         </div>
       </div>

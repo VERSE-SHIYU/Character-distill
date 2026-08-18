@@ -11,7 +11,7 @@ import { SkeletonRow } from './common/Skeleton'
 import { loadCardAvatar } from '../store/db'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-import { Book, Clipboard, Trash2 } from './common/Icon'
+import { Book, Clipboard, Trash2, ArrowLeft } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 
@@ -216,11 +216,9 @@ export default function HistoryPanel({ initialTrash = false }) {
           setItems(newItems)
         }
         const total = data.total ?? 0
-        if (append) {
-          setHasMore(newItems.length === PAGE_SIZE && (items.length + newItems.length) < total)
-        } else {
-          setHasMore(newItems.length === PAGE_SIZE && newItems.length < total)
-        }
+        // Derive from the fetched page, not captured `items` (stale in the
+        // append closure) — avoids a redundant request after the last full page.
+        setHasMore(newItems.length === PAGE_SIZE && page * PAGE_SIZE < total)
       }
     } catch (err) {
       console.error('[HistoryPanel] load failed:', err)
@@ -551,7 +549,7 @@ export default function HistoryPanel({ initialTrash = false }) {
           className="btn-secondary btn-sm"
           onClick={() => switchTrashMode(!trashMode)}
         >
-          {trashMode ? <><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7-7-7 7 7 7"/></svg> 返回列表</> : '回收站'}
+          {trashMode ? <><ArrowLeft size={16} /> 返回列表</> : '回收站'}
         </button>
 
         {!trashMode && (

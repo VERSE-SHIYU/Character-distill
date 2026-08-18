@@ -328,6 +328,18 @@ export const adminAPI = {
     { method: 'POST' },
   ).then(r => r.json()),
 
+  listCardReports: () => fetchWithTimeout('/api/admin/card-reports').then(r => r.json()),
+
+  resolveCardReport: (cardId) => fetchWithTimeout(
+    `/api/admin/card-reports/${cardId}/resolve`,
+    { method: 'POST' },
+  ).then(r => r.json()),
+
+  takedownCardReport: (cardId) => fetchWithTimeout(
+    `/api/admin/card-reports/${cardId}/takedown`,
+    { method: 'POST' },
+  ).then(r => r.json()),
+
   // ---- P1: Content Moderation ----
   listCards: () => fetchWithTimeout('/api/admin/cards').then(r => r.json()),
   takedownCard: (cardId) => fetchWithTimeout(`/api/admin/cards/${cardId}/takedown`, { method: 'POST' }).then(r => r.json()),

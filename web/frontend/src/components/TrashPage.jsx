@@ -8,21 +8,8 @@ import ConfirmModal from './common/ConfirmModal'
 import { parseCardJson } from '../utils/card'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
-
-function formatTime(iso) {
-  if (!iso) return '—'
-  try {
-    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
-    return new Date(s).toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
-}
+import { Book } from './common/Icon'
+import { formatShortTime } from '../utils/time'
 
 export default function TrashPage() {
   const popView = useAppStore((s) => s.popView)
@@ -84,7 +71,7 @@ export default function TrashPage() {
     setPurgeId(null)
     if (!id) return
     try {
-      await fetchWithTimeout(`/api/cards/${id}/purge`, { method: 'DELETE' })
+      await fetchWithTimeout(`/api/cards/${id}/permanent`, { method: 'DELETE' })
       setCards((prev) => prev.filter((c) => c.id !== id))
     } catch { /* ignore */ }
   }
@@ -296,7 +283,7 @@ export default function TrashPage() {
                     <div className="history-item-body">
                       <div className="history-item-head">
                         <span className="history-item-name">{g.name || '未命名群聊'}</span>
-                        <span className="history-item-time">{formatTime(g.deleted_at)}</span>
+                        <span className="history-item-time">{formatShortTime(g.deleted_at)}</span>
                       </div>
                       <p className="history-item-preview">
                         {Array.isArray(g.card_ids) ? g.card_ids.length : 0} 个角色
@@ -357,11 +344,11 @@ export default function TrashPage() {
                     </button>
                   </div>
                   <div className="history-item" style={{ cursor: 'default' }}>
-                    <div className="history-item-text-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg></div>
+                    <div className="history-item-text-icon"><Book size={20} /></div>
                     <div className="history-item-body">
                       <div className="history-item-head">
                         <span className="history-item-name">{t.title || t.filename || '未命名'}</span>
-                        <span className="history-item-time">{formatTime(t.deleted_at)}</span>
+                        <span className="history-item-time">{formatShortTime(t.deleted_at)}</span>
                       </div>
                       <p className="history-item-preview">{t.char_count?.toLocaleString() || '0'} 字</p>
                     </div>

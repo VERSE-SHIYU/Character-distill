@@ -10,6 +10,7 @@ import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
 import EditCardModal from './EditCardModal'
 import useSmoothProgress from '../hooks/useSmoothProgress'
+import { formatDateTime } from '../utils/time'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
 const MAX_BYTES = 100 * 1024 * 1024
@@ -56,22 +57,6 @@ function charCountClass(n) {
   if (n <= 500000) return 'chars-blue'
   if (n <= 1000000) return 'chars-orange'
   return 'chars-red'
-}
-
-function formatTime(iso) {
-  if (!iso) return '—'
-  try {
-    const s = iso.includes('T') && !iso.endsWith('Z') && !iso.includes('+') ? iso + 'Z' : iso
-    return new Date(s).toLocaleString('zh-CN', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return iso
-  }
 }
 
 export default function TextPanel() {
@@ -301,7 +286,7 @@ export default function TextPanel() {
           <div className="creation-text-grid">
             {texts.map((t) => {
               const ext = extOf(t.filename || '')
-              const iconColor = ext === '.txt' ? '#4a90d9' : ext === '.md' ? '#4caf50' : 'var(--text-dim)'
+              const iconColor = ext === '.txt' || ext === '.md' ? 'var(--accent)' : 'var(--text-dim)'
               const statusClass = cardCounts[t.id] > 0 ? 'done' : 'pending'
               const statusLabel = cardCounts[t.id] > 0 ? '已完成' : '待蒸馏'
               return (
@@ -679,7 +664,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                     <div className="creation-char-identity">{identity}</div>
                     <div className="creation-char-footer">
                       {sourceText && <span className="creation-char-source" title={sourceText}>{sourceText.length > 10 ? sourceText.slice(0, 10) + '…' : sourceText}</span>}
-                      {createdAt && <span className="creation-char-time">{formatTime(createdAt)}</span>}
+                      {createdAt && <span className="creation-char-time">{formatDateTime(createdAt)}</span>}
                       {hasVersions && (
                         <span className="creation-char-version-badge" onClick={(e) => { e.stopPropagation(); setExpandedGroups(prev => ({ ...prev, [name]: !isExpanded })) }}>
                           {isExpanded ? '收起' : `共${group.versions.length}个版本`}
@@ -748,7 +733,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                             <div className="creation-char-identity">{vIdentity}</div>
                             <div className="creation-char-footer">
                               {vSourceText && <span className="creation-char-source" title={vSourceText}>{vSourceText.length > 10 ? vSourceText.slice(0, 10) + '…' : vSourceText}</span>}
-                              {vCreatedAt && <span className="creation-char-time">{formatTime(vCreatedAt)}</span>}
+                              {vCreatedAt && <span className="creation-char-time">{formatDateTime(vCreatedAt)}</span>}
                             </div>
                           </div>
                           <div className="creation-char-menu-wrap">

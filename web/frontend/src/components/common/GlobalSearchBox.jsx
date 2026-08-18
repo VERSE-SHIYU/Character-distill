@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import useAppStore from '../../store/useAppStore'
 import { globalSearch } from '../../api/client'
 import Avatar from './Avatar'
-import { Book } from './Icon'
+import { Book, Search } from './Icon'
 import { displayName } from '../../utils/displayName'
 
 export default function GlobalSearchBox({ className = '' }) {
@@ -59,9 +59,7 @@ export default function GlobalSearchBox({ className = '' }) {
   return (
     <div className={`sidebar-search-wrap${className ? ` ${className}` : ''}`} ref={searchRef}>
       <div className="sidebar-search-box">
-        <svg className="sidebar-search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
+        <Search size={16} className="sidebar-search-icon" />
         <input
           type="text"
           className="sidebar-search-input"

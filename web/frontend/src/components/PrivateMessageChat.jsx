@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
@@ -9,6 +9,7 @@ import Avatar from './common/Avatar'
 import { AlertTriangle, Clock, Wifi } from './common/Icon'
 import ChatBubble from './common/ChatBubble'
 import { displayName } from '../utils/displayName'
+import { mergeMessages } from '../utils/mergeMessages'
 import MessageReactions from './common/MessageReactions'
 import ChatInputBar from './common/ChatInputBar'
 import useIsMobile from '../hooks/useIsMobile'
@@ -29,6 +30,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   const listRef = useRef(null)
   const messagesEndRef = useRef(null)
+  const prependAnchor = useRef(null) // scroll anchor recorded before loading older page
   const autoSendRef = useRef(false)
   const [otherAvatar, setOtherAvatar] = useState(null)
   const [otherOnline, setOtherOnline] = useState(null) // null=loading, true, false
@@ -60,6 +62,22 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
       setLoading(false)
     }
   }, [otherUserId])
+
+  // Merge poll results into local state: keep optimistic (temp / _status) and
+  // older loaded pages, refresh server copy by id, preserve oldest→newest order.
+  const mergePollMessages = useCallback((serverMsgs) => {
+    setMessages((prev) => mergeMessages(prev, serverMsgs))
+  }, [])
+
+  // Poll only refreshes the newest page without touching pagination state
+  const pollNewMessages = useCallback(async () => {
+    if (!otherUserId) return
+    try {
+      const res = await fetchWithTimeout(`/api/messages/with/${otherUserId}?page=1&page_size=${PAGE_SIZE}`)
+      const data = await res.json()
+      mergePollMessages(data.messages || [])
+    } catch {}
+  }, [otherUserId, mergePollMessages])
 
   // Fetch reactions for the current conversation
   const fetchReactions = useCallback(async () => {
@@ -145,19 +163,30 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     return () => clearInterval(timer)
   }, [otherUserId, fetchOnlineStatus])
 
-  // Poll for new messages
+  // Poll for new messages (merge, never clobber optimistic or older pages)
   useEffect(() => {
     if (!otherUserId) return
     const timer = setInterval(() => {
-      loadMessages(1)
+      pollNewMessages()
       fetchReactions()
       markRead()
     }, POLL_INTERVAL)
     return () => clearInterval(timer)
-  }, [otherUserId, loadMessages, fetchReactions, markRead])
+  }, [otherUserId, pollNewMessages, fetchReactions, markRead])
 
   // Auto-scroll to bottom on new messages
   const { handleScroll } = useAutoScroll(listRef, messagesEndRef, [messages])
+
+  // Keep the viewport pinned when an older page is prepended above.
+  useLayoutEffect(() => {
+    const anchor = prependAnchor.current
+    if (!anchor) return
+    const el = listRef.current
+    if (!el) return
+    const delta = el.scrollHeight - anchor.height
+    if (delta > 0) el.scrollTop = anchor.scrollTop + delta
+    prependAnchor.current = null
+  }, [messages])
 
   // Network status
   useEffect(() => {
@@ -250,9 +279,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   }
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      loadMessages(page + 1, true)
-    }
+    if (loading || !hasMore) return
+    const el = listRef.current
+    if (el) prependAnchor.current = { height: el.scrollHeight, scrollTop: el.scrollTop }
+    loadMessages(page + 1, true)
   }
 
   return (
@@ -284,10 +314,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
             onClick={() => setHistoryOpen(v => !v)}
             title="历史记录"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
+            <Clock size={20} />
           </button>
         </div>
       </div>
@@ -334,9 +361,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                             onClick={() => handleResend(msg)} title="发送失败，点击重试"><AlertTriangle size={14} /></button>
                         ) : msg._status === 'sending' ? (
                           <span className="messages-status sending" title="发送中"><Clock size={12} /></span>
-                        ) : (
+                        ) : msg._status === 'queued' ? (
                           <span className="messages-status queued" title="等待网络恢复"><Wifi size={12} /></span>
-                        )
+                        ) : undefined
                       ) : undefined}
                     >
                       <span className="messages-msg-text">{msg.content}</span>

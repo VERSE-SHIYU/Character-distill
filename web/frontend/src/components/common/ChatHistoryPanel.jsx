@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatChatTime } from '../../utils/time'
+import { ChevronLeft, ChevronRight, ChevronDown, Search, Close } from './Icon'
 import Avatar from './Avatar'
 
 // ── Calendar picker (also exported for external tab use) ──
@@ -99,7 +100,7 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
     <div className="calendar-picker">
       <div className="cal-nav">
         <button type="button" className="cal-nav-btn" onClick={handlePrevMonth}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <ChevronLeft size={14} />
         </button>
         <div className="cal-nav-center">
           <div className="cal-nav-pills">
@@ -109,7 +110,7 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
               onClick={() => setOpenPicker(openPicker === 'year' ? null : 'year')}
             >
               {viewYear}年
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <ChevronDown size={10} />
             </button>
             {openPicker === 'year' && (
               <PickerDropdown options={yearOpts} selected={viewYear} onSelect={setViewYear} onClose={() => setOpenPicker(null)} suffix="年" />
@@ -122,7 +123,7 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
               onClick={() => setOpenPicker(openPicker === 'month' ? null : 'month')}
             >
               {viewMonth}月
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              <ChevronDown size={10} />
             </button>
             {openPicker === 'month' && (
               <PickerDropdown options={monthOpts} selected={viewMonth} onSelect={setViewMonth} onClose={() => setOpenPicker(null)} suffix="月" />
@@ -130,7 +131,7 @@ export function Calendar({ dateGroups, selectedDate, onSelectDate }) {
           </div>
         </div>
         <button type="button" className="cal-nav-btn" onClick={handleNextMonth}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          <ChevronRight size={14} />
         </button>
       </div>
       <div className="cal-weekdays">
@@ -234,16 +235,14 @@ export default function ChatHistoryPanel({
     <div className="history-sidebar-content">
       <div className="history-sidebar-header">
         <div className="chat-history-search-bar" style={{ flex: 1 }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
+          <Search size={14} style={{ flexShrink: 0 }} />
           <input type="text" className="chat-history-search-input" placeholder="搜索消息…"
             value={searchKeyword}
             onChange={(e) => setSearchKeyword(e.target.value)} />
         </div>
         {extraActions}
         <button type="button" className="history-sidebar-close" onClick={onClose}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          <Close size={20} />
         </button>
       </div>
 
@@ -278,7 +277,7 @@ export default function ChatHistoryPanel({
                 <span className="group-history-filter-chip">
                   {selectedDate}
                   <button type="button" className="group-history-filter-chip-x" onClick={() => setSelectedDate('')}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <Close size={10} />
                   </button>
                 </span>
               )}
@@ -286,7 +285,7 @@ export default function ChatHistoryPanel({
                 <span className="group-history-filter-chip">
                   {speakerLabel(historyFilterSpeaker)}
                   <button type="button" className="group-history-filter-chip-x" onClick={() => setHistoryFilterSpeaker('all')}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <Close size={10} />
                   </button>
                 </span>
               )}

@@ -1,4 +1,4 @@
-import { getIcon } from './Icon'
+import { getIcon, ChevronRight } from './Icon'
 
 export default function EntryList({ entries, flags = {}, badge, onAction }) {
   return (
@@ -22,7 +22,7 @@ export default function EntryList({ entries, flags = {}, badge, onAction }) {
                 )}
               </span>
               <span className="entry-list-label">{entry.label}</span>
-              <svg className="entry-list-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6" /></svg>
+              <ChevronRight size={16} className="entry-list-arrow" />
             </button>
           )
         })}

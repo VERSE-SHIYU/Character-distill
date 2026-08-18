@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
-import { Check } from './common/Icon'
+import { Check, EyeOff, Eye, Sun, Star, MessageCircle } from './common/Icon'
 
 function PasswordInput({ id, value, onChange, placeholder, autoComplete, name, autoFocus }) {
   const [visible, setVisible] = useState(false)
@@ -25,9 +25,9 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete, name, a
         tabIndex={-1}
       >
         {visible ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+          <EyeOff size={20} />
         ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+          <Eye size={20} />
         )}
       </button>
     </div>
@@ -47,15 +47,15 @@ function LoginHero({ subtitle }) {
       )}
       <div className="login-features">
         <div className="dl-feature">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4" /><circle cx="12" cy="12" r="3.5" /></svg>
+          <Sun size={18} />
           六套主题 · 亮暗自由切换
         </div>
         <div className="dl-feature">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8L20 9l-4.9 3.9 1.8 5.9L12 15l-4.9 3.8 1.8-5.9L4 9l6.1-.2L12 3z" /></svg>
+          <Star size={18} />
           蒸馏你的专属角色
         </div>
         <div className="dl-feature">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.25-3.5-.7L3 21l1.2-6A8.5 8.5 0 1 1 21 12z" /></svg>
+          <MessageCircle size={18} />
           群聊 · 私信 · 沉浸式对话
         </div>
       </div>
@@ -107,36 +107,40 @@ export default function LoginPage() {
   const strength = useMemo(() => passwordStrength(password), [password])
 
   // ---- Send verification code ----
+  // Returns true only on a confirmed send; the code-sent UI (countdown lock)
+  // is applied after the request succeeds, not before.
   const sendCode = useCallback(async (targetEmail, purpose) => {
     setError('')
     if (!targetEmail || !targetEmail.includes('@')) {
       setError('请输入有效的邮箱地址')
-      return
+      return false
     }
-    setCodeSent(true)
-    setCountdown(60)
-    const timer = setInterval(() => {
-      setCountdown((c) => {
-        if (c <= 1) { clearInterval(timer); return 0 }
-        return c - 1
-      })
-    }, 1000)
     try {
       await fetchWithTimeout('/api/auth/send-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: targetEmail, purpose }),
       })
+      setCodeSent(true)
+      setCountdown(60)
+      const timer = setInterval(() => {
+        setCountdown((c) => {
+          if (c <= 1) { clearInterval(timer); return 0 }
+          return c - 1
+        })
+      }, 1000)
+      return true
     } catch (err) {
       setError(err.message || '发送验证码失败')
+      return false
     }
   }, [])
 
   // ---- Forgot password ----
-  const handleForgotSendCode = useCallback(() => {
-    sendCode(forgotEmail, 'reset_password')
-    if (!error) setForgotStep('code')
-  }, [forgotEmail, sendCode, error])
+  const handleForgotSendCode = useCallback(async () => {
+    const ok = await sendCode(forgotEmail, 'reset_password')
+    if (ok) setForgotStep('code')
+  }, [forgotEmail, sendCode])
 
   const handleForgotReset = useCallback(async () => {
     setError('')

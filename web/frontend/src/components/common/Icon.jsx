@@ -423,6 +423,179 @@ export const Wifi = (props) => (
   </Svg>
 )
 
+export const Share = (props) => (
+  <Svg {...props}>
+    <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
+    <polyline points="16 6 12 2 8 6" />
+    <line x1="12" y1="2" x2="12" y2="15" />
+  </Svg>
+)
+
+export const ArrowLeft = (props) => (
+  <Svg {...props}>
+    <line x1="19" y1="12" x2="5" y2="12" />
+    <polyline points="12 19 5 12 12 5" />
+  </Svg>
+)
+
+export const ChevronLeft = (props) => (
+  <Svg {...props}>
+    <polyline points="15 18 9 12 15 6" />
+  </Svg>
+)
+
+export const ChevronRight = (props) => (
+  <Svg {...props}>
+    <polyline points="9 18 15 12 9 6" />
+  </Svg>
+)
+
+export const Lightbulb = (props) => (
+  <Svg {...props}>
+    <path d="M9 18h6" />
+    <path d="M10 22h4" />
+    <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0018 8 6 6 0 006 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 018.91 14" />
+  </Svg>
+)
+
+export const List = (props) => (
+  <Svg {...props}>
+    <line x1="8" y1="6" x2="21" y2="6" />
+    <line x1="8" y1="12" x2="21" y2="12" />
+    <line x1="8" y1="18" x2="21" y2="18" />
+    <line x1="3" y1="6" x2="3.01" y2="6" />
+    <line x1="3" y1="12" x2="3.01" y2="12" />
+    <line x1="3" y1="18" x2="3.01" y2="18" />
+  </Svg>
+)
+
+export const MoreHorizontal = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+    <circle cx="5" cy="12" r="1" />
+  </Svg>
+)
+
+export const MoreVertical = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="12" cy="5" r="1" />
+    <circle cx="12" cy="19" r="1" />
+  </Svg>
+)
+
+export const MapPin = (props) => (
+  <Svg {...props}>
+    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
+    <circle cx="12" cy="10" r="3" />
+  </Svg>
+)
+
+export const Upload = (props) => (
+  <Svg {...props}>
+    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+    <polyline points="17 8 12 3 7 8" />
+    <line x1="12" y1="3" x2="12" y2="15" />
+  </Svg>
+)
+
+export const Filter = (props) => (
+  <Svg {...props}>
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+  </Svg>
+)
+
+export const Play = (props) => (
+  <Svg {...props}>
+    <polygon points="5 3 19 12 5 21 5 3" />
+  </Svg>
+)
+
+export const Square = (props) => (
+  <Svg {...props}>
+    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+  </Svg>
+)
+
+export const Plus = (props) => (
+  <Svg {...props}>
+    <line x1="12" y1="5" x2="12" y2="19" />
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </Svg>
+)
+
+export const AlertCircle = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="10" />
+    <line x1="12" y1="8" x2="12" y2="12" />
+    <line x1="12" y1="16" x2="12.01" y2="16" />
+  </Svg>
+)
+
+export const ChevronDown = (props) => (
+  <Svg {...props}>
+    <polyline points="6 9 12 15 18 9" />
+  </Svg>
+)
+
+export const UserPlus = (props) => (
+  <Svg {...props}>
+    <path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+    <circle cx="8.5" cy="7" r="4" />
+    <line x1="20" y1="8" x2="20" y2="14" />
+    <line x1="23" y1="11" x2="17" y2="11" />
+  </Svg>
+)
+
+export const Edit3 = (props) => (
+  <Svg {...props}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+  </Svg>
+)
+
+export const LogIn = (props) => (
+  <Svg {...props}>
+    <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4" />
+    <polyline points="10 17 15 12 10 7" />
+    <line x1="15" y1="12" x2="3" y2="12" />
+  </Svg>
+)
+
+export const MessageCircle = (props) => (
+  <Svg {...props}>
+    <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+  </Svg>
+)
+
+export const AlignLeft = (props) => (
+  <Svg {...props}>
+    <line x1="17" y1="10" x2="3" y2="10" />
+    <line x1="21" y1="6" x2="3" y2="6" />
+    <line x1="21" y1="14" x2="3" y2="14" />
+    <line x1="17" y1="18" x2="3" y2="18" />
+  </Svg>
+)
+
+export const AlignCenter = (props) => (
+  <Svg {...props}>
+    <line x1="18" y1="10" x2="6" y2="10" />
+    <line x1="21" y1="6" x2="3" y2="6" />
+    <line x1="21" y1="14" x2="3" y2="14" />
+    <line x1="18" y1="18" x2="6" y2="18" />
+  </Svg>
+)
+
+export const AlignRight = (props) => (
+  <Svg {...props}>
+    <line x1="21" y1="10" x2="7" y2="10" />
+    <line x1="21" y1="6" x2="3" y2="6" />
+    <line x1="21" y1="14" x2="3" y2="14" />
+    <line x1="21" y1="18" x2="7" y2="18" />
+  </Svg>
+)
+
 const ICON_MAP = {
   mail: Mail,
   settings: Settings,
@@ -443,6 +616,29 @@ const ICON_MAP = {
   inbox: Inbox,
   external: ExternalLink,
   wifi: Wifi,
+  share: Share,
+  'arrow-left': ArrowLeft,
+  'chevron-left': ChevronLeft,
+  'chevron-right': ChevronRight,
+  lightbulb: Lightbulb,
+  list: List,
+  'more-horizontal': MoreHorizontal,
+  'more-vertical': MoreVertical,
+  'map-pin': MapPin,
+  upload: Upload,
+  filter: Filter,
+  play: Play,
+  square: Square,
+  plus: Plus,
+  'alert-circle': AlertCircle,
+  'chevron-down': ChevronDown,
+  'user-plus': UserPlus,
+  'edit-3': Edit3,
+  'log-in': LogIn,
+  'message-circle': MessageCircle,
+  'align-left': AlignLeft,
+  'align-center': AlignCenter,
+  'align-right': AlignRight,
 }
 
 export function getIcon(name) {

@@ -7,11 +7,11 @@ import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
 import ErrorBox from './common/ErrorBox'
-import ConfirmModal from './common/ConfirmModal'
 import { Heart, Book, Close, Globe } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import { displayName } from '../utils/displayName'
 import { avatarGradient } from '../utils/avatarColor'
+import { formatShortTime } from '../utils/time'
 
 const PAGE_SIZE = 20
 
@@ -37,7 +37,6 @@ export default function MarketPage() {
   const [forkingId, setForkingId] = useState(null)
   const [forkCard, setForkCard] = useState(null)
   const [commentCardId, setCommentCardId] = useState(null)
-  const [deletePostId, setDeletePostId] = useState(null)
   const [comments, setComments] = useState([])
   const [commentsLoading, setCommentsLoading] = useState(false)
   const [commentText, setCommentText] = useState('')
@@ -124,10 +123,6 @@ export default function MarketPage() {
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
-
-  const handleDeletePost = (postId) => {
-    setDeletePostId(postId)
-  }
 
   const handleLike = async (cardId) => {
     try {
@@ -334,16 +329,12 @@ export default function MarketPage() {
                 <div key={c.id} className="market-card-v2 anim-item" style={{ animationDelay: `${idx * 50}ms` }} onClick={(e) => { e.stopPropagation(); useAppStore.getState().setCurrentMarketCardId(c.id); pushView('marketCardDetail') }}>
                   <div className="market-card-v2-cover">
                     {c.avatar_data ? (
-                      <>
-                        <img src={c.avatar_data} alt="" className="market-card-v2-cover-blur" aria-hidden="true" />
-                        <img src={c.avatar_data} alt={charName} className="market-card-v2-cover-img" />
-                      </>
+                      <img src={c.avatar_data} alt={charName} className="market-card-v2-cover-img" />
                     ) : (
                       <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(charName) }}>
                         <span className="market-card-v2-fallback-letter">{charName.charAt(0).toUpperCase()}</span>
                       </div>
                     )}
-                    <div className="stage-glow" />
                   </div>
                   <div className="market-card-v2-glass-info">
                     <div className="market-card-v2-name">{charName}</div>
@@ -380,7 +371,7 @@ export default function MarketPage() {
 
       {/* Comment drawer */}
       {commentCardId && (
-        <div className="modal-overlay" onClick={() => setCommentCardId(null)}>
+        <div className="modal-overlay modal-sheet" onClick={() => setCommentCardId(null)}>
           <div className="modal-card" style={{ maxWidth: 480, maxHeight: '70vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
             <div className="modal-title" style={{ flexShrink: 0 }}>
               评论
@@ -397,7 +388,7 @@ export default function MarketPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                       <Avatar name={displayName(c) || '?'} size={24} />
                       <span style={{ fontSize: 12, fontWeight: 600 }}>{displayName(c)}</span>
-                      <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 'auto' }}>{c.created_at ? new Date(c.created_at.includes('T') && !c.created_at.endsWith('Z') && !c.created_at.includes('+') ? c.created_at + 'Z' : c.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                      <span style={{ fontSize: 12, color: 'var(--text-dim)', marginLeft: 'auto' }}>{formatShortTime(c.created_at)}</span>
                     </div>
                     <p style={{ fontSize: 13, margin: 0, lineHeight: 1.5 }}>{c.content}</p>
                   </div>
@@ -424,7 +415,7 @@ export default function MarketPage() {
 
       {/* Fork type selection modal */}
       {forkCard && (
-        <div className="modal-overlay" onClick={() => setForkCard(null)}>
+        <div className="modal-overlay modal-sheet" onClick={() => setForkCard(null)}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">选择使用方式</h3>
             <div className="modal-body">
@@ -454,24 +445,6 @@ export default function MarketPage() {
           </div>
         </div>
       )}
-
-      <ConfirmModal
-        isOpen={!!deletePostId}
-        title="删除动态"
-        message="确定删除该动态？"
-        confirmText="删除"
-        onConfirm={async () => {
-          const id = deletePostId
-          setDeletePostId(null)
-          try {
-            await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE' })
-            setCards((prev) => prev.filter((c) => c.id !== id))
-          } catch (err) {
-            console.error('[Market] Delete failed:', err)
-          }
-        }}
-        onCancel={() => setDeletePostId(null)}
-      />
     </div>
   )
 }

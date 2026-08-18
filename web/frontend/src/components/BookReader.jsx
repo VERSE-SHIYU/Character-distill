@@ -3,6 +3,8 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import { List, Close, ChevronLeft, ChevronRight, Sun, Moon } from './common/Icon'
+import { resolveSavedPage } from '../utils/readingProgress'
 
 const FONT_SIZES = [14, 16, 18, 20, 22]
 const LS_FONT_KEY = 'reader_font_size'
@@ -247,6 +249,7 @@ export default function BookReader() {
   const pages = useMemo(() => paginateContent(content, 5000, chapters), [content, chapters])
   const totalPages = pages.length
   const initializedPageRef = useRef(false)
+  const savedProgressRef = useRef(null)
 
   useEffect(() => {
     if (!readerTextId) {
@@ -272,6 +275,7 @@ export default function BookReader() {
       .then(([textData, progressData]) => {
         const c = textData.text?.content || ''
         setContent(c)
+        savedProgressRef.current = progressData
         setTitle(textData.text?.title || title)
       })
       .catch((err) => {
@@ -280,18 +284,11 @@ export default function BookReader() {
       .finally(() => setLoading(false))
   }, [readerTextId])
 
-  // Initialize page from saved progress once content/pages are ready
+  // Initialize page from saved progress once content/pages are ready.
   useEffect(() => {
     if (!content || initializedPageRef.current) return
     initializedPageRef.current = true
-    // Fetch progress again to get saved page number
-    fetchWithTimeout(`/api/text/${readerTextId}/progress`)
-      .then((r) => r.json())
-      .then((data) => {
-        const savedPage = Math.round((data.progress || 0) * totalPages)
-        setCurrentPage(Math.min(Math.max(0, savedPage), totalPages - 1))
-      })
-      .catch(() => {})
+    setCurrentPage(resolveSavedPage(savedProgressRef.current, totalPages))
   }, [content, totalPages])
 
   // Save progress on page change
@@ -383,7 +380,7 @@ export default function BookReader() {
         onBack={goBack}
         actions={toc.length > 0 ? (
           <button className="reader-top-btn" onClick={() => setShowTOC(!showTOC)} title="目录">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            <List size={20} />
           </button>
         ) : undefined}
       />
@@ -394,7 +391,7 @@ export default function BookReader() {
         <div className="reader-toc-header">
           <div className="reader-toc-title">目录</div>
           <button className="reader-toc-close" onClick={() => setShowTOC(false)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            <Close size={18} />
           </button>
         </div>
         <div className="reader-toc-body">
@@ -422,13 +419,13 @@ export default function BookReader() {
         {totalPages > 1 ? (
           <>
             <button className="reader-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 0}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <ChevronLeft size={16} />
               上一页
             </button>
             <span className="reader-page-info">{currentPage + 1} / {totalPages}</span>
             <button className="reader-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages - 1}>
               下一页
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <ChevronRight size={16} />
             </button>
           </>
         ) : (
@@ -445,9 +442,9 @@ export default function BookReader() {
         </div>
         <button className="reader-bottom-btn reader-theme-btn" onClick={toggleTheme} title={darkMode ? '日间模式' : '夜间模式'}>
           {darkMode ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            <Sun size={18} />
           ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            <Moon size={18} />
           )}
         </button>
       </div>

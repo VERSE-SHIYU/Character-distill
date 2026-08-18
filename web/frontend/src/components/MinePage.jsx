@@ -10,7 +10,7 @@ import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
-import { Theater, Book, MessageSquare } from './common/Icon'
+import { Theater, Book, MessageSquare, UserPlus, Users, Camera, Edit3, Heart, Globe, Lock, MapPin, Close, Clock } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
 import PageHeader from './PageHeader'
@@ -160,6 +160,7 @@ export default function MinePage() {
   const isMobile = useIsMobile()
   const [posts, setPosts] = useState([])
   const [postsLoading, setPostsLoading] = useState(false)
+  const [authorMissing, setAuthorMissing] = useState(false)
   const [postContent, setPostContent] = useState('')
   const [posting, setPosting] = useState(false)
   const [postLocation, setPostLocation] = useState('')
@@ -326,6 +327,7 @@ export default function MinePage() {
     setFollowers([])
     setFollowing([])
     setFollowingLocked(false)
+    setAuthorMissing(false)
     setLoading(true)
     Promise.all([
       fetchWithTimeout(`/api/market/author/${userId}`).then(r => r.json()),
@@ -340,7 +342,9 @@ export default function MinePage() {
         setIsFollowing(authorData.is_following || false)
         setFollowsMe(authorData.follows_me || false)
       }
-    }).catch(() => {})
+    }).catch((err) => {
+      if (err?.status === 404) setAuthorMissing(true)
+    })
       .finally(() => setLoading(false))
   }
 
@@ -517,8 +521,8 @@ export default function MinePage() {
     { key: 'characters', label: '角色', icon: <Theater size={15} /> },
     { key: 'books', label: '书籍', icon: <Book size={15} /> },
     { key: 'posts', label: '动态', icon: <MessageSquare size={15} /> },
-    { key: 'followers', label: '粉丝', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg> },
-    { key: 'following', label: '关注', icon: <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+    { key: 'followers', label: '粉丝', icon: <UserPlus size={15} /> },
+    { key: 'following', label: '关注', icon: <Users size={15} /> },
   ]
 
   if (loading) return (
@@ -545,7 +549,7 @@ export default function MinePage() {
         <div className="mine-banner-overlay" />
         {isMe && (
           <button type="button" className="mine-banner-upload" onClick={() => bannerInputRef.current?.click()} title="更换封面">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> 更换封面
+            <Camera size={18} /> 更换封面
           </button>
         )}
         {isMe && <input ref={bannerInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleBannerSelect} />}
@@ -562,7 +566,7 @@ export default function MinePage() {
               {isMe && (
                 <>
                   <div className="mine-avatar-overlay avatar-shape" onClick={() => avatarInputRef.current?.click()}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <Camera size={18} />
                   </div>
                   <input ref={avatarInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleAvatarSelect} />
                 </>
@@ -582,7 +586,7 @@ export default function MinePage() {
               </h2>
               {isMe && (
                 <button className="mine-edit-icon" onClick={() => pushView('profile')} title="编辑资料">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                  <Edit3 size={15} />
                 </button>
               )}
             </div>
@@ -683,6 +687,13 @@ export default function MinePage() {
 
       {/* ── Tab 内容 ── */}
       <div className="mine-tab-content">
+        {!isMe && authorMissing ? (
+          <div className="mine-onboard-card">
+            <h3 className="mine-onboard-title">用户不存在或已注销</h3>
+            <p className="mine-onboard-desc">该账号可能已被删除</p>
+          </div>
+        ) : (
+          <>
         {/* 角色 tab */}
         {tab === 'characters' && (
           cards.length === 0 ? (
@@ -728,10 +739,7 @@ export default function MinePage() {
                   }}>
                     <div className="market-card-v2-cover">
                       {card.avatar_data ? (
-                        <>
-                          <img src={card.avatar_data} alt="" className="market-card-v2-cover-blur" aria-hidden="true" />
-                          <img src={card.avatar_data} alt={name} className="market-card-v2-cover-img" />
-                        </>
+                        <img src={card.avatar_data} alt={name} className="market-card-v2-cover-img" />
                       ) : (
                         <div className="market-card-v2-cover-fallback" style={{ background: avatarGradient(name) }}>
                           <span className="market-card-v2-fallback-letter">{name.charAt(0).toUpperCase()}</span>
@@ -746,14 +754,14 @@ export default function MinePage() {
                       <div className="market-card-v2-name">{name}</div>
                       {identity && <div className="market-card-v2-identity">{identity}</div>}
                       <div className="market-card-v2-stats">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                        <Heart size={12} />
                         {card.likes ?? 0}
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <MessageSquare size={12} />
                         {card.chat_count ?? 0}
                         {card.visibility === 'public' ? (
-                          <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>公开</>
+                          <><Globe size={12} />公开</>
                         ) : (
-                          <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>私有</>
+                          <><Lock size={12} />私有</>
                         )}
                       </div>
                       {card.text_title && (
@@ -811,7 +819,7 @@ export default function MinePage() {
                           }}
                           title="更换封面"
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                          <Camera size={14} />
                           换封面
                         </button>
                       )}
@@ -877,7 +885,7 @@ export default function MinePage() {
                   {postLocation ? (
                     <div className="mine-loc-active-wrap">
                       <div className="mine-loc-selected">
-                        <svg className="mine-loc-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        <MapPin size={14} className="mine-loc-icon" />
                         <span className="mine-loc-selected-text">{postLocation}</span>
                         <button
                           type="button"
@@ -885,7 +893,7 @@ export default function MinePage() {
                           onClick={() => { setPostLocation(''); setLocationQuery(''); setLocationSuggestions([]) }}
                           title="取消位置"
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          <Close size={14} />
                         </button>
                       </div>
                       <div className="mine-loc-search-box">
@@ -923,12 +931,12 @@ export default function MinePage() {
                     >
                       {locationLoading ? (
                         <>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="spin-icon"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                          <Clock size={14} className="spin-icon" />
                           定位中…
                         </>
                       ) : (
                         <>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                          <MapPin size={14} />
                           添加位置
                         </>
                       )}
@@ -1111,6 +1119,8 @@ export default function MinePage() {
               </div>
             </>
           )
+        )}
+          </>
         )}
       </div>
 
