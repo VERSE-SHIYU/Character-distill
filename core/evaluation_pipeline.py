@@ -175,7 +175,7 @@ class EvaluationPipeline:
     def _persist_affinity(self, ctx: EvalContext) -> None:
         """将 AffinityService 中的最新好感状态写回 DB。
 
-        群聊走 update_group_affinity，单聊走 update_session_affinity。
+        群聊走 update_group_affinity，单聊走 save_affinity_state。
         群聊没有 session_id 时跳过（仅内存模式）。
         """
         if not ctx.storage:

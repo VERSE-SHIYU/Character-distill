@@ -1367,10 +1367,12 @@ export default function GroupChatPage() {
                                 <div className="group-member-info">
                                   <span className="group-member-name">{card?.name || '?'}</span>
                                   {identity && <span className="group-member-identity">{identity}</span>}
-                                  {groupAffinities[cardId] && (
+                                  {groupAffinities[cardId] ? (
                                     <span className="group-member-affinity">
                                       {groupAffinities[cardId].stage_emoji} {groupAffinities[cardId].stage_name} · {groupAffinities[cardId].affinity}
                                     </span>
+                                  ) : (
+                                    <span className="group-member-affinity">尚未评估</span>
                                   )}
                                 </div>
                                 <button

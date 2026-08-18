@@ -4,7 +4,8 @@
 //   - 状态卡 .char-state-card：内心独白 + 6 段阶段阶梯 + 好感/信任/防御 三条 0-100 进度条
 //   - 开场/跨时段角色名 .cbubble-name（i===0 或 showTime）
 //   - 移动端单栏 + 无横向溢出
-// affinity 端点 mock（testadmin 无 LLM key，真实后端返回默认值；mock 让断言确定）
+// affinity 端点 mock：真实后端对无评估数据返回 204→store affinity=null，断言无从谈起；
+// mock 提供固定 body（自带 response，不受后端影响），让 UI 断言确定
 const { openApp, login, seedChat, shot } = require('./helpers.cjs')
 
 const TEXT_ID = 'cd124e88e923'

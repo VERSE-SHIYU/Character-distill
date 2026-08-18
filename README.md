@@ -415,7 +415,7 @@ Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 |------|------|------|
 | `/api/chat/send` | POST | 发送消息（SSE 流式 / JSON，含撤回字段） |
 | `/api/chat/revoke` | POST | 撤回消息（DB + 内存同步） |
-| `/api/chat/affinity/{session_id}` | GET | 获取会话好感度/信任/心情/戒备值 |
+| `/api/chat/affinity/{session_id}` | GET | 获取会话好感度/信任/心情/戒备值（无已评估数据时 204 空体） |
 | `/api/chat/reset` | POST | 重置对话历史（保留角色卡） |
 
 ### 历史（`/api/history`）

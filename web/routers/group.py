@@ -649,11 +649,12 @@ async def list_group_affinities(
     result: list[dict] = []
     for cid in card_ids:
         row = await storage.get_group_affinity(group_id, cid)
-        affinity = row["affinity"] if row else 50
-        stage_name, stage_emoji = calc_stage(affinity)
+        if not row:
+            continue  # 该角色在本群从未被评估：省略条目，前端显示诚实空态，不伪造 50
+        stage_name, stage_emoji = calc_stage(row["affinity"])
         result.append({
             "card_id": cid,
-            "affinity": affinity,
+            "affinity": row["affinity"],
             "stage_name": stage_name,
             "stage_emoji": stage_emoji,
         })
