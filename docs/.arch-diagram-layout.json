@@ -1,0 +1,11 @@
+{
+  "issues": [
+    {
+      "code": "LAYOUT_ERROR",
+      "message": "no collision-free label position for '情感检索'",
+      "severity": "error"
+    }
+  ],
+  "ok": false,
+  "schema_version": 1
+}

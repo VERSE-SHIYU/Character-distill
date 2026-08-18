@@ -251,3 +251,33 @@ logs/
 
 # graphify knowledge graph artifacts (generated)
 graphify-out/
+
+# e2e 验证脚本产物（截图/日志/输出目录）
+web/frontend/e2e/b3/
+web/frontend/e2e/b4/
+web/frontend/e2e/pages/
+web/frontend/e2e/landing/
+web/frontend/e2e/od-log/
+web/frontend/e2e/screenshots/
+web/frontend/e2e/scratch/
+web/frontend/e2e/repro-out/
+web/frontend/e2e/chat-optimize/
+web/frontend/e2e/chat-redesign/
+web/frontend/e2e/dualpane/
+web/frontend/e2e/audit-overflow-results.txt
+
+# 前端本地测试产物/截图
+web/frontend/test-results/
+web/frontend/test_report.json
+web/frontend/test_report_raw.json
+web/frontend/cd_shot.jpeg
+web/frontend/verify_after_login.png
+web/frontend/verify_mine.png
+web/frontend/verify_minepage.png
+
+# 根目录 e2e scratch（一次性调查工具；仅根目录，勿吞 web/frontend/e2e 脚本）
+/e2e/
+
+# 账户数据迁移工具（涉 user_secrets，不进版本库）
+scripts/export_shiyu.py
+scripts/import_shiyu.py

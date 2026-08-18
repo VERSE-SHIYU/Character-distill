@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Textarea centering verification</title>
+<style>
+/* Desktop rules (base) */
+.chat-textarea {
+  --field-h: 38px;
+  --field-line: 21px;
+  flex: 1;
+  min-height: var(--field-h);
+  padding-block: calc((var(--field-h) - var(--field-line)) / 2);
+  padding-inline: 14px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  line-height: var(--field-line);
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Mobile rules (~480px) */
+@media (max-width: 480px) {
+  .chat-textarea {
+    --field-h: 36px;
+    min-height: var(--field-h);
+    border-radius: 18px;
+    border: none;
+    --padding-calc: calc((var(--field-h) - var(--field-line)) / 2);
+  }
+}
+.old-desktop {
+  min-height: 38px; padding: 8px 14px; line-height: 1.5; border: 1px solid red;
+  width: 100%; box-sizing: border-box; font-size: 14px; border-radius: 8px;
+}
+.old-mobile {
+  min-height: 36px; height: 36px; padding: 4px 14px; line-height: 1.5;
+  width: 100%; box-sizing: border-box; font-size: 14px; border-radius: 18px; border: 1px solid red;
+}
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.cell { display: flex; flex-direction: column; gap: 4px; }
+.label { font: 12px monospace; color: #666; }
+textarea { display: block; }
+</style>
+</head><body>
+<h3>Textarea vertical centering — 改动前 (红) vs 改动后</h3>
+<div class="grid">
+  <div class="cell">
+    <div class="label">桌面 旧 (红 border)</div>
+    <textarea class="old-desktop" rows="1" placeholder="输入消息…">单行文字</textarea>
+    <textarea class="old-desktop" rows="2" placeholder="输入消息…">两行&#10;文字</textarea>
+  </div>
+  <div class="cell">
+    <div class="label">桌面 新</div>
+    <textarea class="chat-textarea" rows="1" placeholder="输入消息…">单行文字</textarea>
+    <textarea class="chat-textarea" rows="2" placeholder="输入消息…">两行&#10;文字</textarea>
+  </div>
+  <div class="cell" style="max-width:360px">
+    <div class="label">移动 旧 (红 border, max-width:360px)</div>
+    <textarea class="old-mobile" rows="1" placeholder="输入消息…">单行文字</textarea>
+  </div>
+  <div class="cell" style="max-width:360px">
+    <div class="label">移动 新 (max-width:360px)</div>
+    <textarea class="chat-textarea mobile" rows="1" placeholder="输入消息…">单行文字</textarea>
+  </div>
+</div>
+<script>
+// Apply mobile override via class for side-by-side comparison
+document.querySelector('.chat-textarea.mobile').style.setProperty('--field-h','36px');
+</script>
+</body></html>

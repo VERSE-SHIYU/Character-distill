@@ -1,0 +1,622 @@
+{
+  "title": "Character-distill 系统架构",
+  "subtitle": "角色模拟器 · FastAPI + React · 双区域部署 SZ / SG（真实代码分层 · graphify 知识图谱 + fireworks 图）",
+  "style": 1,
+  "width": 1440,
+  "height": 1120,
+  "legend_orientation": "horizontal",
+  "legend_box": true,
+  "containers": [
+    {
+      "id": "c-client",
+      "label": "① 客户端 · React SPA",
+      "x": 60,
+      "y": 60,
+      "width": 1320,
+      "height": 84,
+      "header_height": 26
+    },
+    {
+      "id": "c-edge",
+      "label": "② 接入层 · Nginx + FastAPI + 安全",
+      "x": 60,
+      "y": 156,
+      "width": 1320,
+      "height": 84,
+      "header_height": 26
+    },
+    {
+      "id": "c-routers",
+      "label": "③ API 路由 · web/routers",
+      "x": 60,
+      "y": 252,
+      "width": 1320,
+      "height": 168,
+      "header_height": 26
+    },
+    {
+      "id": "c-core",
+      "label": "④ 核心业务 · core/",
+      "x": 60,
+      "y": 448,
+      "width": 1320,
+      "height": 244,
+      "header_height": 26
+    },
+    {
+      "id": "c-adapters",
+      "label": "⑤ 外部适配 · adapters / speech / services",
+      "x": 60,
+      "y": 722,
+      "width": 1320,
+      "height": 84,
+      "header_height": 26
+    },
+    {
+      "id": "c-storage",
+      "label": "⑥ 存储 · storage/（StorageBase 抽象）",
+      "x": 60,
+      "y": 836,
+      "width": 1320,
+      "height": 84,
+      "header_height": 26
+    },
+    {
+      "id": "c-deploy",
+      "label": "⑦ 部署 · 双区域独立实例",
+      "x": 60,
+      "y": 948,
+      "width": 1320,
+      "height": 96,
+      "header_height": 26
+    }
+  ],
+  "nodes": [
+    {
+      "id": "n-browser",
+      "x": 110,
+      "y": 92,
+      "width": 180,
+      "height": 38,
+      "label": "浏览器 / 用户"
+    },
+    {
+      "id": "n-spa",
+      "x": 480,
+      "y": 92,
+      "width": 760,
+      "height": 38,
+      "label": "React SPA 前端 (web/frontend)"
+    },
+    {
+      "id": "n-nginx",
+      "x": 70,
+      "y": 188,
+      "width": 200,
+      "height": 38,
+      "label": "Nginx 网关"
+    },
+    {
+      "id": "n-fastapi",
+      "x": 380,
+      "y": 188,
+      "width": 470,
+      "height": 38,
+      "label": "FastAPI · server.py"
+    },
+    {
+      "id": "n-sec",
+      "x": 950,
+      "y": 188,
+      "width": 220,
+      "height": 38,
+      "label": "安全风控 · geo_guard/limiter"
+    },
+    {
+      "id": "n-xsync",
+      "x": 1200,
+      "y": 188,
+      "width": 180,
+      "height": 38,
+      "label": "跨区同步 · cross_border_sync"
+    },
+    {
+      "id": "n-auth",
+      "x": 70,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "auth 认证"
+    },
+    {
+      "id": "n-chat",
+      "x": 246,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "chat 会话"
+    },
+    {
+      "id": "n-distill",
+      "x": 422,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "distill 蒸馏"
+    },
+    {
+      "id": "n-card",
+      "x": 598,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "card 角色卡"
+    },
+    {
+      "id": "n-market",
+      "x": 774,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "market 市场"
+    },
+    {
+      "id": "n-admin",
+      "x": 950,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "admin 管理"
+    },
+    {
+      "id": "n-group",
+      "x": 1126,
+      "y": 284,
+      "width": 150,
+      "height": 38,
+      "label": "group 群聊"
+    },
+    {
+      "id": "n-history",
+      "x": 175.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "history 历史"
+    },
+    {
+      "id": "n-memr",
+      "x": 351.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "memory 记忆"
+    },
+    {
+      "id": "n-msg",
+      "x": 527.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "message 消息"
+    },
+    {
+      "id": "n-textr",
+      "x": 703.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "text 文本"
+    },
+    {
+      "id": "n-voicer",
+      "x": 879.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "voice 语音"
+    },
+    {
+      "id": "n-inext",
+      "x": 1055.0,
+      "y": 340,
+      "width": 150,
+      "height": 38,
+      "label": "inter_node 跨节点"
+    },
+    {
+      "id": "n-chatengine",
+      "x": 70,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "ChatEngine 对话引擎"
+    },
+    {
+      "id": "n-rag",
+      "x": 234,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "RAGEngine 情感检索"
+    },
+    {
+      "id": "n-embed",
+      "x": 398,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "DashScopeEmbedding 向量化"
+    },
+    {
+      "id": "n-distiller",
+      "x": 562,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "Distiller 人格蒸馏"
+    },
+    {
+      "id": "n-text",
+      "x": 726,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "TextManager 文本"
+    },
+    {
+      "id": "n-context",
+      "x": 890,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "ContextEngine 上下文"
+    },
+    {
+      "id": "n-affinity",
+      "x": 1054,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "AffinityService 亲和度"
+    },
+    {
+      "id": "n-groups",
+      "x": 1218,
+      "y": 480,
+      "width": 148,
+      "height": 38,
+      "label": "GroupSession 群聊会话"
+    },
+    {
+      "id": "n-agent",
+      "x": 124.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "AgentLoop 智能体"
+    },
+    {
+      "id": "n-moderation",
+      "x": 288.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "Moderation 内容审核"
+    },
+    {
+      "id": "n-memory",
+      "x": 452.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "MemoryManager 记忆"
+    },
+    {
+      "id": "n-reflect",
+      "x": 616.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "ReflectionService 反思"
+    },
+    {
+      "id": "n-index",
+      "x": 780.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "IndexingService 索引"
+    },
+    {
+      "id": "n-scene",
+      "x": 944.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "SceneIndexer 场景索引"
+    },
+    {
+      "id": "n-aux",
+      "x": 1108.0,
+      "y": 576,
+      "width": 148,
+      "height": 38,
+      "label": "辅助服务 · event/email/reaction…"
+    },
+    {
+      "id": "n-llm",
+      "x": 70,
+      "y": 754,
+      "width": 230,
+      "height": 38,
+      "label": "LLMAdapter LLM 适配"
+    },
+    {
+      "id": "n-asr",
+      "x": 330,
+      "y": 754,
+      "width": 210,
+      "height": 38,
+      "label": "ASR 语音识别 (funasr)"
+    },
+    {
+      "id": "n-tts",
+      "x": 570,
+      "y": 754,
+      "width": 210,
+      "height": 38,
+      "label": "TTS 语音合成 (edge-tts)"
+    },
+    {
+      "id": "n-vclone",
+      "x": 810,
+      "y": 754,
+      "width": 220,
+      "height": 38,
+      "label": "VoiceClone 语音克隆"
+    },
+    {
+      "id": "n-gptsovits",
+      "x": 1060,
+      "y": 754,
+      "width": 260,
+      "height": 38,
+      "label": "GPT-SoVITS TTS 服务"
+    },
+    {
+      "id": "n-sqlite",
+      "x": 285.0,
+      "y": 868,
+      "width": 230,
+      "height": 38,
+      "label": "SQLiteStore 本地/测试"
+    },
+    {
+      "id": "n-storagebase",
+      "x": 575.0,
+      "y": 868,
+      "width": 230,
+      "height": 38,
+      "label": "StorageBase 存储抽象"
+    },
+    {
+      "id": "n-postgres",
+      "x": 865.0,
+      "y": 868,
+      "width": 230,
+      "height": 38,
+      "label": "PostgresStore 生产"
+    },
+    {
+      "id": "n-sz",
+      "x": 390.0,
+      "y": 980,
+      "width": 230,
+      "height": 38,
+      "label": "SZ 深圳部署"
+    },
+    {
+      "id": "n-sg",
+      "x": 760.0,
+      "y": 980,
+      "width": 230,
+      "height": 38,
+      "label": "SG 新加坡部署"
+    }
+  ],
+  "arrows": [
+    {
+      "source": "n-browser",
+      "target": "n-spa",
+      "color": "#2563eb",
+      "label": "打开 SPA"
+    },
+    {
+      "source": "n-browser",
+      "target": "n-nginx",
+      "color": "#2563eb"
+    },
+    {
+      "source": "n-spa",
+      "target": "n-fastapi",
+      "color": "#2563eb",
+      "label": "API 请求"
+    },
+    {
+      "source": "n-nginx",
+      "target": "n-fastapi",
+      "color": "#2563eb",
+      "label": "反代 /api"
+    },
+    {
+      "source": "n-fastapi",
+      "target": "n-chat",
+      "color": "#2563eb",
+      "label": "路由分发",
+      "source_port": "bottom",
+      "corridor_x": [
+        321
+      ]
+    },
+    {
+      "source": "n-fastapi",
+      "target": "n-distill",
+      "color": "#2563eb",
+      "source_port": "bottom",
+      "corridor_x": [
+        497
+      ]
+    },
+    {
+      "source": "n-chat",
+      "target": "n-chatengine",
+      "color": "#2563eb",
+      "label": "会话处理"
+    },
+    {
+      "source": "n-distill",
+      "target": "n-distiller",
+      "color": "#2563eb",
+      "label": "蒸馏任务"
+    },
+    {
+      "source": "n-group",
+      "target": "n-groups",
+      "color": "#2563eb",
+      "label": "群聊会话"
+    },
+    {
+      "source": "n-textr",
+      "target": "n-text",
+      "color": "#2563eb",
+      "label": "文本处理"
+    },
+    {
+      "source": "n-voicer",
+      "target": "n-asr",
+      "color": "#2563eb",
+      "label": "语音指令"
+    },
+    {
+      "source": "n-voicer",
+      "target": "n-tts",
+      "color": "#2563eb",
+      "label": "语音合成"
+    },
+    {
+      "source": "n-chatengine",
+      "target": "n-rag",
+      "color": "#16a34a",
+      "source_port": "right"
+    },
+    {
+      "source": "n-rag",
+      "target": "n-embed",
+      "color": "#16a34a",
+      "source_port": "right"
+    },
+    {
+      "source": "n-chatengine",
+      "target": "n-memory",
+      "color": "#16a34a",
+      "label": "记忆读写",
+      "source_port": "bottom",
+      "target_port": "top",
+      "route_points": [
+        [
+          144,
+          545
+        ],
+        [
+          526,
+          545
+        ]
+      ]
+    },
+    {
+      "source": "n-chatengine",
+      "target": "n-llm",
+      "color": "#16a34a",
+      "label": "LLM 调用",
+      "source_port": "bottom",
+      "corridor_x": [
+        110
+      ]
+    },
+    {
+      "source": "n-text",
+      "target": "n-llm",
+      "color": "#16a34a",
+      "label": "文本生成",
+      "source_port": "bottom",
+      "corridor_x": [
+        250
+      ]
+    },
+    {
+      "source": "n-memory",
+      "target": "n-storagebase",
+      "color": "#16a34a",
+      "label": "记忆写入(异步)",
+      "dashed": true,
+      "target_port": "top"
+    },
+    {
+      "source": "n-rag",
+      "target": "n-storagebase",
+      "color": "#16a34a",
+      "label": "索引写入(异步)",
+      "dashed": true,
+      "target_port": "top"
+    },
+    {
+      "source": "n-chatengine",
+      "target": "n-storagebase",
+      "color": "#16a34a",
+      "label": "会话持久化(异步)",
+      "dashed": true,
+      "source_port": "bottom",
+      "target_port": "top"
+    },
+    {
+      "source": "n-storagebase",
+      "target": "n-postgres",
+      "color": "#16a34a",
+      "label": "生产数据",
+      "source_port": "right"
+    },
+    {
+      "source": "n-storagebase",
+      "target": "n-sqlite",
+      "color": "#16a34a",
+      "label": "本地/测试",
+      "source_port": "left"
+    },
+    {
+      "source": "n-sz",
+      "target": "n-sg",
+      "color": "#9333ea",
+      "label": "跨区域同步",
+      "dashed": true
+    }
+  ],
+  "legend": [
+    {
+      "label": "请求 / 响应主链路",
+      "color": "#2563eb"
+    },
+    {
+      "label": "核心业务数据流",
+      "color": "#16a34a"
+    },
+    {
+      "label": "存储写入 (异步)",
+      "color": "#16a34a"
+    },
+    {
+      "label": "跨区域同步 (异步)",
+      "color": "#9333ea"
+    }
+  ]
+}
