@@ -7,7 +7,7 @@ import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import Avatar from './common/Avatar'
 import {
-  ArrowLeft, Clock, MessageCircle, Heart, Check, Shield, RefreshCw, AlertTriangle, MessageSquare, Wifi, Sparkles,
+  ArrowLeft, Clock, MessageCircle, Heart, Check, Shield, RefreshCw, AlertTriangle, MessageSquare, Wifi,
 } from './common/Icon'
 import { displayName } from '../utils/displayName'
 import { mergeMessages } from '../utils/mergeMessages'
@@ -460,8 +460,8 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
               {canShowInnerVoice && innerVoiceOpen && (
                 <div className="dm-inner-voice">
-                  <div className="dm-inner-voice-header"><Sparkles size={14} />{currentCard?.name || peerName}此刻的想法</div>
-                  <div className="dm-inner-voice-text">"{affinity.inner_voice}"</div>
+                  <div className="dm-inner-voice-header">{affinity.mood_emoji || '😊'} {currentCard?.name || peerName}此刻的想法</div>
+                  <div className="dm-inner-voice-text">"{affinity.inner_voice || '…'}"</div>
                   {!!affinity.mood && (
                     <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>
                   )}
