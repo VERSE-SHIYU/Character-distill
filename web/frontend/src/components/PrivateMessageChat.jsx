@@ -82,6 +82,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [reactions, setReactions] = useState({})
 
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [copiedId, setCopiedId] = useState(null)
   const isMobile = useIsMobile()
 
   const peerName = otherUsername || '对方'
@@ -228,6 +229,14 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         headers: { ...getAuthHeaders() },
       })
       setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, retracted: true } : m))
+    } catch {}
+  }
+
+  const handleCopy = async (msg) => {
+    try {
+      await navigator.clipboard.writeText(msg.content)
+      setCopiedId(msg.id)
+      setTimeout(() => setCopiedId((id) => (id === msg.id ? null : id)), 1200)
     } catch {}
   }
 
@@ -522,6 +531,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                                     </div>
                                     {row.isMe && msg._status !== 'consent' && (
                                       <div className="dm-bubble-actions">
+                                        <button type="button" className="dm-mini-btn" onClick={() => handleCopy(msg)}>{copiedId === msg.id ? '已复制' : '复制'}</button>
                                         <button type="button" className="dm-mini-btn danger" onClick={() => handleRetract(msg)}>撤回</button>
                                       </div>
                                     )}
