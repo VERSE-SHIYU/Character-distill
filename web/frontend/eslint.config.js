@@ -19,7 +19,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['**/*.test.mjs'],
+    files: ['**/*.test.{js,mjs}'],
     languageOptions: {
       globals: { ...globals.node, ...globals.es2021 },
     },
