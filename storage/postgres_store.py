@@ -3981,7 +3981,7 @@ class PostgresStore(StorageBase):
             offset = (page - 1) * page_size
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT id, sender_id, receiver_id, content, is_read, created_at
+                    """SELECT id, sender_id, receiver_id, content, is_read, created_at, retracted, cross_border_synced
                        FROM direct_messages
                        WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $3 AND receiver_id = $4)
                        ORDER BY created_at DESC

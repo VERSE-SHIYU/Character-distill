@@ -5152,7 +5152,7 @@ class SQLiteStore(StorageBase):
             offset = (page - 1) * page_size
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, sender_id, receiver_id, content, is_read, created_at
+                    """SELECT id, sender_id, receiver_id, content, is_read, created_at, retracted, cross_border_synced
                        FROM direct_messages
                        WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?)
                        ORDER BY created_at DESC
