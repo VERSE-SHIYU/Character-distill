@@ -15,7 +15,7 @@
   /* Text */
   --adm-color-text: var(--text-primary);
   --adm-color-text-secondary: var(--text-secondary);
-  --adm-color-weak: var(--charcoal-light);
+  --adm-color-weak: var(--text-dim);
 
   /* Border */
   --adm-color-border: var(--glass-border);

@@ -5,8 +5,8 @@ import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 import ConfirmModal from './common/ConfirmModal'
 import Modal from './common/Modal'
-import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Sun, Moon, Close } from './common/Icon'
-import { formatChatTime } from '../utils/time'
+import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Close, AlignLeft, AlignCenter, AlignRight } from './common/Icon'
+import { formatChatTime, formatDateTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import EmojiPicker from './common/EmojiPicker'
@@ -56,16 +56,6 @@ export default function AdminPanel() {
   const swipeBack = useSwipeBack(popView)
   const [tab, setTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [theme, setTheme] = useState(() => {
-    try { return localStorage.getItem('charsim-theme') || 'light' } catch { return 'light' }
-  })
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-    try { localStorage.setItem('charsim-theme', theme) } catch {}
-  }, [theme])
-
-  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark')
 
   const renderTab = () => {
     switch (tab) {
@@ -106,9 +96,6 @@ export default function AdminPanel() {
             })}
           </div>
         ))}
-        <button className="admin-theme-toggle" onClick={toggleTheme}>
-          <Sun size={15} /> / <Moon size={15} />
-        </button>
       </aside>
 
       {sidebarOpen && <div className="admin-overlay" onClick={() => setSidebarOpen(false)} />}
@@ -143,18 +130,12 @@ function fmtTimeAgo(iso) {
   if (!s.endsWith('Z') && !s.includes('+')) s += 'Z'
   const then = new Date(s).getTime()
   const now = Date.now()
-  if (isNaN(then)) {
-    const d = new Date(s)
-    if (!isNaN(d.getTime())) return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-    return iso
-  }
+  if (isNaN(then)) return formatDateTime(s)
   const diff = Math.floor((now - then) / 1000)
   if (diff < 60) return '刚刚'
   if (diff < 3600) return `${Math.floor(diff / 60)} 分钟前`
   if (diff < 86400) return `${Math.floor(diff / 3600)} 小时前`
-  const d = new Date(s)
-  if (!isNaN(d.getTime())) return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-  return iso
+  return formatDateTime(s)
 }
 
 const STAT_CARD_STYLES = {
@@ -326,7 +307,6 @@ function UsersTab() {
   const [emailOk, setEmailOk] = useState('')
   const [emailSetting, setEmailSetting] = useState(false)
   const [disableConfirm, setDisableConfirm] = useState(null)
-  const [clearEmailConfirm, setClearEmailConfirm] = useState(null)
   const [detailTarget, setDetailTarget] = useState(null)
   const [detailData, setDetailData] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -407,17 +387,6 @@ function UsersTab() {
       setEmailError(err.message || '设置失败')
     } finally {
       setEmailSetting(false)
-    }
-  }
-
-  const handleClearEmail = async (user) => {
-    setClearEmailConfirm(user)
-    return
-    try {
-      await adminAPI.clearUserEmail(user.id)
-      await load()
-    } catch (err) {
-      setActionError(err.message || '清除失败')
     }
   }
 
@@ -756,24 +725,6 @@ function UsersTab() {
           }
         }}
         onCancel={() => setDisableConfirm(null)}
-        danger
-      />
-      <ConfirmModal
-        isOpen={!!clearEmailConfirm}
-        title="清除邮箱"
-        message={`确定清除用户「${clearEmailConfirm ? displayName(clearEmailConfirm) : '?'}」的邮箱？`}
-        confirmText="确定"
-        onConfirm={async () => {
-          const user = clearEmailConfirm
-          setClearEmailConfirm(null)
-          try {
-            await adminAPI.clearUserEmail(user.id)
-            await load()
-          } catch (err) {
-            setActionError(err.message)
-          }
-        }}
-        onCancel={() => setClearEmailConfirm(null)}
         danger
       />
 
@@ -1180,6 +1131,20 @@ function UsageTab() {
 }
 
 function ReportsTab() {
+  const [kind, setKind] = useState('comment')
+  return (
+    <div className="admin-card">
+      <div className="admin-card-title">举报管理</div>
+      <div className="admin-subtabs">
+        <button className={`admin-subtab${kind === 'comment' ? ' active' : ''}`} onClick={() => setKind('comment')}>评论举报</button>
+        <button className={`admin-subtab${kind === 'card' ? ' active' : ''}`} onClick={() => setKind('card')}>卡片举报</button>
+      </div>
+      {kind === 'comment' ? <CommentReportsTable /> : <CardReportsTable />}
+    </div>
+  )
+}
+
+function CommentReportsTable() {
   const [reports, setReports] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -1230,8 +1195,7 @@ function ReportsTab() {
   }
 
   return (
-    <div className="admin-card">
-      <div className="admin-card-title">举报管理</div>
+    <>
       {error && (
         <div className="admin-error-banner">
           <span>{error}</span>
@@ -1297,7 +1261,122 @@ function ReportsTab() {
         onCancel={() => setConfirmDeleteId(null)}
         danger
       />
-    </div>
+    </>
+  )
+}
+
+function CardReportsTable() {
+  const [reports, setReports] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [confirmTakedownId, setConfirmTakedownId] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const data = await adminAPI.listCardReports()
+      setReports(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleResolve = async (cardId) => {
+    try {
+      await adminAPI.resolveCardReport(cardId)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleTakedown = async () => {
+    const cardId = confirmTakedownId
+    setConfirmTakedownId(null)
+    setBusy(true)
+    try {
+      await adminAPI.takedownCardReport(cardId)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const fmtDate = (iso) => {
+    if (!iso) return '-'
+    return iso.slice(0, 16).replace('T', ' ')
+  }
+
+  return (
+    <>
+      {error && (
+        <div className="admin-error-banner">
+          <span>{error}</span>
+          <button className="admin-error-close" onClick={() => setError('')}><Close size={12} /></button>
+        </div>
+      )}
+      {loading ? (
+        <div className="admin-loading">加载中…</div>
+      ) : reports.length === 0 ? (
+        <p style={{ padding: '20px 16px', color: 'var(--text-secondary)', fontSize: 13 }}>暂无待处理的卡片举报</p>
+      ) : (
+        <div className="admin-table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 160 }}>卡片名称</th>
+                <th style={{ minWidth: 80 }}>作者</th>
+                <th style={{ minWidth: 80 }}>举报次数</th>
+                <th style={{ minWidth: 150 }}>举报原因</th>
+                <th style={{ minWidth: 120 }}>首次举报</th>
+                <th style={{ minWidth: 140 }}>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {reports.map((r) => (
+                <tr key={r.card_id}>
+                  <td style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.card_name || r.card_id}
+                  </td>
+                  <td>{r.card_author_name || '-'}</td>
+                  <td><span className="admin-status" style={r.report_count > 1 ? { color: 'var(--danger)' } : {}}>{r.report_count}</span></td>
+                  <td style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.reasons}>
+                    {r.reasons}
+                  </td>
+                  <td>{fmtDate(r.first_reported_at)}</td>
+                  <td className="admin-actions-cell">
+                    <button className="btn-ghost-sm" onClick={() => handleResolve(r.card_id)}>
+                      驳回
+                    </button>
+                    <button className="btn-ghost-danger btn-sm" onClick={() => setConfirmTakedownId(r.card_id)}>
+                      <Trash2 size={14} /> 下架
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={!!confirmTakedownId}
+        title="下架被举报卡片"
+        message="确定下架此卡片？下架后该卡从市场移除、作者改为仅自己可见，相关举报将自动关闭。"
+        confirmText="下架"
+        onConfirm={handleTakedown}
+        onCancel={() => setConfirmTakedownId(null)}
+        danger
+      />
+    </>
   )
 }
 
@@ -1759,9 +1838,9 @@ function AnnouncementsTab() {
           )}
           <div className="announcement-align-group">
             {[
-              { key: 'left', label: '左', svg: <svg key="left" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="15" y2="12" /><line x1="3" y1="18" x2="19" y2="18" /></svg> },
-              { key: 'center', label: '中', svg: <svg key="center" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="7" y1="6" x2="17" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="5" y1="18" x2="19" y2="18" /></svg> },
-              { key: 'right', label: '右', svg: <svg key="right" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6" /><line x1="9" y1="12" x2="21" y2="12" /><line x1="5" y1="18" x2="21" y2="18" /></svg> },
+              { key: 'left', label: '左', svg: <AlignLeft key="left" size={16} /> },
+              { key: 'center', label: '中', svg: <AlignCenter key="center" size={16} /> },
+              { key: 'right', label: '右', svg: <AlignRight key="right" size={16} /> },
             ].map(a => (
               <button
                 key={a.key}
