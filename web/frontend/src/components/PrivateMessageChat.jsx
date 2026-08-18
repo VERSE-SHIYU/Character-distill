@@ -58,6 +58,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const userAvatar = useAppStore((s) => s.userAvatar)
   const currentCard = useAppStore((s) => s.currentCard)
   const affinity = useAppStore((s) => s.affinity)
+  const fetchAffinity = useAppStore((s) => s.fetchAffinity)
   const refreshUnread = useAppStore((s) => s.refreshUnread)
 
   const [messages, setMessages] = useState([])
@@ -90,8 +91,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   // through the public author endpoint, which returns the raw user dict.
   const isCrossRegion = !!(myHomeRegion && otherHomeRegion && myHomeRegion !== otherHomeRegion)
   // Inner voice reuses the active character session's affinity — only meaningful
-  // when the DM peer owns the character we are currently talking to.
-  const canShowInnerVoice = !!currentCard && currentCard.user_id === otherUserId && !!affinity?.inner_voice
+  // when the DM peer owns the character we are currently talking to. The button
+  // stays visible once identity matches; the overlay shows a placeholder while
+  // inner_voice is empty (e.g. affinity still loading after a refresh).
+  const canShowInnerVoice = !!currentCard && currentCard.user_id === otherUserId
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -315,6 +318,16 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     return () => clearInterval(timer)
   }, [otherUserId, fetchOnlineStatus])
 
+  // Inner voice affinity: pull the active character session's affinity fresh on
+  // mount instead of depending on store state left by the last role chat (which
+  // resets to INITIAL_AFFINITY after a refresh). fetchAffinity reads the current
+  // sessionId and silently no-ops when none exists.
+  useEffect(() => {
+    if (currentCard && currentCard.user_id === otherUserId) {
+      fetchAffinity()
+    }
+  }, [otherUserId, currentCard?.id, fetchAffinity])
+
   // Poll for new messages (merge, never clobber optimistic or older pages)
   useEffect(() => {
     if (!otherUserId) return
@@ -461,7 +474,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
               {canShowInnerVoice && innerVoiceOpen && (
                 <div className="dm-inner-voice">
                   <div className="dm-inner-voice-header">{affinity.mood_emoji || '😊'} {currentCard?.name || peerName}此刻的想法</div>
-                  <div className="dm-inner-voice-text">"{affinity.inner_voice || '…'}"</div>
+                  <div className="dm-inner-voice-text">{affinity.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
                   {!!affinity.mood && (
                     <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>
                   )}
