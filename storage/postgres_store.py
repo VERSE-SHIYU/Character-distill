@@ -2832,20 +2832,6 @@ class PostgresStore(StorageBase):
 
     # ---- Affinity ----
 
-    async def update_session_affinity(self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = "") -> None:
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    """UPDATE sessions
-                       SET affinity = $1, trust = $2, mood = $3, guard = $4,
-                           affinity_reason = $5,
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE id = $6""",
-                    affinity, trust, mood, guard, reason, session_id,
-                )
-        except Exception as exc:
-            print(f"[PostgresStore] Update session affinity failed: {exc}")
-
     async def get_session_affinity(self, session_id: str) -> dict | None:
         try:
             async with await self._connect() as conn:

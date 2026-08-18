@@ -310,6 +310,28 @@ class AffinityService:
         except (json.JSONDecodeError, TypeError):
             return None
 
+    @staticmethod
+    def legacy_looks_evaluated(data: dict[str, Any]) -> bool:
+        """旧格式扁平行是否已评估（区别于会话创建时的硬编码默认值）。
+
+        唯一判定源，供 chat_engine.load_affinity 与 read_persisted_affinity 共用：
+          ① reason 可解析为含 inner_voice 的 JSON
+          ② 数值非硬编码默认（50/30/平静/70）
+        """
+        raw_reason = data.get("reason", "") or ""
+        try:
+            p = json.loads(raw_reason)
+            if isinstance(p, dict) and p.get("inner_voice"):
+                return True
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return not (
+            data.get("affinity") == 50
+            and data.get("trust") == 30
+            and data.get("mood") == "平静"
+            and data.get("guard") == 70
+        )
+
     def apply_evaluation(self, data: dict, old_stage: str) -> int:
         """把解析结果回写11个情感字段，返回importance。纯状态计算，无IO。
 
@@ -355,3 +377,39 @@ class AffinityService:
         }
         self.affinity_reason = _json.dumps(extended, ensure_ascii=False)
         return importance
+
+
+async def read_persisted_affinity(session_id: str, storage) -> tuple[dict[str, Any] | None, str | None]:
+    """唯一持久化读取入口：给定 session_id + storage，返回 (data, source)。
+
+    source:
+      - 'state'  → data = affinity_state 列解析出的规范 dict（affinity_initialized=1）
+      - 'legacy' → data = 扁平列原始行（legacy_looks_evaluated 判定为已评估）
+      - None     → data = 扁平列原始行（纯默认值）或 None，代表"无已评估数据"
+
+    优先级：affinity_state → 扁平列。GET 接口与 engine 重建两个调用方共用。
+    storage 以参数传入（duck-typed），避免引入 storage 反向依赖。
+    """
+    state_json, initialized = await storage.load_affinity_state(session_id)
+    if initialized and state_json:
+        parsed = AffinityService.from_persist(state_json)
+        if parsed:
+            return parsed, 'state'
+        print(f"[affinity] Corrupt affinity_state for session {session_id}; falling back to legacy (non-fatal)")
+    row = await storage.get_session_affinity(session_id)
+    if row and AffinityService.legacy_looks_evaluated(row):
+        return row, 'legacy'
+    return row, None
+
+
+async def resolve_session_affinity(session_id: str, storage, sessions: dict) -> dict[str, Any] | None:
+    """API 层统一入口：内存 engine 优先，否则走持久化读取。无已评估数据时返回 None。"""
+    session = sessions.get(session_id)
+    if session and session.get("engine"):
+        return session["engine"].get_affinity()
+    data, source = await read_persisted_affinity(session_id, storage)
+    if source == 'legacy':
+        svc = AffinityService()
+        svc.load(data)
+        return svc.get()
+    return data if source == 'state' else None

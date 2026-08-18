@@ -8,7 +8,7 @@ import random
 import traceback
 from typing import Any, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ from deps import get_sessions, get_storage, get_text_manager, touch_session
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
+from core.affinity_service import read_persisted_affinity, resolve_session_affinity
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -179,15 +180,12 @@ async def _ensure_session(
     engine._session_id = session_id
     engine._user_id = user_id
     try:
-        state_json, initialized = await storage.load_affinity_state(session_id)
-        if initialized and state_json:
-            parsed = engine._affinity_service.from_persist(state_json)
-            if parsed:
-                engine.load_affinity(parsed, initialized=True)
+        data, source = await read_persisted_affinity(session_id, storage)
+        if source == 'state':
+            engine.load_affinity(data, initialized=True)
         else:
-            affinity_data = await storage.get_session_affinity(session_id)
-            if affinity_data:
-                engine.load_affinity(affinity_data)
+            # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
+            engine.load_affinity(data)
     except Exception as exc:
         print(f"[chat] Restore affinity failed (non-fatal): {exc}")
     sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
@@ -590,15 +588,19 @@ async def revoke_messages(
 
     return {"deleted": count}
 
-@router.get("/affinity/{session_id}")
+@router.get("/affinity/{session_id}", response_model=None)
 async def get_affinity(
     session_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
     sessions: dict = Depends(get_sessions),
-) -> dict[str, Any]:
-    """Return affinity scores for a session (incl. inner_voice, mood_emoji, stage)."""
+) -> dict[str, Any] | Response:
+    """Return affinity scores for a session (incl. inner_voice, mood_emoji, stage).
+
+    无已评估 affinity 数据时返回 204（前端以 affinity=null 表达"无数据"），
+    不返回长得像真实数据的假默认值。
+    """
     # Always verify ownership via DB first
     db_session = await storage.get_session(session_id)
     if not db_session:
@@ -606,37 +608,10 @@ async def get_affinity(
     if db_session.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此会话")
 
-    session = sessions.get(session_id)
-    if session and session.get("engine"):
-        return session["engine"].get_affinity()
-
-    # Fallback to DB (server restarted)
-    data = await storage.get_session_affinity(session_id)
-    if data:
-        aff = data.get("affinity", 50)
-        reason = data.get("reason", "")
-        # Try to parse extended JSON from affinity_reason
-        extended = {}
-        if reason:
-            try:
-                extended = json.loads(reason)
-            except (json.JSONDecodeError, TypeError):
-                extended = {"inner_voice": reason, "mood_emoji": "😊"}
-        # Calculate stage
-        from core.chat_engine import calc_stage
-        stage_name, stage_emoji = calc_stage(aff)
-        return {
-            "affinity": aff,
-            "trust": data.get("trust", 30),
-            "mood": data.get("mood", "平静"),
-            "guard": data.get("guard", 70),
-            "reason": reason,
-            "inner_voice": extended.get("inner_voice", ""),
-            "mood_emoji": extended.get("mood_emoji", "😊"),
-            "stage": stage_name,
-            "stage_emoji": stage_emoji,
-        }
-    return {"affinity": 50, "trust": 30, "mood": "平静", "guard": 70, "reason": "", "inner_voice": "", "mood_emoji": "😊", "stage": "陌生", "stage_emoji": "🫥"}
+    aff = await resolve_session_affinity(session_id, storage, sessions)
+    if aff is None:
+        return Response(status_code=204)
+    return aff
 
 
 @router.post("/reset")

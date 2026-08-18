@@ -506,28 +506,9 @@ class ChatEngine:
             return
 
         # ── 存量旧格式升级路径 ──────────────────────────────
-        # 启发式判断旧格式行是否"已评估"（affinity_initialized 尚为 0）：
-        #   ① reason 可解析为含 inner_voice 的 JSON
-        #   ② 数值非硬编码默认（50/30/平静/70）
-        _raw_reason = data.get("reason", "") or ""
-        _legacy_evaluated = False
-        try:
-            _p = json.loads(_raw_reason)
-            if isinstance(_p, dict) and _p.get("inner_voice"):
-                _legacy_evaluated = True
-        except (json.JSONDecodeError, TypeError):
-            pass
-        if not _legacy_evaluated:
-            _is_default = (
-                data.get("affinity") == 50
-                and data.get("trust") == 30
-                and data.get("mood") == "平静"
-                and data.get("guard") == 70
-            )
-            if not _is_default:
-                _legacy_evaluated = True
-
-        if _legacy_evaluated:
+        # "已评估"判定走唯一判定源 AffinityService.legacy_looks_evaluated：
+        #   reason 可解析为含 inner_voice 的 JSON，或数值非硬编码默认（50/30/平静/70）
+        if self._affinity_service.legacy_looks_evaluated(data):
             # 已评估旧数据：加载旧进度 → 升级为 affinity_state 新格式
             self._affinity_service.load(data)
             self._save_affinity_state()

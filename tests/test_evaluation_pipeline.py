@@ -61,21 +61,6 @@ class FakeStorage:
         self.raise_on_update = raise_on_update
         self.captured: dict | None = None
 
-    async def update_session_affinity(
-        self, session_id: str, affinity: int, trust: int,
-        mood: str, guard: int, reason: str,
-    ) -> None:
-        if self.raise_on_update:
-            raise RuntimeError("Storage update failed (fake)")
-        self.captured = {
-            "session_id": session_id,
-            "affinity": affinity,
-            "trust": trust,
-            "mood": mood,
-            "guard": guard,
-            "reason": reason,
-        }
-
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int,
         mood: str, guard: int, reason: str,

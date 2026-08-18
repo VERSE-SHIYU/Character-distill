@@ -238,12 +238,6 @@ class StorageBase(ABC):
         """Get today's usage quality stats: total, estimated count, ratio."""
 
     @abstractmethod
-    async def update_session_affinity(
-        self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
-    ) -> None:
-        """Update affinity scores for a session."""
-
-    @abstractmethod
     async def get_session_affinity(self, session_id: str) -> dict | None:
         """Get affinity scores for a session."""
 

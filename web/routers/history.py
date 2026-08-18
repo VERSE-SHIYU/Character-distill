@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel
 
 from core.trash_service import hard_delete, restore, soft_delete
+from core.affinity_service import read_persisted_affinity
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard
 from core.clock import UserClock
@@ -296,15 +297,12 @@ async def resume_session(
     # 8. Restore affinity from DB — each session has independent scores
     engine._session_id = session_id
     try:
-        state_json, initialized = await storage.load_affinity_state(session_id)
-        if initialized and state_json:
-            parsed = engine._affinity_service.from_persist(state_json)
-            if parsed:
-                engine.load_affinity(parsed, initialized=True)
+        data, source = await read_persisted_affinity(session_id, storage)
+        if source == 'state':
+            engine.load_affinity(data, initialized=True)
         else:
-            affinity_data = await storage.get_session_affinity(session_id)
-            if affinity_data:
-                engine.load_affinity(affinity_data)
+            # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
+            engine.load_affinity(data)
     except Exception as exc:
         print(f"[history] Restore affinity failed (non-fatal): {exc}")
 

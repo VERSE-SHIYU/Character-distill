@@ -490,7 +490,7 @@ function ChatView() {
             <span className="chat-topbar-compact-name">{charName}</span>
             <span className="ai-online" title="在线"><i className="ai-online-dot" aria-hidden="true" /><span>在线</span></span>
             {charIdentity && <span className="chat-topbar-badge-compact">{charIdentity}</span>}
-            {affinityEnabled && (
+            {affinityEnabled && affinity && (
               <button
                 type="button"
                 data-affinity-trigger
@@ -529,7 +529,8 @@ function ChatView() {
       </div>
 
       {/* ── Inner voice popup (replaces old affinity bar) ── */}
-      {showInnerVoice && (
+      {/* 门控加 affinity：popup 与触发按钮相互独立，affinity 为 null（无数据）时不渲染，避免残留 showInnerVoice 解引用空值 */}
+      {showInnerVoice && affinity && (
         <div className="inner-voice-popup" ref={innerVoicePopupRef}>
           <div className="inner-voice-header">
             {affinity.mood_emoji || '😊'} {charName}此刻的想法
@@ -946,7 +947,8 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, charN
     if (isStreaming && !prevStreamingRef.current) {
       twRef.current.reset()
       lastCpCountRef.current = 0
-      twRef.current.setCharInterval(moodCharInterval(useAppStore.getState().affinity.mood))
+      const _aff = useAppStore.getState().affinity
+      if (_aff) twRef.current.setCharInterval(moodCharInterval(_aff.mood))
     }
     prevStreamingRef.current = isStreaming
   }, [isStreaming])

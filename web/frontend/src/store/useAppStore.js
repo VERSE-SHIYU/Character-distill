@@ -11,12 +11,6 @@ const clientTz = () => {
   catch { return '' }
 }
 
-const INITIAL_AFFINITY = {
-  affinity: 50, trust: 30, guard: 70,
-  mood: '平静', reason: '', inner_voice: '',
-  mood_emoji: '😊', stage: '陌生', stage_emoji: '🫥',
-}
-
 let _cidSeq = 0
 const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })
 
@@ -460,7 +454,8 @@ const useAppStore = create((set, get) => ({
   agentMode: false,
   setAgentMode: (val) => set({ agentMode: val }),
 
-  affinity: { ...INITIAL_AFFINITY },
+  // affinity: null 表达"无数据"（后端 204）。有真实数据时为 10 字段规范 dict。
+  affinity: null,
   affinityOpen: localStorage.getItem('affinity_open') !== 'false',
   setAffinityOpen: (val) => {
     localStorage.setItem('affinity_open', val ? 'true' : 'false')
@@ -476,12 +471,16 @@ const useAppStore = create((set, get) => ({
     if (!sessionId) return
     try {
       const res = await fetchWithTimeout(`/api/chat/affinity/${sessionId}`)
-      const data = await res.json()
+      // 204 = 无已评估数据 → affinity:null（与后端契约一致，不吞也不造假）
+      const data = res.status === 204 ? null : await res.json()
       set({ affinity: data })
-    } catch (err) { if (err?.status !== 401) console.warn('[affinity]', err) }
+    } catch (err) {
+      if (err?.status !== 401) console.warn('[affinity]', err)
+      set({ affinity: null })
+    }
   },
 
-  resetAffinity: () => set({ affinity: { ...INITIAL_AFFINITY } }),
+  resetAffinity: () => set({ affinity: null }),
 
   // Recording
   isRecording: false,

@@ -69,7 +69,6 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [consent, setConsent] = useState(null) // { target_region, receiver_username } waiting for cross-border consent
   const [innerVoiceOpen, setInnerVoiceOpen] = useState(false)
-  const [affinityLoaded, setAffinityLoaded] = useState(false)
 
   const listRef = useRef(null)
   const messagesEndRef = useRef(null)
@@ -92,14 +91,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   // through the public author endpoint, which returns the raw user dict.
   const isCrossRegion = !!(myHomeRegion && otherHomeRegion && myHomeRegion !== otherHomeRegion)
   // Inner voice reuses the active character session's affinity — only meaningful
-  // when the DM peer owns the character we are currently talking to. The button
-  // stays visible once identity matches; the overlay shows a placeholder while
-  // inner_voice is empty (e.g. affinity still loading after a refresh).
+  // when the DM peer owns the character we are currently talking to. Identity
+  // gate only; the overlay shows a placeholder while affinity is null (no data)
+  // or inner_voice is empty. Real numbers only render when affinity is non-null.
   const canShowInnerVoice = !!currentCard && currentCard.user_id === otherUserId
-  // Stats / stage only render once affinity has actually been fetched — before
-  // that the store holds INITIAL_AFFINITY defaults (50/30/70, 陌生) that would
-  // read as real numbers.
-  const canShowInnerVoiceData = canShowInnerVoice && affinityLoaded
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -324,20 +319,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   }, [otherUserId, fetchOnlineStatus])
 
   // Inner voice affinity: pull the active character session's affinity fresh on
-  // mount instead of depending on store state left by the last role chat (which
-  // resets to INITIAL_AFFINITY after a refresh). fetchAffinity reads the current
-  // sessionId and silently no-ops when none exists. The loaded flag is only set
-  // when the store affinity actually changed (fetch succeeded) so the overlay
-  // never shows INITIAL defaults as if they were real data.
+  // mount instead of depending on store state left by the last role chat.
+  // fetchAffinity reads the current sessionId and silently no-ops when none
+  // exists. No-data (204) lands as affinity=null — the overlay placeholder then
+  // covers it without ever showing fake numbers.
   useEffect(() => {
     if (currentCard && currentCard.user_id === otherUserId) {
-      const before = useAppStore.getState().affinity
-      setAffinityLoaded(false)
-      fetchAffinity().then(() => {
-        setAffinityLoaded(useAppStore.getState().affinity !== before)
-      })
-    } else {
-      setAffinityLoaded(false)
+      fetchAffinity()
     }
   }, [otherUserId, currentCard?.id, fetchAffinity])
 
@@ -486,9 +474,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
               {canShowInnerVoice && innerVoiceOpen && (
                 <div className="dm-inner-voice">
-                  <div className="dm-inner-voice-header">{affinity.mood_emoji || '😊'} {currentCard?.name || peerName}此刻的想法</div>
-                  <div className="dm-inner-voice-text">{affinity.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
-                  {canShowInnerVoiceData && (
+                  <div className="dm-inner-voice-header">{affinity?.mood_emoji || '😊'} {currentCard?.name || peerName}此刻的想法</div>
+                  <div className="dm-inner-voice-text">{affinity?.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
+                  {affinity && (
                     <>
                       {!!affinity.mood && (
                         <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>

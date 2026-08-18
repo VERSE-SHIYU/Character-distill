@@ -3897,23 +3897,6 @@ class SQLiteStore(StorageBase):
 
     # ---- Affinity ----
 
-    async def update_session_affinity(
-        self, session_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
-    ) -> None:
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    """UPDATE sessions
-                       SET affinity = ?, trust = ?, mood = ?, guard = ?,
-                           affinity_reason = ?,
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE id = ?""",
-                    (affinity, trust, mood, guard, reason, session_id),
-                )
-                await conn.commit()
-        except Exception as exc:
-            print(f"[SQLiteStore] Update session affinity failed: {exc}")
-
     async def get_session_affinity(self, session_id: str) -> dict | None:
         try:
             async with await self._connect() as conn:
