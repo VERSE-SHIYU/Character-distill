@@ -876,6 +876,15 @@ class SQLiteStore(StorageBase):
                             if "duplicate column" not in str(exc).lower():
                                 print(f"[SQLiteStore] Affinity state migration failed: {exc}")
 
+                    # Run 083_card_reports migration (CREATE TABLE)
+                    cr_path = migrations_dir / "083_card_reports.sql"
+                    if cr_path.exists():
+                        try:
+                            await conn.executescript(cr_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Card reports migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -4253,6 +4262,88 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Delete comment and resolve reports failed: {exc}")
+            return False
+
+    # ── Card Reports ──
+
+    async def add_card_report(self, card_id: str, reporter_id: str, reason: str) -> bool:
+        """Insert a card report record. Duplicate reports from same user are ignored."""
+        try:
+            report_id = uuid.uuid4().hex[:12]
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT OR IGNORE INTO card_reports
+                       (id, card_id, reporter_id, reason)
+                       VALUES (?, ?, ?, ?)""",
+                    (report_id, card_id, reporter_id, reason),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Add card report failed: {exc}")
+            return False
+
+    async def get_card_reports_grouped(self, status: str = 'pending') -> list[dict]:
+        """List pending card reports grouped by card for admin view."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT r.card_id,
+                              COALESCE(c.name, '') AS card_name,
+                              COALESCE(u.username, '') AS card_author_name,
+                              COUNT(*) AS report_count,
+                              GROUP_CONCAT(r.reason, ' | ') AS reasons,
+                              MIN(r.created_at) AS first_reported_at
+                       FROM card_reports r
+                       LEFT JOIN cards c ON c.id = r.card_id
+                       LEFT JOIN users u ON u.id = c.user_id
+                       WHERE r.status = ?
+                       GROUP BY r.card_id
+                       ORDER BY report_count DESC, first_reported_at ASC""",
+                    (status,),
+                )
+                rows = await cursor.fetchall()
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card reports grouped failed: {exc}")
+            return []
+
+    async def resolve_all_card_reports(self, card_id: str, resolver_id: str) -> bool:
+        """Resolve all pending reports for a card (dismiss, keep card)."""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE card_reports
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
+                       WHERE card_id = ? AND status = 'pending'""",
+                    (now, resolver_id, card_id),
+                )
+                await conn.commit()
+            return True
+        except Exception as exc:
+            print(f"[SQLiteStore] Resolve all card reports failed: {exc}")
+            return False
+
+    async def takedown_card_and_resolve_reports(self, card_id: str, resolver_id: str) -> bool:
+        """Takedown a public card and resolve all its pending reports."""
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE cards SET visibility = 'private' WHERE id = ? AND visibility = 'public'",
+                    (card_id,),
+                )
+                await conn.execute(
+                    """UPDATE card_reports
+                       SET status = 'resolved', resolved_at = ?, resolver_id = ?
+                       WHERE card_id = ? AND status = 'pending'""",
+                    (now, resolver_id, card_id),
+                )
+                await conn.commit()
+                return cursor.rowcount > 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Takedown card and resolve reports failed: {exc}")
             return False
 
     # ── Follows ──

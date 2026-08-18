@@ -3161,6 +3161,80 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Delete comment and resolve reports failed: {exc}")
             return False
 
+    # ── Card Reports ──
+
+    async def add_card_report(self, card_id: str, reporter_id: str, reason: str) -> bool:
+        try:
+            report_id = uuid.uuid4().hex[:12]
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO card_reports
+                       (id, card_id, reporter_id, reason)
+                       VALUES ($1, $2, $3, $4)
+                       ON CONFLICT DO NOTHING""",
+                    report_id, card_id, reporter_id, reason,
+                )
+            return True
+        except Exception as exc:
+            print(f"[PostgresStore] Add card report failed: {exc}")
+            return False
+
+    async def get_card_reports_grouped(self, status: str = 'pending') -> list[dict]:
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT r.card_id,
+                              COALESCE(c.name, '') AS card_name,
+                              COALESCE(u.username, '') AS card_author_name,
+                              COUNT(*) AS report_count,
+                              STRING_AGG(r.reason, ' | ') AS reasons,
+                              MIN(r.created_at) AS first_reported_at
+                       FROM card_reports r
+                       LEFT JOIN cards c ON c.id = r.card_id
+                       LEFT JOIN users u ON u.id = c.user_id
+                       WHERE r.status = $1
+                       GROUP BY r.card_id
+                       ORDER BY report_count DESC, first_reported_at ASC""",
+                    status,
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get card reports grouped failed: {exc}")
+            return []
+
+    async def resolve_all_card_reports(self, card_id: str, resolver_id: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """UPDATE card_reports
+                       SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolver_id = $1
+                       WHERE card_id = $2 AND status = 'pending'""",
+                    resolver_id, card_id,
+                )
+            return True
+        except Exception as exc:
+            print(f"[PostgresStore] Resolve all card reports failed: {exc}")
+            return False
+
+    async def takedown_card_and_resolve_reports(self, card_id: str, resolver_id: str) -> bool:
+        try:
+            async with await self._connect() as conn:
+                async with conn.transaction():
+                    cur = await conn.execute(
+                        "UPDATE cards SET visibility = 'private' WHERE id = $1 AND visibility = 'public'",
+                        card_id,
+                    )
+                    await conn.execute(
+                        """UPDATE card_reports
+                           SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolver_id = $1
+                           WHERE card_id = $2 AND status = 'pending'""",
+                        resolver_id, card_id,
+                    )
+                return cur.rowcount > 0
+        except Exception as exc:
+            print(f"[PostgresStore] Takedown card and resolve reports failed: {exc}")
+            return False
+
     # ── Follows ──
 
     async def get_followers(self, user_id: str) -> list[str]:

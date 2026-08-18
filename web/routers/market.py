@@ -839,6 +839,25 @@ async def report_comment(
     return {"ok": True}
 
 
+@router.post("/{card_id}/report")
+@limiter.limit("30/minute")
+async def report_card(
+    request: Request,
+    card_id: str,
+    body: dict,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Report a public card."""
+    reason = (body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "请填写举报原因")
+    ok = await storage.add_card_report(card_id, user["id"], reason)
+    if not ok:
+        raise HTTPException(500, "举报提交失败")
+    return {"ok": True}
+
+
 @router.post("/{card_id}/fork")
 @limiter.limit("30/minute")
 async def fork_card(

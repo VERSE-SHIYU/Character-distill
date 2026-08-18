@@ -431,6 +431,50 @@ async def delete_reported_comment(
     return {"ok": True}
 
 
+# ---- Card Reports ----
+
+
+@router.get("/card-reports")
+@limiter.limit("30/minute")
+async def list_card_reports(
+    request: Request,
+    _admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> list[dict[str, Any]]:
+    """List pending card reports grouped by card."""
+    return await storage.get_card_reports_grouped()
+
+
+@router.post("/card-reports/{card_id}/resolve")
+@limiter.limit("30/minute")
+async def resolve_card_reports(
+    request: Request,
+    card_id: str,
+    admin_user: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Resolve all pending reports for a card (dismiss, keep card)."""
+    ok = await storage.resolve_all_card_reports(card_id, admin_user["id"])
+    if not ok:
+        raise HTTPException(500, "操作失败")
+    return {"ok": True}
+
+
+@router.post("/card-reports/{card_id}/takedown")
+@limiter.limit("30/minute")
+async def takedown_reported_card(
+    request: Request,
+    card_id: str,
+    admin_user: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """Takedown a reported card and resolve all its pending reports."""
+    ok = await storage.takedown_card_and_resolve_reports(card_id, admin_user["id"])
+    if not ok:
+        raise HTTPException(404, "卡片不存在或已是非公开状态")
+    return {"ok": True}
+
+
 # ============================================================
 # P1-1: Content Moderation
 # ============================================================
