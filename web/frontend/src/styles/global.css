@@ -40,6 +40,7 @@
   --danger: #ef4444;
   --warning: #f59e0b;
   --on-danger: #ffffff;
+  --info: #3b82f6;   /* 信息蓝；暗色主题用 color-mix 提亮（对应原 .chars-blue #2e86c1/#60a5fa） */
 
   --bg: var(--bg-page);
   --card-bg: var(--glass-bg);
@@ -184,7 +185,6 @@ html.serif-display .profile-section-title {
   --card-blur: blur(16px) saturate(160%);
 
   --input-bg: rgba(255, 255, 255, 0.42);
-  --input-focus-ring: rgba(106, 205, 198, 0.28);
   --input-radius: 14px;
 
   --scrollbar-thumb: rgba(29, 111, 127, 0.25);
@@ -388,6 +388,10 @@ html.theme-galaxy::before {
   pointer-events: none;
 }
 
+/* ── Dark adjustments shim（.theme-midnight/.theme-galaxy 成对覆盖）──
+ * 旧 [data-theme="dark"] 适配层残留：组件硬编码亮色 → 暗色主题靠覆盖块拉回。
+ * 新组件请直接用语义 token（--surface/--text-primary/--border/--success…）。
+ * 本区只减不增，迁完一条删一条。 */
 /* Midnight — 背景星云渐变 */
 .theme-midnight .bg-gradient-pastel,
 .theme-galaxy .bg-gradient-pastel {
@@ -636,13 +640,13 @@ html.theme-midnight::before {
 }
 
 .theme-midnight .chars-green,
-.theme-galaxy .chars-green { color: #4ade80; font-weight: 600; }
+.theme-galaxy .chars-green { color: color-mix(in srgb, var(--success) 82%, white); font-weight: 600; }
 .theme-midnight .chars-blue ,
-.theme-galaxy .chars-blue  { color: #60a5fa; font-weight: 600; }
+.theme-galaxy .chars-blue  { color: color-mix(in srgb, var(--info) 82%, white); font-weight: 600; }
 .theme-midnight .chars-orange,
-.theme-galaxy .chars-orange { color: #fb923c; font-weight: 600; }
+.theme-galaxy .chars-orange { color: color-mix(in srgb, var(--warning) 82%, white); font-weight: 600; }
 .theme-midnight .chars-red  ,
-.theme-galaxy .chars-red   { color: #f87171; font-weight: 600; }
+.theme-galaxy .chars-red   { color: color-mix(in srgb, var(--danger) 82%, white); font-weight: 600; }
 
 /* Usage stats, action rows */
 .theme-midnight .usage-action-name,
@@ -2606,10 +2610,10 @@ label[for] {
   white-space: nowrap;
 }
 
-.chars-green  { color: #27ae60; font-weight: 600; }
-.chars-blue   { color: #2e86c1; font-weight: 600; }
-.chars-orange { color: #e67e22; font-weight: 600; }
-.chars-red    { color: #e74c3c; font-weight: 600; }
+.chars-green  { color: var(--success); font-weight: 600; }
+.chars-blue   { color: var(--info); font-weight: 600; }
+.chars-orange { color: var(--warning); font-weight: 600; }
+.chars-red    { color: var(--danger); font-weight: 600; }
 
 .text-list-cleaned {
   display: block;
@@ -4353,32 +4357,7 @@ label[for] {
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* Dark mode adjustments */
-:root.is-midnight .inner-voice-popup,
-.midnight .inner-voice-popup {
-  background: var(--card-bg);
-  border-color: rgba(255,255,255,0.08);
-}
-:root.is-midnight .inner-voice-popup::before,
-.midnight .inner-voice-popup::before {
-  background: #1e2330;
-  border-color: rgba(255,255,255,0.08);
-}
-:root.is-midnight .inner-voice-header,
-.midnight .inner-voice-header {
-  color: #e5e7eb;
-}
-:root.is-midnight .inner-voice-text,
-.midnight .inner-voice-text {
-  color: #9ca3af;
-  border-color: rgba(255,255,255,0.06);
-}
-:root.is-midnight .stage-toast,
-.midnight .stage-toast {
-  background: rgba(30, 35, 48, 0.96);
-  border-color: rgba(255,255,255,0.08);
-  color: #e5e7eb;
-}
+/* (死代码已删：:root.is-midnight/.midnight 的 inner-voice/stage-toast 暗色块，JS 从不设这两类) */
 
 /* ── More menu ── */
 .chat-more-menu {
@@ -12843,6 +12822,7 @@ select.settings-input {
   min-width: 0;
   background: rgba(255,255,255,0.04);
 }
+/* Dark adjustments shim（聊天覆盖区，同上：只减不增） */
 .theme-midnight .group-chat-layout .group-chat-messages-area,
 .theme-galaxy .group-chat-layout .group-chat-messages-area {
   background: rgba(0,0,0,0.08);
