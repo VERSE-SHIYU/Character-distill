@@ -69,6 +69,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
   const [consent, setConsent] = useState(null) // { target_region, receiver_username } waiting for cross-border consent
   const [innerVoiceOpen, setInnerVoiceOpen] = useState(false)
+  const [affinityLoaded, setAffinityLoaded] = useState(false)
 
   const listRef = useRef(null)
   const messagesEndRef = useRef(null)
@@ -95,6 +96,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   // stays visible once identity matches; the overlay shows a placeholder while
   // inner_voice is empty (e.g. affinity still loading after a refresh).
   const canShowInnerVoice = !!currentCard && currentCard.user_id === otherUserId
+  // Stats / stage only render once affinity has actually been fetched — before
+  // that the store holds INITIAL_AFFINITY defaults (50/30/70, 陌生) that would
+  // read as real numbers.
+  const canShowInnerVoiceData = canShowInnerVoice && affinityLoaded
 
   // Load messages
   const loadMessages = useCallback(async (pageNum = 1, append = false) => {
@@ -321,10 +326,18 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   // Inner voice affinity: pull the active character session's affinity fresh on
   // mount instead of depending on store state left by the last role chat (which
   // resets to INITIAL_AFFINITY after a refresh). fetchAffinity reads the current
-  // sessionId and silently no-ops when none exists.
+  // sessionId and silently no-ops when none exists. The loaded flag is only set
+  // when the store affinity actually changed (fetch succeeded) so the overlay
+  // never shows INITIAL defaults as if they were real data.
   useEffect(() => {
     if (currentCard && currentCard.user_id === otherUserId) {
-      fetchAffinity()
+      const before = useAppStore.getState().affinity
+      setAffinityLoaded(false)
+      fetchAffinity().then(() => {
+        setAffinityLoaded(useAppStore.getState().affinity !== before)
+      })
+    } else {
+      setAffinityLoaded(false)
     }
   }, [otherUserId, currentCard?.id, fetchAffinity])
 
@@ -475,17 +488,21 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                 <div className="dm-inner-voice">
                   <div className="dm-inner-voice-header">{affinity.mood_emoji || '😊'} {currentCard?.name || peerName}此刻的想法</div>
                   <div className="dm-inner-voice-text">{affinity.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
-                  {!!affinity.mood && (
-                    <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>
+                  {canShowInnerVoiceData && (
+                    <>
+                      {!!affinity.mood && (
+                        <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>
+                      )}
+                      <div className="dm-inner-voice-footer">
+                        {!!affinity.stage && <span className="dm-inner-voice-stage">{affinity.stage_emoji || ''} {affinity.stage}</span>}
+                        <span className="dm-inner-voice-stats">
+                          <span><Heart size={11} />{affinity.affinity}</span>
+                          <span><Check size={11} />{affinity.trust}</span>
+                          <span><Shield size={11} />{affinity.guard}</span>
+                        </span>
+                      </div>
+                    </>
                   )}
-                  <div className="dm-inner-voice-footer">
-                    {!!affinity.stage && <span className="dm-inner-voice-stage">{affinity.stage_emoji || ''} {affinity.stage}</span>}
-                    <span className="dm-inner-voice-stats">
-                      <span><Heart size={11} />{affinity.affinity}</span>
-                      <span><Check size={11} />{affinity.trust}</span>
-                      <span><Shield size={11} />{affinity.guard}</span>
-                    </span>
-                  </div>
                 </div>
               )}
 
