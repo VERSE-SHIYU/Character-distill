@@ -6,7 +6,9 @@ export function mergeMessages(prev, serverMsgs) {
   for (const m of prev) byId.set(m.id, m)
   for (const m of serverMsgs) {
     const local = byId.get(m.id)
-    byId.set(m.id, local && local._status ? local : m)
+    // Keep the optimistic copy only while it is in-flight; once it reaches
+    // 'sent' the server copy wins so its is_read / retracted can land.
+    byId.set(m.id, local && local._status && local._status !== 'sent' ? local : m)
   }
   return [...byId.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
 }

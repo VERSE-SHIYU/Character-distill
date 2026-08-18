@@ -95,24 +95,24 @@ async function runDesktop(fail) {
 
   // 点击第一会话 → 聊天
   await page.locator('.messages-conv-item').first().click()
-  await page.waitForSelector('.private-chat-body', { timeout: 10000 })
-  await page.waitForSelector('.messages-row', { timeout: 10000 })
+  await page.waitForSelector('.dm', { timeout: 10000 })
+  await page.waitForSelector('.dm-row', { timeout: 10000 })
   await page.waitForTimeout(200)
 
   const chat = await page.evaluate(() => {
     const q = (sel) => document.querySelector(sel)
-    const title = q('.private-chat-title')
-    const status = q('.private-chat-header-status')
-    const dot = q('.private-chat-header-status-dot')
+    const title = q('.dm-peer-name')
+    const status = q('.dm-peer-status')
+    const dot = q('.dm-peer-status .dot')
     return {
       titleText: title?.textContent.trim() || null,
       titleFont: title ? getComputedStyle(title).fontFamily : null,
       statusText: status?.textContent.trim() || null,
       statusColor: status ? getComputedStyle(status).color : null,
       dotBg: dot ? getComputedStyle(dot).backgroundColor : null,
-      rows: document.querySelectorAll('.messages-row').length,
-      bubbles: document.querySelectorAll('.cbubble').length,
-      emptyChat: !!q('.messages-empty-chat'),
+      rows: document.querySelectorAll('.dm-row').length,
+      bubbles: document.querySelectorAll('.dm-bubble').length,
+      emptyChat: !!q('.dm-empty'),
       overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
     }
   })
@@ -123,13 +123,13 @@ async function runDesktop(fail) {
   if (chat.statusColor !== 'rgb(34, 197, 94)') fail.push('在线状态应用 success 色: ' + chat.statusColor)
   if (chat.dotBg !== 'rgb(34, 197, 94)') fail.push('在线色点应用 success 色: ' + chat.dotBg)
   if (chat.rows < 2) fail.push('消息气泡行应 ≥2: ' + chat.rows)
-  if (chat.bubbles < 2) fail.push('cbubble 应 ≥2: ' + chat.bubbles)
+  if (chat.bubbles < 2) fail.push('dm-bubble 应 ≥2: ' + chat.bubbles)
   if (chat.overflowX) fail.push('桌面横向溢出')
 
   // 宋体开关：conv 名字 + 聊天标题联动
   await toggleSerif(page, true)
   const sfName = await cs(page, '.messages-conv-name', ['fontFamily'])
-  const sfTitle = await cs(page, '.private-chat-title', ['fontFamily'])
+  const sfTitle = await cs(page, '.dm-peer-name', ['fontFamily'])
   await toggleSerif(page, false)
   if (sfName && !isSerif(sfName.fontFamily)) fail.push('serif 未作用于 conv 名字: ' + sfName.fontFamily)
   if (sfTitle && !isSerif(sfTitle.fontFamily)) fail.push('serif 未作用于聊天标题: ' + sfTitle.fontFamily)
@@ -183,7 +183,7 @@ async function runMobile(fail) {
   if (listShown.sideDisplay === 'none') fail.push('移动端列表应显示')
 
   await page.locator('.messages-conv-item').first().click()
-  await page.waitForSelector('.private-chat-body', { timeout: 10000 })
+  await page.waitForSelector('.dm', { timeout: 10000 })
   await page.waitForTimeout(200)
   const chatShown = await page.evaluate(() => {
     const sidebar = document.querySelector('.messages-sidebar')

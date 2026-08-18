@@ -27,6 +27,16 @@ describe('mergeMessages', () => {
     expect(out[0].content).toBe('sent')
   })
 
+  it('lets the server copy replace a sent message so is_read can land', () => {
+    const out = mergeMessages(
+      [{ id: 1, content: 'hi', _status: 'sent', is_read: 0, created_at: '2026-01-01T00:00:00Z' }],
+      [{ id: 1, content: 'hi', is_read: 1, created_at: '2026-01-01T00:00:00Z' }]
+    )
+    expect(out).toHaveLength(1)
+    expect(out[0].is_read).toBe(1)
+    expect(out[0]._status).toBeUndefined()
+  })
+
   it('applies server refresh for a same-id message that is not pending', () => {
     const out = mergeMessages([{ id: 1, content: 'stale' }], [{ id: 1, content: 'fresh' }])
     expect(out[0].content).toBe('fresh')
