@@ -18971,3 +18971,119 @@ select.settings-input {
 .dw-mobile .dw-detail-scroll { flex: 1; min-height: 0; }
 .dw-mobile .dw-detail-scroll { height: auto; }
 
+/* ===== 私聊输入区皮肤（composer-bar--dm）+ 背景光晕 =====
+   放在文件末尾：与移动端媒体查询（~18558 .composer-bar/.chat-send-btn 等）
+   同特异性时靠后声明取胜；所有选择器以 .composer-bar--dm 开头，零影响
+   ChatArea / GroupChatPage 的默认 composer。 */
+.dm-bg-glow { position:absolute; inset:0; pointer-events:none; z-index:0; background:
+  radial-gradient(90% 55% at 50% -8%, color-mix(in srgb,var(--accent) 16%, transparent), transparent 62%),
+  radial-gradient(70% 45% at 88% 108%, color-mix(in srgb,var(--accent) 9%, transparent), transparent 60%); }
+
+.composer-bar--dm {
+  align-items: flex-end;
+  gap: 6px;
+  padding: 4px 0 0;
+  background: transparent;
+  border-top: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* 落点选择：ChatInputBar 输入区唯一的 <div> 直属子节点（flex:1 包裹层，
+   EmojiPicker/MentionDropdown 弹层是其子级），即设计稿 .dm-compose-field。
+   其余直属子节点均为 <button>，故 `> div` 唯一命中，与 voice 是否显示无关。 */
+.composer-bar--dm > div {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: color-mix(in srgb, var(--card-bg) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 18px;
+  padding: 5px 6px 5px 14px;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--text) 5%, transparent);
+  transition: border-color .2s, box-shadow .2s;
+}
+.composer-bar--dm > div:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent) 14%, transparent),
+    inset 0 1px 2px color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* .dm-input */
+.composer-bar--dm .chat-textarea {
+  font-size: 14px;
+  line-height: 1.5;
+  max-height: 120px;
+  padding: 7px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  resize: none;
+}
+.composer-bar--dm .chat-textarea:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+/* .dm-compose-btn */
+.composer-bar--dm .record-btn,
+.composer-bar--dm .chat-input-voice-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.composer-bar--dm .record-btn:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+.composer-bar--dm .record-btn:active {
+  transform: scale(.92);
+}
+.composer-bar--dm .record-btn svg,
+.composer-bar--dm .chat-input-voice-btn svg {
+  width: 19px;
+  height: 19px;
+}
+.composer-bar--dm .chat-input-voice-btn {
+  opacity: .38;
+  cursor: not-allowed;
+}
+
+/* .dm-send */
+.composer-bar--dm .chat-send-btn {
+  height: 34px;
+  min-height: 34px;
+  min-width: 0;
+  width: auto;
+  padding: 0 16px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  color: var(--on-accent);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 18%, transparent);
+  transition: background .2s, box-shadow .2s, transform .15s var(--ease-spring);
+}
+.composer-bar--dm .chat-send-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 42%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 20%, transparent);
+}
+.composer-bar--dm .chat-send-btn:active:not(:disabled) {
+  transform: translateY(0) scale(.97);
+}
+.composer-bar--dm .chat-send-btn:disabled {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text-dim);
+  box-shadow: none;
+  opacity: 1;
+}
+

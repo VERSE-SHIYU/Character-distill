@@ -42,6 +42,9 @@ import ResizableInputArea from './ResizableInputArea'
  *   voice                   { status, isRecording, recordingDuration, sendVoiceMessage }
  *                           → enables press-to-talk mic. Omit to hide mic entirely.
  *   topSlot                 node rendered above the bar (banners).
+ *   variant                 optional visual skin key (e.g. 'dm'). Appends
+ *                           `composer-bar--${variant}` to the root className so
+ *                           callers restyle purely via CSS (no JSX changes).
  */
 const ChatInputBar = forwardRef(function ChatInputBar(props, ref) {
   const { topSlot, replyTo, onCancelReply, voice } = props
@@ -81,6 +84,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
     placeholder = '输入消息…',
     disabledPlaceholder,
     sending = false,
+    variant = '',
     mentionableItems,
     onMention,
     voice,
@@ -214,7 +218,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
 
   if (isRecording) {
     return (
-      <div className="composer-bar recording-bar">
+      <div className={`composer-bar recording-bar${variant ? ` composer-bar--${variant}` : ''}`}>
         <span className="recording-dot" />
         <span className="recording-text">{`录音中 ${recordingDuration}s`}</span>
         <button type="button" className="recording-cancel-btn" onClick={cancelRecording}>取消</button>
@@ -224,7 +228,7 @@ const ChatInputBarBody = forwardRef(function ChatInputBarBody(
   }
 
   return (
-    <div className={`composer-bar${!text.trim() ? ' is-empty' : ''}`}>
+    <div className={`composer-bar${variant ? ` composer-bar--${variant}` : ''}${!text.trim() ? ' is-empty' : ''}`}>
       {voice && (
         funasrReady ? (
           <button

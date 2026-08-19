@@ -456,6 +456,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         main={
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="dm">
+              <div className="dm-bg-glow" />
               <header className="dm-header">
                 <button type="button" className="dm-back" onClick={() => history.back()} title="返回会话列表">
                   <ArrowLeft size={20} />
@@ -634,6 +635,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                   onChange={setInputText}
                   onSend={handleSend}
                   placeholder="输入消息…"
+                  variant="dm"
                 />
               </div>
             </div>
