@@ -393,17 +393,23 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   }
 
   // Group messages into date headers + sender rows (consecutive same sender, <5min gap)
+  // Missing timestamps (optimistic sending) must not force a date break or split the group.
   const rows = useMemo(() => {
     const out = []
     for (let i = 0; i < messages.length; i++) {
       const m = messages[i]
       const prev = messages[i - 1]
-      if (!prev || dayLabel(m.created_at) !== dayLabel(prev.created_at)) {
-        out.push({ type: 'date', key: `d-${m.id}`, label: `${dayLabel(m.created_at)} ${toHM(m.created_at)}` })
+      const prevDay = prev ? dayLabel(prev.created_at) : null
+      const curDay = dayLabel(m.created_at)
+      const needDate = prev ? (prevDay && curDay && prevDay !== curDay) : Boolean(curDay)
+      if (needDate) {
+        out.push({ type: 'date', key: `d-${m.id}`, label: `${curDay} ${toHM(m.created_at)}` })
       }
       const isMe = m.sender_id === authUser?.id
       const last = out[out.length - 1]
-      const withinGap = prev && new Date(parseTS(m.created_at)) - new Date(parseTS(prev.created_at)) <= GROUP_GAP
+      const tM = parseTS(m.created_at)
+      const tP = prev ? parseTS(prev.created_at) : null
+      const withinGap = !prev || !tM || !tP || (tM - tP <= GROUP_GAP)
       if (last?.type === 'row' && last.isMe === isMe && prev && prev.sender_id === m.sender_id && withinGap) {
         last.messages.push(m)
       } else {
@@ -515,7 +521,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                   const first = row.messages[0]
                   return (
                     <div
-                      className={`dm-row${row.isMe ? ' mine' : ''}${row.messages.length > 1 ? ' grouped' : ''}${first._status === 'sending' || first._status === 'queued' ? ' is-new' : ''}`}
+                      className={`dm-row${row.isMe ? ' mine' : ''}${first._status === 'sending' || first._status === 'queued' ? ' is-new' : ''}`}
                       key={row.key}
                       data-msg-id={first.id}
                     >
