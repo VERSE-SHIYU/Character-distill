@@ -142,7 +142,7 @@ jobs:
       NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
       COMMIT_SHA: ${{ needs.resolve-digest.outputs.commit_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Push docker-compose.prod.yml to server
         uses: appleboy/scp-action@v0.1.7
@@ -269,7 +269,7 @@ jobs:
       NGINX_DIGEST: ${{ needs.resolve-digest.outputs.nginx_digest }}
       COMMIT_SHA: ${{ needs.resolve-digest.outputs.commit_sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Push docker-compose.prod.yml to server
         uses: appleboy/scp-action@v0.1.7
