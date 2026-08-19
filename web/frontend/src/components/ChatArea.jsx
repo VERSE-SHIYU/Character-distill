@@ -490,15 +490,15 @@ function ChatView() {
             <span className="chat-topbar-compact-name">{charName}</span>
             <span className="ai-online" title="在线"><i className="ai-online-dot" aria-hidden="true" /><span>在线</span></span>
             {charIdentity && <span className="chat-topbar-badge-compact">{charIdentity}</span>}
-            {affinityEnabled && affinity && (
+            {affinityEnabled && (
               <button
                 type="button"
                 data-affinity-trigger
                 className="chat-topbar-mood-btn"
                 onClick={() => setShowInnerVoice(v => !v)}
-                title={affinity.mood || '情感状态'}
+                title={affinity?.mood || '情感状态'}
               >
-                {affinity.mood_emoji || '😊'}
+                {affinity?.mood_emoji || '😊'}
               </button>
             )}
           </div>
@@ -529,18 +529,22 @@ function ChatView() {
       </div>
 
       {/* ── Inner voice popup (replaces old affinity bar) ── */}
-      {/* 门控加 affinity：popup 与触发按钮相互独立，affinity 为 null（无数据）时不渲染，避免残留 showInnerVoice 解引用空值 */}
-      {showInnerVoice && affinity && (
+      {/* 弹层打开不看数据：affinity 为 null（未评估）时显示占位文案，数值区才用 affinity 门控，与私聊侧同构 */}
+      {showInnerVoice && (
         <div className="inner-voice-popup" ref={innerVoicePopupRef}>
           <div className="inner-voice-header">
-            {affinity.mood_emoji || '😊'} {charName}此刻的想法
+            {affinity?.mood_emoji || '😊'} {charName}此刻的想法
           </div>
-          <div className="inner-voice-text">"{affinity.inner_voice || '…'}"</div>
-          <div className="inner-voice-mood"><Heart size={14} /> {affinity.mood}</div>
-          <div className="inner-voice-footer">
-            <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
-            <span className="inner-voice-stats"><Heart size={12} /> {affinity.affinity} <Handshake size={12} /> {affinity.trust} <Shield size={12} /> {affinity.guard}</span>
-          </div>
+          <div className="inner-voice-text">{affinity?.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
+          {affinity && (
+            <>
+              <div className="inner-voice-mood"><Heart size={14} /> {affinity.mood}</div>
+              <div className="inner-voice-footer">
+                <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
+                <span className="inner-voice-stats"><Heart size={12} /> {affinity.affinity} <Handshake size={12} /> {affinity.trust} <Shield size={12} /> {affinity.guard}</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
