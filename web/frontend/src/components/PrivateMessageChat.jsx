@@ -11,12 +11,12 @@ import {
 } from './common/Icon'
 import { displayName } from '../utils/displayName'
 import { mergeMessages } from '../utils/mergeMessages'
-import MessageReactions from './common/MessageReactions'
 import ChatInputBar from './common/ChatInputBar'
 import useIsMobile from '../hooks/useIsMobile'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 const GROUP_GAP = 5 * 60 * 1000
+const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥']
 
 // Parse naive backend timestamps the same way utils/time.js does (treat as UTC).
 const parseTS = (ts) => {
@@ -84,6 +84,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   const [historyOpen, setHistoryOpen] = useState(false)
   const [copiedId, setCopiedId] = useState(null)
+  const [emojiPickerId, setEmojiPickerId] = useState(null)
   const isMobile = useIsMobile()
 
   const peerName = otherUsername || '对方'
@@ -144,19 +145,37 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     } catch {}
   }, [otherUserId])
 
-  // React to a DM
+  // React to a DM: optimistic local toggle, silent rollback to server truth on failure
   const handleReact = useCallback(async (messageId, emoji) => {
+    const uid = authUser?.id
+    if (!uid) return
+    setReactions((prev) => {
+      const list = prev[messageId] || []
+      const existing = list.find((r) => r.emoji === emoji)
+      let next
+      if (!existing) {
+        next = [...list, { emoji, count: 1, users: [uid] }]
+      } else {
+        const mine = existing.users.includes(uid)
+        const users = mine ? existing.users.filter((u) => u !== uid) : [...existing.users, uid]
+        const count = mine ? existing.count - 1 : existing.count + 1
+        next = count <= 0 ? list.filter((r) => r.emoji !== emoji) : list.map((r) => r.emoji === emoji ? { ...r, count, users } : r)
+      }
+      return { ...prev, [messageId]: next }
+    })
     try {
-      await fetchWithTimeout(`/api/messages/${messageId}/react`, {
+      const res = await fetchWithTimeout(`/api/messages/${messageId}/react`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ emoji }),
       })
-      const res = await fetchWithTimeout(`/api/messages/with/${otherUserId}/reactions`)
-      const d = await res.json()
-      setReactions(d.reactions || {})
-    } catch {}
-  }, [otherUserId])
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok || d.ok !== true) throw new Error('react rejected')
+    } catch {
+      // silent rollback: refetch authoritative state
+      fetchReactions()
+    }
+  }, [otherUserId, authUser?.id, fetchReactions])
 
   // Mark messages as read
   const markRead = useCallback(async () => {
@@ -536,6 +555,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                         {!row.isMe && <div className="dm-name">{peerName}</div>}
                         {row.messages.map((msg) => {
                           const failed = msg._status === 'failed'
+                          const rxs = reactions[msg.id] || []
                           return (
                             <React.Fragment key={msg.id}>
                               <div className="dm-bubble-wrap" data-msg-id={msg.id}>
@@ -555,19 +575,34 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                                     </div>
                                     {row.isMe && msg._status !== 'consent' && (
                                       <div className="dm-bubble-actions">
+                                        <button type="button" className="dm-mini-btn" onClick={() => setEmojiPickerId(emojiPickerId === msg.id ? null : msg.id)}>😊</button>
                                         <button type="button" className="dm-mini-btn" onClick={() => handleCopy(msg)}>{copiedId === msg.id ? '已复制' : '复制'}</button>
                                         <button type="button" className="dm-mini-btn danger" onClick={() => handleRetract(msg)}>撤回</button>
                                       </div>
                                     )}
                                   </>
                                 )}
-                                <MessageReactions
-                                  side={row.isMe ? 'right' : 'left'}
-                                  reactions={reactions[msg.id] || []}
-                                  showQuickBar={true}
-                                  onReact={(emoji) => handleReact(msg.id, emoji)}
-                                  authUserId={authUser?.id}
-                                />
+                                {emojiPickerId === msg.id && (
+                                  <div className="dm-emoji-picker" data-side={row.isMe ? 'right' : 'left'}>
+                                    {QUICK_EMOJIS.map((e) => (
+                                      <button key={e} type="button" className="dm-emoji-pick"
+                                        onClick={() => { handleReact(msg.id, e); setEmojiPickerId(null) }}>
+                                        {e}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {rxs.length > 0 && (
+                                  <div className="dm-reactions">
+                                    {rxs.map((r) => (
+                                      <button key={r.emoji} type="button"
+                                        className={`dm-reaction${r.users?.includes(authUser?.id) ? ' mine' : ''}`}
+                                        onClick={() => handleReact(msg.id, r.emoji)}>
+                                        {r.emoji}<span className="cnt">{r.count}</span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                               {failed && (
                                 <button type="button" className="dm-resend" onClick={() => handleResend(msg)}>
