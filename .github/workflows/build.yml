@@ -81,14 +81,14 @@ jobs:
         working-directory: web/frontend
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Aliyun CR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.ALIYUN_REGISTRY }}
           username: ${{ secrets.ACR_USERNAME }}
@@ -96,7 +96,7 @@ jobs:
 
       - name: Build and push app image
         id: build_app
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -117,7 +117,7 @@ jobs:
 
       - name: Build and push nginx image
         id: build_nginx
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./nginx
           push: true
@@ -149,7 +149,7 @@ jobs:
             > digest-info.json
 
       - name: Upload digest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: digest-info
           retention-days: 30
