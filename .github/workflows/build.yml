@@ -96,7 +96,7 @@ jobs:
 
       - name: Build and push app image
         id: build_app
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -117,7 +117,7 @@ jobs:
 
       - name: Build and push nginx image
         id: build_nginx
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./nginx
           push: true
@@ -149,7 +149,7 @@ jobs:
             > digest-info.json
 
       - name: Upload digest artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: digest-info
           retention-days: 30
