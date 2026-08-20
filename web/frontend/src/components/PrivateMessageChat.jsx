@@ -539,13 +539,16 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                     )
                   }
                   const first = row.messages[0]
+                  // 一组消息全部被撤回：只剩灰色占位，头像显得突兀 → 隐藏。
+                  // 用 visibility（保留占位宽度，气泡右缘不错位），不用 display:none。
+                  const allRetracted = row.messages.every(isRetractedMsg)
                   return (
                     <div
                       className={`dm-row${row.isMe ? ' mine' : ''}${first._status === 'sending' || first._status === 'queued' ? ' is-new' : ''}`}
                       key={row.key}
                       data-msg-id={first.id}
                     >
-                      <div className="dm-avatar">
+                      <div className={`dm-avatar${allRetracted ? ' dm-avatar--hidden' : ''}`}>
                         <Avatar
                           name={row.isMe ? (displayName(authUser) || '我') : peerName}
                           src={row.isMe ? userAvatar : otherAvatar}

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
+import fs from 'node:fs'
+import path from 'node:path'
 import PrivateMessageChat from '../PrivateMessageChat'
 
 // jsdom 缺省能力补齐（useIsMobile / useAutoScroll 依赖）
@@ -124,5 +126,42 @@ describe('PrivateMessageChat 消息分组（同发送者 <5min 合并）', () =>
     await waitFor(() => expect(container.querySelectorAll('.dm-row').length).toBe(3))
     expect(container.querySelectorAll('.dm-name').length).toBe(1)
     expect(container.querySelector('.dm-name').textContent).toBe('沈星回')
+  })
+})
+
+describe('PrivateMessageChat 整组全撤回时隐藏头像（设计稿最后一处差异）', () => {
+  it('一组内全部消息被撤回：头像带 dm-avatar--hidden，且非 display:none', async () => {
+    setServerMsgs([msg('r1', 'A', 4, { retracted: 1 }), msg('r2', 'B', 3, { retracted: 1 })])
+    const { container } = render(<PrivateMessageChat otherUserId={PEER} otherUsername="沈星回" />)
+    await waitFor(() => expect(container.querySelectorAll('.dm-row').length).toBe(1))
+    const avatar = container.querySelector('.dm-avatar')
+    expect(avatar).toBeTruthy()
+    expect(avatar.classList.contains('dm-avatar--hidden')).toBe(true)
+    // 硬性约束锁死：visibility 而非 display（display:none 会让占位宽度消失、气泡右缘错位）
+    expect(avatar.style.display).not.toBe('none')
+  })
+
+  it('一组内部分撤回（仍有正常消息）：头像正常显示', async () => {
+    setServerMsgs([msg('p1', 'A', 4, { retracted: 1 }), msg('p2', 'B', 3)])
+    const { container } = render(<PrivateMessageChat otherUserId={PEER} otherUsername="沈星回" />)
+    await waitFor(() => expect(container.querySelectorAll('.dm-row').length).toBe(1))
+    const avatar = container.querySelector('.dm-avatar')
+    expect(avatar.classList.contains('dm-avatar--hidden')).toBe(false)
+  })
+
+  it('一组内无撤回消息：头像正常显示', async () => {
+    setServerMsgs([msg('n1', 'A', 4), msg('n2', 'B', 3)])
+    const { container } = render(<PrivateMessageChat otherUserId={PEER} otherUsername="沈星回" />)
+    await waitFor(() => expect(container.querySelectorAll('.dm-row').length).toBe(1))
+    const avatar = container.querySelector('.dm-avatar')
+    expect(avatar.classList.contains('dm-avatar--hidden')).toBe(false)
+  })
+
+  it('.dm-avatar--hidden 在 global.css 定义为 visibility:hidden（保留占位宽度，不用 display）', () => {
+    const css = fs.readFileSync(path.join(__dirname, '../../styles/global.css'), 'utf8')
+    const block = css.match(/\.dm-avatar--hidden\s*\{([^}]*)\}/)
+    expect(block).toBeTruthy()
+    expect(block[1]).toMatch(/visibility\s*:\s*hidden/)
+    expect(block[1]).not.toMatch(/display/)
   })
 })
