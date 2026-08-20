@@ -124,8 +124,8 @@ describe('ChatArea 顶栏 dm-header 结构', () => {
     expect(btn).toBeInTheDocument()
 
     fireEvent.click(btn)
-    expect(container.querySelector('.inner-voice-popup')).toBeInTheDocument()
-    expect(container.querySelector('.inner-voice-stats')).not.toBeInTheDocument()
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
+    expect(container.querySelector('.dm-inner-voice-stats')).not.toBeInTheDocument()
   })
 
   it('属地：中国 IP → 显示省份标签', async () => {

@@ -4,7 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Check, Shield, Edit, Close, Clipboard, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -444,7 +444,7 @@ function ChatView() {
   useEffect(() => {
     if (!showInnerVoice && !showMore) return
     const handler = (e) => {
-      if (showInnerVoice && !e.target.closest('[data-affinity-trigger]') && !e.target.closest('.inner-voice-popup')) {
+      if (showInnerVoice && !e.target.closest('[data-affinity-trigger]') && !e.target.closest('.dm-inner-voice')) {
         setShowInnerVoice(false)
       }
       if (showMore && !e.target.closest('[data-more-trigger]') && !e.target.closest('.chat-more-menu')) {
@@ -544,17 +544,21 @@ function ChatView() {
       {/* ── Inner voice popup (replaces old affinity bar) ── */}
       {/* 弹层打开不看数据：affinity 为 null（未评估）时显示占位文案，数值区才用 affinity 门控，与私聊侧同构 */}
       {showInnerVoice && (
-        <div className="inner-voice-popup" ref={innerVoicePopupRef}>
-          <div className="inner-voice-header">
-            {affinity?.mood_emoji || '😊'} {charName}此刻的想法
-          </div>
-          <div className="inner-voice-text">{affinity?.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
+        <div className="dm-inner-voice" ref={innerVoicePopupRef}>
+          <div className="dm-inner-voice-header">{affinity?.mood_emoji || '😊'} {charName}此刻的想法</div>
+          <div className="dm-inner-voice-text">{affinity?.inner_voice ? `"${affinity.inner_voice}"` : '还没有产生想法'}</div>
           {affinity && (
             <>
-              <div className="inner-voice-mood"><Heart size={14} /> {affinity.mood}</div>
-              <div className="inner-voice-footer">
-                <span className="stage-pill">{affinity.stage_emoji} {affinity.stage}</span>
-                <span className="inner-voice-stats"><Heart size={12} /> {affinity.affinity} <Handshake size={12} /> {affinity.trust} <Shield size={12} /> {affinity.guard}</span>
+              {!!affinity.mood && (
+                <div className="dm-inner-voice-mood"><Heart size={13} />{affinity.mood}</div>
+              )}
+              <div className="dm-inner-voice-footer">
+                {!!affinity.stage && <span className="dm-inner-voice-stage">{affinity.stage_emoji || ''} {affinity.stage}</span>}
+                <span className="dm-inner-voice-stats">
+                  <span><Heart size={11} />{affinity.affinity}</span>
+                  <span><Check size={11} />{affinity.trust}</span>
+                  <span><Shield size={11} />{affinity.guard}</span>
+                </span>
               </div>
             </>
           )}

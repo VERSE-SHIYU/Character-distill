@@ -117,12 +117,12 @@ describe('ChatArea 内心活动按钮（affinity 门控回归）', () => {
     expect(btn).toBeInTheDocument()
 
     fireEvent.click(btn)
-    expect(container.querySelector('.inner-voice-popup')).toBeInTheDocument()
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
     // 数值区不渲染
-    expect(container.querySelector('.inner-voice-stats')).not.toBeInTheDocument()
-    expect(container.querySelector('.inner-voice-stage-pill') || container.querySelector('.stage-pill')).not.toBeInTheDocument()
+    expect(container.querySelector('.dm-inner-voice-stats')).not.toBeInTheDocument()
+    expect(container.querySelector('.dm-inner-voice-stage')).not.toBeInTheDocument()
     // 占位文案
-    expect(container.querySelector('.inner-voice-text')?.textContent).toBe('还没有产生想法')
+    expect(container.querySelector('.dm-inner-voice-text')?.textContent).toBe('还没有产生想法')
   })
 
   it('affinity 有数据时弹层渲染真实数值区', () => {
@@ -132,12 +132,22 @@ describe('ChatArea 内心活动按钮（affinity 门控回归）', () => {
     expect(btn).toBeInTheDocument()
 
     fireEvent.click(btn)
-    expect(container.querySelector('.inner-voice-popup')).toBeInTheDocument()
-    const stats = container.querySelector('.inner-voice-stats')
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
+    const stats = container.querySelector('.dm-inner-voice-stats')
     expect(stats).toBeInTheDocument()
     expect(stats?.textContent).toContain('62')
     expect(stats?.textContent).toContain('45')
     expect(stats?.textContent).toContain('38')
-    expect(container.querySelector('.inner-voice-text')?.textContent).toContain('今天也想和你多说两句。')
+    expect(container.querySelector('.dm-inner-voice-text')?.textContent).toContain('今天也想和你多说两句。')
+  })
+
+  it('点击弹层外部能关闭（外部点击选择器随类名改版同步）', () => {
+    const { container } = render(<ChatArea />)
+    const btn = container.querySelector('[data-affinity-trigger]')
+    fireEvent.click(btn)
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
+
+    fireEvent.mouseDown(document.body)
+    expect(container.querySelector('.dm-inner-voice')).not.toBeInTheDocument()
   })
 })
