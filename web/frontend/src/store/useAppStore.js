@@ -5,6 +5,7 @@ import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
 import { FALLBACK } from '../config/navigation'
+import { scoped, bumpScope } from './scope'
 
 const clientTz = () => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone }
@@ -14,7 +15,11 @@ const clientTz = () => {
 let _cidSeq = 0
 const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })
 
-const useAppStore = create((set, get) => ({
+const useAppStore = create((set, get) => {
+  // 结构性竞态防护：写会话/角色态数据的 async action 用 protect 包装，越界写自动丢弃。
+  // guard 只存在 scoped 里，action 永不手写 `if (get().sessionId !== ...) return`。
+  const protect = (fn) => scoped(fn, set, get)
+  return {
   // ---- Auth ----
 
   authUser: null,
@@ -373,16 +378,16 @@ const useAppStore = create((set, get) => ({
     })
   },
 
-  loadVoiceRef: async (cardId) => {
-    if (!cardId) { set({ voiceRefInfo: null }); return }
+  loadVoiceRef: protect(async (setScoped, get, cardId) => {
+    if (!cardId) { setScoped({ voiceRefInfo: null }); return }
     try {
       const res = await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`)
       const data = await res.json()
-      set({ voiceRefInfo: data })
+      setScoped({ voiceRefInfo: data })
     } catch {
-      set({ voiceRefInfo: null })
+      setScoped({ voiceRefInfo: null })
     }
-  },
+  }),
 
   deleteVoiceRef: async (cardId) => {
     await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`, { method: 'DELETE' })
@@ -466,19 +471,19 @@ const useAppStore = create((set, get) => ({
     localStorage.setItem('affinity_enabled', val ? 'true' : 'false')
     set({ affinityEnabled: val })
   },
-  fetchAffinity: async () => {
+  fetchAffinity: protect(async (setScoped, get) => {
     const { sessionId } = get()
     if (!sessionId) return
     try {
       const res = await fetchWithTimeout(`/api/chat/affinity/${sessionId}`)
       // 204 = 无已评估数据 → affinity:null（与后端契约一致，不吞也不造假）
       const data = res.status === 204 ? null : await res.json()
-      set({ affinity: data })
+      setScoped({ affinity: data })
     } catch (err) {
       if (err?.status !== 401) console.warn('[affinity]', err)
-      set({ affinity: null })
+      setScoped({ affinity: null })
     }
-  },
+  }),
 
   resetAffinity: () => set({ affinity: null }),
 
@@ -552,7 +557,7 @@ const useAppStore = create((set, get) => ({
     return data
   },
 
-  _synthesizeVoiceReply: async (reply, charIdx) => {
+  _synthesizeVoiceReply: protect(async (setScoped, get, reply, charIdx) => {
     const { sessionId } = get()
     if (!reply || !sessionId) return
     // Strip action/narration in parentheses before TTS
@@ -572,7 +577,7 @@ const useAppStore = create((set, get) => ({
       if (res.ok) {
         const blob = await res.blob()
         const audio_url = URL.createObjectURL(blob)
-        set((s) => {
+        setScoped((s) => {
           const msgs = [...s.messages]
           if (msgs[charIdx]?.role === 'char') {
             msgs[charIdx] = { ...msgs[charIdx], audio_url }
@@ -583,7 +588,7 @@ const useAppStore = create((set, get) => ({
     } catch {
       console.warn('[store] Voice synthesis failed, falling back to text-only')
     }
-  },
+  }),
 
   sendVoiceMessage: async (audioBlob) => {
     const form = new FormData()
@@ -740,17 +745,17 @@ const useAppStore = create((set, get) => ({
     get().loadCards(textId)
   },
 
-  loadCards: async (textId) => {
+  loadCards: protect(async (setScoped, get, textId) => {
     if (!textId) return
     try {
       const res = await fetchWithTimeout(`/api/distill/cards/by-text/${textId}`)
       const data = await res.json()
-      set({ cards: data })
+      setScoped({ cards: data })
     } catch (err) {
       console.error('[store] loadCards failed:', err)
-      set({ error: err.message })
+      setScoped({ error: err.message })
     }
-  },
+  }),
 
   loadStandaloneCards: async () => {
     try {
@@ -762,19 +767,19 @@ const useAppStore = create((set, get) => ({
     }
   },
 
-  identifyCharacters: async (textId) => {
-    set({ identifying: true, identifiedChars: [], error: null })
+  identifyCharacters: protect(async (setScoped, get, textId) => {
+    setScoped({ identifying: true, identifiedChars: [], error: null })
     try {
       const data = await postJSON('/api/distill/identify', { text_id: textId })
       const chars = data.characters || []
-      set({ identifiedChars: chars, identifying: false })
+      setScoped({ identifiedChars: chars, identifying: false })
       return chars
     } catch (err) {
       console.error('[store] identifyCharacters failed:', err)
-      set({ error: err.message, identifying: false })
+      setScoped({ error: err.message, identifying: false })
       throw err
     }
-  },
+  }),
 
   distillCharacter: async (textId, characterName, force = false) => {
     set({ error: null })
@@ -1281,12 +1286,12 @@ const useAppStore = create((set, get) => ({
     _pendingChatCardId: null,
   }),
 
-  sendMessage: async (message) => {
+  sendMessage: protect(async (setScoped, get, message) => {
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
     if (!sessionId || !message.trim()) return
 
     const userMsg = withCid({ role: 'user', content: message })
-    set({ messages: [...messages, userMsg], sending: true, error: null })
+    setScoped({ messages: [...messages, userMsg], sending: true, error: null })
 
     try {
       const data = await postJSON('/api/chat/send', {
@@ -1298,7 +1303,7 @@ const useAppStore = create((set, get) => ({
         affinity_enabled: get().affinityEnabled,
         client_tz: clientTz(),
       })
-      set((s) => {
+      setScoped((s) => {
         const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push(withCid({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at }))
         if (data.summary) {
           msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: data.summary }))
@@ -1314,7 +1319,7 @@ const useAppStore = create((set, get) => ({
       get().fetchAffinity()
     } catch (err) {
       console.error('[store] sendMessage failed:', err)
-      set((s) => ({
+      setScoped((s) => ({
         messages: [
           ...s.messages,
           withCid({ role: 'char', content: `[Error] ${err.message}` }),
@@ -1323,7 +1328,7 @@ const useAppStore = create((set, get) => ({
         error: err.message,
       }))
     }
-  },
+  }),
 
   sendMessageStream: (message, reply_to_id = null, reply_to_preview = '') => {
     const { sessionId, messages, voiceEnabled, voiceRefInfo } = get()
@@ -1479,7 +1484,7 @@ const useAppStore = create((set, get) => ({
     return cancel
   },
 
-  resetChat: async () => {
+  resetChat: protect(async (setScoped, get) => {
     const { sessionId, currentCard } = get()
     if (!sessionId) return
     try {
@@ -1489,12 +1494,12 @@ const useAppStore = create((set, get) => ({
         withCid,
       )
 
-      set({ messages: _resetMsgs })
+      setScoped({ messages: _resetMsgs })
     } catch (err) {
       console.error('[store] resetChat failed:', err)
-      set({ error: err.message })
+      setScoped({ error: err.message })
     }
-  },
+  }),
 
   loadHistory: async ({ keyword, page = 1, page_size = 100 } = {}) => {
     set({ sessionListLoading: true })
@@ -1587,6 +1592,19 @@ const useAppStore = create((set, get) => ({
       throw err
     }
   },
-}))
+  }
+})
+
+// 身份一变就递增代际：会话切换 / 换卡 / 换文本都会让在途的旧写回失效。
+// 用 subscribe 而非在 switch action 里手工调用，新加的切换 action 也自动受保护。
+useAppStore.subscribe((state, prev) => {
+  if (
+    state.sessionId !== prev.sessionId ||
+    (state.currentCard?.id ?? null) !== (prev.currentCard?.id ?? null) ||
+    state.currentTextId !== prev.currentTextId
+  ) {
+    bumpScope()
+  }
+})
 
 export default useAppStore
