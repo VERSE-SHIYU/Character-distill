@@ -150,4 +150,17 @@ describe('ChatArea 内心活动按钮（affinity 门控回归）', () => {
     fireEvent.mouseDown(document.body)
     expect(container.querySelector('.dm-inner-voice')).not.toBeInTheDocument()
   })
+
+  // 与上一条互补：外部点击判断同时依赖类名选择器。若有人改弹层 JSX 类名而
+  // 漏改 :447 的 `.dm-inner-voice`，点弹层内部会误判为外部、弹层被意外关闭。
+  // 仅靠「点外面会关」测不出这个漂移，必须由「点里面不关」锁住同步关系。
+  it('点击弹层内部元素不关闭弹层（外部点击选择器与弹层类名同步）', () => {
+    const { container } = render(<ChatArea />)
+    const btn = container.querySelector('[data-affinity-trigger]')
+    fireEvent.click(btn)
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
+
+    fireEvent.mouseDown(container.querySelector('.dm-inner-voice-text'))
+    expect(container.querySelector('.dm-inner-voice')).toBeInTheDocument()
+  })
 })
