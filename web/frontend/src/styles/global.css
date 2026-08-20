@@ -4291,7 +4291,7 @@ label[for] {
 /* ── Inner voice popup ── */
 .inner-voice-popup {
   position: absolute;
-  top: 54px;
+  top: 62px;
   left: 12px;
   z-index: 50;
   width: 280px;
@@ -4395,7 +4395,7 @@ label[for] {
 /* ── More menu ── */
 .chat-more-menu {
   position: absolute;
-  top: 50px;
+  top: 62px;
   right: 12px;
   z-index: 50;
   min-width: 160px;
@@ -11773,6 +11773,14 @@ select.settings-input {
   border:1px solid color-mix(in srgb,var(--warning) 26%, transparent);
 }
 .dm-header-actions { display:flex; gap:2px; flex-shrink:0; }
+
+/* ChatArea 顶栏双标签容器（复用 .dm-peer-tag 样式，不复制第二份） */
+.dm-peer-tags { display:flex; gap:4px; flex-shrink:0; }
+/* 头像在 ChatArea 当按钮用（DM 侧是 div，以下属性对其无副作用） */
+.dm-peer-avatar { border:none; padding:0; cursor:pointer; }
+/* ChatArea 侧 peer 区整体不可点，去掉 .dm-peer 的 hover/pointer 死区 */
+.chat-topbar-peer { cursor:default; }
+.chat-topbar-peer:hover { background:transparent; }
 .dm-icon-btn {
   width:34px; height:34px; border-radius:10px; border:none; background:transparent; color:var(--text-secondary);
   display:flex; align-items:center; justify-content:center; cursor:pointer; transition:background .15s,color .15s,transform .12s;

@@ -7,12 +7,13 @@ import time
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel
 
 from core.schema import PRESET_TAGS
 from cross_border_sync import forward_card_to_peer
 from deps import get_storage
+from geo_guard import ip_location
 from limiter import get_client_ip, limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user, get_optional_user
@@ -36,6 +37,22 @@ async def _get_ip_location(client_ip: str) -> str:
     except Exception:
         pass
     return ""
+
+
+@router.get("/location")
+@limiter.limit("60/minute")
+async def get_client_ip_location(request: Request):
+    """Current requester's IP geolocation for the chat-page tag.
+
+    Returns {"country", "region"}; 204 No Content when unknown (private IP /
+    lookup failure) — never fabricates a default. The literal path "/location"
+    would otherwise be shadowed by DELETE /{card_id} as card_id="location";
+    this GET route full-matches first, which is intended.
+    """
+    country, region = ip_location(get_client_ip(request))
+    if not country:
+        return Response(status_code=204)
+    return {"country": country, "region": region}
 
 
 class ForkRequest(BaseModel):

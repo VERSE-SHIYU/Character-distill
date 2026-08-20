@@ -92,4 +92,12 @@ describe('私聊输入区皮肤（composer-bar--dm）+ 背景光晕', () => {
     const { container } = render(<PrivateMessageChat otherUserId={PEER} otherUsername="沈星回" />)
     await waitFor(() => expect(container.querySelector('.dm-bg-glow')).toBeTruthy())
   })
+
+  it('私聊页顶栏结构不变（回归：ChatArea 改版不得影响私聊页）', async () => {
+    const { container } = render(<PrivateMessageChat otherUserId={PEER} otherUsername="沈星回" />)
+    await waitFor(() => expect(container.querySelector('.dm-header')).toBeTruthy())
+    expect(container.querySelector('.dm-back')).toBeTruthy()
+    expect(container.querySelector('.dm-peer-name')?.textContent).toBe('沈星回')
+    expect(container.querySelector('.chat-topbar-compact')).toBeNull()
+  })
 })

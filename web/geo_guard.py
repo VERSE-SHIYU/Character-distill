@@ -138,6 +138,34 @@ def is_domestic_ip(ip: str | None) -> bool:
         return True  # exception → domestic (fail closed)
 
 
+def ip_location(ip: str | None) -> tuple[str | None, str | None]:
+    """Return (country, region) via ip2region. (None, None) when unknown.
+
+    Never fabricates a default: private IP / lookup failure / no data → (None, None).
+    """
+    if not ip or not ip.strip():
+        return None, None
+    ip = ip.strip()
+    if _is_private_ip(ip):
+        return None, None
+    searcher = _get_searcher()
+    if searcher is None:
+        return None, None
+    try:
+        result = searcher.search(ip)
+        if not result:
+            return None, None
+        parts = result.split("|")
+        if len(parts) < 3 or not parts[0] or parts[0] == "0":
+            return None, None
+        country = parts[0]
+        region = parts[2] if parts[2] and parts[2] != "0" else None
+        return country, region
+    except Exception:
+        logger.warning("[geo_guard] ip2region lookup failed for %s", ip, exc_info=True)
+        return None, None
+
+
 def is_whitelisted_base_url(base_url: str) -> bool:
     """Check if a base_url's host is in the domestic LLM whitelist.
 

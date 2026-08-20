@@ -4,7 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
-import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard, Clock } from './common/Icon'
+import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Handshake, Shield, Edit, Close, Clipboard, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
 import { saveAvatar, loadCardAvatar } from '../store/db'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
@@ -429,6 +429,17 @@ function ChatView() {
   const [showMore, setShowMore] = useState(false)
   const moreMenuRef = useRef(null)
 
+  // IP 属地标签（装饰性，无数据不显示、失败不报错）
+  const [geo, setGeo] = useState(null)
+  useEffect(() => {
+    let alive = true
+    fetchWithTimeout('/api/market/location')
+      .then((r) => (r.status === 204 ? null : r.json()))
+      .then((d) => { if (alive) setGeo(d) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
   // Close popup/menu on outside click
   useEffect(() => {
     if (!showInnerVoice && !showMore) return
@@ -462,6 +473,9 @@ function ChatView() {
 
   const chatSwipeBack = useSwipeBack(handleChatBack)
 
+  // 抖音式属地：中国 → 省份，国外 → 国家；无数据 → 空字符串（不渲染标签）
+  const geoLabel = geo ? (geo.country === '中国' ? (geo.region || '中国') : geo.country) : ''
+
   return (
     <div className={`chat-view chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
       <SplitOrFullscreen
@@ -471,62 +485,61 @@ function ChatView() {
         main={
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ position: 'relative', flexShrink: 0 }}>
-          <div className="chat-topbar-compact">
-        <div className="chat-topbar-compact-left">
-          <button type="button" className="chat-topbar-back" onClick={handleChatBack} title="返回">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          </button>
+          <header className="dm-header">
+        <button type="button" className="dm-back" onClick={handleChatBack} title="返回">
+          <ArrowLeft size={20} />
+        </button>
+        <div className="dm-peer chat-topbar-peer">
           <button
             type="button"
-            className="chat-topbar-avatar-btn avatar-shape"
+            className="dm-peer-avatar avatar-shape"
             onClick={() => avatarInputRef.current?.click()}
             title="更换头像"
           >
-            <Avatar name={charName} src={avatarUrl} size={48} />
+            <Avatar name={charName} src={avatarUrl} size={38} />
           </button>
           <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
           <input ref={userAvatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleUserAvatarChange} />
-          <div className="chat-topbar-compact-name-row">
-            <span className="chat-topbar-compact-name">{charName}</span>
-            <span className="ai-online" title="在线"><i className="ai-online-dot" aria-hidden="true" /><span>在线</span></span>
-            {charIdentity && <span className="chat-topbar-badge-compact">{charIdentity}</span>}
-            {affinityEnabled && (
-              <button
-                type="button"
-                data-affinity-trigger
-                className="chat-topbar-mood-btn"
-                onClick={() => setShowInnerVoice(v => !v)}
-                title={affinity?.mood || '情感状态'}
-              >
-                {affinity?.mood_emoji || '😊'}
-              </button>
-            )}
+          <div className="dm-peer-meta">
+            <div className="dm-peer-name">{charName}</div>
+            <div className="dm-peer-status online"><span className="dot" aria-hidden="true" /><span>在线</span></div>
+          </div>
+          <div className="dm-peer-tags">
+            {charIdentity && <span className="dm-peer-tag">{charIdentity}</span>}
+            {geoLabel && <span className="dm-peer-tag">{geoLabel}</span>}
           </div>
         </div>
-        <div className="chat-topbar-compact-right">
+        <div className="dm-header-actions">
+          {affinityEnabled && (
+            <button
+              type="button"
+              data-affinity-trigger
+              className={`dm-icon-btn${showInnerVoice ? ' active' : ''}`}
+              onClick={() => setShowInnerVoice(v => !v)}
+              title="内心之声"
+            >
+              <MessageCircle size={19} />
+            </button>
+          )}
           <button
             type="button"
-            className={`chat-history-toggle${historyOpen ? ' active' : ''}`}
+            className={`dm-icon-btn${historyOpen ? ' active' : ''}`}
             onClick={() => setHistoryOpen(v => !v)}
             title="历史记录"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-            历史
+            <Clock size={19} />
           </button>
           <button
             type="button"
             data-more-trigger
-            className="chat-topbar-more-btn"
+            className={`dm-icon-btn${showMore ? ' active' : ''}`}
             onClick={() => setShowMore(v => !v)}
             title="更多"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            <MoreHorizontal size={19} />
           </button>
         </div>
-      </div>
+      </header>
 
       {/* ── Inner voice popup (replaces old affinity bar) ── */}
       {/* 弹层打开不看数据：affinity 为 null（未评估）时显示占位文案，数值区才用 affinity 门控，与私聊侧同构 */}
