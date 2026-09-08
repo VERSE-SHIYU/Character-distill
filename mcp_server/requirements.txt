@@ -1,0 +1,5 @@
+# MCP server — 把 core/agent/tools.py 的三个检索工具暴露为标准 MCP 工具
+# 额外依赖只此一个（面向 mcp 1.x 的 decorator API；2.x 改为构造器回调式，API 不兼容）。
+# 注意：本 server import core.context_engine（→core.rag→chromadb），必须跑在能 import core/
+# 的 Python 环境里（即装齐项目根 requirements.txt 的环境），见 README「运行环境」。
+mcp>=1.9.0,<2
