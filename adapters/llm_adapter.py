@@ -15,6 +15,8 @@ import yaml
 from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI
 
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+
 
 def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
     """返回 (是否为429限流, Retry-After秒数或None)。"""
@@ -54,6 +56,27 @@ def _backoff_delay(attempt: int, is_rate_limit: bool, retry_after: float | None)
 
 class ToolsNotSupportedError(RuntimeError):
     """Provider 不支持 tools 参数时抛出，上层据此降级到 legacy 路径。"""
+
+
+def _infer_finalize(sp, self, result, exc) -> None:
+    """推理 span 收尾：补 model + last_usage（OTEL 关时 sp=None，直接返回）。"""
+    if sp is None:
+        return
+    T.set_attr(sp, "model", self._model)
+    if exc is None:
+        usage = getattr(self, "last_usage", None)
+        if usage:
+            T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
+
+
+def _async_infer_finalize(sp, self, result, exc) -> None:
+    """async_chat span 收尾：usage 取返回的 (text, usage) 元组（async_chat 不写 self.last_usage）。"""
+    if sp is None:
+        return
+    T.set_attr(sp, "model", self._model)
+    if exc is None and isinstance(result, tuple) and len(result) == 2 and result[1]:
+        usage = result[1]
+        T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
 
 
 class LLMAdapter:
@@ -141,6 +164,7 @@ class LLMAdapter:
             self.last_usage = usage
         return result
 
+    @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
         """非流式对话，返回完整文本回复。最多重试3次（非429）或5次（429限流）。"""
         payload = self._build_messages(system_prompt, messages)
@@ -194,6 +218,7 @@ class LLMAdapter:
                     print(f"[LLMAdapter] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
                 time.sleep(wait)
 
+    @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
     async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None) -> tuple[str, dict | None]:
         """异步非流式对话，用于 Map 阶段并发。最多重试3次（非429）或5次（429限流）。
 
@@ -258,6 +283,7 @@ class LLMAdapter:
                     print(f"[LLMAdapter async] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
                 await asyncio.sleep(wait)
 
+    @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
         payload = self._build_messages(system_prompt, messages)
@@ -308,6 +334,7 @@ class LLMAdapter:
             print(f"读取流式响应失败：{exc}")
             raise
 
+    @T.spanned("llm.chat_with_tools", op="chat", finalize=_infer_finalize)
     def chat_with_tools(
         self,
         system_prompt: str,

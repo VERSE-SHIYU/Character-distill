@@ -16,6 +16,7 @@ from fastapi.responses import Response
 from urllib.parse import quote
 
 from core.trash_service import hard_delete, restore, soft_delete
+from core import telemetry as T  # OTel context 传播点（ctx_thread）
 from deps import get_storage, run_on_main_loop
 from storage.base import StorageBase
 
@@ -173,8 +174,8 @@ async def upload_text(
     upload_task_id = ""
     if text_type in ("story", "classic"):
         upload_task_id = uuid.uuid4().hex[:12]
-        thread = threading.Thread(
-            target=_run_upload_task,
+        thread = T.ctx_thread(  # OTel context 传播点
+            _run_upload_task,
             args=(upload_task_id, text_id, user_id, _client_ip),
             daemon=True,
         )

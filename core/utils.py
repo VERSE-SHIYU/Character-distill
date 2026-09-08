@@ -6,6 +6,8 @@ import asyncio
 import threading
 from typing import Any
 
+from core import telemetry as T  # OTel context 传播点（ctx_thread）
+
 
 def try_record_usage(
     storage: Any,
@@ -48,4 +50,4 @@ def try_record_usage(
         except Exception as exc:
             print(f"[{source}] Record usage failed (non-fatal): {exc}")
 
-    threading.Thread(target=_do, daemon=True).start()
+    T.ctx_thread(_do, daemon=True).start()  # OTel context 传播点：usage 线程挂到调用方 trace

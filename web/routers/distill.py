@@ -21,6 +21,7 @@ from deps import get_indexing_service, get_sessions, get_storage, run_on_main_lo
 from core.distiller import Distiller
 from core.export import export_tavern_json
 from core.schema import CharacterCard
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from storage.base import StorageBase
 from limiter import get_client_ip, limiter
 from routers.auth import get_current_user
@@ -129,6 +130,7 @@ def _generate_awakening(llm, card: CharacterCard) -> str:
         return ""
 
 
+@T.spanned("distill.task", wf="distill")
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
@@ -577,8 +579,8 @@ async def distill_start(
         _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
                            "message": f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)"}
 
-    thread = threading.Thread(
-        target=_run_distill_task,
+    thread = T.ctx_thread(  # OTel context 传播点：蒸馏后台线程挂到发起请求 trace
+        _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config, _client_ip),
         daemon=True,
     )
@@ -785,7 +787,11 @@ async def distill_stream(
         done_payload = {'done': True, 'awakening': awakening, **result}
         yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
 
-    return StreamingResponse(_event_gen(), media_type="text/event-stream")
+    # OTel context 传播点：distill 根 span（wf=distill 与 chat 分链路统计）
+    return StreamingResponse(
+        T.trace_sse_async(_event_gen(), "distill.stream", wf="distill"),
+        media_type="text/event-stream",
+    )
 
 
 @router.post("/reindex/{text_id}")

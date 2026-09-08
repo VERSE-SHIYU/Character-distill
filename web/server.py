@@ -90,6 +90,8 @@ async def _lifespan(app: FastAPI):
     validate_inter_node_secret()
     install_log_collector()
     loop = asyncio.get_running_loop()
+    # OTel context 传播点注记：set_default_executor 的 run_in_executor / asyncio.to_thread
+    # 自动拷贝 contextvar，不是断点（实测 Python 3.12 保留 context），故无需包装。
     loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
     from deps import set_main_loop
     set_main_loop(loop)

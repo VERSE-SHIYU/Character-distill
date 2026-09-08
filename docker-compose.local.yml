@@ -47,16 +47,46 @@ services:
     networks:
       - prod
 
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: jaeger-otel
+    ports:
+      - "16686:16686"            # UI
+      - "127.0.0.1:4317:4317"    # OTLP gRPC
+      - "127.0.0.1:4318:4318"    # OTLP HTTP（容器内 app 走服务名 jaeger:4318）
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+    networks:
+      - prod
+
   app:
     build: .
     ports:
       - "7861:7860"
     volumes:
       - ./data:/app/data
+    # 容器→Windows host 的 mock LLM/embed/mem0 走 host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # ②④ Step 3/4：OTel 开关 + OTLP 导出（默认关；压测时 shell 置 OTEL_ENABLED=1 OTEL_EXPORTER=otlp 再 up -d app）
+      - OTEL_ENABLED=${OTEL_ENABLED:-0}
+      - OTEL_EXPORTER=${OTEL_EXPORTER:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+      # ②④ Step 1：本地压测把两条外部通道指向 host mock（未设置用内置 region/DeepSeek 默认）
+      - EMBEDDING_BASE_URL=${EMBEDDING_BASE_URL:-}
+      - MEM0_LLM_BASE_URL=${MEM0_LLM_BASE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

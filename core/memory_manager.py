@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core import telemetry as T  # OTel context 传播点（ctx_thread）
+
 # ── 加权检索常量（两级门控: base = α·rel + β·rec + γ·imp, final = base × (1+λ·emo)）──
 RERANK_ALPHA = 0.60    # 语义相关性权重（含原 DELTA 并入）
 RERANK_BETA  = 0.15    # 时间新近度权重
@@ -178,7 +180,10 @@ class MemoryManager:
                     "config": {
                         "model": "deepseek-chat",
                         "api_key": api_key,
-                        "openai_base_url": "https://api.deepseek.com/v1",
+                        # MEM0_LLM_BASE_URL 覆盖（②④ Step 2：本地压测剥离外部 LLM 延迟）；
+                        # 未设置时走默认 DeepSeek 地址，行为不变。
+                        "openai_base_url": os.environ.get("MEM0_LLM_BASE_URL")
+                        or "https://api.deepseek.com/v1",
                     },
                 },
                 "embedder": {
@@ -325,7 +330,7 @@ class MemoryManager:
                 import traceback
                 traceback.print_exc()
 
-        threading.Thread(target=_do_add, daemon=True).start()
+        T.ctx_thread(_do_add, daemon=True).start()  # OTel context 传播点：记忆入库线程
 
     def get_all(self, card_id: str) -> list[dict[str, Any]]:
         """获取某角色的所有记忆。"""
@@ -410,7 +415,7 @@ class MemoryManager:
                 import traceback
                 traceback.print_exc()
 
-        threading.Thread(target=_do_reflect, daemon=True).start()
+        T.ctx_thread(_do_reflect, daemon=True).start()  # OTel context 传播点：反思线程
 
     def update(self, memory_id: str, text: str) -> bool:
         """更新一条记忆的内容。"""

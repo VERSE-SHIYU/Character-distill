@@ -13,6 +13,7 @@ from typing import Any
 
 from adapters.llm_adapter import ToolsNotSupportedError
 from core.agent.tools import EMPTY_RESULT
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 ROUTER_SYSTEM_PROMPT = (
     "你是一个对话系统的检索决策器。你的唯一职责是判断："
@@ -49,6 +50,7 @@ class AgentLoop:
         self._llm = llm
         self._toolkit = toolkit
 
+    @T.spanned("agent.plan", op="plan")
     def run(self, character_hint: str, messages: list[dict]) -> AgentLoopResult:
         """执行工具决策循环。
 
@@ -102,7 +104,8 @@ class AgentLoop:
                     ok = True
                 else:
                     executed.add(dedup_key)
-                    result = self._toolkit.execute(name, args)
+                    with T.span("agent.execute_tool", op="execute_tool", attrs={"tool": name}):
+                        result = self._toolkit.execute(name, args)
                     result_content = result.content
                     ok = result.ok
                     steps.append({

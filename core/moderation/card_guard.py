@@ -34,6 +34,7 @@ import re
 from dataclasses import dataclass, field
 
 from adapters.llm_adapter import LLMAdapter
+from core import telemetry as T  # OTel context 传播点（ctx_thread）
 
 _LEAF_CAP = 160  # per-leaf char cap for the judge payload
 
@@ -123,8 +124,6 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0) -> GuardVerdi
     # LLMAdapter.chat already retries internally; a timeout wall keeps a stuck
     # judge from holding the distill flow for its full 600s client budget.
     try:
-        import threading
-
         box: dict = {}
 
         def _run():
@@ -139,7 +138,7 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0) -> GuardVerdi
                 box["ok"] = False
                 box["err"] = f"{type(exc).__name__}: {exc}"
 
-        th = threading.Thread(target=_run, daemon=True)
+        th = T.ctx_thread(_run, daemon=True)  # OTel context 传播点
         th.start()
         th.join(timeout)
         if th.is_alive():

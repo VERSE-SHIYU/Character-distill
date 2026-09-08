@@ -23,6 +23,7 @@ from adapters.llm_adapter import LLMAdapter
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import try_record_usage
+from core import telemetry as T  # OTel context 传播点（ctx_thread/ctx_submit）
 
 # ── identify_characters TTL cache ───────────────────────────────────────
 IDENTIFY_CACHE_TTL_SECONDS = 600
@@ -696,7 +697,8 @@ class Distiller:
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as pool:
-                results = pool.submit(lambda: asyncio.run(_resolve_all())).result()
+                # OTel context 传播点：submit 不拷贝 contextvar → ctx_submit
+                results = T.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
         else:
             results = asyncio.run(_resolve_all())
 
@@ -1173,7 +1175,7 @@ class Distiller:
             except Exception as exc:
                 q.put(("error", str(exc)))
 
-        t = threading.Thread(target=_thread_run, daemon=True)
+        t = T.ctx_thread(_thread_run, daemon=True)  # OTel context 传播点
         t.start()
 
         map_results: list[tuple[int, str]] = []
@@ -1397,7 +1399,7 @@ class Distiller:
             except Exception as exc:
                 q.put(("error", str(exc), None, None))
 
-        t = threading.Thread(target=_thread_run, daemon=True)
+        t = T.ctx_thread(_thread_run, daemon=True)  # OTel context 传播点
         t.start()
 
         map_results: list[tuple[int, str]] = []
@@ -1483,7 +1485,7 @@ class Distiller:
                 except Exception as exc:
                     rq.put(("error", str(exc)))
 
-            rt = threading.Thread(target=_reduce_thread, daemon=True)
+            rt = T.ctx_thread(_reduce_thread, daemon=True)  # OTel context 传播点
             rt.start()
 
             batch_by_index: dict[int, str] = {}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import time
 import traceback
 from typing import Any, Union
 
@@ -17,6 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -514,7 +516,13 @@ async def _do_chat_stream(
             err_payload = {"error": str(exc)}
             yield f"data: {json.dumps(err_payload, ensure_ascii=False, default=str)}\n\n"
 
-    return StreamingResponse(_event_generator(), media_type="text/event-stream")
+    # OTel context 传播点：invoke_agent 根 span 包住整个 SSE（TTFT→首 token），
+    # 子链路在 to_thread / ctx_submit 线程里经 context 拷贝自动挂到本根下。
+    return StreamingResponse(
+        T.trace_sse_async(_event_generator(), "chat.invoke_agent",
+                          op="invoke_agent", wf="chat"),
+        media_type="text/event-stream",
+    )
 
 
 async def _do_reset(

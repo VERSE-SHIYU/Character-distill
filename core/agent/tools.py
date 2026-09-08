@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from typing import Any
 
+from core import telemetry as T  # OTel context 传播点（ctx_submit）
 
 EMPTY_RESULT = "未找到相关内容"
 
@@ -128,7 +129,9 @@ class AgentToolkit:
 
         pool = ThreadPoolExecutor(max_workers=1)
         try:
-            fut = pool.submit(handler, query)
+            # OTel context 传播点：submit 不拷贝 contextvar → 用 ctx_submit，
+            # 让 handler 内检索/embed 子 span 挂到 execute_tool 下而非孤儿。
+            fut = T.ctx_submit(pool, handler, query)
             result = fut.result(timeout=timeout)
         except TimeoutError:
             elapsed = int((time.monotonic() - started) * 1000)

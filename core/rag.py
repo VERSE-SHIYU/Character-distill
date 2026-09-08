@@ -9,6 +9,14 @@ import chromadb
 from chromadb.api.models.Collection import Collection
 
 from core.embeddings import create_safe_embedding_fn
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+
+
+def _set_hits(sp, result) -> None:
+    """检索 span 收尾：记命中条数（canonical 短键，导出归一到 app.retrieval.hits）。"""
+    if sp is None or result is None:
+        return
+    T.set_attr(sp, "retrieval_hits", len(result))
 
 
 class RAGEngine:
@@ -180,6 +188,7 @@ class RAGEngine:
         self.collection = collection
         self.collection_name = name
 
+    @T.spanned("rag.query", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query(
         self, query_text: str, character_name: str | None = None, top_k: int | None = None
     ) -> list[str]:
@@ -220,6 +229,7 @@ class RAGEngine:
             return []
         return list(first)
 
+    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query_with_emotion(
         self,
         query_text: str,

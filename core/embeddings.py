@@ -1,7 +1,10 @@
 from collections import OrderedDict
+import os
 import threading
 
 from chromadb.api.types import EmbeddingFunction
+
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 # ── Factory cache: region:api_key → DashScopeEmbedding singleton ──
 _cache: dict[str, "DashScopeEmbedding"] = {}
@@ -103,7 +106,9 @@ class DashScopeEmbedding(EmbeddingFunction):
     ):
         from openai import OpenAI
 
-        base_url = {
+        # EMBEDDING_BASE_URL 覆盖（②④ Step 2：本地压测剥离 DashScope 网络延迟）；
+        # 未设置时行为与 region 硬编码表逐字节一致。
+        base_url = os.environ.get("EMBEDDING_BASE_URL") or {
             "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
             "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         }[region]
@@ -117,6 +122,8 @@ class DashScopeEmbedding(EmbeddingFunction):
     MAX_CHARS = 3000  # 单条安全长度（~8192 token 的保守字符数）
     STRATEGY = "batch=10, truncate=3000"
 
+    @T.spanned("embed.api", op="embeddings",
+               finalize=lambda sp, self, res, exc: T.set_attr(sp, "model", self._model))
     def _call_api(self, texts: list[str]) -> list[list[float]]:
         """Single batch API call. Returns embeddings in input order."""
         resp = self._client.embeddings.create(

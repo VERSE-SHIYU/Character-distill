@@ -7,6 +7,7 @@ from typing import Any
 from core.schema import CharacterCard
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
+from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 
 def _count_tokens(text: str) -> int:
@@ -89,6 +90,7 @@ class ContextEngine:
 
     # ── 公开接口 ──────────────────────────────────────────────
 
+    @T.spanned("context.build")
     def build(
         self,
         user_message: str,
@@ -121,8 +123,10 @@ class ContextEngine:
         # ③ 动态区（仅 include_dynamic=True 时执行）
         if include_dynamic:
             with ThreadPoolExecutor(max_workers=2) as pool:
-                f_scene = pool.submit(self._retrieve_scenes, user_message)
-                f_memory = pool.submit(self._retrieve_memories, user_message, current_mood=current_mood)
+                # OTel context 传播点：submit 不拷贝 contextvar，用 ctx_submit 包装，
+                # 否则 worker 里的检索/embed span 会成孤儿。
+                f_scene = T.ctx_submit(pool, self._retrieve_scenes, user_message)
+                f_memory = T.ctx_submit(pool, self._retrieve_memories, user_message, current_mood=current_mood)
                 scene = f_scene.result()
                 memory = f_memory.result()
             sources.append(("scene", scene, self.MAX_SCENE))
