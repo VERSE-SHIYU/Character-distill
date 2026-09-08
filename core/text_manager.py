@@ -6,6 +6,7 @@ import asyncio
 import csv
 import io
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,9 @@ class TextManager:
         indexing_service=None,
     ) -> None:
         self._storage = storage
+        self._guard_enabled = os.getenv("CARD_GUARD_ENABLED", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
         self._distiller = distiller
         self._llm = llm
         self._rag_config = rag_config
@@ -49,8 +53,14 @@ class TextManager:
     # are neutralized in place; a flag or a judge error is written to
     # review_log so the card is held out of the market until an admin clears it.
     # Judge LLM calls are pushed to a worker thread so the event loop isn't blocked.
+    # OFF by default (CARD_GUARD_ENABLED=1 turns it on): measured (2026-09-08)
+    # zero detection on narrativized residue + FP 0/23 means the per-distill LLM
+    # call is pure cost today; re-enable once the judge targets executable-config
+    # field landings (decision_style/speaking_style/values + precedence wording).
 
     async def _guard_card(self, card: CharacterCard) -> GuardVerdict:
+        if not self._guard_enabled:
+            return GuardVerdict()
         if self._llm is None:
             return GuardVerdict()
         try:
