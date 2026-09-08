@@ -936,9 +936,10 @@ class SQLiteStore(StorageBase):
         await self._ensure_initialized()
         conn = await aiosqlite.connect(self.db_path)  # type: ignore[union-attr]
         conn.row_factory = aiosqlite.Row  # type: ignore[union-attr]
+        # busy_timeout 必须最先设置：WAL pragma 本身也可能撞写锁，放在其后则失去保护
+        await conn.execute("PRAGMA busy_timeout = 5000;")
         await conn.execute("PRAGMA foreign_keys = ON;")
         await conn.execute("PRAGMA journal_mode = WAL;")
-        await conn.execute("PRAGMA busy_timeout = 5000;")
         return _ConnectionContext(conn)
 
     @staticmethod
