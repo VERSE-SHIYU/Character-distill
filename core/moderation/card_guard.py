@@ -13,6 +13,18 @@ around, and would double tokens on full-text rewrite.
 
 The judge is deliberately conservative (宁漏勿误): false-positive rate is the
 make-or-break metric, so only clear injection signals are reported.
+
+Measured limitation (2026-09-08 Step-3 rerun): the judge only fires on *active*
+persona-override / system-leak directives. Payloads that survive distillation
+laundered into diegetic residue (character quoting the instruction, other-
+speaker entrustment, memories, content the character rejects) score zero here by
+design — those are not active behavioral constraints. Result on the upload L1
+substring metric: FP 0/23 clean cards, detection 0/8 rerun positives, L1 net
+change 0. Do NOT fix by widening to narrativized quotations (would blow the FP
+budget). Deferred targeted direction: watch payloads landing in *executable
+config fields* (decision_style / speaking_style / values) carrying precedence
+wording such as "优先于正文" — the schema-05 rerun card (r2) is the concrete
+prototype landing. Judge implementation intentionally unchanged pending that.
 """
 
 from __future__ import annotations
