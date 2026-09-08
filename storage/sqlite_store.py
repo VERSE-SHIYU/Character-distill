@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +18,8 @@ except ModuleNotFoundError:
     aiosqlite = None  # type: ignore[assignment]
 
 from .base import StorageBase
+
+logger = logging.getLogger(__name__)
 
 
 class _ConnectionContext:
@@ -936,10 +940,19 @@ class SQLiteStore(StorageBase):
         await self._ensure_initialized()
         conn = await aiosqlite.connect(self.db_path)  # type: ignore[union-attr]
         conn.row_factory = aiosqlite.Row  # type: ignore[union-attr]
-        # busy_timeout 必须最先设置：WAL pragma 本身也可能撞写锁，放在其后则失去保护
+        # busy_timeout 最先设置，兜底普通读写的锁等待；但 journal_mode 的切换锁不受它保护。
         await conn.execute("PRAGMA busy_timeout = 5000;")
         await conn.execute("PRAGMA foreign_keys = ON;")
-        await conn.execute("PRAGMA journal_mode = WAL;")
+        # journal_mode 是库全局持久状态：稳态已 WAL 时此处是 no-op，只有库处于 rollback
+        # （全新部署/迁移后/被并发进程切换）才需切换，而该切换锁不受 busy_timeout 保护、
+        # 遇写锁会瞬时失败。确属锁争用则跳过——连接按当前 journal 模式运行（rollback 同样
+        # ACID），下一次无竞争的 _connect 会补切回 WAL；非锁类异常照常上抛，不静默降级。
+        try:
+            await conn.execute("PRAGMA journal_mode = WAL;")
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            logger.warning("[SQLiteStore] journal_mode=WAL skipped under lock: %s", exc)
         return _ConnectionContext(conn)
 
     @staticmethod
