@@ -125,6 +125,7 @@ vim .env
 - `DASHSCOPE_API_KEY`：阿里云百炼 API Key。用户可在 Web 设置页自行填写，无需服务端统一配置。
 - `FFMPEG_PATH`：ffmpeg 路径，默认走系统 PATH（音视频音轨提取需要）。
 - `BLOCKLIST_PATH`：内容审核敏感词黑名单文件路径，不设用内置默认。
+- `CARD_GUARD_ENABLED`：蒸馏持久化注入判官（card_guard，逐字段 LLM 判定）开关，**默认关**。开启 = 每次蒸馏持久化前多一次 LLM 判定调用。判官 2026-09-08 实测（Step-3）对叙事化残留零检出、干净卡误伤 0/23 → 当前阈值下开启是纯成本无收益，故默认关。等判官按「载荷落入可执行配置字段 decision_style/speaking_style/values 且带优先级措辞」靶向改造后再设 `1` 开启（见 `core/moderation/card_guard.py` 顶部局限说明）。
 - 审核阈值 `TRUST_THRESHOLD` / `BLOCK_THRESHOLD` / `MAX_TOKEN_LENGTH` 及各级关键词列表，均可用环境变量覆盖内置默认（详见 `.env.example`）。
 
 > 两台机器的 `JWT_SECRET`、`FERNET_KEY` 可各自独立；数据库密码各自设置。
