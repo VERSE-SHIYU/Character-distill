@@ -3815,6 +3815,21 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get review logs failed: {exc}")
             return []
 
+    async def get_latest_review_log(self, card_id: str) -> dict | None:
+        """Return the most recent review_log row for a card (by monotonic id)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT id, card_id, user_id, result, reason, created_at
+                       FROM review_log WHERE card_id = ? ORDER BY id DESC LIMIT 1""",
+                    (card_id,),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get latest review log failed: {exc}")
+            return None
+
     # ---- Usage stats ----
 
     async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False) -> None:

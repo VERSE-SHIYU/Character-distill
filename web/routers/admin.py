@@ -799,6 +799,34 @@ async def admin_review_log(
     return await storage.get_review_logs(50)
 
 
+class ReviewApproveRequest(BaseModel):
+    card_id: str
+    note: str = ""
+
+
+@router.post("/review/approve")
+@limiter.limit("30/minute")
+async def admin_review_approve(
+    request: Request,
+    req: ReviewApproveRequest,
+    admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """Approve a flagged card: writes a 'pass' row so the publish gate (latest
+    review_log == 'flag') lifts. Only admins may clear a flag — this is the sole
+    unlock for the manual-review queue."""
+    card = await storage.get_card(req.card_id)
+    if not card:
+        raise HTTPException(404, "Card not found")
+    from storage.base import new_review_id
+
+    note = (req.note or f"管理员 {admin.get('username', '')} 复核通过").strip()
+    await storage.save_review_log(
+        new_review_id(), req.card_id, admin["id"], "pass", f"[admin-approve] {note}"
+    )
+    return {"ok": True, "card_id": req.card_id}
+
+
 # ============================================================
 # Admin: Featured Cards
 # ============================================================

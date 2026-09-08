@@ -1,12 +1,12 @@
-"""Tests for auto_review_card and _flatten_card."""
+"""Tests for auto_review_card, auto_review_split and _flatten_card."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core.moderation.auto_review import _flatten_card, auto_review_card
+from core.moderation.auto_review import _flatten_card, auto_review_card, auto_review_split
 
 
 class TestFlattenCard:
@@ -121,3 +121,58 @@ class TestAutoReviewCard:
         assert "测试角色" in user_content
         assert "法师" in user_content
         assert "魔法世界" in user_content
+
+
+class TestAutoReviewSplit:
+    """auto_review_split is the two-channel review used at market publish.
+
+    Content channel keeps fail-open semantics; injection channel must fail
+    *to the manual queue* (error=True) rather than silently pass.
+    """
+
+    async def test_both_pass(self):
+        mock_llm = AsyncMock()
+        mock_llm.achat.return_value = '{"content_pass": true, "content_reason": "", "injection_pass": true, "injection_reason": ""}'
+        result = await auto_review_split({"name": "合规角色"}, llm=mock_llm)
+        assert result["content"]["pass"] is True
+        assert result["injection"]["pass"] is True
+        assert result["injection"]["error"] is False
+
+    async def test_injection_detected(self):
+        mock_llm = AsyncMock()
+        mock_llm.achat.return_value = '{"content_pass": true, "content_reason": "", "injection_pass": false, "injection_reason": "包含忽略以上设定"}'
+        result = await auto_review_split({"name": "注入卡"}, llm=mock_llm)
+        assert result["content"]["pass"] is True
+        assert result["injection"]["pass"] is False
+        assert "忽略以上设定" in result["injection"]["reason"]
+
+    async def test_content_violation(self):
+        mock_llm = AsyncMock()
+        mock_llm.achat.return_value = '{"content_pass": false, "content_reason": "色情", "injection_pass": true, "injection_reason": ""}'
+        result = await auto_review_split({"name": "违规卡"}, llm=mock_llm)
+        assert result["content"]["pass"] is False
+        assert result["injection"]["pass"] is True
+
+    async def test_llm_error_fails_content_open_but_flags_injection(self):
+        mock_llm = AsyncMock()
+        mock_llm.achat.side_effect = RuntimeError("LLM unavailable")
+        result = await auto_review_split({"name": "测试"}, llm=mock_llm)
+        # content: fail-open (unchanged)
+        assert result["content"]["pass"] is True
+        # injection: fail-to-flag (never silent pass)
+        assert result["injection"]["error"] is True
+        assert result["injection"]["pass"] is False
+
+    async def test_bad_json_flags_injection(self):
+        mock_llm = AsyncMock()
+        mock_llm.achat.return_value = "not json"
+        result = await auto_review_split({"name": "测试"}, llm=mock_llm)
+        assert result["content"]["pass"] is True
+        assert result["injection"]["error"] is True
+
+    async def test_llm_none_flags_injection(self):
+        with patch("deps.get_llm", return_value=None):
+            result = await auto_review_split({"name": "测试"}, llm=None)
+        assert result["content"]["pass"] is True
+        assert result["injection"]["pass"] is False
+        assert result["injection"]["error"] is True

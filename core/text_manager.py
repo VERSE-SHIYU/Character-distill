@@ -14,8 +14,9 @@ from adapters.llm_adapter import LLMAdapter
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
+from core.moderation.card_guard import GuardVerdict, guard_card_obj
 from core.schema import CharacterCard
-from storage.base import StorageBase
+from storage.base import StorageBase, new_review_id
 
 
 class TextManager:
@@ -42,6 +43,29 @@ class TextManager:
         self._sessions = sessions
         self._summary_threshold = summary_threshold
         self._indexing_service = indexing_service
+
+    # ── Prompt-injection field guard (2.1/2.6) ─────────────
+    # Runs on every freshly distilled card before persistence. Flagged leaves
+    # are neutralized in place; a flag or a judge error is written to
+    # review_log so the card is held out of the market until an admin clears it.
+    # Judge LLM calls are pushed to a worker thread so the event loop isn't blocked.
+
+    async def _guard_card(self, card: CharacterCard) -> GuardVerdict:
+        if self._llm is None:
+            return GuardVerdict()
+        try:
+            return await asyncio.to_thread(guard_card_obj, card, self._llm)
+        except Exception as exc:
+            print(f"[TextManager] Card guard crashed (flagging): {exc}")
+            return GuardVerdict(error=True, error_msg=f"{type(exc).__name__}: {exc}")
+
+    async def _flag_review(self, card_id: str, user_id: str, reason: str) -> None:
+        try:
+            await self._storage.save_review_log(
+                new_review_id(), card_id, user_id, "flag", reason
+            )
+        except Exception as exc:
+            print(f"[TextManager] Record review flag failed (non-fatal): {exc}")
 
     @staticmethod
     def _parse_wechat_json(data: dict) -> str:
@@ -413,6 +437,7 @@ class TextManager:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
                 raise
 
+            verdict = await self._guard_card(card)
             card_id = uuid.uuid4().hex[:12]
             try:
                 await self._storage.save_card(
@@ -421,6 +446,19 @@ class TextManager:
             except Exception as exc:
                 print(f"[TextManager] Save card failed: {exc}")
                 raise
+
+            if verdict.error:
+                await self._flag_review(
+                    card_id, user_id,
+                    f"[distill-validator] 校验失败，待人工复核（{verdict.error_msg[:200]}）",
+                )
+                print(f"[card-guard] judge error → flag pending review {card_id}")
+            elif verdict.flagged:
+                await self._flag_review(
+                    card_id, user_id,
+                    f"[distill-validator] 检测到注入性内容，已清除并待人工复核：{verdict.summary[:300]}",
+                )
+                print(f"[card-guard] flagged {len(verdict.flagged)} leaves (neutralized {verdict.neutralized}): {verdict.summary}")
 
         # Generate a variation of the first message to avoid repetition
         generated_opening = ""
@@ -479,10 +517,26 @@ class TextManager:
         embedding_key: str = "", embedding_region: str = "",
     ) -> dict[str, Any]:
         """Persist a freshly distilled card and create its chat session."""
+        # Prompt-injection field guard: neutralize flagged leaves on the card
+        # *before* persist, so no injection text ever lands in stored card_json.
+        verdict = await self._guard_card(card)
         card_id = uuid.uuid4().hex[:12]
         result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json(), user_id)
         # save_card does upsert by text_id+name — on re-distill it returns the existing ID
         actual_card_id = result_card.get("id") or card_id
+
+        if verdict.error:
+            await self._flag_review(
+                actual_card_id, user_id,
+                f"[distill-validator] 校验失败，待人工复核（{verdict.error_msg[:200]}）",
+            )
+            print(f"[card-guard] judge error → flag pending review {actual_card_id}")
+        elif verdict.flagged:
+            await self._flag_review(
+                actual_card_id, user_id,
+                f"[distill-validator] 检测到注入性内容，已清除并待人工复核：{verdict.summary[:300]}",
+            )
+            print(f"[card-guard] flagged {len(verdict.flagged)} leaves (neutralized {verdict.neutralized}): {verdict.summary}")
 
         text_rec = await self._storage.get_text(text_id)
         content = text_rec.get("content", "")

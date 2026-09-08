@@ -2745,6 +2745,20 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get review logs failed: {exc}")
             return []
 
+    async def get_latest_review_log(self, card_id: str) -> dict | None:
+        """Return the most recent review_log row for a card (by monotonic id)."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    """SELECT id, card_id, user_id, result, reason, created_at
+                       FROM review_log WHERE card_id = $1 ORDER BY id DESC LIMIT 1""",
+                    card_id,
+                )
+            return self._list_rows([row])[0] if row else None
+        except Exception as exc:
+            print(f"[PostgresStore] Get latest review log failed: {exc}")
+            return None
+
     # ---- Usage stats ----
 
     async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False) -> None:

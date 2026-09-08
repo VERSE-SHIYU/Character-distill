@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
+import time
+import uuid as _uuid
 from abc import ABC, abstractmethod
+
+
+def new_review_id() -> str:
+    """Monotonic review_log id: ms-since-epoch prefix + random tail.
+
+    ``review_log`` has no sequence column, so "latest decision" for a card is
+    resolved by ``ORDER BY id DESC`` — the fixed-width ms prefix keeps ids
+    lexically ordered without relying on the second-resolution created_at.
+    """
+    return f"{int(time.time() * 1000):013d}-{_uuid.uuid4().hex[:8]}"
 
 
 class StorageBase(ABC):

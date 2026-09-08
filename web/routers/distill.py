@@ -851,7 +851,15 @@ async def update_card(
         raise HTTPException(404, "Card not found")
     if record.get("user_id") != user["id"]:
         raise HTTPException(403, "无权修改此角色卡")
-    result = await storage.update_card(card_id, req.card_json)
+    # Schema gate: raw PATCH had no filter — a card editor payload that is not a
+    # structurally valid CharacterCard is rejected instead of blindly persisted.
+    # update_card replaces card_json wholesale, so we store the canonical dump
+    # (validated) rather than the raw request dict.
+    try:
+        validated = CharacterCard.model_validate(req.card_json)
+    except Exception as exc:
+        raise HTTPException(400, f"角色卡数据校验失败：{exc}") from exc
+    result = await storage.update_card(card_id, validated.model_dump())
     return {"ok": True, "card": result}
 
 
