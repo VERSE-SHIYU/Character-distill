@@ -220,6 +220,7 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
+                    extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices
                 if not choices:
