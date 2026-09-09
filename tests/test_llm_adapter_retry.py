@@ -105,6 +105,15 @@ def _no_real_openai(monkeypatch):
     monkeypatch.setattr(M, "AsyncOpenAI", _FakeOpenAIClient)
 
 
+class _RateLimitError429(RuntimeError):
+    """非 openai 包的 429 假异常：status_code 驱动 _classify_retry，response.headers 回 Retry-After。"""
+
+    def __init__(self, retry_after: str):
+        super().__init__("429 upstream rate limit")
+        self.status_code = 429
+        self.response = SimpleNamespace(headers={"Retry-After": retry_after})
+
+
 def _storm(exc):
     return lambda: (_ for _ in ()).throw(exc)
 
@@ -142,6 +151,37 @@ def test_decision_deadline_gate_caps_attempts(monkeypatch):
         llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
     assert time.monotonic() - t0 < 0.5
     assert fake.chat.completions.calls == 1  # deadline 到即弃，不 sleep 不重试
+
+
+def test_decision_429_backoff_clamped_to_deadline(monkeypatch):
+    # 必修1：Retry-After=30 不得让决策轮烧 30s——wait 被 clamp 到 deadline 剩余；
+    # 剩余窗耗尽后下一次失败即判 exhausted（总调用 2 次，墙钟 ~deadline 而非 ~30s）。
+    monkeypatch.setattr(M, "_DECISION_DEADLINE_S", 2.0)
+    llm = _make_llm()
+    fake = _SyncClient(_storm(_RateLimitError429("30")))
+    llm._client = fake
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match=r"rate limited \(429\) after 2 attempts"):
+        llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+    elapsed = time.monotonic() - t0
+    assert fake.chat.completions.calls == 2
+    assert elapsed < 5.0, f"backoff must be clamped to deadline, took {elapsed:.2f}s"
+
+
+def test_decision_429_has_own_attempt_cap(monkeypatch):
+    # 必修2：429 不计入非429 attempts，但有独立次数上限（_RATE_LIMIT_ATTEMPTS）。
+    # Retry-After=1s 若只受 deadline(6s) 约束最多打 6 次；cap=3 → 3 次即抛、不再高频重打。
+    # （真实 Retry-After 是整秒；isdigit 不认小数，故用整数秒走 _classify_retry 解析路径。）
+    monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 3)
+    llm = _make_llm()
+    fake = _SyncClient(_storm(_RateLimitError429("1")))
+    llm._client = fake
+    t0 = time.monotonic()
+    with pytest.raises(RuntimeError, match=r"rate limited \(429\) after 3 attempts"):
+        llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+    elapsed = time.monotonic() - t0
+    assert fake.chat.completions.calls == 3
+    assert elapsed < 5.0
 
 
 def test_with_tools_400_no_retry_preserved():

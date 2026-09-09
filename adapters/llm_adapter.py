@@ -44,8 +44,10 @@ def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
 # 缺陷 #1（retry 嵌套）：旧 chat/async_chat/chat_with_tools 各复制一份 budget×SDK 默认
 # max_retries=2，至多 9 次 HTTP；非 429 退避 (attempt+1)*5s → 决策轮 degrade 前固定烧 5s+10s。
 # 现：SDK max_retries 归 0（见 __init__），次数与总墙钟都在 _RetryBudget 封顶（先到先弃）。
-#   attempts     非 429 失败的硬次数上限（429 不计次数，靠 Retry-After/指数退避自限）
+#   attempts     非 429 失败的硬次数上限
 #   deadline_s   budget 起算的总墙钟上限。决策 6s / 生成 60s / 流式首 token 8s。
+#                on_failure 把 wait clamp 到 deadline 剩余（方案 sleep=min(backoff, 剩余)），
+#                剩余窗耗尽即判 exhausted 抛，不 sleep 无意义间隔（D1a 审计必修1）。
 #                注：D1a 阶段 per-attempt 尚无 HTTP timeout，deadline 只在 attempt 间裁决、
 #                不能中断一个已阻塞的 create；单次请求本身的兜底由 D1b 的
 #                create(timeout=min(role_ceiling, deadline_remaining)) 补上。
@@ -57,44 +59,69 @@ _DECISION_BACKOFF_S = 1.0
 _GEN_ATTEMPTS = 3
 _GEN_DEADLINE_S = 60.0
 _GEN_BACKOFF_S = 5.0
-# 流式首 token 补偿：SDK 重试撤除后，create()（吐 chunk 前）连接失败不再被 SDK 静默重试，
-# 这里补 ≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S / 1s。一旦已 yield 内容即不可安全重放，只包 create()。
+# 流式首 token 补偿：SDK 重试撤除后 create()（吐 chunk 前）连接失败不再被 SDK 静默重试，
+# 折叠到同一 _RetryBudget（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S / 退避 1s）。
+# 一旦已 yield 内容即不可安全重放，只包 create() 返回前。
 _STREAM_ATTEMPTS = 2
 _STREAM_DEADLINE_S = 8.0
 _STREAM_BACKOFF_S = 1.0
+# 429 独立次数上限（旧 rate_limit_budget=5 语义，D1a 审计必修2）：429 不计入非429 attempts，
+# 但需自身上限，否则 Retry-After 极小(如 0.1)时决策轮 6s 内可高频重打数十次 → 加速 provider
+# 侧用户 key 封禁。两个计数器、两个上限、共享一个 deadline。
+_RATE_LIMIT_ATTEMPTS = 5
+# wait 被 clamp 后的剩余窗耗尽阈值：<= 此值视为「无意义 sleep」，直接判 exhausted 抛。
+_BACKOFF_EPSILON_S = 0.05
 
 
 class _RetryBudget:
-    """单次调用的重试预算：attempts（非429次数上限）× deadline（总墙钟上限），先到先弃。
+    """单次调用的重试预算：非429次数 × 429次数 × 总墙钟 deadline，先到先弃（单一裁决点）。
 
     旧三个方法各自手写 budget 递减 + 退避 + 耗尽的循环，策略漂移又埋了 9× 嵌套乘法。
-    本类是唯一重试裁决点：on_failure() 判分类(429/其他)、累计、判耗尽，返回下次退避秒数
-    或抛 RuntimeError。429 不计入 attempts（与旧 rate_limit_budget 分离语义一致），只受 deadline 夹逼。
+    本类是唯一重试裁决点：on_failure() 判分类(429/其他)、累计、判耗尽、把退避 clamp 到
+    deadline 剩余，返回下次退避秒数或抛 RuntimeError。429 有独立次数上限
+    （rate_limit_attempts，旧 rate_limit_budget=5 语义，不计入非429 attempts），但共享 deadline。
     """
 
     def __init__(self, *, attempts: int, deadline_s: float, backoff_mult_s: float,
-                 log_prefix: str = "LLMAdapter", err_prefix: str = "LLM API") -> None:
+                 log_prefix: str = "LLMAdapter", err_prefix: str = "LLM API",
+                 rate_limit_attempts: int | None = None) -> None:
         self._attempts = attempts
+        self._rate_limit_attempts = _RATE_LIMIT_ATTEMPTS if rate_limit_attempts is None else rate_limit_attempts
         self._deadline = time.monotonic() + deadline_s
         self._backoff_mult = backoff_mult_s
         self._tag = f"[{log_prefix}] "
         self._err = err_prefix
         self._non429 = 0
+        self._rate_limited = 0
         self._total = 0
 
     def on_failure(self, exc: Exception) -> float:
-        """记录一次失败，返回下次尝试前应等秒数；次数/墙钟达上限则抛 RuntimeError。"""
+        """记录一次失败；返回下次尝试前应等秒数，或达上限/窗尽抛 RuntimeError。
+
+        顺序：累计对应计数器 → 判各自上限 → 算退避 → clamp 到 deadline 剩余。
+        clamp 后剩余窗 <= _BACKOFF_EPSILON_S 即判 exhausted 抛，杜绝「sleep 完才发现超时」。
+        """
         self._total += 1
         is_429, retry_after = _classify_retry(exc)
         if not is_429:
             self._non429 += 1
-        exhausted = (not is_429 and self._non429 >= self._attempts) or time.monotonic() >= self._deadline
+            cap_hit = self._non429 >= self._attempts
+        else:
+            self._rate_limited += 1
+            cap_hit = self._rate_limited >= self._rate_limit_attempts
         if is_429:
             wait = retry_after if retry_after is not None \
                 else min(2 ** (self._total - 1) * 2, 30.0) + random.uniform(0, 2)
         else:
             wait = self._backoff_mult * self._total
-        if exhausted:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= _BACKOFF_EPSILON_S:
+            cap_hit = True
+        elif wait > remaining:
+            wait = remaining
+            if wait <= _BACKOFF_EPSILON_S:
+                cap_hit = True
+        if cap_hit:
             if is_429:
                 print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
                 raise RuntimeError(f"{self._err} rate limited (429) after {self._total} attempts: {exc}")
@@ -302,10 +329,11 @@ class LLMAdapter:
         prompt_chars = sum(len(m.get("content", "")) for m in payload)
         self.last_usage = None  # 切断上一轮污染
         # SDK max_retries 已归 0：create()（吐首 chunk 前）连接失败不再被 SDK 静默重试，
-        # 在此做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S）。流一旦吐出 chunk 即不可
-        # 安全重放，故只包 create() 返回前；续流中断仍直接上抛（与撤 SDK 重试前一致）。
-        attempt = 0
-        t0 = time.monotonic()
+        # 在此用同一 _RetryBudget 做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S /
+        # 退避 1s），429 也走 _classify_retry 的 Retry-After——不再是手写第四份循环。
+        # 流一旦吐出 chunk 即不可安全重放，故只包 create() 返回前；续流中断仍直接上抛。
+        budget = _RetryBudget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
+                              backoff_mult_s=_STREAM_BACKOFF_S, log_prefix="LLMAdapter chat_stream")
         while True:
             try:
                 stream = self._client.chat.completions.create(
@@ -320,13 +348,7 @@ class LLMAdapter:
                 )
                 break
             except Exception as exc:
-                attempt += 1
-                if attempt >= _STREAM_ATTEMPTS or time.monotonic() - t0 >= _STREAM_DEADLINE_S:
-                    print(f"调用 DeepSeek Chat API 失败（流式）：{exc}")
-                    raise
-                print(f"[LLMAdapter] chat_stream 首 token 前失败(第{attempt}次)：{exc}，"
-                      f"{_STREAM_BACKOFF_S:.0f}s 后重试")
-                time.sleep(_STREAM_BACKOFF_S)
+                time.sleep(budget.on_failure(exc))
         completion_chars = 0
         try:
             for chunk in stream:
