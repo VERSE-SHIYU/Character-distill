@@ -52,9 +52,23 @@ python mcp_server/server.py     # stdio 传输，等待 MCP 客户端 spawn
 
 ```bash
 python mcp_server/client_demo.py
-# → initialize / list_tools(3，各工具 required 含 card_id) / 用例(a) 两卡 scene 不同
-#   / 用例(b) 缺 card_id 报 isError / 用例(c) 未知 card_id 报 isError
+# → 用例(a) 按 card_id 路由隔离（toolkit/rag 引擎/memory 隔离键断言，不依赖检索内容）
+#   / happy path 真实卡检索非 isError / 用例(b) 缺 card_id 报 isError / 用例(c) 未知 card_id 报 isError
 ```
+
+## spawn 环境变量（重要坑）
+
+server 启动即读环境配置，缺了直接 fail-fast：`STORAGE_BACKEND`（storage 后端必填）+ 配套
+`DB_PATH`(sqlite) / `DATABASE_URL`(postgres)，以及无用户会话时的 embedding 兜底 key
+（`DASHSCOPE_API_KEY` / `EMBEDDING_API_KEY`）。这些必须存在于**启动 server 的进程环境**里：
+Claude Desktop / Cline 是 `command` 直接拉起 `server.py`，继承的是客户端应用自己的环境，
+需确认配置已在那里（或用带 `.env` 来源的 wrapper 再 launch）。
+
+**用官方 mcp SDK 以 stdio 子进程 spawn server 的客户端**（如本仓 `client_demo.py`）另有一个坑：
+mcp 1.x 的 stdio 子进程 env 只取 `get_default_environment()`（白名单，仅 PATH 等极少数），
+**不继承父进程 env**——`StdioServerParameters(..., env=None)` 时 server 会报
+`STORAGE_BACKEND 未设置`。必须显式透传：`StdioServerParameters(command=..., args=..., env=dict(os.environ))`。
+真实桌面客户端不经过这条 SDK spawn 路径，不受此限。
 
 ## 客户端配置
 
