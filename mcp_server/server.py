@@ -1,9 +1,13 @@
 """标准 MCP server：把 core/agent/tools.py 的三路检索工具暴露为 MCP 工具。
 
 本文件只做协议适配层，不改动任何 core/ 实现：
-- 工具 schema 直接透传 AgentToolkit.get_schemas()（JSON Schema，不重写）
-- 工具执行仍走 AgentToolkit.execute()
-- ContextEngine 由本进程独立构建（v1：rag/memory 未接线，llm 有 key 才挂）
+- 工具 schema 来自 AgentToolkit.get_schemas()（JSON Schema），deepcopy 后为每个工具注入
+  必填的 card_id —— server 不绑单卡，list_tools 静态暴露 3 个工具
+- call_tool 从 arguments pop 出 card_id，按 card_id 从存储取/建该卡的 toolkit（进程内缓存），
+  其余参数原样交给 AgentToolkit.execute()。card_id 缺失/空/查无此卡/card_json 解析失败
+  → raise，由 MCP SDK 转协议 isError，绝不吞成空结果
+- rag/memory 与生产同源：rag 按 text_id 只读 text_{text_id} chroma 集合；memory 走 mem0。
+  无用户会话，embedding 用环境服务级 DashScope key 兜底；llm 有 DEEPSEEK_API_KEY 才挂
 
 面向官方 mcp SDK 的 1.x decorator API（@server.list_tools / @server.call_tool）。
 注意：import core.context_engine 会连带 import core.rag → chromadb，因此本进程必须
@@ -17,8 +21,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import io
-import json
 import os
 import sys
 from pathlib import Path
@@ -33,18 +37,10 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 
 from core.agent.tools import AgentToolkit
-from core.context_engine import ContextEngine
-from core.schema import CharacterCard
+from core.context_engine import ContextEngine  # import 连带 core.rag → chromadb（启动即 fail-fast）
 
 SERVER_NAME = "character-distill-tools"
 SERVER_VERSION = "0.1.0"
-DEFAULT_CARD_FILE = Path(__file__).resolve().parent / "example_card.json"
-
-
-def _load_card() -> CharacterCard:
-    card_file = os.getenv("MCP_CARD_FILE") or str(DEFAULT_CARD_FILE)
-    with open(card_file, encoding="utf-8") as f:
-        return CharacterCard(**json.load(f))
 
 
 # ── 进程级缓存 ─────────────────────────────────────────────
@@ -197,24 +193,26 @@ async def _toolkit_for(card_id: str):
     return toolkit
 
 
-def _build_toolkit() -> AgentToolkit:
-    """遗留单卡路径（env MCP_CARD_FILE / example_card.json）。本步保留作 fallback，
-    步骤 2 切到 call_tool 按 card_id 路由后删除。文件卡无 text_id → rag=None。"""
-    card = _load_card()
-    return _make_toolkit(card, rag=None, card_id=os.getenv("MCP_CARD_ID") or card.name)
+def _tool_specs() -> list[types.Tool]:
+    """静态工具 schema：AgentToolkit.get_schemas() 深拷贝后注入必填 card_id。
 
-
-def _tool_specs(toolkit: AgentToolkit) -> list[types.Tool]:
-    """透传 AgentToolkit.get_schemas()，OpenAI function 形状 → MCP Tool。"""
+    绝不原位改 get_schemas() 返回对象——card_id 是 MCP 适配层才有的路由参数，
+    core/agent/tools.py 的干净 schema 要留给 agent 模式（router LLM）原样使用。
+    """
     specs = []
-    for entry in toolkit.get_schemas():
+    for entry in AgentToolkit(ctx_engine=None).get_schemas():
         fn = entry["function"]
+        params = copy.deepcopy(fn["parameters"])
+        props = params.setdefault("properties", {})
+        props["card_id"] = {
+            "type": "string",
+            "description": "目标角色卡 id（storage cards.id）。同一 server 按卡路由，可服务任意已蒸馏卡。",
+        }
+        req = params.setdefault("required", [])
+        if "card_id" not in req:
+            req.append("card_id")
         specs.append(
-            types.Tool(
-                name=fn["name"],
-                description=fn["description"],
-                inputSchema=fn["parameters"],
-            )
+            types.Tool(name=fn["name"], description=fn["description"], inputSchema=params)
         )
     return specs
 
@@ -226,9 +224,7 @@ def _execute_silent(toolkit: AgentToolkit, name: str, args: dict):
 
 
 def main() -> None:
-    toolkit = _build_toolkit()
-    tools = _tool_specs(toolkit)
-
+    tools = _tool_specs()
     server = Server(SERVER_NAME, version=SERVER_VERSION)
 
     @server.list_tools()
@@ -236,13 +232,19 @@ def main() -> None:
         return tools
 
     # execute 内部自带单 worker 线程 + per-tool 超时；MCP 侧再加锁保证一次一个请求，
-    # 同时避免 redirect_stdout 改全局 sys.stdout 时的并发竞争。
+    # 同时避免 redirect_stdout 改全局 sys.stdout 时的并发竞争。多卡共一锁：构建/执行都串行。
     exec_lock = asyncio.Lock()
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent]:
         args = dict(arguments or {})
+        card_id = (args.pop("card_id", "") or "").strip()
+        if not card_id:
+            raise ValueError("缺少 card_id 参数")
         async with exec_lock:
+            # _toolkit_for：取/建该卡 toolkit（进程内缓存）。卡不存在/解析失败 → _NoCardError。
+            # ValueError / _NoCardError 都被 SDK call_tool 的 except 转 isError，绝不返回空结果。
+            toolkit = await _toolkit_for(card_id)
             result = await asyncio.to_thread(_execute_silent, toolkit, name, args)
         return [types.TextContent(type="text", text=result.content)]
 

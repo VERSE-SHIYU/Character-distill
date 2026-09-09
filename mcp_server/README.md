@@ -1,15 +1,22 @@
 # character-distill MCP server
 
-把 `core/agent/tools.py` 的三个检索工具暴露为标准 [MCP](https://modelcontextprotocol.io) 工具：
+把 `core/agent/tools.py` 的三个检索工具暴露为标准 [MCP](https://modelcontextprotocol.io) 工具，
+**不绑定单卡**——每个调用按 `card_id` 路由到存储里那张已蒸馏角色卡的检索引擎：
 
-| MCP 工具 | 底层 | 作用 |
-|---|---|---|
-| `search_scenes` | `AgentToolkit._call_search_scenes` → `ContextEngine._retrieve_scenes` | 检索角色原著场景 |
-| `search_memory` | `AgentToolkit._call_search_memory` → `ContextEngine._retrieve_memories` | 检索角色长期记忆 |
-| `web_search` | `AgentToolkit._call_web_search` → `ContextEngine._search_web` | 现实信息搜索（DuckDuckGo + 角色过滤） |
+| MCP 工具 | 额外必填参数 | 底层 | 作用 |
+|---|---|---|---|
+| `search_scenes` | `card_id` + `query` | `AgentToolkit._call_search_scenes` → `ContextEngine._retrieve_scenes` | 检索该角色原著场景 |
+| `search_memory` | `card_id` + `query` | `AgentToolkit._call_search_memory` → `ContextEngine._retrieve_memories` | 检索该角色长期记忆 |
+| `web_search` | `card_id` + `query` | `AgentToolkit._call_web_search` → `ContextEngine._search_web` | 现实信息搜索（DuckDuckGo + 角色过滤） |
 
-**纯协议适配层**：工具 schema 直接透传 `AgentToolkit.get_schemas()`（JSON Schema，未重写）；
-执行仍走现有 `AgentToolkit.execute()`。**未改动 `core/` / `web/` / `storage/` 任何文件。**
+**纯协议适配层**：工具 schema 来自 `AgentToolkit.get_schemas()`（JSON Schema），deepcopy 后
+为每个工具注入必填的 `card_id`——绝不原位改 `get_schemas()` 的返回值（那是给 agent 模式 router
+LLM 用的干净 schema）。执行仍走现有 `AgentToolkit.execute()`。**未改动 `core/` / `web/` /
+`storage/` 任何文件。**
+
+按 `card_id` 路由：`call_tool` 从 arguments pop 出 `card_id` → `_toolkit_for(card_id)`（进程内
+缓存 card→toolkit、text_id→RAGEngine）→ 其余参数原样交给该卡的 `AgentToolkit.execute()`。
+`card_id` 缺失/空/查无此卡/card_json 解析失败 → 抛错由 MCP SDK 转成协议 `isError`，绝不返回空结果。
 
 ## 运行环境（重要）
 
@@ -31,20 +38,22 @@ pip install -r mcp_server/requirements.txt
 python mcp_server/server.py     # stdio 传输，等待 MCP 客户端 spawn
 ```
 
-可用的环境变量：
+进程不读任何角色卡文件；卡都从数据库（`storage` 后端，同 web 的 `STORAGE_BACKEND` 配置）按
+`card_id` 现取现建。可选环境变量：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `MCP_CARD_FILE` | `mcp_server/example_card.json` | 角色卡 JSON 路径（`CharacterCard` schema） |
-| `MCP_CARD_ID` | 卡名 | 角色 id（检索 memory 时用） |
 | `MCP_MOOD` | 空 | 传给工具检索的当前情绪 |
 | `DEEPSEEK_API_KEY` | 无 | **可选**。有则挂 LLM，`web_search` 的角色过滤步才生效 |
+| `DASHSCOPE_API_KEY` | 无 | **必需**（或用 `EMBEDDING_API_KEY`）。无用户会话时做 embedding 的兜底 key |
+| `MCP_CARD_ID` | 空 | （已废弃，v1 单卡遗留） |
 
 自测（真实 MCP stdio 往返，不 mock）：
 
 ```bash
 python mcp_server/client_demo.py
-# → initialize / list_tools(3) / 逐个 call_tool 各返回一次结构化结果 / 未知工具拒绝
+# → initialize / list_tools(3，各工具 required 含 card_id) / 用例(a) 两卡 scene 不同
+#   / 用例(b) 缺 card_id 报 isError / 用例(c) 未知 card_id 报 isError
 ```
 
 ## 客户端配置
@@ -77,16 +86,25 @@ python mcp_server/client_demo.py
 }
 ```
 
-## v1 行为边界（诚实说明）
+工具现在要求 `card_id`，LLM 侧（Claude Desktop 等）由客户端把目标卡 id 填进参数即可。
 
-- `search_scenes` / `search_memory`：适配器构建的 `ContextEngine` **未接线 rag/memory**
-  （`rag=None, memory_manager=None`），因此任何 query 都返回 `未找到相关内容`（`EMPTY_RESULT`，
-  工具对「没检索到」的设计响应，非报错）。要在真实数据上跑通这两个工具，需要把适配器的
-  ContextEngine 指向应用实际的 chroma 检索库 / mem0 记忆——这依赖应用运行期基础设施，超出本
-  v1「纯协议适配」范围，故未在 server 内造轮子。
+## 行为边界（诚实说明）
+
+- `search_scenes` / `search_memory` 的检索引擎与生产同源：场景按该卡 `text_id` 读
+  `text_{text_id}` chroma 集合（文本蒸馏时已索引，MCP 只 `load_existing`，不突发重建）；
+  记忆走 mem0（按 `card_id`）。查无匹配 → `未找到相关内容`（`EMPTY_RESULT`，工具对「没检索到」
+  的设计响应，非报错）。
+  - ⚠️ 数据依赖：chroma 集合须由**当前 embedder（DashScope text-embedding-v4 / 1024 维）**索引。
+    早于 2026-06-24 embedder 迁移（原 SentenceTransformer 384 维）的旧集合仍能被
+    `load_existing` 加载（它只看 count>0），但查询会因 384/1024 维度不符被吞成空——web 单卡
+    chat 同样如此，非本 server 缺陷。这类旧文本需按当前 embedder 重建后才能查到场景。
+  - ⚠️ 环境依赖：本仓库 chroma 数据由 Linux 容器写入；Windows 宿主 Python 直接读会段错误
+    （duckdb 平台段不匹配），真实检索验证须跑在 Linux 容器里。
 - `web_search`：走 DuckDuckGo Instant Answer 免费接口 + 角色 LLM 过滤。依赖：(1) 网络可达该接口
   且其返回内容（地域不同返回可能为空）；(2) `DEEPSEEK_API_KEY`（否则过滤步返回空）。
 - 工具/`ContextEngine` 的 `print()` 日志被重定向到 stderr——stdio 传输独占 stdout，避免破坏 JSON-RPC 帧。
+- 多卡调用串行（单 `exec_lock`）：既避免 `redirect_stdout` 改全局 `sys.stdout` 的并发竞争，也避免
+  构建/执行并发。MCP 场景下吞吐足够。
 
 ## 仓库约束
 
