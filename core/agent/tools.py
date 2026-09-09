@@ -8,8 +8,28 @@ from dataclasses import dataclass
 from typing import Any
 
 from core import telemetry as T  # OTel context 传播点（ctx_submit）
+from core.embeddings import embed_deadline  # D2：库内 embed 的 deadline scope
 
 EMPTY_RESULT = "未找到相关内容"
+
+# D2：工具执行器给 embed 的预算 margin。外层 fut.result(timeout) 到期只是"放弃 future"，
+# 杀不掉已启动的 handler 线程（Python 线程不可 kill）。scope 必须在 fut.result 到期前让
+# 库内 embed 自行收手，否则 handler 线程残留到 embed 放弃（leak_probe 实测 +16.5s）。
+# budget = timeout − margin：embed 截止先于弃船约 margin 秒，给 handler 从容 unwinding、
+# 返回空结果（上层把 embed 异常吞成空检索）的窗口，fut.result 拿到的就不是 TimeoutError。
+_EXECUTE_DEADLINE_MARGIN_S = 1.0
+
+
+def _run_with_deadline(deadline: float | None, fn, arg):
+    """在真正跑 handler 的线程内打开 embed deadline scope 再调 handler。
+
+    ContextVar 不跨裸线程；ctx_submit 只 attach OTel trace context（opentelemetry.
+    context），拷不进 _EMBED_DEADLINE —— scope 必须开在 executor worker（其调用栈深处
+    是 mem0/chroma 的库内 embed）这条线程上，embed 才在同线程读得到截止时刻并被
+    _call_api_bounded 夹逼。deadline=None → embed_deadline 直接 yield，与 D2 前一致。
+    """
+    with embed_deadline(deadline):
+        return fn(arg)
 
 
 @dataclass
@@ -131,7 +151,11 @@ class AgentToolkit:
         try:
             # OTel context 传播点：submit 不拷贝 contextvar → 用 ctx_submit，
             # 让 handler 内检索/embed 子 span 挂到 execute_tool 下而非孤儿。
-            fut = T.ctx_submit(pool, handler, query)
+            # D2：_run_with_deadline 在 worker 内开 embed scope，预算 = timeout − margin，
+            # 让库内 embed 在 fut.result(timeout) 弃船前自行收手（见模块注释）。
+            budget_s = timeout - _EXECUTE_DEADLINE_MARGIN_S
+            deadline = time.monotonic() + budget_s if budget_s > 0 else None
+            fut = T.ctx_submit(pool, _run_with_deadline, deadline, handler, query)
             result = fut.result(timeout=timeout)
         except TimeoutError:
             elapsed = int((time.monotonic() - started) * 1000)

@@ -11,7 +11,8 @@ from typing import Any
 
 from adapters.llm_adapter import ToolsNotSupportedError
 from core.agent.agent_loop import AgentLoop
-from core.agent.tools import AgentToolkit, ToolResult
+from core.agent.tools import EMPTY_RESULT, AgentToolkit, ToolResult
+from core.embeddings import current_embed_deadline  # D2：回归(a) 验证 scope 进 executor
 
 
 # ── Fake objects ────────────────────────────────────────────────
@@ -107,6 +108,8 @@ class FakeCtxEngine:
         self.scenes_exception: Exception | None = None
         self.memory_result = ""
         self.memory_sleep = 0.0
+        self.memory_hang_until_deadline = False  # D2：模拟库内 embed 挂死但尊重 scope
+        self.memory_deadline_seen: float | None = None  # D2：worker 读到的截止时刻
         self.web_result = ""
         self.web_sleep = 0.0
         self.web_exception: Exception | None = None
@@ -119,6 +122,20 @@ class FakeCtxEngine:
         return self.scenes_result
 
     def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
+        dl = current_embed_deadline()
+        if dl is not None:
+            self.memory_deadline_seen = dl
+        if self.memory_hang_until_deadline:
+            # 真实路径等价物：库内 embed 挂死被 scope 夹逼 → _call_api_bounded 到截止自断
+            # → 上层(MemoryManager.search/context_engine)吞成空检索 → 返回 ""。若 scope
+            # 没传进 worker（回归应失败），无截止可等 → 睡到 fut.result(timeout) 先弃船。
+            if dl is not None:
+                rem = dl - time.monotonic()
+                if rem > 0:
+                    time.sleep(rem)
+            else:
+                time.sleep(30.0)
+            return ""
         if self.memory_sleep > 0:
             time.sleep(self.memory_sleep)
         return self.memory_result
@@ -321,3 +338,33 @@ def test_toolkit_timeout_and_exception(monkeypatch):
     assert r2.ok is False
     # The error message should be in the content (caught by except Exception)
     assert r2.content != ""
+
+
+def test_execute_embed_deadline_reaches_worker(monkeypatch):
+    """回归(a)：tools.execute 把 embed deadline scope 传进 executor 线程，库内挂死被夹逼。
+
+    fake ctx 尊重 current_embed_deadline()（等价于真实路径里 mem0/chroma 库内 embed 被
+    _call_api_bounded 到截止自断、上层吞成空检索）→ handler 在 fut.result(timeout) 弃船前
+    自行返回 "" → execute 拿到空检索结果而非"工具执行超时"，无弃船、无线程残留。
+
+    D2 前会失败的两点：
+      1. ContextVar 不跨裸线程 → worker 读不到 scope → memory_deadline_seen 为 None；
+      2. handler 无人夹逼 → 睡满 → fut.result(5s) 弃船 → content 含"工具执行超时"，
+         handler 线程残留到 embed 放弃（leak_probe 实测 ~16.5s）。
+    """
+    monkeypatch.setattr(AgentToolkit, "MEMORY_TIMEOUT", 5)
+    ctx = FakeCtxEngine()
+    ctx.memory_hang_until_deadline = True
+    toolkit = AgentToolkit(ctx)
+
+    t0 = time.monotonic()
+    r = toolkit.execute("search_memory", {"query": "novel hang query"})
+    elapsed = time.monotonic() - t0
+
+    assert ctx.memory_deadline_seen is not None  # scope 真进了 executor worker 线程
+    assert r.ok is False
+    assert "工具执行超时" not in r.content  # 不是 fut.result 弃船
+    assert r.content == EMPTY_RESULT  # 空检索结果的正常文案
+    assert elapsed < 5.0  # 早于 MEMORY_TIMEOUT=5 返回，没等弃船
+    # budget = timeout − margin = 4s：deadline ≈ 提交时刻 + 4s，handler 睡到截止返回
+    assert abs(r.elapsed_ms / 1000.0 - 4.0) < 1.0
