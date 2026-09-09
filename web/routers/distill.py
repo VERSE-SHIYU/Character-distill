@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import threading
-import time
 import uuid as _uuid
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
@@ -80,6 +79,73 @@ _task_lock = threading.Lock()
 DISTILL_MAX_CONCURRENT = 3
 _DISTILL_SEMAPHORE = threading.Semaphore(DISTILL_MAX_CONCURRENT)  # 最多同时3个蒸馏任务
 
+# ── DB 真相源 / 内存写缓存 ─────────────────────────────────────────────────
+# 任务状态查询一律读 distill_tasks 表；内存 _tasks 只在 bg 线程里作写侧缓存
+# （_set_task 先更内存、再全行 upsert 落库）。跨重启：boot reconcile 把孤儿
+# running 置 interrupted（web/server.py _lifespan），供步骤 3 断点续跑挑选。
+_DB_TERMINAL = {"done", "error", "interrupted"}
+
+
+def _db_status(mem_status: str) -> str:
+    """内存 rich 状态 → DB 四态。done/error/interrupted 原样，其余(含 queued)→ running。
+
+    排队/识别/分析/合并/格式化/保存都是「没结束、占一个 worker」，DB 统一记
+    running 作跨重启决策；rich 细节只给前端看、存内存就够。
+    """
+    if mem_status in _DB_TERMINAL:
+        return mem_status
+    return "running"
+
+
+def _set_task(task_id: str, updates: dict[str, Any]) -> None:
+    """内存写缓存更新 + DB 全行 upsert。仅 bg 线程调用（内部 run_on_main_loop 派发）。
+
+    去重键 = (粗粒度 status, progress_pct)：analyze/merging 每 chunk 只动
+    message/current/total 时不再发 DB；终态或带 card_id/awakening 的收尾更新总落库。
+    """
+    with _task_lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            return  # 条目不存在（不应发生在活跃任务），不复活
+        task.update(updates)
+        mem_status = task.get("status", "queued")
+        st = _db_status(mem_status)
+        pct = int(task.get("progress_pct", 0) or 0)
+        force = st in _DB_TERMINAL or "card_id" in updates or "awakening" in updates
+        last = task.get("_db")
+        if last == (st, pct) and not force:
+            return
+        task["_db"] = (st, pct)
+        snap = {
+            "user_id": task.get("user_id", ""),
+            "text_id": task.get("text_id", ""),
+            "character": task.get("character", ""),
+            "status": st,
+            "progress_pct": pct,
+            "message": task.get("message", ""),
+            "card_id": task.get("card_id", ""),
+            "awakening": task.get("awakening", ""),
+        }
+    try:
+        async def _persist():
+            await get_storage().save_distill_task(
+                task_id, snap["user_id"], snap["text_id"], snap["character"],
+                snap["status"], snap["progress_pct"], snap["message"],
+                snap["card_id"], snap["awakening"],
+            )
+            if snap["status"] in _DB_TERMINAL:
+                # 终态已落库 = bg 线程最后一次写，此后再无 update —— 内存写缓存可弃，
+                # 防无界累积。cancel 路由不经过 _set_task（它直接 update DB），
+                # 不会误清仍在跑的停止信号；只有 bg 自己写完终态才清。
+                with _task_lock:
+                    cur = _tasks.get(task_id)
+                    if cur is not None and cur.get("_db") == (snap["status"], snap["progress_pct"]):
+                        _tasks.pop(task_id, None)
+        run_on_main_loop(_persist(), timeout=10)
+    except Exception as exc:
+        # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
+        print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
+
 
 class DistillTaskRequest(BaseModel):
     text_id: str
@@ -87,18 +153,23 @@ class DistillTaskRequest(BaseModel):
     force: bool = False
 
 
-def cancel_distill_tasks_by_text_id(text_id: str) -> int:
+async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
     """Cancel all in-flight distill tasks matching the given text_id.
 
-    Returns the number of tasks cancelled.
+    Loop 线程调用（text.py 软/硬删路由）。内存 loop 只为让 bg 线程收到停止信号，
+    DB 扫一遍同 text_id 的活跃行（含上一个进程的孤儿）统一置 error —— 否则删掉的
+    文本会留一根 running 孤儿行永远占着 count_running 槽。
+    Returns the number of DB rows cancelled.
     """
-    count = 0
     with _task_lock:
         for tid, task in list(_tasks.items()):
             if task.get("text_id") == text_id and task.get("status") not in ("done", "error"):
                 task.update({"status": "error", "message": "文本已删除，任务已取消"})
-                count += 1
-    return count
+    try:
+        return await get_storage().cancel_distills_by_text_id(text_id, "文本已删除，任务已取消")
+    except Exception as exc:
+        print(f"[distill] DB cancel by text failed (non-fatal): {exc}")
+        return 0
 
 
 def _generate_awakening(llm, card: CharacterCard) -> str:
@@ -146,8 +217,7 @@ def _run_distill_task(
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
         print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
-        with _task_lock:
-            _tasks.setdefault(task_id, {"user_id": user_id}).update({"status": "error", "message": "服务器繁忙，请稍后重试"})
+        _set_task(task_id, {"status": "error", "message": "服务器繁忙，请稍后重试"})
         return
     try:
         from adapters.llm_adapter import LLMAdapter
@@ -175,18 +245,15 @@ def _run_distill_task(
         text_manager = get_text_manager(llm=per_user_llm)
 
         if not distiller or not text_manager:
-            with _task_lock:
-                _tasks[task_id].update({"status": "error", "message": "请先在设置页配置 API Key"})
+            _set_task(task_id, {"status": "error", "message": "请先在设置页配置 API Key"})
             return
 
         # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
         aliases: list[str] = []
 
-        with _task_lock:
-            _tasks[task_id].update({"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在读取文本…"})
-        with _task_lock:
-            _tasks[task_id].update({"progress_pct": 8, "message": "正在识别角色…"})
+        _set_task(task_id, {"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在读取文本…"})
+        _set_task(task_id, {"progress_pct": 8, "message": "正在识别角色…"})
 
         try:
             chars = distiller.identify_characters(content)
@@ -194,21 +261,18 @@ def _run_distill_task(
             chars = []
         if not name:
             if not chars:
-                with _task_lock:
-                    _tasks[task_id].update({"status": "error", "message": "No characters identified"})
+                _set_task(task_id, {"status": "error", "message": "No characters identified"})
                 return
             name = chars[0].get("name", "")
             if not name:
-                with _task_lock:
-                    _tasks[task_id].update({"status": "error", "message": "Identified result missing name"})
+                _set_task(task_id, {"status": "error", "message": "Identified result missing name"})
                 return
         for c in chars:
             if c.get("name") == name:
                 aliases = c.get("aliases", [])
                 break
 
-        with _task_lock:
-            _tasks[task_id].update({"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
+        _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
         # Step 2: run incremental distill (synchronous, collect full output)
         full = ""
@@ -218,49 +282,51 @@ def _run_distill_task(
         stream = distiller.distill_incremental_stream(content, name, aliases, text_type)
         for piece in stream:
             with _task_lock:
-                if _tasks.get(task_id, {}).get("status") == "error":
-                    return
+                aborted = _tasks.get(task_id, {}).get("status") == "error"
+            if aborted:
+                # cancel/删文本置了内存 error 作停止信号。这里补一个终态 DB 写，
+                # 盖掉 cancel 之后 bg 可能交错的最后一次 running 进度写（避免 DB
+                # 停在 running 占 count_running 槽）。message 从内存取已取消原因。
+                _set_task(task_id, {"status": "error"})
+                return
             if isinstance(piece, dict):
                 if "error" in piece:
                     print(f"[distill] Stream error for {name}: {piece['error']}")
-                    with _task_lock:
-                        _tasks[task_id].update({"status": "error", "message": piece["error"], "character": name})
+                    _set_task(task_id, {"status": "error", "message": piece["error"], "character": name})
                     return
                 if piece.get("heartbeat"):
                     continue
                 cur_phase = piece.get("status", cur_phase)
-                with _task_lock:
-                    current = piece.get("current", 0)
-                    total = piece.get("total", 1)
-                    status = piece.get("status", "analyzing")
-                    if status == "analyzing":
-                        pct = 10 + int((current / total) * 60) if total > 0 else 10
-                        msg = f"分析角色 {current}/{total}"
-                    elif status == "merging":
-                        pct = 70 + int((current / total) * 20) if total > 0 else 75
-                        msg = f"合并角色信息 {current}/{total}"
-                    elif status == "formatting":
-                        full_format = ""
-                        pct = 40
-                        msg = "生成角色卡…"
-                    else:
-                        pct = 10
-                        msg = ""
-                    _tasks[task_id].update({
-                        "status": status,
-                        "current": current,
-                        "total": total,
-                        "progress_pct": pct,
-                        "character": name,
-                        "message": msg,
-                    })
+                current = piece.get("current", 0)
+                total = piece.get("total", 1)
+                status = piece.get("status", "analyzing")
+                if status == "analyzing":
+                    pct = 10 + int((current / total) * 60) if total > 0 else 10
+                    msg = f"分析角色 {current}/{total}"
+                elif status == "merging":
+                    pct = 70 + int((current / total) * 20) if total > 0 else 75
+                    msg = f"合并角色信息 {current}/{total}"
+                elif status == "formatting":
+                    full_format = ""
+                    pct = 40
+                    msg = "生成角色卡…"
+                else:
+                    pct = 10
+                    msg = ""
+                _set_task(task_id, {
+                    "status": status,
+                    "current": current,
+                    "total": total,
+                    "progress_pct": pct,
+                    "character": name,
+                    "message": msg,
+                })
             else:
                 if cur_phase == "formatting":
                     full_format += piece
                     f_len = len(full_format)
                     f_pct = 40 + min(int(f_len / EXPECT_CHARS * 55), 55)
-                    with _task_lock:
-                        _tasks[task_id].update({"progress_pct": f_pct})
+                    _set_task(task_id, {"progress_pct": f_pct})
                 full += piece
 
         # Step 3: parse + validate — 健壮处理 LLM 可能的格式问题
@@ -301,20 +367,17 @@ def _run_distill_task(
         if data is None:
             if not stripped:
                 print(f"[distill] Empty format output for {name} — Map/Reduce likely failed upstream")
-                with _task_lock:
-                    _tasks[task_id].update({"status": "error", "message": "蒸馏过程异常，请查看服务器日志", "character": name})
+                _set_task(task_id, {"status": "error", "message": "蒸馏过程异常，请查看服务器日志", "character": name})
             else:
                 print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
-                with _task_lock:
-                    _tasks[task_id].update({"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
+                _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
 
         from core.schema import CharacterCard
         try:
             card = CharacterCard.model_validate(data)
         except Exception as exc:
-            with _task_lock:
-                _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name})
+            _set_task(task_id, {"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name})
             return
 
         # AI auto-tagging (fails open)
@@ -355,22 +418,20 @@ def _run_distill_task(
             )
             return result
 
-        with _task_lock:
-            _tasks[task_id].update({
-                "status": "saving",
-                "progress_pct": 95,
-                "message": "正在保存角色卡…",
-            })
+        _set_task(task_id, {
+            "status": "saving",
+            "progress_pct": 95,
+            "message": "正在保存角色卡…",
+        })
 
         try:
             result = run_on_main_loop(_save_card(), timeout=120)
         except FutureTimeoutError:
-            with _task_lock:
-                _tasks[task_id].update({
-                    "status": "error",
-                    "message": "保存超时：角色卡写入耗时过长，请重试",
-                    "character": name, "text_id": text_id,
-                })
+            _set_task(task_id, {
+                "status": "error",
+                "message": "保存超时：角色卡写入耗时过长，请重试",
+                "character": name, "text_id": text_id,
+            })
             return
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
@@ -389,24 +450,22 @@ def _run_distill_task(
             except Exception as exc:
                 print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
 
-        with _task_lock:
-            update_dict = {
-                "status": "done",
-                "card_id": result.get("card_id", ""),
-                "character": name,
-                "progress_pct": 100,
-                "message": "蒸馏完成 ✓",
-            }
-            if awakening:
-                update_dict["awakening"] = awakening
-            _tasks[task_id].update(update_dict)
+        update_dict = {
+            "status": "done",
+            "card_id": result.get("card_id", ""),
+            "character": name,
+            "progress_pct": 100,
+            "message": "蒸馏完成 ✓",
+        }
+        if awakening:
+            update_dict["awakening"] = awakening
+        _set_task(task_id, update_dict)
 
     except Exception as exc:
         import traceback
         print(f"[distill] Background task {task_id} failed: {exc}\n{traceback.format_exc()}")
         readable = str(exc).split("\n")[0].strip() or type(exc).__name__
-        with _task_lock:
-            _tasks[task_id].update({"status": "error", "message": f"蒸馏失败：{readable}", "text_id": text_id, "character": char_name})
+        _set_task(task_id, {"status": "error", "message": f"蒸馏失败：{readable}", "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
             async def _cleanup():
@@ -575,9 +634,24 @@ async def distill_start(
     content = _get_distill_content(text_rec)
     task_id = _uuid.uuid4().hex[:12]
 
+    # DB 先落一行（queued 粗粒度记 running），再放内存写缓存、再启线程。三者都发生在
+    # loop 线程：DB insert 在 thread.start() 前完成，bg 线程的 _set_task 只做 upsert。
+    try:
+        await storage.save_distill_task(
+            task_id, user_id, req.text_id, req.character_name,
+            status="running", progress_pct=0,
+            message=f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)",
+            card_id="", awakening="",
+        )
+    except Exception as exc:
+        # DB 不可用时退化为纯内存旧行为：任务能跑，只是跨重启不可查
+        print(f"[distill] Create distill task row failed (non-fatal): {exc}")
+
     with _task_lock:
         _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
-                           "message": f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)"}
+                           "text_id": req.text_id, "character": req.character_name,
+                           "message": f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)",
+                           "card_id": "", "awakening": "", "_db": ("running", 0)}
 
     thread = T.ctx_thread(  # OTel context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
@@ -593,38 +667,57 @@ async def distill_start(
 async def distill_task_status(
     task_id: str,
     user: dict = Depends(get_current_user),
-    request: Request = None,
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Poll distillation task status."""
-    with _task_lock:
-        task = _tasks.get(task_id)
-    if task is None:
+    """Poll distillation task status — DB 是真相源，内存只作写缓存，不作查询依据。
+
+    DB 只有 running/done/error/interrupted 四态，rich 阶段细节(识别/分析/…)不进库，
+    前端拿到 coarse 状态 + progress_pct/message 即可驱动进度条。
+    """
+    row = await storage.get_distill_task(task_id)
+    if row is None:
         raise HTTPException(404, "Task not found")
-    if task.get("user_id") != user["id"]:
+    if row.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此任务")
-    if task.get("status") in ("done", "error"):
-        now = time.time()
-        with _task_lock:
-            if "completed_at" not in task:
-                task["completed_at"] = now
-            elif now - task["completed_at"] > 300:
-                _tasks.pop(task_id, None)
-    return task
+    return {
+        "task_id": task_id,
+        "status": row["status"],
+        "progress_pct": row["progress_pct"],
+        "message": row["message"],
+        "character": row["character"],
+        "text_id": row["text_id"],
+        "card_id": row["card_id"],
+        "awakening": row["awakening"],
+    }
 
 
 @router.delete("/task/{task_id}")
 async def cancel_distill_task(
     task_id: str,
     user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
-    """Cancel a running distillation task."""
+    """Cancel a running distillation task.
+
+    所有权以 DB 行为准（跨重启后内存可能为空）。内存更新只作本进程 bg 线程的
+    停止信号（stream 循环逐 piece 查 status==error）；DB 置 error 是查询真相。
+    bg 线程收到信号后走 abort 路径，其 _set_task(terminal) 会把 DB 终态补写回来，
+    盖掉 cancel 与 bg 之间可能交错的最后一次 running 进度写。
+    """
+    row = await storage.get_distill_task(task_id)
+    if row is None:
+        raise HTTPException(404, "Task not found")
+    if row.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权操作此任务")
     with _task_lock:
         task = _tasks.get(task_id)
-        if task is None:
-            raise HTTPException(404, "Task not found")
-        if task.get("user_id") != user["id"]:
-            raise HTTPException(403, "无权操作此任务")
-        task.update({"status": "error", "message": "已取消"})
+        if task is not None and task.get("status") not in ("done", "error"):
+            task.update({"status": "error", "message": "已取消"})
+    try:
+        await storage.update_distill_task(task_id, status="error", message="已取消")
+    except Exception as exc:
+        # DB 写失败仍有内存停止信号，bg 线程 abort 时还会再补一次终态落库
+        print(f"[distill] Cancel task {task_id} DB update failed (non-fatal): {exc}")
     return {"ok": True}
 
 

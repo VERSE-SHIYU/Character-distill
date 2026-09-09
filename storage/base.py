@@ -367,8 +367,12 @@ class StorageBase(ABC):
     # ── Distill task persistence ────────────────
 
     @abstractmethod
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+
+        card_id/awakening complete the done payload so a DB-truth read of a
+        finished task still carries what the frontend needs (card refresh toast).
+        """
 
     @abstractmethod
     async def get_distill_task(self, task_id: str) -> dict | None:
@@ -393,3 +397,21 @@ class StorageBase(ABC):
     @abstractmethod
     async def count_running_distills(self, user_id: str) -> int:
         """Count a user's non-terminal distill tasks (status queued/running) = slot occupancy."""
+
+    @abstractmethod
+    async def mark_interrupted_distills(self, message: str = "服务重启，任务已中断，等待自动恢复") -> int:
+        """Boot-time reconcile: flip every status='running' row to 'interrupted'.
+
+        Runs once at process start when the in-memory worker set is empty, so a
+        running row can only belong to a dead previous process. Returns the
+        number of rows transitioned.
+        """
+
+    @abstractmethod
+    async def cancel_distills_by_text_id(self, text_id: str, message: str = "文本已删除，任务已取消") -> int:
+        """Set every non-terminal distill row for a text to error.
+
+        Called when the text is deleted so no running/interrupted row keeps
+        occupying a slot or gets resumed against a gone text. Returns the
+        number of rows updated.
+        """

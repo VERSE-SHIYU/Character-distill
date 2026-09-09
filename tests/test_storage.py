@@ -1381,3 +1381,35 @@ class TestDistillTaskPersistence:
         assert await store.get_distill_task("no_such_task") is None
         assert await store.get_distill_chunks("no_such_task") == []
         assert await store.count_running_distills("ghost") == 0
+
+    async def test_card_id_awakening_roundtrip(self, store, text_id):
+        # 步骤2：done payload 的 card_id/awakening 必须随行落库，DB 真源读到仍能
+        # 驱动前端卡片刷新 toast —— 只存内存会在跨重启后丢。
+        await store.save_distill_task("dt6", "u1", text_id, character="A",
+                                      status="done", progress_pct=100, message="完成",
+                                      card_id="cardX", awakening="你醒了？")
+        got = await store.get_distill_task("dt6")
+        assert got["card_id"] == "cardX" and got["awakening"] == "你醒了？"
+
+    async def test_mark_interrupted_flips_running(self, store, text_id):
+        # 开机 reconcile：只动 running（孤儿），done/interrupted 不动；返回翻转数。
+        await store.save_distill_task("dtA", "u1", text_id, status="running")
+        await store.save_distill_task("dtB", "u1", text_id, status="done")
+        await store.save_distill_task("dtC", "u1", text_id, status="interrupted")
+        assert await store.mark_interrupted_distills() == 1
+        got = await store.get_distill_task("dtA")
+        assert got["status"] == "interrupted"
+        assert "重启" in got["message"]
+        # interrupted 不占 running 槽；是步骤 3 挑选恢复对象的直接依据
+        assert await store.count_running_distills("u1") == 0
+
+    async def test_cancel_by_text_id(self, store, text_id):
+        # 删文本 sweep：running + interrupted（含上进程孤儿）都置 error，done 不动。
+        await store.save_distill_task("dtX", "u1", text_id, status="running")
+        await store.save_distill_task("dtY", "u1", text_id, status="interrupted")
+        await store.save_distill_task("dtZ", "u1", text_id, status="done")
+        n = await store.cancel_distills_by_text_id(text_id)
+        assert n == 2
+        assert (await store.get_distill_task("dtX"))["status"] == "error"
+        assert (await store.get_distill_task("dtY"))["status"] == "error"
+        assert (await store.get_distill_task("dtZ"))["status"] == "done"

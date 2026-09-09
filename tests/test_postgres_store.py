@@ -351,3 +351,33 @@ class TestDistillTaskPersistence:
         assert await store.get_distill_task(f"dt_{uuid.uuid4().hex}") is None
         assert await store.get_distill_chunks(f"dt_{uuid.uuid4().hex}") == []
         assert await store.count_running_distills(f"usr_{uuid.uuid4().hex}") == 0
+
+    async def test_card_id_awakening_roundtrip(self, store, text_id, user_id):
+        task_id = f"dt_{uuid.uuid4().hex}"
+        await store.save_distill_task(task_id, user_id, text_id, character="A",
+                                      status="done", progress_pct=100, message="完成",
+                                      card_id="cardX", awakening="你醒了？")
+        got = await store.get_distill_task(task_id)
+        assert got["card_id"] == "cardX" and got["awakening"] == "你醒了？"
+
+    async def test_mark_interrupted_flips_running(self, store, text_id, user_id):
+        a, b, c = (f"dt_{uuid.uuid4().hex}" for _ in range(3))
+        await store.save_distill_task(a, user_id, text_id, status="running")
+        await store.save_distill_task(b, user_id, text_id, status="done")
+        await store.save_distill_task(c, user_id, text_id, status="interrupted")
+        assert await store.mark_interrupted_distills() == 1
+        got = await store.get_distill_task(a)
+        assert got["status"] == "interrupted"
+        assert "重启" in got["message"]
+        assert await store.count_running_distills(user_id) == 0
+
+    async def test_cancel_by_text_id(self, store, text_id, user_id):
+        x, y, z = (f"dt_{uuid.uuid4().hex}" for _ in range(3))
+        await store.save_distill_task(x, user_id, text_id, status="running")
+        await store.save_distill_task(y, user_id, text_id, status="interrupted")
+        await store.save_distill_task(z, user_id, text_id, status="done")
+        n = await store.cancel_distills_by_text_id(text_id)
+        assert n == 2
+        assert (await store.get_distill_task(x))["status"] == "error"
+        assert (await store.get_distill_task(y))["status"] == "error"
+        assert (await store.get_distill_task(z))["status"] == "done"

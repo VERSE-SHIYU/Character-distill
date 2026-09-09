@@ -3964,13 +3964,13 @@ class SQLiteStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "") -> dict | None:
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "") -> dict | None:
         """Insert a distillation task row (upsert on task_id). Returns the stored row."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(task_id) DO UPDATE SET
                            user_id = excluded.user_id,
                            text_id = excluded.text_id,
@@ -3978,8 +3978,10 @@ class SQLiteStore(StorageBase):
                            status = excluded.status,
                            progress_pct = excluded.progress_pct,
                            message = excluded.message,
+                           card_id = excluded.card_id,
+                           awakening = excluded.awakening,
                            updated_at = CURRENT_TIMESTAMP""",
-                    (task_id, user_id, text_id, character, status, progress_pct, message),
+                    (task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening),
                 )
                 await conn.commit()
             return await self.get_distill_task(task_id) or {}
@@ -3993,7 +3995,7 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
-                              created_at, updated_at
+                              card_id, awakening, created_at, updated_at
                        FROM distill_tasks WHERE task_id = ?""",
                     (task_id,),
                 )
@@ -4066,6 +4068,34 @@ class SQLiteStore(StorageBase):
             return int(row[0]) if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Count running distills failed: {exc}")
+            raise
+
+    async def mark_interrupted_distills(self, message: str = "服务重启，任务已中断，等待自动恢复") -> int:
+        """Boot-time reconcile: flip every status='running' row to 'interrupted'."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE distill_tasks SET status = 'interrupted', message = ?, updated_at = CURRENT_TIMESTAMP WHERE status = 'running'",
+                    (message,),
+                )
+                await conn.commit()
+                return cursor.rowcount or 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Mark interrupted distills failed: {exc}")
+            raise
+
+    async def cancel_distills_by_text_id(self, text_id: str, message: str = "文本已删除，任务已取消") -> int:
+        """Set every non-terminal distill row for a text to error."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "UPDATE distill_tasks SET status = 'error', message = ?, updated_at = CURRENT_TIMESTAMP WHERE text_id = ? AND status NOT IN ('done', 'error')",
+                    (message, text_id),
+                )
+                await conn.commit()
+                return cursor.rowcount or 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Cancel distills by text failed: {exc}")
             raise
 
     async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:

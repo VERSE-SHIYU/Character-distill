@@ -96,6 +96,7 @@ async def _lifespan(app: FastAPI):
     from deps import set_main_loop
     set_main_loop(loop)
     await _preload_embedding()
+    await _reconcile_distill_tasks()
     cleanup_task = asyncio.create_task(_session_cleanup_loop())
     resync_task = asyncio.create_task(_cross_border_resync_loop())
     yield
@@ -119,6 +120,23 @@ app.state.limiter = limiter
 async def _preload_embedding():
     """Embedding is now API-based (DashScope), no local model to preload."""
     print("[startup] Embedding: DashScope API mode (on-demand, no preload needed)")
+
+
+async def _reconcile_distill_tasks():
+    """开机仲裁：把所有 status='running' 的蒸馏任务置 interrupted。
+
+    前提是「单 region 单进程模型」—— 进程刚起、内存 worker 集为空，running 行只能
+    来自已死的上一个进程。若将来多开进程/加 worker，新启动进程会把另一个进程正在跑
+    的任务误标 interrupted —— 那时必须改成基于 heartbeat / lease 的认领机制再移除本
+    函数。interrupted 是步骤 3 断点续跑挑选恢复对象的直接依据。
+    """
+    try:
+        n = await get_storage().mark_interrupted_distills()
+        if n:
+            print(f"[distill] Boot reconcile: {n} orphan running task(s) → interrupted")
+    except Exception as exc:
+        # 启动期 DB 未就绪等不可致命：任务以 running 留存，下次启动再仲裁
+        print(f"[distill] Boot reconcile failed (non-fatal): {exc}")
 
 
 async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

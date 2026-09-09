@@ -331,7 +331,7 @@ async def delete_text(
     # Cancel in-flight background tasks for this text
     from routers.distill import cancel_distill_tasks_by_text_id
     cancel_upload_tasks_by_text_id(text_id)
-    cancel_distill_tasks_by_text_id(text_id)
+    await cancel_distill_tasks_by_text_id(text_id)
 
     if keep_cards:
         await storage.detach_text_cards(text_id)
@@ -392,7 +392,7 @@ async def permanent_delete_text(
     # Cancel in-flight background tasks for this text
     from routers.distill import cancel_distill_tasks_by_text_id
     cancel_upload_tasks_by_text_id(text_id)
-    cancel_distill_tasks_by_text_id(text_id)
+    await cancel_distill_tasks_by_text_id(text_id)
 
     ok = await hard_delete("text", text_id, user, storage, keep_cards=keep_cards)
     if not ok:
