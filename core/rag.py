@@ -7,6 +7,7 @@ from typing import Any
 
 import chromadb
 from chromadb.api.models.Collection import Collection
+from chromadb.errors import NotFoundError
 
 from core.embeddings import create_safe_embedding_fn
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
@@ -19,10 +20,38 @@ def _set_hits(sp, result) -> None:
     T.set_attr(sp, "retrieval_hits", len(result))
 
 
+class CollectionUnusableError(RuntimeError):
+    """检索集合不可用：向量维度与当前 embedder 不符，或集合已损坏。
+
+    与「真无匹配（空结果）」严格区分 —— 这是确定性、重试无用、静默无益的失败。
+    曾根因：embedder 迁移前的 384 维旧集合被 load_existing 当"可用"装载（只看
+    count()>0 不验维度），query 时 chroma 维度错又被两层宽 except 吞成 []，
+    调用方当"没检索到"，场景检索静默失效、无日志。本异常让失败在上层可见。
+
+    Attributes:
+        collection_name: 出问题的集合名（查询路径未知时为 ""）。
+        stored_dim: 集合内实际向量维度（load 时探测到才非 None）。
+        expected_dim: 当前 embedder 期望维度（非 None 表示做了 load 时校验）。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        collection_name: str = "",
+        stored_dim: int | None = None,
+        expected_dim: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.collection_name = collection_name
+        self.stored_dim = stored_dim
+        self.expected_dim = expected_dim
+
+
 class RAGEngine:
     """使用 ChromaDB 与阿里云百炼 text-embedding-v4 的 RAG 检索引擎。"""
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(self, config: dict[str, Any], chroma_path: str | None = None) -> None:
         """从配置字典初始化客户端、嵌入函数与集合占位字段。
 
         Note: ChromaDB 的 PersistenClient 默认向 ``./chroma`` 写入数据。
@@ -31,6 +60,7 @@ class RAGEngine:
 
         Args:
             config: 需包含 chunk_size、chunk_overlap、top_k。
+            chroma_path: chroma 持久化目录；缺省 ``./data/chroma_db``。测试可注入临时目录。
         """
         try:
             self._chunk_size: int = int(config["chunk_size"])
@@ -41,7 +71,7 @@ class RAGEngine:
             raise
 
         try:
-            self._client = chromadb.PersistentClient(path="./data/chroma_db")
+            self._client = chromadb.PersistentClient(path=chroma_path or "./data/chroma_db")
         except Exception as exc:
             print(f"初始化 Chroma EphemeralClient 失败：{exc}")
             raise
@@ -217,8 +247,10 @@ class RAGEngine:
                 where=where,
             )
         except Exception as exc:
-            print(f"向量检索查询失败（降级返回空）：{exc}")
-            return []
+            # 不再吞成空：查询失败（含维度不符/损坏）与"真无匹配"必须可区分。
+            # 真无匹配时 chroma 返回空 documents 不抛异常；凡是抛出的都是真失败，
+            # 显式上抛，由 ContextEngine._retrieve_scenes 降级并记日志。
+            raise CollectionUnusableError(f"向量检索查询失败：{exc}") from exc
 
         documents = results.get("documents")
         if not documents:
@@ -264,8 +296,11 @@ class RAGEngine:
                 include=["documents", "distances", "metadatas"],
             )
         except Exception as exc:
-            print(f"[RAGEngine] query_with_emotion failed: {exc}")
-            return self.query(query_text, character_name, top_k)
+            # 原实现吞错后降级回调 self.query，而 self.query 又吞错返回 [] ——
+            # 维度错被两层吞成"无匹配"。现直接上抛，由上层(ContextEngine)降级记日志。
+            raise CollectionUnusableError(
+                f"情感加权场景检索失败：{exc}"
+            ) from exc
 
         docs = (results.get("documents") or [[]])[0]
         dists = (results.get("distances") or [[]])[0]
@@ -310,20 +345,62 @@ class RAGEngine:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [doc for _, doc in scored[:top_k]]
 
+    @staticmethod
+    def _peek_dimension(col: Collection) -> int | None:
+        """读集合内首条向量的维度（本地 op，不触发 embedding 网络请求）。
+
+        空集合 / peek 失败 → None（无法校验；查询层对失败显式上抛兜底）。
+        peek 返回的 embeddings 可能是 list 或 numpy 数组，避免对数组做真值判断。
+        """
+        try:
+            result = col.peek(limit=1)
+        except Exception:
+            return None
+        embs = result.get("embeddings") if result is not None else None
+        if embs is None or len(embs) == 0:
+            return None
+        try:
+            return int(len(embs[0]))
+        except (TypeError, ValueError):
+            return None
+
     def load_existing(self, collection_name: str) -> bool:
-        """Try to load an existing persistent collection. Returns True on success."""
+        """装载已存在的持久化集合，可用返回 True。
+
+        集合不存在 / 空 → False（调用方视为"无数据"，自行决定是否重建）。
+        get_collection 真错误 → 记日志后返回 False（不再静默 pass）。
+        集合向量维度与当前 embedder 不符（如 embedder 迁移前的旧集合）→ 抛
+        CollectionUnusableError：确定性不可用，显式让上层感知 —— 绝不返回 True
+        制造"已装载但查询恒空"的静默失效，也不与"无集合"的 False 混淆而盲目重建。
+        """
         try:
             col = self._client.get_collection(
                 name=collection_name,
                 embedding_function=self._embedding_function,
             )
-            if col.count() > 0:
-                self.collection = col
-                self.collection_name = collection_name
-                return True
-        except Exception:
-            pass
-        return False
+        except NotFoundError:
+            return False
+        except Exception as exc:
+            print(f"[RAGEngine] load_existing 获取集合失败（{collection_name}）：{exc}")
+            return False
+        if col.count() == 0:
+            return False
+
+        expected = getattr(self._embedding_function, "_dimensions", None)
+        if expected is not None:
+            stored = self._peek_dimension(col)
+            if stored is not None and stored != expected:
+                raise CollectionUnusableError(
+                    f"集合 {collection_name} 向量维度 {stored} 与当前 embedder 期望 "
+                    f"{expected} 不符：该集合由其他 embedder（如迁移前 384 维）写入，"
+                    f"需按当前 embedder 重建后才可查询。",
+                    collection_name=collection_name,
+                    stored_dim=stored,
+                    expected_dim=expected,
+                )
+        self.collection = col
+        self.collection_name = collection_name
+        return True
 
     def reset(self) -> None:
         """删除当前集合并清空内存引用。"""

@@ -71,7 +71,7 @@ async def _rebuild_group_session(
     """Rebuild an in-memory GroupSession from the persisted DB record."""
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
-    from core.rag import RAGEngine
+    from core.rag import CollectionUnusableError, RAGEngine
     from core.group_session import GroupSession
     from deps import get_rag_config, get_memory_manager
 
@@ -134,6 +134,11 @@ async def _rebuild_group_session(
             rag = RAGEngine(rag_config)
             try:
                 rag.load_existing(f"text_{text_id}")
+            except CollectionUnusableError as exc:
+                # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用。
+                # 只降级记日志、不 index() 重建 —— 不把静默失败换成静默重建（烧 embed/写库）。
+                print(f"[Group WARN] card_id={card_id} text_id={text_id} "
+                      f"text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：{exc}")
             except Exception:
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag
@@ -269,7 +274,7 @@ async def create_group(
 
     from core.schema import CharacterCard
     from core.chat_engine import ChatEngine
-    from core.rag import RAGEngine
+    from core.rag import CollectionUnusableError, RAGEngine
     from deps import get_rag_config, get_memory_manager
 
     rag_config = get_rag_config()
@@ -319,6 +324,10 @@ async def create_group(
             rag = RAGEngine(rag_config)
             try:
                 rag.load_existing(f"text_{text_id}")
+            except CollectionUnusableError as exc:
+                # 维度不符的旧集合（如迁移前 384 维）：确定性不可用，降级不重建。
+                print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} "
+                      f"text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：{exc}")
             except Exception:
                 import traceback
                 print(f"[GroupCreate WARN] card_id={card_id} text_id={text_id} RAG load_existing failed, falling back to index")

@@ -142,12 +142,17 @@ def _rag_for_text_id(text_id: str, text_content: str | None):
     rag = _rag_by_text_id.get(text_id)
     if rag is not None:
         return rag
-    from core.rag import RAGEngine
+    from core.rag import CollectionUnusableError, RAGEngine
 
     rag = RAGEngine(_embed_rag_config())
     try:
         rag.load_existing(f"text_{text_id}")
-    except Exception as exc:  # noqa: BLE001 —— 照抄 group.py：load 真抛错才回退重建
+    except CollectionUnusableError as exc:
+        # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用，
+        # 降级为无集合检索、不 index() 重建 —— 重建留待显式迁移方案。
+        print(f"[MCP] text_{text_id} 集合不可用（向量维度不符/损坏），降级空检索、不重建：{exc}",
+              file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001 —— load 真抛错且非维度不符才回退重建
         if text_content:
             rag.index(text_content, collection_name=f"text_{text_id}")
         else:
