@@ -162,7 +162,7 @@ class _RetryBudget:
             wait = retry_after if retry_after is not None \
                 else min(2 ** (self._total - 1) * 2, 30.0) + random.uniform(0, 2)
         else:
-            wait = self._backoff_mult * self._total
+            wait = self._backoff_mult * self._total + random.uniform(0, 1)
         remaining = self._deadline - time.monotonic()
         # 上一次 attempt 已是边界（超时==min 的最小有效窗）仍失败 → 连最小有效窗都用掉了，之后只会
         # 发 sub-min 死亡窗或对「即时失败」0-sleep 空转 → 直接判 exhausted。即时失败几乎不消耗
