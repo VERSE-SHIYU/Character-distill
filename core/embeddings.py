@@ -1,10 +1,81 @@
-from collections import OrderedDict
 import os
 import threading
+import time
+from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from chromadb.api.types import EmbeddingFunction
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+
+# ── Active embed deadline（D2：线程/上下文级，杜绝跨请求污染）────────────────
+# 挂死的 embed 发生在 mem0/chroma 库内部（它们各自调 embedding_model.embed /
+# EmbeddingFunction.__call__），函数参数传不进第三方库 —— scope 是唯一能夹逼库内
+# embed 的机制。必须是 ContextVar 而非模块级全局：tools.execute 每个 tool 一个 executor
+# 线程、异步侧还有并发，全局会串，不同请求的 deadline 互相污染。
+# 约定：embed 调用所在线程（检索 handler 线程 = mem0/chroma embed 同线程）里开 scope，
+# _call_api 读当前值；无 scope / None → 嵌入行为与 D2 前逐字节一致。
+_EMBED_DEADLINE: ContextVar[float | None] = ContextVar("embed_deadline", default=None)
+
+
+@contextmanager
+def embed_deadline(deadline: float | None):
+    """把当前上下文嵌入调用的截止时刻设为 deadline（time.monotonic() 刻度，绝对值）。
+
+    None 等价于不设 —— 调用方想显式声明"此路径不夹逼"时传 None。
+    """
+    if deadline is None:
+        yield
+        return
+    token = _EMBED_DEADLINE.set(deadline)
+    try:
+        yield
+    finally:
+        _EMBED_DEADLINE.reset(token)
+
+
+def current_embed_deadline() -> float | None:
+    """当前上下文的嵌入截止时刻（无则 None）。供 _call_api 与测试/假 ctx 读取。"""
+    return _EMBED_DEADLINE.get()
+
+
+# ── D2 bounded 单次调用上限组 ──────────────────────────────────
+# ceiling 8.0 = 旧 client timeout 默认值（保留非工具路径 ~24s 上限）；env 可覆盖，默认不变。
+# margin/min 只服务 bounded 循环收尾：剩余不足撑一次有效 attempt 则拒发，不做会把
+# timeout=0/负 变成 no-timeout 假请求的死亡窗 create。
+_EMBED_ATTEMPT_S = max(float(os.getenv("EMBED_ATTEMPT_S", "8.0")), 0.1)
+_EMBED_MARGIN_S = 0.1
+_EMBED_MIN_S = 0.1
+_EMBED_WINDOW_S = _EMBED_MARGIN_S + _EMBED_MIN_S
+_EMBED_ATTEMPTS = 3  # bounded 路径总尝试上限（对齐旧 SDK max_retries=2 → ≤3 次 HTTP）
+
+
+def _retry_after_secs(exc: Exception) -> float | None:
+    """429 响应里的 Retry-After 秒数（夹到 5s，防 user key 侧无限重打），无则 None。"""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None) if resp is not None else None
+    if not headers:
+        return None
+    val = headers.get("Retry-After", "")
+    if val and val.isdigit():
+        return min(float(val), 5.0)
+    return None
+
+
+def _is_retryable_embed(exc: Exception) -> bool:
+    """bounded 路径重试分类：429 / 5xx / 408 / 409 / 连接与读超时 → 重试；
+    400/401/403/其他 → 立即抛。可重试是受 deadline 约束的显式重试（不是把瞬时抖动吞成
+    空检索，也不是把用户配置/内容错误当抖动反复打）。
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status in (408, 409, 429) or status >= 500
+    name = type(exc).__name__
+    mod = type(exc).__module__ or ""
+    if "openai" in mod:
+        return name in ("APIConnectionError", "APITimeoutError")
+    return name in ("TimeoutError", "ConnectionError")
 
 # ── Factory cache: region:api_key → DashScopeEmbedding singleton ──
 _cache: dict[str, "DashScopeEmbedding"] = {}
@@ -115,6 +186,10 @@ class DashScopeEmbedding(EmbeddingFunction):
         self._client = OpenAI(
             api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2
         )
+        # D2：bounded 路径用 max_retries=0 克隆 —— SDK 内部重试会复用同一 per-request
+        # timeout（挂死=3×timeout，严格吃不到 deadline），必须撤掉黑盒重试，改由
+        # _call_api 自己做受 deadline 约束的显式重试。with_options 共享同一 httpx 连接池。
+        self._client_no_retry = self._client.with_options(max_retries=0)
         self._model = model
         self._dimensions = dimensions
 
@@ -124,12 +199,51 @@ class DashScopeEmbedding(EmbeddingFunction):
 
     @T.spanned("embed.api", op="embeddings",
                finalize=lambda sp, self, res, exc: T.set_attr(sp, "model", self._model))
-    def _call_api(self, texts: list[str]) -> list[list[float]]:
-        """Single batch API call. Returns embeddings in input order."""
-        resp = self._client.embeddings.create(
-            model=self._model, input=texts, dimensions=self._dimensions,
-        )
-        return [resp.data[i].embedding for i in range(len(texts))]
+    def _call_api(self, texts: list[str], *, deadline: float | None = None) -> list[list[float]]:
+        """Single batch API call. Returns embeddings in input order.
+
+        deadline（time.monotonic() 刻度，绝对值）：非 None 时本调用被严格夹逼 ——
+        per-attempt timeout=min(ceiling, 剩余−margin)，次数(≤_EMBED_ATTEMPTS)与时限
+        (deadline)二维先到先弃；429(可 honor Retry-After)/5xx/连接与读超时在窗口内显式重试，
+        400/401/403 立即抛。deadline=None 且无活跃 embed_deadline scope → 走 _client
+        (timeout=8.0, max_retries=2)，行为与 D2 前逐字节一致（非工具路径 ~24s 上限保留）。
+        """
+        effective = deadline if deadline is not None else _EMBED_DEADLINE.get()
+        if effective is None:
+            resp = self._client.embeddings.create(
+                model=self._model, input=texts, dimensions=self._dimensions,
+            )
+            return [resp.data[i].embedding for i in range(len(texts))]
+        return self._call_api_bounded(texts, effective)
+
+    def _call_api_bounded(self, texts: list[str], deadline: float) -> list[list[float]]:
+        """受 deadline 夹逼的单批调用：次数与时限两维分开管，先到先弃。"""
+        attempts = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining - _EMBED_MARGIN_S < _EMBED_MIN_S:
+                raise RuntimeError(
+                    f"embedding no time for an attempt: remaining {remaining:.2f}s "
+                    f"< window {_EMBED_WINDOW_S:.2f}s (deadline hit)"
+                )
+            timeout = min(_EMBED_ATTEMPT_S, remaining - _EMBED_MARGIN_S)
+            try:
+                resp = self._client_no_retry.embeddings.create(
+                    model=self._model, input=texts, dimensions=self._dimensions,
+                    timeout=timeout,
+                )
+                return [resp.data[i].embedding for i in range(len(texts))]
+            except Exception as exc:
+                attempts += 1
+                if attempts >= _EMBED_ATTEMPTS or not _is_retryable_embed(exc):
+                    raise
+                wait = _retry_after_secs(exc) or 0.3
+                rem = deadline - time.monotonic()
+                max_wait = rem - _EMBED_WINDOW_S  # 睡满还留 min 窗给下一次有效 attempt
+                if wait > max_wait:
+                    wait = max(0.0, max_wait)
+                if wait > 0:
+                    time.sleep(wait)
 
     def _embed_impl(self, input: list[str]) -> list[list[float]]:
         """Raw embedding logic — returns pure Python list[list[float]].

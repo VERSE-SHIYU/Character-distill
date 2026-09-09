@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +12,8 @@ import pytest
 from core.embeddings import (
     DashScopeEmbedding,
     Mem0BridgeEmbedder,
+    current_embed_deadline,
+    embed_deadline,
     get_embed_stats,
     reset_embed_stats,
     _is_moderation_error,
@@ -269,3 +274,122 @@ class TestModerationInterception:
         assert get_embed_stats()["moderation_blocked"] == 1
         # batch(3 fails) → per-item: safe1 ✓, bad ✗, safe2 ✓ = 1+3 = 4
         assert mock_openai_client.embeddings.create.call_count == 4
+
+
+# ── D2: embed deadline scope + bounded _call_api ──────────────
+
+
+class _RateLimit429(RuntimeError):
+    """429 假异常：status_code 驱动 _is_retryable_embed，response.headers 回 Retry-After。"""
+
+    def __init__(self):
+        super().__init__("429 upstream rate limit")
+        self.status_code = 429
+        self.response = SimpleNamespace(headers={"Retry-After": "0"})
+
+
+class _BadRequest400(RuntimeError):
+    def __init__(self):
+        super().__init__("400 bad request")
+        self.status_code = 400
+
+
+class _HangUntilTimeoutClient:
+    """模拟真实挂死的 embed 端点：create() 阻塞 `timeout` 秒后抛读超时 —— 等价于 openai
+    httpx 读超时在 per-request timeout 处打断真实请求。"""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.embeddings = _HangUntilTimeoutEmb(self)
+
+
+class _HangUntilTimeoutEmb:
+    def __init__(self, owner):
+        self._o = owner
+
+    def create(self, **kw):
+        self._o.calls.append(kw)
+        time.sleep(max(float(kw.get("timeout", 0.0)), 0.0))
+        raise TimeoutError("simulated read timeout")
+
+
+def _emb() -> DashScopeEmbedding:
+    return DashScopeEmbedding(api_key="test_key")
+
+
+class TestEmbedDeadline:
+    def test_scope_roundtrip_and_bare_thread_does_not_carry(self):
+        assert current_embed_deadline() is None
+        with embed_deadline(123.0):
+            assert current_embed_deadline() == 123.0
+        assert current_embed_deadline() is None
+        # 裸线程不自动携带 ContextVar —— 这正是 tools.execute 必须把 scope 开在 worker
+        # 线程内部（而非主线程 set 后指望自动跨线程）的原因。若有脏泄漏此处会失败。
+        seen: dict = {}
+        t = threading.Thread(target=lambda: seen.setdefault("v", current_embed_deadline()))
+        t.start()
+        t.join()
+        assert seen["v"] is None
+
+    def test_deadline_via_scope_bounds_hanging_call(self, mock_openai_client):
+        # 真实路径：mem0/chroma 库内 embed 拿不到函数参数，靠活跃 scope 夹逼（断言 (b)）。
+        emb = _emb()
+        hang = _HangUntilTimeoutClient()
+        emb._client_no_retry = hang
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError, match="no time for an attempt"):
+            with embed_deadline(time.monotonic() + 0.5):
+                emb._call_api(["novel query text that must miss shared cache"])
+        assert time.monotonic() - t0 < 1.0
+        assert hang.calls[0]["timeout"] < 0.5  # per-attempt timeout 被剩余窗夹逼
+
+    def test_deadline_param_bounds_hanging_call(self, mock_openai_client):
+        # 直接传 deadline 参数（_call_api 签名保留，供单元直测）
+        emb = _emb()
+        hang = _HangUntilTimeoutClient()
+        emb._client_no_retry = hang
+        t0 = time.monotonic()
+        with pytest.raises(RuntimeError):
+            emb._call_api(["x"], deadline=time.monotonic() + 0.5)
+        assert time.monotonic() - t0 < 1.0
+
+    def test_429_retried_then_succeeds_within_deadline(self, mock_openai_client):
+        # bounded 不归零：瞬时 429 必须在窗口内显式重试，不能直接变空检索。
+        emb = _emb()
+        fake = MagicMock()
+        n = {"v": 0}
+
+        def side(**kw):
+            if n["v"] == 0:
+                n["v"] += 1
+                raise _RateLimit429()
+            return _FakeEmbeddingResponse([[0.1] * 1024])
+
+        fake.embeddings.create.side_effect = side
+        emb._client_no_retry = fake
+        out = emb._call_api(["a"], deadline=time.monotonic() + 2.0)
+        assert len(out) == 1
+        assert fake.embeddings.create.call_count == 2
+
+    def test_400_raises_immediately_no_retry(self, mock_openai_client):
+        # 400/401/403 等不可重试立即抛，不吞成空检索、也不当抖动重打。
+        emb = _emb()
+        fake = MagicMock()
+        fake.embeddings.create.side_effect = _BadRequest400()
+        emb._client_no_retry = fake
+        with pytest.raises(_BadRequest400):
+            emb._call_api(["a"], deadline=time.monotonic() + 2.0)
+        assert fake.embeddings.create.call_count == 1
+
+    def test_no_deadline_keeps_unbounded_client(self, mock_openai_client):
+        # deadline=None 且无 scope → 走 _client（max_retries=2，timeout=8），非工具路径
+        # ~24s 上限原样保留。用 unbounded 客户端直接返回，不触发 bounded 分支。
+        emb = _emb()
+        unbounded = MagicMock()
+        unbounded.embeddings.create.return_value = _FakeEmbeddingResponse([[0.1] * 1024])
+        emb._client = unbounded
+        out = emb._call_api(["y"])
+        assert len(out) == 1
+        unbounded.embeddings.create.assert_called_once_with(
+            model=emb._model, input=["y"], dimensions=emb._dimensions
+        )
