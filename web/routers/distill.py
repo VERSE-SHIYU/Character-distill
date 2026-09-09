@@ -97,25 +97,83 @@ def _db_status(mem_status: str) -> str:
     return "running"
 
 
+async def _persist_snap(task_id: str, snap: dict[str, Any]) -> None:
+    """落库 + 成功后记账 + 终态清理。main loop 线程执行（由 run_on_main_loop 派发）。
+
+    记账(_db)放在持久化成功之后：失败时 _db 保持旧值，下一次同状态调用不会被去重吞
+    掉，能自动补发。终态成功落库 = bg 线程最后一次写，此后再无 update —— pop 写缓存
+    防无界累积（cancel 路由不经过这里、直接 update DB，不会误清仍在跑的停止信号）。
+    """
+    await get_storage().save_distill_task(
+        task_id, snap["user_id"], snap["text_id"], snap["character"],
+        snap["status"], snap["progress_pct"], snap["message"],
+        snap["card_id"], snap["awakening"],
+    )
+    with _task_lock:
+        cur = _tasks.get(task_id)
+        if cur is not None:
+            cur["_db"] = (snap["status"], snap["progress_pct"])
+            if snap["status"] in _DB_TERMINAL:
+                _tasks.pop(task_id, None)
+
+
+def _dispatch_persist(task_id: str, snap: dict[str, Any]) -> None:
+    """bg 线程把一次状态写派发到 main loop 落库。失败打日志（non-fatal），不抛异常。"""
+    try:
+        run_on_main_loop(_persist_snap(task_id, snap), timeout=10)
+    except Exception as exc:
+        # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
+        print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
+
+
 def _set_task(task_id: str, updates: dict[str, Any]) -> None:
     """内存写缓存更新 + DB 全行 upsert。仅 bg 线程调用（内部 run_on_main_loop 派发）。
 
     去重键 = (粗粒度 status, progress_pct)：analyze/merging 每 chunk 只动
     message/current/total 时不再发 DB；终态或带 card_id/awakening 的收尾更新总落库。
+    _db 只在落库成功后更新（见 _persist_snap）——记账不提前于事实，DB 没收到就不认。
     """
     with _task_lock:
         task = _tasks.get(task_id)
         if task is None:
             return  # 条目不存在（不应发生在活跃任务），不复活
         task.update(updates)
-        mem_status = task.get("status", "queued")
-        st = _db_status(mem_status)
+        st = _db_status(task.get("status", "queued"))
         pct = int(task.get("progress_pct", 0) or 0)
         force = st in _DB_TERMINAL or "card_id" in updates or "awakening" in updates
-        last = task.get("_db")
-        if last == (st, pct) and not force:
+        if task.get("_db") == (st, pct) and not force:
             return
-        task["_db"] = (st, pct)
+        snap = {
+            "user_id": task.get("user_id", ""),
+            "text_id": task.get("text_id", ""),
+            "character": task.get("character", ""),
+            "status": st,
+            "progress_pct": pct,
+            "message": task.get("message", ""),
+            "card_id": task.get("card_id", ""),
+            "awakening": task.get("awakening", ""),
+        }
+    _dispatch_persist(task_id, snap)
+
+
+def _confirm_terminal_persist(task_id: str) -> None:
+    """终态收口：bg 线程退出前补一次确认写，防 DB 行永久停 running。
+
+    在 _run_distill_task 的 finally（及 acquire 失败分支）调用，此刻 bg 线程已无别的
+    写者。只有当内存条目仍带终态且 _db 未确认（即此前那次终态写失败）才补写；成功后
+    照常 pop。重试仍失败：打区别于普通 non-fatal 的日志，提示 boot reconcile 兜底；
+    不 pop（保持内存可见供查询 stage）、不抛异常影响 semaphore release。
+    """
+    with _task_lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            return  # 终态已成功落库并 pop，无需补写
+        st = _db_status(task.get("status", "queued"))
+        if st not in _DB_TERMINAL:
+            return  # 理论不进 finally 的非终态，走正常 _set_task
+        pct = int(task.get("progress_pct", 0) or 0)
+        if task.get("_db") == (st, pct):
+            return  # 已确认落库（如 pop 未执行的边缘），避免重复写
         snap = {
             "user_id": task.get("user_id", ""),
             "text_id": task.get("text_id", ""),
@@ -127,24 +185,12 @@ def _set_task(task_id: str, updates: dict[str, Any]) -> None:
             "awakening": task.get("awakening", ""),
         }
     try:
-        async def _persist():
-            await get_storage().save_distill_task(
-                task_id, snap["user_id"], snap["text_id"], snap["character"],
-                snap["status"], snap["progress_pct"], snap["message"],
-                snap["card_id"], snap["awakening"],
-            )
-            if snap["status"] in _DB_TERMINAL:
-                # 终态已落库 = bg 线程最后一次写，此后再无 update —— 内存写缓存可弃，
-                # 防无界累积。cancel 路由不经过 _set_task（它直接 update DB），
-                # 不会误清仍在跑的停止信号；只有 bg 自己写完终态才清。
-                with _task_lock:
-                    cur = _tasks.get(task_id)
-                    if cur is not None and cur.get("_db") == (snap["status"], snap["progress_pct"]):
-                        _tasks.pop(task_id, None)
-        run_on_main_loop(_persist(), timeout=10)
+        run_on_main_loop(_persist_snap(task_id, snap), timeout=10)
     except Exception as exc:
-        # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
-        print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
+        # 区别于普通 non-fatal：这是终态确认的第二次失败，DB 行可能滞留 running 占
+        # count_running 槽，只能靠下次 boot reconcile 置 interrupted。
+        print(f"[distill] Task {task_id} TERMINAL persist failed in final confirm: {exc}. "
+              f"DB row may stay running; boot reconcile will flip it to interrupted.")
 
 
 class DistillTaskRequest(BaseModel):
@@ -218,6 +264,7 @@ def _run_distill_task(
     if not acquired:
         print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
         _set_task(task_id, {"status": "error", "message": "服务器繁忙，请稍后重试"})
+        _confirm_terminal_persist(task_id)
         return
     try:
         from adapters.llm_adapter import LLMAdapter
@@ -475,6 +522,9 @@ def _run_distill_task(
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
+        # 终态确认在 release 之前：若刚才的终态 _set_task 落库失败，这里补最后一次
+        # 写，否则 DB 行会永久停 running 占 count_running 槽（release 了 DB 没跟上）。
+        _confirm_terminal_persist(task_id)
         _DISTILL_SEMAPHORE.release()
 
 
@@ -636,6 +686,8 @@ async def distill_start(
 
     # DB 先落一行（queued 粗粒度记 running），再放内存写缓存、再启线程。三者都发生在
     # loop 线程：DB insert 在 thread.start() 前完成，bg 线程的 _set_task 只做 upsert。
+    # 落库失败必须拒绝启动：DB 是查询真相源，无行 = 不可观测的野线程 —— 查询会 404
+    # 报"任务丢失"，后台却仍在烧 LLM 额度、占 semaphore。绝不能"能跑但不给查"。
     try:
         await storage.save_distill_task(
             task_id, user_id, req.text_id, req.character_name,
@@ -644,8 +696,8 @@ async def distill_start(
             card_id="", awakening="",
         )
     except Exception as exc:
-        # DB 不可用时退化为纯内存旧行为：任务能跑，只是跨重启不可查
-        print(f"[distill] Create distill task row failed (non-fatal): {exc}")
+        print(f"[distill] Create distill task row failed; refusing to start: {exc}")
+        raise HTTPException(503, "蒸馏任务创建失败，请稍后重试") from exc
 
     with _task_lock:
         _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
@@ -671,15 +723,17 @@ async def distill_task_status(
 ) -> dict[str, Any]:
     """Poll distillation task status — DB 是真相源，内存只作写缓存，不作查询依据。
 
-    DB 只有 running/done/error/interrupted 四态，rich 阶段细节(识别/分析/…)不进库，
-    前端拿到 coarse 状态 + progress_pct/message 即可驱动进度条。
+    DB 只有 running/done/error/interrupted 四态 + 进度，rich 阶段细节只存内存作
+    **展示字段**：仅当 DB running 且本进程确有活跃条目时，用内存的 message / stage
+    细化展示；status/progress_pct/所有权/存在性永远以 DB 为准，绝不被内存覆盖。
+    跨重启后内存空 → stage 为空串、message 回落 DB 值，展示不崩、四态不谎。
     """
     row = await storage.get_distill_task(task_id)
     if row is None:
         raise HTTPException(404, "Task not found")
     if row.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此任务")
-    return {
+    resp = {
         "task_id": task_id,
         "status": row["status"],
         "progress_pct": row["progress_pct"],
@@ -688,7 +742,16 @@ async def distill_task_status(
         "text_id": row["text_id"],
         "card_id": row["card_id"],
         "awakening": row["awakening"],
+        "stage": "",
     }
+    # 只读覆盖展示字段：需同时满足 DB running + 本进程内存有该活跃条目。
+    if row["status"] == "running":
+        with _task_lock:
+            mem = _tasks.get(task_id)
+            if mem is not None:
+                resp["stage"] = mem.get("status", "")
+                resp["message"] = mem.get("message", resp["message"])
+    return resp
 
 
 @router.delete("/task/{task_id}")
@@ -725,17 +788,22 @@ async def cancel_distill_task(
 async def distill_task_params(
     task_id: str,
     user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Get stored task parameters for retry recovery."""
-    with _task_lock:
-        task = _tasks.get(task_id)
-        if task is None:
-            raise HTTPException(404, "Task not found")
-        if task.get("user_id") != user["id"]:
-            raise HTTPException(403, "无权访问此任务")
+    """Get stored task params for retry recovery — 与 status 同源，读 DB。
+
+    DB 是真相源：内存终态 pop 之后或跨重启后仍能取到 text_id/character，否则
+    「任务成功完成」与「任务不存在」在该接口上不可分。不留内存回退分支。
+    """
+    row = await storage.get_distill_task(task_id)
+    if row is None:
+        raise HTTPException(404, "Task not found")
+    if row.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权访问此任务")
     return {
-        "text_id": task.get("text_id", ""),
-        "character": task.get("character", ""),
+        "task_id": task_id,
+        "text_id": row["text_id"],
+        "character": row["character"],
     }
 
 
