@@ -2,3 +2,6 @@
 gradio>=5.0.0
 pytest
 pytest-asyncio
+# MCP SDK —— mcp_server 协议层测试依赖（test_rag_unusable 走 mcp_server 降级路径）。
+# 生产 app 不 import mcp（core/web/storage/adapters 无引用），故不入 requirements.txt
+mcp==1.26.0
