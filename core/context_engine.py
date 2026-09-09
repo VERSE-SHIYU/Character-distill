@@ -123,6 +123,11 @@ class ContextEngine:
         # ③ 动态区（仅 include_dynamic=True 时执行）
         if include_dynamic:
             with ThreadPoolExecutor(max_workers=2) as pool:
+                # D2：这里检索刻意不开 embed deadline scope —— 下方 result() 无 timeout，
+                # 调用方阻塞等待而非弃船：没有 force-abandon 就没有"线程残留到 embed 放弃"
+                # 的泄漏（区别于 tools.execute 的 fut.result(timeout) 弃船路径）。加了反而
+                # 夹逼慢 embed、把正常检索误杀成空结果，净退化。工具模式的检索由
+                # tools.execute 的 budget scope 管。
                 # OTel context 传播点：submit 不拷贝 contextvar，用 ctx_submit 包装，
                 # 否则 worker 里的检索/embed span 会成孤儿。
                 f_scene = T.ctx_submit(pool, self._retrieve_scenes, user_message)
