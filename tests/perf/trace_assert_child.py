@@ -55,11 +55,12 @@ def start_mock() -> tuple[subprocess.Popen, str]:
          "--port", str(port), "--preset", "fast"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
     )
-    base = f"http://127.0.0.1:{port}/v1"
+    root = f"http://127.0.0.1:{port}"
+    base = root + "/v1"
     # 全量 pytest 下进程/import 负载高，启动可达数秒 → 放宽就绪窗口（最长 ~20s）
     for _ in range(400):
         try:
-            urllib.request.urlopen(base.rstrip("/v1") + "/health", timeout=0.5)
+            urllib.request.urlopen(root + "/health", timeout=0.5)
             return proc, base
         except Exception:
             if proc.poll() is not None:

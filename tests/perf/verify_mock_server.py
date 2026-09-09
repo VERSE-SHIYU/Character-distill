@@ -44,10 +44,11 @@ def start_server(preset: str) -> tuple[subprocess.Popen, str]:
         [sys.executable, os.path.join(ROOT, "tests", "perf", "mock_llm_server.py"), "--port", str(port)],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
     )
-    base = f"http://127.0.0.1:{port}/v1"
+    root = f"http://127.0.0.1:{port}"
+    base = root + "/v1"
     for _ in range(100):  # 等就绪
         try:
-            urllib.request.urlopen(base.rstrip("/v1") + "/health", timeout=0.5)
+            urllib.request.urlopen(root + "/health", timeout=0.5)
             return proc, base
         except Exception:
             if proc.poll() is not None:
