@@ -21,6 +21,7 @@ from core.utils import try_record_usage
 from core.event_service import EventService
 from core.reaction_service import ReactionService
 from core.reflection_service import ReflectionService
+from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
 
@@ -283,6 +284,7 @@ class ChatEngine:
 
         toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
         result = AgentLoop(self.llm, toolkit).run(system_prompt, llm_messages)
+        set_current_attr("degraded", bool(result.degraded))
         if result.degraded:
             print("[ChatEngine] agent degraded → legacy context injection")
             legacy_sp = self._compose_system_prompt(user_message, voice_mode, include_dynamic=True)

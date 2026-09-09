@@ -36,6 +36,8 @@ A = {
     "ttft": "app.ttft_ms",                # SSE 首 token 时延
     "tool": "gen_ai.tool.name",
     "retrieval_hits": "app.retrieval.hits",
+    "degraded": "agent.degraded",         # AgentLoop 降级回退标记（bool）
+    "repair_stage": "distill.json_repair.stage",  # JSON 修复命中阶段 1/2/3
 }
 # GenAI semconv 改名时只改这里（导出期归一化，见 NormalizingExporter）
 ATTR_RENAME = dict(A)
@@ -201,6 +203,19 @@ def set_attr(sp, key: str, value: Any) -> None:
     if sp is None:
         return
     sp.set_attribute(key, value)
+
+
+def set_current_attr(key: str, value: Any) -> None:
+    """写当前 context 中 span 的 canonical 属性；无 recording span 时为 no-op。
+
+    用于无法拿到显式 span 引用的埋点（装饰器作用域外的降级/修复判定分支）。
+    """
+    if not _ENABLED:
+        return
+    from opentelemetry import trace as _ot_trace
+    sp = _ot_trace.get_current_span()
+    if sp.is_recording():
+        sp.set_attribute(key, value)
 
 
 def capture_event(sp, name: str, text: str) -> None:

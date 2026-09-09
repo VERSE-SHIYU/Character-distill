@@ -406,6 +406,7 @@ class Distiller:
             _extracted = self._extract_json(reply.strip())
             data = json.loads(_extracted)
             if _shape_ok(data):
+                T.set_current_attr("repair_stage", 1)
                 return data
             if isinstance(data, dict):
                 last_error = f"parsed dict missing required keys {required_keys}: got keys {list(data.keys())}"
@@ -456,6 +457,7 @@ class Distiller:
                 data = json.loads(self._extract_json(fix_reply.strip()))
                 if _shape_ok(data):
                     self._try_record_usage(action_label)
+                    T.set_current_attr("repair_stage", 2)
                     return data
                 if isinstance(data, dict):
                     last_error = f"fix_reply dict missing required keys {required_keys}: got keys {list(data.keys())}"
@@ -484,6 +486,7 @@ class Distiller:
                 data = json.loads(self._extract_json(retry_reply.strip()))
                 if _shape_ok(data):
                     self._try_record_usage(action_label)
+                    T.set_current_attr("repair_stage", 3)
                     return data
                 if isinstance(data, dict):
                     last_error = f"retry dict missing required keys {required_keys}: got keys {list(data.keys())}"
