@@ -87,9 +87,11 @@ TTFT 不是单峰。上游健康与上游故障各有一个模式：
 
 ---
 
-## 5. 已识别未实现（4 条，记账不做）
+## 5. 已识别未实现（6 条，记账不做）
 
 1. **重试比例预算**（client retry ratio budget）——现在每请求 bounded，无 fleet 级「重试次数 / 总请求」比例闸门；上游持续半故障时仍会在预算内逐请求重试。SRE 完全体需要比例门。
 2. **熔断 / adaptive throttling**——上游错误率跨阈值后 fail fast + 冷却窗，或 Google 自适应限流。D1/D2 假定外部（DeepSeek/embed provider）会恢复；熔断是在「持续故障」下的下一道闸。
 3. **ceiling 调优**——决策 5s ceiling 是估值（prod 无 OTel sink、rig 延迟全来自 mock，真实 DeepSeek `chat_with_tools` 耗时分布无源可报）。三常量已 env 可覆盖（`8ad5f05`，默认值不变）；生产发现太紧/太松改 `LLM_DECISION_ATTEMPT_S` 等即可，需真实分布后再调。
 4. **web_search LLM filter overrun**——`ContextEngine._search_web` 第二步角色过滤器是独立 LLM chat 调用，超 15s 仍会被调用方 timeout 弃船 → 与 D2 同类（线程孤儿），但机制在 **llm_adapter 的 chat 预算**而非 embed 的 deadline scope，是独立一块。已识别，未实现。
+5. **execute() 复用 ThreadPoolExecutor（不做）**——D2 预算下传消除弃船后 executor 不再泄漏（线程残留 16.5s→0.8s，span 子超父 12.5s→1ms）。剩余的"每次 execute() 新建 ThreadPoolExecutor"只是创建开销，压测实测噪声级（线程 241→257、PG 池 17/30、mem 276MiB，全程无资源绑定）。且换共享池会引入新失败模式：被占住的 worker 会拖死整个池，比每次新建更糟。判定为性能优化而非缺陷，不做。
+6. **成本模型漏洞——embedding 走平台 key、零配额（记账不做）**——LLM 走用户自带 key（平台零成本），但 embedding 走平台 key（core/embeddings.py，dashscope:region:key 单例 + 模块级共享 512 LRU），**无任何调用配额或限流**——[embed-stats] 计数器纯观测不拦截，LRU 只去重不设闸。用户每次蒸馏都在烧平台的钱，开放注册会放大。单本 30 万字 ≈ 1–2 毛 / 整库 pass，但多角色/多轮重建 scenes 按 pass 数累乘。候选对策：每文本/每日 token 上限、或 embedding 改走用户自带 key。当前邀请制量小未暴露，记账不做。
