@@ -176,6 +176,57 @@ class TestA2TerminalConfirm:
         assert store.attempts == 0
 
 
+class TestA2Wiring:
+    """P0 兜底接线：_run_distill_task 里两处 _confirm_terminal_persist 真的被调到。
+
+    TestA2TerminalConfirm 是直接调 D._confirm_terminal_persist()，没覆盖过生产调用点；
+    变异验证（注释掉这两行之一，本类对应用例应变红）：
+    - acquire 失败分支那行（return 前）→ test_acquire_timeout_calls_confirm 红
+    - finally 里那行 → test_finally_confirms_before_release 红
+    任务不 seed 进内存：_set_task 对不存在的条目 no-op，事件序只反映接线。
+    """
+
+    def _test_events(self, monkeypatch, acquired, distiller_boom):
+        """搭好假信号量 + confirm spy + 可选 get_distiller 抛错，跑完整 _run_distill_task。
+
+        distiller_boom=True 时需 _install 假 store —— except 分支的 cleanup 协程
+        会打到真 get_storage 否则碰真库。返回事件序。
+        """
+        events: list[str] = []
+
+        class _FakeSem:
+            def acquire(self, timeout=0):
+                events.append("acquire")
+                return acquired
+
+            def release(self):
+                events.append("release")
+
+        monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", _FakeSem())
+        monkeypatch.setattr(
+            D, "_confirm_terminal_persist",
+            lambda tid: events.append(f"confirm:{tid}"),
+        )
+        if distiller_boom:
+            _install(monkeypatch, _FakeStore())
+            monkeypatch.setattr(
+                "deps.get_distiller", lambda llm=None: (_ for _ in ()).throw(RuntimeError("boom")),
+            )
+        return events
+
+    def test_acquire_timeout_calls_confirm(self, monkeypatch):
+        """acquire(timeout=300) 超时拿不到 → confirm 兜底终态后 return，不放行、不 release。"""
+        events = self._test_events(monkeypatch, acquired=False, distiller_boom=False)
+        D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story")
+        assert events == ["acquire", "confirm:tW1"]   # 无 release
+
+    def test_finally_confirms_before_release(self, monkeypatch):
+        """异常路径进 finally：confirm 必须发生在 release 之前。"""
+        events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
+        D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story")
+        assert events == ["acquire", "confirm:tW2", "release"]
+
+
 # ── 路由测试（B / C / D）：独立 app + 真 SQLiteStore ────────────────────────
 
 @pytest.fixture
