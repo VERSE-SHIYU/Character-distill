@@ -889,6 +889,15 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Card reports migration failed: {exc}")
 
+                    # Run 084_distill_tasks migration (CREATE TABLE)
+                    distill_path = migrations_dir / "084_distill_tasks.sql"
+                    if distill_path.exists():
+                        try:
+                            await conn.executescript(distill_path.read_text(encoding="utf-8"))
+                            await conn.commit()
+                        except Exception as exc:
+                            print(f"[SQLiteStore] Distill tasks migration failed: {exc}")
+
                     # Auto-deduplicate: keep only the newest card per text_id+name
                     # Exclude forked cards (forked_from != '') to preserve independent copies
                     try:
@@ -3952,6 +3961,112 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save affinity state failed: {exc}")
+
+    # ── Distill task persistence ────────────────
+
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(task_id) DO UPDATE SET
+                           user_id = excluded.user_id,
+                           text_id = excluded.text_id,
+                           character = excluded.character,
+                           status = excluded.status,
+                           progress_pct = excluded.progress_pct,
+                           message = excluded.message,
+                           updated_at = CURRENT_TIMESTAMP""",
+                    (task_id, user_id, text_id, character, status, progress_pct, message),
+                )
+                await conn.commit()
+            return await self.get_distill_task(task_id) or {}
+        except Exception as exc:
+            print(f"[SQLiteStore] Save distill task failed: {exc}")
+            raise
+
+    async def get_distill_task(self, task_id: str) -> dict | None:
+        """Return one distillation task row by task_id, or None if absent."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
+                              created_at, updated_at
+                       FROM distill_tasks WHERE task_id = ?""",
+                    (task_id,),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get distill task failed: {exc}")
+            raise
+
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
+        """Patch only the non-None fields of a distillation task row."""
+        try:
+            sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
+            params: list[Any] = []
+            if status is not None:
+                sets.append("status = ?"); params.append(status)
+            if progress_pct is not None:
+                sets.append("progress_pct = ?"); params.append(progress_pct)
+            if message is not None:
+                sets.append("message = ?"); params.append(message)
+            params.append(task_id)
+            async with await self._connect() as conn:
+                await conn.execute(
+                    f"UPDATE distill_tasks SET {', '.join(sets)} WHERE task_id = ?",
+                    params,
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update distill task failed: {exc}")
+            raise
+
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "INSERT OR IGNORE INTO distill_chunks (task_id, chunk_index, result) VALUES (?, ?, ?)",
+                    (task_id, chunk_index, result),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Save distill chunk failed: {exc}")
+            raise
+
+    async def get_distill_chunks(self, task_id: str) -> list[dict]:
+        """Return finished chunks of a task ordered by chunk_index asc."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT task_id, chunk_index, result, created_at
+                       FROM distill_chunks WHERE task_id = ?
+                       ORDER BY chunk_index ASC""",
+                    (task_id,),
+                )
+                rows = await cursor.fetchall()
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get distill chunks failed: {exc}")
+            raise
+
+    async def count_running_distills(self, user_id: str) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running)."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM distill_tasks WHERE user_id = ? AND status IN ('queued', 'running')",
+                    (user_id,),
+                )
+                row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Count running distills failed: {exc}")
+            raise
 
     async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
         try:

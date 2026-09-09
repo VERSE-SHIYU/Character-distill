@@ -2871,6 +2871,108 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Save affinity state failed: {exc}")
 
+    # ── Distill task persistence ────────────────
+
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)
+                       ON CONFLICT (task_id) DO UPDATE SET
+                           user_id = EXCLUDED.user_id,
+                           text_id = EXCLUDED.text_id,
+                           character = EXCLUDED.character,
+                           status = EXCLUDED.status,
+                           progress_pct = EXCLUDED.progress_pct,
+                           message = EXCLUDED.message,
+                           updated_at = CURRENT_TIMESTAMP""",
+                    task_id, user_id, text_id, character, status, progress_pct, message,
+                )
+            return await self.get_distill_task(task_id) or {}
+        except Exception as exc:
+            print(f"[PostgresStore] Save distill task failed: {exc}")
+            raise
+
+    async def get_distill_task(self, task_id: str) -> dict | None:
+        """Return one distillation task row by task_id, or None if absent."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
+                              created_at, updated_at
+                       FROM distill_tasks WHERE task_id = $1""",
+                    task_id,
+                )
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[PostgresStore] Get distill task failed: {exc}")
+            raise
+
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
+        """Patch only the non-None fields of a distillation task row."""
+        try:
+            field_items: list[tuple[str, Any]] = []
+            if status is not None:
+                field_items.append(("status", status))
+            if progress_pct is not None:
+                field_items.append(("progress_pct", progress_pct))
+            if message is not None:
+                field_items.append(("message", message))
+            assigns = ["updated_at = CURRENT_TIMESTAMP"] + [
+                f"{col} = ${i + 1}" for i, (col, _v) in enumerate(field_items)
+            ]
+            params = [v for _c, v in field_items] + [task_id]
+            sql = f"UPDATE distill_tasks SET {', '.join(assigns)} WHERE task_id = ${len(field_items) + 1}"
+            async with await self._connect() as conn:
+                await conn.execute(sql, *params)
+        except Exception as exc:
+            print(f"[PostgresStore] Update distill task failed: {exc}")
+            raise
+
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    """INSERT INTO distill_chunks (task_id, chunk_index, result)
+                       VALUES ($1, $2, $3)
+                       ON CONFLICT (task_id, chunk_index) DO NOTHING""",
+                    task_id, chunk_index, result,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Save distill chunk failed: {exc}")
+            raise
+
+    async def get_distill_chunks(self, task_id: str) -> list[dict]:
+        """Return finished chunks of a task ordered by chunk_index asc."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT task_id, chunk_index, result, created_at
+                       FROM distill_chunks WHERE task_id = $1
+                       ORDER BY chunk_index ASC""",
+                    task_id,
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get distill chunks failed: {exc}")
+            raise
+
+    async def count_running_distills(self, user_id: str) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running)."""
+        try:
+            async with await self._connect() as conn:
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) FROM distill_tasks WHERE user_id = $1 AND status IN ('queued', 'running')",
+                    user_id,
+                )
+            return int(row[0]) if row else 0
+        except Exception as exc:
+            print(f"[PostgresStore] Count running distills failed: {exc}")
+            raise
+
     async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
         try:
             async with await self._connect() as conn:

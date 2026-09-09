@@ -40,7 +40,7 @@ async def _clean_tables(store: PostgresStore) -> None:
         tables = [
             "messages", "sessions", "cards", "texts", "users",
             "group_messages", "group_sessions", "direct_messages",
-            "user_follows",
+            "user_follows", "distill_chunks", "distill_tasks",
         ]
         for t in tables:
             await conn.execute(f"DELETE FROM {t}")
@@ -293,3 +293,61 @@ class TestDMCrud:
 
         msgs = await store.get_conversation_messages(user_id, other)
         assert any(m["content"] == "Hello DM" for m in msgs)
+
+
+# ── Distill task persistence ─────────────────────────────────────────────────
+
+class TestDistillTaskPersistence:
+    """save_distill_task → update → chunks (idempotent) → running-count lifecycle."""
+
+    async def test_save_get_update(self, store, text_id, user_id):
+        task_id = f"dt_{uuid.uuid4().hex}"
+        row = await store.save_distill_task(task_id, user_id, text_id, character="角色A")
+        assert row["task_id"] == task_id and row["status"] == "queued"
+
+        got = await store.get_distill_task(task_id)
+        assert got is not None and got["character"] == "角色A"
+
+        await store.update_distill_task(task_id, progress_pct=42, message="跑到一半")
+        got2 = await store.get_distill_task(task_id)
+        assert got2["progress_pct"] == 42 and got2["message"] == "跑到一半"
+        assert got2["status"] == "queued"  # untouched field preserved
+        await store.update_distill_task(task_id, status="done", progress_pct=100)
+        got3 = await store.get_distill_task(task_id)
+        assert got3["status"] == "done" and got3["message"] == "跑到一半"
+
+    async def test_upsert_same_id(self, store, text_id, user_id):
+        task_id = f"dt_{uuid.uuid4().hex}"
+        await store.save_distill_task(task_id, user_id, text_id, status="queued")
+        await store.save_distill_task(task_id, user_id, text_id, status="done", progress_pct=100)
+        assert await store.count_running_distills(user_id) == 0
+
+    async def test_chunk_save_idempotent(self, store, text_id, user_id):
+        task_id = f"dt_{uuid.uuid4().hex}"
+        await store.save_distill_task(task_id, user_id, text_id, character="A")
+        first = json.dumps({"r": "三"}, ensure_ascii=False)
+        await store.save_distill_chunk(task_id, 3, first)
+        await store.save_distill_chunk(task_id, 3, json.dumps({"r": "重写"}, ensure_ascii=False))
+        await store.save_distill_chunk(task_id, 1, json.dumps({"r": "一"}, ensure_ascii=False))
+        chunks = await store.get_distill_chunks(task_id)
+        assert [c["chunk_index"] for c in chunks] == [1, 3]
+        by_index = {c["chunk_index"]: c["result"] for c in chunks}
+        assert by_index[3] == first
+
+    async def test_count_running(self, store, text_id, user_id):
+        a = f"dt_{uuid.uuid4().hex}"
+        b = f"dt_{uuid.uuid4().hex}"
+        c = f"dt_{uuid.uuid4().hex}"
+        other = f"usr_{uuid.uuid4().hex}"
+        await store.save_distill_task(a, user_id, text_id, status="queued")
+        await store.save_distill_task(b, user_id, text_id, status="done")
+        await store.save_distill_task(c, other, text_id, status="queued")
+        assert await store.count_running_distills(user_id) == 1
+        assert await store.count_running_distills(other) == 1
+        await store.update_distill_task(a, status="error")
+        assert await store.count_running_distills(user_id) == 0
+
+    async def test_get_nonexistent(self, store, user_id):
+        assert await store.get_distill_task(f"dt_{uuid.uuid4().hex}") is None
+        assert await store.get_distill_chunks(f"dt_{uuid.uuid4().hex}") == []
+        assert await store.count_running_distills(f"usr_{uuid.uuid4().hex}") == 0

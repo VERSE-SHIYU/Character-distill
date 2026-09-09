@@ -363,3 +363,33 @@ class StorageBase(ABC):
     @abstractmethod
     async def set_announcement_active(self, announcement_id: str, active: bool) -> bool:
         """Set announcement active/inactive. When activating, all others are deactivated first."""
+
+    # ── Distill task persistence ────────────────
+
+    @abstractmethod
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+
+    @abstractmethod
+    async def get_distill_task(self, task_id: str) -> dict | None:
+        """Return one distillation task row by task_id, or None if absent."""
+
+    @abstractmethod
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
+        """Patch only the non-None fields of a distillation task row."""
+
+    @abstractmethod
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+
+    @abstractmethod
+    async def get_distill_chunks(self, task_id: str) -> list[dict]:
+        """Return finished chunks of a task ordered by chunk_index asc.
+
+        Each row: {task_id, chunk_index, result, created_at}. result is the
+        raw chunk output (JSON-encoded by caller).
+        """
+
+    @abstractmethod
+    async def count_running_distills(self, user_id: str) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running) = slot occupancy."""

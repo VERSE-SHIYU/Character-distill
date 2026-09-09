@@ -6,6 +6,7 @@ any external service.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import aiosqlite
@@ -1320,3 +1321,63 @@ class TestRefreshTokenGraceWindow:
         t3_record = await store.get_refresh_token(t3_hash)
         assert t3_record is not None
         assert t3_record["used"] == 0  # T3 hasn't been used yet
+
+
+# ── Distill task persistence ─────────────────────────────────────────────────
+
+class TestDistillTaskPersistence:
+    """save_distill_task → update → chunks (idempotent) → running-count lifecycle."""
+
+    async def test_save_and_get(self, store, text_id):
+        row = await store.save_distill_task("dt1", "u1", text_id, character="角色A")
+        assert row["task_id"] == "dt1"
+        assert row["status"] == "queued"
+        assert row["user_id"] == "u1"
+        assert row["progress_pct"] == 0
+        got = await store.get_distill_task("dt1")
+        assert got is not None and got["character"] == "角色A"
+
+    async def test_upsert_same_task_id(self, store, text_id):
+        await store.save_distill_task("dt2", "u1", text_id, character="A", status="queued")
+        await store.save_distill_task("dt2", "u1", text_id, character="A", status="done", progress_pct=100)
+        got = await store.get_distill_task("dt2")
+        assert got["status"] == "done" and got["progress_pct"] == 100
+        # one row survives two upserts → non-terminal count is 0
+        assert await store.count_running_distills("u1") == 0
+
+    async def test_update_distill_task(self, store, text_id):
+        await store.save_distill_task("dt3", "u1", text_id, character="A")
+        await store.update_distill_task("dt3", progress_pct=42, message="跑到一半")
+        got = await store.get_distill_task("dt3")
+        assert got["progress_pct"] == 42 and got["message"] == "跑到一半"
+        assert got["status"] == "queued"  # untouched field preserved
+        await store.update_distill_task("dt3", status="done", progress_pct=100)
+        got2 = await store.get_distill_task("dt3")
+        assert got2["status"] == "done" and got2["progress_pct"] == 100
+        assert got2["message"] == "跑到一半"  # null patch does not clear message
+
+    async def test_chunk_save_idempotent(self, store, text_id):
+        await store.save_distill_task("dt4", "u1", text_id, character="A")
+        await store.save_distill_chunk("dt4", 3, json.dumps({"r": "三"}, ensure_ascii=False))
+        await store.save_distill_chunk("dt4", 3, json.dumps({"r": "重写"}, ensure_ascii=False))
+        await store.save_distill_chunk("dt4", 1, json.dumps({"r": "一"}, ensure_ascii=False))
+        chunks = await store.get_distill_chunks("dt4")
+        # composite PK: re-save of index 3 is a no-op, first write wins
+        assert len(chunks) == 2
+        assert [c["chunk_index"] for c in chunks] == [1, 3]
+        by_index = {c["chunk_index"]: c["result"] for c in chunks}
+        assert by_index[3] == json.dumps({"r": "三"}, ensure_ascii=False)
+
+    async def test_count_running(self, store, text_id):
+        await store.save_distill_task("dtA", "u1", text_id, status="queued")
+        await store.save_distill_task("dtB", "u1", text_id, status="done")
+        await store.save_distill_task("dtC", "u2", text_id, status="queued")
+        assert await store.count_running_distills("u1") == 1
+        assert await store.count_running_distills("u2") == 1
+        await store.update_distill_task("dtA", status="error")
+        assert await store.count_running_distills("u1") == 0
+
+    async def test_get_nonexistent(self, store):
+        assert await store.get_distill_task("no_such_task") is None
+        assert await store.get_distill_chunks("no_such_task") == []
+        assert await store.count_running_distills("ghost") == 0
