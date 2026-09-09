@@ -40,18 +40,71 @@ def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
     return is_429, retry_after
 
 
-def _backoff_delay(attempt: int, is_rate_limit: bool, retry_after: float | None) -> float:
-    """Calculate backoff delay in seconds.
+# ── 阶段 D 重试预算组（唯一重试控制点参数）────────────────────────────
+# 缺陷 #1（retry 嵌套）：旧 chat/async_chat/chat_with_tools 各复制一份 budget×SDK 默认
+# max_retries=2，至多 9 次 HTTP；非 429 退避 (attempt+1)*5s → 决策轮 degrade 前固定烧 5s+10s。
+# 现：SDK max_retries 归 0（见 __init__），次数与总墙钟都在 _RetryBudget 封顶（先到先弃）。
+#   attempts     非 429 失败的硬次数上限（429 不计次数，靠 Retry-After/指数退避自限）
+#   deadline_s   budget 起算的总墙钟上限。决策 6s / 生成 60s / 流式首 token 8s。
+#                注：D1a 阶段 per-attempt 尚无 HTTP timeout，deadline 只在 attempt 间裁决、
+#                不能中断一个已阻塞的 create；单次请求本身的兜底由 D1b 的
+#                create(timeout=min(role_ceiling, deadline_remaining)) 补上。
+# 决策轮=路由：失败应快速降级 → 2 次 / 6s / 退避 1s（旧 5s+10s）。
+# 生成轮=交付物：值得多试 → 3 次 / 60s / 退避 5s 线性（保留旧节奏，被 deadline 夹逼）。
+_DECISION_ATTEMPTS = 2
+_DECISION_DEADLINE_S = 6.0
+_DECISION_BACKOFF_S = 1.0
+_GEN_ATTEMPTS = 3
+_GEN_DEADLINE_S = 60.0
+_GEN_BACKOFF_S = 5.0
+# 流式首 token 补偿：SDK 重试撤除后，create()（吐 chunk 前）连接失败不再被 SDK 静默重试，
+# 这里补 ≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S / 1s。一旦已 yield 内容即不可安全重放，只包 create()。
+_STREAM_ATTEMPTS = 2
+_STREAM_DEADLINE_S = 8.0
+_STREAM_BACKOFF_S = 1.0
 
-    * With *retry-after*: retry_after + small jitter.
-    * 429 without retry-after: exponential backoff min(2**attempt*2, 30) + jitter.
-    * Non-429: linear (attempt+1)*5 (unchanged from original).
+
+class _RetryBudget:
+    """单次调用的重试预算：attempts（非429次数上限）× deadline（总墙钟上限），先到先弃。
+
+    旧三个方法各自手写 budget 递减 + 退避 + 耗尽的循环，策略漂移又埋了 9× 嵌套乘法。
+    本类是唯一重试裁决点：on_failure() 判分类(429/其他)、累计、判耗尽，返回下次退避秒数
+    或抛 RuntimeError。429 不计入 attempts（与旧 rate_limit_budget 分离语义一致），只受 deadline 夹逼。
     """
-    if retry_after is not None:
-        return retry_after + random.uniform(0, 1)
-    if is_rate_limit:
-        return min(2 ** attempt * 2, 30.0) + random.uniform(0, 2)
-    return float((attempt + 1) * 5)
+
+    def __init__(self, *, attempts: int, deadline_s: float, backoff_mult_s: float,
+                 log_prefix: str = "LLMAdapter", err_prefix: str = "LLM API") -> None:
+        self._attempts = attempts
+        self._deadline = time.monotonic() + deadline_s
+        self._backoff_mult = backoff_mult_s
+        self._tag = f"[{log_prefix}] "
+        self._err = err_prefix
+        self._non429 = 0
+        self._total = 0
+
+    def on_failure(self, exc: Exception) -> float:
+        """记录一次失败，返回下次尝试前应等秒数；次数/墙钟达上限则抛 RuntimeError。"""
+        self._total += 1
+        is_429, retry_after = _classify_retry(exc)
+        if not is_429:
+            self._non429 += 1
+        exhausted = (not is_429 and self._non429 >= self._attempts) or time.monotonic() >= self._deadline
+        if is_429:
+            wait = retry_after if retry_after is not None \
+                else min(2 ** (self._total - 1) * 2, 30.0) + random.uniform(0, 2)
+        else:
+            wait = self._backoff_mult * self._total
+        if exhausted:
+            if is_429:
+                print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
+                raise RuntimeError(f"{self._err} rate limited (429) after {self._total} attempts: {exc}")
+            print(f"{self._tag}All {self._total} attempts failed: {exc}")
+            raise RuntimeError(f"{self._err} failed after {self._total} attempts: {exc}")
+        if is_429:
+            print(f"{self._tag}Rate limited (429), attempt {self._total}, waiting {wait:.1f}s")
+        else:
+            print(f"{self._tag}Attempt {self._total} failed: {exc}, retrying in {wait:.1f}s...")
+        return wait
 
 
 class ToolsNotSupportedError(RuntimeError):
@@ -128,15 +181,20 @@ class LLMAdapter:
             raise RuntimeError("missing API key — configure in Settings or set DEEPSEEK_API_KEY")
 
         try:
-            self._client = OpenAI(api_key=resolved_key, base_url=self._base_url, timeout=600.0)
-            self._async_client = AsyncOpenAI(api_key=resolved_key, base_url=self._base_url, timeout=600.0)
+            # max_retries=0：撤掉 SDK 层静默重试（否则外层 budget × SDK retry=2 = 至多 9 次 HTTP，
+            # 阶段 D 缺陷 #1）。所有重试由方法内 _RetryBudget 单点控制。
+            self._client = OpenAI(api_key=resolved_key, base_url=self._base_url,
+                                  timeout=600.0, max_retries=0)
+            self._async_client = AsyncOpenAI(api_key=resolved_key, base_url=self._base_url,
+                                             timeout=600.0, max_retries=0)
         except Exception as exc:
             print(f"初始化 OpenAI 客户端失败：{exc}")
             raise
 
     def _make_async_client(self) -> AsyncOpenAI:
         """Create a standalone AsyncOpenAI for a single asyncio.run cycle."""
-        return AsyncOpenAI(api_key=self._api_key, base_url=self._base_url, timeout=600.0)
+        return AsyncOpenAI(api_key=self._api_key, base_url=self._base_url,
+                           timeout=600.0, max_retries=0)
 
     async def aclose(self) -> None:
         """幂等关闭异步客户端。"""
@@ -166,13 +224,11 @@ class LLMAdapter:
 
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
-        """非流式对话，返回完整文本回复。最多重试3次（非429）或5次（429限流）。"""
+        """非流式对话，返回完整文本回复。重试预算=生成轮（3 次非429 / 总墙钟 60s，_RetryBudget）。"""
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        normal_budget = 3
-        rate_limit_budget = 5
-        attempt = 0
-        last_error = None
+        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                              backoff_mult_s=_GEN_BACKOFF_S, err_prefix="LLM API")
         while True:
             try:
                 completion = self._client.chat.completions.create(
@@ -194,29 +250,7 @@ class LLMAdapter:
                     }
                 return content
             except Exception as exc:
-                attempt += 1
-                last_error = exc
-                is_429, retry_after = _classify_retry(exc)
-
-                if is_429:
-                    rate_limit_budget -= 1
-                else:
-                    normal_budget -= 1
-
-                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
-                if exhausted:
-                    if is_429:
-                        print(f"[LLMAdapter] Rate limited (429): all {attempt} attempts exhausted")
-                        raise RuntimeError(f"LLM API rate limited (429) after {attempt} attempts: {last_error}")
-                    print(f"[LLMAdapter] All {attempt} attempts failed: {last_error}")
-                    raise RuntimeError(f"LLM API failed after {attempt} attempts: {last_error}")
-
-                wait = _backoff_delay(attempt - 1, is_429, retry_after)
-                if is_429:
-                    print(f"[LLMAdapter] Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
-                else:
-                    print(f"[LLMAdapter] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
-                time.sleep(wait)
+                time.sleep(budget.on_failure(exc))
 
     @T.async_spanned("llm.chat", op="chat", finalize=_async_infer_finalize)
     async def async_chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None, client: AsyncOpenAI | None = None) -> tuple[str, dict | None]:
@@ -233,10 +267,9 @@ class LLMAdapter:
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        normal_budget = 3
-        rate_limit_budget = 5
-        attempt = 0
-        last_error = None
+        budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
+                              backoff_mult_s=_GEN_BACKOFF_S, log_prefix="LLMAdapter async",
+                              err_prefix="Async LLM")
         while True:
             try:
                 completion = await _c.chat.completions.create(
@@ -259,29 +292,7 @@ class LLMAdapter:
                     }
                 return result, usage
             except Exception as exc:
-                attempt += 1
-                last_error = exc
-                is_429, retry_after = _classify_retry(exc)
-
-                if is_429:
-                    rate_limit_budget -= 1
-                else:
-                    normal_budget -= 1
-
-                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
-                if exhausted:
-                    if is_429:
-                        print(f"[LLMAdapter async] Rate limited (429): all {attempt} attempts exhausted")
-                        raise RuntimeError(f"Async LLM rate limited (429) after {attempt} attempts: {last_error}")
-                    print(f"[LLMAdapter async] All {attempt} attempts failed: {last_error}")
-                    raise RuntimeError(f"Async LLM failed after {attempt} attempts: {last_error}")
-
-                wait = _backoff_delay(attempt - 1, is_429, retry_after)
-                if is_429:
-                    print(f"[LLMAdapter async] Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
-                else:
-                    print(f"[LLMAdapter async] Attempt {attempt} failed: {last_error}, retrying in {wait}s...")
-                await asyncio.sleep(wait)
+                await asyncio.sleep(budget.on_failure(exc))
 
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
@@ -290,20 +301,32 @@ class LLMAdapter:
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         prompt_chars = sum(len(m.get("content", "")) for m in payload)
         self.last_usage = None  # 切断上一轮污染
-        try:
-            stream = self._client.chat.completions.create(
-                model=self._model,
-                messages=payload,
-                temperature=self._temperature,
-                max_tokens=_mt,
-                presence_penalty=self._presence_penalty,
-                stream=True,
-                stream_options={"include_usage": True},
-                extra_body={"enable_thinking": False},
-            )
-        except Exception as exc:
-            print(f"调用 DeepSeek Chat API 失败（流式）：{exc}")
-            raise
+        # SDK max_retries 已归 0：create()（吐首 chunk 前）连接失败不再被 SDK 静默重试，
+        # 在此做有界补偿（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S）。流一旦吐出 chunk 即不可
+        # 安全重放，故只包 create() 返回前；续流中断仍直接上抛（与撤 SDK 重试前一致）。
+        attempt = 0
+        t0 = time.monotonic()
+        while True:
+            try:
+                stream = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=payload,
+                    temperature=self._temperature,
+                    max_tokens=_mt,
+                    presence_penalty=self._presence_penalty,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    extra_body={"enable_thinking": False},
+                )
+                break
+            except Exception as exc:
+                attempt += 1
+                if attempt >= _STREAM_ATTEMPTS or time.monotonic() - t0 >= _STREAM_DEADLINE_S:
+                    print(f"调用 DeepSeek Chat API 失败（流式）：{exc}")
+                    raise
+                print(f"[LLMAdapter] chat_stream 首 token 前失败(第{attempt}次)：{exc}，"
+                      f"{_STREAM_BACKOFF_S:.0f}s 后重试")
+                time.sleep(_STREAM_BACKOFF_S)
         completion_chars = 0
         try:
             for chunk in stream:
@@ -344,16 +367,16 @@ class LLMAdapter:
     ) -> Any:
         """非流式 function-calling 对话，返回完整 message 对象（含 tool_calls）。
 
-        网络/临时错误重试（非429最多3次，429限流最多5次）；
+        重试预算=决策轮（2 次非429 / 总墙钟 6s / 退避 1s，_RetryBudget）——决策是路由，
+        失败应快速降级（agent_loop 捕获后走 legacy 纯生成），不再烧 5s+10s 的旧退避墙；
         provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
         其他 400 → 原样抛出，不重试。
         """
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
-        normal_budget = 3
-        rate_limit_budget = 5
-        attempt = 0
-        last_error: Exception | None = None
+        budget = _RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
+                              backoff_mult_s=_DECISION_BACKOFF_S, log_prefix="LLMAdapter chat_with_tools",
+                              err_prefix="chat_with_tools")
         while True:
             try:
                 completion = self._client.chat.completions.create(
@@ -385,26 +408,4 @@ class LLMAdapter:
                     ) from exc
                 raise  # 其他 400：不重试，原样抛出
             except Exception as exc:
-                attempt += 1
-                last_error = exc
-                is_429, retry_after = _classify_retry(exc)
-
-                if is_429:
-                    rate_limit_budget -= 1
-                else:
-                    normal_budget -= 1
-
-                exhausted = (is_429 and rate_limit_budget <= 0) or (not is_429 and normal_budget <= 0)
-                if exhausted:
-                    if is_429:
-                        print(f"[LLMAdapter] chat_with_tools: Rate limited (429), all {attempt} attempts exhausted")
-                        raise RuntimeError(f"chat_with_tools rate limited (429) after {attempt} attempts: {last_error}")
-                    print(f"[LLMAdapter] chat_with_tools: all {attempt} attempts failed: {last_error}")
-                    raise RuntimeError(f"chat_with_tools failed after {attempt} attempts: {last_error}")
-
-                wait = _backoff_delay(attempt - 1, is_429, retry_after)
-                if is_429:
-                    print(f"[LLMAdapter] chat_with_tools: Rate limited (429), attempt {attempt}, waiting {wait:.1f}s")
-                else:
-                    print(f"[LLMAdapter] chat_with_tools attempt {attempt} failed: {last_error}, retrying in {wait}s...")
-                time.sleep(wait)
+                time.sleep(budget.on_failure(exc))
