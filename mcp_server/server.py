@@ -47,31 +47,161 @@ def _load_card() -> CharacterCard:
         return CharacterCard(**json.load(f))
 
 
-def _build_toolkit() -> AgentToolkit:
-    card = _load_card()
+# ── 进程级缓存 ─────────────────────────────────────────────
+# card_id → AgentToolkit；text_id → RAGEngine（照抄 group.py text_rag_cache 口径，
+# RAG 是 per-text_id 而非 per-card：同文本多卡共享一个引擎，靠 card.name 过滤角色片段）。
+# 多卡仍串行（exec_lock 串行化构建/执行），缓存更新无并发竞争，无需额外加锁。
+_toolkit_by_card_id: dict[str, AgentToolkit] = {}
+_rag_by_text_id: dict[str, "Any"] = {}
+_storage: "Any" = None  # storage.get_store() 单例，首次在 serve 事件循环内惰性创建
 
-    # LLM 仅当环境给了 DEEPSEEK_API_KEY 才挂（web_search 的角色过滤需要它）。
-    # 懒加载：LLMAdapter 顶层 import openai/yaml/dotenv，缺 key 时不应因 import 失败。
-    llm = None
-    llm_model = ""
-    if os.getenv("DEEPSEEK_API_KEY"):
-        try:
-            from adapters.llm_adapter import LLMAdapter
 
-            llm = LLMAdapter()
-            llm_model = llm._model
-        except Exception as exc:  # noqa: BLE001
-            print(f"[MCP] LLMAdapter init failed, running without llm: {exc}", file=sys.stderr)
+class _NoCardError(Exception):
+    """card_id 缺失 / 查无此卡 / card_json 解析失败 —— 协议层转 isError，禁止吞成空结果。"""
 
+
+@contextlib.contextmanager
+def _stdout_to_stderr():
+    """把构建/执行产生的 print 日志转到 stderr —— stdio 通道独占 stdout（mcp 1.x 直写 buffer）。"""
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
+def _get_storage():
+    """惰性 storage 单例。get_store() 会打 SQLite 迁移日志 → 撕 stdio 帧，故创建时转 stderr。"""
+    global _storage
+    if _storage is None:
+        with _stdout_to_stderr():
+            from storage import get_store
+
+            _storage = get_store()
+    return _storage
+
+
+def _embed_rag_config() -> dict:
+    """生产口径 RAG 配置（web.deps.get_rag_config，与 web 同一份 config.yaml，避免配置漂移）。
+
+    生产 embedding key 是 per-user（会话注入）；MCP 无用户会话，config 缺 embedding_key 时
+    用环境里的服务级 DashScope key 兜底。仍无 key → RAGEngine 构造抛清晰错误（不静默空检索）。
+    """
+    from web.deps import get_rag_config
+
+    cfg = get_rag_config()
+    if not cfg.get("embedding_key"):
+        key = os.getenv("EMBEDDING_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        if key:
+            cfg["embedding_key"] = key
+            cfg["embedding_region"] = os.getenv("EMBEDDING_REGION", "cn")
+    return cfg
+
+
+def _memory_manager():
+    """memory 全局单例 —— 与生产同源 web.deps.get_memory_manager()。"""
+    from web.deps import get_memory_manager
+
+    return get_memory_manager()
+
+
+def _lazy_llm():
+    """LLM 仅当环境给了 DEEPSEEK_API_KEY 才挂（web_search 的角色过滤需要它）。
+    懒加载：LLMAdapter 顶层 import openai/yaml/dotenv，缺 key 时不应因 import 失败。"""
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        return None, ""
+    try:
+        from adapters.llm_adapter import LLMAdapter
+
+        llm = LLMAdapter()
+        return llm, llm._model
+    except Exception as exc:  # noqa: BLE001
+        print(f"[MCP] LLMAdapter init failed, running without llm: {exc}", file=sys.stderr)
+        return None, ""
+
+
+def _make_toolkit(card, rag, card_id: str):
+    """按 CharacterCard 构建 ContextEngine + AgentToolkit。构建会 print（ContextEngine
+    预算、RAG），调用方需自行包 _stdout_to_stderr。"""
+    from core.agent.tools import AgentToolkit
+    from core.context_engine import ContextEngine
+
+    llm, llm_model = _lazy_llm()
     ctx = ContextEngine(
         card=card,
-        rag=None,  # v1 未接线：search_scenes 返回空
-        memory_manager=None,  # v1 未接线：search_memory 返回空
-        card_id=os.getenv("MCP_CARD_ID") or card.name,
+        rag=rag,
+        memory_manager=_memory_manager(),
+        card_id=card_id,
         llm=llm,
         model=llm_model,
     )
     return AgentToolkit(ctx, current_mood=os.getenv("MCP_MOOD"))
+
+
+def _rag_for_text_id(text_id: str, text_content: str | None):
+    """per-text_id 取/建 RAGEngine（照抄 group.py:129-139）。text_id 空 → None。
+
+    只读 load_existing(f"text_{text_id}")，不主动建集合——文本在蒸馏时就已索引，
+    与生产一致：未索引文本 scenes 检索为空，而非 MCP 调用时突发重建烧 embed。
+    """
+    if not text_id:
+        return None
+    rag = _rag_by_text_id.get(text_id)
+    if rag is not None:
+        return rag
+    from core.rag import RAGEngine
+
+    rag = RAGEngine(_embed_rag_config())
+    try:
+        rag.load_existing(f"text_{text_id}")
+    except Exception as exc:  # noqa: BLE001 —— 照抄 group.py：load 真抛错才回退重建
+        if text_content:
+            rag.index(text_content, collection_name=f"text_{text_id}")
+        else:
+            print(f"[MCP] text_{text_id} 无正文且 load_existing 失败：{exc}", file=sys.stderr)
+    _rag_by_text_id[text_id] = rag
+    return rag
+
+
+def _build_toolkit_blocking(card_rec: dict, text_content: str | None, card_id: str):
+    """同步构建 worker（chroma load_existing / ContextEngine 构建会 print → 转 stderr）。"""
+    with _stdout_to_stderr():
+        from core.schema import CharacterCard
+
+        try:
+            card = CharacterCard.model_validate_json(card_rec["card_json"])
+        except Exception as exc:  # noqa: BLE001
+            raise _NoCardError(f"card_id={card_id!r} card_json 解析失败：{exc}") from exc
+
+        text_id = (card_rec.get("text_id") or "").strip()
+        rag = _rag_for_text_id(text_id, text_content) if text_id else None
+        return _make_toolkit(card, rag, card_id)
+
+
+async def _toolkit_for(card_id: str):
+    """按 card_id 从存储取卡构建 toolkit（进程内缓存）。卡不存在 / 解析失败 → _NoCardError。"""
+    cached = _toolkit_by_card_id.get(card_id)
+    if cached is not None:
+        return cached
+
+    card_rec = await _get_storage().get_card(card_id)
+    if not card_rec:
+        raise _NoCardError(f"card not found：{card_id!r}")
+
+    text_id = (card_rec.get("text_id") or "").strip()
+    text_content = None
+    if text_id and text_id not in _rag_by_text_id:
+        text_rec = await _get_storage().get_text(text_id)
+        if text_rec:
+            text_content = text_rec.get("content")
+
+    toolkit = await asyncio.to_thread(_build_toolkit_blocking, card_rec, text_content, card_id)
+    _toolkit_by_card_id[card_id] = toolkit
+    return toolkit
+
+
+def _build_toolkit() -> AgentToolkit:
+    """遗留单卡路径（env MCP_CARD_FILE / example_card.json）。本步保留作 fallback，
+    步骤 2 切到 call_tool 按 card_id 路由后删除。文件卡无 text_id → rag=None。"""
+    card = _load_card()
+    return _make_toolkit(card, rag=None, card_id=os.getenv("MCP_CARD_ID") or card.name)
 
 
 def _tool_specs(toolkit: AgentToolkit) -> list[types.Tool]:
