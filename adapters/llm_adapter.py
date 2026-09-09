@@ -72,15 +72,19 @@ _STREAM_BACKOFF_S = 1.0
 # 侧用户 key 封禁。两个计数器、两个上限、共享一个 deadline。
 _RATE_LIMIT_ATTEMPTS = 5
 # D1b per-attempt timeout 组：
-#   _*_ATTEMPT_S           role ceiling（单次 create 超时上限），决策 5 / 生成 45 / 流式 7
+#   _*_ATTEMPT_S           role ceiling（单次 create 超时上限），决策 5 / 生成 45 / 流式 7。
+#                          三个 ceiling 均可 env 覆盖（LLM_DECISION_ATTEMPT_S /
+#                          LLM_GEN_ATTEMPT_S / LLM_STREAM_ATTEMPT_S，默认值不变，同
+#                          CARD_GUARD_ENABLED 模式）——生产发现太紧改环境变量即可，不发版。
 #   _ATTEMPT_TIMEOUT_MARGIN_S  超时触发(on_failure 裁决)须落在 deadline 内的收尾余量
 #   _ATTEMPT_MIN_S             一次有效 attempt 的最小超时；剩余连 margin+min 都撑不起则拒发
-_DECISION_ATTEMPT_S = 5.0
-_GEN_ATTEMPT_S = 45.0
-_STREAM_ATTEMPT_S = 7.0
 _ATTEMPT_TIMEOUT_MARGIN_S = 1.0
 _ATTEMPT_MIN_S = 0.25
 _ATTEMPT_WINDOW_S = _ATTEMPT_TIMEOUT_MARGIN_S + _ATTEMPT_MIN_S  # 撑起一次 attempt 所需剩余 = 1.25s
+# floor=_ATTEMPT_MIN_S：防 0/负 ceiling 把 create(timeout=0) 变 no-timeout，静默撤掉 D1b 单次封顶。
+_DECISION_ATTEMPT_S = max(float(os.getenv("LLM_DECISION_ATTEMPT_S", "5.0")), _ATTEMPT_MIN_S)
+_GEN_ATTEMPT_S = max(float(os.getenv("LLM_GEN_ATTEMPT_S", "45.0")), _ATTEMPT_MIN_S)
+_STREAM_ATTEMPT_S = max(float(os.getenv("LLM_STREAM_ATTEMPT_S", "7.0")), _ATTEMPT_MIN_S)
 
 
 class _RetryBudget:
