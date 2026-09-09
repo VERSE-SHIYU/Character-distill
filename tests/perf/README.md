@@ -96,13 +96,31 @@ TTFT 恒超 15s 阈——故 slow 看的是「外部慢时是否守恒」，不�
 | hg_hang_30 | hang rate30 hang8s（before） | 60 | 60 | 3702 | 100438 | 133468 | 18 | 8s hang×~9 attempts |
 | **d1a_hang8000_30** | hang rate30 hang8s（D1a 后） | 58 | 50 | 3735 | **68813** | 76172 | 6 | 8 个 ttft_timeout，单 attempt 以 create 返回为界 |
 | **d1a_hang20000_30** | hang rate30 hang20s（D1a 后） | 30 | 30 | 3766 | **23125** | 23156 | 7 | = 1 次 20s 阻塞 + legacy 回退 |
+| **d1b_raise_30** | raise rate30（D1b 后） | 60 | 60 | 4014 | **5297** | 5593 | 0 | vs D1a 5452 不回归 |
+| **d1b2_hang8000_30** | hang rate30 hang8s（D1b 后） | 60 | 60 | 4782 | **8077** | 8390 | 0 | over 0 vs D1a 6；ok 60 vs 50+8 timeout |
+| **d1b2_blackhole_100** | blackhole rate100（D1b 后） | 6 | 6 | 6547 | **7436** | 7436 | 0 | per-attempt 读超时斩零字节阻塞 → degrade |
 
-> D1a 复压档参编排器 `run_d1a_repress.py`：raise30/hang8/hang20 各自 fresh 前缀
-> (d1ar30/d1ah8/d1ah20)，档间 drain 断言回落（drain 记录见 results/d1a_repress_drain.txt）。
-> hang8 的 p95 68.8s 仍重：单次 create 阻塞以 HTTP 返回为界、deadline 打不断已发出的请求
-> → 由 **D1b per-attempt `create(timeout=min(ceiling, 剩余−margin))`** 收尾（commit 3，
-> 单测在 `test_llm_adapter_retry.py`）。D1b 复压口径：raise30 不回归 + hang8 对比 68.8s +
-> blackhole 单档（mock blackhole 模式下 degraded 应 ~1s，证明 per-attempt socket 读超时真斩断阻塞）。
+> D1a 复压档参编排器 `run_d1a_repress.py`（raise30/hang8/hang20 各自 fresh 前缀，档间 drain
+> 断言回落，drain 记录见 results/d1a_repress_drain.txt）。hang8 的 p95 68.8s 仍重：单次
+> create 阻塞以 HTTP 返回为界、deadline 打不断已发出的请求 → 由 **D1b per-attempt
+> `create(timeout=min(ceiling, 剩余−margin))`** 收尾（commit 3，单测在
+> `test_llm_adapter_retry.py`；ceiling 三常量 env 可覆盖，commit 8ad5f05）。
+>
+> D1b 复压三档（编排器 `run_d1b_repress.py` + `run_d1b_repress2.py`，结果 JSON
+> d1b_raise_30 / d1b2_hang8000_30 / d1b2_blackhole_100；**round-1 的 d1b_blackhole_100
+> 与 d1b_hang8000_30 作废**——旧 mock 进程缺 commit-2 blackhole 分支，round-1 blackhole 跑成了
+> raise 档、hang8 带 2 个旧 mock 连接抖动 error_event；round-2 重启 commit-2 mock 后重跑）：
+> - **raise30 不回归**：p95 5297 ≈ D1a 5452。raise 档 degrade 决策成本 ~1s（attempt1 立即 500 →
+>   退避 1s → attempt2 立即 500 → non429 cap）——快速失败用得上 attempts=2。
+> - **hang8**：决策 5s ceiling 生效（app 日志全 "All 1 attempts failed: Request timed out"）。
+>   **attempts=2 在超时类故障下不生效**：首 attempt 吃满 5s 后剩余 ~1s < 窗 1.25s 直接耗尽，
+>   deadline 优先于次数（正确设计，别对不上）。degrade 总 TTFT ≈6.5s = 决策 5s + legacy 上下文
+>   重建 ~1.3s + 生成 0.2s（C=1 rate100 探针 `probe_hang_degrade.py` 实测，无并发干扰）。
+> - **blackhole（THE D1b 证据）**：mock 零字节挂 30s，只有 per-attempt socket 读超时能把单次
+>   阻塞斩在 5s → degrade ≈6.5s、ok 6/6。若无 D1b，此档每请求阻塞 30s → ttft_timeout。
+>
+> 注：决策 5s ceiling 为**估值**——prod 无 OTel sink、rig 延迟全来自 mock，真实 DeepSeek
+> chat_with_tools 耗时分布无源可报；生产发现太紧改 `LLM_DECISION_ATTEMPT_S` 即可。
 
 单次 degrade 成本探针：`pb_probe_rate100.json`（C=1 rate100 raise，5 样本全 ~27.5s）
 ——旧 adapter 决策轮 raise 单轮固定成本 ~26s，D1a 后降为 ~1s。
