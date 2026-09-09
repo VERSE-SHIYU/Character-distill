@@ -46,11 +46,13 @@ def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
 # 现：SDK max_retries 归 0（见 __init__），次数与总墙钟都在 _RetryBudget 封顶（先到先弃）。
 #   attempts     非 429 失败的硬次数上限
 #   deadline_s   budget 起算的总墙钟上限。决策 6s / 生成 60s / 流式首 token 8s。
-#                on_failure 把 wait clamp 到 deadline 剩余（方案 sleep=min(backoff, 剩余)），
-#                剩余窗耗尽即判 exhausted 抛，不 sleep 无意义间隔（D1a 审计必修1）。
-#                注：D1a 阶段 per-attempt 尚无 HTTP timeout，deadline 只在 attempt 间裁决、
-#                不能中断一个已阻塞的 create；单次请求本身的兜底由 D1b 的
-#                create(timeout=min(role_ceiling, deadline_remaining)) 补上。
+#                on_failure 把 wait clamp 到 max_wait=剩余−(margin+min)，保下一次 attempt 至少
+#                有 margin+min 的窗（D1a 审计必修1）；并在 sleep 前预计算下一次超时 _next_to，
+#                免疫 sleep 过冲把「刚好够窗」抖成「不够」（D1b 确定性，紧界回归不闪断）。
+#   ceiling_s    role ceiling：单次 create 超时上限（决策 5 / 生成 45 / 流式 7），再被剩余窗夹逼。
+#                D1b：每次 create 传 timeout = min(ceiling, 剩余−margin)（见 attempt_timeout）；
+#                剩余 < margin+min 撑不起一次有效 attempt → attempt_timeout 直接抛，不发出会
+#                假失败的死亡窗 create（max(0.25, 0−1)=0.25s 那类误导性超时）。
 # 决策轮=路由：失败应快速降级 → 2 次 / 6s / 退避 1s（旧 5s+10s）。
 # 生成轮=交付物：值得多试 → 3 次 / 60s / 退避 5s 线性（保留旧节奏，被 deadline 夹逼）。
 _DECISION_ATTEMPTS = 2
@@ -69,23 +71,37 @@ _STREAM_BACKOFF_S = 1.0
 # 但需自身上限，否则 Retry-After 极小(如 0.1)时决策轮 6s 内可高频重打数十次 → 加速 provider
 # 侧用户 key 封禁。两个计数器、两个上限、共享一个 deadline。
 _RATE_LIMIT_ATTEMPTS = 5
-# wait 被 clamp 后的剩余窗耗尽阈值：<= 此值视为「无意义 sleep」，直接判 exhausted 抛。
-_BACKOFF_EPSILON_S = 0.05
+# D1b per-attempt timeout 组：
+#   _*_ATTEMPT_S           role ceiling（单次 create 超时上限），决策 5 / 生成 45 / 流式 7
+#   _ATTEMPT_TIMEOUT_MARGIN_S  超时触发(on_failure 裁决)须落在 deadline 内的收尾余量
+#   _ATTEMPT_MIN_S             一次有效 attempt 的最小超时；剩余连 margin+min 都撑不起则拒发
+_DECISION_ATTEMPT_S = 5.0
+_GEN_ATTEMPT_S = 45.0
+_STREAM_ATTEMPT_S = 7.0
+_ATTEMPT_TIMEOUT_MARGIN_S = 1.0
+_ATTEMPT_MIN_S = 0.25
+_ATTEMPT_WINDOW_S = _ATTEMPT_TIMEOUT_MARGIN_S + _ATTEMPT_MIN_S  # 撑起一次 attempt 所需剩余 = 1.25s
 
 
 class _RetryBudget:
-    """单次调用的重试预算：非429次数 × 429次数 × 总墙钟 deadline，先到先弃（单一裁决点）。
+    """单次调用的重试预算：非429次数 × 429次数 × 单次超时(ceiling×剩余窗) × 总墙钟，先到先弃（单一裁决点）。
 
     旧三个方法各自手写 budget 递减 + 退避 + 耗尽的循环，策略漂移又埋了 9× 嵌套乘法。
-    本类是唯一重试裁决点：on_failure() 判分类(429/其他)、累计、判耗尽、把退避 clamp 到
-    deadline 剩余，返回下次退避秒数或抛 RuntimeError。429 有独立次数上限
-    （rate_limit_attempts，旧 rate_limit_budget=5 语义，不计入非429 attempts），但共享 deadline。
+    本类是唯一重试裁决点：
+      on_failure()       判分类(429/其他)、累计、判耗尽、把退避 clamp 到 max_wait=剩余−(margin+min)
+                         （保下一次 attempt 有有效窗）、预计算下一次超时 _next_to，返回下次退避
+                         秒数或抛 RuntimeError；
+      attempt_timeout()  每次 create 前取单次超时 = min(ceiling, 剩余−margin)。有 _next_to（上次
+                         on_failure 预计算）先消费它；否则按当下剩余推。剩余 < margin+min 撑不起
+                         一次有效 attempt → 直接抛，不发出会假失败的死亡窗 create。
+    429 有独立次数上限（rate_limit_attempts，旧 rate_limit_budget=5 语义），共享 deadline。
     """
 
-    def __init__(self, *, attempts: int, deadline_s: float, backoff_mult_s: float,
+    def __init__(self, *, attempts: int, deadline_s: float, ceiling_s: float, backoff_mult_s: float,
                  log_prefix: str = "LLMAdapter", err_prefix: str = "LLM API",
                  rate_limit_attempts: int | None = None) -> None:
         self._attempts = attempts
+        self._ceiling = ceiling_s
         self._rate_limit_attempts = _RATE_LIMIT_ATTEMPTS if rate_limit_attempts is None else rate_limit_attempts
         self._deadline = time.monotonic() + deadline_s
         self._backoff_mult = backoff_mult_s
@@ -94,12 +110,41 @@ class _RetryBudget:
         self._non429 = 0
         self._rate_limited = 0
         self._total = 0
+        self._next_to: float | None = None  # 下一次 attempt 的预计算超时（on_failure 在 sleep 前定死）
+        self._last_to: float | None = None  # 本次 create 实际用的超时（attempt_timeout 记录，on_failure 判边界）
+
+    def remaining_s(self) -> float:
+        return max(0.0, self._deadline - time.monotonic())
+
+    def attempt_timeout(self) -> float:
+        """本次 create 应传的 timeout（秒）。剩余撑不起一次有效 attempt 则抛（不发出会假失败的 create）。
+
+        timeout = min(ceiling, 剩余 − margin)：单次请求最坏吃到 剩余−margin，超时触发后还留 margin
+        给 on_failure 收尾裁决（不越过 deadline）。若 剩余−margin < min，连最小有效超时都不够，
+        强行发会得到 max(0.25, 负)=0.25s 这类几乎必假失败的死亡窗请求 → 直接判 budget 尽。
+        后续 attempt 返回 on_failure 预计算的 _next_to（一次即清）：on_failure 已按 remaining−wait−margin
+        算好下一次超时，杜绝 sleep 过冲把「刚好够窗」抖成「不够」——否则紧界回归/真机会在发与不发
+        最末 0.25s attempt 间非确定摇摆。
+        """
+        if self._next_to is not None:
+            self._last_to = self._next_to
+            self._next_to = None
+            return self._last_to
+        window = self._deadline - _ATTEMPT_TIMEOUT_MARGIN_S - time.monotonic()
+        if window < _ATTEMPT_MIN_S:
+            raise RuntimeError(
+                f"{self._err} no time for an attempt: window {window:.2f}s < min "
+                f"{_ATTEMPT_MIN_S:.2f}s (need margin+min {_ATTEMPT_WINDOW_S:.2f}s)")
+        self._last_to = min(self._ceiling, window)
+        return self._last_to
 
     def on_failure(self, exc: Exception) -> float:
         """记录一次失败；返回下次尝试前应等秒数，或达上限/窗尽抛 RuntimeError。
 
-        顺序：累计对应计数器 → 判各自上限 → 算退避 → clamp 到 deadline 剩余。
-        clamp 后剩余窗 <= _BACKOFF_EPSILON_S 即判 exhausted 抛，杜绝「sleep 完才发现超时」。
+        顺序：累计对应计数器 → 判各自上限 → 算退避 → 窗口门。剩余 < margin+min 撑不起一次
+        有效 attempt → 直接判 exhausted（不 sleep、也不让调用方去发 attempt_timeout 会拒的
+        死亡窗 create）；否则退避最多睡到 max_wait=剩余−(margin+min)（保下一次 attempt 至少有
+        margin+min 的窗），并预计算下一次超时 _next_to=min(ceiling, 剩余−wait−margin) ≥ min。
         """
         self._total += 1
         is_429, retry_after = _classify_retry(exc)
@@ -115,12 +160,20 @@ class _RetryBudget:
         else:
             wait = self._backoff_mult * self._total
         remaining = self._deadline - time.monotonic()
-        if remaining <= _BACKOFF_EPSILON_S:
+        # 上一次 attempt 已是边界（超时==min 的最小有效窗）仍失败 → 连最小有效窗都用掉了，之后只会
+        # 发 sub-min 死亡窗或对「即时失败」0-sleep 空转 → 直接判 exhausted。即时失败几乎不消耗
+        # timeout 时间，仅靠 remaining 判据会在窗口边沿永远 ≥ window 触发不了 → 空转到次数上限；
+        # 此守卫把「边界 attempt 失败」定为终态，确定性停在最后一次有效窗（D1b 紧界回归不闪断）。
+        last_was_boundary = self._last_to is not None and self._last_to <= _ATTEMPT_MIN_S + 1e-9
+        if last_was_boundary or remaining < _ATTEMPT_WINDOW_S:
             cap_hit = True
-        elif wait > remaining:
-            wait = remaining
-            if wait <= _BACKOFF_EPSILON_S:
-                cap_hit = True
+        else:
+            max_wait = remaining - _ATTEMPT_WINDOW_S  # 睡满 max_wait 后仍留 margin+min 的有效窗
+            if wait > max_wait:
+                wait = max_wait
+            # sleep 前用算术定死下一次超时：sleep wait 后剩余 ≈ remaining−wait，其有效窗剩
+            # remaining−wait−margin ≥ min（因 remaining−wait ≥ window）→ 超时不受过冲影响。
+            self._next_to = min(self._ceiling, remaining - wait - _ATTEMPT_TIMEOUT_MARGIN_S)
         if cap_hit:
             if is_429:
                 print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
@@ -255,8 +308,10 @@ class LLMAdapter:
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                              backoff_mult_s=_GEN_BACKOFF_S, err_prefix="LLM API")
+                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                              err_prefix="LLM API")
         while True:
+            timeout = budget.attempt_timeout()
             try:
                 completion = self._client.chat.completions.create(
                     model=self._model,
@@ -264,6 +319,7 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
+                    timeout=timeout,
                     extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices
@@ -295,9 +351,10 @@ class LLMAdapter:
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
-                              backoff_mult_s=_GEN_BACKOFF_S, log_prefix="LLMAdapter async",
-                              err_prefix="Async LLM")
+                              ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
+                              log_prefix="LLMAdapter async", err_prefix="Async LLM")
         while True:
+            timeout = budget.attempt_timeout()
             try:
                 completion = await _c.chat.completions.create(
                     model=self._model,
@@ -305,6 +362,7 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
+                    timeout=timeout,
                     extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices
@@ -333,8 +391,10 @@ class LLMAdapter:
         # 退避 1s），429 也走 _classify_retry 的 Retry-After——不再是手写第四份循环。
         # 流一旦吐出 chunk 即不可安全重放，故只包 create() 返回前；续流中断仍直接上抛。
         budget = _RetryBudget(attempts=_STREAM_ATTEMPTS, deadline_s=_STREAM_DEADLINE_S,
-                              backoff_mult_s=_STREAM_BACKOFF_S, log_prefix="LLMAdapter chat_stream")
+                              ceiling_s=_STREAM_ATTEMPT_S, backoff_mult_s=_STREAM_BACKOFF_S,
+                              log_prefix="LLMAdapter chat_stream")
         while True:
+            timeout = budget.attempt_timeout()
             try:
                 stream = self._client.chat.completions.create(
                     model=self._model,
@@ -342,6 +402,7 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
+                    timeout=timeout,
                     stream=True,
                     stream_options={"include_usage": True},
                     extra_body={"enable_thinking": False},
@@ -397,9 +458,11 @@ class LLMAdapter:
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         budget = _RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,
-                              backoff_mult_s=_DECISION_BACKOFF_S, log_prefix="LLMAdapter chat_with_tools",
+                              ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
+                              log_prefix="LLMAdapter chat_with_tools",
                               err_prefix="chat_with_tools")
         while True:
+            timeout = budget.attempt_timeout()
             try:
                 completion = self._client.chat.completions.create(
                     model=self._model,
@@ -408,6 +471,7 @@ class LLMAdapter:
                     temperature=self._temperature,
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
+                    timeout=timeout,
                     extra_body={"enable_thinking": False},
                 )
                 choices = completion.choices

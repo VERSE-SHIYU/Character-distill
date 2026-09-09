@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
-"""D1a 回归：SDK 重试撤除 + _RetryBudget 单点控制不被破坏。
+"""D1a/D1b 回归：SDK 重试撤除 + _RetryBudget 单点控制不被破坏。
 
 缺陷 #1 是 retry 嵌套（adapter budget × SDK max_retries=2 = 至多 9 次 HTTP，
 决策 degrade 前固定烧 5s+10s）。这里锁：
   1. 三个 client 构造点 max_retries=0（嵌套乘法消失的前提）；
   2. 决策轮 500 风暴在 ~1s 内抛「failed after 2 attempts」，不再烧 5s+10s；
-  3. deadline 门控真正封顶（deadline=0 → 单次尝试即弃，不 sleep）；
+  3. deadline 门控真正封顶——D1a 期 deadline=0 单次即弃，D1b 后剩余−margin<min 直接拒发（不 create）；
   4. chat_with_tools 的 400/工具不支持「不重试」语义保留；
   5. async 路径同预算（一次失败后成功 / 风暴 3 次封顶）；
-  6. chat_stream 首 token 前有界补偿（create 失败重试，从不越 2 次）。
+  6. chat_stream 首 token 前有界补偿（create 失败重试，从不越 2 次）；
+  7. D1b per-attempt timeout：create 收 timeout=min(ceiling, 剩余−margin)；首 attempt 由 role ceiling
+     定（决策≈5 / 生成≈45，生成档证明非 deadline 裸奔）；紧 deadline 下被剩余窗夹逼（1.0 而非 30）；
+     死亡窗（剩余−margin<min=0.25）由 _RetryBudget 直接判 exhausted，create 调用数不含那次。
 """
 import asyncio
 import time
@@ -50,13 +53,16 @@ class _Resp:
 
 
 # 每轮 create 都调用 behavior()：可返回 _Resp，也可 raise。
+# timeouts 记录每次 create 收到的 timeout kwarg——D1b 证据：单次超时 = min(ceiling, 剩余−margin)。
 class _SyncCompletions:
     def __init__(self, behavior):
         self.behavior = behavior
         self.calls = 0
+        self.timeouts: list = []
 
     def create(self, **kwargs):
         self.calls += 1
+        self.timeouts.append(kwargs.get("timeout"))
         return self.behavior()
 
 
@@ -74,9 +80,11 @@ class _AsyncCompletions:
     def __init__(self, behavior):
         self.behavior = behavior
         self.calls = 0
+        self.timeouts: list = []
 
     async def create(self, **kwargs):
         self.calls += 1
+        self.timeouts.append(kwargs.get("timeout"))
         return self.behavior()
 
 
@@ -141,21 +149,48 @@ def test_decision_500_storm_raises_fast_not_5s_10s_wall():
     assert fake.chat.completions.calls == 2
 
 
-def test_decision_deadline_gate_caps_attempts(monkeypatch):
+def test_deadline_insufficient_remaining_no_create(monkeypatch):
+    # D1b 边界洞回归：deadline=0 → 剩余−margin(0−1) < min(0.25)，撑不起一次有效 attempt。
+    # _RetryBudget 必须直接判 exhausted（attempt_timeout 抛 "no time for an attempt"），
+    # 不发出那个会假失败的死亡窗 create（timeout=max(0.25, 0−1)=0.25s）；断言 create 调用数 =0。
     monkeypatch.setattr(M, "_DECISION_DEADLINE_S", 0.0)
     llm = _make_llm()
     fake = _SyncClient(_storm(RuntimeError("upstream 500")))
     llm._client = fake
     t0 = time.monotonic()
-    with pytest.raises(RuntimeError, match="failed after 1 attempts"):
+    with pytest.raises(RuntimeError, match="no time for an attempt"):
         llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
     assert time.monotonic() - t0 < 0.5
-    assert fake.chat.completions.calls == 1  # deadline 到即弃，不 sleep 不重试
+    assert fake.chat.completions.calls == 0  # 没发出任何 create，直接抛
+
+
+def test_decision_first_attempt_timeout_equals_ceiling():
+    # D1b 证据：决策轮首 attempt timeout == min(ceiling=5, 剩余−margin≈deadline−1=5) ≈ 5.0，
+    # 即剩余窗宽裕时由 role ceiling 决定，不让单次请求潜在吃掉整个 6s deadline。
+    llm = _make_llm()
+    fake = _SyncClient(lambda: _Resp("ok"))
+    llm._client = fake
+    llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+    assert fake.chat.completions.calls == 1
+    assert fake.chat.completions.timeouts[0] == pytest.approx(M._DECISION_ATTEMPT_S, abs=0.2)
+
+
+def test_gen_first_attempt_timeout_capped_by_ceiling_not_deadline():
+    # D1b 证据：生成轮首 attempt timeout == min(ceiling=45, 剩余−margin≈59) = 45.0。
+    # 若没 ceiling 夹逼会发 59s 的 create（≈整个 60s deadline 裸奔）；45 封顶证明 ceiling 生效。
+    llm = _make_llm()
+    fake = _SyncClient(lambda: _Resp("ok"))
+    llm._client = fake
+    llm.chat("sys", [{"role": "user", "content": "hi"}])
+    assert fake.chat.completions.calls == 1
+    assert fake.chat.completions.timeouts[0] == pytest.approx(M._GEN_ATTEMPT_S, abs=0.2)
 
 
 def test_decision_429_backoff_clamped_to_deadline(monkeypatch):
-    # 必修1：Retry-After=30 不得让决策轮烧 30s——wait 被 clamp 到 deadline 剩余；
-    # 剩余窗耗尽后下一次失败即判 exhausted（总调用 2 次，墙钟 ~deadline 而非 ~30s）。
+    # 必修1 + D1b：Retry-After=30 不得让决策轮烧 30s——wait 被 clamp 到 max_wait=剩余−(margin+min)；
+    # 下一次超时由 on_failure 预计算（非时钟重推）→ 紧界下也确定：attempt1 timeout=deadline−margin=1.0，
+    # attempt2 timeout=0.25（睡满 0.75 后恰剩 min 窗），随后剩余 < margin+min → 判 exhausted（共 2 次）。
+    # 墙钟 ~0.75s（非 ~30s）。若重推会因 sleep 过冲在 1/2 次间非确定摇摆。
     monkeypatch.setattr(M, "_DECISION_DEADLINE_S", 2.0)
     llm = _make_llm()
     fake = _SyncClient(_storm(_RateLimitError429("30")))
@@ -165,6 +200,9 @@ def test_decision_429_backoff_clamped_to_deadline(monkeypatch):
         llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
     elapsed = time.monotonic() - t0
     assert fake.chat.completions.calls == 2
+    tos = fake.chat.completions.timeouts
+    assert tos[0] == pytest.approx(1.0, abs=0.05)   # min(ceiling, deadline−margin) 夹逼 < ceiling
+    assert tos[1] == pytest.approx(0.25, abs=0.05)  # 预计算的最后一次有效窗
     assert elapsed < 5.0, f"backoff must be clamped to deadline, took {elapsed:.2f}s"
 
 
