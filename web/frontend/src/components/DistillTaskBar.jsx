@@ -4,8 +4,8 @@ import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import { Check, Close, Clock, Play, RefreshCw, Settings, Zap } from './common/Icon'
 
-// 终态三态各自的展示表。查表而非散落 `status === 'done'` 之类的终态谓词 —— 是否终态
-// 只读 done；status 仅在"已终结"之后用来挑具体文案/图标（§3.2 的三分支要求）。
+// 终态三态各自的展示表。查表而非散落按 status 判终态的谓词 —— 是否终态只读 done；
+// status 仅在"已终结"之后用来挑具体文案/图标（§3.2 的三分支要求）。
 const TERMINAL_VIEW = {
   done: {
     cls: ' done',

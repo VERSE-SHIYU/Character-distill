@@ -36,7 +36,7 @@ const LOG_TEXT = {
 }
 
 // 终态展示表：done 为真之后才按 status 挑具体文案/视觉（§3.2 的三分支要求）。
-// 是否终态只读 done —— 不再散落 `status === 'done'` 之类的终态谓词。
+// 是否终态只读 done —— 不再散落按 status 判终态的谓词。
 const TERMINAL_VIEW = {
   // interrupted 复用 is-error 视觉（无独立规则）；图标/文案/动作与失败区分。
   done:        { badge: '已完成', cls: ' is-done',  badgeCls: ' is-done',  step: 5, logState: 'done',  showMessage: false, canChat: true, allStepsDone: true },
