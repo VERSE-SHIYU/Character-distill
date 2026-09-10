@@ -21,7 +21,9 @@ import uuid
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
+from core import telemetry as T
 from core.distiller import text_fingerprint
 from deps import get_storage
 from routers import distill as D
@@ -43,10 +45,11 @@ def _db_path(tmp_path) -> str:
 
 @pytest.fixture(autouse=True)
 def _clean_tasks():
-    """每条用例后清空模块级内存任务表，避免跨用例污染。"""
+    """每条用例后清空模块级内存表（任务缓存 + 按用户槽位），避免跨用例污染。"""
     yield
     with D._task_lock:
         D._tasks.clear()
+        D._user_slots.clear()
 
 
 # ── 单元测试（A / A2）：monkeypatch 模块级 get_storage + run_on_main_loop ─────
@@ -240,14 +243,18 @@ def user_id():
     return f"usr_{uuid.uuid4().hex[:8]}"
 
 
-def _build_client(store, uid):
+def _build_app(store, uid):
     app = FastAPI()
     app.include_router(D.router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
         "id": uid, "username": "testuser", "is_admin": False,
     }
-    return TestClient(app)
+    return app
+
+
+def _build_client(store, uid):
+    return TestClient(_build_app(store, uid))
 
 
 def _seed_distill_row(store, task_id, user_id, *, status="running", pct=0,
@@ -515,3 +522,194 @@ class TestEResumeGate:
         assert resp.status_code == 200
         assert resp.json()["task_id"] != old_id
         assert cands is None
+
+
+# ── 路由测试（F）：按用户并发闸（步骤 4）────────────────────────────────────
+# 两道门：同步预留位（进程内，挡并发 TOCTOU）+ DB 复核（带时效窗，挡跨重启残留）。
+# 全局闸 _DISTILL_SEMAPHORE 语义不变，仍由 bg 线程 acquire(timeout=300)。
+
+
+class _ChunkEmittingDistiller:
+    """吐 N 片 map 回调后收尾 —— 让真后台线程跑出一条完整的落盘路径。
+
+    故意不产出合法 JSON：格式解析失败会走 _set_task(error) 正常收口，而分片落库
+    发生在那之前，所以分片计数与终止态无关，断言更稳。
+    """
+
+    N = 4
+
+    def __init__(self):
+        self.map_calls = 0
+
+    def effective_chunk_size(self, text_type="story"):
+        return 3000
+
+    def identify_characters(self, content):
+        return [{"name": "甲", "aliases": []}]
+
+    def distill_incremental_stream(self, text, character_name, aliases=None,
+                                   text_type="story", on_chunk_done=None,
+                                   resume_candidates=None):
+        for i in range(self.N):
+            self.map_calls += 1
+            if on_chunk_done:
+                on_chunk_done(i, f"分析{i}", f"fp{i}")
+            yield {"status": "analyzing", "current": i + 1, "total": self.N}
+
+
+class _CapOnlySemaphore:
+    """只数 acquire 次数、release 是 no-op —— 让第 cap+1 次 acquire 必然落空。
+
+    这样「第 4 个用户撞上全局闸」可确定复现，不必真等 acquire(timeout=300) 的 5 分钟。
+    """
+
+    def __init__(self, cap):
+        self.cap = cap
+        self.acquires = 0
+
+    def acquire(self, timeout=0):
+        self.acquires += 1
+        return self.acquires <= self.cap
+
+    def release(self):
+        pass
+
+
+def _install_bg(monkeypatch, store, cap=3):
+    """把 /start 的真后台线程装进测试：stub 掉 store/LLM 边界。
+
+    返回 (蒸馏器, 信号量, 线程表)。run_on_main_loop 换成同步 asyncio.run —— bg 线程里
+    没有事件循环，落库路径照跑。
+    """
+    async def _no_api_cfg(_uid):
+        return {}
+    store.get_user_api_config = _no_api_cfg
+
+    distiller = _ChunkEmittingDistiller()
+    monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
+    monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
+    monkeypatch.setattr(D, "get_storage", lambda: store)
+    monkeypatch.setattr(D, "run_on_main_loop", lambda coro, timeout=10: asyncio.run(coro))
+    sem = _CapOnlySemaphore(cap)
+    monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", sem)
+
+    threads = []
+    real_ctx_thread = T.ctx_thread
+
+    def _spy(target, args=(), **kw):
+        t = real_ctx_thread(target, args=args, **kw)
+        threads.append(t)
+        return t
+
+    monkeypatch.setattr("core.telemetry.ctx_thread", _spy)
+    return distiller, sem, threads
+
+
+def _age_row(store, task_id, minutes):
+    """把一行的 updated_at 推到 N 分钟前（造幽灵行）。"""
+    async def _go():
+        async with await store._connect() as conn:
+            await conn.execute(
+                "UPDATE distill_tasks SET updated_at = datetime('now', ?) WHERE task_id = ?",
+                (f"-{minutes} minutes", task_id),
+            )
+            await conn.commit()
+    _run_async(_go())
+
+
+class TestFPerUserGate:
+    def _text(self, store, uid, body="角色说的话"):
+        tid = f"txt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
+        return tid
+
+    def test_second_serial_start_rejected(self, store, user_id, monkeypatch):
+        """同一用户串行第二次 → 429 + 明确提示。"""
+        tid = self._text(store, user_id)
+        first, _ = _capture_start(monkeypatch, store, user_id, tid)
+        assert first.status_code == 200
+
+        second, _ = _capture_start(monkeypatch, store, user_id, tid)
+        assert second.status_code == 429
+        assert "已有蒸馏任务在运行" in second.json()["detail"]
+
+    def test_different_users_do_not_interfere(self, store, monkeypatch):
+        """不同用户各开 1 个 → 都 200（按用户闸不串台）。"""
+        for uid in ("usr_a", "usr_b", "usr_c"):
+            tid = self._text(store, uid)
+            resp, _ = _capture_start(monkeypatch, store, uid, tid)
+            assert resp.status_code == 200, resp.text
+
+    def test_early_error_releases_slot(self, store, user_id, monkeypatch):
+        """占坑之后早退（404 文本不存在）必须释放，否则该用户被自己永久挡住。"""
+        bad, _ = _capture_start(monkeypatch, store, user_id, "txt_does_not_exist")
+        assert bad.status_code == 404
+
+        tid = self._text(store, user_id)
+        ok, _ = _capture_start(monkeypatch, store, user_id, tid)
+        assert ok.status_code == 200, ok.text
+
+    def test_db_gate_blocks_live_row_but_not_ghost(self, store, user_id, monkeypatch):
+        """第二道门：新鲜 running 行挡；推老到时效窗外的幽灵行不挡。"""
+        tid = self._text(store, user_id)
+        _seed_distill_row(store, "dtLive", user_id, status="running", text_id=tid)
+
+        blocked, _ = _capture_start(monkeypatch, store, user_id, tid)
+        assert blocked.status_code == 429
+        assert "已有蒸馏任务在运行" in blocked.json()["detail"]
+
+        _age_row(store, "dtLive", D.DISTILL_GHOST_IDLE_MIN + 90)
+        allowed, _ = _capture_start(monkeypatch, store, user_id, tid)
+        assert allowed.status_code == 200, allowed.text
+
+    async def test_concurrent_double_start_same_target(self, store, user_id, monkeypatch):
+        """并发双 /start 打同一 (text, character)：只起一条线程、分片只落一份。
+
+        两个请求在同一 event loop 上用 asyncio.gather 真并发 —— 没有同步预留位时，
+        它们会在 count / insert 的 await 点交错、双双通过。
+        """
+        tid = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
+        distiller, _sem, threads = _install_bg(monkeypatch, store)
+
+        transport = ASGITransport(app=_build_app(store, user_id))
+        payload = {"text_id": tid, "character_name": "甲", "force": False}
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            r1, r2 = await asyncio.gather(
+                ac.post("/api/distill/start", json=payload),
+                ac.post("/api/distill/start", json=payload),
+            )
+        for t in threads:
+            t.join(timeout=30)
+
+        assert sorted([r1.status_code, r2.status_code]) == [200, 429], (r1.text, r2.text)
+        assert len(threads) == 1, "只该起一条后台线程"
+        assert distiller.map_calls == _ChunkEmittingDistiller.N, "分片只该跑一遍"
+        winner = r1 if r1.status_code == 200 else r2
+        chunks = await store.get_distill_chunks(winner.json()["task_id"])
+        assert len(chunks) == _ChunkEmittingDistiller.N, "分片只该落一份"
+
+    def test_global_gate_still_caps_at_max_concurrent(self, store, monkeypatch):
+        """全局闸仍生效：3 个不同用户各 1 个 → 第 4 个撞上全局闸（acquire 落空）。
+
+        注：这里用假信号量断言「第 4 个确实 acquire 不到」，**没有真等** timeout=300 的
+        5 分钟排队 —— 排队本身未被本用例验证。
+        """
+        _distiller, sem, threads = _install_bg(monkeypatch, store, cap=3)
+
+        rows = []
+        for i in range(4):
+            uid = f"usr_global_{i}"
+            tid = self._text(store, uid)
+            resp = _build_client(store, uid).post(
+                "/api/distill/start",
+                json={"text_id": tid, "character_name": "甲", "force": False},
+            )
+            assert resp.status_code == 200, resp.text
+            threads[-1].join(timeout=30)
+            rows.append(_run_async(store.get_distill_task(resp.json()["task_id"])))
+
+        assert sem.acquires == 4
+        for i in range(3):
+            assert "服务器繁忙" not in (rows[i]["message"] or ""), f"第 {i + 1} 个不该撞闸"
+        assert "服务器繁忙" in (rows[3]["message"] or ""), "第 4 个该撞全局闸"
