@@ -121,8 +121,8 @@ def _release_user_slot(user_id: str) -> None:
 
 # ── DB 真相源 / 内存写缓存 ─────────────────────────────────────────────────
 # 任务状态查询一律读 distill_tasks 表；内存 _tasks 只在 bg 线程里作写侧缓存
-# （_set_task 先更内存、再全行 upsert 落库）。跨重启：boot reconcile 把孤儿
-# running 置 interrupted（web/server.py _lifespan），供步骤 3 断点续跑挑选。
+# （_set_task 先更内存、再 UPDATE 落库 —— update-only，行没了写不回去）。跨重启：
+# boot reconcile 把孤儿 running 置 interrupted（web/server.py _lifespan），供步骤 3 断点续跑挑选。
 _DB_TERMINAL = {"done", "error", "interrupted"}
 
 
@@ -144,10 +144,12 @@ async def _persist_snap(task_id: str, snap: dict[str, Any]) -> None:
     掉，能自动补发。终态成功落库 = bg 线程最后一次写，此后再无 update —— pop 写缓存
     防无界累积（cancel 路由不经过这里、直接 update DB，不会误清仍在跑的停止信号）。
     """
-    await get_storage().save_distill_task(
-        task_id, snap["user_id"], snap["text_id"], snap["character"],
-        snap["status"], snap["progress_pct"], snap["message"],
-        snap["card_id"], snap["awakening"],
+    # UPDATE-only：行不在（文本被删、行已清）→ 0 行、静默无操作。这正是竞态闭合点 ——
+    # bg 线程无需知道文本被删，写不回去是存储层的保证。
+    await get_storage().update_distill_task(
+        task_id,
+        status=snap["status"], progress_pct=snap["progress_pct"],
+        message=snap["message"], card_id=snap["card_id"], awakening=snap["awakening"],
     )
     with _task_lock:
         cur = _tasks.get(task_id)
@@ -167,7 +169,7 @@ def _dispatch_persist(task_id: str, snap: dict[str, Any]) -> None:
 
 
 def _set_task(task_id: str, updates: dict[str, Any]) -> None:
-    """内存写缓存更新 + DB 全行 upsert。仅 bg 线程调用（内部 run_on_main_loop 派发）。
+    """内存写缓存更新 + DB UPDATE 落库（update-only）。仅 bg 线程调用（内部 run_on_main_loop 派发）。
 
     去重键 = (粗粒度 status, progress_pct)：analyze/merging 每 chunk 只动
     message/current/total 时不再发 DB；终态或带 card_id/awakening 的收尾更新总落库。
@@ -809,20 +811,36 @@ async def _distill_start_impl(
         task_id = _uuid.uuid4().hex[:12]
 
     # DB 先落一行（queued 粗粒度记 running），再放内存写缓存、再启线程。三者都发生在
-    # loop 线程：DB insert 在 thread.start() 前完成，bg 线程的 _set_task 只做 upsert。
+    # loop 线程：DB 写在 thread.start() 前完成，bg 线程的 _set_task 只做 update（不再 upsert）。
     # 落库失败必须拒绝启动：DB 是查询真相源，无行 = 不可观测的野线程 —— 查询会 404
     # 报"任务丢失"，后台却仍在烧 LLM 额度、占 semaphore。绝不能"能跑但不给查"。
     # chunk_size/text_fingerprint 每次起跑都盖章：复用行重跑时也要刷新成当前 checkpoint
     # （否则陈旧值会让下次续跑反复误判）。overlap 无对应切分概念（_split_chunks 无重叠），
     # 保持 NULL。
+    _queued_msg = f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)"
     try:
-        await storage.save_distill_task(
-            task_id, user_id, req.text_id, req.character_name,
-            status="running", progress_pct=0,
-            message=f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)",
-            card_id="", awakening="",
-            chunk_size=chunk_size, text_fingerprint=text_fp,
-        )
+        if existing is not None:
+            # 复用行：盖章 + 置 running 走 UPDATE（绝不 INSERT）。返回 0 = 行在发现与盖章
+            # 之间被删（如文本被删）→ 拒绝启动，否则会起一条查询 404 的野线程。一次原子
+            # UPDATE 的返回即裁决，没有 SELECT-then-UPDATE 的窗口。
+            affected = await storage.update_distill_task(
+                task_id, status="running", progress_pct=0, message=_queued_msg,
+                card_id="", awakening="",
+                chunk_size=chunk_size, text_fingerprint=text_fp,
+            )
+            if affected == 0:
+                print(f"[distill] Resume row {task_id} gone before restamp; refusing to start")
+                raise HTTPException(503, "蒸馏任务创建失败，请稍后重试")
+        else:
+            # 新任务：纯 INSERT。主键冲突是真异常（新铸 uuid），由下面 except 兜成 503。
+            await storage.create_distill_task(
+                task_id, user_id, req.text_id, req.character_name,
+                status="running", progress_pct=0, message=_queued_msg,
+                card_id="", awakening="",
+                chunk_size=chunk_size, text_fingerprint=text_fp,
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         print(f"[distill] Create distill task row failed; refusing to start: {exc}")
         raise HTTPException(503, "蒸馏任务创建失败，请稍后重试") from exc
@@ -830,7 +848,7 @@ async def _distill_start_impl(
     with _task_lock:
         _tasks[task_id] = {"status": "queued", "progress_pct": 0, "user_id": user_id,
                            "text_id": req.text_id, "character": req.character_name,
-                           "message": f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)",
+                           "message": _queued_msg,
                            "card_id": "", "awakening": "", "_db": ("running", 0)}
 
     thread = T.ctx_thread(  # OTel context 传播点：蒸馏后台线程挂到发起请求 trace

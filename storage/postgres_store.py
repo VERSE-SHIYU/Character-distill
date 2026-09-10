@@ -347,6 +347,22 @@ class PostgresStore(StorageBase):
                         await conn.execute("DELETE FROM cards WHERE text_id = $1", id)
                     # Delete reading progress
                     await conn.execute("DELETE FROM reading_progress WHERE text_id = $1", id)
+                    # 清理本文本的蒸馏行。顺序必须是**先父后子**，与通常相反：先删父行即取
+                    # 父行排他锁，save_distill_chunk 的 FOR SHARE 随后必阻塞，等本事务提交后
+                    # 父行已无 → 跳过不写；反序（T1 已持共享锁）则本事务阻塞到它提交，随后
+                    # 连它新插的 chunk 一起删掉。两条都闭合。**先子后父不行**：删 chunk 不碰
+                    # 父行，插入方的 FOR SHARE 顺利拿到锁并落分片，之后本事务才删父行提交，
+                    # 孤儿分片存活 ← 这是 PG 上唯一能演示顺序有语义的变异。
+                    # 两表零外键（migrations_pg/017），删父不会级联子，必须显式删两张。
+                    # 不清理 delete_card / purge_card / detach_text_cards：蒸馏行身份是
+                    # (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，
+                    # 文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）。权衡，不是遗漏。
+                    rows = await conn.fetch(
+                        "SELECT task_id FROM distill_tasks WHERE text_id = $1", id)
+                    dt_ids = [row[0] for row in rows]
+                    await conn.execute("DELETE FROM distill_tasks WHERE text_id = $1", id)
+                    for tid in dt_ids:
+                        await conn.execute("DELETE FROM distill_chunks WHERE task_id = $1", tid)
                     # Delete the text itself
                     tag = await conn.execute("DELETE FROM texts WHERE id = $1", id)
                 return self._parse_rowcount(tag) > 0
@@ -2873,44 +2889,31 @@ class PostgresStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+        """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
-        chunk_size/overlap/text_fingerprint 仅显式传入时参与 INSERT/SET：通用进度
-        upsert（_persist_snap 等不传）不会把它们冲回 NULL，保住已盖章的切分指纹。
+        重复 task_id 抛异常：这里是新铸的 id，冲突是真 bug，不是"请更新已有行"。
+        chunk_size/overlap/text_fingerprint 是创建时的切分 checkpoint；复用行的重新
+        盖章走 update_distill_task，不在这里。
         """
         try:
-            base_cols = ["task_id", "user_id", "text_id", "character", "status",
-                         "progress_pct", "message", "card_id", "awakening"]
-            base_vals = [task_id, user_id, text_id, character, status,
-                         progress_pct, message, card_id, awakening]
-            extras: list[tuple[str, Any]] = []
+            cols = ["task_id", "user_id", "text_id", "character", "status",
+                    "progress_pct", "message", "card_id", "awakening"]
+            vals: list[Any] = [task_id, user_id, text_id, character, status,
+                               progress_pct, message, card_id, awakening]
             if chunk_size is not None:
-                extras.append(("chunk_size", chunk_size))
+                cols.append("chunk_size"); vals.append(chunk_size)
             if overlap is not None:
-                extras.append(("overlap", overlap))
+                cols.append("overlap"); vals.append(overlap)
             if text_fingerprint:
-                extras.append(("text_fingerprint", text_fingerprint))
-            cols = list(base_cols)
-            vals = list(base_vals)
-            for col, val in extras:
-                cols.append(col)
-                vals.append(val)
+                cols.append("text_fingerprint"); vals.append(text_fingerprint)
             placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
-            set_list = [f"{c} = EXCLUDED.{c}" for c in base_cols[1:]] + [
-                f"{c} = EXCLUDED.{c}" for c, _v in extras
-            ]
-            sql = (
-                f"INSERT INTO distill_tasks ({', '.join(cols)}) "
-                f"VALUES ({placeholders}) "
-                f"ON CONFLICT (task_id) DO UPDATE SET "
-                f"{', '.join(set_list)}, updated_at = CURRENT_TIMESTAMP"
-            )
+            sql = f"INSERT INTO distill_tasks ({', '.join(cols)}) VALUES ({placeholders})"
             async with await self._connect() as conn:
                 await conn.execute(sql, *vals)
             return await self.get_distill_task(task_id) or {}
         except Exception as exc:
-            print(f"[PostgresStore] Save distill task failed: {exc}")
+            print(f"[PostgresStore] Create distill task failed: {exc}")
             raise
 
     async def get_distill_task(self, task_id: str) -> dict | None:
@@ -2947,34 +2950,58 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Find interrupted distill failed: {exc}")
             raise
 
-    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
-        """Patch only the non-None fields of a distillation task row."""
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
+        """Patch only the non-None fields of a distillation task row. Returns rows affected.
+
+        UPDATE-only、绝不 upsert：0 行 = 行已被删（如文本被删时 bg 线程仍在跑），
+        此时本就不该写 —— 这就是竞态的闭合点，不需要任何人通知 bg 线程。
+        chunk_size/text_fingerprint 供复用行重新盖章；overlap 无对应概念，不进此方法。
+        """
         try:
             field_items: list[tuple[str, Any]] = []
-            if status is not None:
-                field_items.append(("status", status))
-            if progress_pct is not None:
-                field_items.append(("progress_pct", progress_pct))
-            if message is not None:
-                field_items.append(("message", message))
+            for col, val in (
+                ("status", status), ("progress_pct", progress_pct), ("message", message),
+                ("card_id", card_id), ("awakening", awakening),
+                ("chunk_size", chunk_size), ("text_fingerprint", text_fingerprint),
+            ):
+                if val is not None:
+                    field_items.append((col, val))
             assigns = ["updated_at = CURRENT_TIMESTAMP"] + [
                 f"{col} = ${i + 1}" for i, (col, _v) in enumerate(field_items)
             ]
             params = [v for _c, v in field_items] + [task_id]
             sql = f"UPDATE distill_tasks SET {', '.join(assigns)} WHERE task_id = ${len(field_items) + 1}"
             async with await self._connect() as conn:
-                await conn.execute(sql, *params)
+                tag = await conn.execute(sql, *params)
+            return self._parse_rowcount(tag)
         except Exception as exc:
             print(f"[PostgresStore] Update distill task failed: {exc}")
             raise
 
     async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
-        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op.
+
+        WHERE EXISTS 父行 + FOR SHARE：父任务行不在（文本被删、行已清）则零行写入、不报错。
+        FOR SHARE 是关键 —— 单独 EXISTS 只是**快照读**，挡的是"父行已不存在"，挡不住
+        "父行正在被删、还没提交"：MVCC 下未提交的 DELETE 对另一连接不可见，分片照样插得
+        进去、并在删除事务提交后变成孤儿。加共享锁后，分片写入与删除事务在父行上互斥，
+        窗口才真正闭合 —— 也才让 hard_delete_text 的"先父后子"变成有语义的约束
+        （见其注释）：删除方先取父行排他锁，插入方的 FOR SHARE 随后必阻塞。
+
+        死锁分析（无环）：三条路径取锁顺序都是"先父行、后分片行"。
+          - 本方法：父行 S → 插自己新建的 chunk 行（插新行不与任何已存在行争锁）
+          - hard_delete_text：父行 X → 删 chunk 行
+          - update_distill_task：只取父行 X
+        父行锁是一切的前置，两条触碰 chunk 行的路径因此不可能同时持有对方所需：
+        删除方持父行 X 时，任何分片写入都卡在 FOR SHARE 上、压根没拿到 chunk 行锁；
+        分片写入持父行 S 时，删除方卡在父行 X 上。无循环等待。
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
                     """INSERT INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint)
-                       VALUES ($1, $2, $3, $4)
+                       SELECT $1, $2, $3, $4
+                       WHERE EXISTS (SELECT 1 FROM distill_tasks WHERE task_id = $1 FOR SHARE)
                        ON CONFLICT (task_id, chunk_index) DO NOTHING""",
                     task_id, chunk_index, result, fingerprint,
                 )
@@ -3001,7 +3028,7 @@ class PostgresStore(StorageBase):
         """Count a user's non-terminal distill tasks (status queued/running).
 
         window_minutes: only count rows whose updated_at is within the last N minutes.
-        A live task refreshes updated_at on every progress write (save_distill_task's
+        A live task refreshes updated_at on every progress write (update_distill_task's
         upsert stamps CURRENT_TIMESTAMP); a ghost row (thread died without a terminal
         write) does not, so it ages out instead of blocking the user forever.
         None = no age filter.

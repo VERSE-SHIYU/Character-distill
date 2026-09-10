@@ -1326,10 +1326,10 @@ class TestRefreshTokenGraceWindow:
 # ── Distill task persistence ─────────────────────────────────────────────────
 
 class TestDistillTaskPersistence:
-    """save_distill_task → update → chunks (idempotent) → running-count lifecycle."""
+    """create_distill_task → update → chunks (idempotent) → running-count lifecycle."""
 
-    async def test_save_and_get(self, store, text_id):
-        row = await store.save_distill_task("dt1", "u1", text_id, character="角色A")
+    async def test_create_and_get(self, store, text_id):
+        row = await store.create_distill_task("dt1", "u1", text_id, character="角色A")
         assert row["task_id"] == "dt1"
         assert row["status"] == "queued"
         assert row["user_id"] == "u1"
@@ -1337,17 +1337,23 @@ class TestDistillTaskPersistence:
         got = await store.get_distill_task("dt1")
         assert got is not None and got["character"] == "角色A"
 
-    async def test_upsert_same_task_id(self, store, text_id):
-        await store.save_distill_task("dt2", "u1", text_id, character="A", status="queued")
-        await store.save_distill_task("dt2", "u1", text_id, character="A", status="done", progress_pct=100)
-        got = await store.get_distill_task("dt2")
+    async def test_create_duplicate_task_id_raises(self, store, text_id):
+        # INSERT-only：重复 task_id 是真异常，不再静默转 UPDATE。改成 upsert 这条必红。
+        await store.create_distill_task("dt2", "u1", text_id, character="A")
+        with pytest.raises(Exception):
+            await store.create_distill_task("dt2", "u1", text_id, character="A")
+
+    async def test_create_then_update_one_row(self, store, text_id):
+        # 创建+更新两步语义（替代旧 upsert 用法）：只有一行，读到更新后的值。
+        await store.create_distill_task("dt2b", "u1", text_id, character="A", status="queued")
+        assert await store.update_distill_task("dt2b", status="done", progress_pct=100) == 1
+        got = await store.get_distill_task("dt2b")
         assert got["status"] == "done" and got["progress_pct"] == 100
-        # one row survives two upserts → non-terminal count is 0
         assert await store.count_running_distills("u1") == 0
 
     async def test_update_distill_task(self, store, text_id):
-        await store.save_distill_task("dt3", "u1", text_id, character="A")
-        await store.update_distill_task("dt3", progress_pct=42, message="跑到一半")
+        await store.create_distill_task("dt3", "u1", text_id, character="A")
+        assert await store.update_distill_task("dt3", progress_pct=42, message="跑到一半") == 1
         got = await store.get_distill_task("dt3")
         assert got["progress_pct"] == 42 and got["message"] == "跑到一半"
         assert got["status"] == "queued"  # untouched field preserved
@@ -1356,31 +1362,45 @@ class TestDistillTaskPersistence:
         assert got2["status"] == "done" and got2["progress_pct"] == 100
         assert got2["message"] == "跑到一半"  # null patch does not clear message
 
+    async def test_update_missing_row_returns_zero(self, store):
+        # UPDATE-only 的竞态闭合点：行不在 = 0 行、不抛异常、不复活。
+        assert await store.update_distill_task("no_such_task", status="done") == 0
+        assert await store.get_distill_task("no_such_task") is None
+
     async def test_task_checkpoint_params_roundtrip_and_preserved(self, store, text_id):
         # 3b：任务级切分指纹（chunk_size/overlap/text_fingerprint）落库可读；
-        # KEY：通用进度 upsert 不传这三参时不得把它们冲回 NULL（保住已盖章 checkpoint）。
-        await store.save_distill_task("dtCp", "u1", text_id, character="A",
-                                      chunk_size=8000, overlap=500, text_fingerprint="fp_full")
+        # KEY：进度 update 不传这三参时不得把它们冲回 NULL（保住已盖章 checkpoint）。
+        await store.create_distill_task("dtCp", "u1", text_id, character="A",
+                                        chunk_size=8000, overlap=500, text_fingerprint="fp_full")
         got = await store.get_distill_task("dtCp")
         assert got["chunk_size"] == 8000 and got["overlap"] == 500
         assert got["text_fingerprint"] == "fp_full"
 
-        await store.save_distill_task("dtCp", "u1", text_id, character="A",
-                                      status="running", progress_pct=50)
+        await store.update_distill_task("dtCp", status="running", progress_pct=50)
         got2 = await store.get_distill_task("dtCp")
         assert got2["chunk_size"] == 8000 and got2["overlap"] == 500
         assert got2["text_fingerprint"] == "fp_full"
 
+    async def test_task_checkpoint_restamp_via_update(self, store, text_id):
+        # 复用行重新盖章走 update：chunk_size/text_fingerprint 是 update 的合法字段。
+        await store.create_distill_task("dtRs", "u1", text_id, character="A",
+                                        chunk_size=8000, text_fingerprint="fp_old")
+        assert await store.update_distill_task("dtRs", chunk_size=3000,
+                                               text_fingerprint="fp_new") == 1
+        got = await store.get_distill_task("dtRs")
+        assert got["chunk_size"] == 3000 and got["text_fingerprint"] == "fp_new"
+        assert got["overlap"] is None  # overlap 不进 update，保持 NULL
+
     async def test_task_checkpoint_defaults_empty(self, store, text_id):
         # 3b：不带 checkpoint 参数的普通建行 → chunk_size/overlap 为 NULL、text_fingerprint 空串。
-        await store.save_distill_task("dtCp2", "u1", text_id)
+        await store.create_distill_task("dtCp2", "u1", text_id)
         got = await store.get_distill_task("dtCp2")
         assert got["chunk_size"] is None and got["overlap"] is None
         assert got["text_fingerprint"] == ""
 
     async def test_chunk_fingerprint_roundtrip_and_first_write_wins(self, store, text_id):
         # 3b：chunk_fingerprint 随片落库可读；同 index 重写（含不同指纹）仍 first-wins。
-        await store.save_distill_task("dtFp", "u1", text_id, character="A")
+        await store.create_distill_task("dtFp", "u1", text_id, character="A")
         await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "二"}, ensure_ascii=False),
                                        fingerprint="fp2")
         await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "重写"}, ensure_ascii=False),
@@ -1391,7 +1411,7 @@ class TestDistillTaskPersistence:
         assert chunks[0]["result"] == json.dumps({"r": "二"}, ensure_ascii=False)
 
     async def test_chunk_save_idempotent(self, store, text_id):
-        await store.save_distill_task("dt4", "u1", text_id, character="A")
+        await store.create_distill_task("dt4", "u1", text_id, character="A")
         await store.save_distill_chunk("dt4", 3, json.dumps({"r": "三"}, ensure_ascii=False))
         await store.save_distill_chunk("dt4", 3, json.dumps({"r": "重写"}, ensure_ascii=False))
         await store.save_distill_chunk("dt4", 1, json.dumps({"r": "一"}, ensure_ascii=False))
@@ -1402,10 +1422,15 @@ class TestDistillTaskPersistence:
         by_index = {c["chunk_index"]: c["result"] for c in chunks}
         assert by_index[3] == json.dumps({"r": "三"}, ensure_ascii=False)
 
+    async def test_chunk_write_blocked_without_parent(self, store):
+        # 改动 B：父任务行不在 → 零行写入、不报错（孤儿分片写不进来）。
+        await store.save_distill_chunk("no_parent", 0, json.dumps({"r": "x"}, ensure_ascii=False))
+        assert await store.get_distill_chunks("no_parent") == []
+
     async def test_count_running(self, store, text_id):
-        await store.save_distill_task("dtA", "u1", text_id, status="queued")
-        await store.save_distill_task("dtB", "u1", text_id, status="done")
-        await store.save_distill_task("dtC", "u2", text_id, status="queued")
+        await store.create_distill_task("dtA", "u1", text_id, status="queued")
+        await store.create_distill_task("dtB", "u1", text_id, status="done")
+        await store.create_distill_task("dtC", "u2", text_id, status="queued")
         assert await store.count_running_distills("u1") == 1
         assert await store.count_running_distills("u2") == 1
         await store.update_distill_task("dtA", status="error")
@@ -1419,8 +1444,8 @@ class TestDistillTaskPersistence:
     async def test_count_running_window_ages_out_ghost(self, store, text_id):
         # 时效窗：活任务靠进度写刷 updated_at，幽灵行（线程已死、终态没落库）不会。
         # 超窗的 running 行不计入 → 不会永久挡住该用户。
-        await store.save_distill_task("dtLive", "u1", text_id, status="running")
-        await store.save_distill_task("dtGhost", "u1", text_id, status="running")
+        await store.create_distill_task("dtLive", "u1", text_id, status="running")
+        await store.create_distill_task("dtGhost", "u1", text_id, status="running")
         async with await store._connect() as conn:
             await conn.execute(
                 "UPDATE distill_tasks SET updated_at = datetime('now', '-120 minutes') "
@@ -1435,7 +1460,7 @@ class TestDistillTaskPersistence:
     async def test_card_id_awakening_roundtrip(self, store, text_id):
         # 步骤2：done payload 的 card_id/awakening 必须随行落库，DB 真源读到仍能
         # 驱动前端卡片刷新 toast —— 只存内存会在跨重启后丢。
-        await store.save_distill_task("dt6", "u1", text_id, character="A",
+        await store.create_distill_task("dt6", "u1", text_id, character="A",
                                       status="done", progress_pct=100, message="完成",
                                       card_id="cardX", awakening="你醒了？")
         got = await store.get_distill_task("dt6")
@@ -1443,9 +1468,9 @@ class TestDistillTaskPersistence:
 
     async def test_mark_interrupted_flips_running(self, store, text_id):
         # 开机 reconcile：只动 running（孤儿），done/interrupted 不动；返回翻转数。
-        await store.save_distill_task("dtA", "u1", text_id, status="running")
-        await store.save_distill_task("dtB", "u1", text_id, status="done")
-        await store.save_distill_task("dtC", "u1", text_id, status="interrupted")
+        await store.create_distill_task("dtA", "u1", text_id, status="running")
+        await store.create_distill_task("dtB", "u1", text_id, status="done")
+        await store.create_distill_task("dtC", "u1", text_id, status="interrupted")
         assert await store.mark_interrupted_distills() == 1
         got = await store.get_distill_task("dtA")
         assert got["status"] == "interrupted"
@@ -1456,10 +1481,10 @@ class TestDistillTaskPersistence:
     async def test_find_interrupted_distill(self, store, text_id):
         # 续跑发现：只认 interrupted（done/running 不算）；character 精确匹配——同一文本下
         # 两个角色绝不能互借缓存片；user 隔离。
-        await store.save_distill_task("dtI1", "u1", text_id, character="甲", status="interrupted")
-        await store.save_distill_task("dtI2", "u1", text_id, character="乙", status="interrupted")
-        await store.save_distill_task("dtI3", "u1", text_id, character="甲", status="done")
-        await store.save_distill_task("dtI4", "u2", text_id, character="甲", status="interrupted")
+        await store.create_distill_task("dtI1", "u1", text_id, character="甲", status="interrupted")
+        await store.create_distill_task("dtI2", "u1", text_id, character="乙", status="interrupted")
+        await store.create_distill_task("dtI3", "u1", text_id, character="甲", status="done")
+        await store.create_distill_task("dtI4", "u2", text_id, character="甲", status="interrupted")
 
         got = await store.find_interrupted_distill("u1", text_id, "甲")
         assert got is not None and got["task_id"] == "dtI1"
@@ -1470,11 +1495,42 @@ class TestDistillTaskPersistence:
 
     async def test_cancel_by_text_id(self, store, text_id):
         # 删文本 sweep：running + interrupted（含上进程孤儿）都置 error，done 不动。
-        await store.save_distill_task("dtX", "u1", text_id, status="running")
-        await store.save_distill_task("dtY", "u1", text_id, status="interrupted")
-        await store.save_distill_task("dtZ", "u1", text_id, status="done")
+        await store.create_distill_task("dtX", "u1", text_id, status="running")
+        await store.create_distill_task("dtY", "u1", text_id, status="interrupted")
+        await store.create_distill_task("dtZ", "u1", text_id, status="done")
         n = await store.cancel_distills_by_text_id(text_id)
         assert n == 2
         assert (await store.get_distill_task("dtX"))["status"] == "error"
         assert (await store.get_distill_task("dtY"))["status"] == "error"
         assert (await store.get_distill_task("dtZ"))["status"] == "done"
+
+    async def test_hard_delete_purges_distill_rows_and_chunks(self, store):
+        # 改动 C：硬删文本 → 该 text 的 distill_tasks + distill_chunks 清零，别的 text 不受影响。
+        tid_a = f"txt_{uuid.uuid4().hex}"
+        tid_b = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid_a, "a.txt", "A 内容" * 10)
+        await store.save_text(tid_b, "b.txt", "B 内容" * 10)
+        await store.create_distill_task("dtA", "u1", tid_a, status="done")
+        await store.save_distill_chunk("dtA", 0, json.dumps({"r": "零"}, ensure_ascii=False))
+        await store.save_distill_chunk("dtA", 1, json.dumps({"r": "一"}, ensure_ascii=False))
+        await store.create_distill_task("dtB", "u1", tid_b, status="done")
+        await store.save_distill_chunk("dtB", 0, json.dumps({"r": "零"}, ensure_ascii=False))
+
+        assert await store.hard_delete_text(tid_a) is True
+
+        assert await store.get_distill_task("dtA") is None
+        assert await store.get_distill_chunks("dtA") == []
+        assert (await store.get_distill_task("dtB"))["task_id"] == "dtB"
+        assert len(await store.get_distill_chunks("dtB")) == 1
+
+    async def test_hard_delete_nonexistent_text_no_raise(self, store):
+        # 对不存在的 text_id：不抛异常。
+        assert await store.hard_delete_text("txt_no_such") is False
+
+    async def test_soft_delete_keeps_distill_rows(self, store):
+        # 软删不清理：垃圾桶可 restore，行随文本保留。
+        tid = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid, "s.txt", "内容" * 10)
+        await store.create_distill_task("dtS", "u1", tid, status="done")
+        assert await store.delete_text(tid) is True
+        assert (await store.get_distill_task("dtS"))["task_id"] == "dtS"

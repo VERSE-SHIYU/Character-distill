@@ -367,16 +367,22 @@ class StorageBase(ABC):
     # ── Distill task persistence ────────────────
 
     @abstractmethod
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+        """Insert a NEW distillation task row. Returns the stored row.
 
-        card_id/awakening complete the done payload so a DB-truth read of a
-        finished task still carries what the frontend needs (card refresh toast).
+        INSERT-only — deliberately no upsert. A duplicate task_id is a real error
+        and raises: task_id is a freshly minted id here, so a conflict is a bug,
+        not "please update the existing row". Keeping create and update separate
+        is what makes a deleted row stay deleted — a background thread that
+        outlives its text can only UPDATE, and UPDATE never inserts.
+
+        card_id/awakening are stored but normally empty at creation; they are
+        filled in later via update_distill_task.
 
         chunk_size/overlap/text_fingerprint are the task-level chunking checkpoint
-        (used by resume's task gate). Only an explicitly non-default value is
-        written — a generic progress upsert that omits them preserves whatever is
-        already stored rather than nulling it.
+        (resume's task gate). overlap is always None today — _split_chunks has no
+        overlap concept. Later checkpoint refreshes (a reused resume row) go
+        through update_distill_task, not here.
         """
 
     @abstractmethod
@@ -397,8 +403,20 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
-        """Patch only the non-None fields of a distillation task row."""
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
+        """Patch only the non-None fields of a distillation task row. UPDATE-only.
+
+        Returns the number of rows affected. 0 means the row is gone (e.g. its text
+        was deleted while a background thread was still mid-flight) — callers that
+        must have a row (the resume re-stamp) treat 0 as fatal; progress writers
+        ignore it, because 0 is exactly "row deleted, don't write". That is the
+        race closure: nobody has to notify the background thread.
+
+        Never upserts and never inserts on a missing row. chunk_size/text_fingerprint
+        carry the task-level chunking checkpoint and are re-stamped here when a
+        resume reuses an existing row. overlap is intentionally absent — the chunker
+        has no overlap concept.
+        """
 
     @abstractmethod
     async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:

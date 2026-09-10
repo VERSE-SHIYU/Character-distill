@@ -1236,6 +1236,21 @@ class SQLiteStore(StorageBase):
                     await conn.execute("DELETE FROM cards WHERE text_id = ?", (id,))
                 # Delete reading progress
                 await conn.execute("DELETE FROM reading_progress WHERE text_id = ?", (id,))
+                # 清理本文本的蒸馏行。顺序**先父后子**，与通常相反：父行一消失，
+                # save_distill_chunk 的 WHERE EXISTS 即失效，写路径随之关闭。
+                # SQLite 写是库级序列化的（删除事务持写锁直至提交），并发分片写要么在
+                # 事务前提交（随即被一并删掉）、要么阻塞到提交后（父行已无、跳过）——
+                # 窗口从根上不存在，故此处无需 PG 那侧的 FOR SHARE，顺序即足够。
+                # 两表零外键（migration 084），删父不会级联子，必须显式删两张。
+                # 不清理 delete_card / purge_card / detach_text_cards：蒸馏行身份是
+                # (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，
+                # 文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）。权衡，不是遗漏。
+                cursor = await conn.execute(
+                    "SELECT task_id FROM distill_tasks WHERE text_id = ?", (id,))
+                dt_ids = [row[0] for row in await cursor.fetchall()]
+                await conn.execute("DELETE FROM distill_tasks WHERE text_id = ?", (id,))
+                for tid in dt_ids:
+                    await conn.execute("DELETE FROM distill_chunks WHERE task_id = ?", (tid,))
                 # Delete the text itself
                 cursor = await conn.execute("DELETE FROM texts WHERE id = ?", (id,))
                 await conn.commit()
@@ -3964,42 +3979,32 @@ class SQLiteStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+        """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
-        chunk_size/overlap/text_fingerprint 仅显式传入时参与 INSERT/SET：通用进度
-        upsert（_persist_snap 等不传）不会把它们冲回 NULL，保住已盖章的切分指纹。
+        重复 task_id 抛异常：这里是新铸的 id，冲突是真 bug，不是"请更新已有行"。
+        chunk_size/overlap/text_fingerprint 是创建时的切分 checkpoint；复用行的重新
+        盖章走 update_distill_task，不在这里。
         """
         try:
-            base_cols = ["task_id", "user_id", "text_id", "character", "status",
-                         "progress_pct", "message", "card_id", "awakening"]
-            base_vals = [task_id, user_id, text_id, character, status,
-                         progress_pct, message, card_id, awakening]
-            extras: list[tuple[str, Any]] = []
+            cols = ["task_id", "user_id", "text_id", "character", "status",
+                    "progress_pct", "message", "card_id", "awakening"]
+            vals: list[Any] = [task_id, user_id, text_id, character, status,
+                               progress_pct, message, card_id, awakening]
             if chunk_size is not None:
-                extras.append(("chunk_size", chunk_size))
+                cols.append("chunk_size"); vals.append(chunk_size)
             if overlap is not None:
-                extras.append(("overlap", overlap))
+                cols.append("overlap"); vals.append(overlap)
             if text_fingerprint:
-                extras.append(("text_fingerprint", text_fingerprint))
-            set_list = [f"{c} = excluded.{c}" for c in base_cols[1:]]  # task_id 是冲突键不更新
-            for col, val in extras:
-                base_cols.append(col)
-                base_vals.append(val)
-                set_list.append(f"{col} = excluded.{col}")
-            placeholders = ", ".join("?" * len(base_cols))
-            sql = (
-                f"INSERT INTO distill_tasks ({', '.join(base_cols)}) "
-                f"VALUES ({placeholders}) "
-                f"ON CONFLICT(task_id) DO UPDATE SET "
-                f"{', '.join(set_list)}, updated_at = CURRENT_TIMESTAMP"
-            )
+                cols.append("text_fingerprint"); vals.append(text_fingerprint)
+            placeholders = ", ".join("?" * len(cols))
+            sql = f"INSERT INTO distill_tasks ({', '.join(cols)}) VALUES ({placeholders})"
             async with await self._connect() as conn:
-                await conn.execute(sql, base_vals)
+                await conn.execute(sql, vals)
                 await conn.commit()
             return await self.get_distill_task(task_id) or {}
         except Exception as exc:
-            print(f"[SQLiteStore] Save distill task failed: {exc}")
+            print(f"[SQLiteStore] Create distill task failed: {exc}")
             raise
 
     async def get_distill_task(self, task_id: str) -> dict | None:
@@ -4038,35 +4043,54 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Find interrupted distill failed: {exc}")
             raise
 
-    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
-        """Patch only the non-None fields of a distillation task row."""
+    async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
+        """Patch only the non-None fields of a distillation task row. 返回受影响行数。
+
+        UPDATE-only、绝不 upsert：0 行 = 行已被删（如文本被删时 bg 线程仍在跑），
+        此时本就不该写 —— 这就是竞态的闭合点，不需要任何人通知 bg 线程。
+        chunk_size/text_fingerprint 供复用行重新盖章；overlap 无对应概念，不进此方法。
+        """
         try:
             sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
             params: list[Any] = []
-            if status is not None:
-                sets.append("status = ?"); params.append(status)
-            if progress_pct is not None:
-                sets.append("progress_pct = ?"); params.append(progress_pct)
-            if message is not None:
-                sets.append("message = ?"); params.append(message)
+            for col, val in (
+                ("status", status), ("progress_pct", progress_pct), ("message", message),
+                ("card_id", card_id), ("awakening", awakening),
+                ("chunk_size", chunk_size), ("text_fingerprint", text_fingerprint),
+            ):
+                if val is not None:
+                    sets.append(f"{col} = ?"); params.append(val)
             params.append(task_id)
             async with await self._connect() as conn:
-                await conn.execute(
+                cursor = await conn.execute(
                     f"UPDATE distill_tasks SET {', '.join(sets)} WHERE task_id = ?",
                     params,
                 )
                 await conn.commit()
+                return cursor.rowcount or 0
         except Exception as exc:
             print(f"[SQLiteStore] Update distill task failed: {exc}")
             raise
 
     async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
-        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op.
+
+        WHERE EXISTS 父行：父任务行不在（文本被删、行已清）则零行写入、不报错。
+        与 update-only 同一条不变量 —— 孤儿分片写不进来。
+
+        这里不需要 PG 那侧的 FOR SHARE：SQLite 写是**库级序列化**的（单写者，删除事务
+        持写锁直至提交），并发分片写入要么在删除事务前提交（随即被一并删掉），要么阻塞
+        到提交后（父行已无、跳过）。窗口从根上不存在，不是靠运气 —— 故不引入行锁
+        （SQLite 也没有行锁语法），不为了与 PG 对称写无用代码。
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT OR IGNORE INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint) VALUES (?, ?, ?, ?)",
-                    (task_id, chunk_index, result, fingerprint),
+                    """INSERT INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint)
+                       SELECT ?, ?, ?, ?
+                       WHERE EXISTS (SELECT 1 FROM distill_tasks WHERE task_id = ?)
+                       ON CONFLICT (task_id, chunk_index) DO NOTHING""",
+                    (task_id, chunk_index, result, fingerprint, task_id),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -4093,7 +4117,7 @@ class SQLiteStore(StorageBase):
         """Count a user's non-terminal distill tasks (status queued/running).
 
         window_minutes: 只统计 updated_at 在最近 N 分钟内的行。活任务的进度写会持续
-        刷新 updated_at（save_distill_task 的 upsert 带 CURRENT_TIMESTAMP），幽灵行
+        刷新 updated_at（update_distill_task 每次带 CURRENT_TIMESTAMP），幽灵行
         （线程已死、终态没落库）不会 —— 超窗即不计，避免永久挡住该用户。None = 不计时效。
         """
         try:

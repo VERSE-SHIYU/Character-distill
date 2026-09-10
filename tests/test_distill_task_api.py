@@ -55,25 +55,24 @@ def _clean_tasks():
 # ── 单元测试（A / A2）：monkeypatch 模块级 get_storage + run_on_main_loop ─────
 
 class _FakeStore:
-    """save_distill_task 可控失败；成功时记录完整快照。"""
+    """update_distill_task 可控失败；成功时记录快照（bg 进度写走 update-only）。"""
 
     def __init__(self):
         self.calls: list[dict] = []
         self.attempts = 0
         self.fail = False
 
-    async def save_distill_task(self, task_id, user_id, text_id, character="",
-                                status="queued", progress_pct=0, message="",
-                                card_id="", awakening=""):
+    async def update_distill_task(self, task_id, *, status=None, progress_pct=None,
+                                  message=None, card_id=None, awakening=None,
+                                  chunk_size=None, text_fingerprint=None):
         self.attempts += 1
         if self.fail:
             raise RuntimeError("db down")
         self.calls.append({
-            "task_id": task_id, "user_id": user_id, "text_id": text_id,
-            "character": character, "status": status, "progress_pct": progress_pct,
+            "task_id": task_id, "status": status, "progress_pct": progress_pct,
             "message": message, "card_id": card_id, "awakening": awakening,
         })
-        return self.calls[-1]
+        return 1
 
 
 def _install(monkeypatch, store):
@@ -259,7 +258,7 @@ def _build_client(store, uid):
 
 def _seed_distill_row(store, task_id, user_id, *, status="running", pct=0,
                       character="甲", text_id="txt1", message="m"):
-    _run_async(store.save_distill_task(
+    _run_async(store.create_distill_task(
         task_id, user_id, text_id, character, status=status,
         progress_pct=pct, message=message, card_id="", awakening="",
     ))
@@ -364,9 +363,9 @@ class TestDStatusReadonlyStage:
 
 
 class _FailingSaveStore(SQLiteStore):
-    """仅 save_distill_task 抛错，其余全走真 store（避免手写全量委托）。"""
+    """仅 create_distill_task 抛错，其余全走真 store（避免手写全量委托）。"""
 
-    async def save_distill_task(self, *args, **kwargs):
+    async def create_distill_task(self, *args, **kwargs):
         raise RuntimeError("db insert boom")
 
 
@@ -417,7 +416,7 @@ class _ResumeDistillerStub:
 
 def _seed_interrupted(store, user_id, tid, *, task_id, chunk_size, fp, chunks=()):
     """落一行 interrupted 任务（带 checkpoint 参数）+ 可选分片行。"""
-    _run_async(store.save_distill_task(
+    _run_async(store.create_distill_task(
         task_id, user_id, tid, "甲", status="interrupted", progress_pct=40,
         message="进程重启，任务中断", card_id="", awakening="",
         chunk_size=chunk_size, text_fingerprint=fp,
@@ -713,3 +712,87 @@ class TestFPerUserGate:
         for i in range(3):
             assert "服务器繁忙" not in (rows[i]["message"] or ""), f"第 {i + 1} 个不该撞闸"
         assert "服务器繁忙" in (rows[3]["message"] or ""), "第 4 个该撞全局闸"
+
+
+# ── 交错竞态（6.2 核心）：写入循环运行期间删文本 → 两表零行 ───────────────────
+# 只测「删完之后再写一次」是顺序场景，证明不了竞态闭合。这里 writer 与 deleter 用
+# asyncio.gather 真并发，writer 跨过删除点继续写。闭合靠两条存储层不变量：
+#   update-only  —— 父行没了，_persist_snap 写不回
+#   WHERE EXISTS —— 父行没了，save_distill_chunk 不落分片
+# bg 线程全程不知道文本被删，也就无需任何「通知」路径。
+#
+# 本用例对"删除顺序"（先父后子 vs 先子后父）**无判别力**：SQLite 写是库级序列化的，
+# 删除事务持写锁直至提交，并发分片写要么在其前提交（随即被一并删）、要么阻塞到提交后
+# （父行已无、跳过）——窗口从根上不存在，两种顺序都绿。顺序有语义的战场在 PG（快照读 +
+# 并发连接），红绿对照见 tests/test_postgres_store.py::TestDistillRaceStaleWriteAfterDelete。
+
+class TestGRaceStaleWriteAfterDelete:
+    def _seed(self, store, uid, body="角色说的话" * 20):
+        tid = f"txt_{uuid.uuid4().hex}"
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
+        _run_async(store.create_distill_task(
+            task_id, uid, tid, "甲", status="running", progress_pct=0,
+            message="进行中", card_id="", awakening="",
+        ))
+        return tid, task_id
+
+    def test_writer_outliving_delete_leaves_no_rows(self, store, user_id, monkeypatch):
+        """writer 跨过 hard_delete 继续写 → 两表零行 + running 计数归零。
+
+        分两段，避免把「调度运气」当证据：
+          phase 1 — writer 与 deleter 真并发，删除落在 writer 运行期间（用 at_delete
+                    记录删除时刻 writer 已写完的片数，>0 证明删除确实发生在循环中）
+          phase 2 — 删除提交后，writer 再确定性地写固定轮，逐片落库与写回进度都真发。
+                    写不回来是存储层不变量保证的，不依赖删除恰好在某次 await 之间。
+        """
+        tid, task_id = self._seed(store, user_id)
+        monkeypatch.setattr(D, "get_storage", lambda: store)
+        _seed_task(task_id, "running", 0, ("running", 0))
+
+        PHASE2 = 6
+
+        async def _race() -> dict:
+            snap = {"status": "running", "progress_pct": 0, "message": "进行中",
+                    "card_id": "", "awakening": ""}
+            deleted = asyncio.Event()
+            writer_running = asyncio.Event()
+            prog = {"i": 0, "at_delete": -1}
+
+            async def _write(i: int) -> None:
+                snap["progress_pct"] = i % 90
+                snap["message"] = f"分析第 {i} 片"
+                await D._persist_snap(task_id, snap)
+                await store.save_distill_chunk(task_id, i, f"分析{i}", fingerprint=f"fp{i}")
+
+            async def writer():
+                i = 0
+                prog["i"] = i
+                while not deleted.is_set():          # phase 1：与删除并发
+                    await _write(i)
+                    i += 1
+                    prog["i"] = i
+                    if i >= 2:
+                        writer_running.set()
+                    await asyncio.sleep(0)
+                for _ in range(PHASE2):              # phase 2：删除后确定性续写
+                    await _write(i)
+                    i += 1
+                    prog["i"] = i
+                    await asyncio.sleep(0)
+
+            async def deleter():
+                await writer_running.wait()          # 等 writer 跑起来，删除必落循环中
+                await store.hard_delete_text(tid)
+                prog["at_delete"] = prog["i"]
+                deleted.set()
+
+            await asyncio.gather(writer(), deleter())
+            return prog
+
+        prog = _run_async(_race())
+
+        assert prog["at_delete"] > 0, "删除必须落在 writer 运行期间，否则退化成顺序场景"
+        assert _run_async(store.get_distill_task(task_id)) is None
+        assert _run_async(store.get_distill_chunks(task_id)) == []
+        assert _run_async(store.count_running_distills(user_id)) == 0
