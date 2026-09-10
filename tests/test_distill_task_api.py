@@ -796,3 +796,68 @@ class TestGRaceStaleWriteAfterDelete:
         assert _run_async(store.get_distill_task(task_id)) is None
         assert _run_async(store.get_distill_chunks(task_id)) == []
         assert _run_async(store.count_running_distills(user_id)) == 0
+
+
+class TestHStatusAffordances:
+    """任务状态契约：_task_affordances 是 done/actions/poll_after_ms 的唯一计算点。
+
+    响应新增三字段（纯新增，向后兼容），既有字段一个不动 —— 后者由
+    test_existing_fields_unchanged 兜底，防"顺手改坏"。
+    """
+
+    @pytest.mark.parametrize("status,expected", [
+        ("running", (False, ["cancel"], 3000)),
+        ("done", (True, [], 0)),
+        ("error", (True, ["retry"], 0)),
+        ("interrupted", (True, ["resume"], 0)),
+    ])
+    def test_affordances_exact_triple(self, status, expected):
+        """四态各一条：三元组精确相等（不是"包含"）。"""
+        assert D._task_affordances(status) == expected
+
+    @pytest.mark.parametrize("status", ["queued", "parsing", "", "unknown"])
+    def test_affordances_unknown_status_is_non_terminal(self, status):
+        """未知 status → 非终态、无动作、默认间隔：宁可多轮询，不可误判任务已终结。"""
+        assert D._task_affordances(status) == (False, [], 3000)
+
+    @pytest.mark.parametrize("status", ["running", "done", "error", "interrupted"])
+    def test_status_endpoint_matches_affordances(self, store, user_id, status):
+        """四态各查一次：响应的 done/actions/poll_after_ms 与 _task_affordances 一致，
+        即端点是序列化器出口、没有第二处计算。"""
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _seed_distill_row(store, task_id, user_id, status=status, pct=42, message="msg")
+        client = _build_client(store, user_id)
+
+        body = client.get(f"/api/distill/task/{task_id}").json()
+        done, actions, poll = D._task_affordances(status)
+        assert body["done"] is done
+        assert body["actions"] == actions
+        assert body["poll_after_ms"] == poll
+
+    def test_existing_fields_unchanged(self, store, user_id):
+        """兼容断言：本次改动前既有字段仍在且值不变（纯新增，§2.3 的落地检查）。"""
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _seed_distill_row(store, task_id, user_id, status="done", pct=100,
+                          character="Alice", text_id="txt_x", message="蒸馏完成 ✓")
+        client = _build_client(store, user_id)
+
+        body = client.get(f"/api/distill/task/{task_id}").json()
+        assert body["task_id"] == task_id
+        assert body["status"] == "done"
+        assert body["progress_pct"] == 100
+        assert body["message"] == "蒸馏完成 ✓"
+        assert body["character"] == "Alice"
+        assert body["text_id"] == "txt_x"
+        assert body["card_id"] == ""
+        assert body["awakening"] == ""
+        assert body["stage"] == ""
+
+    def test_done_is_sole_terminal_predicate(self, store, user_id):
+        """done 与 status 的四态一一对应：interrupted/error 是终态（本次要修的主症状）。"""
+        for status, expect_done in [("running", False), ("done", True),
+                                    ("error", True), ("interrupted", True)]:
+            task_id = f"dt_{uuid.uuid4().hex}"
+            _seed_distill_row(store, task_id, user_id, status=status)
+            client = _build_client(store, user_id)
+            body = client.get(f"/api/distill/task/{task_id}").json()
+            assert body["done"] is expect_done, f"{status} → done 应为 {expect_done}"

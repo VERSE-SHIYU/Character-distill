@@ -862,6 +862,64 @@ async def _distill_start_impl(
     return {"task_id": task_id}
 
 
+# ── 任务状态契约（服务端唯一真相）───────────────────────────────────────────
+#   done          唯一终态判据。前端据它停止轮询。对齐 AIP-151 长任务的 done 布尔。
+#   poll_after_ms 非终态的轮询节奏，由服务端决定；终态为 0。对应 Azure LRO 的
+#                 Retry-After / MCP Tasks 的 pollInterval。
+#   actions       可执行动作 token，前端只渲染此处出现的。**本项目自有扩展，非任何
+#                 标准** —— 标准里没有"可续跑的中断态"这个概念。resume 与 retry 都
+#                 打到 POST /api/distill/start：续跑 vs 整批重跑由后端任务级门
+#                 （chunk_size / text_fingerprint）自行裁决，前端不判断。二者只差文案。
+_DEFAULT_POLL_MS = 3000
+
+
+def _task_affordances(status: str) -> tuple[bool, list[str], int]:
+    """(done, actions, poll_after_ms) —— 决定这三者的唯一地方，全仓不得有第二处计算。
+
+    未知 status 按**非终态**处理：宁可多轮询一次，不可让前端以为任务已终结、
+    停止观察一个可能仍在跑的任务。
+    """
+    return {
+        "running":     (False, ["cancel"], _DEFAULT_POLL_MS),
+        "done":        (True,  [],         0),
+        "error":       (True,  ["retry"],  0),
+        "interrupted": (True,  ["resume"], 0),
+    }.get(status, (False, [], _DEFAULT_POLL_MS))
+
+
+def _task_response(row: dict[str, Any], mem: dict[str, Any] | None = None) -> dict[str, Any]:
+    """任务状态对象序列化器 —— distill 域内唯一出口，新增字段一律加在这里。
+
+    **域边界**：只收口蒸馏任务（distill_tasks 表）。上传预处理任务是独立域
+    （routers/text.py 的 _upload_tasks：纯内存、不落库、无 interrupted 态、无续跑，
+    前端走 uploadTaskProgress 独立消费）——它**不共用**此契约，不是遗漏，别来"顺手统一"。
+
+    status/progress_pct/所有权/存在性永远以 DB 为准；mem 只作展示字段细化，且仅在
+    DB running 时覆盖 stage/message（跨重启后 mem 为空 → stage 空串、message 回落
+    DB 值，展示不崩、四态不谎）。
+    """
+    status = row["status"]
+    done, actions, poll_after_ms = _task_affordances(status)
+    resp = {
+        "task_id": row["task_id"],
+        "status": status,
+        "done": done,
+        "actions": actions,
+        "poll_after_ms": poll_after_ms,
+        "progress_pct": row["progress_pct"],
+        "message": row["message"],
+        "character": row["character"],
+        "text_id": row["text_id"],
+        "card_id": row["card_id"],
+        "awakening": row["awakening"],
+        "stage": "",
+    }
+    if status == "running" and mem is not None:
+        resp["stage"] = mem.get("status", "")
+        resp["message"] = mem.get("message", resp["message"])
+    return resp
+
+
 @router.get("/task/{task_id}")
 async def distill_task_status(
     task_id: str,
@@ -880,25 +938,15 @@ async def distill_task_status(
         raise HTTPException(404, "Task not found")
     if row.get("user_id") != user["id"]:
         raise HTTPException(403, "无权访问此任务")
-    resp = {
-        "task_id": task_id,
-        "status": row["status"],
-        "progress_pct": row["progress_pct"],
-        "message": row["message"],
-        "character": row["character"],
-        "text_id": row["text_id"],
-        "card_id": row["card_id"],
-        "awakening": row["awakening"],
-        "stage": "",
-    }
-    # 只读覆盖展示字段：需同时满足 DB running + 本进程内存有该活跃条目。
+    # 只读覆盖展示字段：需同时满足 DB running + 本进程内存有该活跃条目。锁内浅拷一份，
+    # 锁外只读 —— 序列化器不持锁，避免把 _task_lock 扩散进纯函数。
+    mem = None
     if row["status"] == "running":
         with _task_lock:
-            mem = _tasks.get(task_id)
-            if mem is not None:
-                resp["stage"] = mem.get("status", "")
-                resp["message"] = mem.get("message", resp["message"])
-    return resp
+            live = _tasks.get(task_id)
+            if live is not None:
+                mem = dict(live)
+    return _task_response(row, mem)
 
 
 @router.delete("/task/{task_id}")
@@ -1092,6 +1140,10 @@ async def distill_stream(
             except Exception as exc:
                 print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
 
+        # 注意：这里的 done 是 SSE **流结束标记**，与任务契约里 _task_affordances 的
+        # done（任务终态判据）只是撞名。本流不建 DB 任务行、不产任务状态对象，故不带
+        # status/actions/poll_after_ms —— 前端 normalizeTask 的 task_id+status 门会挡掉
+        # 它，不会被误判成任务终态。改这里前先看前端那道门。
         done_payload = {'done': True, 'awakening': awakening, **result}
         yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
 
