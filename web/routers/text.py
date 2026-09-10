@@ -56,7 +56,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
         from deps import get_distiller
 
         with _upload_task_lock:
-            _upload_tasks[task_id] = {"status": "parsing", "progress_pct": 5, "message": "解析文件中…", "text_id": text_id}
+            _upload_tasks[task_id] = {"status": "parsing", "progress_pct": 5, "message": "解析文件中…", "text_id": text_id, "user_id": user_id}
 
         # Run on the main event loop (run_coroutine_threadsafe) so the
         # global asyncpg pool stays on its home loop.
@@ -81,7 +81,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
     except Exception as exc:
         print(f"[text] Upload task {task_id} failed: {exc}")
         with _upload_task_lock:
-            _upload_tasks[task_id] = {"status": "error", "message": str(exc)}
+            _upload_tasks[task_id] = {"status": "error", "message": str(exc), "user_id": user_id}
 
 
 class CommentCreate(BaseModel):
@@ -197,6 +197,7 @@ async def upload_text(
         with _upload_task_lock:
             _upload_tasks.setdefault(upload_task_id, {})
             _upload_tasks[upload_task_id]["text_id"] = text_id
+            _upload_tasks[upload_task_id]["user_id"] = user_id
     return response
 
 
@@ -210,6 +211,10 @@ async def get_upload_task_status(
         task = _upload_tasks.get(task_id)
     if task is None:
         raise HTTPException(404, "Upload task not found")
+    # 归属校验（fail closed：条目缺 user_id 也拒）。修复前任何登录用户拿 task_id 就能读
+    # 别人的上传任务（含其 text_id / 进度 / 错误信息）。
+    if task.get("user_id") != user["id"]:
+        raise HTTPException(403, "无权查看此上传任务")
     # Clean up done/error tasks after 5 minutes
     if task.get("status") in ("done", "error"):
         now = time.time()
@@ -218,7 +223,8 @@ async def get_upload_task_status(
                 task["completed_at"] = now
             elif now - task["completed_at"] > 300:
                 _upload_tasks.pop(task_id, None)
-    return task
+    # user_id 只用于归属校验，不上屏
+    return {k: v for k, v in task.items() if k != "user_id"}
 
 
 @router.get("/list")
