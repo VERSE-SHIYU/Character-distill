@@ -646,7 +646,7 @@ async def identify_by_text_id(
     cached = await storage.get_characters(req.text_id)
     if cached:
         return {"characters": cached}
-    text_rec = await storage.get_text(req.text_id)
+    text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
     result = await _do_identify(text_rec["content"], distiller)
@@ -670,7 +670,7 @@ async def distill_by_text_id(
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
-    text_rec = await storage.get_text(req.text_id)
+    text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
@@ -768,7 +768,7 @@ async def _distill_start_impl(
 
     # Read text content in the async endpoint so the background thread
     # doesn't need to call asyncio storage methods (cross-thread safe).
-    text_rec = await storage.get_text(req.text_id)
+    text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
@@ -1033,7 +1033,7 @@ async def distill_stream(
     _ek = (_api_config or {}).get("embedding_key", "")
     _er = (_api_config or {}).get("embedding_region", "")
 
-    text_rec = await storage.get_text(req.text_id)
+    text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
@@ -1175,7 +1175,7 @@ async def reindex_rag(
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
-    text_rec = await storage.get_text(text_id)
+    text_rec = await storage.get_text_owned(text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
     content = _get_distill_content(text_rec)
@@ -1349,7 +1349,7 @@ async def start_session(
 
     try:
         if req.text_id:
-            text_rec = await storage.get_text(req.text_id)
+            text_rec = await storage.get_text_owned(req.text_id, user_id)
             if not text_rec:
                 raise HTTPException(404, "Text not found")
             content = _get_distill_content(text_rec)

@@ -145,7 +145,7 @@ async def _ensure_session(
         return session
 
     # Server restarted — rebuild from DB
-    db_session = await storage.get_session(session_id)
+    db_session = await storage.get_session_owned(session_id, user_id)
     if not db_session:
         raise HTTPException(404, "Session not found")
 
@@ -160,7 +160,7 @@ async def _ensure_session(
     card_rec = await storage.get_card(card_id)
     if not card_rec:
         raise HTTPException(404, "Card not found")
-    text_rec = await storage.get_text(card_rec["text_id"])
+    text_rec = await storage.get_text_owned(card_rec["text_id"], user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
@@ -292,7 +292,7 @@ async def _do_chat(
         if session.get("_persisted_user_role") != user_role:
             session["_persisted_user_role"] = user_role
             try:
-                db_s = await storage.get_session(session_id)
+                db_s = await storage.get_session_owned(session_id, user_id)
                 if db_s:
                     await storage.save_session(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
@@ -409,7 +409,7 @@ async def _do_chat_stream(
         if session.get("_persisted_user_role") != user_role:
             session["_persisted_user_role"] = user_role
             try:
-                db_s = await storage.get_session(session_id)
+                db_s = await storage.get_session_owned(session_id, user_id)
                 if db_s:
                     await storage.save_session(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,

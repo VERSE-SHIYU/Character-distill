@@ -353,12 +353,14 @@ class TextManager:
             raise
         return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
-    async def distill_all(self, text_id: str, user_id: str = "") -> list[dict[str, Any]]:
+    async def distill_all(self, text_id: str, user_id: str) -> list[dict[str, Any]]:
         """Identify every character in a stored text and distill each one.
+
+        user_id 必需：读取原文走属主过滤，缺失即 TypeError 而不是静默读到他人文本。
 
         Skips characters that fail distillation rather than aborting the batch.
         """
-        text_rec = await self._storage.get_text(text_id)
+        text_rec = await self._storage.get_text_owned(text_id, user_id)
         if not text_rec:
             raise ValueError("Text not found")
         content = text_rec.get("content", "")
@@ -400,15 +402,17 @@ class TextManager:
         return results
 
     async def get_or_distill(
-        self, text_id: str, character_name: str, force: bool = False, user_id: str = "",
+        self, text_id: str, character_name: str, user_id: str, force: bool = False,
         embedding_key: str = "", embedding_region: str = "",
     ) -> dict[str, Any]:
         """Return a card + fresh session. Reuses a cached card when available. Set force=True to re-distill.
 
+        user_id 必需：读取原文走属主过滤，缺失即 TypeError 而不是静默读到他人文本。
+
         Pass embedding_key/embedding_region from the user's saved API config
         so RAGEngine can initialize DashScope embedding.
         """
-        text_rec = await self._storage.get_text(text_id)
+        text_rec = await self._storage.get_text_owned(text_id, user_id)
         if not text_rec:
             raise ValueError("Text not found")
         content = text_rec.get("content", "")
@@ -523,10 +527,13 @@ class TextManager:
         return result
 
     async def save_distilled_card(
-        self, text_id: str, card: CharacterCard, user_id: str = "",
+        self, text_id: str, card: CharacterCard, user_id: str,
         embedding_key: str = "", embedding_region: str = "",
     ) -> dict[str, Any]:
-        """Persist a freshly distilled card and create its chat session."""
+        """Persist a freshly distilled card and create its chat session.
+
+        user_id 必需：读取原文走属主过滤，缺失即 TypeError 而不是静默读到他人文本。
+        """
         # Prompt-injection field guard: neutralize flagged leaves on the card
         # *before* persist, so no injection text ever lands in stored card_json.
         verdict = await self._guard_card(card)
@@ -548,7 +555,7 @@ class TextManager:
             )
             print(f"[card-guard] flagged {len(verdict.flagged)} leaves (neutralized {verdict.neutralized}): {verdict.summary}")
 
-        text_rec = await self._storage.get_text(text_id)
+        text_rec = await self._storage.get_text_owned(text_id, user_id)
         content = text_rec.get("content", "")
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
@@ -573,7 +580,7 @@ class TextManager:
         return result
 
     async def switch_character(
-        self, text_id: str, character_name: str, user_id: str = "",
+        self, text_id: str, character_name: str, user_id: str,
     ) -> dict[str, Any]:
         """Switch to another character from the same text.
 

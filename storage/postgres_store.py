@@ -163,7 +163,7 @@ class PostgresStore(StorageBase):
                     """,
                     id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved,
                 )
-            return await self.get_text(id) or {}
+            return await self.get_text_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save text failed: {exc}")
             raise
@@ -1072,7 +1072,7 @@ class PostgresStore(StorageBase):
                     """,
                     id, card_id, user_role, avatar_data, user_id,
                 )
-            return await self.get_session(id) or {}
+            return await self.get_session_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save session failed: {exc}")
             raise
@@ -1780,7 +1780,8 @@ class PostgresStore(StorageBase):
         fmt = format.lower().strip()
         if fmt not in {"json", "txt"}:
             raise ValueError("format only supports json or txt")
-        session = await self.get_session(session_id)
+        # 无属主过滤：存储层导出原语没有 user 语境，属主校验由调用方端点负责。
+        session = await self.get_session_unscoped(session_id)
         if session is None:
             raise ValueError("session not found")
         messages = await self.get_messages(session_id)

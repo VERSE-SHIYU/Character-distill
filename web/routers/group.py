@@ -128,7 +128,7 @@ async def _rebuild_group_session(
 
         text_id = card_rec["text_id"]
         if text_id not in text_rag_cache:
-            text_rec = await storage.get_text(text_id)
+            text_rec = await storage.get_text_owned(text_id, user_id)
             if not text_rec:
                 continue
             rag = RAGEngine(rag_config)
@@ -318,7 +318,7 @@ async def create_group(
 
         text_id = card_rec["text_id"]
         if text_id not in text_rag_cache:
-            text_rec = await storage.get_text(text_id)
+            text_rec = await storage.get_text_owned(text_id, user_id)
             if not text_rec:
                 raise HTTPException(404, f"原文 {text_id} 不存在")
             rag = RAGEngine(rag_config)

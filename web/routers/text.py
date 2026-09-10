@@ -64,7 +64,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
             from deps import get_storage
             store = get_storage()
 
-            text_rec = await store.get_text(text_id)
+            text_rec = await store.get_text_owned(text_id, user_id)
             if not text_rec:
                 with _upload_task_lock:
                     _upload_tasks[task_id].update({"status": "error", "message": "文本未找到"})
@@ -182,7 +182,7 @@ async def upload_text(
         thread.start()
 
     try:
-        record = await storage.get_text(text_id)
+        record = await storage.get_text_owned(text_id, user_id)
     except Exception as exc:
         print(f"[text] Get text record failed: {exc}")
         raise HTTPException(500, "获取文本记录失败，请稍后重试") from exc

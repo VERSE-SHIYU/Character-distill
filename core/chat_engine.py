@@ -619,8 +619,9 @@ class ChatEngine:
         if self._last_user_msg_at is None and self.history and self._storage and self._session_id:
             try:
                 from deps import run_on_main_loop
+                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
                 session_data = run_on_main_loop(
-                    self._storage.get_session(self._session_id), timeout=5,
+                    self._storage.get_session_unscoped(self._session_id), timeout=5,
                 )
                 if session_data:
                     self._last_user_msg_at = _to_aware_utc(session_data.get("updated_at"))
@@ -984,8 +985,9 @@ class ChatEngine:
             try:
                 from deps import run_on_main_loop
                 import time as _t; _t0 = _t.time()
+                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
                 session_data = run_on_main_loop(
-                    self._storage.get_session(self._session_id),
+                    self._storage.get_session_unscoped(self._session_id),
                     timeout=5,
                 )
                 print(f"[perf] time_awareness took {_t.time()-_t0:.2f}s")
@@ -1322,8 +1324,9 @@ class ChatEngine:
             from deps import run_on_main_loop
 
             if session_data is None:
+                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
                 session_data = run_on_main_loop(
-                    self._storage.get_session(self._session_id),
+                    self._storage.get_session_unscoped(self._session_id),
                     timeout=5,
                 )
             if not session_data:

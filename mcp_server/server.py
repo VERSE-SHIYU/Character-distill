@@ -189,7 +189,8 @@ async def _toolkit_for(card_id: str):
     text_id = (card_rec.get("text_id") or "").strip()
     text_content = None
     if text_id and text_id not in _rag_by_text_id:
-        text_rec = await _get_storage().get_text(text_id)
+        # _unscoped：MCP stdio 通道无身份语境，按 card_id 路由，可服务任意已蒸馏卡。
+        text_rec = await _get_storage().get_text_unscoped(text_id)
         if text_rec:
             text_content = text_rec.get("content")
 

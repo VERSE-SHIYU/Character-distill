@@ -199,7 +199,7 @@ async def resume_session(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     # 1. Load session + card + text from DB
-    db_session = await storage.get_session(session_id)
+    db_session = await storage.get_session_owned(session_id, user_id)
     if not db_session:
         raise HTTPException(404, "Session not found")
 
@@ -208,7 +208,7 @@ async def resume_session(
     if not card_rec:
         raise HTTPException(404, "Card not found")
 
-    text_rec = await storage.get_text(card_rec["text_id"])
+    text_rec = await storage.get_text_owned(card_rec["text_id"], user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
 

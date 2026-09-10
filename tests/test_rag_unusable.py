@@ -304,7 +304,7 @@ def test_caller_group_rebuild_degrades_no_index():
             {"id": "c1", "user_id": "u1", "text_id": "t_unusable_a", "card_json": card_json},
             {"id": "c2", "user_id": "u1", "text_id": "t_unusable_b", "card_json": card_json},
         ])
-        storage.get_text = AsyncMock(side_effect=[{"content": "正文A"}, {"content": "正文B"}])
+        storage.get_text_owned = AsyncMock(side_effect=[{"content": "正文A"}, {"content": "正文B"}])
         storage.get_group_messages = AsyncMock(return_value=[])
 
         buf = io.StringIO()
