@@ -228,6 +228,12 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus, onEvent
             const payload = JSON.parse(line.slice(6))
             if (payload.error) {
               finished = true
+              // payload.code 目前只有 'incomplete_response'（LLM 未完成终态）。
+              // 配合 payload.finish_reason 可细分成三类处置（UI 分支尚未做，属产品决策；
+              // 这里只透传，做 UI 的人别把它丢了）：
+              //   length                       → 内容过长，建议缩短输入后重试
+              //   content_filter               → 内容被安全策略拦截，提示改输入（重试无用）
+              //   insufficient_system_resource → 上游资源不足，提示稍后重试
               onError(new AppError(payload.error, 0, payload.code || ''))
               return
             }
