@@ -400,6 +400,20 @@ class TestDistillTaskPersistence:
         assert "重启" in got["message"]
         assert await store.count_running_distills(user_id) == 0
 
+    async def test_find_interrupted_distill(self, store, text_id):
+        # 续跑发现：只认 interrupted；character 精确匹配（同文本两角色不互借）；user 隔离。
+        await store.save_distill_task("dtI1", "u1", text_id, character="甲", status="interrupted")
+        await store.save_distill_task("dtI2", "u1", text_id, character="乙", status="interrupted")
+        await store.save_distill_task("dtI3", "u1", text_id, character="甲", status="done")
+        await store.save_distill_task("dtI4", "u2", text_id, character="甲", status="interrupted")
+
+        got = await store.find_interrupted_distill("u1", text_id, "甲")
+        assert got is not None and got["task_id"] == "dtI1"
+        assert got["chunk_size"] is None and got["text_fingerprint"] == ""
+        assert await store.find_interrupted_distill("u1", text_id, "丙") is None
+        assert (await store.find_interrupted_distill("u2", text_id, "甲"))["task_id"] == "dtI4"
+        assert await store.find_interrupted_distill("u1", "txt_none", "甲") is None
+
     async def test_cancel_by_text_id(self, store, text_id, user_id):
         x, y, z = (f"dt_{uuid.uuid4().hex}" for _ in range(3))
         await store.save_distill_task(x, user_id, text_id, status="running")

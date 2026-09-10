@@ -160,6 +160,37 @@ def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
     return all(k in data for k in required_keys)
 
 
+def text_fingerprint(text: str) -> str:
+    """sha256(utf-8) hex — 跨进程稳定的内容指纹。
+
+    不要用内置 hash()：str 哈希受 PYTHONHASHSEED 影响，跨进程不稳定。任务级
+    (text_fingerprint) 与分片级 (chunk_fingerprint) 共用此函数，避免两份漂移。
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
+    """续跑分片三重门：三道全过才返回缓存 result，否则 None（需重跑）。
+
+    1. candidates 里有该 index 且形状正确（result/fingerprint 两键齐全，_shape_ok）
+    2. result 非空 —— 上一轮失败的片落的是空串，空串不是可用结果
+    3. chunk_fingerprint 与当前切分重算的 sha256 一致（该片原文未变）
+
+    第 3 道用原文哈希而非 index：别名漂移会让 relevant 切片变化、index 语义漂移，
+    哈希不一致即拒绝复用——宁重跑，不拼错位结果。
+    """
+    if not candidates:
+        return None
+    cand = candidates.get(index)
+    if not _shape_ok(cand, ("result", "fingerprint")):
+        return None
+    if not (isinstance(cand["result"], str) and cand["result"].strip()):
+        return None
+    if cand["fingerprint"] != text_fingerprint(chunk):
+        return None
+    return cand["result"]
+
+
 class Distiller:
     """基于 LLM 的角色识别与角色卡蒸馏。"""
 
@@ -212,6 +243,14 @@ class Distiller:
             usage=usage,
             source="Distiller",
         )
+
+    def effective_chunk_size(self, text_type: str = "story") -> int:
+        """本次 text_type 下实际使用的分片字符数（任务级 checkpoint 的一部分）。
+
+        classic 强制放大到 ≥6000，与 map 路径分档一致。续跑的任务级门用它比对：
+        切分参数变了则整批重跑（index 语义已变），不进分片级三重门。
+        """
+        return max(self._chunk_size, 6000) if text_type == "classic" else self._chunk_size
 
     # ── static prompt helpers ──────────────────────────────────────────
 
@@ -1130,11 +1169,10 @@ class Distiller:
             return card
         # ── End long-context routing ──────────────────────────────────────
 
-        # 参数分档：classic类型用更大的chunk和profile
-        chunk_size = self._chunk_size
+        # 参数分档：classic类型用更大的profile
+        chunk_size = self.effective_chunk_size(text_type)
         max_profile_len = self._max_profile_len
         if is_classic:
-            chunk_size = max(chunk_size, 6000)
             max_profile_len = max(max_profile_len, 12000)
 
         # Chat: Layer 0+1 already done at upload time; only Layer 2 here
@@ -1313,6 +1351,8 @@ class Distiller:
         character_name: str,
         aliases: list[str] | None = None,
         text_type: str = "story",
+        on_chunk_done: "callable | None" = None,
+        resume_candidates: dict[int, dict] | None = None,
     ):
         """MapReduce 流式蒸馏 — 实时推送进度 + 流式 JSON 生成。
 
@@ -1321,6 +1361,14 @@ class Distiller:
         - str:  Format 阶段的 token 片段（SSE 路由累积为 card JSON）
 
         text_type: 'story' (默认) 或 'chat' (聊天记录预处理+专用提示词)
+
+        on_chunk_done(index, result, fingerprint): 每片 Map 完成即同步回调，供调用方
+        逐片落库（distiller 自身不做 IO）。命中缓存的片不回调（已在库里）。指纹由
+        distiller 算——只有它知道该片的原文。
+
+        resume_candidates: {index: {"result", "fingerprint"}} 上一轮已落库的候选片。
+        命中三重门（见 _resume_hit）则直接复用、不发 LLM 调用；默认 None 时整条 Map
+        路径与不续跑时完全一致。长上下文单次路径无分片，候选不生效（整跑）。
         """
         is_chat = text_type == "chat"
         is_classic = text_type == "classic"
@@ -1332,14 +1380,13 @@ class Distiller:
             if is_chat:
                 preprocessor = ChatPreprocessor()
                 text = preprocessor._layer2_character_context(text, character_name)
+            # 长上下文单次路径无分片 checkpoint，续跑候选无从对应：直接整跑。
             yield from self._distill_longcontext_stream(text, character_name)
             return
         # ── End long-context routing ──────────────────────────────────────
 
         # 参数分档：classic类型用更大的chunk和profile
-        chunk_size = self._chunk_size
-        if is_classic:
-            chunk_size = max(chunk_size, 6000)
+        chunk_size = self.effective_chunk_size(text_type)
 
         # Chat preprocessing
         # Chat: Layer 0+1 already done at upload time; only Layer 2 here
@@ -1378,22 +1425,28 @@ class Distiller:
                 failures: list[tuple[int, Exception]] = []
 
                 async def _one(i: int, chunk: str) -> tuple[int, str]:
-                    async with sem:
-                        system = map_system(character_name)
-                        user = map_user(chunk, character_name)
-                        try:
-                            result, _ = await self._llm.async_chat(
-                                system, [{"role": "user", "content": user}], client=run_client
-                            )
-                        except Exception as exc:
-                            print(f"[distiller] Map chunk {i} failed: {exc}")
-                            async with lock:
-                                failures.append((i, exc))
-                            result = ""
+                    cached = _resume_hit(i, chunk, resume_candidates)
+                    if cached is not None:
+                        # 命中：零 LLM 调用，缓存结果照常并入 map_results 供 reduce 消费
+                        result, from_cache = cached, True
+                    else:
+                        async with sem:
+                            system = map_system(character_name)
+                            user = map_user(chunk, character_name)
+                            try:
+                                result, _ = await self._llm.async_chat(
+                                    system, [{"role": "user", "content": user}], client=run_client
+                                )
+                            except Exception as exc:
+                                print(f"[distiller] Map chunk {i} failed: {exc}")
+                                async with lock:
+                                    failures.append((i, exc))
+                                result = ""
+                        from_cache = False
                     async with lock:
                         done_count[0] += 1
                         current = done_count[0]
-                    q.put(("chunk", current, i, result))
+                    q.put(("chunk", current, i, result, from_cache))
                     return (i, result)
 
                 tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
@@ -1423,7 +1476,12 @@ class Distiller:
                 yield {"error": f"Map 阶段失败：{item[1]}"}
                 return
             if kind == "chunk":
-                map_results.append((item[2], item[3]))
+                _k, _current, idx, result, from_cache = item
+                map_results.append((idx, result))
+                # 每片完成即回调落库（不攒批：攒批时 OOM 会丢掉一整批已付费的结果）。
+                # 缓存命中的片已在库里，不重复写。指纹在此算——只有这里能拿到 relevant[idx] 的原文。
+                if not from_cache and on_chunk_done:
+                    on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
                 yield {"status": "analyzing", "current": item[1], "total": total}
 
         t.join(timeout=5)
@@ -1455,6 +1513,9 @@ class Distiller:
             return
 
         # ── Phase 2: Reduce — streaming with auto-batching ──
+        # 续跑只缓存 Map 片：Reduce 每次都整跑。这是权衡不是遗漏——分批续跑最多省最后
+        # 一两次调用，却要定义「部分 reduce 结果如何合并」的一致性语义，得不偿失。
+        # 缓存命中的 Map 片已并入 map_results，reduce 天然看到全集。
         if len(raw_analyses) <= self.SAFE_SINGLE_REDUCE:
             yield {"status": "merging", "current": 0, "total": 1}
             profile_draft = ""

@@ -4019,6 +4019,25 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get distill task failed: {exc}")
             raise
 
+    async def find_interrupted_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
+        """Return the newest interrupted distill task for (user, text, character), or None."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
+                              card_id, awakening, chunk_size, overlap, text_fingerprint,
+                              created_at, updated_at
+                       FROM distill_tasks
+                       WHERE user_id = ? AND text_id = ? AND character = ? AND status = 'interrupted'
+                       ORDER BY updated_at DESC LIMIT 1""",
+                    (user_id, text_id, character),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Find interrupted distill failed: {exc}")
+            raise
+
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
         """Patch only the non-None fields of a distillation task row."""
         try:

@@ -387,6 +387,16 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def find_interrupted_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
+        """Return the newest interrupted distill task for (user, text, character), or None.
+
+        Resume discovery: boot reconcile leaves a dead process's running rows as
+        'interrupted'. /start looks one up to reuse its task_id + chunk checkpoint
+        instead of minting a fresh task. Exact character match — a shared text must
+        not let two characters reuse each other's cached chunks.
+        """
+
+    @abstractmethod
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
         """Patch only the non-None fields of a distillation task row."""
 

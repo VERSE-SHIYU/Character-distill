@@ -375,7 +375,11 @@ class TestCStartRefusesOnDBFailure:
         failing.get_user_api_config = _no_api_cfg
         client = _build_client(failing, user_id)
 
-        monkeypatch.setattr("deps.get_distiller", lambda llm=None: object())
+        class _StubDistiller:
+            def effective_chunk_size(self, text_type="story"):
+                return 3000
+
+        monkeypatch.setattr("deps.get_distiller", lambda llm=None: _StubDistiller())
         started = []
         monkeypatch.setattr("core.telemetry.ctx_thread",
                             lambda *a, **k: started.append(a) or threading.Thread())

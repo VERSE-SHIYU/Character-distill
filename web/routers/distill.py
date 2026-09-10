@@ -17,7 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from deps import get_indexing_service, get_sessions, get_storage, run_on_main_loop
-from core.distiller import Distiller
+from core.distiller import Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
@@ -251,7 +251,7 @@ def _generate_awakening(llm, card: CharacterCard) -> str:
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
     content: str, text_type: str, api_config: dict | None = None,
-    client_ip: str | None = None,
+    client_ip: str | None = None, resume_candidates: dict[int, dict] | None = None,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -259,6 +259,9 @@ def _run_distill_task(
     ``run_on_main_loop()``, which uses ``run_coroutine_threadsafe`` so the
     asyncpg pool is only ever touched from the loop that created it.
     LLM calls (slow, network-heavy) stay on this background thread.
+
+    ``resume_candidates`` = {chunk_index: {"result", "fingerprint"}} from a prior
+    interrupted run (see /start); distiller reuses hits and reruns the rest.
     """
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
@@ -326,7 +329,23 @@ def _run_distill_task(
         full_format = ""
         cur_phase = None
         EXPECT_CHARS = 3500
-        stream = distiller.distill_incremental_stream(content, name, aliases, text_type)
+
+        def _persist_chunk(index: int, result: str, fingerprint: str) -> None:
+            """每片 Map 完成即落库（ON CONFLICT DO NOTHING，重写同 index 是 no-op）。
+
+            写失败不致命（该片退化为下次重跑），但不静默吞——续跑省调用靠的就是这些片。
+            """
+            async def _save() -> None:
+                await get_storage().save_distill_chunk(task_id, index, result, fingerprint)
+            try:
+                run_on_main_loop(_save(), timeout=10)
+            except Exception as exc:
+                print(f"[distill] Persist chunk {index} of {task_id} failed (non-fatal): {exc}")
+
+        stream = distiller.distill_incremental_stream(
+            content, name, aliases, text_type,
+            on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
+        )
         for piece in stream:
             with _task_lock:
                 aborted = _tasks.get(task_id, {}).get("status") == "error"
@@ -682,18 +701,56 @@ async def distill_start(
 
     text_type = text_rec.get("text_type", "story")
     content = _get_distill_content(text_rec)
-    task_id = _uuid.uuid4().hex[:12]
+    text_fp = text_fingerprint(content)
+    chunk_size = distiller.effective_chunk_size(text_type)
+
+    # ── 续跑发现：复用上个进程遗留的 interrupted 任务 ────────────────────
+    # boot reconcile 把孤儿 running 置 interrupted（web/server.py）。同一 (user,
+    # text, character) 有 interrupted 行就复用它：前端继续轮询同一 task_id、不产生
+    # 重复行，分片候选按该行 checkpoint 取。force=True 是「重新蒸馏」，不复用。
+    # 精确匹配 character：同一文本下两个角色绝不能互借缓存片。
+    resume_candidates: dict[int, dict] | None = None
+    existing = None
+    if not req.force:
+        try:
+            existing = await storage.find_interrupted_distill(user_id, req.text_id, req.character_name)
+        except Exception as exc:
+            # 发现失败当新任务：宁可整跑，不因发现环节拒启动
+            print(f"[distill] Resume discovery failed (non-fatal, start fresh): {exc}")
+
+    if existing is not None:
+        task_id = existing["task_id"]
+        # 任务级门（先于分片三重门）：切分参数 / 全文指纹任一不符 → 整批作废。
+        # 两种故障分开记日志：用户看到的解释不同（换了解析参数 vs 换了原文）。
+        if existing.get("chunk_size") != chunk_size:
+            print(f"[distill] Resume {task_id} rejected: 切分参数变更 "
+                  f"chunk_size {existing.get('chunk_size')} → {chunk_size}，整批重跑")
+        elif existing.get("text_fingerprint") != text_fp:
+            print(f"[distill] Resume {task_id} rejected: 原文变更（text_fingerprint 不符），整批重跑")
+        else:
+            rows = await storage.get_distill_chunks(task_id)
+            resume_candidates = {
+                r["chunk_index"]: {"result": r["result"], "fingerprint": r["chunk_fingerprint"]}
+                for r in rows
+            }
+            print(f"[distill] Resume {task_id}: {len(resume_candidates)} 片候选，任务级门通过")
+    else:
+        task_id = _uuid.uuid4().hex[:12]
 
     # DB 先落一行（queued 粗粒度记 running），再放内存写缓存、再启线程。三者都发生在
     # loop 线程：DB insert 在 thread.start() 前完成，bg 线程的 _set_task 只做 upsert。
     # 落库失败必须拒绝启动：DB 是查询真相源，无行 = 不可观测的野线程 —— 查询会 404
     # 报"任务丢失"，后台却仍在烧 LLM 额度、占 semaphore。绝不能"能跑但不给查"。
+    # chunk_size/text_fingerprint 每次起跑都盖章：复用行重跑时也要刷新成当前 checkpoint
+    # （否则陈旧值会让下次续跑反复误判）。overlap 无对应切分概念（_split_chunks 无重叠），
+    # 保持 NULL。
     try:
         await storage.save_distill_task(
             task_id, user_id, req.text_id, req.character_name,
             status="running", progress_pct=0,
             message=f"排队中(最多同时{DISTILL_MAX_CONCURRENT}个蒸馏)",
             card_id="", awakening="",
+            chunk_size=chunk_size, text_fingerprint=text_fp,
         )
     except Exception as exc:
         print(f"[distill] Create distill task row failed; refusing to start: {exc}")
@@ -707,7 +764,8 @@ async def distill_start(
 
     thread = T.ctx_thread(  # OTel context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
-        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type, api_config, _client_ip),
+        args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
+              api_config, _client_ip, resume_candidates),
         daemon=True,
     )
     thread.start()
