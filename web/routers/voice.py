@@ -195,7 +195,9 @@ async def preview_audio(
     if voice_id not in VOICES:
         library = _read_voice_library()
         entry = next((v for v in library if v["voice_id"] == voice_id), None)
-        if entry:
+        # 自定义音色按设计私有（/list 只列 user_customs、删除/上传都查属主），但这里此前
+        # 直接把文件返回。非属主与不存在同判 404：403 会让人靠状态码枚举出 voice_id 存在。
+        if entry and entry.get("user_id") == user["id"]:
             ext = entry.get("ext", ".wav")
             path = VOICE_LIBRARY_DIR / f"{voice_id}{ext}"
             if path.exists():
@@ -237,6 +239,13 @@ async def voice_synthesize(
 
     # Try GPT-SoVITS if card has reference audio
     if card_id:
+        # 与 preview_ref_audio / get_ref_audio / delete_ref_audio 同口径：参考音频只归卡主。
+        # 此前缺这道校验，任何登录用户传别人的 card_id 即可用其克隆音色合成。非属主与卡不
+        # 存在同判 404（不用 403，避免靠状态码枚举 card_id）。校验须在下面吞异常的 try 之外，
+        # 否则 HTTPException 会被 except 吞掉、静默退回 Edge TTS。
+        card = await storage.get_card(card_id)
+        if not card or card.get("user_id") != user["id"]:
+            raise HTTPException(404, "角色卡不存在")
         try:
             ref_json_str = await storage.get_session_voice_ref(card_id)
             if ref_json_str:
