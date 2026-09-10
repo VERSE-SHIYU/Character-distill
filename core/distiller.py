@@ -178,6 +178,11 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
 
     第 3 道用原文哈希而非 index：别名漂移会让 relevant 切片变化、index 语义漂移，
     哈希不一致即拒绝复用——宁重跑，不拼错位结果。
+
+    职责边界（别把本门当结构校验）：第 2 道只挡本路径自己产生的空串，不承诺结构校验。
+    非空但内容非法（截断文本、半截 JSON）不会被拦——实测证据：A 阶段 v3，52 字节半截
+    内容被复用、未重发。上游截断由 adapters/llm_adapter.py 的 finish_reason 裁决层负责
+    （第一道），该层遇未完成终态即抛异常使本片落空串，再由本门挡住。
     """
     if not candidates:
         return None
@@ -1441,6 +1446,14 @@ class Distiller:
                                 print(f"[distiller] Map chunk {i} failed: {exc}")
                                 async with lock:
                                     failures.append((i, exc))
+                                # 已知残留（非进展循环）：某片被上游判定不完整 → 落空串
+                                # → 续跑时 _resume_hit 第 2 道挡住 → 重发 → 同参数下可能
+                                # 再次不完整 → 该片永不成功。兜底 >50% 分片失败即整批 bail
+                                # （见下方 :1507 的 if failed / total_chunks > 0.5）；50% 以下会带着
+                                # 缺片继续产出。缓解手段是调 llm.max_tokens（LLM_MAX_TOKENS
+                                # 环境变量）或减小 chunk_size，不在适配器层解决。
+                                # 实测佐证：同一片两次调用一次 content=0 一次 content=2060，
+                                # 是随机饿死而非确定性截断，故重发有概率成功、不是死循环。
                                 result = ""
                         from_cache = False
                     async with lock:

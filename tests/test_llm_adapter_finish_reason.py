@@ -53,16 +53,20 @@ class _StreamChunk:
 class _Completions:
     def __init__(self, payload):
         self._payload = payload
+        self.calls = 0  # 计数 create 次数：证明确定性失败（截断）不进重试预算
 
     def create(self, **kwargs):
+        self.calls += 1
         return iter(self._payload) if kwargs.get("stream") else self._payload
 
 
 class _AsyncCompletions:
     def __init__(self, payload):
         self._payload = payload
+        self.calls = 0
 
     async def create(self, **kwargs):
+        self.calls += 1
         return self._payload
 
 
@@ -145,6 +149,28 @@ def test_async_chat_length_raises():
     llm._async_client = _Client(_AsyncCompletions(_Resp(_Choice(finish_reason="length"))))
     with pytest.raises(IncompleteResponseError):
         asyncio.run(llm.async_chat("sys", _MSGS))
+
+
+# ── 截断不进重试预算：两处前置 except 的直接证据（chat / async_chat 各自独立）──
+
+def test_length_does_not_consume_retry_budget_sync():
+    """chat 的 IncompleteResponseError 前置 except 若落进泛 handler，会退避重发 → calls>1。"""
+    llm = _llm()
+    comp = _Completions(_Resp(_Choice(finish_reason="length")))
+    llm._client = _Client(comp)
+    with pytest.raises(IncompleteResponseError):
+        llm.chat("sys", _MSGS)
+    assert comp.calls == 1
+
+
+def test_length_does_not_consume_retry_budget_async():
+    """async_chat 的前置 except 独立于 chat —— 一条绿不代表另一条绿。"""
+    llm = _llm()
+    comp = _AsyncCompletions(_Resp(_Choice(finish_reason="length")))
+    llm._async_client = _Client(comp)
+    with pytest.raises(IncompleteResponseError):
+        asyncio.run(llm.async_chat("sys", _MSGS))
+    assert comp.calls == 1
 
 
 def test_chat_with_tools_length_raises():
