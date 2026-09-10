@@ -1452,8 +1452,9 @@ class Distiller:
                                 # 失败片不落 checkpoint：空串配一个合法指纹写进去，续跑时
                                 # 只有 _resume_hit 的门 2（非空）拦得住它，而 ON CONFLICT
                                 # DO NOTHING 会让那行永久占位——重跑成功也写不进去。
-                                # 空串仍并入 map_results：下游失败率判断与 raw_analyses
-                                # 过滤按「非空且 != 无」丢弃它，契约不变。
+                                # 空串仍并入 map_results（统一 append，不特判），但这不是契约：
+                                # raw_analyses 按「非空且 != 无」过滤它，失败率判断用的是
+                                # map_failures —— 收或收不到都无观测差异，别据此写断言。
                                 # 已知残留（非进展循环）：该片下轮无候选 → 重发 → 同参数下
                                 # 可能再次失败 → 该片永不成功。兜底是本函数末尾的
                                 # `failed / total_chunks > 0.5` 整批 bail 分支；50% 以下会带着

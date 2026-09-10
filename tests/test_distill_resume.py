@@ -204,8 +204,10 @@ class TestFailedChunkNotCheckpointed:
     （指纹）都过，只有门 2（非空）拦得住 —— 门 2 是唯一屏障。且 save_distill_chunk 是
     ON CONFLICT DO NOTHING，那行空串永久占位，重跑成功也写不进去，全程静默。
 
-    契约：map_results 照旧收该片的空串（失败率判断与 raw_analyses 过滤依赖它），
-    只是 on_chunk_done 不被调用。
+    失败片仍产出 (idx, "") 汇入 map_results，但**这不是契约**：空串被 raw_analyses
+    过滤、条目缺失则根本没有，下游完全等价；失败率判断用的是 map_failures，与本条
+    无关。故不加白盒断言去钉「map_results 收了空串」——那会把无下游后果的内部状态
+    冻成契约。本类只钉可观测后果：reduce 见 2 段（见下）。
     """
 
     TEXT3 = "\n\n".join(
@@ -239,15 +241,14 @@ class TestFailedChunkNotCheckpointed:
         assert 2 not in idxs
         assert all(r.strip() for _i, r, _f in done), "回调结果不该是空串"
 
-        # 2) 失败片以空串并入 map_results → 被 raw_analyses 的
-        #    `r[1].strip() and != "无"` 过滤 → reduce 只见 2 段。
-        #    不测 map_results 本身（公开 generator 内不可达），测其下游可观测后果：
-        #    reduce 的 user prompt 里 `[来源片段 N]` 的条数。失败片若以**非空假结果**
-        #    落库（如占位串「分析失败」），这里会数到 3 段 → 红。
+        # 2) reduce 的 user prompt 里 `[来源片段 N]` 的条数 == 2。测的是下游可观测后果，
+        #    不测 map_results 本身——它公开不可达，且「收了空串」与「没这条」在 reduce 层
+        #    等价，钉不住。失败片若以**非空假结果**落库（占位串「分析失败」），这里数到
+        #    3 段 → 红：这才是本断言真正拦的类（占位串污染 reduce）。
         reduce_inputs = [s for s in llm.stream_inputs if "---片段分隔---" in s]
         assert len(reduce_inputs) == 1, f"应恰有一次 reduce 调用，实得 {len(reduce_inputs)}"
         assert reduce_inputs[0].count("[来源片段 ") == 2, \
-            "失败片应作空串进 map_results 后被 raw_analyses 过滤 → reduce 只见 2 段"
+            "reduce 只该见到 2 段分析（失败片不产出可用分析）"
 
         # 3) failures 仍记录该片：失败率判断不受影响（1/3 在容忍范围内 → 继续）
         out = capsys.readouterr().out
