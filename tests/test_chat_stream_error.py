@@ -7,7 +7,9 @@
 """
 from __future__ import annotations
 
-from adapters.llm_adapter import IncompleteResponseError
+import pathlib
+
+from adapters.llm_adapter import IncompleteResponseError, llm_error_payload
 from routers.chat import _stream_error_payload
 
 
@@ -28,3 +30,26 @@ def test_other_errors_keep_original_shape():
     p = _stream_error_payload(RuntimeError("LLM API failed after 3 attempts"))
     assert p == {"error": "LLM API failed after 3 attempts"}
     assert "code" not in p
+
+
+# ── 错误边界：路由层认 code 字符串，不 import 异常类 ──────────────────
+
+def test_boundary_maps_known_failure_and_rejects_others():
+    p = llm_error_payload(IncompleteResponseError("length", "chat_stream"))
+    assert p["code"] == "incomplete_response"
+    assert p["finish_reason"] == "length"
+    assert p["error"] == "回复被截断，请重试"
+    assert llm_error_payload(RuntimeError("boom")) is None
+
+
+def test_no_exception_class_leaks_into_core_web_storage():
+    """边界锁：core/web/storage 只认 code 字符串。将来加第二个异常类时，
+    若在路由层 isinstance/import，这条会红——它拦的就是那类耦合的重现。"""
+    root = pathlib.Path(__file__).resolve().parent.parent
+    offenders = [
+        str(p.relative_to(root))
+        for sub in ("core", "web", "storage")
+        for p in (root / sub).rglob("*.py")
+        if "IncompleteResponseError" in p.read_text(encoding="utf-8")
+    ]
+    assert offenders == []

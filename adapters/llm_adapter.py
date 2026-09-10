@@ -308,6 +308,18 @@ class IncompleteResponseError(RuntimeError):
         return _INCOMPLETE_USER_MESSAGES.get(self.finish_reason, "回复未完成，请重试")
 
 
+def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
+    """错误边界：把 LLM 侧的已知失败翻成上线格式，其余返回 None。
+
+    调用方（路由层）据此拿 code / finish_reason / 上屏文案，**无需 import 异常类**——
+    否则每加一个异常类，core/web 就多一处 isinstance 耦合。本层是这条边界的唯一出口。
+    """
+    if isinstance(exc, IncompleteResponseError):
+        return {"code": "incomplete_response", "error": exc.user_message,
+                "finish_reason": exc.finish_reason}
+    return None
+
+
 def _check_finish_reason(finish_reason: str | None, *, where: str) -> None:
     """已知未完成终态 → 抛；其余放行。陌生值与缺失点名 WARN（不同供应商语义不一，不阻断）。"""
     if finish_reason in _INCOMPLETE_FINISH_REASONS:
