@@ -136,11 +136,16 @@ config.yaml 现值（现读，非转述）：
 - 回归锁：`tests/test_llm_adapter_finish_reason.py`（含变异验证）、`tests/test_chat_stream_error.py`
 - 行号读取于 2026-09-10
 
-**3. 第二道门是「非空」门，不是「结构合法」门**
-- `core/distiller.py:187`：`if not (isinstance(cand["result"], str) and cand["result"].strip()): return None`
-- 只判非空，挡不住非空的截断文本；docstring 自述即如此（`distiller.py:176`：「result 非空——上一轮失败的片落的是空串」）
-- 三门位置：门 1 形状 `:185`、门 2 非空 `:187`、门 3 指纹 `:189`
-- **是命名问题，不是 bug**
+**3. 第二道门是「非空」门，不是「结构合法」门** —— 状态：纵深防御（主屏障已上移）
+- `core/distiller.py:194`：`if not (isinstance(cand["result"], str) and cand["result"].strip()): return None`
+- 只判非空，挡不住非空的截断文本；docstring 自述即如此（`distiller.py:182`：「第 2 道是**纵深防御**，不是契约……不承诺结构校验」）
+- 三门位置：门 1 形状 `:192`、门 2 非空 `:194`、门 3 指纹 `:196`
+- **主屏障在上游，不在本门**：`distill_incremental_stream` 的失败 Map 片不落 checkpoint（抛异常即跳过 `on_chunk_done`），正常路径下这里不该出现空串候选。本门只挡「任何路径往 checkpoint 写入空结果」这一类错误
+- Map 返回自由文本角色证据、不产 JSON —— 「半截 JSON」不是本门的场景（曾如此误写）
+- **边界约束：`core/` 内任何位置（含注释与 docstring）不得出现 adapter 层异常类名**。描述边界用语义表达（「该层遇未完成终态即抛异常」），类名只留在 adapter 层
+- 该约束由 `tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage` 强制（**文本级 grep——注释与 docstring 也拦**）
+- 门的**范围**由活断言钉住：`tests/test_distill_resume.py::TestResumeHitDoors::test_truncated_nonempty_result_passes_second_gate`（非空截断的自由文本必须穿过、不得被拦）——给本门加结构校验会让它变红
+- 行号读取于 2026-09-10
 
 **4. 改原文后旧分片永不刷新**
 - 根因：两个 store 的 `save_distill_chunk` 都是 `INSERT ... ON CONFLICT (task_id, chunk_index) DO NOTHING`（`storage/sqlite_store.py:4088-4092`、`storage/postgres_store.py:3001-3005`）
