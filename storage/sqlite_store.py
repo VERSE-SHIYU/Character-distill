@@ -3964,25 +3964,38 @@ class SQLiteStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+
+        chunk_size/overlap/text_fingerprint 仅显式传入时参与 INSERT/SET：通用进度
+        upsert（_persist_snap 等不传）不会把它们冲回 NULL，保住已盖章的切分指纹。
+        """
         try:
+            base_cols = ["task_id", "user_id", "text_id", "character", "status",
+                         "progress_pct", "message", "card_id", "awakening"]
+            base_vals = [task_id, user_id, text_id, character, status,
+                         progress_pct, message, card_id, awakening]
+            extras: list[tuple[str, Any]] = []
+            if chunk_size is not None:
+                extras.append(("chunk_size", chunk_size))
+            if overlap is not None:
+                extras.append(("overlap", overlap))
+            if text_fingerprint:
+                extras.append(("text_fingerprint", text_fingerprint))
+            set_list = [f"{c} = excluded.{c}" for c in base_cols[1:]]  # task_id 是冲突键不更新
+            for col, val in extras:
+                base_cols.append(col)
+                base_vals.append(val)
+                set_list.append(f"{col} = excluded.{col}")
+            placeholders = ", ".join("?" * len(base_cols))
+            sql = (
+                f"INSERT INTO distill_tasks ({', '.join(base_cols)}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT(task_id) DO UPDATE SET "
+                f"{', '.join(set_list)}, updated_at = CURRENT_TIMESTAMP"
+            )
             async with await self._connect() as conn:
-                await conn.execute(
-                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(task_id) DO UPDATE SET
-                           user_id = excluded.user_id,
-                           text_id = excluded.text_id,
-                           character = excluded.character,
-                           status = excluded.status,
-                           progress_pct = excluded.progress_pct,
-                           message = excluded.message,
-                           card_id = excluded.card_id,
-                           awakening = excluded.awakening,
-                           updated_at = CURRENT_TIMESTAMP""",
-                    (task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening),
-                )
+                await conn.execute(sql, base_vals)
                 await conn.commit()
             return await self.get_distill_task(task_id) or {}
         except Exception as exc:
@@ -3995,7 +4008,8 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
-                              card_id, awakening, created_at, updated_at
+                              card_id, awakening, chunk_size, overlap, text_fingerprint,
+                              created_at, updated_at
                        FROM distill_tasks WHERE task_id = ?""",
                     (task_id,),
                 )
@@ -4027,13 +4041,13 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update distill task failed: {exc}")
             raise
 
-    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
         """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT OR IGNORE INTO distill_chunks (task_id, chunk_index, result) VALUES (?, ?, ?)",
-                    (task_id, chunk_index, result),
+                    "INSERT OR IGNORE INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint) VALUES (?, ?, ?, ?)",
+                    (task_id, chunk_index, result, fingerprint),
                 )
                 await conn.commit()
         except Exception as exc:
@@ -4045,7 +4059,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT task_id, chunk_index, result, created_at
+                    """SELECT task_id, chunk_index, result, chunk_fingerprint, created_at
                        FROM distill_chunks WHERE task_id = ?
                        ORDER BY chunk_index ASC""",
                     (task_id,),

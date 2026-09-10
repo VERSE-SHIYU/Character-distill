@@ -322,6 +322,35 @@ class TestDistillTaskPersistence:
         await store.save_distill_task(task_id, user_id, text_id, status="done", progress_pct=100)
         assert await store.count_running_distills(user_id) == 0
 
+    async def test_task_checkpoint_params_roundtrip_and_preserved(self, store, text_id, user_id):
+        # 3b：任务级切分指纹（chunk_size/overlap/text_fingerprint）落库可读；
+        # KEY：通用进度 upsert 不传这三参时不得把它们冲回 NULL（保住已盖章 checkpoint）。
+        task_id = f"dt_{uuid.uuid4().hex}"
+        await store.save_distill_task(task_id, user_id, text_id, character="A",
+                                      chunk_size=8000, overlap=500, text_fingerprint="fp_full")
+        got = await store.get_distill_task(task_id)
+        assert got["chunk_size"] == 8000 and got["overlap"] == 500
+        assert got["text_fingerprint"] == "fp_full"
+
+        await store.save_distill_task(task_id, user_id, text_id, character="A",
+                                      status="running", progress_pct=50)
+        got2 = await store.get_distill_task(task_id)
+        assert got2["chunk_size"] == 8000 and got2["overlap"] == 500
+        assert got2["text_fingerprint"] == "fp_full"
+
+    async def test_chunk_fingerprint_roundtrip_and_first_write_wins(self, store, text_id, user_id):
+        # 3b：chunk_fingerprint 随片落库可读；同 index 重写（含不同指纹）仍 first-wins。
+        task_id = f"dt_{uuid.uuid4().hex}"
+        await store.save_distill_task(task_id, user_id, text_id, character="A")
+        await store.save_distill_chunk(task_id, 2, json.dumps({"r": "二"}, ensure_ascii=False),
+                                       fingerprint="fp2")
+        await store.save_distill_chunk(task_id, 2, json.dumps({"r": "重写"}, ensure_ascii=False),
+                                       fingerprint="fp2_other")
+        chunks = await store.get_distill_chunks(task_id)
+        assert len(chunks) == 1
+        assert chunks[0]["chunk_fingerprint"] == "fp2"
+        assert chunks[0]["result"] == json.dumps({"r": "二"}, ensure_ascii=False)
+
     async def test_chunk_save_idempotent(self, store, text_id, user_id):
         task_id = f"dt_{uuid.uuid4().hex}"
         await store.save_distill_task(task_id, user_id, text_id, character="A")

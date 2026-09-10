@@ -367,31 +367,44 @@ class StorageBase(ABC):
     # ── Distill task persistence ────────────────
 
     @abstractmethod
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "") -> dict | None:
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
         """Insert a distillation task row (upsert on task_id). Returns the stored row.
 
         card_id/awakening complete the done payload so a DB-truth read of a
         finished task still carries what the frontend needs (card refresh toast).
+
+        chunk_size/overlap/text_fingerprint are the task-level chunking checkpoint
+        (used by resume's task gate). Only an explicitly non-default value is
+        written — a generic progress upsert that omits them preserves whatever is
+        already stored rather than nulling it.
         """
 
     @abstractmethod
     async def get_distill_task(self, task_id: str) -> dict | None:
-        """Return one distillation task row by task_id, or None if absent."""
+        """Return one distillation task row by task_id, or None if absent.
+
+        Row includes chunk_size/overlap/text_fingerprint for the resume task gate.
+        """
 
     @abstractmethod
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None) -> None:
         """Patch only the non-None fields of a distillation task row."""
 
     @abstractmethod
-    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
-        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
+        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op.
+
+        fingerprint is sha256 of the chunk's raw text (utf-8 bytes). Persisted with
+        the chunk; the resume triple-gate compares it against a recomputed hash so a
+        changed chunk boundary never reuses a stale result.
+        """
 
     @abstractmethod
     async def get_distill_chunks(self, task_id: str) -> list[dict]:
         """Return finished chunks of a task ordered by chunk_index asc.
 
-        Each row: {task_id, chunk_index, result, created_at}. result is the
-        raw chunk output (JSON-encoded by caller).
+        Each row: {task_id, chunk_index, result, chunk_fingerprint, created_at}.
+        result is the raw chunk output (JSON-encoded by caller).
         """
 
     @abstractmethod

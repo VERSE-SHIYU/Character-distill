@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS distill_tasks (
     message     TEXT NOT NULL DEFAULT '',
     card_id     TEXT NOT NULL DEFAULT '',
     awakening   TEXT NOT NULL DEFAULT '',
+    chunk_size  INTEGER,
+    overlap     INTEGER,
+    text_fingerprint TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -16,6 +19,7 @@ CREATE TABLE IF NOT EXISTS distill_chunks (
     task_id     TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
     result      TEXT NOT NULL DEFAULT '',
+    chunk_fingerprint TEXT NOT NULL DEFAULT '',
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (task_id, chunk_index)
 );

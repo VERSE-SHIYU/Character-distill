@@ -1356,6 +1356,40 @@ class TestDistillTaskPersistence:
         assert got2["status"] == "done" and got2["progress_pct"] == 100
         assert got2["message"] == "跑到一半"  # null patch does not clear message
 
+    async def test_task_checkpoint_params_roundtrip_and_preserved(self, store, text_id):
+        # 3b：任务级切分指纹（chunk_size/overlap/text_fingerprint）落库可读；
+        # KEY：通用进度 upsert 不传这三参时不得把它们冲回 NULL（保住已盖章 checkpoint）。
+        await store.save_distill_task("dtCp", "u1", text_id, character="A",
+                                      chunk_size=8000, overlap=500, text_fingerprint="fp_full")
+        got = await store.get_distill_task("dtCp")
+        assert got["chunk_size"] == 8000 and got["overlap"] == 500
+        assert got["text_fingerprint"] == "fp_full"
+
+        await store.save_distill_task("dtCp", "u1", text_id, character="A",
+                                      status="running", progress_pct=50)
+        got2 = await store.get_distill_task("dtCp")
+        assert got2["chunk_size"] == 8000 and got2["overlap"] == 500
+        assert got2["text_fingerprint"] == "fp_full"
+
+    async def test_task_checkpoint_defaults_empty(self, store, text_id):
+        # 3b：不带 checkpoint 参数的普通建行 → chunk_size/overlap 为 NULL、text_fingerprint 空串。
+        await store.save_distill_task("dtCp2", "u1", text_id)
+        got = await store.get_distill_task("dtCp2")
+        assert got["chunk_size"] is None and got["overlap"] is None
+        assert got["text_fingerprint"] == ""
+
+    async def test_chunk_fingerprint_roundtrip_and_first_write_wins(self, store, text_id):
+        # 3b：chunk_fingerprint 随片落库可读；同 index 重写（含不同指纹）仍 first-wins。
+        await store.save_distill_task("dtFp", "u1", text_id, character="A")
+        await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "二"}, ensure_ascii=False),
+                                       fingerprint="fp2")
+        await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "重写"}, ensure_ascii=False),
+                                       fingerprint="fp2_other")
+        chunks = await store.get_distill_chunks("dtFp")
+        assert len(chunks) == 1
+        assert chunks[0]["chunk_fingerprint"] == "fp2"
+        assert chunks[0]["result"] == json.dumps({"r": "二"}, ensure_ascii=False)
+
     async def test_chunk_save_idempotent(self, store, text_id):
         await store.save_distill_task("dt4", "u1", text_id, character="A")
         await store.save_distill_chunk("dt4", 3, json.dumps({"r": "三"}, ensure_ascii=False))

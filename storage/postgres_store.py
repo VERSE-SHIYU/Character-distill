@@ -2873,25 +2873,41 @@ class PostgresStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "") -> dict | None:
-        """Insert a distillation task row (upsert on task_id). Returns the stored row."""
+    async def save_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+        """Insert a distillation task row (upsert on task_id). Returns the stored row.
+
+        chunk_size/overlap/text_fingerprint 仅显式传入时参与 INSERT/SET：通用进度
+        upsert（_persist_snap 等不传）不会把它们冲回 NULL，保住已盖章的切分指纹。
+        """
         try:
+            base_cols = ["task_id", "user_id", "text_id", "character", "status",
+                         "progress_pct", "message", "card_id", "awakening"]
+            base_vals = [task_id, user_id, text_id, character, status,
+                         progress_pct, message, card_id, awakening]
+            extras: list[tuple[str, Any]] = []
+            if chunk_size is not None:
+                extras.append(("chunk_size", chunk_size))
+            if overlap is not None:
+                extras.append(("overlap", overlap))
+            if text_fingerprint:
+                extras.append(("text_fingerprint", text_fingerprint))
+            cols = list(base_cols)
+            vals = list(base_vals)
+            for col, val in extras:
+                cols.append(col)
+                vals.append(val)
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
+            set_list = [f"{c} = EXCLUDED.{c}" for c in base_cols[1:]] + [
+                f"{c} = EXCLUDED.{c}" for c, _v in extras
+            ]
+            sql = (
+                f"INSERT INTO distill_tasks ({', '.join(cols)}) "
+                f"VALUES ({placeholders}) "
+                f"ON CONFLICT (task_id) DO UPDATE SET "
+                f"{', '.join(set_list)}, updated_at = CURRENT_TIMESTAMP"
+            )
             async with await self._connect() as conn:
-                await conn.execute(
-                    """INSERT INTO distill_tasks (task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening)
-                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                       ON CONFLICT (task_id) DO UPDATE SET
-                           user_id = EXCLUDED.user_id,
-                           text_id = EXCLUDED.text_id,
-                           character = EXCLUDED.character,
-                           status = EXCLUDED.status,
-                           progress_pct = EXCLUDED.progress_pct,
-                           message = EXCLUDED.message,
-                           card_id = EXCLUDED.card_id,
-                           awakening = EXCLUDED.awakening,
-                           updated_at = CURRENT_TIMESTAMP""",
-                    task_id, user_id, text_id, character, status, progress_pct, message, card_id, awakening,
-                )
+                await conn.execute(sql, *vals)
             return await self.get_distill_task(task_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save distill task failed: {exc}")
@@ -2903,7 +2919,8 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
-                              card_id, awakening, created_at, updated_at
+                              card_id, awakening, chunk_size, overlap, text_fingerprint,
+                              created_at, updated_at
                        FROM distill_tasks WHERE task_id = $1""",
                     task_id,
                 )
@@ -2933,15 +2950,15 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Update distill task failed: {exc}")
             raise
 
-    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str) -> None:
+    async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
         """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    """INSERT INTO distill_chunks (task_id, chunk_index, result)
-                       VALUES ($1, $2, $3)
+                    """INSERT INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint)
+                       VALUES ($1, $2, $3, $4)
                        ON CONFLICT (task_id, chunk_index) DO NOTHING""",
-                    task_id, chunk_index, result,
+                    task_id, chunk_index, result, fingerprint,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save distill chunk failed: {exc}")
@@ -2952,7 +2969,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT task_id, chunk_index, result, created_at
+                    """SELECT task_id, chunk_index, result, chunk_fingerprint, created_at
                        FROM distill_chunks WHERE task_id = $1
                        ORDER BY chunk_index ASC""",
                     task_id,
