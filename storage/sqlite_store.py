@@ -1067,8 +1067,8 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] update_text_cover failed: {exc}")
             raise
 
-    async def get_text(self, id: str) -> dict | None:
-        """Get one text record by id."""
+    async def get_text_unscoped(self, id: str) -> dict | None:
+        """Get one text record by id, no ownership filter."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -1079,6 +1079,20 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get text failed: {exc}")
+            raise
+
+    async def get_text_owned(self, id: str, user_id: str) -> dict | None:
+        """Get one text record by id, filtered to its owner in SQL."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ? AND user_id = ?",
+                    (id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get text (owned) failed: {exc}")
             raise
 
     async def list_texts(self, user_id: str = "") -> list[dict]:
@@ -1970,8 +1984,8 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Save session failed: {exc}")
             raise
 
-    async def get_session(self, id: str) -> dict | None:
-        """Get one session with character name."""
+    async def get_session_unscoped(self, id: str) -> dict | None:
+        """Get one session with character name, with no ownership filter."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -1987,6 +2001,25 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get session failed: {exc}")
+            raise
+
+    async def get_session_owned(self, id: str, user_id: str) -> dict | None:
+        """Get one session by id, filtered to its owner in SQL."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """
+                    SELECT s.id, s.card_id, s.user_role, s.avatar_data, s.created_at, s.updated_at, s.user_id, s.deleted_at, c.text_id, c.name AS character_name
+                    FROM sessions s
+                    JOIN cards c ON s.card_id = c.id
+                    WHERE s.id = ? AND s.user_id = ?
+                    """,
+                    (id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get session (owned) failed: {exc}")
             raise
 
     async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:

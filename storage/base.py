@@ -25,8 +25,26 @@ class StorageBase(ABC):
         """Save text content and return the stored record."""
 
     @abstractmethod
+    async def get_text_unscoped(self, id: str) -> dict | None:
+        """Get a text record by ID, with no ownership filter.
+
+        Only for callers with no user context (storage internals, migration,
+        background cleanup). Anything reachable from a logged-in request must
+        use get_text_owned instead.
+        """
+
+    @abstractmethod
+    async def get_text_owned(self, id: str, user_id: str) -> dict | None:
+        """Get a text record by ID only if it belongs to user_id.
+
+        Ownership is filtered in SQL. Returns None both when the text does not
+        exist and when it belongs to someone else — the caller decides whether
+        that becomes 404 or 403.
+        """
+
     async def get_text(self, id: str) -> dict | None:
-        """Get a text record by ID."""
+        """Deprecated alias for get_text_unscoped. Removed once all callers pick a variant."""
+        return await self.get_text_unscoped(id)
 
     @abstractmethod
     async def list_texts(self, user_id: str = "") -> list[dict]:
@@ -76,8 +94,24 @@ class StorageBase(ABC):
         """Save a chat session and return the stored record."""
 
     @abstractmethod
+    async def get_session_unscoped(self, id: str) -> dict | None:
+        """Get a session record by ID, with no ownership filter.
+
+        Only for callers with no user context. Anything reachable from a
+        logged-in request must use get_session_owned instead.
+        """
+
+    @abstractmethod
+    async def get_session_owned(self, id: str, user_id: str) -> dict | None:
+        """Get a session record by ID only if it belongs to user_id.
+
+        Ownership is filtered in SQL. Returns None both when the session does
+        not exist and when it belongs to someone else.
+        """
+
     async def get_session(self, id: str) -> dict | None:
-        """Get a session record by ID."""
+        """Deprecated alias for get_session_unscoped. Removed once all callers pick a variant."""
+        return await self.get_session_unscoped(id)
 
     @abstractmethod
     async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:
