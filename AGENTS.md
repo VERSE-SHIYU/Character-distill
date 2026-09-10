@@ -170,6 +170,18 @@ config.yaml 现值（现读，非转述）：
 - 历史（修复前，思考未真正关闭）：单次 map 调用 12.0–160.0s，>45s 12/14、>60s 11/14（`e2e/scratch/out_maplen.prefix.json`）→ 当时超过 60s 的调用在生产上必然失败
 - 生产是否仍有超时：**待验证**（受本机吞吐、网络、prod `.env` 覆盖值影响）。常量仍写死不可 env 覆盖，保留记账
 
+**9. 端点注入 `get_current_user` 却不引用 `user`（越权一类）** —— 状态：**已修**（2026-09-10）
+- 形态：签名取 `user: dict = Depends(get_current_user)`，函数体从不引用它 → 无归属校验，任何登录用户拿 id 就能读他人资源
+- 全仓 AST 扫描（`web/routers/*.py`）命中 **9 处**：
+  - **3 处真越权，已修**：`text.py:204`（上传任务：任意 task_id 读他人进度/错误）、`voice.py:189`（自定义音色文件：绕过私有的 `/list` 过滤与删除/上传的属主校验）、`voice.py:213`（`card_id` 参考音频：兄弟端点 `preview_ref_audio:272` 查卡主，唯独它不查）。统一 fail closed + 非属主 **404**（不用 403，避免靠状态码枚举资源是否存在）
+  - **6 处良性**（只当登录门，读全局/公开数据）：`auth.py:get_announcement`、`market.py:get_card_versions` / `get_card_forks` / `list_post_comments`、`voice.py:voice_status` / `speech_to_text`
+- 边界锁：`tests/test_auth_param_used.py` 固化这次 AST 扫描 + 白名单，将来新增同类端点自动变红，不必靠人再扫一遍
+- 注：`voice.py` 内既有四处查属主返回 **403**（`get_ref_audio` / `preview_ref_audio` / `upload_ref_audio` / `delete_ref_audio`），与新修的 404 并存，口径待统一
+
+**10. `market.py:697 list_post_comments` 不标 `liked_by_me`** —— 状态：未修
+- 同类端点 `text.py:449 get_text_comments` 用 `user["id"]` 标了 `liked_by_me`，这个没标——它也因此进了上面第 9 条的扫描名单（读 user 与否在这里是「功能与否」，不是「越权与否」）
+- 属**功能缺口，非安全问题**
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、行号、函数签名）：禁止引用上一轮结果或凭记忆。行号随改动漂移，写进文档的都要标读取日期
@@ -179,6 +191,8 @@ config.yaml 现值（现读，非转述）：
 - **测试通过 ≠ 命题成立**，可能只是那条路径根本没被走到。案例：分片续跑逻辑落地后长期未真实执行——短文本恒走长上下文路径（分流在 `distiller.py:1379`），从不进分片。要验分片路径必须显式强制（见第五节）
 - **修复必须做变异验证**：改坏它，指定测试必须变红。案例：把兜底调用从 `finally` 里整行删掉，**原 14 个测试仍全绿** → 接线没被覆盖；随后补 `TestA2Wiring` 两条（commit `9d2a9e4`，`.claude/sessions/2026-09-10-distill-dbtruth-closeout.md:29`）
 - **「X 消失了」不足以证明 Y 修好了——要找独立、可交叉验证的指标**。案例：关掉思考后「空正文片数 3→0」，但空正文消失本身也可能只是采样波动，用它证明「思考关掉了」是同义反复。真正的实证是 **tokens / 正文字符 3.85 → 0.62**，与本仓自己的 `_estimate_tokens = int(len*0.6)`（`core/distiller.py:897`）吻合——两个互相独立的量对上，结论才立得住
+- **别人给的 premise 与代码不符时，报更正、只修真缺口，不去实现那个不存在的修复**。案例：SSE「截断会硬断流，因为 `_next_piece` 只捕 `StopIteration`」——实读 `chat.py` 外层 `except` 早已 `yield {"error": ...}`、`client.js:228` 早已渲染，连接不会掉。真缺口是**可识别性**（帧里没有 `code`/`finish_reason`）与**文案漏内部标识**，修的是这两样。按错前提动手会改出一段无人需要、还掩盖真问题的代码
+- **修复一处越权 ≠ 这一类修完**。案例：`text.py` 上报的越权与 `voice.py` 两处同形（都因「注入 `user` 却不引用」）；用 AST 扫一遍全仓同类形态，才把 9 处一次分清（3 真越权 / 6 良性），并把扫描固化成测试（见缺陷 9）。逐处手工排查会漏，且下次照旧
 - **任何「新建/添加/引入」类动作，先确认它是否已存在**（仓库里多半已有同形实现或同名字段）
 
 ### 五、验证工具现状
