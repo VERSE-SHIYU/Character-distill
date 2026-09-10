@@ -1,8 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
-import useAppStore from '../store/useAppStore'
+import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
-import { Check, Close, Clock, RefreshCw, Settings, Zap } from './common/Icon'
+import { Check, Close, Clock, Play, RefreshCw, Settings, Zap } from './common/Icon'
+
+// 终态三态各自的展示表。查表而非散落 `status === 'done'` 之类的终态谓词 —— 是否终态
+// 只读 done；status 仅在"已终结"之后用来挑具体文案/图标（§3.2 的三分支要求）。
+const TERMINAL_VIEW = {
+  done: {
+    cls: ' done',
+    icon: <Check size={16} />,
+    text: (t) => `${t.character} 蒸馏完成，点击查看`,
+    openable: true,
+  },
+  error: {
+    cls: ' error',
+    icon: <Close size={16} />,
+    text: (t) => `${t.character || ''} 蒸馏失败: ${t.message || '未知错误'}`,
+    openable: false,
+  },
+  interrupted: {
+    // 复用 error 视觉（无独立 .interrupted 规则，且主题覆盖只认 .error/.done）；
+    // 靠图标 + 文案 + 可续跑动作与失败区分。
+    cls: ' error',
+    icon: <Clock size={16} />,
+    text: (t) => `${t.character || ''} 蒸馏已中断，可继续蒸馏`,
+    openable: false,
+  },
+}
 
 function DistillTaskItem({ task }) {
   const setView = useAppStore((s) => s.setView)
@@ -10,21 +35,17 @@ function DistillTaskItem({ task }) {
   const loadCards = useAppStore((s) => s.loadCards)
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
-  const displayPct = useSmoothProgress(task.progress_pct, task.status === 'done')
+  const done = isTerminal(task)
+  const actions = taskActions(task)
+  const displayPct = useSmoothProgress(task.progress_pct, done)
 
-  const isDone = task.status === 'done'
-  const isError = task.status === 'error'
-  const isQueued = task.status === 'queued' && (task.progress_pct == null || task.progress_pct === 0)
-  const statusText = isDone
-    ? `${task.character} 蒸馏完成，点击查看`
-    : isError
-      ? `${task.character || ''} 蒸馏失败: ${task.message || '未知错误'}`
-      : task.message || `正在蒸馏 ${task.character || '…'}`
+  const view = done ? TERMINAL_VIEW[task.status] : null
+  const statusText = view ? view.text(task) : (task.message || `正在蒸馏 ${task.character || '…'}`)
 
   const strPct = displayPct > 0 ? `${Math.round(displayPct)}%` : '…'
   const showIndeterminate = displayPct <= 5
 
-  const handleDoneClick = async () => {
+  const handleOpen = async () => {
     const s = useAppStore.getState()
     const { card_id } = task
     if (task.textId && s.currentTextId !== task.textId) {
@@ -41,54 +62,64 @@ function DistillTaskItem({ task }) {
     }
   }
 
+  // 取消 = 服务端动作（actions 含 cancel 才发 DELETE）+ 本地移出列表
   const handleCancel = (e) => {
     e.stopPropagation()
-    if (!isDone && !isError) {
+    if (actions.includes('cancel')) {
       fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' }).catch(() => {})
     }
     removeDistillTask(task.id)
   }
 
-  const handleRetry = (e) => {
+  // resume 与 retry 打同一个端点（POST /api/distill/start），续跑 vs 整批重跑由后端
+  // 任务级门裁决 —— 前端不判断，二者只差按钮文案。
+  const handleRestart = (e) => {
     e.stopPropagation()
     removeDistillTask(task.id)
     distillCharacter(task.textId, task.character)
   }
 
+  // 本地关闭：纯列表管理，不是服务端动作，故不受 actions 管辖
+  const handleDismiss = (e) => {
+    e.stopPropagation()
+    removeDistillTask(task.id)
+  }
+
   return (
     <div
-      className={`distill-task-item${isDone ? ' done' : ''}${isError ? ' error' : ''}${isQueued ? ' is-queued' : ''}`}
-      onClick={isDone ? handleDoneClick : undefined}
-      role={isDone ? 'button' : undefined}
-      tabIndex={isDone ? 0 : undefined}
+      className={`distill-task-item${view ? view.cls : ''}`}
+      onClick={view?.openable ? handleOpen : undefined}
+      role={view?.openable ? 'button' : undefined}
+      tabIndex={view?.openable ? 0 : undefined}
     >
-      <span className="distill-task-icon">
-        {isDone ? <Check size={16} /> : isError ? <Close size={16} /> : isQueued ? <Clock size={16} /> : <Zap size={16} />}
-      </span>
+      <span className="distill-task-icon">{view ? view.icon : <Zap size={16} />}</span>
       <div className="distill-task-body">
         <span className="distill-task-text">{statusText}</span>
-        {isDone && task.awakening && (
+        {done && task.awakening && (
           <div className="distill-task-awakening">
             {task.character}：「{task.awakening}」
           </div>
         )}
       </div>
-      {!isDone && !isError && (
+      {!done && (
         <>
           <span className="distill-task-pct">{strPct}</span>
           <span className="distill-task-bar-track">
             <span className={`distill-task-bar-fill${showIndeterminate ? ' indeterminate' : ''}`} style={{ width: `${displayPct}%` }} />
           </span>
-          <span className="distill-task-close" onClick={handleCancel} title="取消蒸馏"><Close size={12} /></span>
         </>
       )}
-      {(isDone || isError) && (
-        <>
-          {isError && task.textId && (
-            <span className="distill-task-retry" onClick={handleRetry} title="重新蒸馏"><RefreshCw size={12} /></span>
-          )}
-          <span className="distill-task-close" onClick={handleCancel} title="关闭"><Close size={12} /></span>
-        </>
+      {actions.includes('cancel') && (
+        <span className="distill-task-close" onClick={handleCancel} title="取消蒸馏"><Close size={12} /></span>
+      )}
+      {actions.includes('resume') && (
+        <span className="distill-task-retry" onClick={handleRestart} title="继续蒸馏"><Play size={12} /></span>
+      )}
+      {actions.includes('retry') && (
+        <span className="distill-task-retry" onClick={handleRestart} title="重新蒸馏"><RefreshCw size={12} /></span>
+      )}
+      {done && (
+        <span className="distill-task-close" onClick={handleDismiss} title="关闭"><Close size={12} /></span>
       )}
     </div>
   )
@@ -125,9 +156,10 @@ export default function DistillTaskBar() {
 
   if (tasks.length === 0) return null
 
-  const runningCount = tasks.filter((t) => t.status !== 'done' && t.status !== 'error').length
-  const hasQueued = tasks.some((t) => t.status === 'queued')
-  const allTerminal = tasks.every((t) => t.status === 'done' || t.status === 'error')
+  const runningCount = tasks.filter((t) => !isTerminal(t)).length
+  // 尚无服务端动作 = 刚建、还没拿到第一次响应 → 徽标脉冲（仅视觉，不参与任何判定）
+  const hasQueued = tasks.some((t) => !isTerminal(t) && taskActions(t).length === 0)
+  const allTerminal = tasks.every(isTerminal)
 
   const fabClass = `distill-fab${shake ? ' shake' : ''}`
 

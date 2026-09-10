@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import useAppStore from '../store/useAppStore'
+import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useIsMobile from '../hooks/useIsMobile'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
-import { AlertTriangle, Check, Clock, CornerUpLeft, Download, RefreshCw, Sparkles } from './common/Icon'
+import { AlertTriangle, Check, Clock, CornerUpLeft, Download, Play, RefreshCw, Sparkles } from './common/Icon'
 
-// 5 步视觉状态机：由后端 status 诚实映射（queued→采集语料 … formatting/saving→验收上线）
+// 5 步视觉状态机：非终态阶段由服务端 stage（内存细化）驱动，回落 status
 const STEPS = ['采集语料', '提取人格', '生成人设', '校准语气', '验收上线']
 const STATUS_STEP = { queued: 1, identifying: 2, analyzing: 3, merging: 4, formatting: 5, saving: 5 }
 
 const STATUS_TEXT = {
   queued: '排队中',
+  running: '蒸馏中',
   identifying: '识别角色',
   analyzing: '生成人设',
   merging: '校准语气',
@@ -20,6 +21,7 @@ const STATUS_TEXT = {
   saving: '保存卡片',
   done: '已完成',
   error: '失败',
+  interrupted: '已中断',
 }
 
 const LOG_TEXT = {
@@ -30,6 +32,16 @@ const LOG_TEXT = {
   formatting: '正在格式化人设，验收中…',
   saving: '正在保存角色卡…',
   done: '蒸馏完成，角色卡已生成',
+  interrupted: '蒸馏已中断，可从断点继续',
+}
+
+// 终态展示表：done 为真之后才按 status 挑具体文案/视觉（§3.2 的三分支要求）。
+// 是否终态只读 done —— 不再散落 `status === 'done'` 之类的终态谓词。
+const TERMINAL_VIEW = {
+  // interrupted 复用 is-error 视觉（无独立规则）；图标/文案/动作与失败区分。
+  done:        { badge: '已完成', cls: ' is-done',  badgeCls: ' is-done',  step: 5, logState: 'done',  showMessage: false, canChat: true, allStepsDone: true },
+  error:       { badge: '失败',   cls: ' is-error', badgeCls: ' is-error', step: 1, logState: 'error', showMessage: true,  canChat: false },
+  interrupted: { badge: '已中断', cls: ' is-error', badgeCls: ' is-error', step: 1, logState: 'error', showMessage: true,  canChat: false },
 }
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -212,16 +224,16 @@ function ListPane({ tasks, cards, currentTextId, selKey, onSelect, onPop }) {
 }
 
 function TaskRow({ task, active, onClick }) {
-  const displayPct = useSmoothProgress(task.progress_pct, task.status === 'done')
-  const isDone = task.status === 'done'
-  const isError = task.status === 'error'
-  const running = !isDone && !isError
-  const statusText = isDone ? '已完成' : isError ? '失败' : `${STATUS_TEXT[task.status] || '蒸馏中'} · ${Math.round(displayPct)}%`
+  const done = isTerminal(task)
+  const displayPct = useSmoothProgress(task.progress_pct, done)
+  const view = done ? TERMINAL_VIEW[task.status] : null
+  const stageLabel = STATUS_TEXT[task.stage] || STATUS_TEXT[task.status] || '蒸馏中'
+  const statusText = view ? view.badge : `${stageLabel} · ${Math.round(displayPct)}%`
 
   return (
     <button
       type="button"
-      className={`dw-task-item${active ? ' is-active' : ''}${isError ? ' is-error' : ''}`}
+      className={`dw-task-item${active ? ' is-active' : ''}${view?.cls || ''}`}
       onClick={onClick}
     >
       <Avatar name={task.character || '?'} size={34} />
@@ -229,12 +241,12 @@ function TaskRow({ task, active, onClick }) {
         <span className="dw-item-name">{task.character || '未命名角色'}</span>
         <span className="dw-item-sub">{statusText}</span>
       </span>
-      {running ? (
+      {!done ? (
         <span className="dw-item-progress" style={{ width: 52 }}>
           <span className="dw-item-progress-fill" style={{ width: `${Math.max(displayPct, 3)}%` }} />
         </span>
       ) : (
-        <span className={`dw-item-badge${isDone ? ' is-done' : ' is-error'}`}>{isDone ? '已完成' : '失败'}</span>
+        <span className={`dw-item-badge${view?.badgeCls || ''}`}>{view?.badge}</span>
       )}
     </button>
   )
@@ -258,33 +270,38 @@ function TaskDetail({ task, onBack }) {
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
   const pushView = useAppStore((s) => s.pushView)
-  const displayPct = useSmoothProgress(task.progress_pct, task.status === 'done')
+  const done = isTerminal(task)
+  const actions = taskActions(task)
+  const displayPct = useSmoothProgress(task.progress_pct, done)
 
-  const isDone = task.status === 'done'
-  const isError = task.status === 'error'
-  const running = !isDone && !isError
-  const activeStep = isDone ? 5 : STATUS_STEP[task.status] || 1
-  const statusText = isDone ? '已完成' : isError ? '失败' : `${STATUS_TEXT[task.status] || '蒸馏中'} · ${Math.round(displayPct)}%`
+  // 是否终态只读 done；终态之后才按 status 查表挑文案/视觉（完成/失败/中断三分支）。
+  const view = done ? TERMINAL_VIEW[task.status] : null
+  const allDone = view?.allStepsDone
+  // 非终态的 5 步细分由服务端 stage（内存细化）驱动，回落 status
+  const stageLabel = STATUS_TEXT[task.stage] || STATUS_TEXT[task.status] || '蒸馏中'
+  const activeStep = done ? view?.step ?? 5 : STATUS_STEP[task.stage] || STATUS_STEP[task.status] || 1
+  const statusText = view ? view.badge : `${stageLabel} · ${Math.round(displayPct)}%`
 
-  // 本地状态机日志：监听 status 变化追加
+  // 本地状态机日志：监听阶段变化追加（stage 是内存细化，终态后 stage 为空 → 用 status）
   const [logs, setLogs] = useState([])
   const prevStatus = useRef(null)
   useEffect(() => {
     if (!task) { prevStatus.current = null; return }
-    const st = task.status
+    const st = task.stage || task.status
     if (st === prevStatus.current) return
     const isFirst = prevStatus.current === null
     prevStatus.current = st
-    const text = isFirst ? '任务已创建' : (LOG_TEXT[st] || (isError ? task.message || '蒸馏失败' : `进入阶段：${STATUS_TEXT[st] || st}`))
-    const state = st === 'done' ? 'done' : st === 'error' ? 'error' : 'run'
+    const text = isFirst ? '任务已创建' : (LOG_TEXT[st] || (task.done ? task.message || '蒸馏失败' : `进入阶段：${STATUS_TEXT[st] || st}`))
+    const state = task.done ? (TERMINAL_VIEW[st]?.logState || 'error') : 'run'
     setLogs((l) => [...l.slice(-6), { t: nowHM(), text, state }])
-  }, [task, task?.status, isError]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [task, task?.stage, task?.status, task?.done])
 
   const cancelTask = () => {
-    if (running) fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' }).catch(() => {})
+    if (actions.includes('cancel')) fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' }).catch(() => {})
     removeDistillTask(task.id)
   }
-  const retryTask = () => {
+  // resume 与 retry 打同一端点，续跑 vs 整批重跑由后端任务级门裁决；前端只差文案。
+  const restartTask = () => {
     removeDistillTask(task.id)
     distillCharacter(task.textId, task.character)
   }
@@ -308,25 +325,25 @@ function TaskDetail({ task, onBack }) {
             <h2 className="dw-hero-title">{task.character || '蒸馏任务'}</h2>
             <p className="dw-hero-sub">任务 {shortId(task.id)} · 文本 {shortId(task.textId)}</p>
           </div>
-          <span className={`dw-badge${isDone ? ' is-done' : isError ? ' is-error' : ''}`}>{statusText}</span>
+          <span className={`dw-badge${view?.cls || ''}`}>{statusText}</span>
         </div>
       </div>
 
       <div className="dw-stepper">
         {STEPS.map((label, i) => {
           const n = i + 1
-          const cls = isDone ? ' is-done' : isError && n === activeStep ? ' is-error' : n < activeStep ? ' is-done' : n === activeStep ? ' is-active' : ''
+          const cls = allDone ? ' is-done' : done && n === activeStep ? ' is-error' : n < activeStep ? ' is-done' : n === activeStep ? ' is-active' : ''
           return (
             <div key={label} className={`dw-step${cls}`}>
-              <span className="dw-step-dot">{n < activeStep || isDone ? <Check size={13} /> : n}</span>
+              <span className="dw-step-dot">{n < activeStep || allDone ? <Check size={13} /> : n}</span>
               <span className="dw-step-label">{label}</span>
             </div>
           )
         })}
       </div>
 
-      {isError && (
-        <div className="dw-error-banner"><AlertTriangle size={14} />{task.message || '蒸馏失败'}</div>
+      {view?.showMessage && (
+        <div className="dw-error-banner"><AlertTriangle size={14} />{task.message || view.badge}</div>
       )}
 
       <div className="dw-progress"><span className="dw-progress-bar" style={{ width: `${displayPct}%` }} /></div>
@@ -334,7 +351,7 @@ function TaskDetail({ task, onBack }) {
       <div className="dw-stat-grid">
         <div className="dw-tstat"><b>{Math.round(displayPct)}%</b><span>总体进度</span></div>
         <div className="dw-tstat"><b>{task.current && task.total ? `${task.current}/${task.total}` : '—'}</b><span>语料段落</span></div>
-        <div className="dw-tstat"><b>{STATUS_TEXT[task.status] || '—'}</b><span>任务状态</span></div>
+        <div className="dw-tstat"><b>{view ? view.badge : stageLabel}</b><span>任务状态</span></div>
         <div className="dw-tstat"><b>{task.character || '—'}</b><span>蒸馏角色</span></div>
       </div>
 
@@ -351,9 +368,10 @@ function TaskDetail({ task, onBack }) {
       </div>
 
       <div className="dw-cta">
-        {running && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
-        {isError && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={retryTask}><RefreshCw size={15} /> 重新蒸馏</button>}
-        {isDone && (
+        {actions.includes('cancel') && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
+        {actions.includes('resume') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><Play size={15} /> 继续蒸馏</button>}
+        {actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
+        {view?.canChat && (
           <>
             <button type="button" className="dw-cta-btn dw-cta-primary" onClick={tryChat}><Sparkles size={15} /> 试聊当前版本</button>
             <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard({ id: task.card_id, card_json: null, name: task.character })}><Download size={15} /> 导出卡片</button>

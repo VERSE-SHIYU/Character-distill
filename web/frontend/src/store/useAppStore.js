@@ -15,6 +15,54 @@ const clientTz = () => {
 let _cidSeq = 0
 const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })
 
+// ── 任务状态契约：前端归一化边界 ──────────────────────────────────────────────
+// 服务端下发 done / actions / poll_after_ms（见后端 _task_affordances）。前端不复刻
+// 任何业务规则：是否终态只读 done，能做什么只读 actions，多久后再问只读 poll_after_ms。
+const DEFAULT_POLL_MS = 3000  // 服务端未给节奏时的兜底
+const POLL_MIN_MS = 500       // 钳位下界：服务端给 0/负数而直接 setTimeout 会打成紧密循环
+const POLL_MAX_MS = 30000     // 钳位上界：给超大值会让任务看起来卡死。上下界硬编码，不信服务端
+// rollout shim，后端字段稳定发布满一个版本后删除：前端已部署而后端回滚、或用户加载了
+// 缓存的旧 bundle 时 done 缺失，靠它仍能判终态，避免无限轮询。
+const TERMINAL_FALLBACK = new Set(['done', 'error', 'interrupted'])
+// 上传任务是独立域：不落库、无 status/actions/poll_after_ms 契约，节奏由前端固定。
+const UPLOAD_POLL_MS = 500
+// done 后任务在任务栏的展示停留时长 —— 不是轮询节奏。终态 poll_after_ms 恒为 0，
+// 硬套会让完成态瞬间消失、用户来不及看到。
+const DONE_LINGER_MS = 5000
+// 「成功」这一支的 status 取值 —— 全 store 只此一处字面量。是否终态一律读 done；
+// 这里只用来挑成功后的处理（苏醒台词 / 补卡 / 停留后移除），失败与中断统一走 isTerminal。
+const STATUS_SUCCEEDED = 'done'
+
+/** 服务端 / localStorage 任务对象 → store 的唯一入口。所有来源都必须先过这里。
+ *
+ *  入参门：缺 task_id 或 status 一律丢弃并 warn —— 这道门挡住 SSE 的 done_payload
+ *  （{'done':true,'awakening':...}，有 done 无 status），也挡住将来任何形状不对的输入。
+ *  形状不对返回 null，调用方跳过（不得整条塞进 store）。
+ */
+export function normalizeTask(payload) {
+  if (!payload || typeof payload !== 'object' || !payload.task_id || !payload.status) {
+    console.warn('[distill] normalizeTask 丢弃形状不符的任务对象:', payload)
+    return null
+  }
+  // 终态：服务端 done 优先；缺失走重启兜底集合（见 TERMINAL_FALLBACK 注释）
+  const done = payload.done ?? TERMINAL_FALLBACK.has(payload.status)
+  // 缺省(undefined/null) → 兜底节奏；给了数值则强制钳位。钳位是安全要求：服务端给 0/负数
+  // 而直接 setTimeout 会打成紧密循环，给超大值又会让任务看起来卡死。
+  const ms = Number(payload.poll_after_ms ?? DEFAULT_POLL_MS)
+  const poll_after_ms = Number.isFinite(ms)
+    ? Math.min(Math.max(ms, POLL_MIN_MS), POLL_MAX_MS)
+    : DEFAULT_POLL_MS
+  // actions 非数组 → []；未知 token 保留在数组里（UI 不渲染即可），不抛、不丢整条
+  const actions = Array.isArray(payload.actions) ? payload.actions : []
+  return { ...payload, id: payload.id ?? payload.task_id, done, poll_after_ms, actions }
+}
+
+/** 终态判据 —— 唯一来源是归一化后的 done，不再看 status。 */
+export const isTerminal = (task) => task?.done === true
+
+/** 可用动作 —— 只认归一化后的 actions。UI 不得在 actions 之外自行推断。 */
+export const taskActions = (task) => (Array.isArray(task?.actions) ? task.actions : [])
+
 const useAppStore = create((set, get) => {
   // 结构性竞态防护：写会话/角色态数据的 async action 用 protect 包装，越界写自动丢弃。
   // guard 只存在 scoped 里，action 永不手写 `if (get().sessionId !== ...) return`。
@@ -662,7 +710,7 @@ const useAppStore = create((set, get) => {
                     get().loadTexts()
                   } else {
                     set({ uploadTaskProgress: task })
-                    setTimeout(poll, 500)
+                    setTimeout(poll, UPLOAD_POLL_MS)
                   }
                 })
                 .catch(() => {
@@ -796,7 +844,12 @@ const useAppStore = create((set, get) => {
   },
 
   addDistillTask: (taskId, textId, characterName) => {
-    const task = { id: taskId, textId, character: characterName, status: 'queued', progress_pct: 0 }
+    // 本地乐观种子：形状对齐契约（过 normalizeTask 门），actions 与「刚启动的 running
+    // 任务」一致，让首响应到达前也有可取消按钮；下一拍即被服务端真值覆盖。
+    const task = normalizeTask({
+      task_id: taskId, id: taskId, textId, character: characterName,
+      status: 'running', progress_pct: 0, actions: ['cancel'],
+    })
     set((s) => ({ distillTasks: [...s.distillTasks, task], distilling: true }))
     get()._persistTasks()
 
@@ -806,7 +859,14 @@ const useAppStore = create((set, get) => {
     const poll = () => {
       fetchWithTimeout(`/api/distill/task/${taskId}`)
         .then((r) => r.json())
-        .then((payload) => {
+        .then((raw) => {
+          const payload = normalizeTask(raw)
+          if (!payload) {
+            // 形状不符：丢弃并停止轮询（不排下一次，否则无限打一个坏端点）
+            set((s) => ({ distillTasks: s.distillTasks.filter((t) => t.id !== taskId) }))
+            get()._persistTasks()
+            return
+          }
           retryCount = 0
           set((s) => ({
             distillTasks: s.distillTasks.map((t) =>
@@ -816,7 +876,7 @@ const useAppStore = create((set, get) => {
             ),
           }))
           get()._persistTasks()
-          if (payload.status === 'done') {
+          if (payload.status === STATUS_SUCCEEDED) {
             // Show awakening toast (first done transition, once per task)
             if (payload.awakening) {
               set({ awakeningToast: {
@@ -829,7 +889,7 @@ const useAppStore = create((set, get) => {
             // only refresh cards when user is viewing this text, else leave it to selectText/loadCards
             const s = get()
             set((s2) => ({
-              distilling: s2.distillTasks.every((t) => t.status === 'done' || t.status === 'error')
+              distilling: s2.distillTasks.every((t) => isTerminal(t))
                 ? false : s2.distilling,
               currentTextId: s2.currentTextId || textId,
             }))
@@ -870,31 +930,26 @@ const useAppStore = create((set, get) => {
                 })
                 .catch((err) => console.warn('[distill] Failed to fetch cards for fallback name matching:', err))
             }
-            setTimeout(() => get().removeDistillTask(taskId), 5000)
+            setTimeout(() => get().removeDistillTask(taskId), DONE_LINGER_MS)
             return
           }
-          if (payload.status === 'error') {
+          if (isTerminal(payload)) {
+            // error / interrupted：终态 → 停止轮询，但保留在列表（interrupted 由动作按钮续跑）
             set((s) => ({
-              distilling: s.distillTasks.every((t) => t.id === taskId || t.status === 'done' || t.status === 'error')
+              distilling: s.distillTasks.every((t) => t.id === taskId || isTerminal(t))
                 ? false : s.distilling,
             }))
             get()._persistTasks()
             return
           }
-          setTimeout(poll, 2000)
+          setTimeout(poll, payload.poll_after_ms)
         })
         .catch((err) => {
           const status = err?.status
           if (status === 404) {
-            // 服务重启，任务丢失
-            set((s) => ({
-              distillTasks: s.distillTasks.map((t) =>
-                t.id === taskId
-                  ? { ...t, status: 'error', message: '服务已重启，任务丢失，请重新蒸馏' }
-                  : t,
-              ),
-              distilling: false,
-            }))
+            // 任务行已不存在（文本被硬删）。开机 reconcile 后，重启的任务在 DB 里是
+            // interrupted 而非消失，此分支基本不再触发。不得标 error 后留在列表里。
+            set((s) => ({ distillTasks: s.distillTasks.filter((t) => t.id !== taskId) }))
             get()._persistTasks()
             return
           }
@@ -905,7 +960,7 @@ const useAppStore = create((set, get) => {
               set((s) => ({
                 distillTasks: s.distillTasks.map((t) =>
                   t.id === taskId
-                    ? { ...t, status: 'error', message: '权限验证失败，请重新发起蒸馏' }
+                    ? normalizeTask({ ...t, status: 'error', message: '权限验证失败，请重新发起蒸馏' })
                     : t,
                 ),
                 distilling: false,
@@ -914,19 +969,20 @@ const useAppStore = create((set, get) => {
               return
             }
             console.warn(`[distill] 403 on poll (${retryCount}/${MAX_RETRIES}), will retry after re-auth`)
-            setTimeout(poll, 5000)
+            setTimeout(poll, DEFAULT_POLL_MS)
             return
           }
           // 网络错误等，继续重试
-          setTimeout(poll, 3000)
+          setTimeout(poll, DEFAULT_POLL_MS)
         })
     }
-    setTimeout(poll, 1000)
+    setTimeout(poll, DEFAULT_POLL_MS)
   },
 
   _persistTasks: () => {
     const tasks = get().distillTasks.map((t) => ({
-      id: t.id, textId: t.textId, character: t.character, status: t.status,
+      id: t.id, task_id: t.task_id ?? t.id,
+      textId: t.textId, character: t.character, status: t.status,
     }))
     if (tasks.length > 0) {
       localStorage.setItem('distill_tasks', JSON.stringify(tasks))
@@ -947,8 +1003,13 @@ const useAppStore = create((set, get) => {
 
   restoreDistillTasks: () => {
     try {
-      const saved = JSON.parse(localStorage.getItem('distill_tasks') || '[]')
-      const active = saved.filter((t) => t.status !== 'done' && t.status !== 'error')
+      const savedRaw = JSON.parse(localStorage.getItem('distill_tasks') || '[]')
+      // 旧形状兼容：本改动前写入的是 {id, textId, character, status}，入口门要求 task_id
+      // —— 在这一处边界补上再归一化，旧记录因此仍能被恢复、被判终态。
+      const saved = savedRaw
+        .map((t) => normalizeTask({ ...t, task_id: t.task_id ?? t.id }))
+        .filter(Boolean)
+      const active = saved.filter((t) => !isTerminal(t))
       if (active.length === 0) {
         localStorage.removeItem('distill_tasks')
         return
@@ -956,39 +1017,60 @@ const useAppStore = create((set, get) => {
       // 先显示 checking 状态，尝试从后端恢复
       set({ distillTasks: active.map(t => ({ ...t, status: 'checking' })), distilling: true })
       active.forEach((t) => {
-        fetchWithTimeout(`/api/distill/task/${t.id}`)
+        fetchWithTimeout(`/api/distill/task/${t.task_id}`)
           .then((r) => r.json())
-          .then((payload) => {
+          .then((raw) => {
+            const payload = normalizeTask(raw)
+            if (!payload) {
+              set((s) => ({ distillTasks: s.distillTasks.filter((task) => task.id !== t.id) }))
+              get()._persistTasks()
+              return
+            }
             set((s) => ({
               distillTasks: s.distillTasks.map((task) =>
                 task.id === t.id ? { ...task, ...payload } : task,
               ),
             }))
             get()._persistTasks()
-            if (payload.status !== 'done' && payload.status !== 'error') {
+            if (!isTerminal(payload)) {
               // 任务还在跑，只启动轮询，不重复添加
               const poll = () => {
-                fetchWithTimeout(`/api/distill/task/${t.id}`)
+                fetchWithTimeout(`/api/distill/task/${t.task_id}`)
                   .then(r => r.json())
-                  .then(p => {
+                  .then(raw2 => {
+                    const p = normalizeTask(raw2)
+                    if (!p) {
+                      set((s) => ({ distillTasks: s.distillTasks.filter((task) => task.id !== t.id) }))
+                      get()._persistTasks()
+                      return
+                    }
                     set((s) => ({
                       distillTasks: s.distillTasks.map(task =>
                         task.id === t.id ? { ...task, ...p } : task
                       ),
                     }))
                     get()._persistTasks()
-                    if (p.status !== 'done' && p.status !== 'error') setTimeout(poll, 3000)
+                    if (!isTerminal(p)) setTimeout(poll, p.poll_after_ms)
                   })
-                  .catch(() => setTimeout(poll, 5000))
+                  .catch(() => setTimeout(poll, DEFAULT_POLL_MS))
               }
-              setTimeout(poll, 3000)
+              setTimeout(poll, payload.poll_after_ms)
             }
           })
-          .catch(() => {
+          .catch((err) => {
+            if (err?.status === 404) {
+              // 行已不存在（文本被硬删）→ 从列表移除并停止轮询，不标 error 后留着
+              set((s) => {
+                const distillTasks = s.distillTasks.filter((task) => task.id !== t.id)
+                return { distillTasks, distilling: distillTasks.some((task) => !isTerminal(task)) }
+              })
+              get()._persistTasks()
+              return
+            }
             set((s) => ({
               distillTasks: s.distillTasks.map((task) =>
                 task.id === t.id
-                  ? { ...task, status: 'error', message: '服务已重启，请重新蒸馏' }
+                  ? normalizeTask({ ...task, status: 'error', message: '状态查询失败，请重试' })
                   : task,
               ),
               distilling: false,
