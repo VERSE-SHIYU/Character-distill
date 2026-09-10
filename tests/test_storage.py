@@ -1416,6 +1416,22 @@ class TestDistillTaskPersistence:
         assert await store.get_distill_chunks("no_such_task") == []
         assert await store.count_running_distills("ghost") == 0
 
+    async def test_count_running_window_ages_out_ghost(self, store, text_id):
+        # 时效窗：活任务靠进度写刷 updated_at，幽灵行（线程已死、终态没落库）不会。
+        # 超窗的 running 行不计入 → 不会永久挡住该用户。
+        await store.save_distill_task("dtLive", "u1", text_id, status="running")
+        await store.save_distill_task("dtGhost", "u1", text_id, status="running")
+        async with await store._connect() as conn:
+            await conn.execute(
+                "UPDATE distill_tasks SET updated_at = datetime('now', '-120 minutes') "
+                "WHERE task_id = 'dtGhost'"
+            )
+            await conn.commit()
+
+        assert await store.count_running_distills("u1") == 2          # 不带窗：全算
+        assert await store.count_running_distills("u1", window_minutes=30) == 1  # 幽灵超窗
+        assert await store.count_running_distills("u1", window_minutes=180) == 2 # 窗比幽灵还老
+
     async def test_card_id_awakening_roundtrip(self, store, text_id):
         # 步骤2：done payload 的 card_id/awakening 必须随行落库，DB 真源读到仍能
         # 驱动前端卡片刷新 toast —— 只存内存会在跨重启后丢。

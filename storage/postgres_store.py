@@ -2997,14 +2997,26 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get distill chunks failed: {exc}")
             raise
 
-    async def count_running_distills(self, user_id: str) -> int:
-        """Count a user's non-terminal distill tasks (status queued/running)."""
+    async def count_running_distills(self, user_id: str, window_minutes: int | None = None) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running).
+
+        window_minutes: only count rows whose updated_at is within the last N minutes.
+        A live task refreshes updated_at on every progress write (save_distill_task's
+        upsert stamps CURRENT_TIMESTAMP); a ghost row (thread died without a terminal
+        write) does not, so it ages out instead of blocking the user forever.
+        None = no age filter.
+        """
         try:
+            sql = ("SELECT COUNT(*) FROM distill_tasks "
+                   "WHERE user_id = $1 AND status IN ('queued', 'running')")
             async with await self._connect() as conn:
-                row = await conn.fetchrow(
-                    "SELECT COUNT(*) FROM distill_tasks WHERE user_id = $1 AND status IN ('queued', 'running')",
-                    user_id,
-                )
+                if window_minutes is None:
+                    row = await conn.fetchrow(sql, user_id)
+                else:
+                    row = await conn.fetchrow(
+                        sql + " AND updated_at >= now() - make_interval(mins => $2)",
+                        user_id, int(window_minutes),
+                    )
             return int(row[0]) if row else 0
         except Exception as exc:
             print(f"[PostgresStore] Count running distills failed: {exc}")

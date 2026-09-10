@@ -381,6 +381,21 @@ class TestDistillTaskPersistence:
         assert await store.get_distill_chunks(f"dt_{uuid.uuid4().hex}") == []
         assert await store.count_running_distills(f"usr_{uuid.uuid4().hex}") == 0
 
+    async def test_count_running_window_ages_out_ghost(self, store, text_id, user_id):
+        # 时效窗：活任务靠进度写刷 updated_at；幽灵行（线程已死、终态没落库）不会。
+        # 超窗的 running 行不计入 → 不会永久挡住该用户。
+        await store.save_distill_task("dtLive", user_id, text_id, status="running")
+        await store.save_distill_task("dtGhost", user_id, text_id, status="running")
+        async with await store._connect() as conn:
+            await conn.execute(
+                "UPDATE distill_tasks SET updated_at = now() - interval '120 minutes' "
+                "WHERE task_id = 'dtGhost'"
+            )
+
+        assert await store.count_running_distills(user_id) == 2
+        assert await store.count_running_distills(user_id, window_minutes=30) == 1
+        assert await store.count_running_distills(user_id, window_minutes=180) == 2
+
     async def test_card_id_awakening_roundtrip(self, store, text_id, user_id):
         task_id = f"dt_{uuid.uuid4().hex}"
         await store.save_distill_task(task_id, user_id, text_id, character="A",

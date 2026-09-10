@@ -418,8 +418,14 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def count_running_distills(self, user_id: str) -> int:
-        """Count a user's non-terminal distill tasks (status queued/running) = slot occupancy."""
+    async def count_running_distills(self, user_id: str, window_minutes: int | None = None) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running) = slot occupancy.
+
+        ``window_minutes``: only count rows whose updated_at is within the last N
+        minutes. A live task refreshes updated_at on every progress write, so a
+        stale running row is a ghost (its thread died without a terminal write)
+        and must not block the user forever. None = no age filter.
+        """
 
     @abstractmethod
     async def mark_interrupted_distills(self, message: str = "服务重启，任务已中断，等待自动恢复") -> int:

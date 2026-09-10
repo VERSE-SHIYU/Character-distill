@@ -4089,14 +4089,24 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get distill chunks failed: {exc}")
             raise
 
-    async def count_running_distills(self, user_id: str) -> int:
-        """Count a user's non-terminal distill tasks (status queued/running)."""
+    async def count_running_distills(self, user_id: str, window_minutes: int | None = None) -> int:
+        """Count a user's non-terminal distill tasks (status queued/running).
+
+        window_minutes: 只统计 updated_at 在最近 N 分钟内的行。活任务的进度写会持续
+        刷新 updated_at（save_distill_task 的 upsert 带 CURRENT_TIMESTAMP），幽灵行
+        （线程已死、终态没落库）不会 —— 超窗即不计，避免永久挡住该用户。None = 不计时效。
+        """
         try:
+            sql = ("SELECT COUNT(*) FROM distill_tasks "
+                   "WHERE user_id = ? AND status IN ('queued', 'running')")
+            params: list[Any] = [user_id]
+            if window_minutes is not None:
+                # 存的是 CURRENT_TIMESTAMP 的 'YYYY-MM-DD HH:MM:SS'（UTC），与
+                # datetime('now', ...) 同格式，字典序即时间序。
+                sql += " AND updated_at >= datetime('now', ?)"
+                params.append(f"-{int(window_minutes)} minutes")
             async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM distill_tasks WHERE user_id = ? AND status IN ('queued', 'running')",
-                    (user_id,),
-                )
+                cursor = await conn.execute(sql, tuple(params))
                 row = await cursor.fetchone()
             return int(row[0]) if row else 0
         except Exception as exc:
