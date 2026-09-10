@@ -149,6 +149,17 @@ M. 心理画像（用于情感动力学建模 — 依据 Kuppens 情感动力学
 """
 
 
+def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
+    """JSON 形状校验：dict 且含全部必需字段。
+
+    曾嵌套在 _parse_json_with_retry 内（捕获 required_keys 的闭包）。提取为模块级
+    纯函数，供续跑三重门的第二道复用同一份解析规则——复制会让两份漂移。
+    """
+    if not isinstance(data, dict):
+        return False
+    return all(k in data for k in required_keys)
+
+
 class Distiller:
     """基于 LLM 的角色识别与角色卡蒸馏。"""
 
@@ -390,11 +401,6 @@ class Distiller:
         if required_keys:
             schema_hint = "，必须包含字段：" + "、".join(required_keys)
 
-        def _shape_ok(data: Any) -> bool:
-            if not isinstance(data, dict):
-                return False
-            return all(k in data for k in required_keys)
-
         attempts = 0
         last_error = None
         last_bad_shape_reply = None  # 记下"语法合法但结构不对"的那一次，供 Attempt 2 使用
@@ -405,7 +411,7 @@ class Distiller:
         try:
             _extracted = self._extract_json(reply.strip())
             data = json.loads(_extracted)
-            if _shape_ok(data):
+            if _shape_ok(data, required_keys):
                 T.set_current_attr("repair_stage", 1)
                 return data
             if isinstance(data, dict):
@@ -455,7 +461,7 @@ class Distiller:
             )
             try:
                 data = json.loads(self._extract_json(fix_reply.strip()))
-                if _shape_ok(data):
+                if _shape_ok(data, required_keys):
                     self._try_record_usage(action_label)
                     T.set_current_attr("repair_stage", 2)
                     return data
@@ -484,7 +490,7 @@ class Distiller:
             retry_reply = self._llm.chat(retry_prompt, [*retry_messages, anti_drift_notice])
             try:
                 data = json.loads(self._extract_json(retry_reply.strip()))
-                if _shape_ok(data):
+                if _shape_ok(data, required_keys):
                     self._try_record_usage(action_label)
                     T.set_current_attr("repair_stage", 3)
                     return data
