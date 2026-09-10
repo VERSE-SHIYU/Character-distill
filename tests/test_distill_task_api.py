@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.distiller import text_fingerprint
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -391,3 +392,126 @@ class TestCStartRefusesOnDBFailure:
         assert started == []                          # 未启后台线程
         with D._task_lock:
             assert D._tasks == {}                     # 未建内存写缓存条目
+
+
+# ── 路由测试（E）：/start 任务级续跑门（断言 5 / 6）─────────────────────────
+# 分片级三重门（指纹/非空/形状）在 tests/test_distill_resume.py 用确定性 mock 覆盖；
+# 这里只管 router 的任务级门：切分参数 / 全文指纹任一不符 → 整批候选作废。
+
+class _ResumeDistillerStub:
+    """只提供 /start 用到的切分口径；不起真线程、不碰 LLM。"""
+
+    def __init__(self, chunk_size: int = 3000):
+        self.chunk_size = chunk_size
+
+    def effective_chunk_size(self, text_type="story"):
+        return self.chunk_size
+
+
+def _seed_interrupted(store, user_id, tid, *, task_id, chunk_size, fp, chunks=()):
+    """落一行 interrupted 任务（带 checkpoint 参数）+ 可选分片行。"""
+    _run_async(store.save_distill_task(
+        task_id, user_id, tid, "甲", status="interrupted", progress_pct=40,
+        message="进程重启，任务中断", card_id="", awakening="",
+        chunk_size=chunk_size, text_fingerprint=fp,
+    ))
+    for idx, result, c_fp in chunks:
+        _run_async(store.save_distill_chunk(task_id, idx, result, fingerprint=c_fp))
+
+
+def _capture_start(monkeypatch, store, user_id, tid, *, character="甲", force=False,
+                   chunk_size=3000):
+    """POST /start，返回 (resp, 交给后台线程的 resume_candidates)。
+
+    ctx_thread 打桩：不真起线程，只捕获 args 元组（末位即 resume_candidates）。
+    """
+    async def _no_api_cfg(_uid):
+        return {}
+    store.get_user_api_config = _no_api_cfg
+    monkeypatch.setattr("deps.get_distiller",
+                        lambda llm=None: _ResumeDistillerStub(chunk_size))
+    captured: list[tuple] = []
+    monkeypatch.setattr("core.telemetry.ctx_thread",
+                        lambda *a, **k: captured.append(k["args"]) or threading.Thread())
+
+    client = _build_client(store, user_id)
+    resp = client.post("/api/distill/start",
+                       json={"text_id": tid, "character_name": character, "force": force})
+    return resp, (captured[0][-1] if captured else "NO_THREAD")
+
+
+class TestEResumeGate:
+    def _text(self, store, user_id, body="新正文内容"):
+        tid = f"txt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", body, user_id=user_id))
+        return tid
+
+    def test_chunk_size_change_rejects_whole_batch(self, store, user_id, monkeypatch, capsys):
+        """门 A：切分参数变 → 复用行整批作废、候选 None、日志点明原因、重新盖章。"""
+        body = "角色说的话" * 20
+        tid = self._text(store, user_id, body)
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _seed_interrupted(store, user_id, tid, task_id=task_id,
+                          chunk_size=9999, fp=text_fingerprint(body),
+                          chunks=[(0, "分析A", "cfp0")])
+
+        resp, cands = _capture_start(monkeypatch, store, user_id, tid, chunk_size=3000)
+
+        assert resp.status_code == 200
+        assert resp.json()["task_id"] == task_id      # 仍复用原 id（不是新铸）
+        assert cands is None
+        assert "切分参数变更" in capsys.readouterr().out
+        assert _run_async(store.get_distill_task(task_id))["chunk_size"] == 3000
+
+    def test_text_change_rejects_even_if_chunk_fp_wellformed(self, store, user_id,
+                                                            monkeypatch, capsys):
+        """门 B：原文变 → 整批重跑。
+
+        行里挂一片「指纹格式完全合法（真 sha256）」的分片，证明分片级门根本没机会跑：
+        任务级门先于分片门，整批已作废 —— 部分分片指纹再像也救不回来。
+        """
+        body = "新正文内容"
+        tid = self._text(store, user_id, body)
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _seed_interrupted(store, user_id, tid, task_id=task_id,
+                          chunk_size=3000, fp=text_fingerprint("旧的正文字符串"),
+                          chunks=[(0, "旧分析", text_fingerprint("旧的某个分片"))])
+
+        resp, cands = _capture_start(monkeypatch, store, user_id, tid, chunk_size=3000)
+
+        assert resp.status_code == 200
+        assert resp.json()["task_id"] == task_id
+        assert cands is None
+        assert "原文变更" in capsys.readouterr().out
+        assert _run_async(store.get_distill_task(task_id))["text_fingerprint"] == text_fingerprint(body)
+
+    def test_matching_checkpoint_loads_candidates(self, store, user_id, monkeypatch):
+        """正向对照：任务级门全过 → 分片行真的被读成候选（防上面两条门测试空过）。"""
+        body = "新正文内容"
+        tid = self._text(store, user_id, body)
+        task_id = f"dt_{uuid.uuid4().hex}"
+        _seed_interrupted(store, user_id, tid, task_id=task_id,
+                          chunk_size=3000, fp=text_fingerprint(body),
+                          chunks=[(0, "分析A", "cfp0"), (3, "分析B", "cfp3")])
+
+        resp, cands = _capture_start(monkeypatch, store, user_id, tid, chunk_size=3000)
+
+        assert resp.status_code == 200
+        assert resp.json()["task_id"] == task_id
+        assert cands == {0: {"result": "分析A", "fingerprint": "cfp0"},
+                         3: {"result": "分析B", "fingerprint": "cfp3"}}
+
+    def test_force_starts_fresh_ignoring_interrupted(self, store, user_id, monkeypatch):
+        """force=True 是「重新蒸馏」：不发现遗留行 → 铸新 task_id、无候选。"""
+        body = "新正文内容"
+        tid = self._text(store, user_id, body)
+        old_id = f"dt_{uuid.uuid4().hex}"
+        _seed_interrupted(store, user_id, tid, task_id=old_id,
+                          chunk_size=3000, fp=text_fingerprint(body),
+                          chunks=[(0, "分析A", "cfp0")])
+
+        resp, cands = _capture_start(monkeypatch, store, user_id, tid, force=True, chunk_size=3000)
+
+        assert resp.status_code == 200
+        assert resp.json()["task_id"] != old_id
+        assert cands is None
