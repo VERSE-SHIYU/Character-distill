@@ -263,10 +263,22 @@ def _detect_dialect(base_url: str | None, model: str | None) -> str:
 # 落满 6 片，二次续跑 map 调用 = 0）。四个提取点此前各自沉默：非流式三处 content 直取、
 # 流式一处直接 yield delta。本层收敛为单一裁决点，调用点不得再各自判：
 #   _INCOMPLETE_FINISH_REASONS → 显式抛 IncompleteResponseError，绝不返回空串/半截内容
-#   其余（stop / tool_calls / 陌生值 / 缺失）→ 放行；陌生值与缺失各记一条点名 WARN
+#   其余（stop / tool_calls / 真正陌生的值 / 缺失）→ 放行；陌生值与缺失各记一条点名 WARN
 # 截断（IncompleteResponseError）、网络故障（RuntimeError/超时…）、空内容（放行但返回
 # ""）三者互不混淆——失败必须可辨，不只是可见。
-_INCOMPLETE_FINISH_REASONS = frozenset({"length"})
+_INCOMPLETE_FINISH_REASONS = frozenset({
+    "length",                        # 输出被 max_tokens 截断
+    "content_filter",                # 内容被上游安全策略过滤
+    "insufficient_system_resource",  # 上游资源不足
+})
+
+# 未完成 → 处置建议。三者处置不同，只报「失败」会让上层猜错动作：
+#   length 抬预算 / content_filter 改输入（重试无用）/ insufficient_* 可重试。
+_INCOMPLETE_ACTIONS: dict[str, str] = {
+    "length": "输出被 max_tokens 截断 —— 抬 llm.max_tokens（或 LLM_MAX_TOKENS）或调小 chunk_size",
+    "content_filter": "内容被上游安全策略过滤 —— 需改输入，重试无用",
+    "insufficient_system_resource": "上游资源不足 —— 属瞬时故障，可重试",
+}
 _OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
 
 
@@ -275,15 +287,16 @@ class IncompleteResponseError(RuntimeError):
 
     def __init__(self, finish_reason: str, where: str) -> None:
         self.finish_reason = finish_reason
+        action = _INCOMPLETE_ACTIONS.get(
+            finish_reason, "未登记处置 —— 补 adapters/llm_adapter.py 的 _INCOMPLETE_ACTIONS")
         super().__init__(
-            f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— 内容被截断，"
-            f"已按失败处理、不返回半截内容。该值若实为正常终态，改 adapters/llm_adapter.py "
-            f"的 _INCOMPLETE_FINISH_REASONS / _OK_FINISH_REASONS。"
+            f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— {action}；"
+            f"已按失败处理、不返回半截内容。"
         )
 
 
 def _check_finish_reason(finish_reason: str | None, *, where: str) -> None:
-    """截断 → 抛；其余放行。陌生值与缺失点名 WARN（不同供应商语义不一，不阻断）。"""
+    """已知未完成终态 → 抛；其余放行。陌生值与缺失点名 WARN（不同供应商语义不一，不阻断）。"""
     if finish_reason in _INCOMPLETE_FINISH_REASONS:
         raise IncompleteResponseError(finish_reason, where)
     if finish_reason in _OK_FINISH_REASONS:

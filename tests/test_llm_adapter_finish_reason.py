@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
-"""响应校验层回归：finish_reason 是唯一裁决点，截断必须显式失败、绝不返回半截内容。
+"""响应校验层回归：finish_reason 是唯一裁决点，未完成终态必须显式失败、绝不返回半截内容。
 
 历史：全仓生产代码从不读 finish_reason → 截断 / 被思考吃光的响应被当成功返回并落库
-（实测 52 字节半截内容落满 6 片）。本测试锁三件事：
-  1. 已知未完成值（length）→ 抛 IncompleteResponseError，且异常不携带被截断的正文
-  2. stop / tool_calls → 正常返回
-  3. 缺失 / 陌生值 → 放行（不同供应商语义不一），但点名告警
+（实测 52 字节半截内容落满 6 片）。本测试锁四件事：
+  1. 已知未完成终态（length / content_filter / insufficient_system_resource）→
+     抛 IncompleteResponseError，且异常不携带被截断的正文
+  2. 三类处置在文案里可区分（抬预算 / 改输入 / 可重试），上层不会猜错动作
+  3. stop / tool_calls → 正常返回
+  4. 缺失 / 真正陌生的值 → 放行（不同供应商语义不一），但点名告警
 外加一条兼容锁：老 mock 形态（choice 没有 finish_reason 属性）不得因此变红。
 """
 import asyncio
@@ -104,6 +106,24 @@ def test_length_raises_and_carries_no_content():
         llm.chat("sys", _MSGS)
     assert ei.value.finish_reason == "length"
     assert "半截正文" not in str(ei.value)  # 截断内容不出现在消息里（更不返回）
+    assert "max_tokens" in str(ei.value)   # 处置=抬预算
+
+
+def test_content_filter_raises_and_says_change_input():
+    llm = _llm()
+    llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="content_filter"))))
+    with pytest.raises(IncompleteResponseError) as ei:
+        llm.chat("sys", _MSGS)
+    assert ei.value.finish_reason == "content_filter"
+    assert "改输入" in str(ei.value)        # 处置=改输入，不是重试、不是抬预算
+
+
+def test_insufficient_resource_raises_and_says_retryable():
+    llm = _llm()
+    llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="insufficient_system_resource"))))
+    with pytest.raises(IncompleteResponseError) as ei:
+        llm.chat("sys", _MSGS)
+    assert "可重试" in str(ei.value)        # 处置=可重试，区别于前两者
 
 
 def test_stop_returns_content():
@@ -136,11 +156,11 @@ def test_finish_reason_absent_attribute_passes():
 
 
 def test_unknown_finish_reason_warns_but_passes(capsys):
-    """陌生值按 spec 放行，但必须点名——否则新方言的截断型终态会静默溜过。"""
+    """真正陌生的值放行，但必须点名——否则新方言的截断型终态会静默溜过。"""
     llm = _llm()
-    llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="content_filter"))))
+    llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="some_new_vendor_value"))))
     assert llm.chat("sys", _MSGS) == "ok"
-    assert "content_filter" in capsys.readouterr().out
+    assert "some_new_vendor_value" in capsys.readouterr().out
 
 
 # ── 流式：终态在最后一个 chunk，先校验再吐该片 ────────────────────────
