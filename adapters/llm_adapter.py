@@ -257,6 +257,52 @@ def _detect_dialect(base_url: str | None, model: str | None) -> str:
     return _DIALECT_UNKNOWN
 
 
+# ── 响应校验层（唯一 finish_reason 裁决点）─────────────────────────────
+# 缺陷（与重试嵌套/线程弃船/维度不符同根因的第四次显形）：全仓生产代码从不读
+# finish_reason → 截断或「被思考吃光」的响应被当成功返回并落库（实测：52 字节半截内容
+# 落满 6 片，二次续跑 map 调用 = 0）。四个提取点此前各自沉默：非流式三处 content 直取、
+# 流式一处直接 yield delta。本层收敛为单一裁决点，调用点不得再各自判：
+#   _INCOMPLETE_FINISH_REASONS → 显式抛 IncompleteResponseError，绝不返回空串/半截内容
+#   其余（stop / tool_calls / 陌生值 / 缺失）→ 放行；陌生值与缺失各记一条点名 WARN
+# 截断（IncompleteResponseError）、网络故障（RuntimeError/超时…）、空内容（放行但返回
+# ""）三者互不混淆——失败必须可辨，不只是可见。
+_INCOMPLETE_FINISH_REASONS = frozenset({"length"})
+_OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
+
+
+class IncompleteResponseError(RuntimeError):
+    """finish_reason 属 _INCOMPLETE_FINISH_REASONS —— 内容不完整，不可当成功落库。"""
+
+    def __init__(self, finish_reason: str, where: str) -> None:
+        self.finish_reason = finish_reason
+        super().__init__(
+            f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— 内容被截断，"
+            f"已按失败处理、不返回半截内容。该值若实为正常终态，改 adapters/llm_adapter.py "
+            f"的 _INCOMPLETE_FINISH_REASONS / _OK_FINISH_REASONS。"
+        )
+
+
+def _check_finish_reason(finish_reason: str | None, *, where: str) -> None:
+    """截断 → 抛；其余放行。陌生值与缺失点名 WARN（不同供应商语义不一，不阻断）。"""
+    if finish_reason in _INCOMPLETE_FINISH_REASONS:
+        raise IncompleteResponseError(finish_reason, where)
+    if finish_reason in _OK_FINISH_REASONS:
+        return
+    print(f"[llm] WARNING: {where}: 未识别的 finish_reason={finish_reason!r} —— 按正常处理；"
+          f"若确属截断，加入 adapters/llm_adapter.py 的 _INCOMPLETE_FINISH_REASONS")
+
+
+def _checked_message(choice: Any, *, where: str) -> Any:
+    """校验后返回 message 对象（chat_with_tools 需要 tool_calls，故不在此取 content）。"""
+    _check_finish_reason(getattr(choice, "finish_reason", None), where=where)
+    return choice.message
+
+
+def _extract_content(choice: Any, *, where: str) -> str:
+    """校验后取正文；空 content 仍是空串（那是「无内容」，≠ 截断）。"""
+    return _checked_message(choice, where=where).content or ""
+
+
 class LLMAdapter:
     """封装 DeepSeek Chat API 调用。
 
@@ -379,13 +425,15 @@ class LLMAdapter:
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")
-                content = choices[0].message.content or ""
+                content = _extract_content(choices[0], where="chat")
                 if completion.usage:
                     self.last_usage = {
                         "prompt_tokens": completion.usage.prompt_tokens or 0,
                         "completion_tokens": completion.usage.completion_tokens or 0,
                     }
                 return content
+            except IncompleteResponseError:
+                raise  # 截断是确定性失败：不烧重试预算（同 ToolsNotSupportedError 形状）
             except Exception as exc:
                 time.sleep(budget.on_failure(exc))
 
@@ -422,7 +470,7 @@ class LLMAdapter:
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")
-                result = choices[0].message.content or ""
+                result = _extract_content(choices[0], where="async_chat")
                 usage = None
                 if completion.usage:
                     usage = {
@@ -430,6 +478,8 @@ class LLMAdapter:
                         "completion_tokens": completion.usage.completion_tokens or 0,
                     }
                 return result, usage
+            except IncompleteResponseError:
+                raise  # 截断：确定性失败，不烧重试预算
             except Exception as exc:
                 await asyncio.sleep(budget.on_failure(exc))
 
@@ -465,6 +515,7 @@ class LLMAdapter:
             except Exception as exc:
                 time.sleep(budget.on_failure(exc))
         completion_chars = 0
+        saw_finish_reason = False  # 流式终态只在最后一个 chunk 上出现
         try:
             for chunk in stream:
                 if chunk.usage:
@@ -477,11 +528,19 @@ class LLMAdapter:
                 choices = chunk.choices
                 if not choices:
                     continue
+                # 先校验再吐本 chunk：finish_reason=length 时最后一片也不交付。
+                # 中间 chunk 恒为 None，故 None 不在此处告警，留到流尽统一判缺失。
+                fr = getattr(choices[0], "finish_reason", None)
+                if fr is not None:
+                    saw_finish_reason = True
+                    _check_finish_reason(fr, where="chat_stream")
                 delta = choices[0].delta
                 piece = delta.content
                 if piece:
                     completion_chars += len(piece)
                     yield piece
+            if not saw_finish_reason:
+                _check_finish_reason(None, where="chat_stream")  # 流尽仍无终态 → 记缺失
             # 厂商全程未回 usage chunk → 字符估算兜底
             if self.last_usage is None:
                 self.last_usage = {
@@ -490,6 +549,8 @@ class LLMAdapter:
                     "estimated": True,
                 }
                 print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
+        except IncompleteResponseError:
+            raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
         except Exception as exc:
             print(f"读取流式响应失败：{exc}")
             raise
@@ -531,13 +592,15 @@ class LLMAdapter:
                 choices = completion.choices
                 if not choices:
                     raise RuntimeError("API returned empty choices")
-                msg = choices[0].message
+                msg = _checked_message(choices[0], where="chat_with_tools")
                 if completion.usage:
                     self.last_usage = {
                         "prompt_tokens": completion.usage.prompt_tokens or 0,
                         "completion_tokens": completion.usage.completion_tokens or 0,
                     }
                 return msg
+            except IncompleteResponseError:
+                raise  # 截断：确定性失败，不烧重试预算（同 ToolsNotSupportedError 形状）
             except BadRequestError as exc:
                 err_text = " ".join(
                     filter(None, [exc.message, str(exc), str(getattr(exc, "body", "") or "")])
