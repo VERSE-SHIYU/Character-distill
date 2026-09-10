@@ -1501,8 +1501,13 @@ class Distiller:
                 # 缓存命中的片已在库里，不重复写。指纹在此算——只有这里能拿到 relevant[idx] 的原文。
                 # 失败片（checkpoint_ok=False）不回调：写进去的是空串 + 合法指纹，
                 # 续跑时只有门 2 拦得住，且 ON CONFLICT DO NOTHING 让那行永久占位。
-                if checkpoint_ok and not from_cache and on_chunk_done:
-                    on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
+                if on_chunk_done and not from_cache:
+                    if checkpoint_ok:
+                        on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
+                    else:
+                        # 静默的 checkpoint 失效是最贵的那种：点名该片本轮不入库、下轮重跑
+                        print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
+                              f"resume will re-run it")
                 yield {"status": "analyzing", "current": item[1], "total": total}
 
         t.join(timeout=5)

@@ -218,7 +218,10 @@ class TestFailedChunkNotCheckpointed:
         assert currents == [0, 1, 2, 3], f"3 片（含失败片）都该推进度，实得 {currents}"
 
         # 3) failures 仍记录该片：失败率判断不受影响（1/3 在容忍范围内 → 继续）
-        assert "1/3 map chunks failed" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "1/3 map chunks failed" in out
+        # 4) 跳过落库不静默：点名该片未入 checkpoint、下轮重跑
+        assert "Chunk 2 not checkpointed" in out
 
 
 # ── 4 主路径零回归 ───────────────────────────────────────────────────────────
