@@ -230,7 +230,8 @@ class TestFailedChunkNotCheckpointed:
         return done, pieces, events
 
     def test_failed_chunk_is_not_checkpointed(self, capsys):
-        done, _pieces, events = self._run3(_FailingLLM("角色第2段"))
+        llm = _FailingLLM("角色第2段")
+        done, _pieces, _events = self._run3(llm)
 
         # 1) 回调只有 2 次，失败片不在其中
         idxs = [i for i, _r, _f in done]
@@ -238,10 +239,15 @@ class TestFailedChunkNotCheckpointed:
         assert 2 not in idxs
         assert all(r.strip() for _i, r, _f in done), "回调结果不该是空串"
 
-        # 2) 失败片仍走完同一条路径 → map_results 仍收到 (2, "")（其字面内容对公开
-        #    generator 不可见，用 per-chunk 进度事件代理：3 片都报了进度）。
-        currents = sorted(e["current"] for e in events if e.get("status") == "analyzing")
-        assert currents == [0, 1, 2, 3], f"3 片（含失败片）都该推进度，实得 {currents}"
+        # 2) 失败片以空串并入 map_results → 被 raw_analyses 的
+        #    `r[1].strip() and != "无"` 过滤 → reduce 只见 2 段。
+        #    不测 map_results 本身（公开 generator 内不可达），测其下游可观测后果：
+        #    reduce 的 user prompt 里 `[来源片段 N]` 的条数。失败片若以**非空假结果**
+        #    落库（如占位串「分析失败」），这里会数到 3 段 → 红。
+        reduce_inputs = [s for s in llm.stream_inputs if "---片段分隔---" in s]
+        assert len(reduce_inputs) == 1, f"应恰有一次 reduce 调用，实得 {len(reduce_inputs)}"
+        assert reduce_inputs[0].count("[来源片段 ") == 2, \
+            "失败片应作空串进 map_results 后被 raw_analyses 过滤 → reduce 只见 2 段"
 
         # 3) failures 仍记录该片：失败率判断不受影响（1/3 在容忍范围内 → 继续）
         out = capsys.readouterr().out
