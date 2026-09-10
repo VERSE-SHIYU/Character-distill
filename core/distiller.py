@@ -173,16 +173,18 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
     """续跑分片三重门：三道全过才返回缓存 result，否则 None（需重跑）。
 
     1. candidates 里有该 index 且形状正确（result/fingerprint 两键齐全，_shape_ok）
-    2. result 非空 —— 上一轮失败的片落的是空串，空串不是可用结果
+    2. result 非空 —— 空结果不是可用结果
     3. chunk_fingerprint 与当前切分重算的 sha256 一致（该片原文未变）
 
     第 3 道用原文哈希而非 index：别名漂移会让 relevant 切片变化、index 语义漂移，
     哈希不一致即拒绝复用——宁重跑，不拼错位结果。
 
-    职责边界（别把本门当结构校验）：第 2 道只挡本路径自己产生的空串，不承诺结构校验。
-    非空但内容非法（截断文本、半截 JSON）不会被拦——实测证据：A 阶段 v3，52 字节半截
-    内容被复用、未重发。上游截断由 adapters/llm_adapter.py 的 finish_reason 裁决层负责
-    （第一道），该层遇未完成终态即抛异常使本片落空串，再由本门挡住。
+    第 2 道是**纵深防御**，不是契约：它挡的是「任何路径往 checkpoint 里写入空结果」
+    这一类错误，不承诺结构校验——非空但内容不完整（截断的自由文本）照过。
+    Map 返回的是自由文本角色证据，不产 JSON，所以「半截 JSON」不是本门的场景。
+    主屏障在上游：distill_incremental_stream 里失败的 Map 片不落 checkpoint
+    （抛异常即跳过 on_chunk_done），正常路径下这里根本不该出现空串候选。
+    上游截断另由 adapters/llm_adapter.py 的 finish_reason 裁决层在源头变显式失败。
     """
     if not candidates:
         return None

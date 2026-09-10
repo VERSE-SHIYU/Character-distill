@@ -267,7 +267,7 @@ def _detect_dialect(base_url: str | None, model: str | None) -> str:
 # 截断（IncompleteResponseError）、网络故障（RuntimeError/超时…）、空内容（放行但返回
 # ""）三者互不混淆——失败必须可辨，不只是可见。
 # 两道防线的分工：本层是第一道（上游截断在源头显式失败）；续跑侧的第二道在
-# core/distiller.py:172 的 _resume_hit 第 2 道，只挡本路径产生的空串、不承诺结构校验——
+# core/distiller.py 的 _resume_hit 第 2 道，是纵深防御——只挡空结果、不承诺结构校验。
 # 不要把结构校验的期望挪到那边，也不要指望本层挡住「模型自然 stop 但内容不完整」。
 _INCOMPLETE_FINISH_REASONS = frozenset({
     "length",                        # 输出被 max_tokens 截断

@@ -107,6 +107,32 @@ class TestResumeHitDoors:
         assert _resume_hit(0, chunk, {0: {"result": "分析", "fingerprint": "stale"}}) is None
         assert _resume_hit(0, chunk, {0: {"result": None, "fingerprint": text_fingerprint(chunk)}}) is None
 
+    def test_truncated_nonempty_result_passes_second_gate(self):
+        """门的**范围**锁：第 2 道只挡空串，不承诺结构校验（纵深防御，见 docstring）。
+
+        非空但被截断的自由文本必须**穿过去**，不是被拦（实测依据：A 阶段 v3，52 字节
+        半截内容被复用未重发）。将来若有人给这道门加结构校验，本用例必须变红。
+        """
+        chunk = "某片原文"
+        truncated = "角色第 3 段：角色的性格是"     # 非空、被截断的自由文本
+        cand = {0: {"result": truncated, "fingerprint": text_fingerprint(chunk)}}
+        assert _resume_hit(0, chunk, cand) == truncated
+
+    def test_truncated_nonempty_result_reaches_downstream(self):
+        """另一半：穿过门之后确实进了下游（reduce/format 的输入），不是被静默丢弃。"""
+        done1, _out1 = _run(_FakeLLM(), None)
+        cands = _candidates(done1)
+        victim = sorted(cands)[0]
+        truncated = "角色第 3 段：角色的性格是"
+        cands[victim] = {"result": truncated, "fingerprint": cands[victim]["fingerprint"]}
+
+        llm2 = _FakeLLM()
+        done2, _out2 = _run(llm2, cands)
+        assert llm2.map_calls == 0, "非空截断结果被复用 → 该片不重发"
+        assert victim not in [i for i, _r, _f in done2], "复用片不重复落库"
+        assert any(truncated in s for s in llm2.stream_inputs), \
+            "截断结果应原样进到下游，而不是被静默丢弃"
+
 
 # ── 1 续跑省调用 + 2 幂等 ────────────────────────────────────────────────────
 
