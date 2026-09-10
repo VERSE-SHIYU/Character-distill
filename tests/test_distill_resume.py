@@ -6,6 +6,7 @@
 2 幂等：连续两次续跑 → reduce/format 输入与产出逐字节一致
 3 第二道门：缓存 result 为空/失效 → 只重跑该片，不崩、不复用坏结果
 4 主路径零回归：resume_candidates=None 时与不续跑行为完全一致
+5 失败片不落 checkpoint：Map 分片抛异常 → 不进 on_chunk_done，门 2 不再是唯一屏障
 
 任务级门（改 chunk_size / 改原文 → 整批重跑）落在 /start，见
 tests/test_distill_task_api.py::TestEResumeGate（同一提交）。
@@ -152,6 +153,72 @@ class TestSecondGateRerunsBadChunk:
         assert [i for i, _r, _f in done2] == [victim], "只有坏片该重落库"
         assert done2[0][1] == first[victim], "重跑结果应与首轮一致（确定性）"
         assert out2 == out1
+
+
+# ── 5 失败片不落 checkpoint（唯一屏障在门 2 → 移到上游）─────────────────────
+
+class _FailingLLM(_FakeLLM):
+    """内容含 fail_marker 的片抛异常，其余照旧 —— 复现 Map 分片失败路径。"""
+
+    def __init__(self, fail_marker: str):
+        super().__init__()
+        self.fail_marker = fail_marker
+
+    async def async_chat(self, system, messages, client=None):
+        if self.fail_marker in messages[0]["content"]:
+            self.map_calls += 1
+            raise RuntimeError("simulated upstream failure")
+        return await super().async_chat(system, messages, client=client)
+
+
+class TestFailedChunkNotCheckpointed:
+    """失败的 Map 分片不进 checkpoint。
+
+    修复前落的是「空串 + 一个完全合法的指纹」：续跑时 _resume_hit 门 1（形状）与门 3
+    （指纹）都过，只有门 2（非空）拦得住 —— 门 2 是唯一屏障。且 save_distill_chunk 是
+    ON CONFLICT DO NOTHING，那行空串永久占位，重跑成功也写不进去，全程静默。
+
+    契约：map_results 照旧收该片的空串（失败率判断与 raw_analyses 过滤依赖它），
+    只是 on_chunk_done 不被调用。
+    """
+
+    TEXT3 = "\n\n".join(
+        f"角色第{i}段：角色说了第{i}句话，这里还有角色的别的话。" for i in range(3)
+    )
+
+    def _run3(self, llm) -> tuple[list, list[str], list[dict]]:
+        d = _make_distiller(llm)
+        done: list[tuple[int, str, str]] = []
+        pieces: list[str] = []
+        events: list[dict] = []
+        for piece in d.distill_incremental_stream(
+            self.TEXT3, "角色", [], "story",
+            on_chunk_done=lambda i, r, fp: done.append((i, r, fp)),
+            resume_candidates=None,
+        ):
+            if isinstance(piece, str):
+                pieces.append(piece)
+            else:
+                assert "error" not in piece, piece
+                events.append(piece)
+        return done, pieces, events
+
+    def test_failed_chunk_is_not_checkpointed(self, capsys):
+        done, _pieces, events = self._run3(_FailingLLM("角色第2段"))
+
+        # 1) 回调只有 2 次，失败片不在其中
+        idxs = [i for i, _r, _f in done]
+        assert len(done) == 2, f"失败片不该回调落库，实际回调 {idxs}"
+        assert 2 not in idxs
+        assert all(r.strip() for _i, r, _f in done), "回调结果不该是空串"
+
+        # 2) 失败片仍走完同一条路径 → map_results 仍收到 (2, "")（其字面内容对公开
+        #    generator 不可见，用 per-chunk 进度事件代理：3 片都报了进度）。
+        currents = sorted(e["current"] for e in events if e.get("status") == "analyzing")
+        assert currents == [0, 1, 2, 3], f"3 片（含失败片）都该推进度，实得 {currents}"
+
+        # 3) failures 仍记录该片：失败率判断不受影响（1/3 在容忍范围内 → 继续）
+        assert "1/3 map chunks failed" in capsys.readouterr().out
 
 
 # ── 4 主路径零回归 ───────────────────────────────────────────────────────────

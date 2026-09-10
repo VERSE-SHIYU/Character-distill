@@ -1433,8 +1433,9 @@ class Distiller:
                     cached = _resume_hit(i, chunk, resume_candidates)
                     if cached is not None:
                         # 命中：零 LLM 调用，缓存结果照常并入 map_results 供 reduce 消费
-                        result, from_cache = cached, True
+                        result, from_cache, checkpoint_ok = cached, True, True
                     else:
+                        checkpoint_ok = True
                         async with sem:
                             system = map_system(character_name)
                             user = map_user(chunk, character_name)
@@ -1446,20 +1447,25 @@ class Distiller:
                                 print(f"[distiller] Map chunk {i} failed: {exc}")
                                 async with lock:
                                     failures.append((i, exc))
-                                # 已知残留（非进展循环）：某片被上游判定不完整 → 落空串
-                                # → 续跑时 _resume_hit 第 2 道挡住 → 重发 → 同参数下可能
-                                # 再次不完整 → 该片永不成功。兜底 >50% 分片失败即整批 bail
-                                # （见下方 :1507 的 if failed / total_chunks > 0.5）；50% 以下会带着
+                                # 失败片不落 checkpoint：空串配一个合法指纹写进去，续跑时
+                                # 只有 _resume_hit 的门 2（非空）拦得住它，而 ON CONFLICT
+                                # DO NOTHING 会让那行永久占位——重跑成功也写不进去。
+                                # 空串仍并入 map_results：下游失败率判断与 raw_analyses
+                                # 过滤按「非空且 != 无」丢弃它，契约不变。
+                                # 已知残留（非进展循环）：该片下轮无候选 → 重发 → 同参数下
+                                # 可能再次失败 → 该片永不成功。兜底是本函数末尾的
+                                # `failed / total_chunks > 0.5` 整批 bail 分支；50% 以下会带着
                                 # 缺片继续产出。缓解手段是调 llm.max_tokens（LLM_MAX_TOKENS
                                 # 环境变量）或减小 chunk_size，不在适配器层解决。
                                 # 实测佐证：同一片两次调用一次 content=0 一次 content=2060，
                                 # 是随机饿死而非确定性截断，故重发有概率成功、不是死循环。
                                 result = ""
+                                checkpoint_ok = False
                         from_cache = False
                     async with lock:
                         done_count[0] += 1
                         current = done_count[0]
-                    q.put(("chunk", current, i, result, from_cache))
+                    q.put(("chunk", current, i, result, from_cache, checkpoint_ok))
                     return (i, result)
 
                 tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
@@ -1489,11 +1495,13 @@ class Distiller:
                 yield {"error": f"Map 阶段失败：{item[1]}"}
                 return
             if kind == "chunk":
-                _k, _current, idx, result, from_cache = item
+                _k, _current, idx, result, from_cache, checkpoint_ok = item
                 map_results.append((idx, result))
                 # 每片完成即回调落库（不攒批：攒批时 OOM 会丢掉一整批已付费的结果）。
                 # 缓存命中的片已在库里，不重复写。指纹在此算——只有这里能拿到 relevant[idx] 的原文。
-                if not from_cache and on_chunk_done:
+                # 失败片（checkpoint_ok=False）不回调：写进去的是空串 + 合法指纹，
+                # 续跑时只有门 2 拦得住，且 ON CONFLICT DO NOTHING 让那行永久占位。
+                if checkpoint_ok and not from_cache and on_chunk_done:
                     on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
                 yield {"status": "analyzing", "current": item[1], "total": total}
 
