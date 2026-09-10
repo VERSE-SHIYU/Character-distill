@@ -272,12 +272,20 @@ _INCOMPLETE_FINISH_REASONS = frozenset({
     "insufficient_system_resource",  # 上游资源不足
 })
 
-# 未完成 → 处置建议。三者处置不同，只报「失败」会让上层猜错动作：
+# 未完成 → 处置建议（面向运维/日志）。三者动作不同，只报「失败」会让上层猜错：
 #   length 抬预算 / content_filter 改输入（重试无用）/ insufficient_* 可重试。
 _INCOMPLETE_ACTIONS: dict[str, str] = {
     "length": "输出被 max_tokens 截断 —— 抬 llm.max_tokens（或 LLM_MAX_TOKENS）或调小 chunk_size",
     "content_filter": "内容被上游安全策略过滤 —— 需改输入，重试无用",
     "insufficient_system_resource": "上游资源不足 —— 属瞬时故障，可重试",
+}
+
+# 未完成 → 面向终端用户的说法。运维口径（「抬 max_tokens」「调小 chunk_size」）不能给
+# 聊天用户看；SSE 错误帧用这张表，日志与蒸馏任务错误用上一张。
+_INCOMPLETE_USER_MESSAGES: dict[str, str] = {
+    "length": "回复被截断，请重试",
+    "content_filter": "内容被安全策略拦截，请修改后重试",
+    "insufficient_system_resource": "服务繁忙，请稍后重试",
 }
 _OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
 
@@ -287,12 +295,17 @@ class IncompleteResponseError(RuntimeError):
 
     def __init__(self, finish_reason: str, where: str) -> None:
         self.finish_reason = finish_reason
-        action = _INCOMPLETE_ACTIONS.get(
+        self.hint = _INCOMPLETE_ACTIONS.get(
             finish_reason, "未登记处置 —— 补 adapters/llm_adapter.py 的 _INCOMPLETE_ACTIONS")
         super().__init__(
-            f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— {action}；"
+            f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— {self.hint}；"
             f"已按失败处理、不返回半截内容。"
         )
+
+    @property
+    def user_message(self) -> str:
+        """面向用户的文案：不含 where（日志标识）与运维口径的处置建议。"""
+        return _INCOMPLETE_USER_MESSAGES.get(self.finish_reason, "回复未完成，请重试")
 
 
 def _check_finish_reason(finish_reason: str | None, *, where: str) -> None:

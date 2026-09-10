@@ -19,11 +19,21 @@ from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
+from adapters.llm_adapter import IncompleteResponseError
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
 
 MAX_MESSAGE_LENGTH = 5000
+
+
+def _stream_error_payload(exc: Exception) -> dict[str, Any]:
+    """SSE 错误帧。未完成终态额外带 code / finish_reason，前端据此区分「被截断 / 被过滤 /
+    资源不足」与网络故障（只给一句 str(exc) 时前端无从分辨）；其余异常保持原样。"""
+    if isinstance(exc, IncompleteResponseError):
+        return {"error": exc.user_message, "code": "incomplete_response",
+                "finish_reason": exc.finish_reason}
+    return {"error": str(exc)}
 
 # Retraction state machine
 RETRACT_COOLDOWN_TURNS = 4      # 距上次撤回至少间隔的轮数
@@ -513,8 +523,7 @@ async def _do_chat_stream(
             engine = session.get("engine")
             if engine and engine.history and engine.history[-1].get("role") == "user":
                 engine.history.pop()
-            err_payload = {"error": str(exc)}
-            yield f"data: {json.dumps(err_payload, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {json.dumps(_stream_error_payload(exc), ensure_ascii=False, default=str)}\n\n"
 
     # OTel context 传播点：invoke_agent 根 span 包住整个 SSE（TTFT→首 token），
     # 子链路在 to_thread / ctx_submit 线程里经 context 拷贝自动挂到本根下。

@@ -1,8 +1,9 @@
 export class AppError extends Error {
-  constructor(message, status = 0) {
+  constructor(message, status = 0, code = '') {
     super(message)
     this.name = 'AppError'
     this.status = status
+    this.code = code
   }
 }
 
@@ -227,7 +228,7 @@ export function streamSSE(url, body, onToken, onDone, onError, onStatus, onEvent
             const payload = JSON.parse(line.slice(6))
             if (payload.error) {
               finished = true
-              onError(new AppError(payload.error))
+              onError(new AppError(payload.error, 0, payload.code || ''))
               return
             }
             if (payload.done) {

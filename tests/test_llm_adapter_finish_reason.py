@@ -109,6 +109,14 @@ def test_length_raises_and_carries_no_content():
     assert "max_tokens" in str(ei.value)   # 处置=抬预算
 
 
+def test_user_message_omits_internal_and_ops_detail():
+    """上屏文案不得含内部 where 标识，也不得含运维口径的处置建议。"""
+    e = IncompleteResponseError("length", "chat_stream")
+    assert e.user_message == "回复被截断，请重试"
+    assert "chat_stream" not in e.user_message
+    assert "max_tokens" not in e.user_message
+
+
 def test_content_filter_raises_and_says_change_input():
     llm = _llm()
     llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="content_filter"))))
