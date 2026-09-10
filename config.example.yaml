@@ -5,6 +5,10 @@ distill:
 llm:
   # api_key 请在 .env 中设置 DEEPSEEK_API_KEY，或在 Web 设置页填写
   base_url: https://api.deepseek.com
+  # 4096 的来历只有 commit 标题（c2086347 首值 → 8955a683→16384 → 70bd104f→1024 →
+  # 24855554 回到 4096），无量化依据；相对模型 384K 输出上限是万分之一，暂维持不动。
+  # 复现路径与实测数据见 AGENTS.md「蒸馏管线」二、三节。调新值前先按第四节拿数据。
+  # 环境变量 LLM_MAX_TOKENS 可临时覆盖本值（压过本文件，不发版）。
   max_tokens: 4096
   model: deepseek-v4-pro
   presence_penalty: 0.3  # 防重复，温和不磨平口头禅

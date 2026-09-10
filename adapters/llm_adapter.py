@@ -303,6 +303,22 @@ def _extract_content(choice: Any, *, where: str) -> str:
     return _checked_message(choice, where=where).content or ""
 
 
+def _resolve_max_tokens(llm_cfg: dict[str, Any]) -> int:
+    """max_tokens 取值阶梯：显式 arg > LLM_MAX_TOKENS > config.yaml > 4096。
+
+    env 必须压过 config.yaml，否则这个出口是死的（镜像里总有 config.yaml）。与三个
+    ceiling（LLM_DECISION_ATTEMPT_S / LLM_GEN_ATTEMPT_S / LLM_STREAM_ATTEMPT_S）同模式：
+    生产发现值不对，改环境变量即可，不发版。现值 4096 无量化依据（来历见 config 注释）。
+    """
+    env = os.getenv("LLM_MAX_TOKENS")
+    if env and env.strip():
+        try:
+            return int(env)
+        except ValueError:
+            print(f"[LLMAdapter] LLM_MAX_TOKENS={env!r} 不是整数，回退 config.yaml")
+    return int(llm_cfg.get("max_tokens", 4096))
+
+
 class LLMAdapter:
     """封装 DeepSeek Chat API 调用。
 
@@ -341,7 +357,7 @@ class LLMAdapter:
         self._base_url = base_url or str(llm_cfg.get("base_url", "https://api.deepseek.com"))
         self._model = model or str(llm_cfg.get("model", "deepseek-v4-pro"))
         self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
-        self._max_tokens = max_tokens if max_tokens is not None else int(llm_cfg.get("max_tokens", 4096))
+        self._max_tokens = max_tokens if max_tokens is not None else _resolve_max_tokens(llm_cfg)
         self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
         self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
