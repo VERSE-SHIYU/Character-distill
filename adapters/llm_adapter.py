@@ -216,6 +216,47 @@ def _async_infer_finalize(sp, self, result, exc) -> None:
         T.set_usage(sp, usage.get("prompt_tokens"), usage.get("completion_tokens"))
 
 
+# ── 供应商方言层（唯一请求选项控制点）─────────────────────────────────
+# base_url 用户可配（见 __init__），本适配器实际服务多家 OpenAI 兼容端点。同一个意图
+# （"关闭思考"）在不同家的 payload 不同，硬编码任一家都会静默打偏：
+#   extra_body={"enable_thinking": False} 是 Qwen 方言，DeepSeek 不认、静默忽略 →
+#   思考照开、与正文共享 max_tokens → 正文被吃光返回空内容（实测见 AGENTS.md「蒸馏管线」）。
+# 故调用点只表达意图，payload 由本表决定；四处调用点不得再各拼 extra_body 字面量。
+_DIALECT_DEEPSEEK = "deepseek"
+_DIALECT_QWEN = "qwen"
+_DIALECT_UNKNOWN = "unknown"
+
+# 方言指纹：base_url / model 的小写子串匹配（顺序即优先级）。
+_DIALECT_FINGERPRINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (_DIALECT_DEEPSEEK, ("deepseek",)),
+    (_DIALECT_QWEN, ("dashscope", "aliyuncs", "qwen")),
+)
+
+# 「关闭思考」意图 → 各方言 payload。空 dict = 该供应商无此开关 → 不传 extra_body。
+# 未知供应商走空 dict 是安全默认：宁可开着思考（仅多花预算），也不发一个可能被 400
+# 拒绝的未知字段（那会让该用户所有调用永久失败）。
+_THINKING_DISABLED: dict[str, dict[str, Any]] = {
+    _DIALECT_DEEPSEEK: {"thinking": {"type": "disabled"}},
+    _DIALECT_QWEN: {"enable_thinking": False},
+    _DIALECT_UNKNOWN: {},
+}
+
+
+def _detect_dialect(base_url: str | None, model: str | None) -> str:
+    """由 base_url + model 推断供应商方言；认不出返回 _DIALECT_UNKNOWN。
+
+    base_url 优先：它标识「在跟谁说话」，而 model 可能是网关的别名，也可能是
+    config 里的默认值（用户只换 base_url 时 model 不会跟着变）。base_url 认不出
+    再退回 model 名。两条线索都认不出 → unknown。
+    """
+    for source in (base_url, model):
+        hay = (source or "").lower()
+        for dialect, needles in _DIALECT_FINGERPRINTS:
+            if any(n in hay for n in needles):
+                return dialect
+    return _DIALECT_UNKNOWN
+
+
 class LLMAdapter:
     """封装 DeepSeek Chat API 调用。
 
@@ -256,6 +297,7 @@ class LLMAdapter:
         self._temperature = temperature if temperature is not None else float(llm_cfg.get("temperature", 0.7))
         self._max_tokens = max_tokens if max_tokens is not None else int(llm_cfg.get("max_tokens", 4096))
         self._presence_penalty = float(llm_cfg.get("presence_penalty", 0.3))
+        self._dialect = _detect_dialect(self._base_url, self._model)
         self.last_usage: dict | None = None
 
         resolved_key = api_key or llm_cfg.get("api_key") or os.getenv("DEEPSEEK_API_KEY")
@@ -299,6 +341,14 @@ class LLMAdapter:
         """组装包含系统提示的对话消息列表。"""
         return [{"role": "system", "content": system_prompt}, *messages]
 
+    def _request_options(self) -> dict[str, Any]:
+        """本次调用的 provider 专属 extra_body —— 唯一控制点。
+
+        调用点只表达「关闭思考」这一意图，方言 payload 由 _THINKING_DISABLED 决定。
+        加第三个供应商只改那张表，不碰任何调用点。返回副本，防调用方改坏共享表。
+        """
+        return dict(_THINKING_DISABLED[self._dialect])
+
     async def achat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
         """异步非流式对话，返回完整文本回复。最多重试3次。"""
         result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens)
@@ -324,7 +374,7 @@ class LLMAdapter:
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
-                    extra_body={"enable_thinking": False},
+                    extra_body=self._request_options(),
                 )
                 choices = completion.choices
                 if not choices:
@@ -367,7 +417,7 @@ class LLMAdapter:
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
-                    extra_body={"enable_thinking": False},
+                    extra_body=self._request_options(),
                 )
                 choices = completion.choices
                 if not choices:
@@ -409,7 +459,7 @@ class LLMAdapter:
                     timeout=timeout,
                     stream=True,
                     stream_options={"include_usage": True},
-                    extra_body={"enable_thinking": False},
+                    extra_body=self._request_options(),
                 )
                 break
             except Exception as exc:
@@ -476,7 +526,7 @@ class LLMAdapter:
                     max_tokens=_mt,
                     presence_penalty=self._presence_penalty,
                     timeout=timeout,
-                    extra_body={"enable_thinking": False},
+                    extra_body=self._request_options(),
                 )
                 choices = completion.choices
                 if not choices:
