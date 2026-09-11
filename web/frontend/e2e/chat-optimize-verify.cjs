@@ -3,8 +3,8 @@
 // 用法: node e2e/chat-optimize-verify.cjs
 const { openApp, login, seedChat, cs } = require('./helpers.cjs')
 
-const TEXT_ID = 'cd124e88e923' // 失联三十一天
-const CARD_ID = 'd50aa3eae638' // 吴庚霖
+const TEXT_ID = 'cd124e88e923' // testadmin 单卡语料
+const CARD_ID = 'd50aa3eae638' // testadmin 的卡
 
 const now = Date.now()
 const iso = (ms) => new Date(ms).toISOString()
@@ -19,7 +19,7 @@ const affinity = { mood_emoji: '😊', mood: '温暖', inner_voice: '我在想�
   const { browser, page, errors } = await openApp({ width: 1280, height: 900 })
   await login(page, { settleMs: 2000 })
 
-  // ── 用 store 走真实流程开一个会话（testadmin 自己的角色 吴庚霖）──
+  // ── 用 store 走真实流程开一个会话（testadmin 自己的角色卡）──
   const seed = await seedChat(page, { textId: TEXT_ID, cardId: CARD_ID, inject, affinity, textWait: 1000, startWait: 2000, archiveWait: 2000 })
   // 补回原脚本的诊断字段（值经参数序列化传进页面，别在函数体里引用 Node 变量）
   const seedExtras = await page.evaluate(({ CARD_ID }) => {

@@ -57,7 +57,7 @@ class TestComputeInitialAffinity:
         """target is a substring of user_role → still matches close relationship."""
         card = _make_card(ABU_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t",
-                            user_role="吴庚霖（炎亚纶/阿布）")
+                            user_role="角色A（角色B/阿布）")
         affinity = engine.get_affinity()
         assert affinity["affinity"] >= 55, affinity
 

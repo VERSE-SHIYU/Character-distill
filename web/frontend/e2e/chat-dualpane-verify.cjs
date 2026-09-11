@@ -23,7 +23,7 @@ const OUT = 'dualpane'
         session: {
           id: sid,
           card_id: CARD_ID,
-          character_name: '吴庚霖',
+          character_name: '角色A',
           text_id: TEXT_ID,
           user_role: '我自己',
           avatar_data: null,

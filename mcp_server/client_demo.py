@@ -38,9 +38,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# 默认两卡：均为 testadmin（f46432a6a92e4ae7）数据，不同 text_id —— 安全，仅只读检索
-DEFAULT_CARD_A = os.getenv("DEMO_CARD_A", "d50aa3eae638")  # 吴庚霖 text_cd124e88e923（384 旧集合）
-DEFAULT_CARD_B = os.getenv("DEMO_CARD_B", "fb975334594d")  # 阿棠 text_3d394865332c（迁移后，尚无集合）
+# 默认两卡：均为 testadmin（f46432a6a92e4ae7）数据，两卡指向不同 text_id —— 安全，仅只读检索
+DEFAULT_CARD_A = os.getenv("DEMO_CARD_A", "d50aa3eae638")  # 卡 A：384 旧集合，检索恒空（见 docs/384-dim-stale-collections.md）
+DEFAULT_CARD_B = os.getenv("DEMO_CARD_B", "fb975334594d")  # 卡 B：迁移后建，尚无集合
 
 # 1 → happy path 必须返回真实原文（非「未找到相关内容」）。见模块文档串。
 REQUIRE_CONTENT = os.getenv("DEMO_REQUIRE_CONTENT") == "1"
