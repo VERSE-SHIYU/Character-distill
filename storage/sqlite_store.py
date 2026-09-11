@@ -1267,9 +1267,15 @@ class SQLiteStore(StorageBase):
                 # 事务前提交（随即被一并删掉）、要么阻塞到提交后（父行已无、跳过）——
                 # 窗口从根上不存在，故此处无需 PG 那侧的 FOR SHARE，顺序即足够。
                 # 两表零外键（migration 084），删父不会级联子，必须显式删两张。
-                # 不清理 delete_card / purge_card / detach_text_cards：蒸馏行身份是
-                # (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，
-                # 文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）。权衡，不是遗漏。
+                # 不清理 delete_card / purge_card / detach_text_cards：断点行的生命周期
+                # **跟文本走、不跟卡走** —— 行身份是 (user, text, character)，card_id 只是
+                # 产物反向指针，删卡/解绑都不改变这个身份，故那些路径不产生孤儿行。
+                # 别把它读成「保住断点省 API」：续跑发现 find_interrupted_distill 只认
+                # status='interrupted'，删卡时行一般是 running/done/error，重蒸命不中、
+                # 整批重跑。保留只是「不去动与文本无关的状态」的自然结果，不是收益论证。
+                # 证据（双 store 现跑现测，2026-09-12）：tests/perf/distill_resume_reachability.py
+                # 与 tests/perf/distill_orphan_matrix.py，产物 tests/perf/out_distill_orphan_evidence.txt；
+                # 见 AGENTS.md 缺陷 20。
                 cursor = await conn.execute(
                     "SELECT task_id FROM distill_tasks WHERE text_id = ?", (id,))
                 dt_ids = [row[0] for row in await cursor.fetchall()]
