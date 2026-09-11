@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -678,15 +679,25 @@ class SQLiteStore(StorageBase):
                         except Exception as exc:
                             print(f"[SQLiteStore] Group affinity migration failed: {exc}")
 
-                    # Run 067_embedding_config migration (ALTER TABLE may fail if column exists)
+                    # Run 067_embedding_config migration.
+                    # SQLite 没有 `ADD COLUMN IF NOT EXISTS`（PG 才有），所以不能靠 except 吞
+                    # "duplicate column" 去猜这条错误能不能忽略——那只是换了个串猜。
+                    # 改成先读 PRAGMA 现有列，确定性判断：缺哪列 ALTER 哪列，不缺就跳过。
                     ec_path = migrations_dir / "067_embedding_config.sql"
                     if ec_path.exists():
-                        try:
-                            await conn.executescript(ec_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Embedding config migration failed: {exc}")
+                        cursor = await conn.execute("PRAGMA table_info(users)")
+                        existing_cols = {row[1] for row in await cursor.fetchall()}
+                        for stmt in ec_path.read_text(encoding="utf-8").split(";"):
+                            stmt = stmt.strip()
+                            if not stmt:
+                                continue
+                            added = re.match(
+                                r"ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+(\w+)", stmt, re.IGNORECASE
+                            )
+                            if added and added.group(1) in existing_cols:
+                                continue
+                            await conn.execute(stmt)
+                        await conn.commit()
 
                     # Run 068_usage_estimated migration (ALTER TABLE may fail if column exists)
                     ue_path = migrations_dir / "068_usage_estimated.sql"
@@ -777,9 +788,9 @@ class SQLiteStore(StorageBase):
                         cursor = await conn.execute("PRAGMA table_info(users)")
                         all_cols = [row[1] for row in await cursor.fetchall()]
                         if "password_hash" in all_cols:
-                            # Build the column list dynamically — some optional columns
-                            # (embedding_key, embedding_region) may not exist on fresh DBs
-                            # because migration 067 uses IF NOT EXISTS (SQLite syntax error).
+                            # Build the column list dynamically so that columns added by
+                            # later migrations survive the rebuild; col_defs supplies the
+                            # type for known ones (unknown ones fall back to TEXT).
                             keep_cols = [c for c in all_cols
                                          if c not in ("password_hash", "api_key", "base_url", "model")]
                             col_defs = {
