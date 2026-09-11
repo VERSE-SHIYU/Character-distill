@@ -50,7 +50,7 @@ S4ENV = ROOT / "data" / "eval_scratch" / "s4" / ".env.s4"
 RESULTS = ROOT / "data" / "eval_scratch" / "s4" / "results"
 CHAT_SESSION = "75806c950ffc"   # 与 step4_seed_pg 拷贝的会话一致（seed 冒烟用）
 USER_ID = "f46432a6a92e4ae7"    # testadmin id
-CARD_ID = "fb975334594d"        # 阿棠
+CARD_ID = "fb975334594d"        # 与 step4_seed_pg 拷贝的卡片一致
 SESSION_PREFIX = "load"         # 压测会话 id 前缀 load0000..load0095
 
 # 海外源 IP 池（>500）：仅作 X-Real-IP 流量整形值（geo guard 海外分支 + 限流分桶）。

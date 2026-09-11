@@ -4,8 +4,8 @@
 rig 是全空的 fresh PG（数据目录/凭据/端口全部独立，见 data/eval_scratch/s4/）。
 本脚本只拷「打通 chat(agent_mode) 与 distill 冒烟」所需的闭包，不是全量迁移：
 
-  users(testadmin, 保留原 id) → texts(3d394865332c) → cards(fb975334594d)
-  → sessions(75806c950ffc) → messages(该会话 1 行)
+  users(testadmin, 保留原 id) → texts → cards → sessions → messages(该会话 1 行)
+  （texts/cards/sessions 的行按下面 FIXTURES 里列的原 id 拷）
 
 原则（用户要求）：
   - 按 PG information_schema 列清单插入，不照搬 sqlite 列。两后端 schema 由
@@ -35,11 +35,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-# 固定 fixture（dev sqlite 里 testadmin 的阿棠聊天图；copy 保留原 id → 复压复用 e2e 常量）
+# 固定 fixture（dev sqlite 里 testadmin 的聊天图；copy 保留原 id → 复压复用 e2e 常量）
 TESTADMIN = "testadmin"
 FIXTURES = {
-    "texts": ["3d394865332c"],           # 阿棠卡片来源文本
-    "cards": ["fb975334594d"],           # 阿棠
+    "texts": ["3d394865332c"],           # 卡片来源文本
+    "cards": ["fb975334594d"],
     "sessions": ["75806c950ffc"],        # testadmin 上已有会话
     # messages: 按 session_id 拉取（id 是 PG IDENTITY，不拷贝）
 }

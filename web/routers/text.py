@@ -209,12 +209,12 @@ async def get_upload_task_status(
     """Poll upload preprocessing task status (identify + coref)."""
     with _upload_task_lock:
         task = _upload_tasks.get(task_id)
-    if task is None:
+    # 不存在与非属主同判 404、同一条文案（fail closed：条目缺 user_id 也拒）。此前非属主返
+    # 403，与不存在可区分 —— 拿 403/404 就能枚举出哪些 task_id 真实存在（见 AGENTS.md §四
+    # 「授权失败一律 404」）。修复前更早的问题是任何登录用户拿 task_id 就能读别人的上传任务
+    # （含其 text_id / 进度 / 错误信息）。
+    if task is None or task.get("user_id") != user["id"]:
         raise HTTPException(404, "Upload task not found")
-    # 归属校验（fail closed：条目缺 user_id 也拒）。修复前任何登录用户拿 task_id 就能读
-    # 别人的上传任务（含其 text_id / 进度 / 错误信息）。
-    if task.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权查看此上传任务")
     # Clean up done/error tasks after 5 minutes
     if task.get("status") in ("done", "error"):
         now = time.time()

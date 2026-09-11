@@ -79,7 +79,7 @@ def _seed(store, user_id, *, status="running", character="甲", text_id="txt1",
 class TestVisibleAfterRestart:
     def test_interrupted_row_visible_when_memory_empty(self, store, user_id):
         """内存空 = 模拟进程重启；DB 里 boot reconcile 置的 interrupted 行必须可见。"""
-        task_id = _seed(store, user_id, status="running", character="阿棠", message="蒸馏中")
+        task_id = _seed(store, user_id, status="running", character="角色A", message="蒸馏中")
         _run_async(store.mark_interrupted_distills())   # 走真实的 boot reconcile 路径
 
         with D._task_lock:
@@ -93,7 +93,7 @@ class TestVisibleAfterRestart:
         assert row["status"] == "interrupted"
         assert row["done"] is True
         assert row["actions"] == ["resume"]
-        assert row["character"] == "阿棠"
+        assert row["character"] == "角色A"
 
     def test_memory_only_task_not_invented(self, store, user_id):
         """反向：DB 无行 → 不返回（admin 是 DB 真相视图，不是内存镜像）。"""

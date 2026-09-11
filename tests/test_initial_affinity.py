@@ -25,7 +25,7 @@ def _make_card(*relationships: Relationship) -> CharacterCard:
 
 # ── Shared fixtures ──────────────────────────────────────────────────────────
 
-ABU_REL = Relationship(target="阿布", relation="队友", attitude="")
+CLOSE_REL = Relationship(target="角色B", relation="队友", attitude="")
 ENEMY_REL = Relationship(target="仇人甲", relation="仇人", attitude="")
 
 
@@ -37,7 +37,7 @@ class TestComputeInitialAffinity:
 
     def test_empty_role_is_stranger(self):
         """user_role="" → stranger branch: affinity<=18, mood="警觉", inner_voice contains "不认识"."""
-        card = _make_card(ABU_REL)
+        card = _make_card(CLOSE_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t")
         affinity = engine.get_affinity()
         assert affinity["affinity"] <= 18, affinity
@@ -46,8 +46,8 @@ class TestComputeInitialAffinity:
 
     def test_close_relationship(self):
         """user_role matches a close relationship → affinity>=55, stage != "陌生", mood != "警觉"."""
-        card = _make_card(ABU_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+        card = _make_card(CLOSE_REL)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
         affinity = engine.get_affinity()
         assert affinity["affinity"] >= 55, affinity
         assert affinity["stage"] != "陌生", affinity
@@ -55,9 +55,9 @@ class TestComputeInitialAffinity:
 
     def test_substring_match(self):
         """target is a substring of user_role → still matches close relationship."""
-        card = _make_card(ABU_REL)
+        card = _make_card(CLOSE_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t",
-                            user_role="角色A（角色B/阿布）")
+                            user_role="角色A（角色B/角色C）")
         affinity = engine.get_affinity()
         assert affinity["affinity"] >= 55, affinity
 
@@ -71,7 +71,7 @@ class TestComputeInitialAffinity:
 
     def test_unknown_role_falls_back_to_stranger(self):
         """user_role not in relationships → stranger fallback, affinity<=18."""
-        card = _make_card(ABU_REL)
+        card = _make_card(CLOSE_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="路人甲")
         affinity = engine.get_affinity()
         assert affinity["affinity"] <= 18, affinity
@@ -84,9 +84,9 @@ class TestChatEnginePropagatesUserRole:
     """If someone omits user_role in ChatEngine() construction, these fail."""
 
     def test_with_user_role_shows_familiar(self):
-        """user_role="阿布" + close rel → familiar stage (not stranger)."""
-        card = _make_card(ABU_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+        """user_role="角色B" + close rel → familiar stage (not stranger)."""
+        card = _make_card(CLOSE_REL)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
         affinity = engine.get_affinity()
         assert affinity["stage"] != "陌生", affinity
         assert affinity["mood"] != "警觉", affinity
@@ -94,7 +94,7 @@ class TestChatEnginePropagatesUserRole:
 
     def test_without_user_role_shows_stranger(self):
         """user_role="" (missing) → stranger stage."""
-        card = _make_card(ABU_REL)
+        card = _make_card(CLOSE_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t")
         affinity = engine.get_affinity()
         assert affinity["stage"] == "陌生", affinity
@@ -123,8 +123,8 @@ def test_load_affinity_initialized_flag_skips_recompute():
 
     新架构：affinity_initialized=1 的会话 → 直接 from_persist 恢复，绝不重算。
     """
-    card = _make_card(ABU_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    card = _make_card(CLOSE_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
     original_aff = engine.get_affinity()
 
     # 插桩验证 _compute_initial_affinity 不被调用
@@ -149,8 +149,8 @@ def test_load_affinity_legacy_upgrade():
 
     存量行 affinity_initialized=0 但实际有评估 → 启发式判断+load → _save_affinity_state 升级。
     """
-    card = _make_card(ABU_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    card = _make_card(CLOSE_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
     engine._session_id = "legacy_upgrade"
     engine._storage = MagicMock()
 
@@ -177,8 +177,8 @@ def test_load_affinity_uninitialized_computes_and_saves():
 
     纯默认值行 → _compute_initial_affinity 被调用一次。
     """
-    card = _make_card(ABU_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    card = _make_card(CLOSE_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
     engine._session_id = "test_sesh"
     engine._storage = MagicMock()
 
@@ -264,8 +264,8 @@ def test_affinity_engine_roundtrip():
     """engine 全字段 → _save_affinity_state → 新 engine load_affinity(initialized=True) → get_affinity 一致。"""
     from core.affinity_service import AffinityService
 
-    card = _make_card(ABU_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    card = _make_card(CLOSE_REL)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
     engine._session_id = "roundtrip_engine"
     engine._storage = MagicMock()
 
@@ -290,7 +290,7 @@ def test_affinity_engine_roundtrip():
     parsed = AffinityService.from_persist(state_json)
     assert parsed is not None
 
-    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="阿布")
+    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B")
     engine2._session_id = "roundtrip_engine"
     engine2._storage = MagicMock()
     engine2.load_affinity(parsed, initialized=True)
