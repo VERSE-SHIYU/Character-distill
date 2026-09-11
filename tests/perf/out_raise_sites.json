@@ -1,0 +1,334 @@
+{
+  "no_key_mode": false,
+  "records": {
+    "tests/test_ownership_404.py::TestCardOwnership::test_get_card_avatar_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:38:get_card_avatar"
+      }
+    ],
+    "tests/test_ownership_404.py::TestCardOwnership::test_save_card_avatar_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:58:save_card_avatar"
+      }
+    ],
+    "tests/test_ownership_404.py::TestCardOwnership::test_export_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:80:export_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestCardOwnership::test_get_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:141:get_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestDistillOwnership::test_task_status_404": [
+      {
+        "status": 404,
+        "detail": "Task not found",
+        "site": "web/routers/distill.py:939:distill_task_status"
+      }
+    ],
+    "tests/test_ownership_404.py::TestDistillOwnership::test_cancel_task_404": [
+      {
+        "status": 404,
+        "detail": "Task not found",
+        "site": "web/routers/distill.py:967:cancel_distill_task"
+      }
+    ],
+    "tests/test_ownership_404.py::TestDistillOwnership::test_task_params_404": [
+      {
+        "status": 404,
+        "detail": "Task not found",
+        "site": "web/routers/distill.py:994:distill_task_params"
+      }
+    ],
+    "tests/test_ownership_404.py::TestDistillOwnership::test_update_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/distill.py:1215:update_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestDistillOwnership::test_export_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/distill.py:1277:export_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestGroupOwnership::test_create_group_with_foreign_card_404": [
+      {
+        "status": 404,
+        "detail": "角色卡 card_b1bbba8f600b41fdbb84c80278811247 不存在",
+        "site": "web/routers/group.py:301:create_group"
+      }
+    ],
+    "tests/test_ownership_404.py::TestGroupOwnership::test_list_affinities_404": [
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:653:list_group_affinities"
+      }
+    ],
+    "tests/test_ownership_404.py::TestGroupOwnership::test_toggle_reaction_404": [
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:686:toggle_reaction"
+      }
+    ],
+    "tests/test_ownership_404.py::TestGroupOwnership::test_get_history_404": [
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:706:get_history"
+      }
+    ],
+    "tests/test_ownership_404.py::TestGroupOwnership::test_rename_group_404": [
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:746:rename_group"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_publish_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:500:publish_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_update_published_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:578:update_published_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_update_card_version_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:644:update_card_version"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_delete_market_card_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:679:delete_market_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_batch_delete_comments_404": [
+      {
+        "status": 404,
+        "detail": "卡片不存在或无权操作",
+        "site": "web/routers/market.py:872:batch_delete_comments"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_delete_foreign_comment_404": [
+      {
+        "status": 404,
+        "detail": "评论不存在",
+        "site": "web/routers/market.py:901:delete_comment"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMarketOwnership::test_set_visibility_404": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:995:set_visibility"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMemoryOwnership::test_list_memories_404": [
+      {
+        "status": 404,
+        "detail": "无权访问此角色的记忆",
+        "site": "web/routers/memory.py:40:list_memories"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMemoryOwnership::test_add_memory_404": [
+      {
+        "status": 404,
+        "detail": "无权操作此角色的记忆",
+        "site": "web/routers/memory.py:63:add_memory"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMemoryOwnership::test_update_memory_404": [
+      {
+        "status": 404,
+        "detail": "无权操作此角色的记忆",
+        "site": "web/routers/memory.py:89:update_memory"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMemoryOwnership::test_delete_memory_404": [
+      {
+        "status": 404,
+        "detail": "无权删除此记忆",
+        "site": "web/routers/memory.py:112:delete_memory"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMemoryOwnership::test_clear_memories_404": [
+      {
+        "status": 404,
+        "detail": "无权访问此角色的记忆",
+        "site": "web/routers/memory.py:134:clear_memories"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageOwnership::test_react_to_foreign_dm_404": [
+      {
+        "status": 404,
+        "detail": "消息不存在",
+        "site": "web/routers/message.py:167:react_to_dm"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageOwnership::test_retract_still_403": [
+      {
+        "status": 403,
+        "detail": "只能撤回自己发送的消息",
+        "site": "web/routers/message.py:187:retract_dm_message"
+      }
+    ],
+    "tests/test_ownership_404.py::TestVoiceOwnership::test_delete_foreign_custom_voice_404": [
+      {
+        "status": 404,
+        "detail": "音色不存在",
+        "site": "web/routers/voice.py:177:delete_custom_voice"
+      }
+    ],
+    "tests/test_ownership_404.py::TestVoiceOwnership::test_preview_ref_audio_404": [
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:284:preview_ref_audio"
+      }
+    ],
+    "tests/test_ownership_404.py::TestVoiceOwnership::test_get_ref_audio_404": [
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:323:get_ref_audio"
+      }
+    ],
+    "tests/test_ownership_404.py::TestVoiceOwnership::test_upload_ref_audio_404": [
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:352:upload_ref_audio"
+      }
+    ],
+    "tests/test_ownership_404.py::TestVoiceOwnership::test_delete_ref_audio_404": [
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:410:delete_ref_audio"
+      }
+    ],
+    "tests/test_ownership_404.py::TestPermission403StillCoversAdminOnly::test_market_delete_version_non_admin_403": [
+      {
+        "status": 403,
+        "detail": "仅管理员可删除版本历史",
+        "site": "web/routers/market.py:623:delete_card_version"
+      }
+    ],
+    "tests/test_ownership_404.py::TestPermission403StillCoversAdminOnly::test_admin_api_non_admin_403": [
+      {
+        "status": 403,
+        "detail": "需要管理员权限",
+        "site": "web/routers/admin.py:28:require_admin"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_card_parity": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:141:get_card"
+      },
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/card.py:141:get_card"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_group_history_parity": [
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:706:get_history"
+      },
+      {
+        "status": 404,
+        "detail": "群聊不存在",
+        "site": "web/routers/group.py:706:get_history"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_distill_task_parity": [
+      {
+        "status": 404,
+        "detail": "Task not found",
+        "site": "web/routers/distill.py:939:distill_task_status"
+      },
+      {
+        "status": 404,
+        "detail": "Task not found",
+        "site": "web/routers/distill.py:939:distill_task_status"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_market_visibility_parity": [
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:995:set_visibility"
+      },
+      {
+        "status": 404,
+        "detail": "Card not found",
+        "site": "web/routers/market.py:995:set_visibility"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_memory_parity": [
+      {
+        "status": 404,
+        "detail": "无权访问此角色的记忆",
+        "site": "web/routers/memory.py:40:list_memories"
+      },
+      {
+        "status": 404,
+        "detail": "无权访问此角色的记忆",
+        "site": "web/routers/memory.py:40:list_memories"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_voice_ref_audio_parity": [
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:323:get_ref_audio"
+      },
+      {
+        "status": 404,
+        "detail": "角色卡不存在",
+        "site": "web/routers/voice.py:323:get_ref_audio"
+      }
+    ],
+    "tests/test_ownership_404.py::TestMessageParity::test_dm_react_parity": [
+      {
+        "status": 404,
+        "detail": "消息不存在",
+        "site": "web/routers/message.py:167:react_to_dm"
+      },
+      {
+        "status": 404,
+        "detail": "消息不存在",
+        "site": "web/routers/message.py:167:react_to_dm"
+      }
+    ]
+  }
+}

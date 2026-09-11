@@ -86,6 +86,28 @@ class _VoiceClient:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_state(monkeypatch):
+    """钉死两条 ambient 依赖，让用例结果只取决于被测代码，不取决于测试机。
+
+    1. `deps.get_llm`：`deps.get_user_llm` 在用户没配 key 时 fallback 到 `get_llm()`
+       （读 .env / config.yaml）。有 key 的机器上这道门开着、用例能走到属主判定；没 key
+       的机器 `get_user_llm` 返 None，`create_group` 先被 503「请先在设置页配置 API Key」
+       拦下 —— 断言就是巧合过的（本仓曾因此在本机绿、在无 key 机器红）。
+    2. `deps.get_memory_manager`：`create_group` 是**内联** `from deps import
+       get_memory_manager`，不走 `Depends`，故 `dependency_overrides` 管不到它 —— 不钉住
+       就会构造真 MemoryManager（chroma → fastembed → onnxruntime），本机直接打
+       `Windows fatal exception: access violation`，且结果依赖测试机 `data/` 状态。
+
+    注意必须是 `import deps`（web/ 在 sys.path 上），**不是** `import web.deps`：本仓 web/
+    无 `__init__.py`，两者虽是同一文件却是两个不同的模块对象，patch 后者打不到 router
+    实际用的那份 —— 这个坑实测踩过一次，症状是「patch 了、也绿了，门其实还开着」。
+    """
+    import deps
+    monkeypatch.setattr(deps, "get_llm", lambda: object())
+    monkeypatch.setattr(deps, "get_memory_manager", lambda: _MemMgr())
+
+
 def _make_client(store, user_id):
     app = FastAPI()
     for r in (card_router, group_router, market_router, memory_router,

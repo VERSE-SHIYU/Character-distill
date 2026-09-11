@@ -229,6 +229,8 @@ config.yaml 现值（现读，非转述）：
   - `distill_task_status`（裁决 1）：前端 `useAppStore.js` 的轮询对 403 有专门分支（重试，注释写「可能 token 过期」），404 分支是「任务行已不存在 → 立即移除」。翻 404 是**行为变更**——非属主场景从「403 重试」变「404 立即移除」。裁决「改 404 并同步改前端」。该 403 分支仍有活的生产者（账号禁用经 `get_current_user` 返 403），不退化成死码
   - `message.py:retract_dm_message`（裁决 2）：**保留 403 当 B**。「仅发送者可撤回」是对外可公开的规则，不是资源归属；改 404 会让合法接收方收到「消息不存在」而非「只能撤回自己发送的消息」
 - **验收**：`tests/test_ownership_404.py` 42 条——32 端点各一条「非属主 → 404 且显式 `!= 403`」+ 1 条「retract 仍 403 且 `!= 404`」+ 2 条 B 类（管理端点非管理员 → 403 且 `!= 404`）+ 7 条文案一致性（非属主 vs 不存在的 `detail` 逐字相等）
+- **到达性已取证**（2026-09-12）：42 条各自实际命中的 raise 站点已用探针逐一核对，均为预期的属主 guard（非「被前置门拦下、返了巧合正确的码」）；核对同时查出并修掉两条 ambient 依赖（`deps.get_llm` 依赖本机 `.env` 凭据、`deps.get_memory_manager` 内联 import 绕过 `Depends` 构造真 chroma）。工具与产物见 §五「用例到达性证据档」，纪律见 §四
+- **文案一致性仍是抽样**（7/32）：跨端点收敛到单一来源未做，本轮只做到逐端点两侧同文案，补齐 32 处另立一轮
 - **变异已验证**：3 处改动点各自改回 403 → 对应用例必红；B 类 `market.py:delete_card_version` 改成 404 → B 类用例必红
 - **既有测试一并订正**：`tests/test_security_authz.py` 的 `test_03/04/05`（card get/export、group history）与 `tests/test_distill_task_api.py` 的「他人任务」用例——它们原先断言 403，标签与断言都已翻成 404
 - 残留 403 现共 **10 处 = B 6 + C 4**（`admin.py` require_admin；`auth.py` 三处账号禁用 + 一处 geo；`market.py` 三处审核门 + 一处仅管理员；`message.py` retract）；routers 之外另有 `web/deps.py` 的 geo 白名单与 `web/server.py` 的账号禁用（均 B/C）
@@ -292,11 +294,15 @@ config.yaml 现值（现读，非转述）：
 - **定性一个环境缺陷前先做反向对照，把可疑变量逐个摘掉**。案例：本机 chroma 段错误（0xC0000005）一度被定性为「跨平台读容器写的数据会崩」（可疑变量=数据来源）；反向对照——临时目录内本机自建集合并 `add` 两个向量，同样段错误——证明与数据来源无关，真实范围是「任何非空集合的任何操作」（空集合 `count()`、`get_collection` 正常）。范围写窄了，后人会按错误的边界做决策
 - **有上限 / 截断 / 采样的返回路径必须显式上报「被裁过」**。判据：写任何 LIMIT / cap / 采样 / 分页路径时，**在同一次改动里**就决定截断如何上报（`total` / `truncated` 这类显式信号），确实报不了就明说理由，别默认静默。案例：`admin_tasks` 的 200 条上限若不报 `total` / `truncated`，被裁掉的任务在管理页上完全不可见 —— 与 §三 缺陷 2 的「截断响应当成功返回」同病灶，是「失败被吞成正常返回」的**第六次形态**（前五次：线程弃船 / 384 维度不符 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中）。**修 A 时若自己埋下同形态的 B，当场修掉，不许记账放过**。回归锁：`tests/test_admin_tasks_api.py::TestEnvelope`
 - **聚合统计必须写明口径**（分组前 / 后、上中位 / 下中位、含不含空样本）。判据：**产物里的字段名与文档表格里的名字不一致时必须显式对照** —— 同一份数据用两种口径能算出两个数，复算时看着像「数字对不上」，被追问时最致命。案例：thinking 证据表的 `out_tokens` p50 是 14 条**合并后**的 nearest-rank 上中位（`sorted(outs)[n//2]` → 8191 / 1245），产物 `summary[].out_tokens_p50` 却是按档（5000 / 6000 字符）**分组**、`int(round(0.5*(n-1)))` 取的**下**中位（8192 / 6079 → 1446 / 1177）；两者各自自洽，混用则得 6487 / 1205，像造假。复算口径成文于 `tests/perf/thinking_budget_evidence.md` 第 4 节
+- **用例绿 ≠ 命题成立，必须证明它真的走到了断言点**。判据：只断言返回码不够 —— 请求可能在更早的守卫（配置门 / 参数门 / 会话门）就被拦下，返回了一个**与断言恰好相同**的码。这类「凑巧过的断言」比失败更危险：它的成立取决于测试机状态，换台机器（或换台机器的凭据）就红。做法：用探针记录**实际命中的 raise 站点**（`file:line:func`），逐条比对期望 handler —— 不是目视，是产物。工具见 §五。案例：`test_create_group_with_foreign_card_404` 断言 404，实际在**有 key 的机器**上到达属主判定（绿）、在**无 key 的机器**上被 `create_group` 的 503「请先在设置页配置 API Key」拦下（红），从未验到它声称要验的东西
+- **测试用例不得依赖测试机的 ambient 状态**（凭据 / `data/` / 全局单例）。判据：写完夹具先问「换台干净的机器，这条还成立吗」。两类实测踩坑：① `deps.get_user_llm` 在用户没配 key 时 fallback 到 `get_llm()`（读本机 `.env` / `config.yaml`）——测试机有没有 `DEEPSEEK_API_KEY` 直接决定门开不开；② 路由内的**内联** `from deps import get_memory_manager` **不走 `Depends`**，`dependency_overrides` 管不到它，于是构造了真 MemoryManager（chroma → fastembed → onnxruntime → 本机 access violation）。修法是把这些入口在夹具里钉死，而不是让用例去适应本机
+- **monkeypatch 之前先确认打的模块对象就是被测代码用的那一个**。判据：patch 完必须用「把被 patch 的东西真的弄坏」的方式验证（而不是「改完跑绿了」）。案例：`import web.deps` 与 `import deps` 在本仓是**两个不同的模块对象**（同一文件、两份 globals，因为 `web/` 没有 `__init__.py` 且 `web/` 在 `sys.path` 上）——patch 前者完全打空，套件照样绿，真门还开着
 
 ### 五、验证工具现状
 
 - `tests/perf/mock_llm_server.py`：mock LLM，挂 `/chat/completions` + `/embeddings`，另有 `/admin/set` 控制面
 - **思考参数证据档**：`tests/perf/thinking_budget_evidence.md` + `map_len_probe.py` / `capfield_probe.py` + 原始产物 `out_maplen.prefix.json` / `out_maplen.json` / `out_capfield.json`。2026-09-11 自 `e2e/scratch/` 提入库（「调试脚本不入库」的例外：这批数字被 AGENTS.md 正文引用，产物不入库就无从追溯）；入库产物已删 `preview` / `content_head`（会逐字带出原文对话），只留统计量
+- **用例到达性证据档**：`tests/perf/raise_probe.py`（pytest 插件，包住 `HTTPException.__init__` 记录实际命中的 `file:line:func`）+ `check_reachability.py`（逐条比对期望 handler）+ 原始产物 `out_raise_sites.json` / `out_raise_sites_nokey.json`，叙述见 `raise_sites_evidence.md`。用于证明「每条属主用例真的走到了属主判定」以及「夹具已与测试机凭据无关」（`PROBE_NO_KEY=1` 模拟无 key 机器，须仍全绿）
 - `e2e/scratch/`：一次性探针。gitignore 覆盖见 `.gitignore` 的 `/e2e/` 规则；注意另有 `web/frontend/e2e/` 的一组规则，勿混。**调试脚本不入库**
 - **强制走分片路径**：配置里把 `longctx_threshold` 调到 1（另可把 `chunk_size` 调小、`map_concurrency` 调 1 以确定性截杀），**不要改源码**。做法记录于 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`
 - **PG 验证用 throwaway 容器**：`scripts/restore_verify.sh` 里的 `docker run -d --rm` / `docker rm -f`。本仓惯例见会话记录（「PG throwaway（55433）N passed，随后 `docker rm -f`」等）
