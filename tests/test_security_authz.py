@@ -22,6 +22,7 @@ from routers.card import router as card_router
 from routers.history import router as history_router
 from routers.group import router as group_router
 from routers.chat import router as chat_router
+from routers.distill import router as distill_router
 from storage.sqlite_store import SQLiteStore
 
 
@@ -67,6 +68,7 @@ def _make_app(store, user_id, *, include_error_handler=True):
     app.include_router(history_router)
     app.include_router(group_router)
     app.include_router(chat_router)
+    app.include_router(distill_router)
 
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
@@ -207,6 +209,133 @@ class TestReadAuthorization:
         sid = _create_session(store, user_a, cid)
         r = client_b.get(f"/api/chat/affinity/{sid}")
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Regression: the 7 ownership holes closed by the *_owned capability split
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _StubTextManager:
+    """最小可用的 TextManager 替身：让 start_session 能走完建会话那几步。
+
+    存在的理由：属主门若被去掉，start_session 会真的建出会话并返回 200。只有让流程能走完，
+    test_17 才不是一条恒绿用例——否则它在门被去掉时也只是换了个异常。
+    """
+
+    async def _build_all_characters(self, *args, **kwargs):
+        return []
+
+    def _create_session(self, *args, **kwargs):
+        return f"ses_stub_{uuid.uuid4().hex[:8]}"
+
+
+@pytest.fixture
+def llm_gate_open(store, monkeypatch):
+    """打开端点的 503「未配置 API Key」前置门，让请求能走到属主门。
+
+    这批端点在读文本前先判 distiller / text_manager 是否为 None，无 API Key 时直接 503，
+    不打开这道门就测不到属主过滤。只替换 deps 的工厂，不碰被测的属主逻辑。
+
+    另隔离一个无关缺陷：storage/migrations/067_embedding_config.sql 用
+    `ADD COLUMN IF NOT EXISTS`（PostgreSQL 语法，SQLite 不支持），迁移静默失败，
+    于是新建的 SQLite 库缺 users.embedding_key，get_user_api_config 抛
+    OperationalError → 500，挡在属主门之前。这里让该读返回空配置，使用例只测属主过滤。
+    """
+    import deps
+    import web.routers.distill as distill_mod
+
+    async def _fake_user_llm(*args, **kwargs):
+        return object()
+
+    async def _fake_api_config(*args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
+    monkeypatch.setattr(deps, "get_distiller", lambda *a, **kw: object())
+    monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: _StubTextManager())
+    monkeypatch.setattr(store, "get_user_api_config", _fake_api_config)
+    # start_session 建完会话会顺手排场景索引；那条路要用真实 storage，测试里关掉。
+    monkeypatch.setattr(distill_mod, "get_indexing_service", lambda: None)
+
+
+class TestHoleOwnershipRegression:
+    """每个洞一条：非属主拿他人 text_id / session_id 请求 → 404。
+
+    为什么这些用例有效：属主门拿不到行才 404；一旦门被去掉（改回 *_unscoped 或 SQL 里
+    丢掉 user_id 条件），请求会继续往下走，状态码不再可能是 404，用例即红。所以「404」
+    本身就是鉴别力，不需要另设属主正向用例。
+
+    两条 session 用例额外断言 _sessions 里没有被写入他人会话——resume_session 的越权
+    后果最重：它会把为受害者重建的 ChatEngine 塞进共享 dict（注释原文 "Steal the engine"）。
+    """
+
+    def test_11_resume_session_non_owner_404(self, store, user_a, user_b, client_b, llm_gate_open):
+        """夹具刻意让 A 的 card 指向 **B 的** text。
+
+        resume_session 现在是双门：session 属主门 + 下游 get_text_owned。若夹具让 A 的 card
+        指向 A 的 text，则只把 session 门改回 *_unscoped 时下游门会兜住，用例恒绿、测不出
+        session 门被去掉。把下游门让开，这条用例才真正锁住 session 那道门。
+        """
+        from deps import get_sessions
+        tid_b = _create_text(store, user_b)
+        cid = _create_card(store, user_a, tid_b)
+        sid = _create_session(store, user_a, cid)
+        r = client_b.post(f"/api/history/{sid}/resume", json={})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert sid not in get_sessions(), "非属主在 _sessions 里为他人会话重建了引擎"
+
+    def test_12_distill_identify_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        tid = _create_text(store, user_a)
+        r = client_b.post("/api/distill/identify", json={"text_id": tid})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+    def test_13_distill_run_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        tid = _create_text(store, user_a)
+        r = client_b.post("/api/distill/run", json={"text_id": tid})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+    def test_14_distill_start_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        tid = _create_text(store, user_a)
+        r = client_b.post("/api/distill/start", json={"text_id": tid})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+    def test_15_distill_run_stream_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        tid = _create_text(store, user_a)
+        r = client_b.post("/api/distill/run_stream", json={"text_id": tid})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+    def test_16_distill_reindex_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        tid = _create_text(store, user_a)
+        r = client_b.post(f"/api/distill/reindex/{tid}")
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+    def test_17_distill_start_session_non_owner_no_session(self, store, user_a, client_b, llm_gate_open):
+        """start_session 的属主门在 try 块内，`except Exception` 把 HTTPException(404)
+        吞成 500，所以这里锁的是安全性质（不建成会话），不是状态码——状态码缺陷另行立项
+        （见报告）。用例对「将来修成 404」保持前向兼容。
+        """
+        from deps import get_sessions
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        before = len(get_sessions())
+        r = client_b.post("/api/distill/start_session", json={"card_id": cid, "text_id": tid})
+        assert r.status_code >= 400, f"非属主竟然拿到了会话: {r.status_code}: {r.json()}"
+        assert "session_id" not in r.json(), f"响应里带出了 session_id: {r.json()}"
+        assert len(get_sessions()) == before, "非属主用他人 text_id 建出了会话并写进 _sessions"
+
+    def test_18_chat_revoke_non_owner_404(self, store, user_a, user_b, client_b, llm_gate_open):
+        """第 7 个洞：_ensure_session 的 DB 重建分支缺属主校验（内存命中分支有）。
+
+        同 test_11：夹具让 A 的 card 指向 B 的 text，让开下游 get_text_owned，这条用例才
+        真正锁住 session 那道门。
+        """
+        from deps import get_sessions
+        tid_b = _create_text(store, user_b)
+        cid = _create_card(store, user_a, tid_b)
+        sid = _create_session(store, user_a, cid)
+        r = client_b.post("/api/chat/revoke", json={"session_id": sid, "message_id": 1})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert sid not in get_sessions(), "非属主在 _sessions 里为他人会话重建了引擎"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
