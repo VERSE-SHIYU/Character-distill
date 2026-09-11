@@ -7,7 +7,7 @@
     {
       "text_id": "0b353450811b",
       "cs": 6000,
-      "char": "顾昀",
+      "char": "角色A",
       "idx": 0,
       "chunk_chars": 287,
       "elapsed_s": 12.0,
@@ -19,7 +19,7 @@
     {
       "text_id": "0b353450811b",
       "cs": 6000,
-      "char": "顾昀",
+      "char": "角色A",
       "idx": 54,
       "chunk_chars": 5887,
       "elapsed_s": 71.3,
@@ -31,7 +31,7 @@
     {
       "text_id": "0b353450811b",
       "cs": 6000,
-      "char": "顾昀",
+      "char": "角色A",
       "idx": 108,
       "chunk_chars": 3524,
       "elapsed_s": 59.1,
@@ -43,7 +43,7 @@
     {
       "text_id": "997207ccb4dd",
       "cs": 6000,
-      "char": "汪东城",
+      "char": "角色B",
       "idx": 0,
       "chunk_chars": 5996,
       "elapsed_s": 109.4,
@@ -55,7 +55,7 @@
     {
       "text_id": "997207ccb4dd",
       "cs": 6000,
-      "char": "汪东城",
+      "char": "角色B",
       "idx": 6,
       "chunk_chars": 5990,
       "elapsed_s": 108.3,
@@ -67,7 +67,7 @@
     {
       "text_id": "997207ccb4dd",
       "cs": 6000,
-      "char": "汪东城",
+      "char": "角色B",
       "idx": 11,
       "chunk_chars": 1082,
       "elapsed_s": 99.6,
@@ -79,7 +79,7 @@
     {
       "text_id": "921f19d057a3",
       "cs": 6000,
-      "char": "汪东城",
+      "char": "角色C",
       "idx": 0,
       "chunk_chars": 5999,
       "elapsed_s": 137.8,
@@ -91,7 +91,7 @@
     {
       "text_id": "921f19d057a3",
       "cs": 6000,
-      "char": "汪东城",
+      "char": "角色C",
       "idx": 8,
       "chunk_chars": 2420,
       "elapsed_s": 88.6,
@@ -103,7 +103,7 @@
     {
       "text_id": "172239fd232b",
       "cs": 6000,
-      "char": "吴庚霖",
+      "char": "角色D",
       "idx": 0,
       "chunk_chars": 5925,
       "elapsed_s": 110.2,
@@ -115,7 +115,7 @@
     {
       "text_id": "172239fd232b",
       "cs": 6000,
-      "char": "吴庚霖",
+      "char": "角色D",
       "idx": 6,
       "chunk_chars": 1771,
       "elapsed_s": 118.0,
@@ -127,7 +127,7 @@
     {
       "text_id": "997207ccb4dd",
       "cs": 5000,
-      "char": "汪东城",
+      "char": "角色B",
       "idx": 0,
       "chunk_chars": 4992,
       "elapsed_s": 160.0,
@@ -139,7 +139,7 @@
     {
       "text_id": "997207ccb4dd",
       "cs": 5000,
-      "char": "汪东城",
+      "char": "角色B",
       "idx": 13,
       "chunk_chars": 2117,
       "elapsed_s": 154.8,
@@ -151,7 +151,7 @@
     {
       "text_id": "921f19d057a3",
       "cs": 5000,
-      "char": "汪东城",
+      "char": "角色C",
       "idx": 0,
       "chunk_chars": 4961,
       "elapsed_s": 119.6,
@@ -163,7 +163,7 @@
     {
       "text_id": "921f19d057a3",
       "cs": 5000,
-      "char": "汪东城",
+      "char": "角色C",
       "idx": 10,
       "chunk_chars": 483,
       "elapsed_s": 29.5,

@@ -18,7 +18,8 @@
 可替换项（换语料/换机器时改这三处）：
   - `PROBE_DB` 环境变量（默认 `data/character_sim.db`）
   - `PROBE_OUT_DIR` 环境变量（默认 `e2e/scratch/`，gitignored；**不会覆盖入库产物**）
-  - `PLAN` 里的 text_id：取自当时本机库的行 id，换库必须替换
+  - `PLAN` 里的 text_id（本机库行 id）与**角色名占位符**（`角色A`…`角色D`）：换语料必须替换，
+    未替换时脚本拒绝运行（见 `PLACEHOLDER_CHARS`）
 
 版权：模型输出按 map 规则会逐字保留原文对话 → 本脚本**不再落 `preview` 字段**，
       产物只留统计量与 id，不留正文。
@@ -54,15 +55,20 @@ CONC = 3
 NEAR_LINE = 3500              # 「贴线」判据：≥ cap 的 85%
 
 # (text_id, tier_chunk_size, 采样片数, 角色名候选按出现次数取最大者)
-# text_id 是当时本机 data/character_sim.db 的行 id —— 换语料必须替换
+# text_id 是当时本机 data/character_sim.db 的行 id —— 不可读 hex，保留以便追溯；换库必须替换
+# ⚠️ 角色名是**占位符**：入库版本刻意不写真实角色名（本仓是公开作品集，语料身份无证据价值）。
+#    换语料时替换为你自己文本里的角色名（可给多个候选，取出现次数最多者）。
 PLAN = [
-    ("0b353450811b", 6000, 3, ["顾昀", "长庚", "沈易"]),
-    ("997207ccb4dd", 6000, 3, ["汪东城", "吴庚霖"]),
-    ("921f19d057a3", 6000, 2, ["汪东城", "炎亚纶"]),
-    ("172239fd232b", 6000, 2, ["汪东城", "吴庚霖"]),
-    ("997207ccb4dd", 5000, 2, ["汪东城", "吴庚霖"]),          # story 档对照
-    ("921f19d057a3", 5000, 2, ["汪东城", "炎亚纶"]),
+    ("0b353450811b", 6000, 3, ["角色A"]),
+    ("997207ccb4dd", 6000, 3, ["角色B"]),
+    ("921f19d057a3", 6000, 2, ["角色C"]),
+    ("172239fd232b", 6000, 2, ["角色D"]),
+    ("997207ccb4dd", 5000, 2, ["角色B"]),          # story 档对照
+    ("921f19d057a3", 5000, 2, ["角色C"]),
 ]
+
+# 占位符集合：命中即拒绝运行（否则 sample() 找不到含该串的片会静默退回前三片）
+PLACEHOLDER_CHARS = {"角色A", "角色B", "角色C", "角色D"}
 
 
 def db_one(sql, args=()):
@@ -163,6 +169,10 @@ def main() -> None:
     items: list[dict] = []
     for text_id, cs, n, cands in PLAN:
         char, counts = pick_name(text_id, cands)
+        if char in PLACEHOLDER_CHARS:
+            raise SystemExit(
+                f"PLAN 里的角色名 {char!r} 是占位符 —— 替换为你自己语料里的角色名后再跑。"
+                "（占位符下 sample() 匹配不到任何片，会静默退回前三片，测的就不是同一个东西了）")
         picked = sample(text_id, char, cs, n)
         print(f"[plan] {text_id} cs={cs} char={char} counts={counts} picked={len(picked)}",
               file=sys.stderr, flush=True)

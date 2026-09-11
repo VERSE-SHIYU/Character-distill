@@ -20,7 +20,8 @@ DeepSeek 静默忽略）——它是「修复前」的可复现演示，不是�
 可替换项（换语料/换机器时改这三处）：
   - `PROBE_DB` 环境变量（默认 `data/character_sim.db`）
   - `PROBE_OUT_DIR` 环境变量（默认 `e2e/scratch/`，gitignored；**不会覆盖入库产物**）
-  - `CASES` 里的 text_id：取自当时本机库的行 id，换库必须替换
+  - `CASES` 里的 text_id（本机库行 id）与**角色名占位符**：换语料必须替换，
+    未替换时脚本拒绝运行（见 `PLACEHOLDER_CHARS`）
 
 版权：模型 output 按 map 规则会逐字保留原文对话 → 本脚本**不再落 `content_head` 字段**，
       产物只留长度与统计量，不留正文。
@@ -51,12 +52,16 @@ CAP = 8192
 CONC = 3
 
 # map_len_probe 里 out_chars == 0 的三条 (text_id, cs, idx, char, chunk_chars)
-# text_id 是当时本机 data/character_sim.db 的行 id —— 换语料必须替换
+# text_id 是当时本机 data/character_sim.db 的行 id —— 不可读 hex，保留以便追溯；换库必须替换
+# ⚠️ 角色名是**占位符**：入库版本刻意不写真实角色名（本仓是公开作品集，语料身份无证据价值）
 CASES = [
-    ("997207ccb4dd", 6000, 0, "汪东城", 5996),
-    ("997207ccb4dd", 6000, 6, "汪东城", 5990),
-    ("997207ccb4dd", 5000, 13, "汪东城", 2117),
+    ("997207ccb4dd", 6000, 0, "角色B", 5996),
+    ("997207ccb4dd", 6000, 6, "角色B", 5990),
+    ("997207ccb4dd", 5000, 13, "角色B", 2117),
 ]
+
+# 占位符集合：命中即拒绝运行（否则会拿占位名当角色名去拼 map 提示词，测出的是别的东西）
+PLACEHOLDER_CHARS = {"角色A", "角色B", "角色C", "角色D"}
 
 
 def chunk_of(text_id: str, cs: int, idx: int) -> str:
@@ -100,6 +105,11 @@ async def one(llm: LLMAdapter, client, case) -> dict:
 
 
 async def main() -> None:
+    for _tid, _cs, _idx, _char, _ in CASES:
+        if _char in PLACEHOLDER_CHARS:
+            raise SystemExit(
+                f"CASES 里的角色名 {_char!r} 是占位符 —— 替换为你自己语料里的角色名后再跑。"
+                "（占位符会被当作角色名拼进 map 提示词，量出来的不是同一个东西）")
     llm = LLMAdapter()
     client = llm._make_async_client()
     sem = asyncio.Semaphore(CONC)

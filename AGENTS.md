@@ -61,7 +61,7 @@
 - **低于阈值 → 长上下文单次调用**：直接 `_distill_longcontext_stream`，全文喂一次。**不分片、不写 `distill_chunks`**，中途崩了整本重来（docstring 自述）
 - **达到阈值 → MapReduce 分片**：走 `effective_chunk_size` + `_split_chunks`
 - 同一分流的非流式版本在 `distill_incremental`
-- `_estimate_tokens` = `int(len(text) * 0.6)`（`core/distiller.py`）。配合 `longctx_threshold: 150000` → **约 25 万字符以下的文本全部走整本单次调用**。杀破狼 652990 字符 → 估算 ~39 万 > 15 万，才进分片
+- `_estimate_tokens` = `int(len(text) * 0.6)`（`core/distiller.py`）。配合 `longctx_threshold: 150000` → **约 25 万字符以下的文本全部走整本单次调用**。一本 652990 字符的长篇 → 估算 ~39 万 > 15 万，才进分片
 
 **结论**：断点续跑（`distill_chunks` 落库 + 三重门复用）**只在分片路径生效**；短文本从来不进这条路，也就永远不产生分片检查点。
 
@@ -215,6 +215,12 @@ config.yaml 现值（现读，非转述）：
 - `tests/test_security_authz.py` 的 `test_03/04/05`（card、group）断言 403，对应的就是这批；批量翻新时它们要一起改
 - 翻新前先核前端：`web/frontend/src/api/client.js` / `useAppStore.js` 里按 403 分支的逻辑落在 `web/routers/distill.py` 的 task 端点（`/api/distill/task/{taskId}`）与 `web/frontend/src/pages/BookReader.jsx` 的 `!r.ok` 通用分支上；批量翻新会动到它们，需先确认依赖
 
+**14. 已报数字指向 gitignored 产物（可追溯性缺口）** —— 状态：未修（已立项）
+- 形态：AGENTS.md / 会话记录引用的原始产物留在 `e2e/scratch/`（被 `.gitignore` 的 `/e2e/` 规则覆盖），读者按引用去查是空的 —— **引用等于没有出处**，而这正是证据档存在的意义
+- 已知一例：缺陷 2 引用的 `e2e/scratch/out_v5.json`。**全仓清点尚未做**，同类可能还有其它处
+- 处置方向：逐个确认「产数脚本 + 原始产物」是否入库（落点沿用 `tests/perf/` 先例）；产物含正文或凭据的**删字段不删文件**
+- 已处置可参照：缺陷 1 / 缺陷 8 与 §二 基线表的产物已于 2026-09-11 提入库，见 §五「思考参数证据档」
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
@@ -233,6 +239,7 @@ config.yaml 现值（现读，非转述）：
 - **用例恒绿可能是双门互相兜底，不是命题成立**。案例：`resume_session` / `_ensure_session` 是双门（session 属主门 + 下游 `get_text_owned`），只把 session 门改回 `*_unscoped`，下游门兜住、用例仍绿。要让单门暴露，夹具必须刻意让开另一道门（`TestHoleOwnershipRegression` 里让 A 的 card 指向 B 的 text），否则这条用例锁的是「两道门都没了」，而不是「这一道门在」
 - **定性一个环境缺陷前先做反向对照，把可疑变量逐个摘掉**。案例：本机 chroma 段错误（0xC0000005）一度被定性为「跨平台读容器写的数据会崩」（可疑变量=数据来源）；反向对照——临时目录内本机自建集合并 `add` 两个向量，同样段错误——证明与数据来源无关，真实范围是「任何非空集合的任何操作」（空集合 `count()`、`get_collection` 正常）。范围写窄了，后人会按错误的边界做决策
 - **有上限 / 截断 / 采样的返回路径必须显式上报「被裁过」**。判据：写任何 LIMIT / cap / 采样 / 分页路径时，**在同一次改动里**就决定截断如何上报（`total` / `truncated` 这类显式信号），确实报不了就明说理由，别默认静默。案例：`admin_tasks` 的 200 条上限若不报 `total` / `truncated`，被裁掉的任务在管理页上完全不可见 —— 与 §三 缺陷 2 的「截断响应当成功返回」同病灶，是「失败被吞成正常返回」的**第六次形态**（前五次：线程弃船 / 384 维度不符 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中）。**修 A 时若自己埋下同形态的 B，当场修掉，不许记账放过**。回归锁：`tests/test_admin_tasks_api.py::TestEnvelope`
+- **聚合统计必须写明口径**（分组前 / 后、上中位 / 下中位、含不含空样本）。判据：**产物里的字段名与文档表格里的名字不一致时必须显式对照** —— 同一份数据用两种口径能算出两个数，复算时看着像「数字对不上」，被追问时最致命。案例：thinking 证据表的 `out_tokens` p50 是 14 条**合并后**的 nearest-rank 上中位（`sorted(outs)[n//2]` → 8191 / 1245），产物 `summary[].out_tokens_p50` 却是按档（5000 / 6000 字符）**分组**、`int(round(0.5*(n-1)))` 取的**下**中位（8192 / 6079 → 1446 / 1177）；两者各自自洽，混用则得 6487 / 1205，像造假。复算口径成文于 `tests/perf/thinking_budget_evidence.md` 第 4 节
 
 ### 五、验证工具现状
 
