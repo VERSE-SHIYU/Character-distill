@@ -3016,6 +3016,24 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Find interrupted distill failed: {exc}")
             raise
 
+    async def list_distill_tasks(self, limit: int = 200) -> list[dict]:
+        """Return distillation task rows, newest-updated first, capped at limit."""
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
+                              card_id, awakening, chunk_size, overlap, text_fingerprint,
+                              created_at, updated_at
+                       FROM distill_tasks
+                       ORDER BY updated_at DESC
+                       LIMIT $1""",
+                    int(limit),
+                )
+            return self._list_rows(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] List distill tasks failed: {exc}")
+            raise
+
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. Returns rows affected.
 

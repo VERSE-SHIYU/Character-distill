@@ -429,6 +429,17 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def list_distill_tasks(self, limit: int = 200) -> list[dict]:
+        """Return distillation task rows, newest-updated first, capped at ``limit``.
+
+        Ops/admin listing. Deliberately bounded: the table grows without bound
+        (no cascade today), so an unbounded scan is a foot-gun. Ordering by
+        updated_at DESC surfaces what ops cares about first — a live task
+        refreshes it on every progress write, and boot reconcile stamps it when
+        flipping orphaned running rows to interrupted.
+        """
+
+    @abstractmethod
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. UPDATE-only.
 

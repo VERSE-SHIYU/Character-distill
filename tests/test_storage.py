@@ -1549,6 +1549,21 @@ class TestDistillTaskPersistence:
         assert (await store.find_interrupted_distill("u2", text_id, "甲"))["task_id"] == "dtI4"
         assert await store.find_interrupted_distill("u1", "txt_none", "甲") is None
 
+    async def test_list_distill_tasks_capped_and_full_row_shape(self, store, text_id):
+        # G：admin 运维视图的读路径。上限必守（无 cascade 的表会无限长），
+        # 且返回的是完整行 —— user_id 等内部列由 admin 层的白名单挡，不在存储层砍。
+        # 顺序（updated_at DESC）不在此断言：CURRENT_TIMESTAMP 秒级分辨率下同秒并列、
+        # 判不出稳定序，写了就是 flaky。
+        await store.create_distill_task("dtL1", "u1", text_id, character="甲", status="done", progress_pct=100)
+        await store.create_distill_task("dtL2", "u2", text_id, character="乙", status="interrupted")
+        await store.create_distill_task("dtL3", "u1", text_id, character="丙", status="running")
+
+        rows = await store.list_distill_tasks()
+        assert {r["task_id"] for r in rows} == {"dtL1", "dtL2", "dtL3"}
+        assert "user_id" in rows[0] and "text_fingerprint" in rows[0]
+
+        assert len(await store.list_distill_tasks(limit=2)) == 2
+
     async def test_cancel_by_text_id(self, store, text_id):
         # 删文本 sweep：running + interrupted（含上进程孤儿）都置 error，done 不动。
         await store.create_distill_task("dtX", "u1", text_id, status="running")

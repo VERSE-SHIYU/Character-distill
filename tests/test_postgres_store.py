@@ -535,6 +535,19 @@ class TestDistillTaskPersistence:
         assert (await store.find_interrupted_distill("u2", text_id, "甲"))["task_id"] == "dtI4"
         assert await store.find_interrupted_distill("u1", "txt_none", "甲") is None
 
+    async def test_list_distill_tasks_capped_and_full_row_shape(self, store, text_id):
+        # G：admin 运维视图的读路径。上限必守（无 cascade 的表会无限长）；
+        # 返回完整行，内部列由 admin 层白名单挡。顺序同 SQLite 侧不在此断言。
+        await store.create_distill_task("dtL1", "u1", text_id, character="甲", status="done", progress_pct=100)
+        await store.create_distill_task("dtL2", "u2", text_id, character="乙", status="interrupted")
+        await store.create_distill_task("dtL3", "u1", text_id, character="丙", status="running")
+
+        rows = await store.list_distill_tasks()
+        assert {r["task_id"] for r in rows} == {"dtL1", "dtL2", "dtL3"}
+        assert "user_id" in rows[0] and "text_fingerprint" in rows[0]
+
+        assert len(await store.list_distill_tasks(limit=2)) == 2
+
     async def test_cancel_by_text_id(self, store, text_id, user_id):
         x, y, z = (f"dt_{uuid.uuid4().hex}" for _ in range(3))
         await store.create_distill_task(x, user_id, text_id, status="running")

@@ -573,15 +573,28 @@ async def admin_logs(
 async def admin_tasks(
     request: Request,
     _admin: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
-    """List all distill tasks with owner info."""
-    from routers.distill import _tasks, _task_lock
+    """List distill tasks from the DB, serialized by the shared distill contract.
+
+    读 distill_tasks 而非内存 _tasks 写缓存：重启后缓存为空，而 boot reconcile 置为
+    interrupted 的那批行恰恰是运维最需要看见的 —— 读内存等于在最需要它的时刻瞎掉。
+
+    输出走 _task_response（distill 域唯一序列化器），不 spread 行：DB 行里的 user_id
+    等内部列从构造上进不来，将来往内存加字段也不会自动泄漏。mem 只作展示字段细化
+    （stage/message），status/progress_pct/所有权仍以 DB 为准。
+    """
+    from routers.distill import _task_response, _tasks, _task_lock
+
+    rows = await storage.list_distill_tasks()
+    # 一次取锁快照 running 行的内存条目（锁内无 await），锁外只读序列化。
     with _task_lock:
-        result = [
-            {"task_id": tid, **task}
-            for tid, task in list(_tasks.items())
-        ]
-    return result
+        live = {
+            r["task_id"]: dict(_tasks[r["task_id"]])
+            for r in rows
+            if r["status"] == "running" and r["task_id"] in _tasks
+        }
+    return [_task_response(row, live.get(row["task_id"])) for row in rows]
 
 
 # ============================================================
