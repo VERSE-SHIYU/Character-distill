@@ -13,7 +13,6 @@
 
 import { test, expect } from '@playwright/test'
 import * as fs from 'fs'
-if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const AUDIT_LOG = 'e2e/audit-overflow-results.txt'
 const SCREENSHOT_DIR = 'e2e/screenshots'
@@ -72,9 +71,12 @@ const PAGES = [
 ]
 
 async function login(page) {
+  // 凭据惰性校验：真要登录时才查（spec 收集阶段不被牵连）
+  const pass = process.env.TEST_PASSWORD
+  if (!pass) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）')
   await page.goto('/')
   await page.fill('input[name="username"]', 'testadmin')
-  await page.fill('input[type="password"]', process.env.TEST_PASSWORD)
+  await page.fill('input[type="password"]', pass)
   await page.click('button[type="submit"]')
 
   // Wait for either mobile-tabbar (mobile) or sidebar-trigger (desktop)

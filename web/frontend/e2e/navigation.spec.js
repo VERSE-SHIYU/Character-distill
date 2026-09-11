@@ -1,7 +1,13 @@
 import { test, expect } from '@playwright/test'
-if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const BASE = 'http://localhost:7860'
+
+// 凭据惰性校验：真要登录时才查，spec 被收集（--list / 跑别的用例）时不因缺变量而整档失败
+function requirePass() {
+  const pass = process.env.TEST_PASSWORD
+  if (!pass) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）')
+  return pass
+}
 
 /**
  * Read the store's currentView from the browser context.
@@ -27,7 +33,7 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     })
     await page.goto(BASE)
     await page.fill('#login-username', 'testadmin')
-    await page.fill('#login-password', process.env.TEST_PASSWORD)
+    await page.fill('#login-password', requirePass())
     await page.click('.login-submit')
     await page.waitForSelector('.mobile-tabbar', { timeout: 15000 })
     // dismiss cross-border consent modal if it appears
@@ -287,7 +293,7 @@ test.describe('Desktop navigation', () => {
     await page.goto(BASE)
     await page.waitForSelector('.login-submit', { timeout: 15000 })
     await page.fill('#login-username', 'testadmin')
-    await page.fill('#login-password', process.env.TEST_PASSWORD)
+    await page.fill('#login-password', requirePass())
     await page.locator('.login-submit').click()
     // dismiss cross-border consent modal if it appears
     try {

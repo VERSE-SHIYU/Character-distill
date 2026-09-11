@@ -10,10 +10,16 @@ const fs = require('fs')
 // 本地测试专用账号（Character-distill 项目红线：只允许操作 testadmin，绝不碰真实用户）
 const BASE = 'http://localhost:7861'
 const TEST_USER = 'testadmin'
-const TEST_PASS = process.env.TEST_PASSWORD
-if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 const SHELL_SELECTOR = '.mobile-tabbar, [class*="shell"]'
 const LOGIN_TIMEOUT = 15000
+
+// 凭据惰性校验：只有真要登录时才查，import 本模块不因缺变量而失败——
+// 不登录的探针（只取 openApp/gotoLogin/shot 等）不该被牵连。
+function requirePass() {
+  const pass = process.env.TEST_PASSWORD
+  if (!pass) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）')
+  return pass
+}
 
 // 启动浏览器 + 注入 __E2E + 挂 pageerror 收集。返回 { browser, page, errors }
 async function openApp({ width = 390, height = 844 } = {}) {
@@ -34,9 +40,10 @@ async function gotoLogin(page) {
 
 // testadmin 登录 + 等主框架渲染。settleMs=0 跳过结算等待
 async function login(page, { settleMs = 1500, shellSelector = SHELL_SELECTOR } = {}) {
+  const pass = requirePass()
   await gotoLogin(page)
   await page.fill('#login-username', TEST_USER)
-  await page.fill('#login-password', TEST_PASS)
+  await page.fill('#login-password', pass)
   await page.locator('.login-submit').click()
   await page.waitForSelector(shellSelector, { timeout: LOGIN_TIMEOUT })
   if (settleMs) await page.waitForTimeout(settleMs)
@@ -114,4 +121,9 @@ async function shot(page, file, dir = 'screenshots') {
   await page.screenshot({ path: path.join(out, file) })
 }
 
-module.exports = { BASE, TEST_USER, TEST_PASS, openApp, gotoLogin, login, pushView, goToView, seedChat, cs, shot }
+module.exports = {
+  BASE, TEST_USER, openApp, gotoLogin, login, pushView, goToView, seedChat, cs, shot,
+  // 兼容旧调用点（e2e/scratch/ 若干本地脚本解构 TEST_PASS）：惰性取值，
+  // 只有真的访问它才校验 —— 不访问的调用方不被牵连
+  get TEST_PASS() { return requirePass() },
+}

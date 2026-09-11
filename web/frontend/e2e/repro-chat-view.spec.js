@@ -7,7 +7,6 @@
 //   cd web/frontend && npx playwright test e2e/repro-chat-view.spec.js
 
 import { test, expect } from '@playwright/test'
-if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 test.describe('ChatView rendering after no-undef fixes', () => {
   test('chat view renders with mocked start_session', async ({ page }) => {
@@ -26,9 +25,11 @@ test.describe('ChatView rendering after no-undef fixes', () => {
     await page.goto('/')
     await page.waitForTimeout(500)
 
-    // Login
+    // Login（凭据惰性校验：真要登录时才查，spec 收集阶段不被牵连）
+    const pass = process.env.TEST_PASSWORD
+    if (!pass) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）')
     await page.fill('input[name="username"]', 'testadmin')
-    await page.fill('input[type="password"]', process.env.TEST_PASSWORD)
+    await page.fill('input[type="password"]', pass)
     await page.click('button[type="submit"]')
     await page.waitForTimeout(1500)
 
