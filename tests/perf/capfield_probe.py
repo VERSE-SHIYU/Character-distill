@@ -1,0 +1,131 @@
+"""追查 map_len_probe 里「out_tokens 顶到 8192 但 out_chars=0」的三条记录。
+
+要回答：cap 打满时，究竟是
+  (a) content 非空被截断（Tier 1 落地 → 可见失败，正是本次要建的闸）
+  (b) content 为空、token 全花在别处（reasoning_content？）→ 落库空串，闸看不见的新失败形态
+  (c) 两者都不是
+
+结论：是 (b)。三条里两条 `content_chars=0` / `reasoning_content_chars=12441|12413` /
+`finish_reason='length'` —— 思考与正文共享 max_tokens 预算，思考吃光预算。
+原始产物 `out_capfield.json` 同目录入库。
+
+方法与 map_len_probe 同源：生产 _split_chunks 还原同一片、生产 map 提示词、生产参数
+（temperature / presence_penalty）。唯一差别是本脚本**自己发 create()**（不走 async_chat），
+以便 dump 原始响应对象——async_chat 只返回 message.content，会把「token 花在哪」这个信息丢掉。
+
+注意：本脚本**故意**发修复前那套错方言 `extra_body={"enable_thinking": False}`（Qwen 方言，
+DeepSeek 静默忽略）——它是「修复前」的可复现演示，不是待修的代码。生产侧的正确方言见
+`adapters/llm_adapter.py` 的 `_THINKING_DISABLED`。
+
+可替换项（换语料/换机器时改这三处）：
+  - `PROBE_DB` 环境变量（默认 `data/character_sim.db`）
+  - `PROBE_OUT_DIR` 环境变量（默认 `e2e/scratch/`，gitignored；**不会覆盖入库产物**）
+  - `CASES` 里的 text_id：取自当时本机库的行 id，换库必须替换
+
+版权：模型 output 按 map 规则会逐字保留原文对话 → 本脚本**不再落 `content_head` 字段**，
+      产物只留长度与统计量，不留正文。
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import sqlite3
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+import adapters.llm_adapter as A                      # noqa: E402
+from adapters.llm_adapter import LLMAdapter           # noqa: E402
+from core.distiller import Distiller                  # noqa: E402
+
+A._GEN_ATTEMPT_S = 120.0
+A._GEN_DEADLINE_S = 240.0
+
+DB = Path(os.environ.get("PROBE_DB", str(ROOT / "data" / "character_sim.db")))
+OUT_DIR = Path(os.environ.get("PROBE_OUT_DIR", str(ROOT / "e2e" / "scratch")))
+CAP = 8192
+CONC = 3
+
+# map_len_probe 里 out_chars == 0 的三条 (text_id, cs, idx, char, chunk_chars)
+# text_id 是当时本机 data/character_sim.db 的行 id —— 换语料必须替换
+CASES = [
+    ("997207ccb4dd", 6000, 0, "汪东城", 5996),
+    ("997207ccb4dd", 6000, 6, "汪东城", 5990),
+    ("997207ccb4dd", 5000, 13, "汪东城", 2117),
+]
+
+
+def chunk_of(text_id: str, cs: int, idx: int) -> str:
+    c = sqlite3.connect(str(DB), timeout=15)
+    try:
+        content = c.execute("select content from texts where id=?", (text_id,)).fetchone()[0]
+    finally:
+        c.close()
+    return Distiller._split_chunks(content, cs)[idx]
+
+
+async def one(llm: LLMAdapter, client, case) -> dict:
+    text_id, cs, idx, char, want_chars = case
+    chunk = chunk_of(text_id, cs, idx)
+    payload = llm._build_messages(
+        Distiller._map_system_prompt(char),
+        [{"role": "user", "content": Distiller._map_user_prompt(chunk, char)}],
+    )
+    t0 = time.monotonic()
+    comp = await client.chat.completions.create(
+        model=llm._model, messages=payload, temperature=llm._temperature,
+        max_tokens=CAP, presence_penalty=llm._presence_penalty,
+        timeout=120.0, extra_body={"enable_thinking": False},
+    )
+    el = round(time.monotonic() - t0, 1)
+    choice = comp.choices[0]
+    msg = choice.message
+    content = msg.content or ""
+    rc = getattr(msg, "reasoning_content", None)
+    return {
+        "text_id": text_id, "cs": cs, "idx": idx,
+        "chunk_chars_expected": want_chars, "chunk_chars": len(chunk),
+        "elapsed_s": el,
+        "finish_reason": getattr(choice, "finish_reason", "<absent>"),
+        "completion_tokens": (comp.usage.completion_tokens if comp.usage else None),
+        "prompt_tokens": (comp.usage.prompt_tokens if comp.usage else None),
+        "content_chars": len(content),
+        "reasoning_content_chars": (len(rc) if isinstance(rc, str) else None),
+        "msg_field_names": sorted(msg.model_dump().keys()) if hasattr(msg, "model_dump") else [],
+    }
+
+
+async def main() -> None:
+    llm = LLMAdapter()
+    client = llm._make_async_client()
+    sem = asyncio.Semaphore(CONC)
+
+    async def guarded(c):
+        async with sem:
+            try:
+                r = await one(llm, client, c)
+            except Exception as exc:
+                r = {"text_id": c[0], "cs": c[1], "idx": c[2],
+                     "error": f"{type(exc).__name__}: {exc}"}
+            print("[case] " + json.dumps(r, ensure_ascii=False), file=sys.stderr, flush=True)
+            return r
+
+    try:
+        rows = await asyncio.gather(*[guarded(c) for c in CASES])
+    finally:
+        await client.close()
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out = OUT_DIR / "out_capfield.json"
+    out.write_text(json.dumps({"probe": "capfield", "model": llm._model,
+                               "cap": CAP, "records": rows},
+                              ensure_ascii=False, indent=2), encoding="utf-8")
+    print("RESULT " + json.dumps(rows, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

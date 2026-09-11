@@ -1,0 +1,216 @@
+{
+  "probe": "map_len",
+  "model": "deepseek-v4-pro",
+  "measure_max_tokens": 8192,
+  "prod_max_tokens": 4096,
+  "records": [
+    {
+      "text_id": "0b353450811b",
+      "cs": 6000,
+      "char": "顾昀",
+      "idx": 0,
+      "chunk_chars": 287,
+      "elapsed_s": 12.0,
+      "in_tokens": 432,
+      "out_tokens": 584,
+      "out_chars": 73,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "0b353450811b",
+      "cs": 6000,
+      "char": "顾昀",
+      "idx": 54,
+      "chunk_chars": 5887,
+      "elapsed_s": 71.3,
+      "in_tokens": 4256,
+      "out_tokens": 4210,
+      "out_chars": 911,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "0b353450811b",
+      "cs": 6000,
+      "char": "顾昀",
+      "idx": 108,
+      "chunk_chars": 3524,
+      "elapsed_s": 59.1,
+      "in_tokens": 2545,
+      "out_tokens": 4062,
+      "out_chars": 1299,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 6000,
+      "char": "汪东城",
+      "idx": 0,
+      "chunk_chars": 5996,
+      "elapsed_s": 109.4,
+      "in_tokens": 4000,
+      "out_tokens": 8191,
+      "out_chars": 0,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 6000,
+      "char": "汪东城",
+      "idx": 6,
+      "chunk_chars": 5990,
+      "elapsed_s": 108.3,
+      "in_tokens": 4177,
+      "out_tokens": 8192,
+      "out_chars": 0,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 6000,
+      "char": "汪东城",
+      "idx": 11,
+      "chunk_chars": 1082,
+      "elapsed_s": 99.6,
+      "in_tokens": 936,
+      "out_tokens": 6079,
+      "out_chars": 1061,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "921f19d057a3",
+      "cs": 6000,
+      "char": "汪东城",
+      "idx": 0,
+      "chunk_chars": 5999,
+      "elapsed_s": 137.8,
+      "in_tokens": 3733,
+      "out_tokens": 8192,
+      "out_chars": 2449,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "921f19d057a3",
+      "cs": 6000,
+      "char": "汪东城",
+      "idx": 8,
+      "chunk_chars": 2420,
+      "elapsed_s": 88.6,
+      "in_tokens": 1641,
+      "out_tokens": 5411,
+      "out_chars": 1625,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "172239fd232b",
+      "cs": 6000,
+      "char": "吴庚霖",
+      "idx": 0,
+      "chunk_chars": 5925,
+      "elapsed_s": 110.2,
+      "in_tokens": 3967,
+      "out_tokens": 6487,
+      "out_chars": 1933,
+      "clipped_by_probe_cap": false
+    },
+    {
+      "text_id": "172239fd232b",
+      "cs": 6000,
+      "char": "吴庚霖",
+      "idx": 6,
+      "chunk_chars": 1771,
+      "elapsed_s": 118.0,
+      "in_tokens": 1393,
+      "out_tokens": 8192,
+      "out_chars": 2182,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 5000,
+      "char": "汪东城",
+      "idx": 0,
+      "chunk_chars": 4992,
+      "elapsed_s": 160.0,
+      "in_tokens": 3372,
+      "out_tokens": 8192,
+      "out_chars": 1183,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 5000,
+      "char": "汪东城",
+      "idx": 13,
+      "chunk_chars": 2117,
+      "elapsed_s": 154.8,
+      "in_tokens": 1580,
+      "out_tokens": 8192,
+      "out_chars": 0,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "921f19d057a3",
+      "cs": 5000,
+      "char": "汪东城",
+      "idx": 0,
+      "chunk_chars": 4961,
+      "elapsed_s": 119.6,
+      "in_tokens": 3145,
+      "out_tokens": 8192,
+      "out_chars": 2715,
+      "clipped_by_probe_cap": true
+    },
+    {
+      "text_id": "921f19d057a3",
+      "cs": 5000,
+      "char": "汪东城",
+      "idx": 10,
+      "chunk_chars": 483,
+      "elapsed_s": 29.5,
+      "in_tokens": 535,
+      "out_tokens": 1634,
+      "out_chars": 493,
+      "clipped_by_probe_cap": false
+    }
+  ],
+  "summary": [
+    {
+      "tier_chunk_size": 5000,
+      "n": 4,
+      "errors": 0,
+      "chunk_chars_min_med_max": [
+        483,
+        4961,
+        4992
+      ],
+      "out_tokens_min": 1634,
+      "out_tokens_p50": 8192,
+      "out_tokens_p90": 8192,
+      "out_tokens_max": 8192,
+      "prod_cap": 4096,
+      "ge_4096": 3,
+      "ge_near_line": 3,
+      "near_line_threshold": 3500,
+      "any_clipped_by_probe_cap": true
+    },
+    {
+      "tier_chunk_size": 6000,
+      "n": 10,
+      "errors": 0,
+      "chunk_chars_min_med_max": [
+        287,
+        5887,
+        5999
+      ],
+      "out_tokens_min": 584,
+      "out_tokens_p50": 6079,
+      "out_tokens_p90": 8192,
+      "out_tokens_max": 8192,
+      "prod_cap": 4096,
+      "ge_4096": 8,
+      "ge_near_line": 9,
+      "near_line_threshold": 3500,
+      "any_clipped_by_probe_cap": true
+    }
+  ]
+}

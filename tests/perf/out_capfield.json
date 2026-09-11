@@ -1,0 +1,76 @@
+{
+  "probe": "capfield",
+  "model": "deepseek-v4-pro",
+  "cap": 8192,
+  "records": [
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 6000,
+      "idx": 0,
+      "chunk_chars_expected": 5996,
+      "chunk_chars": 5996,
+      "elapsed_s": 161.9,
+      "finish_reason": "length",
+      "completion_tokens": 8191,
+      "prompt_tokens": 4000,
+      "content_chars": 0,
+      "reasoning_content_chars": 12441,
+      "msg_field_names": [
+        "annotations",
+        "audio",
+        "content",
+        "function_call",
+        "reasoning_content",
+        "refusal",
+        "role",
+        "tool_calls"
+      ]
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 6000,
+      "idx": 6,
+      "chunk_chars_expected": 5990,
+      "chunk_chars": 5990,
+      "elapsed_s": 122.4,
+      "finish_reason": "length",
+      "completion_tokens": 8192,
+      "prompt_tokens": 4177,
+      "content_chars": 0,
+      "reasoning_content_chars": 12413,
+      "msg_field_names": [
+        "annotations",
+        "audio",
+        "content",
+        "function_call",
+        "reasoning_content",
+        "refusal",
+        "role",
+        "tool_calls"
+      ]
+    },
+    {
+      "text_id": "997207ccb4dd",
+      "cs": 5000,
+      "idx": 13,
+      "chunk_chars_expected": 2117,
+      "chunk_chars": 2117,
+      "elapsed_s": 131.5,
+      "finish_reason": "stop",
+      "completion_tokens": 7147,
+      "prompt_tokens": 1580,
+      "content_chars": 2060,
+      "reasoning_content_chars": 8735,
+      "msg_field_names": [
+        "annotations",
+        "audio",
+        "content",
+        "function_call",
+        "reasoning_content",
+        "refusal",
+        "role",
+        "tool_calls"
+      ]
+    }
+  ]
+}
