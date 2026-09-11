@@ -112,8 +112,12 @@ mcp 1.x 的 stdio 子进程 env 只取 `get_default_environment()`（白名单�
     早于 2026-06-24 embedder 迁移（原 SentenceTransformer 384 维）的旧集合仍能被
     `load_existing` 加载（它只看 count>0），但查询会因 384/1024 维度不符被吞成空——web 单卡
     chat 同样如此，非本 server 缺陷。这类旧文本需按当前 embedder 重建后才能查到场景。
-  - ⚠️ 环境依赖：本仓库 chroma 数据由 Linux 容器写入；Windows 宿主 Python 直接读会段错误
-    （duckdb 平台段不匹配），真实检索验证须跑在 Linux 容器里。
+  - ⚠️ 环境依赖（本机 Windows）：chroma 1.5.9 对**任何非空集合的任何操作**段错误
+    （0xC0000005），与集合由谁写入无关——反向对照：临时目录内 `create_collection` +
+    `add(2 向量)` 同样崩；空集合 `count()`、`get_collection` 本身正常。故 `load_existing`
+    在 `core/rag.py` 的 `col.count()` 处必崩，走不到 `index()` fallback。影响：本机无法做
+    真实检索验证，须在 Linux 容器内跑；不影响生产（Linux）与 CI。取证脚本在 `e2e/scratch/`
+    （gitignored），结论固化于此。
 - `web_search`：走 DuckDuckGo Instant Answer 免费接口 + 角色 LLM 过滤。依赖：(1) 网络可达该接口
   且其返回内容（地域不同返回可能为空）；(2) `DEEPSEEK_API_KEY`（否则过滤步返回空）。
 - 工具/`ContextEngine` 的 `print()` 日志被重定向到 stderr——stdio 传输独占 stdout，避免破坏 JSON-RPC 帧。
