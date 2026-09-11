@@ -138,9 +138,11 @@ async def _ensure_session(
             "retract_count": 0,
             "turn_index": 0,
         })
-        # SECURITY: verify session ownership even on memory hit
+        # SECURITY: verify session ownership even on memory hit.
+        # 与下面的 DB 分支同判 404（含同一条文案）：命中/未命中的状态码若不同，
+        # 反复请求就能靠差异推断资源是否存在——内存路径会把 DB 路径的防枚举漏掉。
         if session.get("user_id") and session["user_id"] != user_id:
-            raise HTTPException(403, "无权访问此会话")
+            raise HTTPException(404, "Session not found")
         touch_session(session)
         return session
 

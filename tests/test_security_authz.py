@@ -1,8 +1,14 @@
 """Security authorization integration tests.
 
 Tests two security invariants:
-1. Resource owner isolation: user B cannot access user A's resources (gets 403)
+1. Resource owner isolation: user B cannot access user A's resources -> 404，不是 403。
+   403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」与「不存在」不可区分，
+   否则攻击者拿一批 id 扫描时，状态码差异就是存在性枚举的预言机。理由详见
+   TestReadAuthorization 的文档串与 AGENTS.md §四。
 2. Error response safety: system exceptions -> sanitized 500; ValueError -> 400
+
+注：本文件里 test_03/04/05（card、group）仍断言 403，因为那批端点还没翻新——
+那是存量口径问题，不是有意保留的第二种语义，见 AGENTS.md 缺陷 13。
 
 Run: pytest tests/test_security_authz.py -v
 """
@@ -309,18 +315,19 @@ class TestHoleOwnershipRegression:
         r = client_b.post(f"/api/distill/reindex/{tid}")
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
-    def test_17_distill_start_session_non_owner_no_session(self, store, user_a, client_b, llm_gate_open):
-        """start_session 的属主门在 try 块内，`except Exception` 把 HTTPException(404)
-        吞成 500，所以这里锁的是安全性质（不建成会话），不是状态码——状态码缺陷另行立项
-        （见报告）。用例对「将来修成 404」保持前向兼容。
+    def test_17_distill_start_session_non_owner_404(self, store, user_a, client_b, llm_gate_open):
+        """属主门在 try 内，其 404 一度被同块的宽 except 吞成 500。
+
+        这条用例同时锁两件事：状态码是 404（宽 except 前必须 `except HTTPException: raise`），
+        且没有为别人建成会话。只锁「不建成会话」是不够的——500 满足它，却把 4xx 的客户端
+        条件报成服务端错误，与 §四 的 404 口径冲突。
         """
         from deps import get_sessions
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         before = len(get_sessions())
         r = client_b.post("/api/distill/start_session", json={"card_id": cid, "text_id": tid})
-        assert r.status_code >= 400, f"非属主竟然拿到了会话: {r.status_code}: {r.json()}"
-        assert "session_id" not in r.json(), f"响应里带出了 session_id: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
         assert len(get_sessions()) == before, "非属主用他人 text_id 建出了会话并写进 _sessions"
 
     def test_18_chat_revoke_non_owner_404(self, store, user_a, user_b, client_b, llm_gate_open):
@@ -336,6 +343,22 @@ class TestHoleOwnershipRegression:
         r = client_b.post("/api/chat/revoke", json={"session_id": sid, "message_id": 1})
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
         assert sid not in get_sessions(), "非属主在 _sessions 里为他人会话重建了引擎"
+
+    def test_19_chat_memory_hit_non_owner_404(self, store, user_a, client_b):
+        """内存命中分支与 DB 重建分支同判 404（含同一条文案）。
+
+        同一个 session_id，内存里有没有这条记录会走 `_ensure_session` 的不同分支。两条分支的
+        状态码若不同，攻击者反复请求、靠命中/未命中的差异就能推断资源是否存在——内存路径会
+        把 DB 路径的防枚举漏掉。
+        """
+        from deps import get_sessions
+        sid = f"ses_mem_{uuid.uuid4().hex}"
+        get_sessions()[sid] = {"user_id": user_a, "engine": object()}
+        try:
+            r = client_b.post("/api/chat/revoke", json={"session_id": sid, "message_id": 1})
+        finally:
+            get_sessions().pop(sid, None)
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

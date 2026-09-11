@@ -1388,6 +1388,11 @@ async def start_session(
             session_id = _uuid.uuid4().hex[:12]
             sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}
             all_characters = []
+    except HTTPException:
+        # 属主门的 404 这类有语义的拒绝不能被下面的宽 except 重抛成 500：
+        # 4xx 的客户端条件一旦报成服务端错误，「非属主」与「服务端故障」就不可分，
+        # 且与 §四 的 404 口径冲突。宽 except 只兜真正意外的东西。
+        raise
     except Exception as exc:
         print(f"[distill] Create session for card {req.card_id} failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
