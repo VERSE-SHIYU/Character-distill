@@ -150,7 +150,7 @@ config.yaml 现值（现读，非转述）：
 - 影响面：只掉「省调用量」，不掉正确性——当前轮 reduce 吃的是内存里的新结果（`distill_incremental_stream` 内 `map_results.append` → `raw_analyses`），落库副本陈旧只影响下次续跑的复用判据
 - 状态：未修
 
-**5. sqlite 新库缺 `users.embedding_key` / `embedding_region`** —— 状态：**已修**（2026-09-11）
+**5. sqlite 新库缺 `users.embedding_key` / `embedding_region`** —— 状态：**已修**（commit `dae4928`，2026-09-11）
 - 病灶两层：(1) `storage/migrations/067_embedding_config.sql` 用 `ALTER TABLE users ADD COLUMN IF NOT EXISTS ...`——SQLite 无此语法，`executescript` 解析期即抛 `near "EXISTS": syntax error`；(2) 执行块的 `except` 只吞「duplicate column」，这条错误串不匹配 → 打一行 print 就放过。**报错真的发生了，被按字符串匹配漏掉，静默继续**
 - 后果：新建 sqlite 库永远缺 `users.embedding_key` / `embedding_region` → `get_user_api_config` 的 `SELECT u.embedding_key` 抛 `OperationalError` → 500。生产是 PG（该语法合法）不受影响；受影响的是新开发环境与 `start_all.bat`
 - 修法：067 的 SQLite 版去掉 `IF NOT EXISTS`（PG 侧 `storage/migrations_pg/002_embedding_config.sql` 独立、不动）；执行块改 `PRAGMA table_info(users)` **前置判断**——读出现有列，缺哪列 ALTER 哪列，不缺就跳过。**确定性执行取代猜错误串**；该块不再有 except，迁移真失败照常上抛，不再静默
@@ -226,7 +226,8 @@ config.yaml 现值（现读，非转述）：
 - 修 067（缺陷 5）时顺带实测到：同一个库第二次 `_ensure_initialized` 会打 `[SQLiteStore] Post enhancements migration failed: duplicate column name: images`。该块（`storage/sqlite_store.py` 的 034 段）是 `except Exception: print` **连 duplicate column 都不吞**，故「已建库重跑」这一正常路径每次都报失败
 - 两层问题：(1) **假失败**——列已存在的正常情况被报成 failed，噪音会训练人忽略真失败；(2) **真失败被吞**——该块无重抛，034 真出错也只留一行 print 后继续
 - 同族存量（迁移执行区实测）：75 处「失败只 print、从不重抛」，其中 56 处靠错误串判断可否忽略、19 处裸吞。与缺陷 5 同病灶（「失败被吞成正常返回」谱系）
-- **未同轮修的理由**：067 spec 的硬要求是「发现未覆盖的问题只列不修、停下报告」，不自行扩大范围。此外**该缺陷直接影响验收口径**：`tests/test_sqlite_fresh_schema.py` 的 (c)「同库两次 init 无失败输出」因此只能把断言限定在 067；(d) 的「整类兜底」也只覆盖首次建库——修掉 034 后两者都可升级为全强度
+- **影响（比缺陷本身重要）**：它是本仓新增回归锁 `tests/test_sqlite_fresh_schema.py` 只能取弱化口径的**直接原因**。已建库重跑会稳定产出这一行假失败，于是 (c)「同库两次 init 无失败输出」无法按原样断言，只能退到「输出里不含 067 的失败」；同理 (d) 的整类兜底只覆盖**首次建库**——要覆盖「任意时点、任何迁移失败都红」必须跑第二次 init，而那一步恒被 034 污染。**修掉 034 后两者可恢复全强度**（(c) 直接断言整库零失败输出即可）
+- **未同轮修的理由**：067 spec 的硬要求是「发现未覆盖的问题只列不修、停下报告」，不自行扩大范围
 - 附带：缺陷 5 修好后，`tests/test_security_authz.py` / `test_distill_task_api.py`（3 处）/ `test_rag_unusable.py` 里那 5 处「让 `get_user_api_config` 返回空配置」的夹具绕过已成多余（保留无害，但注释里「因缺陷 5」的理由已过期）
 
 ### 四、验证纪律
