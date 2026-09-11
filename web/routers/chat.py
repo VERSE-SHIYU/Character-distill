@@ -639,12 +639,10 @@ async def get_affinity(
     无已评估 affinity 数据时返回 204（前端以 affinity=null 表达"无数据"），
     不返回长得像真实数据的假默认值。
     """
-    # Always verify ownership via DB first
-    db_session = await storage.get_session(session_id)
+    # 属主过滤在 SQL 里完成：非属主与不存在同判 404，不靠状态码区分
+    db_session = await storage.get_session_owned(session_id, user["id"])
     if not db_session:
         raise HTTPException(404, "Session not found")
-    if db_session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此会话")
 
     aff = await resolve_session_affinity(session_id, storage, sessions)
     if aff is None:
@@ -693,12 +691,10 @@ async def get_session_reactions(
     sessions: dict = Depends(get_sessions),
 ) -> dict:
     """Return all reactions for messages in a session."""
-    # Verify ownership
-    db_session = await storage.get_session(session_id)
+    # 属主过滤在 SQL 里完成：非属主与不存在同判 404，不靠状态码区分
+    db_session = await storage.get_session_owned(session_id, user["id"])
     if not db_session:
         raise HTTPException(404, "Session not found")
-    if db_session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此会话")
 
     messages = await storage.get_messages(session_id)
     msg_ids = [m["id"] for m in messages if m.get("id")]

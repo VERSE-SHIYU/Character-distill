@@ -114,13 +114,11 @@ async def export_session(
 ) -> Response:
     """Export a session as json or txt."""
     try:
-        session = await storage.get_session(session_id)
+        session = await storage.get_session_owned(session_id, user["id"])
     except Exception:
         raise HTTPException(404, "Session not found")
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此会话")
     try:
         content = await storage.export_session(session_id, format)
     except ValueError as exc:
@@ -142,11 +140,9 @@ async def get_session_detail(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Get a session with its full message list."""
-    session = await storage.get_session(session_id)
+    session = await storage.get_session_owned(session_id, user["id"])
     if not session:
         raise HTTPException(404, "Session not found")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此会话")
     try:
         messages = await storage.get_messages(session_id)
     except Exception as exc:

@@ -162,21 +162,27 @@ def _create_group(store, user_id):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestReadAuthorization:
-    """Each endpoint: user B → user A resource → 403."""
+    """Each endpoint: user B → user A resource → 404(不可区分于不存在)。
 
-    def test_01_history_session_403(self, store, user_a, client_b):
+    为什么是 404 不是 403：403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」
+    与「不存在」不可区分。攻击者拿一批 id 去扫时，403/404 的差异就是枚举预言机。
+    这些端点的属主过滤在 storage 的 *_owned 原语里用 SQL 完成，拿不到行即 404。
+    不要改回 403 —— 那会重新开一个存在性枚举点。
+    """
+
+    def test_01_history_session_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         sid = _create_session(store, user_a, cid)
         r = client_b.get(f"/api/history/{sid}")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
-    def test_02_history_export_403(self, store, user_a, client_b):
+    def test_02_history_export_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         sid = _create_session(store, user_a, cid)
         r = client_b.get(f"/api/history/{sid}/export")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
     def test_03_card_get_403(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
@@ -195,12 +201,12 @@ class TestReadAuthorization:
         r = client_b.get(f"/api/group/{gid}/history")
         assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
 
-    def test_06_chat_affinity_403(self, store, user_a, client_b):
+    def test_06_chat_affinity_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         sid = _create_session(store, user_a, cid)
         r = client_b.get(f"/api/chat/affinity/{sid}")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

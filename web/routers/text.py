@@ -261,11 +261,9 @@ async def update_text_cover(
     if len(cover) > 300_000:
         raise HTTPException(400, "封面图过大，请压缩后上传")
 
-    text = await storage.get_text(text_id)
+    text = await storage.get_text_owned(text_id, user["id"])
     if not text:
         raise HTTPException(404, "文本不存在")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权修改他人的文本封面")
 
     await storage.update_text_cover(text_id, cover)
     return {"ok": True}
@@ -313,11 +311,12 @@ async def get_text_deletion_impact(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get impact stats before deleting a text (cards, sessions, messages)."""
-    text = await storage.get_text(text_id)
+    text = await storage.get_text_owned(text_id, user["id"])
+    if not text and user.get("is_admin"):
+        # admin 跨属主查看删除影响：显式逃生口，受 is_admin 保护。
+        text = await storage.get_text_unscoped(text_id)
     if not text:
         raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"] and not user.get("is_admin"):
-        raise HTTPException(403, "无权查看此文本")
     return await storage.get_text_deletion_impact(text_id, user["id"])
 
 
@@ -414,11 +413,9 @@ async def download_cleaned(
     storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Download cleaned plain text for chat-type imports."""
-    text_rec = await storage.get_text(text_id)
+    text_rec = await storage.get_text_owned(text_id, user["id"])
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    if text_rec.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权下载此文本")
 
     content = text_rec.get("content", "")
     title = text_rec.get("title", "text")
@@ -440,11 +437,9 @@ async def get_text_detail(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get text metadata and comment count (no full content body)."""
-    text = await storage.get_text(text_id)
+    text = await storage.get_text_owned(text_id, user["id"])
     if not text:
         raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权查看此文本")
     # Count comments
     comments = await storage.get_text_comments(text_id, 1, 1)
     text.pop("content", None)
@@ -507,11 +502,9 @@ async def read_text(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Return full text content for reading."""
-    text = await storage.get_text(text_id)
+    text = await storage.get_text_owned(text_id, user["id"])
     if not text:
         raise HTTPException(404, "Text not found")
-    if text.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权阅读此文本")
     text["content"] = text.get("content", "")
     return {"text": text}
 
