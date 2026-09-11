@@ -1,15 +1,19 @@
 """Test search API directly."""
 import asyncio
+import os
 import httpx
 
 BASE = "http://localhost:7860"
+
+if "TEST_PASSWORD" not in os.environ:
+    raise SystemExit("缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）")
 
 
 async def main():
     async with httpx.AsyncClient(base_url=BASE) as c:
         # Login
         r = await c.post("/api/auth/login", json={
-            "username": "testadmin", "password": "test1234"
+            "username": "testadmin", "password": os.environ["TEST_PASSWORD"]
         })
         data = r.json()
         token = data["access_token"]

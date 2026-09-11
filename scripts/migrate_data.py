@@ -1,6 +1,10 @@
-"""Assign all orphan data (no user_id) to the Shiyu user."""
+"""Assign all orphan data (no user_id) to the target user (env TARGET_USERNAME)."""
 import sqlite3
 import os
+
+if "TARGET_USERNAME" not in os.environ:
+    raise SystemExit("缺少环境变量 TARGET_USERNAME（目标账号名）—— 账号名不写回脚本")
+TARGET_USERNAME = os.environ["TARGET_USERNAME"]
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "character_sim.db")
 
@@ -11,16 +15,16 @@ if not os.path.exists(DB_PATH):
 conn = sqlite3.connect(DB_PATH)
 conn.row_factory = sqlite3.Row
 
-# 1. Find Shiyu's user_id
-cur = conn.execute("SELECT id FROM users WHERE username = ?", ("Shiyu",))
+# 1. Find the target user's id
+cur = conn.execute("SELECT id FROM users WHERE username = ?", (TARGET_USERNAME,))
 row = cur.fetchone()
 if not row:
-    print("User 'Shiyu' not found in users table")
+    print(f"User {TARGET_USERNAME!r} not found in users table")
     conn.close()
     exit(1)
 
 user_id = row["id"]
-print(f"Target user: Shiyu (id={user_id})")
+print(f"Target user: {TARGET_USERNAME} (id={user_id})")
 
 # 2. Texts
 cur = conn.execute("SELECT COUNT(*) AS cnt FROM texts WHERE user_id IS NULL OR user_id = ''")

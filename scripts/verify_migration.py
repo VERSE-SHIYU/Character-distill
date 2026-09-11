@@ -2,6 +2,9 @@ import asyncio, os, json
 import asyncpg
 from pwdlib import PasswordHash
 
+if "TEST_PASSWORD" not in os.environ:
+    raise SystemExit("缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）")
+
 async def verify():
     pg = await asyncpg.connect(os.environ["DATABASE_URL"])
     uid = "3996bd7f23a34311"
@@ -13,7 +16,7 @@ async def verify():
     # 2. Password correct
     secret = await pg.fetchrow("SELECT password_hash FROM user_secrets WHERE user_id = $1", uid)
     ph = PasswordHash.recommended()
-    print(f"Password verify ('test1234'): {ph.verify('test1234', secret['password_hash'])}")
+    print(f"Password verify: {ph.verify(os.environ['TEST_PASSWORD'], secret['password_hash'])}")
 
     # 3. Count data by table
     tables = [

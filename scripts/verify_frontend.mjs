@@ -1,6 +1,7 @@
 /** Frontend verification: nickname search, following filter, @username subtitle, theme sync */
 import { chromium } from 'playwright';
 import { setTimeout as sleep } from 'timers/promises';
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const BASE = 'http://localhost:5173';
 
@@ -19,7 +20,7 @@ async function main() {
     await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
     await sleep(1500);
     await page.fill('input[name="username"]', 'testadmin');
-    await page.fill('input[type="password"]', 'test1234');
+    await page.fill('input[type="password"]', process.env.TEST_PASSWORD);
     await page.click('button[type="submit"]');
     await sleep(3000);
     await page.waitForURL('**/mine', { timeout: 10000 }).catch(() => {});

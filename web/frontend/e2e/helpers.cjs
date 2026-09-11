@@ -10,7 +10,8 @@ const fs = require('fs')
 // 本地测试专用账号（Character-distill 项目红线：只允许操作 testadmin，绝不碰真实用户）
 const BASE = 'http://localhost:7861'
 const TEST_USER = 'testadmin'
-const TEST_PASS = 'test1234'
+const TEST_PASS = process.env.TEST_PASSWORD
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 const SHELL_SELECTOR = '.mobile-tabbar, [class*="shell"]'
 const LOGIN_TIMEOUT = 15000
 

@@ -33,6 +33,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+if "TEST_PASSWORD" not in os.environ:
+    raise SystemExit("缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）")
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 SCRATCH = ROOT / "data" / "eval_scratch" / "e2e"
 DB_SRC = ROOT / "data" / "character_sim.db"
@@ -41,7 +44,7 @@ STATE = SCRATCH / "state.json"
 JAEGER_UI = "http://127.0.0.1:16686"
 OTLP = "http://127.0.0.1:4318"
 TESTADMIN = "testadmin"
-TESTADMIN_PWD = "test1234"          # 固定测试账号，禁动 Shiyu 账户
+TESTADMIN_PWD = os.environ["TEST_PASSWORD"]          # 固定测试账号口令，env 传入
 CHAT_SESSION = "75806c950ffc"       # card fb975334594d 上已有会话（scratch 副本验证过）
 CHAT_TEXT_ID = "3d394865332c"
 USER_ID = "f46432a6a92e4ae7"        # testadmin id

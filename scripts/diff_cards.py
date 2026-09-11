@@ -1,7 +1,7 @@
 import json
 
 # Load export cards
-with open('data/shiyu_export.json', encoding='utf-8') as f:
+with open('data/cards_export.json', encoding='utf-8') as f:
     export = json.load(f)
 
 export_ids = {c['id'] for c in export['cards']}

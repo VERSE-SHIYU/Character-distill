@@ -1,4 +1,5 @@
 const { chromium } = require('playwright')
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const BASE = 'http://localhost:5173'
 
@@ -22,7 +23,7 @@ const BASE = 'http://localhost:5173'
     if (isLoginPage) {
       console.log('--- Logging in ---')
       await page.fill('#login-username', 'testadmin')
-      await page.fill('#login-password', 'test1234')
+      await page.fill('#login-password', process.env.TEST_PASSWORD)
       await page.click('.login-submit')
       await page.waitForTimeout(2000)
       await page.waitForSelector('.app-shell', { timeout: 5000 })

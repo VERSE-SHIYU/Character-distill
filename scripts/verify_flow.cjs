@@ -1,4 +1,5 @@
 const { chromium } = require("playwright");
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 (async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
@@ -19,7 +20,7 @@ const { chromium } = require("playwright");
     await page.goto("http://localhost:5173/login", { waitUntil: "networkidle" });
     await new Promise(r => setTimeout(r, 2000));
     await page.fill("input[name=\"username\"]", "testadmin");
-    await page.fill("input[type=\"password\"]", "test1234");
+    await page.fill("input[type=\"password\"]", process.env.TEST_PASSWORD);
     await page.click("button[type=\"submit\"]");
     await new Promise(r => setTimeout(r, 5000));
     ok("Logged in" + (token ? " (token captured)" : ""));

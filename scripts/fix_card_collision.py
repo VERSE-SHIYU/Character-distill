@@ -12,7 +12,7 @@ async def fix():
 
     print(f"Reassigning card {OLD_ID} -> {NEW_ID}")
 
-    with open("/tmp/shiyu_export.json") as f:
+    with open("/tmp/cards_export.json") as f:
         export = json.load(f)
 
     card = None
@@ -65,7 +65,7 @@ async def fix():
 
     # Final count
     cnt = await pg.fetchval("SELECT COUNT(*) FROM cards WHERE user_id = $1", UID)
-    print(f"\nShiyu_ss cards now: {cnt}")
+    print(f"\ntarget user's cards now: {cnt}")
 
     await pg.close()
     print("\nOK")

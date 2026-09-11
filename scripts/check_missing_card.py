@@ -11,7 +11,7 @@ print("Container SQLite tables:", tables[:5])
 
 cur = conn.execute("SELECT id, name FROM cards WHERE user_id = ?", (uid,))
 cards_sqlite = [(r[0], r[1]) for r in cur.fetchall()]
-print(f"\nShiyu cards in SQLite: {len(cards_sqlite)}")
+print(f"\ntarget user's cards in SQLite: {len(cards_sqlite)}")
 for c in cards_sqlite:
     print(f"  {c[0]}: {c[1]}")
 conn.close()
@@ -21,7 +21,7 @@ async def check_pg():
     pg = await asyncpg.connect(os.environ["DATABASE_URL"])
     pg_cards = await pg.fetch("SELECT id, name FROM cards WHERE user_id = $1", uid)
     pg_ids = [r["id"] for r in pg_cards]
-    print(f"\nShiyu_ss cards in PG: {len(pg_cards)}")
+    print(f"\ntarget user's cards in PG: {len(pg_cards)}")
 
     missing = [(c_id, c_name) for c_id, c_name in cards_sqlite if c_id not in pg_ids]
     if missing:

@@ -1,10 +1,20 @@
-"""E2E verification: login, get profile, get cards, get texts."""
+"""E2E verification: login, get profile, get cards, get texts.
+
+凭据从环境变量读取，不留默认值：TEST_USERNAME / TEST_PASSWORD
+"""
+import os
 import urllib.request, json
 
 BASE = "http://localhost:7860"
 
 # Step 1: Login
-data = json.dumps({"username": "Shiyu_ss", "password": "test1234"}).encode()
+# 凭据来自环境变量；缺失即退出（不静默退回默认账号）
+for _k in ("TEST_USERNAME", "TEST_PASSWORD"):
+    if _k not in os.environ:
+        raise SystemExit(f"缺少环境变量 {_k} —— 请先 export 后再跑（凭据不得写入仓库）")
+
+data = json.dumps({"username": os.environ["TEST_USERNAME"],
+                   "password": os.environ["TEST_PASSWORD"]}).encode()
 req = urllib.request.Request(f"{BASE}/api/auth/login", data=data,
                              headers={"Content-Type": "application/json"})
 resp = urllib.request.urlopen(req)

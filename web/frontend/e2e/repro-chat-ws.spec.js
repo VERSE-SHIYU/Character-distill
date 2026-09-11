@@ -1,4 +1,5 @@
 import { test } from '@playwright/test'
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const BASE = 'http://localhost:7862'
 
@@ -26,7 +27,7 @@ test('reproduce 1-on-1 chat white screen', async ({ page }) => {
   await page.goto(BASE)
   await page.waitForSelector('#login-username', { timeout: 10000 })
   await page.fill('#login-username', 'testplay')
-  await page.fill('#login-password', 'test1234')
+  await page.fill('#login-password', process.env.TEST_PASSWORD)
   await page.locator('.login-submit').click()
   await page.waitForTimeout(3000)
   await page.screenshot({ path: 'e2e/01_login.png', fullPage: true })

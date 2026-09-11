@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+if (!process.env.TEST_PASSWORD) throw new Error('缺少环境变量 TEST_PASSWORD —— 请先 export 后再跑（口令不得写入仓库）');
 
 const BASE = 'http://localhost:7860'
 
@@ -26,7 +27,7 @@ test.describe('Navigation migration: setView → navigateTo/navigateBack', () =>
     })
     await page.goto(BASE)
     await page.fill('#login-username', 'testadmin')
-    await page.fill('#login-password', 'test1234')
+    await page.fill('#login-password', process.env.TEST_PASSWORD)
     await page.click('.login-submit')
     await page.waitForSelector('.mobile-tabbar', { timeout: 15000 })
     // dismiss cross-border consent modal if it appears
@@ -286,7 +287,7 @@ test.describe('Desktop navigation', () => {
     await page.goto(BASE)
     await page.waitForSelector('.login-submit', { timeout: 15000 })
     await page.fill('#login-username', 'testadmin')
-    await page.fill('#login-password', 'test1234')
+    await page.fill('#login-password', process.env.TEST_PASSWORD)
     await page.locator('.login-submit').click()
     // dismiss cross-border consent modal if it appears
     try {
