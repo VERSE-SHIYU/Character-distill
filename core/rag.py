@@ -330,7 +330,7 @@ class RAGEngine:
                 # 取回条数少于请求数 → 库内候选已取尽，再重取也不会有新的。
                 exhausted = True
             else:
-                n *= CHARACTER_FILTER_MULTIPLIER  # ponytail: 线性倍增，集合够大时会多取几次；够用且可读
+                n *= CHARACTER_FILTER_MULTIPLIER
                 refetches += 1
                 continue
 

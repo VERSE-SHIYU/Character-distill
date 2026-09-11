@@ -405,7 +405,26 @@ class PostgresStore(StorageBase):
                 )
                 message_count = row[0] if row else 0
 
-            return {"card_count": card_count, "session_count": session_count, "message_count": message_count}
+                # 永久删除会连带清本文本的蒸馏行（hard_delete_text），弹窗须如实告知。
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) FROM distill_tasks WHERE text_id = $1", text_id,
+                )
+                distill_task_count = row[0] if row else 0
+
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) FROM distill_chunks WHERE task_id IN "
+                    "(SELECT task_id FROM distill_tasks WHERE text_id = $1)",
+                    text_id,
+                )
+                distill_chunk_count = row[0] if row else 0
+
+            return {
+                "card_count": card_count,
+                "session_count": session_count,
+                "message_count": message_count,
+                "distill_task_count": distill_task_count,
+                "distill_chunk_count": distill_chunk_count,
+            }
         except Exception as exc:
             print(f"[PostgresStore] Get text deletion impact failed: {exc}")
             raise
@@ -2488,6 +2507,22 @@ class PostgresStore(StorageBase):
                     counts["sessions"] = self._parse_rowcount(tag)
                     tag = await conn.execute("DELETE FROM cards WHERE user_id = $1", user_id)
                     counts["cards"] = self._parse_rowcount(tag)
+                    # 清理该用户的蒸馏行。顺序必须先父后子，理由同 hard_delete_text：
+                    # 先删父行即取排他锁 → save_distill_chunk 的 FOR SHARE 随后必阻塞，
+                    # 提交后父行已无 → 跳过不写；反序则插入方先持共享锁落分片，本事务
+                    # 提交后其分片成孤儿。admin.delete_user 不停在跑的蒸馏线程，闭合点
+                    # 就在这个顺序上（update_distill_task 是 UPDATE-only，不会复活父行）。
+                    # 两表零外键（migrations_pg/017），删父不级联子，必须显式删两张。
+                    rows = await conn.fetch(
+                        "SELECT task_id FROM distill_tasks WHERE user_id = $1", user_id)
+                    dt_ids = [row[0] for row in rows]
+                    tag = await conn.execute("DELETE FROM distill_tasks WHERE user_id = $1", user_id)
+                    counts["distill_tasks"] = self._parse_rowcount(tag)
+                    chunks = 0
+                    for tid in dt_ids:
+                        tag = await conn.execute("DELETE FROM distill_chunks WHERE task_id = $1", tid)
+                        chunks += self._parse_rowcount(tag)
+                    counts["distill_chunks"] = chunks
                     tag = await conn.execute("DELETE FROM texts WHERE user_id = $1", user_id)
                     counts["texts"] = self._parse_rowcount(tag)
                     tag = await conn.execute("DELETE FROM usage_stats WHERE user_id = $1", user_id)

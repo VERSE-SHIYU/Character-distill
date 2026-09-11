@@ -239,6 +239,98 @@ class TestUserCrud:
         assert len(users) >= 1
 
 
+# ── User purge: distill cascade + deletion impact (F) ────────────────────────
+
+class TestUserPurgeDistillCascade:
+    """delete_user 同事务清掉该用户的 distill_tasks / distill_chunks（F1），不波及其它用户。"""
+
+    async def test_delete_user_clears_distill_rows(self, store, text_id, user_id):
+        other = f"usr_{uuid.uuid4().hex}"
+        await store.create_user(user_id, f"pg_u1_{uuid.uuid4().hex[:8]}", "h")
+        await store.create_user(other, f"pg_u2_{uuid.uuid4().hex[:8]}", "h")
+        await store.save_text(text_id, "src.txt", "source")
+
+        await store.create_distill_task("dt_pg1", user_id, text_id, "张三")
+        await store.save_distill_chunk("dt_pg1", 0, json.dumps({"r": "零"}))
+        await store.save_distill_chunk("dt_pg1", 1, json.dumps({"r": "一"}))
+        await store.create_distill_task("dt_pg2", other, text_id, "李四")
+        await store.save_distill_chunk("dt_pg2", 0, json.dumps({"r": "零"}))
+
+        counts = await store.delete_user(user_id)
+        assert counts["distill_tasks"] == 1
+        assert counts["distill_chunks"] == 2
+
+        assert await store.get_distill_task("dt_pg1") is None
+        assert await store.get_distill_chunks("dt_pg1") == []
+        # 其它用户的蒸馏行不受影响
+        assert await store.get_distill_task("dt_pg2") is not None
+        assert len(await store.get_distill_chunks("dt_pg2")) == 1
+
+    async def test_text_deletion_impact_counts_distill_rows(self, store, text_id, user_id):
+        """永久删除会连带清蒸馏行，impact 必须如实计入（F2）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.create_distill_task("dt_imp", user_id, text_id, "张三")
+        await store.save_distill_chunk("dt_imp", 0, json.dumps({"r": "零"}))
+        await store.save_distill_chunk("dt_imp", 1, json.dumps({"r": "一"}))
+
+        impact = await store.get_text_deletion_impact(text_id, user_id)
+        assert impact["distill_task_count"] == 1
+        assert impact["distill_chunk_count"] == 2
+
+
+class TestUserPurgeDistillRace:
+    """delete_user 的蒸馏清理顺序（先父后子）在并发写下的闭合性 —— 实测，不靠推断。
+
+    admin.delete_user 不停在跑的蒸馏线程，删除与 bg 分片写会真并发。闭合点与
+    hard_delete_text 同：先删父行取排他锁 → save_distill_chunk 的 FOR SHARE 必阻塞、
+    提交后父行已无 → 跳过；反序则插入方先拿共享锁落片，之后才删父 → 孤儿存活。
+    单写者撞窗概率低，故 K 写者 × R 轮把命中率抬到可判定；正确实现下每轮都干净。
+    """
+
+    ROUNDS = 20
+    WRITERS = 6
+
+    async def test_writer_outliving_user_delete_leaves_no_rows(self, store, user_id):
+        import asyncio as _aio
+
+        async def _round() -> bool:
+            uid = f"usr_{uuid.uuid4().hex}"
+            await store.create_user(uid, f"u_{uuid.uuid4().hex[:8]}", "h")
+            tid = f"txt_{uuid.uuid4().hex}"
+            task_id = f"dt_{uuid.uuid4().hex}"
+            await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=uid)
+            await store.create_distill_task(task_id, uid, tid, "甲", status="running")
+
+            stop = _aio.Event()
+            ready = _aio.Event()
+            written = {"n": 0}
+
+            async def writer(w: int):
+                i = w
+                while not stop.is_set():
+                    await store.save_distill_chunk(task_id, i, f"分析{i}", fingerprint=f"fp{i}")
+                    i += self.WRITERS
+                    written["n"] += 1
+                    if written["n"] >= 2 * self.WRITERS:
+                        ready.set()
+                    await _aio.sleep(0)
+
+            async def deleter():
+                await ready.wait()          # 等写者跑起来，删除必落在写循环期间
+                await store.delete_user(uid)
+                stop.set()
+
+            await _aio.gather(*[writer(w) for w in range(self.WRITERS)], deleter())
+            return await store.get_distill_chunks(task_id) != []
+
+        orphan_rounds = 0
+        for _ in range(self.ROUNDS):
+            if await _round():
+                orphan_rounds += 1
+
+        assert orphan_rounds == 0, f"{orphan_rounds}/{self.ROUNDS} 轮留下孤儿分片"
+
+
 # ── Group Session CRUD ───────────────────────────────────────────────────────
 
 class TestGroupSessionCrud:

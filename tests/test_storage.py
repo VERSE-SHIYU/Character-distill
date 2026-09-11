@@ -814,6 +814,38 @@ class TestDeletePropagationAtomicity:
         n = await self._count_outbox(store, "user_purge", uid)
         assert n == 1, "Must not create duplicate outbox rows"
 
+    async def test_delete_user_clears_distill_rows(self, store):
+        """delete_user 同事务清掉该用户的 distill_tasks / distill_chunks（F1），不波及其它用户。"""
+        pwd = "$2b$12$dummyhashdummyhashdummyhashdummyhashdummyha"
+        uid = f"user_dt_{uuid.uuid4().hex}"
+        other = f"user_dt_other_{uuid.uuid4().hex}"
+        await store.create_user(uid, uid, pwd)
+        await store.create_user(other, other, pwd)
+        tid = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid, "src.txt", "source")
+
+        await store.create_distill_task("dt_u1", uid, tid, "张三")
+        await store.save_distill_chunk("dt_u1", 0, json.dumps({"r": "零"}))
+        await store.save_distill_chunk("dt_u1", 1, json.dumps({"r": "一"}))
+        await store.create_distill_task("dt_u2", other, tid, "李四")
+        await store.save_distill_chunk("dt_u2", 0, json.dumps({"r": "零"}))
+
+        counts = await store.delete_user(uid)
+        assert counts["distill_tasks"] == 1
+        assert counts["distill_chunks"] == 2
+
+        assert await store.get_distill_task("dt_u1") is None
+        assert await store.get_distill_chunks("dt_u1") == []
+        # 其它用户的蒸馏行不受影响
+        assert await store.get_distill_task("dt_u2") is not None
+        assert len(await store.get_distill_chunks("dt_u2")) == 1
+
+    async def test_delete_user_nonexistent_keeps_raise_contract(self, store):
+        """契约：不存在的用户 → ValueError("用户不存在")，router(admin.py) 据此翻 404。
+        锁住这条，防止新增的蒸馏清理把 not-found 路径吞掉/改语义。"""
+        with pytest.raises(ValueError, match="用户不存在"):
+            await store.delete_user(f"no_such_{uuid.uuid4().hex}")
+
     # ── Cross-operation isolation ──────────────────────────────────────────
 
     async def test_card_and_user_outbox_rows_are_separate(self, store, text_id, card_id):
@@ -839,12 +871,36 @@ class TestDeletePropagationAtomicity:
 
 
 class TestTextDeletionImpact:
-    """get_text_deletion_impact returns accurate card/session/message counts."""
+    """get_text_deletion_impact returns accurate card/session/message/distill counts."""
 
     async def test_no_cards(self, store, text_id):
         await store.save_text(text_id, "src.txt", "source")
         impact = await store.get_text_deletion_impact(text_id, "")
-        assert impact == {"card_count": 0, "session_count": 0, "message_count": 0}
+        assert impact == {
+            "card_count": 0,
+            "session_count": 0,
+            "message_count": 0,
+            "distill_task_count": 0,
+            "distill_chunk_count": 0,
+        }
+
+    async def test_counts_distill_rows(self, store, text_id):
+        """永久删除会连带清蒸馏行，impact 必须如实计入（F2）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.create_distill_task("dt_impact", "u_impact", text_id, "张三")
+        await store.create_distill_task("dt_impact2", "u_impact", text_id, "李四")
+        await store.save_distill_chunk("dt_impact", 0, json.dumps({"r": "零"}))
+        await store.save_distill_chunk("dt_impact", 1, json.dumps({"r": "一"}))
+        await store.save_distill_chunk("dt_impact2", 0, json.dumps({"r": "零"}))
+        # 其它文本的蒸馏行不得被计入
+        other_text = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(other_text, "other.txt", "other")
+        await store.create_distill_task("dt_other", "u_impact", other_text, "王五")
+        await store.save_distill_chunk("dt_other", 0, json.dumps({"r": "零"}))
+
+        impact = await store.get_text_deletion_impact(text_id, "")
+        assert impact["distill_task_count"] == 2
+        assert impact["distill_chunk_count"] == 3
 
     async def test_with_cards_no_sessions(self, store, text_id):
         await store.save_text(text_id, "src.txt", "source")

@@ -1298,7 +1298,28 @@ class SQLiteStore(StorageBase):
                 row = await cursor.fetchone()
                 message_count = row[0] if row else 0
 
-            return {"card_count": card_count, "session_count": session_count, "message_count": message_count}
+                # 永久删除会连带清本文本的蒸馏行（hard_delete_text），弹窗须如实告知。
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM distill_tasks WHERE text_id = ?", (text_id,),
+                )
+                row = await cursor.fetchone()
+                distill_task_count = row[0] if row else 0
+
+                cursor = await conn.execute(
+                    "SELECT COUNT(*) FROM distill_chunks WHERE task_id IN "
+                    "(SELECT task_id FROM distill_tasks WHERE text_id = ?)",
+                    (text_id,),
+                )
+                row = await cursor.fetchone()
+                distill_chunk_count = row[0] if row else 0
+
+            return {
+                "card_count": card_count,
+                "session_count": session_count,
+                "message_count": message_count,
+                "distill_task_count": distill_task_count,
+                "distill_chunk_count": distill_chunk_count,
+            }
         except Exception as exc:
             print(f"[SQLiteStore] Get text deletion impact failed: {exc}")
             raise
@@ -3527,38 +3548,57 @@ class SQLiteStore(StorageBase):
                 )
                 counts["cards"] = cursor.rowcount
 
-                # 4. Delete texts
+                # 4. Delete distill rows. 顺序先父后子，与 hard_delete_text 同；SQLite 写是
+                # 库级序列化的，无需 PG 那侧的 FOR SHARE，顺序即足够闭合窗口。
+                # 两表零外键（migration 084），删父不级联子，必须显式删两张。
+                cursor = await conn.execute(
+                    "SELECT task_id FROM distill_tasks WHERE user_id = ?", (user_id,)
+                )
+                dt_ids = [row[0] for row in await cursor.fetchall()]
+                cursor = await conn.execute(
+                    "DELETE FROM distill_tasks WHERE user_id = ?", (user_id,)
+                )
+                counts["distill_tasks"] = cursor.rowcount
+                chunks = 0
+                for tid in dt_ids:
+                    cursor = await conn.execute(
+                        "DELETE FROM distill_chunks WHERE task_id = ?", (tid,)
+                    )
+                    chunks += cursor.rowcount
+                counts["distill_chunks"] = chunks
+
+                # 5. Delete texts
                 cursor = await conn.execute(
                     "DELETE FROM texts WHERE user_id = ?", (user_id,)
                 )
                 counts["texts"] = cursor.rowcount
 
-                # 5. Delete usage stats
+                # 6. Delete usage stats
                 cursor = await conn.execute(
                     "DELETE FROM usage_stats WHERE user_id = ?", (user_id,)
                 )
                 counts["usage_stats"] = cursor.rowcount
 
-                # 6. Delete refresh tokens
+                # 7. Delete refresh tokens
                 cursor = await conn.execute(
                     "DELETE FROM refresh_tokens WHERE user_id = ?", (user_id,)
                 )
                 counts["refresh_tokens"] = cursor.rowcount
 
-                # 7. Nullify invite codes created by this user
+                # 8. Nullify invite codes created by this user
                 cursor = await conn.execute(
                     "UPDATE invite_codes SET created_by = '[deleted]' WHERE created_by = ?",
                     (user_id,),
                 )
                 counts["invite_codes"] = cursor.rowcount
 
-                # 8. Delete user_secrets
+                # 9. Delete user_secrets
                 await conn.execute(
                     "DELETE FROM user_secrets WHERE user_id = ?", (user_id,)
                 )
                 counts["user_secrets"] = 1
 
-                # 9. Delete the user
+                # 10. Delete the user
                 cursor = await conn.execute(
                     "DELETE FROM users WHERE id = ?", (user_id,)
                 )
