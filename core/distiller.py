@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from openai import AsyncOpenAI
 
-from adapters.llm_adapter import LLMAdapter, incomplete_response_info
+from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import try_record_usage
@@ -147,6 +147,25 @@ M. 心理画像（用于情感动力学建模 — 依据 Kuppens 情感动力学
 - 数字字段（openness/conscientiousness 等）输出整数，不要加引号
 - 所有字段必须按此模板输出，不要添加自定义字段
 """
+
+
+class DistillError(ValueError):
+    """蒸馏失败：**上屏口径与运维口径分离**。
+
+    ``user_message`` 是上屏口径 —— 不含内部标识（finish_reason / 分片计数 / where /
+    异常类名），也不含运维建议（抬 max_tokens、换 API key）。``str()`` 是运维口径，
+    只进日志。
+
+    路由层取上屏文案**必须经 ``adapters.llm_adapter.user_facing_error`` 这一唯一出口**：
+    不要自己拼「蒸馏失败：」前缀（缺陷 17 的双重前缀就是源与路由各拼了一次），
+    也不要 ``str(exc)`` / ``type(exc).__name__``。
+
+    继承 ValueError：路径上既有的 ``except ValueError`` 语义不变。
+    """
+
+    def __init__(self, user_message: str, ops_detail: str = "") -> None:
+        self.user_message = user_message
+        super().__init__(f"{user_message}｜{ops_detail}" if ops_detail else user_message)
 
 
 def _shape_ok(data: Any, required_keys: tuple[str, ...]) -> bool:
@@ -594,11 +613,12 @@ class Distiller:
             f"  raw_preview (first 500 chars): {raw_preview}"
         )
         if truncated:
-            raise ValueError(
-                "蒸馏失败：角色卡内容超长被截断（max_tokens 不足）。"
-                "请提高生成角色卡调用的 max_tokens 上限，或精简角色卡内容。"
+            raise DistillError(
+                "蒸馏失败：生成内容超长被截断，请重试",
+                f"truncated 且重修用尽；处置：抬 llm.max_tokens（或 LLM_MAX_TOKENS）"
+                f"或调小 chunk_size；last_error={last_error}",
             ) from None
-        raise ValueError("蒸馏失败：LLM 输出格式异常，请重试") from None
+        raise DistillError("蒸馏失败：LLM 输出格式异常，请重试", last_error) from None
 
     # ── public entry points (unchanged) ────────────────────────────────
 
@@ -885,7 +905,7 @@ class Distiller:
             return CharacterCard.model_validate(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
-            raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
     def distill_stream(self, text: str, character_name: str):
         """流式蒸馏（简单截断模式，适合短文本）。
@@ -969,7 +989,7 @@ class Distiller:
             return CharacterCard.model_validate(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
-            raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
     def _distill_longcontext_stream(self, text: str, character_name: str):
         """整本蒸流式版 — 一次性 LLM 调用 + 流式 token + 思考模式。"""
@@ -1286,13 +1306,13 @@ class Distiller:
         if failed / total_chunks > 0.5:
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
-                raise ValueError(
-                    f"蒸馏失败：API 限流（429），{failed}/{total_chunks} 个分片失败。"
-                    "请稍后重试，或更换限额更高的 API key"
+                raise DistillError(
+                    "蒸馏失败：上游接口限流，请稍后重试",
+                    f"API 429；{failed}/{total_chunks} 个分片失败",
                 )
-            raise ValueError(
-                f"蒸馏失败：{failed}/{total_chunks} 个分片处理失败，"
-                f"最后错误：{map_failures[-1][1]}"
+            raise DistillError(
+                "蒸馏失败：部分片段处理失败，请重试",
+                f"{failed}/{total_chunks} 个分片失败；最后错误：{map_failures[-1][1]}",
             )
         if failed > 0:
             print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
@@ -1301,12 +1321,12 @@ class Distiller:
             r[1] for r in map_results if r[1].strip() and r[1].strip() != "无"
         ]
         if not raw_analyses:
-            raise ValueError("蒸馏失败：未能从任何片段中提取到角色信息")
+            raise DistillError("蒸馏失败：未能从任何片段中提取到角色信息")
 
         # Phase 2: Reduce — auto-batching merge
         profile_draft = self._do_reduce(raw_analyses, character_name)
         if not profile_draft.strip():
-            raise ValueError("蒸馏失败：未能从文本中提取到角色信息")
+            raise DistillError("蒸馏失败：未能从文本中提取到角色信息")
 
         # Compress if needed
         if len(profile_draft) > max_profile_len:
@@ -1352,7 +1372,7 @@ class Distiller:
             card = CharacterCard.model_validate(data)
         except ValidationError as exc:
             print(f"Pydantic 校验 CharacterCard 失败：{exc}")
-            raise ValueError("蒸馏失败：LLM 返回格式不正确") from exc
+            raise DistillError("蒸馏失败：LLM 返回格式不正确，请重试", str(exc)) from exc
 
         # AI auto-tagging (fails open)
         try:
@@ -1496,7 +1516,9 @@ class Distiller:
             try:
                 asyncio.run(_map_with_progress())
             except Exception as exc:
-                q.put(("error", str(exc), None, None))
+                # 传异常本体而非 str(exc)：这一支的下游是**上屏**（下面的 yield），
+                # 上屏文案必须经 user_facing_error 收敛，str() 会把内部标识带出去。
+                q.put(("error", exc, None, None))
 
         t = T.ctx_thread(_thread_run, daemon=True)  # OTel context 传播点
         t.start()
@@ -1510,7 +1532,9 @@ class Distiller:
                 map_failures = item[1]
                 break
             if kind == "error":
-                yield {"error": f"Map 阶段失败：{item[1]}"}
+                # 阶段名（Map/Reduce）是内部实现词，只进日志不上屏
+                print(f"[distiller] map stage aborted: {item[1]}")
+                yield {"error": user_facing_error(item[1])}
                 return
             if kind == "chunk":
                 _k, _current, idx, result, from_cache, checkpoint_ok = item
@@ -1538,12 +1562,12 @@ class Distiller:
         if failed / total_chunks > 0.5:
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
-                yield {"error": "蒸馏失败：API 限流（429），"
-                       f"{failed}/{total_chunks} 个分片失败。"
-                       "请稍后重试，或更换限额更高的 API key"}
+                print(f"[distiller] aborting stream: API 429；{failed}/{total_chunks} 个分片失败")
+                yield {"error": "蒸馏失败：上游接口限流，请稍后重试"}
             else:
-                yield {"error": f"蒸馏失败：{failed}/{total_chunks} 个分片处理失败，"
-                       f"最后错误：{map_failures[-1][1]}"}
+                print(f"[distiller] aborting stream: {failed}/{total_chunks} 个分片失败；"
+                      f"最后错误：{map_failures[-1][1]}")
+                yield {"error": "蒸馏失败：部分片段处理失败，请重试"}
             return
         if failed > 0:
             print(f"[distiller] {failed}/{total_chunks} map chunks failed (within tolerance), continuing")
@@ -1597,7 +1621,7 @@ class Distiller:
                     asyncio.run(_reduce_batches())
                     rq.put(("done",))
                 except Exception as exc:
-                    rq.put(("error", str(exc)))
+                    rq.put(("error", exc))   # 同上：下游是上屏，传本体不传 str()
 
             rt = T.ctx_thread(_reduce_thread, daemon=True)  # OTel context 传播点
             rt.start()
@@ -1609,7 +1633,8 @@ class Distiller:
                 if kind == "done":
                     break
                 if kind == "error":
-                    yield {"error": f"Reduce 阶段失败：{item[1]}"}
+                    print(f"[distiller] reduce stage aborted: {item[1]}")
+                    yield {"error": user_facing_error(item[1])}
                     return
                 if kind == "batch":
                     _k, done_count, idx, result = item

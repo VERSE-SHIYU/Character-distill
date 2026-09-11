@@ -97,19 +97,23 @@ class TestTruncationSelfHeal:
         assert TRUNCATION_PROMPT_MARK in _prompts(llm)[1]
 
     def test_repair_cap_raises_truncation_error_not_format_error(self):
-        """上限：连续截断到 3 次尝试用尽 → 抛，且文案是「超长被截断」。
+        """上限：连续截断到 3 次尝试用尽 → 抛，且上屏文案是「超长被截断」。
 
         mock 故意给 4 个值、第 4 个是合法 JSON：这样「把上限改成无限」的变异会走到
         第 4 次并成功返回，断言「抛出」立刻红——变异可判定，不是挂死。
+
+        口径分离（缺陷 17）：运维口径（抬 max_tokens）只能出现在 str() 里进日志，
+        绝不能进 user_message 上屏——旧实现把「请提高 max_tokens 上限」直接给用户看。
         """
         llm = _llm(side_effect=[_truncated(), _truncated(), _truncated(), FULL])
         with pytest.raises(ValueError) as ei:
             Distiller(llm).distill("有些文本", "阿Q")
 
         assert llm.chat.call_count == 3        # 上限仍是 3 次尝试，没多烧第 4 次
-        msg = str(ei.value)
-        assert "超长被截断" in msg and "max_tokens" in msg
-        assert "格式异常" not in msg
+        screen = ei.value.user_message
+        assert "超长被截断" in screen and "格式异常" not in screen
+        assert "max_tokens" not in screen, f"运维口径漏上屏：{screen!r}"
+        assert "max_tokens" in str(ei.value), "运维口径还得留在日志里，否则排障无线索"
 
 
 class TestMapStageUnchanged:

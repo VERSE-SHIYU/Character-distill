@@ -17,6 +17,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from deps import get_indexing_service, get_sessions, get_storage, run_on_main_loop
+from adapters.llm_adapter import user_facing_error
 from core.distiller import Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
@@ -497,7 +498,7 @@ def _run_distill_task(
         if data is None:
             if not stripped:
                 print(f"[distill] Empty format output for {name} — Map/Reduce likely failed upstream")
-                _set_task(task_id, {"status": "error", "message": "蒸馏过程异常，请查看服务器日志", "character": name})
+                _set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})
             else:
                 print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
@@ -507,7 +508,9 @@ def _run_distill_task(
         try:
             card = CharacterCard.model_validate(data)
         except Exception as exc:
-            _set_task(task_id, {"status": "error", "message": f"蒸馏失败：数据校验错误 {exc}", "character": name})
+            # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
+            print(f"[distill] Card validation failed for {name}: {exc}")
+            _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
         # AI auto-tagging (fails open)
@@ -594,8 +597,9 @@ def _run_distill_task(
     except Exception as exc:
         import traceback
         print(f"[distill] Background task {task_id} failed: {exc}\n{traceback.format_exc()}")
-        readable = str(exc).split("\n")[0].strip() or type(exc).__name__
-        _set_task(task_id, {"status": "error", "message": f"蒸馏失败：{readable}", "text_id": text_id, "character": char_name})
+        # 上屏走唯一出口，**此处不再拼「蒸馏失败：」前缀** —— 前缀在异常自带的
+        # user_message 里已经有了，两边各拼一次就是缺陷 17 的双重前缀。
+        _set_task(task_id, {"status": "error", "message": user_facing_error(exc), "text_id": text_id, "character": char_name})
         # Clean up half-done cards (empty card_json)
         try:
             async def _cleanup():
@@ -1094,7 +1098,11 @@ async def distill_stream(
                 piece, done = await asyncio.to_thread(_next_piece, stream)
             except Exception as exc:
                 print(f"[distill] Stream failed: {exc}")
-                yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False, default=str)}\n\n"
+                # 上屏唯一出口（adapters.llm_adapter.user_facing_error）：已知 LLM 失败取上屏表、
+                # 自带话术的异常取 user_message、其余给通用文案。裸 str(exc) 会把
+                # finish_reason / max_tokens / 分片计数带上屏。**不要在 web/ 里 import 异常类** ——
+                # 边界锁 tests/test_chat_stream_error.py 扫的就是这个。
+                yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
                 return
             if done:
                 break
@@ -1130,7 +1138,7 @@ async def distill_stream(
             card = CharacterCard.model_validate(data)
         except Exception as exc:
             print(f"[distill] Card validation failed: {exc}")
-            yield f"data: {json.dumps({'error': f'蒸馏失败：数据校验错误 {exc}'}, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # Persist card + create session (RAG built in _create_session for chat use)
@@ -1141,7 +1149,7 @@ async def distill_stream(
             )
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
-            yield f"data: {json.dumps({'error': f'保存角色卡失败：{exc}'}, ensure_ascii=False, default=str)}\n\n"
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
         # Generate awakening line (fails open, async context)

@@ -19,7 +19,7 @@ from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
-from adapters.llm_adapter import llm_error_payload
+from adapters.llm_adapter import llm_error_payload, user_facing_error
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -30,8 +30,15 @@ MAX_MESSAGE_LENGTH = 5000
 def _stream_error_payload(exc: Exception) -> dict[str, Any]:
     """SSE 错误帧。LLM 侧已知失败（经 adapter 边界映射）带 code / finish_reason，前端据此
     区分「被截断 / 被过滤 / 资源不足」与网络故障（只给一句 str(exc) 时前端无从分辨）；
-    其余异常保持原样。"""
-    return llm_error_payload(exc) or {"error": str(exc)}
+    其余异常保持原样。
+
+    文案统一走 ``user_facing_error`` 这一唯一出口（与蒸馏路径同一份口径链）；
+    ``preserve_unknown=True`` 保住既有契约——未登记的异常原样透出以便排障
+    （tests/test_chat_stream_error.py::test_other_errors_keep_original_shape）。"""
+    payload = llm_error_payload(exc)
+    if payload is not None:
+        return payload
+    return {"error": user_facing_error(exc, preserve_unknown=True)}
 
 
 # 非流式：上游返回不完整响应不是「服务端出错」，一律 500 语义错——content_filter 更是
