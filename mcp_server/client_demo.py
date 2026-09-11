@@ -10,11 +10,14 @@
   用例在本进程 `import mcp_server.server` 后直接断言（只读构建，等价 Step1 build 验证）。
 - 用例 (b)/(c) 协议错误语义：缺/空 card_id、未知 card_id → 协议 isError（绝不是空结果）。
 - happy path：一张真实卡经 stdio 调 search_scenes 应非 isError——确认路由改写没弄坏
-  线级成功路径。
+  线级成功路径。加 `DEMO_REQUIRE_CONTENT=1` 则进一步要求返回**真实原文**：只证
+  isError=False 不够，「未找到相关内容」同样满足它，而那正是 characters 过滤静默
+  失效的形态。本机 chroma 段错误使有集合的真实检索只能在容器腿跑，故用环境变量显式要求。
 
 运行：
   python mcp_server/client_demo.py
   DEMO_CARD_A=xxx DEMO_CARD_B=yyy python mcp_server/client_demo.py   # 覆盖默认卡
+  DEMO_REQUIRE_CONTENT=1 DEMO_CARD_A=14ee2eb526af python mcp_server/client_demo.py   # 容器腿
 """
 
 from __future__ import annotations
@@ -38,6 +41,9 @@ if str(_REPO_ROOT) not in sys.path:
 # 默认两卡：均为 testadmin（f46432a6a92e4ae7）数据，不同 text_id —— 安全，仅只读检索
 DEFAULT_CARD_A = os.getenv("DEMO_CARD_A", "d50aa3eae638")  # 吴庚霖 text_cd124e88e923（384 旧集合）
 DEFAULT_CARD_B = os.getenv("DEMO_CARD_B", "fb975334594d")  # 阿棠 text_3d394865332c（迁移后，尚无集合）
+
+# 1 → happy path 必须返回真实原文（非「未找到相关内容」）。见模块文档串。
+REQUIRE_CONTENT = os.getenv("DEMO_REQUIRE_CONTENT") == "1"
 
 
 def _content_texts(res) -> list[str]:
@@ -120,6 +126,13 @@ async def main() -> None:
             c = _content_texts(r)
             print(f"  -> isError={_is_error(r)} content={json.dumps(c, ensure_ascii=False)[:160]}")
             assert not _is_error(r), "真实卡检索不应 isError"
+            if REQUIRE_CONTENT:
+                from core.agent.tools import EMPTY_RESULT
+
+                assert c and EMPTY_RESULT not in c[0], (
+                    f"该卡集合已加载且应为 1024 维，检索却空 —— characters 过滤多半又断了：{c}"
+                )
+                print("  [PASS] DEMO_REQUIRE_CONTENT=1：search_scenes 返回了真实原文")
             print("  [PASS] 真实卡经 stdio 检索非 isError（内容受 1024 集合数据约束，见 README 行为边界）")
 
             # ── 用例 (b)：缺 card_id → 协议 isError ──

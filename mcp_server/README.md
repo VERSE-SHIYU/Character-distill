@@ -54,6 +54,8 @@ python mcp_server/server.py     # stdio 传输，等待 MCP 客户端 spawn
 python mcp_server/client_demo.py
 # → 用例(a) 按 card_id 路由隔离（toolkit/rag 引擎/memory 隔离键断言，不依赖检索内容）
 #   / happy path 真实卡检索非 isError / 用例(b) 缺 card_id 报 isError / 用例(c) 未知 card_id 报 isError
+DEMO_REQUIRE_CONTENT=1 DEMO_CARD_A=<有集合的卡> python mcp_server/client_demo.py
+# → happy path 进一步断言返回真实原文（非「未找到相关内容」）；须在 Linux 容器里跑（见行为边界）
 ```
 
 ## spawn 环境变量（重要坑）

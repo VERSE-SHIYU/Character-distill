@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from core.rag import RAGEngine
+from core.rag import RAGEngine, characters_tag
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -73,7 +73,8 @@ class SceneIndexer:
             docs.append(scene[:800])
             metas.append({
                 "emotion": emotion,
-                "characters": character_name,
+                # 格式唯一出处：core.rag.characters_tag（与 text_* 集合写入一致）
+                "characters": characters_tag([character_name]),
                 "scene_index": str(i),
             })
 

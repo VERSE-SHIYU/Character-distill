@@ -48,6 +48,58 @@ class CollectionUnusableError(RuntimeError):
         self.expected_dim = expected_dim
 
 
+# ── characters 元数据：写入格式与过滤逻辑的唯一出处 ─────────────────────
+# chroma 1.5.9 实测（本机容器内，临时集合对照）：metadata 的 ``$contains`` 只对
+# **数组**元数据生效，对字符串元数据恒不命中 —— 连 ``$contains`` 完整原串都是 0 命中
+# （不带 where 3 条 / ``$contains`` 0 条 / 等值 3 条）。所以过滤不能在 chroma 侧做，
+# 只能取回候选后在 Python 侧比对。写入格式仍是逗号分隔字符串，为的是不重建存量
+# 集合（改数组元数据需全量重索引）。
+CHARACTERS_NONE_TAG = "__none__"
+CHARACTER_FILTER_MULTIPLIER = 4  # 候选倍数：先取 need×MULT 条候选再过滤
+CHARACTER_FILTER_MAX_REFETCH = 1  # 过滤后仍不足时，扩大候选重取的次数上限
+
+
+def characters_tag(names: list[str]) -> str:
+    """characters 元数据的唯一写入格式：逗号分隔角色名，无角色时 ``__none__``。
+
+    约束：角色名不能含逗号（否则与分隔符混淆）。写入方一律经此函数，不要在调用点
+    各写一份格式 —— 两处不一致就是下一个坑。
+    """
+    return ",".join(names) if names else CHARACTERS_NONE_TAG
+
+
+def filter_by_characters(
+    metadatas: list[dict[str, Any] | None], character_name: str | None
+) -> list[int]:
+    """返回 metadatas 中 characters 命中 character_name 的下标。
+
+    character_name 为空 → 不过滤（返回全部下标）。匹配是**子串匹配**：characters
+    是逗号分隔的多角色串（如 ``"魏无羡,江澄"``），任一角色名命中即算命中 —— 这正是
+    等值匹配（``$eq``）不可行的原因。
+    """
+    if not character_name:
+        return list(range(len(metadatas)))
+    return [
+        i
+        for i, meta in enumerate(metadatas)
+        if character_name in str((meta or {}).get("characters", ""))
+    ]
+
+
+class SceneHits(list):
+    """场景检索结果。是 ``list`` 子类，既有消费方（拼接片段 / 判空）无需改动。
+
+    Attributes:
+        candidates_exhausted: 扩大候选重取后，按 characters 过滤仍不足请求条数。
+            为 True 表示「返回得比要的少，且已无候选可取」——调用方必须能看见，
+            不能把少返回当成正常结果（本仓第五次同类缺陷：失败被吞成正常返回）。
+    """
+
+    def __init__(self, items: Any = (), *, candidates_exhausted: bool = False) -> None:
+        super().__init__(items)
+        self.candidates_exhausted = candidates_exhausted
+
+
 class RAGEngine:
     """使用 ChromaDB 与阿里云百炼 text-embedding-v4 的 RAG 检索引擎。"""
 
@@ -141,17 +193,11 @@ class RAGEngine:
 
         return chunks
 
-    @staticmethod
-    def _characters_tag(found: list[str]) -> str:
-        """Join character names into a comma-separated tag for ChromaDB ``$contains`` matching."""
-        return ",".join(found) if found else "__none__"
-
     def _tag_characters(self, chunk_text: str, all_characters: list[dict[str, Any]]) -> str:
-        """返回逗号分隔的角色名字符串，供 ChromaDB ``$contains`` 子串匹配。
+        """检出本 chunk 出场的角色，按 characters_tag() 的格式打成元数据值。
 
-        ChromaDB 的 ``$contains`` 只对字符串做子串匹配，不支持列表元素匹配。
-        将角色名列表转为逗号分隔字符串（如 ``"魏无羡,江澄"``）后，``$contains`` 即可正确命中。
-        约束：角色名不能包含逗号。
+        格式的唯一出处是 characters_tag()；过滤不走 chroma（``$contains`` 对字符串
+        元数据恒不命中，见模块顶部实测），而是读回后在 filter_by_characters() 里比对。
         """
         found: set[str] = set()
         lower_text = chunk_text.lower()
@@ -164,7 +210,7 @@ class RAGEngine:
                 if term.lower() in lower_text:
                     found.add(name)
                     break
-        return self._characters_tag(sorted(found))
+        return characters_tag(sorted(found))
 
     def index(
         self,
@@ -221,45 +267,83 @@ class RAGEngine:
     @T.spanned("rag.query", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query(
         self, query_text: str, character_name: str | None = None, top_k: int | None = None
-    ) -> list[str]:
+    ) -> SceneHits:
         """对当前集合执行相似度检索，可按角色名过滤。
 
         Args:
             query_text: 查询语句。
-            character_name: 可选角色名，传入后仅返回该角色出场的片段。
+            character_name: 可选角色名，传入后仅返回该角色出场的片段。过滤在 Python
+                侧做（chroma 的 ``$contains`` 对字符串元数据不命中，见模块顶部实测）。
             top_k: 返回片段数，默认使用配置值 ``self._top_k``。
 
         Returns:
-            命中片段文本列表；未索引时返回空列表。
+            SceneHits；未索引时返回空。过滤后取不满时 ``candidates_exhausted`` 为
+            True（日志同时如实报告），不静默少返回。
         """
         if self.collection is None:
-            return []
+            return SceneHits()
 
-        where = (
-            {"characters": {"$contains": character_name}}
-            if character_name
-            else None
+        docs, _, _, exhausted = self._fetch_candidates(
+            query_text,
+            character_name,
+            top_k or self._top_k,
+            ["documents", "metadatas"],
         )
-        try:
-            results = self.collection.query(
-                query_texts=[query_text],
-                n_results=top_k or self._top_k,
-                where=where,
-            )
-        except Exception as exc:
-            # 不再吞成空：查询失败（含维度不符/损坏）与"真无匹配"必须可区分。
-            # 真无匹配时 chroma 返回空 documents 不抛异常；凡是抛出的都是真失败，
-            # 显式上抛，由 ContextEngine._retrieve_scenes 降级并记日志。
-            raise CollectionUnusableError(f"向量检索查询失败：{exc}") from exc
+        return SceneHits(docs, candidates_exhausted=exhausted)
 
-        documents = results.get("documents")
-        if not documents:
-            print("警告：检索结果缺少 documents 字段")
-            return []
-        first = documents[0]
-        if first is None:
-            return []
-        return list(first)
+    def _fetch_candidates(
+        self,
+        query_text: str,
+        character_name: str | None,
+        need: int,
+        include: list[str],
+    ) -> tuple[list[str], list, list[dict[str, Any] | None], bool]:
+        """取候选并按 characters 过滤，过滤后不足则扩大候选重取。
+
+        Returns:
+            ``(docs, distances, metadatas, candidates_exhausted)``，三者均已按角色
+            过滤过。返回条数可能少于 need；此时 candidates_exhausted 为 True 且
+            （有角色过滤时）日志如实报告 —— 绝不静默少返回。
+        """
+        want = max(need, 1)
+        # 有角色过滤才要超取：无过滤时多取没有意义，徒增候选。
+        n = want * CHARACTER_FILTER_MULTIPLIER if character_name else want
+        refetches = 0
+        while True:
+            try:
+                results = self.collection.query(
+                    query_texts=[query_text], n_results=n, include=include
+                )
+            except Exception as exc:
+                # 不再吞成空：查询失败（含维度不符/损坏）与"真无匹配"必须可区分。
+                # 真无匹配时 chroma 返回空 documents 不抛异常；凡是抛出的都是真失败，
+                # 显式上抛，由 ContextEngine._retrieve_scenes 降级并记日志。
+                raise CollectionUnusableError(f"向量检索查询失败：{exc}") from exc
+
+            docs = list((results.get("documents") or [[]])[0] or [])
+            dists = list((results.get("distances") or [[]])[0] or [])
+            metas = list((results.get("metadatas") or [[]])[0] or [])
+            keep = filter_by_characters(metas, character_name)
+            if len(keep) >= want:
+                exhausted = False
+            elif refetches >= CHARACTER_FILTER_MAX_REFETCH or len(docs) < n:
+                # 取回条数少于请求数 → 库内候选已取尽，再重取也不会有新的。
+                exhausted = True
+            else:
+                n *= CHARACTER_FILTER_MULTIPLIER  # ponytail: 线性倍增，集合够大时会多取几次；够用且可读
+                refetches += 1
+                continue
+
+            if exhausted and character_name:
+                print(
+                    f"[RAGEngine] characters 过滤后候选耗尽：need={want} got={len(keep)} "
+                    f"（候选 {len(docs)}/{n}，重取 {refetches} 次）"
+                )
+
+            def _take(seq: list) -> list:
+                return [seq[i] for i in keep] if len(seq) == len(docs) else []
+
+            return _take(docs), _take(dists), _take(metas), exhausted
 
     @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query_with_emotion(
@@ -278,36 +362,21 @@ class RAGEngine:
             top_k: 最终返回数量。
 
         Returns:
-            按 final_score 排序的场景文本列表。
+            按 final_score 排序的 SceneHits。过滤后取不满时 ``candidates_exhausted``
+            为 True（日志同时如实报告），不静默少返回。
         """
         if self.collection is None:
-            return []
+            return SceneHits()
 
-        candidates_n = min(top_k * 3, 10)
-        where = (
-            {"characters": {"$contains": character_name}}
-            if character_name else None
+        docs, dists, metas, exhausted = self._fetch_candidates(
+            query_text,
+            character_name,
+            top_k,
+            ["documents", "distances", "metadatas"],
         )
-        try:
-            results = self.collection.query(
-                query_texts=[query_text],
-                n_results=candidates_n,
-                where=where,
-                include=["documents", "distances", "metadatas"],
-            )
-        except Exception as exc:
-            # 原实现吞错后降级回调 self.query，而 self.query 又吞错返回 [] ——
-            # 维度错被两层吞成"无匹配"。现直接上抛，由上层(ContextEngine)降级记日志。
-            raise CollectionUnusableError(
-                f"情感加权场景检索失败：{exc}"
-            ) from exc
-
-        docs = (results.get("documents") or [[]])[0]
-        dists = (results.get("distances") or [[]])[0]
-        metas = (results.get("metadatas") or [[]])[0]
 
         if not docs:
-            return []
+            return SceneHits(candidates_exhausted=exhausted)
 
         _EMO_DISTANCE: dict[tuple[str, str], float] = {
             ("悲伤", "悲伤"): 1.0, ("愤怒", "愤怒"): 1.0,
@@ -343,7 +412,7 @@ class RAGEngine:
             scored.append((final, doc))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        return [doc for _, doc in scored[:top_k]]
+        return SceneHits([doc for _, doc in scored[:top_k]], candidates_exhausted=exhausted)
 
     @staticmethod
     def _peek_dimension(col: Collection) -> int | None:
