@@ -19,7 +19,7 @@ from pydantic import ValidationError
 
 from openai import AsyncOpenAI
 
-from adapters.llm_adapter import LLMAdapter
+from adapters.llm_adapter import LLMAdapter, incomplete_response_info
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import try_record_usage
@@ -419,9 +419,28 @@ class Distiller:
         # 括号不成对 = 结构未闭合
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
+    def _chat_initial(
+        self, system_prompt: str, messages: list[dict[str, Any]], label: str,
+    ) -> tuple[str, bool]:
+        """初次生成调用 → ``(回复文本, 上游是否已确定截断)``。
+
+        ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
+        `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
+        其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
+        """
+        try:
+            return self._llm.chat(system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS), False
+        except Exception as exc:
+            info = incomplete_response_info(exc)
+            if info is None or info[0] != "length" or not info[1]:
+                print(f"调用 LLM 进行{label}失败：{exc}")
+                raise
+            return info[1], True
+
     def _parse_json_with_retry(
         self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
         action_label: str = "distill", required_keys: tuple[str, ...] = ("name",),
+        upstream_truncated: bool = False,
     ) -> dict[str, Any]:
         """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
 
@@ -434,6 +453,9 @@ class Distiller:
                 ``isinstance(data, dict)`` 无法区分"合法 JSON 但结构错误"
                 （例如 LLM 跑题吐出 ``{"status": "..."}``）和真正的角色卡，
                 这里在 json.loads 之后补一道形状检查，三次尝试都生效。
+            upstream_truncated: 上游是否已确定截断（`_chat_initial` 拿到 length
+                终态时为 True）。确定信号预置 ``truncated``，无需再从文本形状猜；
+                厂商不回 finish_reason 时保持 False，由 `_looks_truncated` 兜底。
 
         Returns:
             解析后的 dict。
@@ -450,7 +472,8 @@ class Distiller:
         attempts = 0
         last_error = None
         last_bad_shape_reply = None  # 记下"语法合法但结构不对"的那一次，供 Attempt 2 使用
-        truncated: bool = False  # Attempt 1 是否检测到截断
+        # 截断证据：上游确定信号预置，没信号时由 Attempt 1 的 _looks_truncated 猜
+        truncated: bool = upstream_truncated
 
         # Attempt 1: direct parse with strengthened extraction
         attempts += 1
@@ -504,6 +527,7 @@ class Distiller:
             fix_reply = self._llm.chat(
                 fix_system,
                 [{"role": "user", "content": fix_user_content}],
+                max_tokens=self.CARD_MAX_TOKENS,
             )
             try:
                 data = json.loads(self._extract_json(fix_reply.strip()))
@@ -518,7 +542,12 @@ class Distiller:
             except json.JSONDecodeError as exc:
                 last_error = str(exc)
         except Exception as exc:
-            last_error = f"fix_reply LLM call failed: {exc}"
+            info = incomplete_response_info(exc)
+            if info is not None:
+                truncated = True
+                last_error = f"fix_reply 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
+            else:
+                last_error = f"fix_reply LLM call failed: {exc}"
 
         # Attempt 3: full retry — re-invoke LLM with original prompt.
         # 仅仅重发同样的 messages 大概率重现同一次"跑题"，因为触发漂移的成因
@@ -533,7 +562,10 @@ class Distiller:
                     "请只输出符合 Schema 的角色卡 JSON 对象，不要扮演角色说话，不要输出状态消息或对话回复。"
                 ),
             }
-            retry_reply = self._llm.chat(retry_prompt, [*retry_messages, anti_drift_notice])
+            retry_reply = self._llm.chat(
+                retry_prompt, [*retry_messages, anti_drift_notice],
+                max_tokens=self.CARD_MAX_TOKENS,
+            )
             try:
                 data = json.loads(self._extract_json(retry_reply.strip()))
                 if _shape_ok(data, required_keys):
@@ -547,7 +579,12 @@ class Distiller:
             except json.JSONDecodeError as exc:
                 last_error = str(exc)
         except Exception as exc:
-            last_error = f"full retry LLM call failed: {exc}"
+            info = incomplete_response_info(exc)
+            if info is not None:
+                truncated = True
+                last_error = f"full retry 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
+            else:
+                last_error = f"full retry LLM call failed: {exc}"
 
         # All attempts exhausted — log raw output and raise readable error
         raw_preview = reply.strip()[:500]
@@ -838,15 +875,11 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        try:
-            reply = self._llm.chat(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
-        except Exception as exc:
-            print(f"调用 LLM 进行角色蒸馏失败：{exc}")
-            raise
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "角色蒸馏")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
-            action_label="distill",
+            action_label="distill", upstream_truncated=upstream_truncated,
         )
         try:
             return CharacterCard.model_validate(data)
@@ -923,17 +956,14 @@ class Distiller:
             f"以下是完整的文本内容，请基于全文为「{character_name}」生成角色卡。\n\n{text}"
         )
 
-        try:
-            reply = self._llm.chat(system_prompt, [{"role": "user", "content": user_content}], max_tokens=self.CARD_MAX_TOKENS)
-        except Exception as exc:
-            print(f"调用 LLM 进行整本蒸馏失败：{exc}")
-            raise
+        user_messages = [{"role": "user", "content": user_content}]
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "整本蒸馏")
 
         self._try_record_usage("distill_longcontext")
 
         data = self._parse_json_with_retry(
-            reply, system_prompt, [{"role": "user", "content": user_content}],
-            action_label="distill_longcontext",
+            reply, system_prompt, user_messages,
+            action_label="distill_longcontext", upstream_truncated=upstream_truncated,
         )
         try:
             return CharacterCard.model_validate(data)
@@ -1302,36 +1332,21 @@ class Distiller:
         system_prompt = (
             DISTILL_PROMPT_BEFORE_NAME + character_name + DISTILL_PROMPT_AFTER_NAME + schema_str
         )
-        try:
-            reply = self._llm.chat(
-                system_prompt,
-                [{"role": "user", "content":
-                    f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
-                    f"特别注意：\n"
-                    f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
-                    f"- dialogue_examples 必须是原文对话，不要改写\n"
-                    f"- personality_traits 每条必须附带具体场景证据\n\n"
-                    f"{profile_draft}"
-                }],
-                max_tokens=self.CARD_MAX_TOKENS,
-            )
-        except Exception as exc:
-            print(f"调用 LLM 进行最终格式化失败：{exc}")
-            raise
+        user_messages = [{"role": "user", "content":
+            f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
+            f"特别注意：\n"
+            f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
+            f"- dialogue_examples 必须是原文对话，不要改写\n"
+            f"- personality_traits 每条必须附带具体场景证据\n\n"
+            f"{profile_draft}"
+        }]
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "最终格式化")
 
         self._try_record_usage("distill_format")
 
         data = self._parse_json_with_retry(
-            reply, system_prompt,
-            [{"role": "user", "content":
-                f"以下是关于「{character_name}」的完整分析档案，请严格按照JSON格式输出角色卡。\n"
-                f"特别注意：\n"
-                f"- catchphrases 必须是原文中的真实口癖，不要编造\n"
-                f"- dialogue_examples 必须是原文对话，不要改写\n"
-                f"- personality_traits 每条必须附带具体场景证据\n\n"
-                f"{profile_draft}"
-            }],
-            action_label="distill_format",
+            reply, system_prompt, user_messages,
+            action_label="distill_format", upstream_truncated=upstream_truncated,
         )
         try:
             card = CharacterCard.model_validate(data)

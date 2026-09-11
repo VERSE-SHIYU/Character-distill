@@ -4,7 +4,8 @@
 历史：全仓生产代码从不读 finish_reason → 截断 / 被思考吃光的响应被当成功返回并落库
 （实测 52 字节半截内容落满 6 片）。本测试锁四件事：
   1. 已知未完成终态（length / content_filter / insufficient_system_resource）→
-     抛 IncompleteResponseError，且异常不携带被截断的正文
+     抛 IncompleteResponseError；正文只作属性挂在 `.content` 上，**不进 message**
+     （message 经路由层截首行上屏，正文混进去等于把半截角色卡给用户看）
   2. 三类处置在文案里可区分（抬预算 / 改输入 / 可重试），上层不会猜错动作
   3. stop / tool_calls → 正常返回
   4. 缺失 / 真正陌生的值 → 放行（不同供应商语义不一），但点名告警
@@ -103,13 +104,14 @@ _MSGS = [{"role": "user", "content": "hi"}]
 
 # ── 非流式：截断是显式失败 ────────────────────────────────────────────
 
-def test_length_raises_and_carries_no_content():
+def test_length_raises_carrying_content_as_attribute_only():
     llm = _llm()
     llm._client = _Client(_Completions(_Resp(_Choice(finish_reason="length", content="半截正文"))))
     with pytest.raises(IncompleteResponseError) as ei:
         llm.chat("sys", _MSGS)
     assert ei.value.finish_reason == "length"
-    assert "半截正文" not in str(ei.value)  # 截断内容不出现在消息里（更不返回）
+    assert ei.value.content == "半截正文"     # 正文作属性携带，供 core 侧截断自愈重修
+    assert "半截正文" not in str(ei.value)    # 但绝不进 message（message 会上屏）
     assert "max_tokens" in str(ei.value)   # 处置=抬预算
 
 

@@ -120,6 +120,7 @@
 | **根因** | 缺响应校验层。截断（`length`）、内容过滤（`content_filter`）、资源不足（`insufficient_system_resource`）三类未完成终态，全部被当成功。 |
 | **准确表述（重要）** | 后果是**截断响应被当成功返回、静默降质**。<br>❌ 不要写成"半截结果落库被复用"——截断片落的是**空串**，续跑第二道门（非空校验）拦得住，不会被复用。这个说法一问就破。 |
 | **修复** | `_check_finish_reason` 单一裁决点：三类未完成终态抛 `IncompleteResponseError`（带 `finish_reason` 字段，三类处置可辨：抬预算 / 改输入 / 可重试）；陌生值 WARN 放行（供应商语义不一）。错误边界收敛为 `llm_error_payload(exc)`，路由层不 import 异常类；HTTP 状态码按 `finish_reason` 分（`content_filter`→400、`length`→502、资源不足→503），不再一律 500。 |
+| **后续（2026-09-11）** | 本层引入过一个**回归**并同轮修掉：`chat` 对 `length` 先抛后，`core/distiller.py` 里那条**截断感知的重修自愈环**主触发路径不可达（半截文本永远到不了 `_parse_json_with_retry`）。修法是让异常**携带**已生成正文（`content` 属性，不进 message）并新增边界出口 `incomplete_response_info`（与 `llm_error_payload` 同构，core 侧仍不 import 异常类）——**边界零泄漏不变**。这不是新增失败，是把"静默降质"换成"显式报错"后，在保持诚实的前提下把可用性拿回来；细节见 `AGENTS.md` 缺陷 2 的接回段。 |
 | **量化** | 属"缺陷消除"类，无 before/after 数字。**别硬凑。**可讲的是设计：三类可辨 + 边界零泄漏（`core/` `web/` `storage/` 对 `IncompleteResponseError` 零命中，且有源文件级边界锁测试，重现即红）。 |
 | **来源** | `✅ 代码核实` `64d2d14` `d068242` `b77c0d5` `e949a94` `2cac39c` |
 
@@ -128,7 +129,7 @@
 | 断言 | 出处 | 判定 |
 |---|---|---|
 | 修复前生产代码对 `finish_reason` 零引用 | `git grep finish_reason 64d2d14^ -- .`，除 `tests/perf/mock_llm_server.py` 外**零命中** | ✅ 代码核实 |
-| `core/` `web/` `storage/` 对 `IncompleteResponseError` 零命中 | `git grep -l IncompleteResponseError` 仅命中 `adapters/llm_adapter.py` + 3 个测试 + `AGENTS.md` | ✅ 代码核实 |
+| `core/` `web/` `storage/` 对 `IncompleteResponseError` 零命中 | `git grep -l IncompleteResponseError` 命中 `adapters/llm_adapter.py` + 4 个测试（`test_llm_adapter_finish_reason` / `test_chat_stream_error` / `test_chat_http_status` / `test_distiller_truncation_selfheal`）+ `AGENTS.md` + 本档自身；**`core/` `web/` `storage/` 实测 0** | ✅ 代码核实 |
 | 边界锁测试（重现即红） | `tests/test_llm_adapter_finish_reason.py`（另有 `test_chat_http_status.py` / `test_chat_stream_error.py` 锁路由层状态码） | ✅ |
 | `content_filter`→400 / `length`→502 / 资源不足→503 | `web/routers/chat.py` `_INCOMPLETE_HTTP_STATUS` 映射表 | ✅ 代码核实 |
 | `_check_finish_reason` / `IncompleteResponseError` / `llm_error_payload` | `adapters/llm_adapter.py` 三符号均存在 | ✅ 代码核实 |

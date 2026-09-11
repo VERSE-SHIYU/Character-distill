@@ -294,15 +294,21 @@ _OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
 
 
 class IncompleteResponseError(RuntimeError):
-    """finish_reason 属 _INCOMPLETE_FINISH_REASONS —— 内容不完整，不可当成功落库。"""
+    """finish_reason 属 _INCOMPLETE_FINISH_REASONS —— 内容不完整，不可当成功落库。
 
-    def __init__(self, finish_reason: str, where: str) -> None:
+    ``content`` 挂已生成的部分正文。只作属性、不进 message：message 会经路由层
+    截首行上屏（web/routers/distill.py），正文混进去等于把半截角色卡给用户看。
+    截断自愈环靠它把上游确定信号接回重修，见 core/distiller.py 的 _chat_initial。
+    """
+
+    def __init__(self, finish_reason: str, where: str, content: str = "") -> None:
         self.finish_reason = finish_reason
+        self.content = content
         self.hint = _INCOMPLETE_ACTIONS.get(
             finish_reason, "未登记处置 —— 补 adapters/llm_adapter.py 的 _INCOMPLETE_ACTIONS")
         super().__init__(
             f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— {self.hint}；"
-            f"已按失败处理、不返回半截内容。"
+            f"已按失败处理、不作为结果返回，已生成部分见 .content。"
         )
 
     @property
@@ -323,10 +329,22 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
     return None
 
 
-def _check_finish_reason(finish_reason: str | None, *, where: str) -> None:
+def incomplete_response_info(exc: BaseException) -> tuple[str, str] | None:
+    """未完成终态 → ``(finish_reason, 已生成的部分正文)``；其余异常 → ``None``。
+
+    与 ``llm_error_payload`` 并列的第二条边界出口：core 侧的截断自愈环据此拿到
+    上游确定信号，而**无需 import 异常类**——否则每加一个异常类，core/web 就多
+    一处 isinstance 耦合（边界锁见 tests/test_chat_stream_error.py）。
+    """
+    if isinstance(exc, IncompleteResponseError):
+        return exc.finish_reason, getattr(exc, "content", "")
+    return None
+
+
+def _check_finish_reason(finish_reason: str | None, *, where: str, content: str = "") -> None:
     """已知未完成终态 → 抛；其余放行。陌生值与缺失点名 WARN（不同供应商语义不一，不阻断）。"""
     if finish_reason in _INCOMPLETE_FINISH_REASONS:
-        raise IncompleteResponseError(finish_reason, where)
+        raise IncompleteResponseError(finish_reason, where, content=content)
     if finish_reason in _OK_FINISH_REASONS:
         return
     print(f"[llm] WARNING: {where}: 未识别的 finish_reason={finish_reason!r} —— 按正常处理；"
@@ -340,8 +358,14 @@ def _checked_message(choice: Any, *, where: str) -> Any:
 
 
 def _extract_content(choice: Any, *, where: str) -> str:
-    """校验后取正文；空 content 仍是空串（那是「无内容」，≠ 截断）。"""
-    return _checked_message(choice, where=where).content or ""
+    """校验后取正文；空 content 仍是空串（那是「无内容」，≠ 截断）。
+
+    先取后校验：截断时把已生成的部分正文挂到异常上，供 core 侧截断自愈环重修。
+    """
+    msg = getattr(choice, "message", None)
+    content = getattr(msg, "content", None) or ""
+    _check_finish_reason(getattr(choice, "finish_reason", None), where=where, content=content)
+    return content
 
 
 def _resolve_max_tokens(llm_cfg: dict[str, Any]) -> int:
