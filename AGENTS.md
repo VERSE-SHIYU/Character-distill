@@ -198,12 +198,19 @@ config.yaml 现值（现读，非转述）：
 - 注：`_distill_start_impl` / `distill_stream` 在读文本前先调 `get_user_api_config`，而新建 sqlite 库缺 `users.embedding_key`（缺陷 5）→ 用例夹具临时让该读返回空配置，避免缺陷 5 挡住属主门的验证
 - 拒绝码：非属主与不存在同判 **404**，理由见 §四
 
-**12. `start_session` 把属主 404 吞成 500** —— 状态：未修（待裁决）
+**12. `start_session` 把属主 404 吞成 500** —— 状态：**已修**（2026-09-11）
 - `web/routers/distill.py` 的 `start_session`：属主门 `get_text_owned` 及其 `raise HTTPException(404, ...)` 在 `try` 块内，同块的 `except Exception` 把它当普通异常重抛成 `HTTPException(500, "操作失败，请稍后重试")`
-- 后果：非属主读他人文本被正确挡住（拿不到行），但客户端看到 500 而非 404——4xx 的客户端条件被报成服务端错误，并破坏 §四 的 404 口径
-- 非属主与不存在仍是同一个码（都 500），故不是存在性枚举点；是错误分类与可观测性问题
-- 修法候选：在该 `except` 之前加 `except HTTPException: raise`，或把属主门移出 `try`
-- 由此，`tests/test_security_authz.py::TestHoleOwnershipRegression::test_17_distill_start_session_non_owner_no_session` 断言的是「不建成会话」而非 404，对将来修成 404 保持前向兼容
+- 后果：非属主读他人文本被正确挡住（拿不到行），但客户端看到 500 而非 404——4xx 的客户端条件被报成服务端错误，并破坏 §四 的 404 口径。非属主与不存在仍是同一个码（都 500），故不是存在性枚举点，是错误分类与可观测性问题
+- 同型：宽 `except` 把有语义的异常吞成通用错误——与 `CollectionUnusableError` 被 `IndexingService` 的宽 `except` 吞掉、`finish_reason` 被当成功返回同源
+- 修法：宽 `except Exception` 之前加 `except HTTPException: raise`。宽 `except` 只兜真正意外的东西
+- 回归锁：`tests/test_security_authz.py::TestHoleOwnershipRegression::test_17_distill_start_session_non_owner_404` 同时锁「状态码是 404」与「没为别人建成会话」——只锁后者不够，500 同样满足它
+
+**13. 存量约 38 处属主型 `HTTPException(403)` 待按 §四 翻成 404** —— 状态：未修（已立项）
+- §四 已定口径：授权失败一律 404，理由是防资源存在性枚举。**新增端点一律按此办**
+- 存量仍有约 38 处属主型 403，分布在 `web/routers/` 的 `card.py` / `group.py` / `memory.py` / `market.py` / `voice.py` / `message.py` 等
+- 与缺陷 11/12 分开立项的理由：这批**语义一致**（都是 403），不存在缺陷 11 的「原语无身份」或缺陷 12 的「同函数两语义」那种不一致缺陷——它是一次性口径大扫，不是逐处排错
+- `tests/test_security_authz.py` 的 `test_03/04/05`（card、group）断言 403，对应的就是这批；批量翻新时它们要一起改
+- 翻新前先核前端：`web/frontend/src/api/client.js` / `useAppStore.js` 里按 403 分支的逻辑落在 `web/routers/distill.py` 的 task 端点（`/api/distill/task/{taskId}`）与 `web/frontend/src/pages/BookReader.jsx` 的 `!r.ok` 通用分支上；批量翻新会动到它们，需先确认依赖
 
 ### 四、验证纪律
 
@@ -217,7 +224,10 @@ config.yaml 现值（现读，非转述）：
 - **别人给的 premise 与代码不符时，报更正、只修真缺口，不去实现那个不存在的修复**。案例：SSE「截断会硬断流，因为 `_next_piece` 只捕 `StopIteration`」——实读 `chat.py` 外层 `except` 早已 `yield {"error": ...}`、`client.js` 早已渲染，连接不会掉。真缺口是**可识别性**（帧里没有 `code`/`finish_reason`）与**文案漏内部标识**，修的是这两样。按错前提动手会改出一段无人需要、还掩盖真问题的代码
 - **修复一处越权 ≠ 这一类修完**。案例：`text.py` 上报的越权与 `voice.py` 两处同形（都因「注入 `user` 却不引用」）；用 AST 扫一遍全仓同类形态，才把 9 处一次分清（3 真越权 / 6 良性），并把扫描固化成测试（见缺陷 9）。逐处手工排查会漏，且下次照旧
 - **任何「新建/添加/引入」类动作，先确认它是否已存在**（仓库里多半已有同形实现或同名字段）
-- **授权失败一律 404，不用 403**：403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」与「不存在」不可区分。攻击者拿一批 id 扫描时，403/404 的差异就是存在性枚举的预言机。新增端点沿用此口径；已下沉到 storage `*_owned` 原语的端点天然如此（拿不到行即 404）。判据与理由落在 `tests/test_security_authz.py::TestReadAuthorization` 的文档串里
+- **授权失败一律 404，不用 403**：403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」与「不存在」不可区分。攻击者拿一批 id 扫描时，403/404 的差异就是存在性枚举的预言机。新增端点沿用此口径；已下沉到 storage `*_owned` 原语的端点天然如此（拿不到行即 404）。判据与理由落在 `tests/test_security_authz.py::TestReadAuthorization` 的文档串里（存量未翻新的 38 处见缺陷 13）
+- **同一判定的两条分支必须同判一个拒绝码**。案例：`web/routers/chat.py` 的 `_ensure_session`，内存命中分支对非属主判 403、DB 重建分支判 404。状态码在分支间不一致，攻击者反复请求、靠命中/未命中的差异就能推断资源是否存在——内存路径把 DB 路径的防枚举漏掉了。已统一为 404（含同一条文案），由 `tests/test_security_authz.py::TestHoleOwnershipRegression::test_19_chat_memory_hit_non_owner_404` 锁住
+- **形态锁与语义用例是两层防线，各管各的，缺一不可**。案例：`tests/test_storage_scope_lock.py` 扫的是调用形态，看不到 SQL 体——把 `storage/sqlite_store.py` 的 `get_text_owned` 里 `AND user_id=?` 去掉，**六条语义用例全红而边界锁全绿**；反过来把调用点改回 `*_unscoped`，锁红。所以「锁绿」不等于读取安全，两层都要有
+- **用例恒绿可能是双门互相兜底，不是命题成立**。案例：`resume_session` / `_ensure_session` 是双门（session 属主门 + 下游 `get_text_owned`），只把 session 门改回 `*_unscoped`，下游门兜住、用例仍绿。要让单门暴露，夹具必须刻意让开另一道门（`TestHoleOwnershipRegression` 里让 A 的 card 指向 B 的 text），否则这条用例锁的是「两道门都没了」，而不是「这一道门在」
 
 ### 五、验证工具现状
 
