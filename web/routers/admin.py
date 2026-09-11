@@ -216,6 +216,13 @@ async def delete_user(
     except Exception as exc:
         print(f"[admin] Mem0 cleanup for user {user_id} failed (non-fatal): {exc}")
 
+    # 停掉该用户正在跑的蒸馏线程，再删行。反序的话：行被删、线程还在烧 LLM 额度，
+    # 且收尾的 save_card 会给已删除的用户建出孤儿卡（cards.user_id 无外键，
+    # migrations/001_init.sql 只在 text_id 上建了 FK），delete_user 已跑过去、
+    # 不会再有第二次清理。必须先置内存停止信号。
+    from routers.distill import cancel_distill_tasks_by_user_id
+    await cancel_distill_tasks_by_user_id(user_id)
+
     try:
         counts = await storage.delete_user(user_id)
         return {"ok": True, "deleted": counts}
@@ -264,6 +271,9 @@ async def batch_delete_users(
             if memory_manager and memory_manager.enabled:
                 for cid in card_ids:
                     memory_manager.delete_all(cid)
+            # 同 delete_user：先停线程再删行，否则收尾的 save_card 会给已删用户建孤儿卡
+            from routers.distill import cancel_distill_tasks_by_user_id
+            await cancel_distill_tasks_by_user_id(user_id)
             await storage.delete_user(user_id)
             deleted += 1
         except Exception as exc:

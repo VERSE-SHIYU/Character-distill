@@ -260,6 +260,27 @@ async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
         return 0
 
 
+async def cancel_distill_tasks_by_user_id(user_id: str) -> int:
+    """Cancel all in-flight distill tasks owned by the given user.
+
+    Loop 线程调用（admin.py 删用户路由，必须在 storage.delete_user **之前**）。**只置内存
+    停止信号、不扫 DB** —— 与按 text 的变体不同，这里 DB 那半是多余的：同一请求里紧接着
+    的 delete_user 就把该用户所有蒸馏行删掉了。
+
+    为什么必须停：bg 线程收尾会调 save_card 落一张新卡，而 cards.user_id 没有外键
+    （migrations/001_init.sql 只在 text_id 上建了 FK）。不停的话，删完用户之后线程还能给
+    一个已不存在的用户建出孤儿卡 —— 且 delete_user 已经跑过去了，不会再有第二次清理。
+    Returns the number of in-memory tasks signalled.
+    """
+    n = 0
+    with _task_lock:
+        for task in _tasks.values():
+            if task.get("user_id") == user_id and task.get("status") not in ("done", "error"):
+                task.update({"status": "error", "message": "账号已删除，任务已取消"})
+                n += 1
+    return n
+
+
 def _generate_awakening(llm, card: CharacterCard) -> str:
     """Generate an awakening line for a newly distilled character.
 
