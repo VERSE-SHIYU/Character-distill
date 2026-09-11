@@ -42,10 +42,6 @@ class StorageBase(ABC):
         that becomes 404 or 403.
         """
 
-    async def get_text(self, id: str) -> dict | None:
-        """Deprecated alias for get_text_unscoped. Removed once all callers pick a variant."""
-        return await self.get_text_unscoped(id)
-
     @abstractmethod
     async def list_texts(self, user_id: str = "") -> list[dict]:
         """List all text records."""
@@ -108,10 +104,6 @@ class StorageBase(ABC):
         Ownership is filtered in SQL. Returns None both when the session does
         not exist and when it belongs to someone else.
         """
-
-    async def get_session(self, id: str) -> dict | None:
-        """Deprecated alias for get_session_unscoped. Removed once all callers pick a variant."""
-        return await self.get_session_unscoped(id)
 
     @abstractmethod
     async def update_session_avatar(self, session_id: str, user_id: str, avatar_data: str) -> bool:

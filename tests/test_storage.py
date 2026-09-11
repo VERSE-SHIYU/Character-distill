@@ -51,12 +51,12 @@ class TestTextCrud:
         assert result.get("content") == "Hello world"
         assert result.get("char_count") == 11
 
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got is not None
         assert got["id"] == text_id
 
     async def test_get_nonexistent(self, store):
-        result = await store.get_text("no_such_id")
+        result = await store.get_text_unscoped("no_such_id")
         assert result is None
 
     async def test_list_texts(self, store, text_id):
@@ -75,7 +75,7 @@ class TestTextCrud:
         assert deleted is True
 
         # Soft-deleted: text still exists with deleted_at set
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got is not None
         assert got.get("deleted_at", "") != ""
 
@@ -90,13 +90,13 @@ class TestTextCrud:
         # Restore works
         restored = await store.restore_text(text_id)
         assert restored is True
-        got2 = await store.get_text(text_id)
+        got2 = await store.get_text_unscoped(text_id)
         assert got2.get("deleted_at", "") == ""
 
         # Hard delete
         await store.delete_text(text_id)
         await store.hard_delete_text(text_id)
-        got3 = await store.get_text(text_id)
+        got3 = await store.get_text_unscoped(text_id)
         assert got3 is None
 
     async def test_delete_nonexistent(self, store):
@@ -105,7 +105,7 @@ class TestTextCrud:
     async def test_upsert_same_id(self, store, text_id):
         await store.save_text(text_id, "v1.txt", "version 1")
         await store.save_text(text_id, "v1.txt", "version 2 updated")
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got["content"] == "version 2 updated"
 
     async def test_text_type_default(self, store, text_id):
@@ -193,13 +193,13 @@ class TestSessionCrud:
         assert result.get("id") == session_id
         assert result.get("user_role") == "user"
 
-        got = await store.get_session(session_id)
+        got = await store.get_session_unscoped(session_id)
         assert got is not None
         assert got["card_id"] == setup["card_id"]
         assert got["character_name"] == "张三"
 
     async def test_get_nonexistent(self, store):
-        assert await store.get_session("no_such_session") is None
+        assert await store.get_session_unscoped("no_such_session") is None
 
     async def test_soft_delete(self, store, session_id, setup):
         await store.save_session(session_id, setup["card_id"], "user", "")
@@ -207,7 +207,7 @@ class TestSessionCrud:
         assert deleted is True
 
         # get_session does NOT filter by deleted_at, so record still visible
-        got = await store.get_session(session_id)
+        got = await store.get_session_unscoped(session_id)
         assert got is not None
         assert got["id"] == session_id
         assert got.get("deleted_at") is not None, "deleted_at must be set after soft-delete"
@@ -218,7 +218,7 @@ class TestSessionCrud:
     async def test_second_save_updates(self, store, session_id, setup):
         await store.save_session(session_id, setup["card_id"], "role_a", "")
         await store.save_session(session_id, setup["card_id"], "role_b", "new_avatar")
-        got = await store.get_session(session_id)
+        got = await store.get_session_unscoped(session_id)
         assert got["user_role"] == "role_b"
         assert got["avatar_data"] == "new_avatar"
 
@@ -882,13 +882,13 @@ class TestTextHardDeleteKeepCards:
         ok = await store.hard_delete_text(text_id, keep_cards=True)
         assert ok is True
         # Text is gone
-        assert await store.get_text(text_id) is None
+        assert await store.get_text_unscoped(text_id) is None
         # Card survives with text_id=NULL
         card = await store.get_card(cid)
         assert card is not None
         assert card["text_id"] == ''
         # Session survives
-        session = await store.get_session(sid)
+        session = await store.get_session_unscoped(sid)
         assert session is not None
         # Messages survive
         msgs = await store.get_messages(sid)
@@ -905,11 +905,11 @@ class TestTextHardDeleteKeepCards:
         ok = await store.hard_delete_text(text_id, keep_cards=False)
         assert ok is True
         # Text is gone
-        assert await store.get_text(text_id) is None
+        assert await store.get_text_unscoped(text_id) is None
         # Card is gone
         assert await store.get_card(cid) is None
         # Session is gone
-        assert await store.get_session(sid) is None
+        assert await store.get_session_unscoped(sid) is None
 
     async def test_detach_text_cards(self, store, text_id):
         await store.save_text(text_id, "src.txt", "source")
@@ -922,7 +922,7 @@ class TestTextHardDeleteKeepCards:
         assert card is not None
         assert card["text_id"] == ''
         # Text still exists
-        assert await store.get_text(text_id) is not None
+        assert await store.get_text_unscoped(text_id) is not None
 
     async def test_keep_cards_public_cards_get_delete_outbox(self, store, text_id):
         await store.save_text(text_id, "src.txt", "source")
@@ -982,7 +982,7 @@ class TestStandaloneCardListing:
         assert card["text_id"] == ''
 
         # Session still accessible
-        session = await store.get_session(sid)
+        session = await store.get_session_unscoped(sid)
         assert session is not None
 
     async def test_standalone_card_excluded_from_text_cards(self, store, text_id):
@@ -1026,10 +1026,10 @@ class TestSessionAvatarIsolation:
         ok = await store.update_session_avatar(sid_a, uid, "avatarX")
         assert ok is True
 
-        session_a = await store.get_session(sid_a)
+        session_a = await store.get_session_unscoped(sid_a)
         assert session_a["avatar_data"] == "avatarX", "A should have session avatar"
 
-        session_b = await store.get_session(sid_b)
+        session_b = await store.get_session_unscoped(sid_b)
         assert session_b["avatar_data"] == "", "B must remain empty (unaffected by A)"
 
     async def test_session_avatar_does_not_touch_global(self, store):
@@ -1064,8 +1064,8 @@ class TestSessionAvatarIsolation:
         assert ok_a is True
         assert ok_b is True
 
-        session_a = await store.get_session(sid_a)
-        session_b = await store.get_session(sid_b)
+        session_a = await store.get_session_unscoped(sid_a)
+        session_b = await store.get_session_unscoped(sid_b)
         assert session_a["avatar_data"] == "X", "Session A should have its own avatar"
         assert session_b["avatar_data"] == "Y", "Session B should have its own avatar"
 
@@ -1092,7 +1092,7 @@ class TestSessionAvatarIsolation:
         ok = await store.update_session_avatar(sid, other_id, "hack")
         assert ok is False, "Ownership check must reject cross-user write"
 
-        session = await store.get_session(sid)
+        session = await store.get_session_unscoped(sid)
         assert session["avatar_data"] == "", "Session avatar must remain unchanged after rejected write"
 
     async def test_unset_session_falls_back_logic(self, store):
@@ -1104,7 +1104,7 @@ class TestSessionAvatarIsolation:
         await self._setup_user_text_card(store, uid, tid, cid)
         await store.save_session(sid, cid, "user", "", user_id=uid)
 
-        session = await store.get_session(sid)
+        session = await store.get_session_unscoped(sid)
         assert session["avatar_data"] == "", "Unset session avatar must be empty (fallback to global avatar in frontend)"
 
 

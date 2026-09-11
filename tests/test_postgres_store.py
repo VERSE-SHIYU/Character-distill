@@ -86,7 +86,7 @@ class TestTextCrud:
         assert result.get("filename") == "test.txt"
         assert result.get("content") == "Hello world"
 
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got is not None
         assert got["id"] == text_id
         assert got["content"] == "Hello world"
@@ -104,11 +104,11 @@ class TestTextCrud:
     async def test_delete_text(self, store, text_id):
         await store.save_text(text_id, "del.txt", "To be deleted")
         await store.delete_text(text_id)
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got is None or got.get("deleted_at", "")
 
     async def test_get_text_not_found(self, store):
-        got = await store.get_text("nonexistent")
+        got = await store.get_text_unscoped("nonexistent")
         assert got is None
 
     async def test_list_texts(self, store):
@@ -160,7 +160,7 @@ class TestSessionCrud:
         result = await store.save_session(session_id, card_id, "", "")
         assert result.get("id") == session_id
 
-        got = await store.get_session(session_id)
+        got = await store.get_session_unscoped(session_id)
         assert got is not None
         assert got["card_id"] == card_id
 

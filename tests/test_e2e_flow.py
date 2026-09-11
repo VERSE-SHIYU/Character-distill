@@ -83,7 +83,7 @@ class TestFullUserFlow:
         assert saved["title"] == "My E2E Novel"
 
         # Read back
-        got = await store.get_text(text_id)
+        got = await store.get_text_unscoped(text_id)
         assert got is not None
         assert got["content"] == content
 
@@ -141,7 +141,7 @@ class TestFullUserFlow:
         assert session["id"] == session_id
 
         # Verify session
-        got = await store.get_session(session_id)
+        got = await store.get_session_unscoped(session_id)
         assert got is not None
         assert got["card_id"] == card_id
 
@@ -199,7 +199,7 @@ class TestFullUserFlow:
 
         # Restore
         assert await store.restore_session(session_id) is True
-        restored = await store.get_session(session_id)
+        restored = await store.get_session_unscoped(session_id)
         assert restored is not None
 
         # Purge
@@ -245,7 +245,7 @@ class TestFullUserFlow:
         story = "In a galaxy far away... " * 50
         await store.save_text(text_id, "space_opera.txt", story,
                                title="Space Opera", text_type="story", user_id=uid)
-        text = await store.get_text(text_id)
+        text = await store.get_text_unscoped(text_id)
         assert text["content"] == story
 
         # ── Distill → cards ──
@@ -289,7 +289,7 @@ class TestFullUserFlow:
 
         # ── Restore ──
         await store.restore_session(session_id)
-        assert (await store.get_session(session_id)) is not None
+        assert (await store.get_session_unscoped(session_id)) is not None
 
         # ── Final cleanup ──
         await store.delete_session(session_id)
