@@ -1577,9 +1577,13 @@ function ContentAuditTab() {
 // P1-2: System Logs & Tasks
 // ============================================================
 
+// 后端任务只有四态（distill.py 的 _db_status 映射），文案在此收口，前端不做终态谓词复刻。
+const TASK_STATUS_LABEL = { running: '运行中', done: '完成', error: '失败', interrupted: '已中断' }
+
 function SystemLogTab() {
   const [logs, setLogs] = useState([])
   const [tasks, setTasks] = useState([])
+  const [taskTotal, setTaskTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [subTab, setSubTab] = useState('logs')
@@ -1591,7 +1595,8 @@ function SystemLogTab() {
     try {
       const [l, t] = await Promise.all([adminAPI.getLogs(), adminAPI.getTasks()])
       setLogs(l)
-      setTasks(t)
+      setTasks(t.tasks)
+      setTaskTotal(t.total)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -1603,6 +1608,8 @@ function SystemLogTab() {
 
   const filteredLogs = logLevel === 'all' ? logs : logs.filter(l => l.level === logLevel)
   const levelCounts = logs.reduce((acc, l) => { acc[l.level] = (acc[l.level] || 0) + 1; return acc }, {})
+  // 后端列表有上限，被裁过必须看得见 —— 不静默截断。
+  const tasksTruncated = taskTotal > tasks.length
 
   return (
     <div className="admin-card">
@@ -1652,7 +1659,7 @@ function SystemLogTab() {
         <>
           <div className="admin-stats-grid" style={{ marginBottom: 16 }}>
             <div className="admin-stat-card">
-              <span className="admin-stat-value">{tasks.filter(t => t.status === 'queued' || t.status === 'identifying' || t.status === 'analyzing' || t.status === 'distilling').length}</span>
+              <span className="admin-stat-value">{tasks.filter(t => !t.done).length}</span>
               <span className="admin-stat-label">运行中</span>
             </div>
             <div className="admin-stat-card">
@@ -1664,10 +1671,15 @@ function SystemLogTab() {
               <span className="admin-stat-label">失败</span>
             </div>
             <div className="admin-stat-card">
-              <span className="admin-stat-value">{tasks.length}</span>
+              <span className="admin-stat-value">{taskTotal}</span>
               <span className="admin-stat-label">总计</span>
             </div>
           </div>
+          {!loading && tasksTruncated && (
+            <p style={{ padding: '0 0 10px', color: 'var(--text-secondary)', fontSize: 13 }}>
+              仅显示最近 {tasks.length} 条，共 {taskTotal} 条
+            </p>
+          )}
           {loading ? (
             <div className="admin-loading">加载中…</div>
           ) : tasks.length === 0 ? (
@@ -1689,8 +1701,8 @@ function SystemLogTab() {
                     <tr key={t.task_id}>
                       <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t.task_id?.slice(0, 8)}</td>
                       <td>
-                        <span className={`admin-status${t.status === 'error' ? ' disabled' : t.status === 'done' ? '' : ''}`}>
-                          {t.status === 'done' ? '完成' : t.status === 'error' ? '失败' : t.status === 'queued' ? '排队中' : t.status || '-'}
+                        <span className={`admin-status${t.status === 'error' ? ' disabled' : ''}`}>
+                          {TASK_STATUS_LABEL[t.status] || t.status || '-'}
                         </span>
                       </td>
                       <td>{t.progress_pct != null ? `${t.progress_pct}%` : '-'}</td>

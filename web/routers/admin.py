@@ -574,7 +574,7 @@ async def admin_tasks(
     request: Request,
     _admin: dict = Depends(require_admin),
     storage: StorageBase = Depends(get_storage),
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
     """List distill tasks from the DB, serialized by the shared distill contract.
 
     读 distill_tasks 而非内存 _tasks 写缓存：重启后缓存为空，而 boot reconcile 置为
@@ -583,10 +583,15 @@ async def admin_tasks(
     输出走 _task_response（distill 域唯一序列化器），不 spread 行：DB 行里的 user_id
     等内部列从构造上进不来，将来往内存加字段也不会自动泄漏。mem 只作展示字段细化
     （stage/message），status/progress_pct/所有权仍以 DB 为准。
+
+    信封 {tasks, total, truncated}：列表有上限，没有 total 管理员就无从知道被裁过 ——
+    静默截断与「失败必须可见」相悖，故截断必须显式上报。truncated 由行数实算，
+    不硬编码上限，改上限时不会失真。
     """
     from routers.distill import _task_response, _tasks, _task_lock
 
     rows = await storage.list_distill_tasks()
+    total = await storage.count_distill_tasks()
     # 一次取锁快照 running 行的内存条目（锁内无 await），锁外只读序列化。
     with _task_lock:
         live = {
@@ -594,7 +599,11 @@ async def admin_tasks(
             for r in rows
             if r["status"] == "running" and r["task_id"] in _tasks
         }
-    return [_task_response(row, live.get(row["task_id"])) for row in rows]
+    return {
+        "tasks": [_task_response(row, live.get(row["task_id"])) for row in rows],
+        "total": total,
+        "truncated": total > len(rows),
+    }
 
 
 # ============================================================

@@ -1563,6 +1563,7 @@ class TestDistillTaskPersistence:
         assert "user_id" in rows[0] and "text_fingerprint" in rows[0]
 
         assert len(await store.list_distill_tasks(limit=2)) == 2
+        assert await store.count_distill_tasks() == 3      # 全表数，不被 limit 污染
 
     async def test_cancel_by_text_id(self, store, text_id):
         # 删文本 sweep：running + interrupted（含上进程孤儿）都置 error，done 不动。

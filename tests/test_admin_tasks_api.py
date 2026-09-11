@@ -4,7 +4,8 @@
 2. 白名单：响应不含 user_id / _db 等内部字段（逐个显式断言，不靠键数量）。
 3. 字段集与 _task_response 输出逐字段一致（不另起一套字段集）。
 4. 非管理员 → 403（权限不足，非归属拒绝，不得翻 404）。
-另：running 行的 mem 只细化 stage/message，不覆盖 status/progress_pct/存在性。
+另：running 行的 mem 只细化 stage/message，不覆盖 status/progress_pct/存在性；
+信封 {tasks, total, truncated} 的截断必须显式上报，不静默裁。
 """
 
 from __future__ import annotations
@@ -86,7 +87,7 @@ class TestVisibleAfterRestart:
 
         resp = _build_client(store).get("/api/admin/tasks")
         assert resp.status_code == 200
-        by_id = {t["task_id"]: t for t in resp.json()}
+        by_id = {t["task_id"]: t for t in resp.json()["tasks"]}
         assert task_id in by_id, "重启后被置 interrupted 的行对管理员不可见"
         row = by_id[task_id]
         assert row["status"] == "interrupted"
@@ -101,7 +102,7 @@ class TestVisibleAfterRestart:
                                     "message": "分析中", "user_id": user_id}
         resp = _build_client(store).get("/api/admin/tasks")
         assert resp.status_code == 200
-        assert resp.json() == []
+        assert resp.json()["tasks"] == []
 
 
 # ── 2. 白名单：内部字段逐个显式断言 ────────────────────────────────────────
@@ -111,8 +112,8 @@ class TestOutputWhitelist:
         """DB 行含 user_id 等内部列，响应里逐个别断言不存在。"""
         _seed(store, user_id, status="done", pct=100)
         body = _build_client(store).get("/api/admin/tasks").json()
-        assert len(body) == 1
-        item = body[0]
+        assert len(body["tasks"]) == 1
+        item = body["tasks"][0]
         for internal in ("user_id", "_db", "chunk_size", "overlap",
                          "text_fingerprint", "created_at", "updated_at"):
             assert internal not in item, f"内部字段泄漏: {internal}"
@@ -133,7 +134,7 @@ class TestFieldSetMatchesContract:
         task_id = _seed(store, user_id, status="error", pct=37, message="蒸馏失败: x")
         row = _run_async(store.get_distill_task(task_id))
         expected = D._task_response(row)
-        item = _build_client(store).get("/api/admin/tasks").json()[0]
+        item = _build_client(store).get("/api/admin/tasks").json()["tasks"][0]
         assert item == expected
         assert set(item) == {
             "task_id", "status", "done", "actions", "poll_after_ms", "progress_pct",
@@ -149,11 +150,40 @@ class TestFieldSetMatchesContract:
                 "progress_pct": 999,          # 内存谎报 —— 不得覆盖 DB
                 "user_id": "someone-else",
             }
-        item = _build_client(store).get("/api/admin/tasks").json()[0]
+        item = _build_client(store).get("/api/admin/tasks").json()["tasks"][0]
         assert item["stage"] == "analyzing"
         assert item["message"] == "分析第 3/12 片"
         assert item["status"] == "running"       # DB 真相
         assert item["progress_pct"] == 5         # 内存 999 不得覆盖
+
+
+# ── 3b. 截断必须显式上报（静默截断与「失败必须可见」相悖）───────────────────
+
+class _SmallCapStore(SQLiteStore):
+    """上限压到 2 的 store —— 不必造 201 行就能验截断上报。"""
+
+    async def list_distill_tasks(self, limit: int = 2) -> list[dict]:
+        return await super().list_distill_tasks(limit=limit)
+
+
+class TestEnvelope:
+    def test_total_and_not_truncated_when_under_cap(self, store, user_id):
+        _seed(store, user_id, status="done")
+        _seed(store, user_id, status="error")
+        body = _build_client(store).get("/api/admin/tasks").json()
+        assert body["total"] == 2
+        assert len(body["tasks"]) == 2
+        assert body["truncated"] is False
+
+    def test_truncated_true_and_total_is_whole_table(self, user_id, tmp_path):
+        """被裁过必须显式上报，且 total 是全表数、不被上限污染。"""
+        capped = _SmallCapStore(_db_path(tmp_path))
+        for _ in range(3):
+            _seed(capped, user_id, status="done")
+        body = _build_client(capped).get("/api/admin/tasks").json()
+        assert len(body["tasks"]) == 2        # 上限生效
+        assert body["total"] == 3             # total 未被上限污染
+        assert body["truncated"] is True
 
 
 # ── 4. 非管理员 → 403 ──────────────────────────────────────────────────────

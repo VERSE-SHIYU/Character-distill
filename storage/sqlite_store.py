@@ -4136,6 +4136,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List distill tasks failed: {exc}")
             raise
 
+    async def count_distill_tasks(self) -> int:
+        """Return the total number of distill task rows, unfiltered and uncapped."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute("SELECT COUNT(*) FROM distill_tasks")
+                row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+        except Exception as exc:
+            print(f"[SQLiteStore] Count distill tasks failed: {exc}")
+            raise
+
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. 返回受影响行数。
 

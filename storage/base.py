@@ -440,6 +440,15 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
+    async def count_distill_tasks(self) -> int:
+        """Return the total number of distill task rows, unfiltered and uncapped.
+
+        Exists so the capped admin listing can report truncation honestly: without
+        a total the admin cannot tell the list was cut. COUNT(*) only — no row
+        materialization.
+        """
+
+    @abstractmethod
     async def update_distill_task(self, task_id: str, *, status: str | None = None, progress_pct: int | None = None, message: str | None = None, card_id: str | None = None, awakening: str | None = None, chunk_size: int | None = None, text_fingerprint: str | None = None) -> int:
         """Patch only the non-None fields of a distillation task row. UPDATE-only.
 
