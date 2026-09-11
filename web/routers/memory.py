@@ -35,8 +35,9 @@ async def list_memories(
     if not memory_manager or not memory_manager.enabled:
         return {"memories": [], "enabled": False}
     owner_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not owner_id or owner_id != user["id"]:
-        raise HTTPException(403, "无权访问此角色的记忆")
+        raise HTTPException(404, "无权访问此角色的记忆")
     memories = memory_manager.get_all(card_id)
     return {"memories": memories, "enabled": True}
 
@@ -57,8 +58,9 @@ async def add_memory(
     if not body.text.strip():
         raise HTTPException(422, "记忆内容不能为空")
     owner_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not owner_id or owner_id != user["id"]:
-        raise HTTPException(403, "无权操作此角色的记忆")
+        raise HTTPException(404, "无权操作此角色的记忆")
     ok = memory_manager.add_manual(body.text.strip(), card_id)
     if not ok:
         raise HTTPException(500, "添加失败")
@@ -82,8 +84,9 @@ async def update_memory(
     if not body.text.strip():
         raise HTTPException(422, "记忆内容不能为空")
     owner_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not owner_id or owner_id != user["id"]:
-        raise HTTPException(403, "无权操作此角色的记忆")
+        raise HTTPException(404, "无权操作此角色的记忆")
     ok = memory_manager.update(memory_id, body.text.strip())
     if not ok:
         raise HTTPException(500, "更新失败")
@@ -104,8 +107,9 @@ async def delete_memory(
     if not memory_manager or not memory_manager.enabled:
         raise HTTPException(400, "记忆系统未启用")
     owner_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not owner_id or owner_id != user["id"]:
-        raise HTTPException(403, "无权删除此记忆")
+        raise HTTPException(404, "无权删除此记忆")
     ok = memory_manager.delete(memory_id)
     if not ok:
         raise HTTPException(500, "删除失败")
@@ -125,8 +129,9 @@ async def clear_memories(
     if not memory_manager or not memory_manager.enabled:
         raise HTTPException(400, "记忆系统未启用")
     owner_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not owner_id or owner_id != user["id"]:
-        raise HTTPException(403, "无权访问此角色的记忆")
+        raise HTTPException(404, "无权访问此角色的记忆")
     ok = memory_manager.delete_all(card_id)
     if not ok:
         raise HTTPException(500, "清空失败")

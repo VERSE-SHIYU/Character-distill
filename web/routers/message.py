@@ -162,10 +162,9 @@ async def react_to_dm(
         raise HTTPException(400, "Emoji cannot be empty")
 
     msg = await storage.get_dm_message(message_id)
-    if not msg:
+    # 非收发双方与不存在同判 404：403 会让人靠状态码枚举出 message_id 存在。
+    if not msg or (msg["sender_id"] != user["id"] and msg["receiver_id"] != user["id"]):
         raise HTTPException(404, "消息不存在")
-    if msg["sender_id"] != user["id"] and msg["receiver_id"] != user["id"]:
-        raise HTTPException(403, "无权操作此消息")
 
     added = await storage.toggle_dm_reaction(message_id, user["id"], req.emoji)
     return {"ok": True, "added": added}

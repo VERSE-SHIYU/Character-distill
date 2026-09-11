@@ -296,10 +296,9 @@ async def create_group(
 
     for card_id in req.card_ids:
         card_rec = await storage.get_card(card_id)
-        if not card_rec:
+        # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+        if not card_rec or card_rec.get("user_id") != user_id:
             raise HTTPException(404, f"角色卡 {card_id} 不存在")
-        if card_rec.get("user_id") != user_id:
-            raise HTTPException(403, f"无权使用角色卡 {card_id}")
 
         try:
             card = CharacterCard.model_validate_json(card_rec["card_json"])
@@ -649,10 +648,9 @@ async def list_group_affinities(
 ) -> list[dict]:
     """List all characters' affinity / stage in this group."""
     session_rec = await storage.get_group_session(group_id)
-    if not session_rec:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
+    if not session_rec or session_rec.get("user_id") != user["id"]:
         raise HTTPException(404, "群聊不存在")
-    if session_rec.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此群聊")
 
     card_ids: list[str] = session_rec.get("card_ids", [])
     result: list[dict] = []
@@ -683,10 +681,9 @@ async def toggle_reaction(
 ) -> dict:
     """Toggle a reaction emoji on a message."""
     session = await storage.get_group_session(group_id)
-    if not session:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
+    if not session or session.get("user_id") != user["id"]:
         raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
 
     if not req.emoji.strip():
         raise HTTPException(400, "emoji 不能为空")
@@ -704,10 +701,9 @@ async def get_history(
 ) -> dict:
     """获取群聊历史消息。"""
     session = await storage.get_group_session(group_id)
-    if not session:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
+    if not session or session.get("user_id") != user["id"]:
         raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此群聊")
 
     if session.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")
@@ -745,10 +741,9 @@ async def rename_group(
     if not req.name.strip():
         raise HTTPException(400, "名称不能为空")
     session = await storage.get_group_session(group_id)
-    if not session:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
+    if not session or session.get("user_id") != user["id"]:
         raise HTTPException(404, "群聊不存在")
-    if session.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此群聊")
     if session.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")
     await storage.update_group_session(group_id, req.name.strip())

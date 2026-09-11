@@ -4,7 +4,7 @@ A  _set_task 记账后置：落库失败 → _db 不提前、条目不 pop；恢
 A2 终态收口确认写：终态落库失败 → finally 补一次；补写仍失败 → 打独立日志不 pop 不抛；
     补写成功 → pop。
 B  distill_task_params 归位读 DB（无内存回退）：内存空 + DB 行 → 200 从 DB 取参；
-    他人任务 → 403；不存在 → 404。
+    他人任务 → 404（非属主与不存在同判，防存在性枚举）；不存在 → 404。
 C  distill_start 落库失败 → 拒绝启动（503），不开后台线程。
 D  distill_task_status 只读覆盖：DB running + 内存活跃 → 覆盖 message / 加 stage；
     其余字段与存在性永远以 DB 为准；DB 非 running → 不覆盖。
@@ -280,13 +280,14 @@ class TestBParamsReadsDB:
         assert body["text_id"] == "txt_abc"
         assert body["character"] == "Alice"
 
-    def test_params_other_users_task_forbidden(self, store, user_id):
-        """B：他人任务 → 403。"""
+    def test_params_other_users_task_404(self, store, user_id):
+        """B：他人任务 → 404（非属主与不存在同判，403 会泄漏 task_id 存在性）。"""
         task_id = f"dt_{uuid.uuid4().hex}"
         _seed_distill_row(store, task_id, "usr_other")
         client = _build_client(store, user_id)
         resp = client.get(f"/api/distill/task/{task_id}/params")
-        assert resp.status_code == 403
+        assert resp.status_code == 404
+        assert resp.status_code != 403
 
     def test_params_nonexistent_404(self, store, user_id):
         """B：不存在 → 404。"""

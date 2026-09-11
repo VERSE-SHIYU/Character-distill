@@ -172,10 +172,9 @@ async def delete_custom_voice(
 ) -> dict[str, bool]:
     library = _read_voice_library()
     entry = next((v for v in library if v["voice_id"] == voice_id), None)
-    if entry is None:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 voice_id 存在。
+    if entry is None or entry.get("user_id") != user["id"]:
         raise HTTPException(404, "音色不存在")
-    if entry.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权删除此音色")
     ext = entry.get("ext", ".wav")
     (VOICE_LIBRARY_DIR / f"{voice_id}{ext}").unlink(missing_ok=True)
     library = [v for v in library if v["voice_id"] != voice_id]
@@ -280,10 +279,9 @@ async def preview_ref_audio(
 ) -> Response:
     """Synthesize a test phrase using GPT-SoVITS with the card's reference audio."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "角色卡不存在")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
 
     ref_json_str = await storage.get_session_voice_ref(card_id)
     if not ref_json_str:
@@ -320,10 +318,9 @@ async def get_ref_audio(
 ) -> JSONResponse:
     """Get reference audio info for a character card."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "角色卡不存在")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
     try:
         ref_json_str = await storage.get_session_voice_ref(card_id)
         if ref_json_str:
@@ -350,10 +347,9 @@ async def upload_ref_audio(
     Video files are auto-converted: audio track extracted to 16kHz mono wav.
     """
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "角色卡不存在")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
 
     ext = Path(file.filename).suffix.lower() if file.filename else ""
     if ext not in AUDIO_EXTS and ext not in VIDEO_EXTS:
@@ -409,10 +405,9 @@ async def delete_ref_audio(
 ) -> JSONResponse:
     """Delete reference audio for a character card."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "角色卡不存在")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
     try:
         ref_json_str = await storage.get_session_voice_ref(card_id)
         if ref_json_str:

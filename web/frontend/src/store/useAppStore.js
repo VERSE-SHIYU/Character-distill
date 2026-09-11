@@ -947,13 +947,16 @@ const useAppStore = create((set, get) => {
         .catch((err) => {
           const status = err?.status
           if (status === 404) {
-            // 任务行已不存在（文本被硬删）。开机 reconcile 后，重启的任务在 DB 里是
-            // interrupted 而非消失，此分支基本不再触发。不得标 error 后留在列表里。
+            // 任务不存在，或本机存着的任务不属于当前账号——非属主与不存在在后端同判 404
+            // （403 会让人靠状态码枚举出 task_id 存在）。文本被硬删也走这里。开机 reconcile
+            // 后，重启的任务在 DB 里是 interrupted 而非消失。不得标 error 后留在列表里。
             set((s) => ({ distillTasks: s.distillTasks.filter((t) => t.id !== taskId) }))
             get()._persistTasks()
             return
           }
           if (status === 403) {
+            // 后端只剩「账号已被禁用」会在此路径返 403（属主拒绝已改 404）。等重登拿新
+            // token；连续失败则标 error 让用户重新发起。
             retryCount++
             if (retryCount >= MAX_RETRIES) {
               console.warn('[distill] 403 retry exhausted, marking task as failed')

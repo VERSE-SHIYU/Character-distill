@@ -7,8 +7,9 @@ Tests two security invariants:
    TestReadAuthorization 的文档串与 AGENTS.md §四。
 2. Error response safety: system exceptions -> sanitized 500; ValueError -> 400
 
-注：本文件里 test_03/04/05（card、group）仍断言 403，因为那批端点还没翻新——
-那是存量口径问题，不是有意保留的第二种语义，见 AGENTS.md 缺陷 13。
+注：全仓存量属主型 403 已统一为 404（card / group / market / memory / message / voice /
+distill 共 32 处），本文件 test_03/04/05 随之从 403 改 404。权限型（非管理员、账号禁用）
+与业务门（审核待审、geo 合规）仍保留 403，见 AGENTS.md 缺陷 13。
 
 Run: pytest tests/test_security_authz.py -v
 """
@@ -174,8 +175,10 @@ class TestReadAuthorization:
 
     为什么是 404 不是 403：403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」
     与「不存在」不可区分。攻击者拿一批 id 去扫时，403/404 的差异就是枚举预言机。
-    这些端点的属主过滤在 storage 的 *_owned 原语里用 SQL 完成，拿不到行即 404。
-    不要改回 403 —— 那会重新开一个存在性枚举点。
+    text / session 类端点的属主过滤在 storage 的 *_owned 原语里用 SQL 完成；card /
+    group 等无 *_owned 变体的资源在路由层把「不存在」与「非属主」两个分支合并成同一个
+    404。两条路径都以「404 与不存在同码同文案」为准。不要改回 403 —— 那会重新开一个
+    存在性枚举点。
     """
 
     def test_01_history_session_404(self, store, user_a, client_b):
@@ -192,22 +195,25 @@ class TestReadAuthorization:
         r = client_b.get(f"/api/history/{sid}/export")
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
-    def test_03_card_get_403(self, store, user_a, client_b):
+    def test_03_card_get_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         r = client_b.get(f"/api/cards/{cid}")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert r.status_code != 403
 
-    def test_04_card_export_403(self, store, user_a, client_b):
+    def test_04_card_export_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
         r = client_b.get(f"/api/cards/{cid}/export")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert r.status_code != 403
 
-    def test_05_group_history_403(self, store, user_a, client_b):
+    def test_05_group_history_404(self, store, user_a, client_b):
         gid = _create_group(store, user_a)
         r = client_b.get(f"/api/group/{gid}/history")
-        assert r.status_code == 403, f"Expected 403, got {r.status_code}: {r.json()}"
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert r.status_code != 403
 
     def test_06_chat_affinity_404(self, store, user_a, client_b):
         tid = _create_text(store, user_a)
@@ -366,7 +372,7 @@ class TestHoleOwnershipRegression:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestControlAccess:
-    """Sanity checks: 403 tests shouldn't break legitimate access."""
+    """Sanity checks: ownership 404 tests shouldn't break legitimate access."""
 
     def test_07a_own_history_200(self, store, user_a, client_a):
         tid = _create_text(store, user_a)

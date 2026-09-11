@@ -934,10 +934,9 @@ async def distill_task_status(
     跨重启后内存空 → stage 为空串、message 回落 DB 值，展示不崩、四态不谎。
     """
     row = await storage.get_distill_task(task_id)
-    if row is None:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
+    if row is None or row.get("user_id") != user["id"]:
         raise HTTPException(404, "Task not found")
-    if row.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此任务")
     # 只读覆盖展示字段：需同时满足 DB running + 本进程内存有该活跃条目。锁内浅拷一份，
     # 锁外只读 —— 序列化器不持锁，避免把 _task_lock 扩散进纯函数。
     mem = None
@@ -963,10 +962,9 @@ async def cancel_distill_task(
     盖掉 cancel 与 bg 之间可能交错的最后一次 running 进度写。
     """
     row = await storage.get_distill_task(task_id)
-    if row is None:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
+    if row is None or row.get("user_id") != user["id"]:
         raise HTTPException(404, "Task not found")
-    if row.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此任务")
     with _task_lock:
         task = _tasks.get(task_id)
         if task is not None and task.get("status") not in ("done", "error"):
@@ -991,10 +989,9 @@ async def distill_task_params(
     「任务成功完成」与「任务不存在」在该接口上不可分。不留内存回退分支。
     """
     row = await storage.get_distill_task(task_id)
-    if row is None:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
+    if row is None or row.get("user_id") != user["id"]:
         raise HTTPException(404, "Task not found")
-    if row.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此任务")
     return {
         "task_id": task_id,
         "text_id": row["text_id"],
@@ -1213,10 +1210,9 @@ async def update_card(
     storage: StorageBase = Depends(get_storage),
 ):
     record = await storage.get_card(card_id)
-    if not record:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record or record.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if record.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权修改此角色卡")
     # Schema gate: raw PATCH had no filter — a card editor payload that is not a
     # structurally valid CharacterCard is rejected instead of blindly persisted.
     # update_card replaces card_json wholesale, so we store the canonical dump
@@ -1276,10 +1272,9 @@ async def export_card(
     with ``Content-Disposition: attachment`` for direct download.
     """
     record = await storage.get_card(card_id)
-    if not record:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record or record.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if record.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权导出此角色卡")
 
     try:
         card = CharacterCard.model_validate_json(record["card_json"])

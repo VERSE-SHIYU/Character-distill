@@ -495,10 +495,9 @@ async def publish_card(
 ) -> dict:
     """Publish a card to the market (first-time publish)."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
 
     # Publish pre-screen: pending-review gate (2.6) + keyword pre-screen (2.2)
     # + two-channel LLM review (2.5). Unexpected failure routes to a human queue
@@ -574,10 +573,9 @@ async def update_published_card(
 ) -> dict:
     """Update an already-published card (with field-level diff)."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
     # Same pre-screen as first-time publish: gate + keyword + two-channel review,
     # applied to the *incoming* payload (that is the untrusted content being pushed).
     outcome, reason = await _publish_preflight({**card, "card_json": body.card_json}, user, storage)
@@ -641,10 +639,9 @@ async def update_card_version(
 ) -> dict:
     """Update version publish_message — card author only."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作")
     message = (body.get("publish_message") or "").strip()
     if not message:
         raise HTTPException(400, "发布说明不能为空")
@@ -677,10 +674,9 @@ async def delete_market_card(
 ) -> dict:
     """Delete a card from market: soft-delete + set visibility private."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404（admin 仍可）；403 会让人靠状态码枚举出 card_id 存在。
+    if not card or (not user.get("is_admin") and card.get("user_id") != user["id"]):
         raise HTTPException(404, "Card not found")
-    if not user.get("is_admin") and card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权删除此角色卡")
     ok = await storage.delete_card(card_id)
     if not ok:
         raise HTTPException(500, "删除失败")
@@ -871,8 +867,9 @@ async def batch_delete_comments(
 ) -> dict:
     """Batch delete comments — card author or admin only."""
     card_author_id = await storage.get_card_author_id(card_id)
+    # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if card_author_id != user["id"] and not user.get("is_admin"):
-        raise HTTPException(403, "无权操作")
+        raise HTTPException(404, "卡片不存在或无权操作")
     comment_ids = body.get("comment_ids", [])
     if not comment_ids:
         return {"ok": True}
@@ -891,7 +888,7 @@ async def delete_comment(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """Delete a comment — card author/comment author/admin can delete, others get 403."""
+    """Delete a comment — card author/comment author/admin can delete, others get 404."""
     card_author_id = await storage.get_card_author_id(card_id)
     # Get comment to check ownership
     comment = await storage.get_comment(comment_id)
@@ -899,8 +896,9 @@ async def delete_comment(
         raise HTTPException(404, "评论不存在")
     is_comment_author = comment["user_id"] == user["id"]
     is_card_author = card_author_id == user["id"]
+    # 非属主（非评论作者/卡作者/管理员）与不存在同判 404：403 会让人靠状态码枚举出 comment_id 存在。
     if not is_comment_author and not is_card_author and not user.get("is_admin"):
-        raise HTTPException(403, "无权删除此评论")
+        raise HTTPException(404, "评论不存在")
     ok = await storage.delete_comment(comment_id, user["id"])
     if not ok:
         # Idempotent: if another request already deleted it, that's fine
@@ -992,10 +990,9 @@ async def set_visibility(
 ) -> dict:
     """Set card visibility (public/private). Only the card owner can change it."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
     ok = await storage.update_card_visibility(card_id, body.visibility)
     if not ok:
         raise HTTPException(400, "visibility 必须是 'public' 或 'private'")

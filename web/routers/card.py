@@ -33,10 +33,9 @@ async def get_card_avatar(
 ) -> dict:
     """Get saved avatar for a card. Returns {data: base64_string} or 404."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
     data = await storage.get_card_avatar(card_id)
     if data is None:
         raise HTTPException(404, "Avatar not found")
@@ -54,10 +53,9 @@ async def save_card_avatar(
 ) -> dict:
     """Save avatar image (base64) for a card."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权操作此角色卡")
     if not body.data or len(body.data) < 10:
         raise HTTPException(400, "Avatar data too short")
     try:
@@ -77,10 +75,9 @@ async def export_card(
 ) -> Response:
     """Export a character card's full JSON as a downloadable file."""
     record = await storage.get_card(card_id)
-    if not record:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not record or record.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if record.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权导出此角色卡")
 
     # Parse card_json to extract the character name
     card_json = record.get("card_json", "{}")
@@ -139,10 +136,9 @@ async def get_card(
 ) -> dict:
     """Get a character card by ID."""
     card = await storage.get_card(card_id)
-    if not card:
+    # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
+    if not card or card.get("user_id") != user["id"]:
         raise HTTPException(404, "Card not found")
-    if card.get("user_id") != user["id"]:
-        raise HTTPException(403, "无权访问此角色卡")
     return card
 
 
