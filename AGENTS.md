@@ -165,7 +165,7 @@ config.yaml 现值（现读，非转述）：
 - 修法：067 的 SQLite 版去掉 `IF NOT EXISTS`（PG 侧 `storage/migrations_pg/002_embedding_config.sql` 独立、不动）；执行块改 `PRAGMA table_info(users)` **前置判断**——读出现有列，缺哪列 ALTER 哪列，不缺就跳过。**确定性执行取代猜错误串**；该块不再有 except，迁移真失败照常上抛，不再静默
 - 回归锁：`tests/test_sqlite_fresh_schema.py`（建真库跑迁移，不是正则扫文件）：(a) 新库列齐 (b) `get_user_api_config` 不抛 (c) 同库两次 init (d) 建库 stdout 无失败行——一处断言兜住全部迁移文件 (e) 半成品库（一列有一列无）只补缺列
 - **盲区说明**：`tests/test_schema_parity.py` 是正则扫 `.sql` 文本、「写了」就算「跑成了」，本缺陷正是该盲区的实例——补齐它需要真建库的用例（即上方回归锁）
-- 迁移执行区仍有 **75 处「失败只 print、从不重抛」**（56 处靠错误串判断可否忽略、19 处裸吞），是本病灶的同族存量，见缺陷 15
+- 迁移执行区曾有 **75 处「失败只 print、从不重抛」**（56 处靠错误串判断可否忽略、19 处裸吞），是本病灶的同族存量——**已于 2026-09-12 随缺陷 15 一并消除**（该区重写为单一应用器，不再有任何 except）
 
 **6. `/api/admin/tasks` 读内存不读库** —— 状态：**已修**（commit `bac7133` / `254455c`，2026-09-11）
 - `web/routers/admin.py` 的 `admin_tasks`：原 `from routers.distill import _tasks, _task_lock`；`{"task_id": tid, **task}` 把内存条目**原样展开**
@@ -257,13 +257,16 @@ config.yaml 现值（现读，非转述）：
 - **残余未收编**：`.claude/sessions/`（gitignored）仍被正文引用 **5 处**（`docs/engineering-evidence.md` L59/63/191/241/282，均已标 `⚠️ 待核`）。处置：机械收编成 `runtime-measured`，本档已裁定**做，但排在缺陷 15 之后**（价值中等，不急）
 - 契约细节（三档 status 的必填字段、白名单上限、`ev:` 语法、commit hash 的保留例外）见 `docs/evidence/README.md`
 
-**15. `034_post_enhancements` 在已建库上每次 init 都打一行假失败；另有 19 处裸吞** —— 状态：未修（已立项）
-- 修 067（缺陷 5）时顺带实测到：同一个库第二次 `_ensure_initialized` 会打 `[SQLiteStore] Post enhancements migration failed: duplicate column name: images`。该块（`storage/sqlite_store.py` 的 034 段）是 `except Exception: print` **连 duplicate column 都不吞**，故「已建库重跑」这一正常路径每次都报失败
-- 两层问题：(1) **假失败**——列已存在的正常情况被报成 failed，噪音会训练人忽略真失败；(2) **真失败被吞**——该块无重抛，034 真出错也只留一行 print 后继续
-- 同族存量（迁移执行区实测）：75 处「失败只 print、从不重抛」，其中 56 处靠错误串判断可否忽略、19 处裸吞。与缺陷 5 同病灶（「失败被吞成正常返回」谱系）
-- **影响（比缺陷本身重要）**：它是本仓新增回归锁 `tests/test_sqlite_fresh_schema.py` 只能取弱化口径的**直接原因**。已建库重跑会稳定产出这一行假失败，于是 (c)「同库两次 init 无失败输出」无法按原样断言，只能退到「输出里不含 067 的失败」；同理 (d) 的整类兜底只覆盖**首次建库**——要覆盖「任意时点、任何迁移失败都红」必须跑第二次 init，而那一步恒被 034 污染。**修掉 034 后两者可恢复全强度**（(c) 直接断言整库零失败输出即可）
-- **未同轮修的理由**：067 spec 的硬要求是「发现未覆盖的问题只列不修、停下报告」，不自行扩大范围
-- 附带：缺陷 5 修好后，`tests/test_security_authz.py` / `test_distill_task_api.py`（3 处）/ `test_rag_unusable.py` 里那 5 处「让 `get_user_api_config` 返回空配置」的夹具绕过已成多余（保留无害，但注释里「因缺陷 5」的理由已过期）
+**15. `034_post_enhancements` 在已建库上每次 init 都打一行假失败；迁移执行区 75 处吞错** —— 状态：**已修**（2026-09-12）
+- 现象（修复前）：同一个库第二次 `_ensure_initialized` 稳定打 `[SQLiteStore] Post enhancements migration failed: duplicate column name: images`。034 段是 `except Exception: print` **连 duplicate column 都不吞**，故「已建库重跑」这一正常路径每次都报失败；真出错也只留一行 print 后继续
+- 两层问题：(1) **假失败**——列已存在的正常情况被报成 failed，噪音会训练人忽略真失败；(2) **真失败被吞**——无重抛，034 真出错也静默继续。与缺陷 5 同病灶（「失败被吞成正常返回」谱系）
+- 同族存量分类（**实测非目测**，AST 扫 `_ensure_initialized`）：77 个 handler = **74 吞错 + 3 重抛**。74 吞错 = **56 靠错误串判断**（`if "duplicate column" not in str(exc).lower()`）+ **18 裸吞**（`except: print` 后继续）；3 重抛里旧 L850（内联 CREATE INDEX）是「print + 不查错误串 + `raise`」，与 18 处裸吞同形态只差最后一步，故合起来就是立项时所称的 **75 处「失败只 print」家族**（56 猜错误串 + 19 裸吞）。全部落在迁移执行区；PG 侧 `_ensure_initialized` 实测仅 1 个 handler（外层，含 raise），**无同族病灶**
+- 修法（**机制，非补丁**）：迁移执行区重写为单一应用器 `_apply_migration` + 显式次序表（`_MIGRATIONS_BEFORE_USER_REBUILD` / `_MIGRATIONS_AFTER_USER_REBUILD`，77/078 之间夹 users 表重建，次序有意义）。幂等靠**读现状**（`PRAGMA table_info`）：脚本内每条 `ALTER TABLE ... ADD COLUMN` 都已在 → 整脚本跳过；部分在 → 剔掉已在的那几条再执行其余。确定性执行取代猜错误串；**该区不再有任何 except**，迁移真失败照常上抛
+- 顺带修掉一个潜伏 bug：旧逻辑「executescript 遇第一条 ALTER 撞 duplicate 即中断整脚本」，同一文件里后续未应用的列会**永不补上**（半成品库形态）——新写法逐列判断，只补缺的那些。`tests/test_sqlite_fresh_schema.py` (e) 专测这条判别力
+- **形态锁（不变量）**：`tests/test_migration_dispatch.py` 两条 —— (i) `storage/migrations/*.sql` 每个文件要么在次序表、要么在带理由的 `_NOT_APPLIED`（**唯一豁免出口**），否则红；(ii) AST 扫 `_ensure_initialized`，任何不含 `raise` 的 except handler 即红
+- **闸门恢复全强度**（本条的真正目的）：`tests/test_sqlite_fresh_schema.py` (c) 由「不含 067 的失败」改为同一库两次 init **整库零失败输出**；(d) 整类兜底同样覆盖第二次 init
+- **变异验证（实测红，验后 sha256 逐字节还原）**：(1) 084 迁移追加非法 SQL + 在 AFTER 循环外包 `except: print` → (c)(d) 两条**断言**红 + AST 锁红（三红）；(2) 从 `_MIGRATIONS_AFTER_USER_REBUILD` 摘掉 `084` → **只有** dispatch 锁红，fresh-schema 5 条全绿 —— 正是缺陷 20 那种「静默掉一个文件」的形态
+- 附带：5 处「因缺陷 5」的 `get_user_api_config` 空配置夹具绕过已删（`test_security_authz.py` 1 + `test_distill_task_api.py` 3 + `test_rag_unusable.py` 1），夹具注释同步订正；`web/routers/group.py:287` 对该读本就套了宽 `except: pass`，故那处 stub 双重多余
 
 **16. `distill` 站点初次调用漏记 usage（三处站点口径不一致）** —— 状态：未修（已立项）
 - 三个 `_parse_json_with_retry` 站点的初次调用记账不对称：`distill`（`core/distiller.py`）初次成功后**不记**，只在重修成功时（`repair_stage` 2/3）记；`distill_longcontext` / `distill_format` 初次成功后**立即记**（`_try_record_usage` 紧跟在 `_chat_initial` 之后）
@@ -331,6 +334,14 @@ config.yaml 现值（现读，非转述）：
   - **注释订正**（`53494ae`）：两 store 的 `hard_delete_text` 注释改成真实口径（断点生命周期跟文本走；非 `interrupted` 的残留行重蒸命不中，是已知取舍），证据脚本 `tests/perf/distill_resume_reachability.py` 与 `distill_orphan_matrix.py` 及其产物一并入库
   - **删卡/解绑的清理口径：不动**（保守裁决）。删卡不产生孤儿行（行身份 `(user, text, character)` 与卡无关），清理由文本死亡路径负责；改成「按 `(user, text, character)` 找最近一条可复用行」是**加功能**，另立项
 - **未接停止信号的其余删除点（本轮只记不修）**：`web/routers/card.py` 的卡删除路由（`hard_delete("card")` ×2 / `soft_delete("card")` ×1），以及 `web/routers/market.py` 的 `delete_market_card`（直接调 `storage.delete_card`）—— 要把在跑的任务对上被删的卡需要 `(text_id, character)`，而 `character` 在 identify 步解析出名字之前是空串，匹配不可靠；且与上面「删卡口径不动」是同一件事
+
+**21. `079_remote_user_profiles.sql` 从未接线 —— SQLite 新库缺 `remote_user_profiles` 表** —— 状态：未修（记账，2026-09-12 缺陷 15 排查时发现）
+- 事实（实测）：`storage/migrations/079_remote_user_profiles.sql` 躺在目录里，但既不在 SQLite 次序表，PG 侧也无对应（PG 用 `migrations_pg/012_remote_user_profiles.sql`，其 glob 驱动已接线）。故 SQLite 新库**没有**这张表
+- 而 `storage/sqlite_store.py` 已在用它：`:4610` `INSERT OR REPLACE INTO remote_user_profiles`、`:4625` `SELECT ... FROM remote_user_profiles`、`:4795` `LEFT JOIN remote_user_profiles` → 新库走到这几条即 `no such table` 抛错
+- 影响面同缺陷 5：生产是 PG（不受影响），受影响的是新开发环境 / `start_all.bat` 建的 SQLite 库
+- **未同轮修的理由**：铁律 3「新发现只记缺陷表，不当场修」；且该表属跨区同步特性，接线后 SQLite 新库凭空多一张表，语义待定
+- 现由 `tests/test_migration_dispatch.py::_NOT_APPLIED` 以「未接线」理由显式豁免 —— 这是**带理由的记账出口**，不是沉默放过；豁免条目一旦指向不存在的文件也会红
+- 同族风险（本次已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故新增「目录 ↔ 次序表求差集」形态锁
 
 ### 四、验证纪律
 

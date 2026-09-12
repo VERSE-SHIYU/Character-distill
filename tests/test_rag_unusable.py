@@ -299,7 +299,6 @@ def test_caller_group_rebuild_degrades_no_index():
             "user_persona_card_id": "", "user_persona_name": "", "user_persona_desc": "",
             "card_ids": ["c1", "c2"],
         })
-        storage.get_user_api_config = AsyncMock(return_value={})
         storage.get_card = AsyncMock(side_effect=[
             {"id": "c1", "user_id": "u1", "text_id": "t_unusable_a", "card_json": card_json},
             {"id": "c2", "user_id": "u1", "text_id": "t_unusable_b", "card_json": card_json},

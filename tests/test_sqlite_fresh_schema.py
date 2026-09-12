@@ -55,37 +55,43 @@ class TestFreshSqliteSchema:
         assert cfg["embedding_region"] == "cn"
 
     async def test_second_init_adds_nothing_and_stays_silent(self, tmp_path, capsys):
-        """(c) 同一个库连跑两次 init：列齐、且 067 不再打失败输出。
+        """(c) 同一个库连跑两次 init：列齐，且**整库零失败输出**。
 
         这条才验得到 PRAGMA 前置：只跑一次的话，裸 ALTER 在新库上本来也成功。
         第二次跑时列已存在，确定性写法根本不发那条 ALTER（PRAGMA 已跳过）。
 
-        断言范围限定在 067：第二次 init 另有一处**既有**噪音
-        （034_post_enhancements 的 except 连 duplicate column 都不吞，直接 print），
-        与本次改动无关，见 AGENTS.md 缺陷表。
+        全强度断言（缺陷 15 收口）：此前第二次 init 另有一处**既有**噪音 ——
+        034_post_enhancements 的 except 连 duplicate column 都不吞、直接 print，于是
+        「同库两次 init 无失败输出」只能退到「不含 067 的失败」。034 改确定性执行后
+        这层退让不再必要，恢复整库口径。
         """
         db_path = str(tmp_path / "twice.db")
         out1 = await _init(SQLiteStore(db_path), capsys)
         out2 = await _init(SQLiteStore(db_path), capsys)
-        assert "Embedding config" not in out1, f"首次 init 就打了 067 失败:\n{out1}"
-        assert "Embedding config" not in out2, f"第二次 init 打了 067 失败:\n{out2}"
+        assert "failed" not in out1, f"首次 init 打了失败行:\n{out1}"
+        assert "failed" not in out2, f"第二次 init 打了失败行:\n{out2}"
         cols = _columns(db_path)
         for col in EMBEDDING_COLS:
             assert col in cols, f"两次 init 后 users 缺 {col}；实际列={sorted(cols)}"
 
     async def test_fresh_init_prints_no_failure(self, tmp_path, capsys):
-        """(d) 兜整类盲区：建库期间 stdout 不得出现任何失败行。
+        """(d) 兜整类盲区：建库期间 stdout 不得出现任何失败行 —— **两次 init 都算**。
 
         一处断言覆盖全部迁移文件——将来任何迁移在 SQLite 上跑失败立刻红，
         不必等到有人用到那张表。断言 "failed" 而非仅 "migration failed"：
-        后者漏掉 `Migration <file> failed: ...` 这类文件名插在中间的格式
-        （010/011/012 的循环块），而 "failed" 是它的超集。
-        成功路径本就不打印含 failed 的行（init 的全部 print 都在 except 分支），
+        后者漏掉 `Migration <file> failed: ...` 这类文件名插在中间的格式，
+        而 "failed" 是它的超集。
+        成功路径本就不打印含 failed 的行（init 的 print 只在异常处理里，且都已删），
         故超集不会误报。
+
+        第二次 init 必须覆盖：只跑一次的话，「已建库重跑」这条正常路径根本不会经过
+        `ADD COLUMN` 的失败分支 —— 034 假失败正是只在第二次出现。
         """
-        store, _ = _fresh_store(tmp_path)
-        out = await _init(store, capsys)
-        assert "failed" not in out, f"新建 sqlite 库的输出里出现失败行:\n{out}"
+        db_path = str(tmp_path / "twice.db")
+        out1 = await _init(SQLiteStore(db_path), capsys)
+        out2 = await _init(SQLiteStore(db_path), capsys)
+        assert "failed" not in out1, f"新建 sqlite 库的输出里出现失败行:\n{out1}"
+        assert "failed" not in out2, f"第二次 init 的输出里出现失败行:\n{out2}"
 
     async def test_partial_state_fills_only_missing_column(self, tmp_path, capsys):
         """(e) 只缺一列时只补那一列——PRAGMA 前置与「猜错误串」的真正分界。

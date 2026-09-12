@@ -22,6 +22,83 @@ from .base import StorageBase
 
 logger = logging.getLogger(__name__)
 
+# 迁移应用次序（缺陷 15）。显式列出而不是 glob 整个目录：077 与 078 之间夹着 users 表
+# 重建，次序有意义。**新增迁移文件必须登记在这里** —— tests/test_migration_dispatch.py
+# 会扫目录求差集，漏登记即红（该文件的 `_NOT_APPLIED` 是唯一豁免出口，必须带理由）。
+_MIGRATIONS_BEFORE_USER_REBUILD = (
+    "002_voice.sql", "003_wechat.sql", "004_title_desc.sql", "005_characters_cache.sql",
+    "006_card_avatar.sql", "007_text_type.sql", "008_original_char_count.sql", "009_users.sql",
+    "010_user_id_texts.sql", "011_user_id_cards.sql", "012_user_id_sessions.sql",
+    "013_admin.sql", "014_sessions_deleted_at.sql", "015_refresh_tokens.sql",
+    "016_usage_stats.sql", "017_affinity.sql", "018_user_api_config.sql",
+    "019_usage_stats_model.sql", "020_affinity_reason.sql", "021_user_avatar.sql",
+    "022_message_retracted.sql", "023_user_email.sql", "024_verification_codes.sql",
+    "025_market.sql", "026_group_sessions.sql", "027_voice_to_cards.sql",
+    "028_comments_follows.sql", "029_soft_delete_cards.sql", "030_user_posts.sql",
+    "031_text_comments.sql", "032_direct_messages.sql", "033_text_visibility.sql",
+    "034_post_enhancements.sql", "035_card_updated_at.sql", "036_market_publish.sql",
+    "038_card_comment_reports.sql", "039_user_profile_visibility.sql",
+    "040_user_privacy_fields.sql", "041_banner_data.sql", "042_comment_ip_location.sql",
+    "043_user_last_login.sql", "044_announcements.sql", "045_config_changelog.sql",
+    "046_review_log.sql", "047_featured_cards.sql", "048_user_last_active.sql",
+    "049_announcement_align.sql", "050_group_soft_delete.sql", "051_message_reactions.sql",
+    "052_user_bio.sql", "053_reading_progress.sql", "054_text_soft_delete.sql",
+    "055_chat_reply.sql", "056_coref_resolved.sql", "057_presence_visibility.sql",
+    "058_following_visible.sql", "059_presence_visibility_rename.sql",
+    "060_group_user_persona.sql", "061_post_location.sql", "062_card_comment_at_reply.sql",
+    "063_text_cover.sql", "064_geo_block.sql", "065_user_consent.sql", "066_group_affinity.sql",
+    "067_embedding_config.sql", "068_usage_estimated.sql", "069_dm_reactions.sql",
+    "070_data_residency.sql", "071_cross_border_consent.sql", "072_card_sync.sql",
+    "073_remote_cards.sql", "074_delete_outbox.sql", "075_dm_retracted.sql",
+    "077_nickname.sql",
+)
+
+# 必须排在 users 表重建之后 —— 重建会把 idx_users_username_lower 一起丢掉。
+_MIGRATIONS_AFTER_USER_REBUILD = (
+    "078_username_lower.sql", "080_group_user_avatar.sql", "081_refresh_token_grace.sql",
+    "082_affinity_state.sql", "083_card_reports.sql", "084_distill_tasks.sql",
+)
+
+# `ALTER TABLE t ADD COLUMN c ...;` —— 迁移里唯一「重复执行即报错」的形态。
+_ADD_COLUMN_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
+    re.IGNORECASE,
+)
+
+
+async def _existing_columns(conn: Any, table: str) -> set[str]:
+    cursor = await conn.execute(f"PRAGMA table_info({table})")
+    return {row[1] for row in await cursor.fetchall()}
+
+
+async def _apply_migration(conn: Any, path: Path) -> None:
+    """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
+
+    SQLite 没有 `ADD COLUMN IF NOT EXISTS`（PG 才有），`ALTER TABLE ... ADD COLUMN` 是迁移
+    脚本里唯一「重复执行即报错」的形态。规则：
+
+    - 脚本里每个 ADD COLUMN 的列都已存在 → 这份脚本早已应用过，**整份跳过**
+      （这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只属于首次应用）
+    - 有列缺失 → 剥掉那些**已存在**的 ADD COLUMN，其余照常执行
+
+    **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
+    「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
+    """
+    sql = path.read_text(encoding="utf-8")
+    add_cols = list(_ADD_COLUMN_RE.finditer(sql))
+    if add_cols:
+        present: dict[str, set[str]] = {}
+        for m in add_cols:
+            table = m.group("table")
+            if table not in present:
+                present[table] = await _existing_columns(conn, table)
+        if all(m.group("column") in present[m.group("table")] for m in add_cols):
+            return
+        sql = _ADD_COLUMN_RE.sub(
+            lambda m: "" if m.group("column") in present[m.group("table")] else m.group(0), sql)
+    await conn.executescript(sql)
+    await conn.commit()
+
 
 class _ConnectionContext:
     """Wrap an opened aiosqlite connection for `async with await ...` usage."""
@@ -73,13 +150,6 @@ class SQLiteStore(StorageBase):
                 self.db_path.parent.mkdir(parents=True, exist_ok=True)
                 migrations_dir = Path(__file__).with_name("migrations")
                 migration_path = migrations_dir / "001_init.sql"
-                migration_sql = migration_path.read_text(encoding="utf-8")
-                voice_migration_path = migrations_dir / "002_voice.sql"
-                wechat_migration_path = migrations_dir / "003_wechat.sql"
-                title_desc_migration_path = migrations_dir / "004_title_desc.sql"
-                characters_cache_path = migrations_dir / "005_characters_cache.sql"
-                card_avatar_path = migrations_dir / "006_card_avatar.sql"
-                text_type_path = migrations_dir / "007_text_type.sql"
             except OSError as exc:
                 print(f"[SQLiteStore] Read migration file failed: {exc}")
                 raise
@@ -87,831 +157,79 @@ class SQLiteStore(StorageBase):
             try:
                 async with aiosqlite.connect(self.db_path) as conn:  # type: ignore[union-attr]
                     await conn.execute("PRAGMA foreign_keys = ON;")
-                    await conn.executescript(migration_sql)
-                    await conn.commit()
-
-                    # Run 002_voice migration (ALTER TABLE may fail if column exists)
-                    if voice_migration_path.exists():
-                        try:
-                            voice_sql = voice_migration_path.read_text(encoding="utf-8")
-                            await conn.executescript(voice_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Voice migration failed: {exc}")
-
-                    # Run 003_wechat migration (CREATE TABLE IF NOT EXISTS)
-                    if wechat_migration_path.exists():
-                        wechat_sql = wechat_migration_path.read_text(encoding="utf-8")
-                        await conn.executescript(wechat_sql)
-                        await conn.commit()
-
-                    # Run 004_title_desc migration (ALTER TABLE may fail if column exists)
-                    if title_desc_migration_path.exists():
-                        try:
-                            title_desc_sql = title_desc_migration_path.read_text(encoding="utf-8")
-                            await conn.executescript(title_desc_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Title/desc migration failed: {exc}")
-
-                    # Run 005_characters_cache migration (ALTER TABLE may fail if column exists)
-                    if characters_cache_path.exists():
-                        try:
-                            characters_cache_sql = characters_cache_path.read_text(encoding="utf-8")
-                            await conn.executescript(characters_cache_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Characters cache migration failed: {exc}")
-
-                    # Run 006_card_avatar migration (ALTER TABLE may fail if column exists)
-                    if card_avatar_path.exists():
-                        try:
-                            card_avatar_sql = card_avatar_path.read_text(encoding="utf-8")
-                            await conn.executescript(card_avatar_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Card avatar migration failed: {exc}")
-
-                    # Run 007_text_type migration (ALTER TABLE may fail if column exists)
-                    if text_type_path.exists():
-                        try:
-                            text_type_sql = text_type_path.read_text(encoding="utf-8")
-                            await conn.executescript(text_type_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Text type migration failed: {exc}")
-
-                    # Run 008_original_char_count migration (ALTER TABLE may fail if column exists)
-                    original_char_count_path = migrations_dir / "008_original_char_count.sql"
-                    if original_char_count_path.exists():
-                        try:
-                            occ_sql = original_char_count_path.read_text(encoding="utf-8")
-                            await conn.executescript(occ_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Original char count migration failed: {exc}")
-
-                    # Run 009_users migration (CREATE TABLE IF NOT EXISTS — idempotent)
-                    users_migration_path = migrations_dir / "009_users.sql"
-                    if users_migration_path.exists():
-                        await conn.executescript(users_migration_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run user_id column migrations (ALTER TABLE — may fail if column exists)
-                    for mig_name in ("010_user_id_texts.sql", "011_user_id_cards.sql", "012_user_id_sessions.sql"):
-                        mig_path = migrations_dir / mig_name
-                        if mig_path.exists():
-                            try:
-                                await conn.executescript(mig_path.read_text(encoding="utf-8"))
-                                await conn.commit()
-                            except Exception as exc:
-                                if "duplicate column" not in str(exc).lower():
-                                    print(f"[SQLiteStore] Migration {mig_name} failed: {exc}")
-
-                    # Run 013_admin migration (ALTER TABLE may fail if columns exist)
-                    admin_migration_path = migrations_dir / "013_admin.sql"
-                    if admin_migration_path.exists():
-                        try:
-                            admin_sql = admin_migration_path.read_text(encoding="utf-8")
-                            await conn.executescript(admin_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Admin migration failed: {exc}")
-
-                    # Run 014_sessions_deleted_at migration (ALTER TABLE may fail if column exists)
-                    deleted_at_migration_path = migrations_dir / "014_sessions_deleted_at.sql"
-                    if deleted_at_migration_path.exists():
-                        try:
-                            deleted_at_sql = deleted_at_migration_path.read_text(encoding="utf-8")
-                            await conn.executescript(deleted_at_sql)
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Deleted_at migration failed: {exc}")
-
-                    # Run 015_refresh_tokens migration (CREATE TABLE IF NOT EXISTS — idempotent)
-                    refresh_tokens_path = migrations_dir / "015_refresh_tokens.sql"
-                    if refresh_tokens_path.exists():
-                        await conn.executescript(refresh_tokens_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run 016_usage_stats migration (CREATE TABLE IF NOT EXISTS — idempotent)
-                    usage_stats_path = migrations_dir / "016_usage_stats.sql"
-                    if usage_stats_path.exists():
-                        await conn.executescript(usage_stats_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run 017_affinity migration (ALTER TABLE — may fail if columns exist)
-                    affinity_migration_path = migrations_dir / "017_affinity.sql"
-                    if affinity_migration_path.exists():
-                        try:
-                            await conn.executescript(affinity_migration_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Affinity migration failed: {exc}")
-
-                    # Run 018_user_api_config migration (ALTER TABLE — may fail if columns exist)
-                    api_config_path = migrations_dir / "018_user_api_config.sql"
-                    if api_config_path.exists():
-                        try:
-                            await conn.executescript(api_config_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User API config migration failed: {exc}")
-
-                    # Run 019_usage_stats_model migration (ALTER TABLE — may fail if column exists)
-                    usage_model_path = migrations_dir / "019_usage_stats_model.sql"
-                    if usage_model_path.exists():
-                        try:
-                            await conn.executescript(usage_model_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Usage stats model migration failed: {exc}")
-
-                    # Run 020_affinity_reason migration
-                    reason_path = migrations_dir / "020_affinity_reason.sql"
-                    if reason_path.exists():
-                        try:
-                            await conn.executescript(reason_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Affinity reason migration failed: {exc}")
-
-                    # Run 021_user_avatar migration (ALTER TABLE may fail if column exists)
-                    avatar_path = migrations_dir / "021_user_avatar.sql"
-                    if avatar_path.exists():
-                        try:
-                            await conn.executescript(avatar_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User avatar migration failed: {exc}")
-
-                    # Run 022_message_retracted migration (ALTER TABLE may fail if column exists)
-                    retracted_path = migrations_dir / "022_message_retracted.sql"
-                    if retracted_path.exists():
-                        try:
-                            await conn.executescript(retracted_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Message retracted migration failed: {exc}")
-
-                    # Run 023_user_email migration (ALTER TABLE may fail if column exists)
-                    email_path = migrations_dir / "023_user_email.sql"
-                    if email_path.exists():
-                        try:
-                            await conn.executescript(email_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User email migration failed: {exc}")
-
-                    # Run 024_verification_codes migration (CREATE TABLE IF NOT EXISTS)
-                    vc_path = migrations_dir / "024_verification_codes.sql"
-                    if vc_path.exists():
-                        await conn.executescript(vc_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run 025_market migration (ALTER TABLE may fail if column exists)
-                    market_path = migrations_dir / "025_market.sql"
-                    if market_path.exists():
-                        try:
-                            await conn.executescript(market_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Market migration failed: {exc}")
-
-                    # Run 026_group_sessions migration (CREATE TABLE IF NOT EXISTS + ALTER TABLE)
-                    group_path = migrations_dir / "026_group_sessions.sql"
-                    if group_path.exists():
-                        try:
-                            await conn.executescript(group_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Group sessions migration failed: {exc}")
-
-                    # Run 027_voice_to_cards migration (ALTER TABLE cards + data migration)
-                    voice_to_cards_path = migrations_dir / "027_voice_to_cards.sql"
-                    if voice_to_cards_path.exists():
-                        try:
-                            await conn.executescript(voice_to_cards_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Voice to cards migration failed: {exc}")
-
-                    # Run 028_comments_follows migration (CREATE TABLE IF NOT EXISTS)
-                    cf_path = migrations_dir / "028_comments_follows.sql"
-                    if cf_path.exists():
-                        try:
-                            await conn.executescript(cf_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Comments/follows migration failed: {exc}")
-
-                    # Run 029_soft_delete migration (ALTER TABLE cards ADD COLUMN deleted_at)
-                    sd_path = migrations_dir / "029_soft_delete_cards.sql"
-                    if sd_path.exists():
-                        try:
-                            await conn.executescript(sd_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Soft delete migration failed: {exc}")
-
-                    # Run 030_user_posts migration (CREATE TABLE IF NOT EXISTS)
-                    up_path = migrations_dir / "030_user_posts.sql"
-                    if up_path.exists():
-                        try:
-                            await conn.executescript(up_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] User posts migration failed: {exc}")
-
-                    # Run 031_text_comments migration (CREATE TABLE IF NOT EXISTS)
-                    tc_path = migrations_dir / "031_text_comments.sql"
-                    if tc_path.exists():
-                        try:
-                            await conn.executescript(tc_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Text comments migration failed: {exc}")
-
-                    # Run 032_direct_messages migration (CREATE TABLE IF NOT EXISTS)
-                    dm_path = migrations_dir / "032_direct_messages.sql"
-                    if dm_path.exists():
-                        try:
-                            await conn.executescript(dm_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Direct messages migration failed: {exc}")
-
-                    # Run 033_text_visibility migration (ALTER TABLE may fail if column exists)
-                    tv_path = migrations_dir / "033_text_visibility.sql"
-                    if tv_path.exists():
-                        try:
-                            await conn.executescript(tv_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Text visibility migration failed: {exc}")
-
-                    # Run 034_post_enhancements migration (ALTER TABLE + CREATE TABLE)
-                    pe_path = migrations_dir / "034_post_enhancements.sql"
-                    if pe_path.exists():
-                        try:
-                            await conn.executescript(pe_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Post enhancements migration failed: {exc}")
-
-                    # Run 035_card_updated_at migration (ALTER TABLE ADD COLUMN)
-                    card_ua_path = migrations_dir / "035_card_updated_at.sql"
-                    if card_ua_path.exists():
-                        try:
-                            await conn.executescript(card_ua_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Card updated_at migration failed: {exc}")
-
-                    # Run 036_market_publish migration (ALTER TABLE cards + CREATE TABLE card_versions)
-                    mp_path = migrations_dir / "036_market_publish.sql"
-                    if mp_path.exists():
-                        try:
-                            await conn.executescript(mp_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Market publish migration failed: {exc}")
-
-                    # Run 038_card_comment_reports migration (CREATE TABLE)
-                    rp_path = migrations_dir / "038_card_comment_reports.sql"
-                    if rp_path.exists():
-                        try:
-                            await conn.executescript(rp_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Comment reports migration failed: {exc}")
-
-                    # Run 039_user_profile_visibility migration (ALTER TABLE)
-                    pv_path = migrations_dir / "039_user_profile_visibility.sql"
-                    if pv_path.exists():
-                        try:
-                            await conn.executescript(pv_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Profile visibility migration failed: {exc}")
-
-                    # Run 040_user_privacy_fields migration (ALTER TABLE)
-                    privacy_path = migrations_dir / "040_user_privacy_fields.sql"
-                    if privacy_path.exists():
-                        try:
-                            await conn.executescript(privacy_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Privacy fields migration failed: {exc}")
-
-                    # Run 041_banner_data migration (ALTER TABLE ADD COLUMN)
-                    banner_path = migrations_dir / "041_banner_data.sql"
-                    if banner_path.exists():
-                        try:
-                            await conn.executescript(banner_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Banner data migration failed: {exc}")
-
-                    # Run 042_comment_ip_location migration
-                    ip_path = migrations_dir / "042_comment_ip_location.sql"
-                    if ip_path.exists():
-                        try:
-                            await conn.executescript(ip_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Comment IP location migration failed: {exc}")
-
-                    # Run 043_user_last_login migration
-                    login_path = migrations_dir / "043_user_last_login.sql"
-                    if login_path.exists():
-                        try:
-                            await conn.executescript(login_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User last_login migration failed: {exc}")
-
-                    # Run 044_announcements migration (CREATE TABLE IF NOT EXISTS)
-                    announce_path = migrations_dir / "044_announcements.sql"
-                    if announce_path.exists():
-                        try:
-                            await conn.executescript(announce_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Announcements migration failed: {exc}")
-
-                    # Run 045_config_changelog migration (CREATE TABLE IF NOT EXISTS)
-                    cl_path = migrations_dir / "045_config_changelog.sql"
-                    if cl_path.exists():
-                        try:
-                            await conn.executescript(cl_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Config changelog migration failed: {exc}")
-
-                    # Run 046_review_log migration (CREATE TABLE IF NOT EXISTS)
-                    rl_path = migrations_dir / "046_review_log.sql"
-                    if rl_path.exists():
-                        try:
-                            await conn.executescript(rl_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Review log migration failed: {exc}")
-
-                    # Run 047_featured_cards migration (CREATE TABLE IF NOT EXISTS)
-                    fc_path = migrations_dir / "047_featured_cards.sql"
-                    if fc_path.exists():
-                        try:
-                            await conn.executescript(fc_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Featured cards migration failed: {exc}")
-
-                    # Run 048_user_last_active migration (ALTER TABLE ADD COLUMN)
-                    la_path = migrations_dir / "048_user_last_active.sql"
-                    if la_path.exists():
-                        try:
-                            await conn.executescript(la_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User last_active migration failed: {exc}")
-
-                    # Run 049_announcement_align migration (ALTER TABLE ADD COLUMN)
-                    aa_path = migrations_dir / "049_announcement_align.sql"
-                    if aa_path.exists():
-                        try:
-                            await conn.executescript(aa_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Announcement align migration failed: {exc}")
-
-                    # Run 050_group_soft_delete migration (ALTER TABLE ADD COLUMN)
-                    gsd_path = migrations_dir / "050_group_soft_delete.sql"
-                    if gsd_path.exists():
-                        try:
-                            await conn.executescript(gsd_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Group soft delete migration failed: {exc}")
-
-                    # Run 051_message_reactions migration (CREATE TABLE + ALTER TABLE)
-                    mr_path = migrations_dir / "051_message_reactions.sql"
-                    if mr_path.exists():
-                        try:
-                            await conn.executescript(mr_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Message reactions migration failed: {exc}")
-
-                    # Run 052_user_bio migration (ALTER TABLE ADD COLUMN)
-                    bio_path = migrations_dir / "052_user_bio.sql"
-                    if bio_path.exists():
-                        try:
-                            await conn.executescript(bio_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] User bio migration failed: {exc}")
-
-                    # Run 053_reading_progress migration (CREATE TABLE IF NOT EXISTS)
-                    rp_path = migrations_dir / "053_reading_progress.sql"
-                    if rp_path.exists():
-                        try:
-                            await conn.executescript(rp_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Reading progress migration failed: {exc}")
-
-                    # Run 054_text_soft_delete migration (ALTER TABLE ADD COLUMN)
-                    soft_del_path = migrations_dir / "054_text_soft_delete.sql"
-                    if soft_del_path.exists():
-                        try:
-                            await conn.executescript(soft_del_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Text soft delete migration failed: {exc}")
-
-                    # Run 055_chat_reply migration (ALTER TABLE ADD COLUMN)
-                    chat_reply_path = migrations_dir / "055_chat_reply.sql"
-                    if chat_reply_path.exists():
-                        try:
-                            await conn.executescript(chat_reply_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Chat reply migration failed: {exc}")
-
-                    # Run 056_coref_resolved migration (ALTER TABLE ADD COLUMN)
-                    coref_resolved_path = migrations_dir / "056_coref_resolved.sql"
-                    if coref_resolved_path.exists():
-                        try:
-                            await conn.executescript(coref_resolved_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Coref resolved migration failed: {exc}")
-
-                    # Run 057_presence_visibility migration (ALTER TABLE ADD COLUMN)
-                    presence_vis_path = migrations_dir / "057_presence_visibility.sql"
-                    if presence_vis_path.exists():
-                        try:
-                            await conn.executescript(presence_vis_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Presence visibility migration failed: {exc}")
-
-                    # Run 058_following_visible migration (ALTER TABLE ADD COLUMN)
-                    following_vis_path = migrations_dir / "058_following_visible.sql"
-                    if following_vis_path.exists():
-                        try:
-                            await conn.executescript(following_vis_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Following visibility migration failed: {exc}")
-
-                    # Run 059_presence_visibility_rename migration (friends → mutual)
-                    presence_rename_path = migrations_dir / "059_presence_visibility_rename.sql"
-                    if presence_rename_path.exists():
-                        try:
-                            await conn.executescript(presence_rename_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Presence visibility rename migration failed: {exc}")
-
-                    # Run 060_group_user_persona migration
-                    group_persona_path = migrations_dir / "060_group_user_persona.sql"
-                    if group_persona_path.exists():
-                        try:
-                            await conn.executescript(group_persona_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Group persona migration failed: {exc}")
-
-                    # Run 061_post_location migration
-                    post_loc_path = migrations_dir / "061_post_location.sql"
-                    if post_loc_path.exists():
-                        try:
-                            await conn.executescript(post_loc_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Post location migration failed: {exc}")
-
-                    # Run 062_card_comment_at_reply migration
-                    at_reply_path = migrations_dir / "062_card_comment_at_reply.sql"
-                    if at_reply_path.exists():
-                        try:
-                            await conn.executescript(at_reply_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Card comment at_reply migration failed: {exc}")
-
-                    # Run 063_text_cover migration
-                    cover_path = migrations_dir / "063_text_cover.sql"
-                    if cover_path.exists():
-                        try:
-                            await conn.executescript(cover_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Text cover migration failed: {exc}")
-
-                    # Run 064_geo_block migration (CREATE TABLE IF NOT EXISTS — idempotent)
-                    geo_block_path = migrations_dir / "064_geo_block.sql"
-                    if geo_block_path.exists():
-                        try:
-                            await conn.executescript(geo_block_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Geo block migration failed: {exc}")
-
-                    # Run 065_user_consent migration
-                    consent_path = migrations_dir / "065_user_consent.sql"
-                    if consent_path.exists():
-                        try:
-                            await conn.executescript(consent_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] User consent migration failed: {exc}")
-
-                    # Run 066_group_affinity migration (CREATE TABLE IF NOT EXISTS — idempotent)
-                    ga_path = migrations_dir / "066_group_affinity.sql"
-                    if ga_path.exists():
-                        try:
-                            await conn.executescript(ga_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Group affinity migration failed: {exc}")
-
-                    # Run 067_embedding_config migration.
-                    # SQLite 没有 `ADD COLUMN IF NOT EXISTS`（PG 才有），所以不能靠 except 吞
-                    # "duplicate column" 去猜这条错误能不能忽略——那只是换了个串猜。
-                    # 改成先读 PRAGMA 现有列，确定性判断：缺哪列 ALTER 哪列，不缺就跳过。
-                    ec_path = migrations_dir / "067_embedding_config.sql"
-                    if ec_path.exists():
-                        cursor = await conn.execute("PRAGMA table_info(users)")
-                        existing_cols = {row[1] for row in await cursor.fetchall()}
-                        for stmt in ec_path.read_text(encoding="utf-8").split(";"):
-                            stmt = stmt.strip()
-                            if not stmt:
-                                continue
-                            added = re.match(
-                                r"ALTER\s+TABLE\s+\w+\s+ADD\s+COLUMN\s+(\w+)", stmt, re.IGNORECASE
-                            )
-                            if added and added.group(1) in existing_cols:
-                                continue
-                            await conn.execute(stmt)
-                        await conn.commit()
-
-                    # Run 068_usage_estimated migration (ALTER TABLE may fail if column exists)
-                    ue_path = migrations_dir / "068_usage_estimated.sql"
-                    if ue_path.exists():
-                        try:
-                            await conn.executescript(ue_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Usage estimated migration failed: {exc}")
-
-                    # Run 069_dm_reactions migration (CREATE TABLE IF NOT EXISTS)
-                    dmr_path = migrations_dir / "069_dm_reactions.sql"
-                    if dmr_path.exists():
-                        try:
-                            await conn.executescript(dmr_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] DM reactions migration failed: {exc}")
-
-                    # Run 070_data_residency migration (ALTER TABLE + CREATE TABLE + INSERT)
-                    residency_path = migrations_dir / "070_data_residency.sql"
-                    if residency_path.exists():
-                        try:
-                            await conn.executescript(residency_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Data residency migration failed: {exc}")
-
-                    # Run 071_cross_border_consent migration (CREATE TABLE IF NOT EXISTS + ALTER TABLE)
-                    cb_path = migrations_dir / "071_cross_border_consent.sql"
-                    if cb_path.exists():
-                        try:
-                            await conn.executescript(cb_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Cross-border consent migration failed: {exc}")
-
-                    # Run 072_card_sync migration (ALTER TABLE ADD COLUMN + INDEX)
-                    card_sync_path = migrations_dir / "072_card_sync.sql"
-                    if card_sync_path.exists():
-                        try:
-                            await conn.executescript(card_sync_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Card sync migration failed: {exc}")
-
-                    # Run 073_remote_cards migration (CREATE TABLE IF NOT EXISTS remote_cards)
-                    remote_cards_path = migrations_dir / "073_remote_cards.sql"
-                    if remote_cards_path.exists():
-                        await conn.executescript(remote_cards_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run 074_delete_outbox migration (CREATE TABLE IF NOT EXISTS)
-                    delete_outbox_path = migrations_dir / "074_delete_outbox.sql"
-                    if delete_outbox_path.exists():
-                        await conn.executescript(delete_outbox_path.read_text(encoding="utf-8"))
-                        await conn.commit()
-
-                    # Run 075_dm_retracted migration (ALTER TABLE may fail if column exists)
-                    dm_retracted_path = migrations_dir / "075_dm_retracted.sql"
-                    if dm_retracted_path.exists():
-                        try:
-                            await conn.executescript(dm_retracted_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] DM retracted migration failed: {exc}")
-
-                    # Run 077_nickname migration (ALTER TABLE may fail if column exists)
-                    nickname_path = migrations_dir / "077_nickname.sql"
-                    if nickname_path.exists():
-                        try:
-                            await conn.executescript(nickname_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Nickname migration failed: {exc}")
+                    await _apply_migration(conn, migration_path)
+
+                    for _name in _MIGRATIONS_BEFORE_USER_REBUILD:
+                        _path = migrations_dir / _name
+                        if _path.exists():
+                            await _apply_migration(conn, _path)
 
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
                     # Data residency: remove password_hash/api_key/base_url/model from users
                     # SQLite table-recreate approach for portability (< 3.35.0 compat)
-                    try:
-                        cursor = await conn.execute("PRAGMA table_info(users)")
-                        all_cols = [row[1] for row in await cursor.fetchall()]
-                        if "password_hash" in all_cols:
-                            # Build the column list dynamically so that columns added by
-                            # later migrations survive the rebuild; col_defs supplies the
-                            # type for known ones (unknown ones fall back to TEXT).
-                            keep_cols = [c for c in all_cols
-                                         if c not in ("password_hash", "api_key", "base_url", "model")]
-                            col_defs = {
-                                "id": "TEXT PRIMARY KEY",
-                                "username": "TEXT NOT NULL UNIQUE",
-                                "is_admin": "INTEGER DEFAULT 0",
-                                "is_disabled": "INTEGER DEFAULT 0",
-                                "avatar_data": "TEXT DEFAULT ''",
-                                "banner_data": "TEXT DEFAULT ''",
-                                "bio": "TEXT DEFAULT ''",
-                                "email": "TEXT DEFAULT ''",
-                                "email_verified": "INTEGER DEFAULT 0",
-                                "profile_stats_visible": "INTEGER DEFAULT 1",
-                                "cards_visible": "INTEGER NOT NULL DEFAULT 1",
-                                "books_visible": "INTEGER NOT NULL DEFAULT 1",
-                                "following_visible": "INTEGER NOT NULL DEFAULT 1",
-                                "presence_visibility": "TEXT NOT NULL DEFAULT 'mutual'",
-                                "last_login_at": "TEXT DEFAULT ''",
-                                "last_active_at": "TEXT DEFAULT ''",
-                                "embedding_key": "TEXT DEFAULT ''",
-                                "embedding_region": "TEXT DEFAULT 'cn'",
-                                "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
-                                "nickname": "TEXT DEFAULT ''",
-                                "username_lower": "TEXT",
-                                "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                            }
-                            col_list = ", ".join(keep_cols)
-                            create_defs = ", ".join(
-                                f"{c} {col_defs.get(c, 'TEXT DEFAULT \"\"')}"
-                                for c in keep_cols
-                            )
-                            await conn.executescript(f"""
-                                PRAGMA defer_foreign_keys = ON;
-                                CREATE TABLE users_mig ({create_defs});
-                                INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
-                                DROP TABLE users;
-                                ALTER TABLE users_mig RENAME TO users;
-                            """)
-                            await conn.commit()
-                    except Exception as exc:
-                        if "no such column" not in str(exc).lower():
-                            print(f"[SQLiteStore] Data residency column removal: {exc}")
-
-                    # Username lower: add column, backfill, create unique index
-                    # Must run AFTER data-residency table rebuild (which would drop the index).
-                    try:
-                        await conn.execute("ALTER TABLE users ADD COLUMN username_lower TEXT")
+                    # `if` 守卫本身就是幂等机制（列已删就整块跳过），所以不需要 except ——
+                    # 重建失败照常上抛，不再被 print 吞成「初始化成功」。
+                    cursor = await conn.execute("PRAGMA table_info(users)")
+                    all_cols = [row[1] for row in await cursor.fetchall()]
+                    if "password_hash" in all_cols:
+                        # Build the column list dynamically so that columns added by
+                        # later migrations survive the rebuild; col_defs supplies the
+                        # type for known ones (unknown ones fall back to TEXT).
+                        keep_cols = [c for c in all_cols
+                                     if c not in ("password_hash", "api_key", "base_url", "model")]
+                        col_defs = {
+                            "id": "TEXT PRIMARY KEY",
+                            "username": "TEXT NOT NULL UNIQUE",
+                            "is_admin": "INTEGER DEFAULT 0",
+                            "is_disabled": "INTEGER DEFAULT 0",
+                            "avatar_data": "TEXT DEFAULT ''",
+                            "banner_data": "TEXT DEFAULT ''",
+                            "bio": "TEXT DEFAULT ''",
+                            "email": "TEXT DEFAULT ''",
+                            "email_verified": "INTEGER DEFAULT 0",
+                            "profile_stats_visible": "INTEGER DEFAULT 1",
+                            "cards_visible": "INTEGER NOT NULL DEFAULT 1",
+                            "books_visible": "INTEGER NOT NULL DEFAULT 1",
+                            "following_visible": "INTEGER NOT NULL DEFAULT 1",
+                            "presence_visibility": "TEXT NOT NULL DEFAULT 'mutual'",
+                            "last_login_at": "TEXT DEFAULT ''",
+                            "last_active_at": "TEXT DEFAULT ''",
+                            "embedding_key": "TEXT DEFAULT ''",
+                            "embedding_region": "TEXT DEFAULT 'cn'",
+                            "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
+                            "nickname": "TEXT DEFAULT ''",
+                            "username_lower": "TEXT",
+                            "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                        }
+                        col_list = ", ".join(keep_cols)
+                        create_defs = ", ".join(
+                            f"{c} {col_defs.get(c, 'TEXT DEFAULT \"\"')}"
+                            for c in keep_cols
+                        )
+                        await conn.executescript(f"""
+                            PRAGMA defer_foreign_keys = ON;
+                            CREATE TABLE users_mig ({create_defs});
+                            INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
+                            DROP TABLE users;
+                            ALTER TABLE users_mig RENAME TO users;
+                        """)
                         await conn.commit()
-                    except Exception as exc:
-                        if "duplicate column" not in str(exc).lower():
-                            print(f"[SQLiteStore] Add username_lower column failed: {exc}")
-                    await conn.execute("UPDATE users SET username_lower = LOWER(username) WHERE username_lower IS NULL")
-                    await conn.commit()
-                    try:
-                        await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(username_lower)")
-                        await conn.commit()
-                    except Exception as exc:
-                        print(f"[SQLiteStore] Create username_lower unique index failed — duplicate usernames exist: {exc}")
-                        raise
 
-                    # Run 078_username_lower migration (ALTER TABLE may fail if column exists)
-                    username_lower_path = migrations_dir / "078_username_lower.sql"
-                    if username_lower_path.exists():
-                        try:
-                            await conn.executescript(username_lower_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Username_lower migration failed: {exc}")
+                    # 078 起必须排在 users 表重建之后 —— 重建会丢掉 idx_users_username_lower。
+                    # 原先这段额外内联做了一遍 ADD COLUMN/backfill/CREATE INDEX，与 078 文件重复；
+                    # 内联那份已删 —— 索引创建失败（用户名重复）照样上抛，不再只 print。
+                    for _name in _MIGRATIONS_AFTER_USER_REBUILD:
+                        _path = migrations_dir / _name
+                        if _path.exists():
+                            await _apply_migration(conn, _path)
 
-                    # Run 080_group_user_avatar migration (ALTER TABLE may fail if column exists)
-                    avatar_path = migrations_dir / "080_group_user_avatar.sql"
-                    if avatar_path.exists():
-                        try:
-                            await conn.executescript(avatar_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Group avatar migration failed: {exc}")
-
-                    # Run 081_refresh_token_grace migration (ALTER TABLE may fail if column exists)
-                    grace_path = migrations_dir / "081_refresh_token_grace.sql"
-                    if grace_path.exists():
-                        try:
-                            await conn.executescript(grace_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Refresh token grace migration failed: {exc}")
-
-                    # Run 082_affinity_state migration (ALTER TABLE — may fail if columns exist)
-                    aff_state_path = migrations_dir / "082_affinity_state.sql"
-                    if aff_state_path.exists():
-                        try:
-                            await conn.executescript(aff_state_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            if "duplicate column" not in str(exc).lower():
-                                print(f"[SQLiteStore] Affinity state migration failed: {exc}")
-
-                    # Run 083_card_reports migration (CREATE TABLE)
-                    cr_path = migrations_dir / "083_card_reports.sql"
-                    if cr_path.exists():
-                        try:
-                            await conn.executescript(cr_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Card reports migration failed: {exc}")
-
-                    # Run 084_distill_tasks migration (CREATE TABLE)
-                    distill_path = migrations_dir / "084_distill_tasks.sql"
-                    if distill_path.exists():
-                        try:
-                            await conn.executescript(distill_path.read_text(encoding="utf-8"))
-                            await conn.commit()
-                        except Exception as exc:
-                            print(f"[SQLiteStore] Distill tasks migration failed: {exc}")
-
-                    # Auto-deduplicate: keep only the newest card per text_id+name
-                    # Exclude forked cards (forked_from != '') to preserve independent copies
-                    try:
+                    # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜
+                    # "no such window function" 来兼容老库 —— 换成一次版本判断：能力不足时
+                    # 明确不发这两条语句，其余失败照常上抛。
+                    if sqlite3.sqlite_version_info >= (3, 25):
+                        # Auto-deduplicate: keep only the newest card per text_id+name
+                        # Exclude forked cards (forked_from != '') to preserve independent copies
                         await conn.execute("""
                             DELETE FROM cards
                             WHERE forked_from = '' AND id NOT IN (
@@ -926,12 +244,8 @@ class SQLiteStore(StorageBase):
                             )
                         """)
                         await conn.commit()
-                    except Exception as exc:
-                        if "no such window function" not in str(exc).lower():
-                            print(f"[SQLiteStore] Dedup cards migration: {exc}")
 
-                    # Auto-deduplicate forked cards: same forked_from+user_id+text_id, keep newest
-                    try:
+                        # Auto-deduplicate forked cards: same forked_from+user_id+text_id, keep newest
                         await conn.execute("""
                             DELETE FROM cards
                             WHERE forked_from != '' AND deleted_at IS NULL AND id NOT IN (
@@ -946,9 +260,6 @@ class SQLiteStore(StorageBase):
                             )
                         """)
                         await conn.commit()
-                    except Exception as exc:
-                        if "no such window function" not in str(exc).lower():
-                            print(f"[SQLiteStore] Dedup forked cards: {exc}")
 
                 self._initialized = True
             except Exception as exc:

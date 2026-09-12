@@ -242,16 +242,11 @@ class _StubTextManager:
 
 
 @pytest.fixture
-def llm_gate_open(store, monkeypatch):
+def llm_gate_open(monkeypatch):
     """打开端点的 503「未配置 API Key」前置门，让请求能走到属主门。
 
     这批端点在读文本前先判 distiller / text_manager 是否为 None，无 API Key 时直接 503，
     不打开这道门就测不到属主过滤。只替换 deps 的工厂，不碰被测的属主逻辑。
-
-    另隔离一个无关缺陷：storage/migrations/067_embedding_config.sql 用
-    `ADD COLUMN IF NOT EXISTS`（PostgreSQL 语法，SQLite 不支持），迁移静默失败，
-    于是新建的 SQLite 库缺 users.embedding_key，get_user_api_config 抛
-    OperationalError → 500，挡在属主门之前。这里让该读返回空配置，使用例只测属主过滤。
     """
     import deps
     import web.routers.distill as distill_mod
@@ -259,13 +254,9 @@ def llm_gate_open(store, monkeypatch):
     async def _fake_user_llm(*args, **kwargs):
         return object()
 
-    async def _fake_api_config(*args, **kwargs):
-        return {}
-
     monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
     monkeypatch.setattr(deps, "get_distiller", lambda *a, **kw: object())
     monkeypatch.setattr(deps, "get_text_manager", lambda *a, **kw: _StubTextManager())
-    monkeypatch.setattr(store, "get_user_api_config", _fake_api_config)
     # start_session 建完会话会顺手排场景索引；那条路要用真实 storage，测试里关掉。
     monkeypatch.setattr(distill_mod, "get_indexing_service", lambda: None)
 

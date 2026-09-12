@@ -376,11 +376,6 @@ class TestCStartRefusesOnDBFailure:
         tid = f"txt_{uuid.uuid4().hex}"
         failing = _FailingSaveStore(_db_path(tmp_path))
         _run_async(failing.save_text(tid, "src.txt", "正文", user_id=user_id))
-        # 既有仓库 seam：新 sqlite 库缺 embedding_key 列（ALTER ADD COLUMN IF NOT EXISTS
-        # 在 sqlite 不支持，非本步引入的迁移缺陷，见 test_rag_unusable 同款 stub）。
-        async def _no_api_cfg(_uid):
-            return {}
-        failing.get_user_api_config = _no_api_cfg
         client = _build_client(failing, user_id)
 
         class _StubDistiller:
@@ -432,9 +427,6 @@ def _capture_start(monkeypatch, store, user_id, tid, *, character="甲", force=F
 
     ctx_thread 打桩：不真起线程，只捕获 args 元组（末位即 resume_candidates）。
     """
-    async def _no_api_cfg(_uid):
-        return {}
-    store.get_user_api_config = _no_api_cfg
     monkeypatch.setattr("deps.get_distiller",
                         lambda llm=None: _ResumeDistillerStub(chunk_size))
     captured: list[tuple] = []
@@ -581,10 +573,6 @@ def _install_bg(monkeypatch, store, cap=3):
     返回 (蒸馏器, 信号量, 线程表)。run_on_main_loop 换成同步 asyncio.run —— bg 线程里
     没有事件循环，落库路径照跑。
     """
-    async def _no_api_cfg(_uid):
-        return {}
-    store.get_user_api_config = _no_api_cfg
-
     distiller = _ChunkEmittingDistiller()
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
