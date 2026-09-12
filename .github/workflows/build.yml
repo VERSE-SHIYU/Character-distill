@@ -36,7 +36,15 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
+      # fetch-depth: 0 是**承重的**，不是顺手加的：tests/test_evidence_integrity.py 的
+      # test_code_sha_resolves 用 `git cat-file -t <sha>` 核 manifest 里的 code_sha，
+      # 默认的 fetch-depth: 1 是浅克隆（只有最新一个 commit），历史里的 sha 一律解析不出，
+      # 该用例会对每条 code_sha 报「不是 commit」——数据其实是对的。
+      # **不要为加速 CI 改回浅克隆**（等于在 CI 里关掉这条锁，而 CI 最该守它）。
+      # 本 job 是唯一跑 pytest 的 job；build job 不跑它，故那里不加。
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6

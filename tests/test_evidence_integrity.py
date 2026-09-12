@@ -287,6 +287,18 @@ class TestManifestEntries:
         先例 `incomplete-v5` 的 `unknown(scratch)` 是**合规**的 —— 产出时点只能界在一个
         commit 窗口内、落不到唯一点，如实记。本条保护的正是这种诚实标注不被随手改成
         一个编造的 sha（复算的人 checkout 到错的点，然后得出「数字对不上」）。
+
+        **依赖完整 git 历史**：`git cat-file -t <sha>` 只能解析出**克隆里实际存在**的
+        对象。CI（`.github/workflows/build.yml` 的 test job）的 `actions/checkout`
+        默认 `fetch-depth: 1` = 浅克隆、只有最新一个 commit，历史 sha 一律解析不出 ——
+        那时本用例会对每条 `code_sha` 报「不是 commit」，而 manifest 数据其实是对的
+        （2026-09-12 实测：当时 11 条非哨兵 `code_sha` 解出 6 个不同 commit，
+        在完整克隆里全部 resolve 成 commit —— 是浅克隆的锅，不是数据错）。
+
+        故该 job 显式 `fetch-depth: 0`（那是**承重**配置，不是性能调优），
+        checkout 步旁有注释点明。**不要为了加速 CI 把它改回浅克隆**，也不要降级成
+        「浅克隆下 skip 这条断言」—— 那等于在 CI 里关掉这条锁，而 CI 正是最该守它的
+        地方（本地可能忘了跑）。降级即白建。
         """
         bad = []
         for e in _manifest():
