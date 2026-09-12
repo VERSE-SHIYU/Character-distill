@@ -28,7 +28,7 @@ MANIFEST = ROOT / "docs" / "evidence" / "manifest.json"
 EV_RE = re.compile(r"ev:([a-z0-9][a-z0-9._-]*)")
 
 _REQUIRED = {
-    "verified": ("artifact", "script", "script_role", "reproduce", "assertions"),
+    "verified": ("artifact", "script", "script_role", "reproduce", "assertions", "derived"),
     "runtime-measured": ("env", "measured_at", "notes"),
     "unverifiable": ("measured_at", "env", "notes"),
 }
@@ -52,8 +52,6 @@ _PATH_RE = re.compile(
 # ── L3 数值闭合（缺陷 14 v3 §五）：claim 里的数字必须落在入库产物上 ──
 # 只认独立的数字串：`9d2a9e4` 是 commit 的一部分，不是量值。
 _NUM_RE = re.compile(r"(?<![0-9A-Za-z_])\d+(?![0-9A-Za-z_])")
-# 派生量声明块：notes 里 `派生量：` 之后的全部文本。块内数字视为已声明（附算法）。
-_DERIVED_MARKER = "派生量："
 
 # ── M0 提取器反空过（缺陷 14 v4 §二之二）────────────────────────────────────
 # `_path_tokens` / `_numbers` 是整套判据里**唯一不可能靠「声明」消除**的启发式：没被提取到的
@@ -384,15 +382,73 @@ class TestClaimBindings:
                 continue
             bound = {v for a in e["assertions"] for v in (a.get("value"), a.get("len"))
                      if isinstance(v, int) and not isinstance(v, bool)}
-            notes = e.get("notes") or ""
-            derived_text = notes.split(_DERIVED_MARKER, 1)[1] if _DERIVED_MARKER in notes else ""
-            if _DERIVED_MARKER in notes and "=" not in derived_text:
-                bad.append((e["id"], "派生量块没有算法（缺 `=`）"))
-            missing = sorted(_numbers(e.get("claim") or "") - bound - _numbers(derived_text))
+            derived = {d.get("value") for d in (e.get("derived") or [])
+                       if isinstance(d, dict) and isinstance(d.get("value"), int)
+                       and not isinstance(d.get("value"), bool)}
+            missing = sorted(_numbers(e.get("claim") or "") - bound - derived)
             if missing:
                 bad.append((e["id"], f"claim 数字无出处：{missing}"))
         assert not bad, (
-            f"claim 的数字必须被某条 assertion 覆盖，或写进 `{_DERIVED_MARKER}` 块（附算法）：{bad}。")
+            f"claim 的数字必须被某条 assertion 覆盖、或写进 `derived`（附 refs 与 formula）：{bad}。"
+            "既绑不上产物、又说不出算法的数字，该做的是从 claim 里删掉它 —— 不是造一个 derived 糊过去。")
+
+    def test_derived_present_for_verified_and_null_otherwise(self):
+        """`derived` 与 `assertions` 同规则：verified 必填（可为空列表），其余两档 null。"""
+        bad = []
+        for e in _manifest():
+            d = e.get("derived", "缺失")
+            if e.get("status") == "verified":
+                if not isinstance(d, list):
+                    bad.append((e["id"], d))
+            elif d is not None:
+                bad.append((e["id"], d))
+        assert not bad, (
+            f"verified 必须有 derived（无派生量时写空列表）、其余两档必须 null：{bad}。")
+
+    def test_derived_values_come_from_bound_refs(self):
+        """派生量只能从**已绑定**的量派生 —— 三条同时成立才算绑定。
+
+        1. `refs` 非空，且逐个落在本条目 `assertions` 的 `path` 集合里
+        2. `value` 不等于任何单个 `ref` 解析出的值（恒等式即红）
+        3. `formula` 非空
+
+        为什么这样能拦住旧写法：`派生量：9999=9999` 那种在 notes 里自说自话的形态，改写成
+        结构化字段后**过不去** —— `9999` 没有可引的 assertion path。要让一个数字合法，作者
+        必须先把它依赖的量绑到产物上，逃逸的成本变成了「先把真话说出来」。
+        """
+        bad = []
+        for e in _manifest():
+            if e.get("status") != "verified":
+                continue
+            paths = {a["path"] for a in (e.get("assertions") or [])}
+            art = self._artifact(e)
+            for d in (e.get("derived") or []):
+                if not isinstance(d, dict) or "value" not in d:
+                    bad.append((e["id"], repr(d), "条目缺 value"))
+                    continue
+                refs = d.get("refs") or []
+                if not refs:
+                    bad.append((e["id"], d["value"], "refs 为空 —— 派生量没有来源"))
+                    continue
+                outside = sorted(r for r in refs if r not in paths)
+                if outside:
+                    bad.append((e["id"], d["value"], f"refs 不在本条目 assertions 里：{outside}"))
+                    continue
+                if not str(d.get("formula") or "").strip():
+                    bad.append((e["id"], d["value"], "formula 为空 —— 只有数字不叫算法"))
+                    continue
+                for r in refs:
+                    try:
+                        got = _resolve(art, r)
+                    except Exception as ex:
+                        bad.append((e["id"], d["value"], f"ref {r} 解析失败：{type(ex).__name__}"))
+                        break
+                    if type(got) is type(d["value"]) and got == d["value"]:
+                        bad.append((e["id"], d["value"], f"恒等式：ref {r} 本身就等于它"))
+                        break
+        assert not bad, (
+            f"派生量必须能从已绑定的量算出（id, value, 问题）：{bad}。"
+            "注意比类型：`0 == False` 在 Python 里成立，不比对类型会漏掉真变异。")
 
 
 class TestWriterContract:
@@ -425,7 +481,7 @@ class TestWriterContract:
         assert e["reproduce"] == "PROBE_EVIDENCE_ID=tmp-id python tests/perf/probe.py"
         assert e["env"] == "e" and e["code_sha"] == "deadbee"
         assert e["measured_at"] == date.today().isoformat()
-        assert e["assertions"] == []
+        assert e["assertions"] == [] and e["derived"] == []
         assert e["redacted_fields"] == []
 
     def test_whitelist_drops_and_accounts_unlisted_keys(self, tmp_evidence):
@@ -492,7 +548,7 @@ class TestRegisterArtifact:
         evidence_writer.register_artifact(
             "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
             code_sha="abc1234", measured_at="2026-09-10", script_role="producer", notes="n",
-            assertions=[{"path": "a", "value": 1}],
+            assertions=[{"path": "a", "value": 1}], derived=[],
             redacted_fields=("content_head", "preview"))
         e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
         assert e["status"] == "verified"
@@ -500,16 +556,17 @@ class TestRegisterArtifact:
         assert e["script_role"] == "producer"
         assert e["artifact"] == "docs/evidence/tmp-id.json"
         assert e["assertions"] == [{"path": "a", "value": 1}]
+        assert e["derived"] == []
         assert e["redacted_fields"] == ["content_head", "preview"]
 
     def test_missing_artifact_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="不存在"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
 
-    def test_register_requires_script_role_and_assertions(self, tmp_evidence):
-        """迁移入口的 `script_role` / `assertions` 无默认值 —— 漏填给 TypeError，不给静默兜底。"""
+    def test_register_requires_declarations_without_defaults(self, tmp_evidence):
+        """迁移入口的 `script_role` / `assertions` / `derived` 无默认值 —— 漏填 TypeError，不静默兜底。"""
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         with pytest.raises(TypeError):
             evidence_writer.register_artifact(
@@ -521,13 +578,13 @@ class TestRegisterArtifact:
         with pytest.raises(ValueError, match="script_role 只允许"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="secondary",
-                assertions=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
 
     def test_unregistered_id_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="未在 evidence_writer"):
             evidence_writer.register_artifact(
                 "never-registered", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
 
 
 class TestRenderedResumeList:

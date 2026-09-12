@@ -9,16 +9,16 @@
 
 ## 一、可写（`verified`，8 条）
 
-| 数字 / 结论 | 证据 | 一句话复现口径 |
-|---|---|---|
-| 8 条删除路径删完后 distill_tasks / distill_chunks 残留矩阵（8 格）；sqlite 与 PG 逐格相同 | `ev:distill-orphan-matrix` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_orphan_matrix.py` （脚本 `tests/perf/distill_orphan_matrix.py`） |
-| 删卡保留行后，find_interrupted_distill 仅命中 status=['interrupted'] 的行（其余状态整批重跑）；sqlite 与 PG 逐格相同 | `ev:distill-resume-reachability` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py` （脚本 `tests/perf/distill_resume_reachability.py`） |
-| 断点续跑：mock 截断下 6 片各 52 字节全部落库且闸 2 放行；二次续跑 map=0（分片未重算） | `ev:incomplete-v5` | `python -m pytest tests/test_distill_resume.py -q` （脚本 `tests/test_distill_resume.py`（**只佐证**，非产出脚本）） |
-| 属主 404 的 32 条 A 类 + 3 条 B 类 + 7 条文案一致性用例，各自命中的 raise 站点与 status（本机有 key） | `ev:ownership-reachability` | `PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability python -m pytest tests/test_ownership_404.py -q -p raise_probe` （脚本 `tests/perf/raise_probe.py`） |
-| 同上，PROBE_NO_KEY=1 模拟无 key 机器；两档站点表逐行相同，用例数均 42 passed | `ev:ownership-reachability-nokey` | `PROBE_NO_KEY=1 PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability-nokey python -m pytest tests/test_ownership_404.py -q -p …` （脚本 `tests/perf/raise_probe.py`） |
-| 顶到 8192 时 3 条里 2 条 content_chars=0、reasoning_content 12441/12413、finish_reason=length —— 思考与正文共享 max_tokens 预算 | `ev:thinking-capfield` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield python tests/perf/capfield_probe.py` （脚本 `tests/perf/capfield_probe.py`） |
-| 修复后 map 自然输出 out_tokens p50 1245、max 2097、撞 8192 探针上限 0/14、空正文 0/14（n=14） | `ev:thinking-maplen-after` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after python tests/perf/map_len_probe.py` （脚本 `tests/perf/map_len_probe.py`） |
-| 修复前 map 自然输出 out_tokens p50 8191、max 8192、撞 8192 探针上限 7/14、空正文 3/14（n=14） | `ev:thinking-maplen-before` | `git checkout f2dfd23^ -- adapters/llm_adapter.py && PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-before python tests/pe…` （脚本 `tests/perf/map_len_probe.py`） |
+| 数字 / 结论 | 证据 | 一句话复现口径 | 派生量（算出来的，产物里没有直接字段）|
+|---|---|---|---|
+| 8 条删除路径删完后 distill_tasks / distill_chunks 残留矩阵（8 格）；sqlite 与 PG 逐格相同 | `ev:distill-orphan-matrix` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_orphan_matrix.py` （脚本 `tests/perf/distill_orphan_matrix.py`） | —（直接测） |
+| 删卡保留行后，find_interrupted_distill 仅命中 status=['interrupted'] 的行（其余状态整批重跑）；sqlite 与 PG 逐格相同 | `ev:distill-resume-reachability` | `DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py` （脚本 `tests/perf/distill_resume_reachability.py`） | —（直接测） |
+| 断点续跑：mock 截断下 6 片各 52 字节全部落库且第二道门放行；二次续跑 map=0（分片未重算） | `ev:incomplete-v5` | `python -m pytest tests/test_distill_resume.py -q` （脚本 `tests/test_distill_resume.py`（**只佐证**，非产出脚本）） | —（直接测） |
+| 属主不存在（A 组）与仍拒绝（B 组）共 42 条用例，按命中 status 分为 32 / 3 / 7；各自命中的 raise 站点与 status（本机有 key） | `ev:ownership-reachability` | `PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability python -m pytest tests/test_ownership_404.py -q -p raise_probe` （脚本 `tests/perf/raise_probe.py`） | **32** = records 中 status == 404 的条数（A 组：属主不存在）；**3** = records 中 status == 403 的条数（B 组：仍拒绝）；**7** = records 中 nodeid 属 TestMessageParity 的条数（文案一致性） |
+| 同上，PROBE_NO_KEY 置位模拟无 key 机器；两档站点表逐行相同，用例数均 42 passed | `ev:ownership-reachability-nokey` | `PROBE_NO_KEY=1 PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability-nokey python -m pytest tests/test_ownership_404.py -q -p …` （脚本 `tests/perf/raise_probe.py`） | —（直接测） |
+| 顶到 8192 时 3 条里 2 条 content_chars=0、reasoning_content 12441/12413、finish_reason=length —— 思考与正文共享 max_tokens 预算 | `ev:thinking-capfield` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield python tests/perf/capfield_probe.py` （脚本 `tests/perf/capfield_probe.py`） | **2** = records 中 content_chars == 0 的条数 |
+| 修复后 map 自然输出 out_tokens p50 1245、max 2097、撞 8192 探针上限 0/14、空正文 0/14（n=14） | `ev:thinking-maplen-after` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after python tests/perf/map_len_probe.py` （脚本 `tests/perf/map_len_probe.py`） | **1245** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（≠ 产物分档字段 summary[].out_tokens_p50 的下中位）；**0** = records 中 clipped_by_probe_cap 为 true 的条数（同为 0 的还有 out_chars == 0） |
+| 修复前 map 自然输出 out_tokens p50 8191、max 8192、撞 8192 探针上限 7/14、空正文 3/14（n=14） | `ev:thinking-maplen-before` | `git checkout f2dfd23^ -- adapters/llm_adapter.py && PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-before python tests/pe…` （脚本 `tests/perf/map_len_probe.py`） | **7** = records 中 clipped_by_probe_cap 为 true 的条数；**3** = records 中 out_chars == 0 的条数；**8191** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（断言里 records[3].out_tokens 恰为同一个数，但这里的口径是合并中位） |
 
 ## 二、不可写（`runtime-measured` / `unverifiable`，4 条）
 

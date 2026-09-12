@@ -56,6 +56,8 @@
   "script_role": "producer | corroborating | null",
   "reproduce": "一条能粘进终端的复现命令或 null",
   "assertions": [{"path": "summary[1].out_tokens_max", "value": 2097}],
+  "derived": [{"value": 1245, "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位",
+               "refs": ["records"]}],
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
   "code_sha": "产出时的 commit",
@@ -74,14 +76,37 @@
 - 每条 `{"path": ..., "value": V}`：按 `path` 从 `docs/evidence/<id>.json` 取值，**严格相等**
   （比类型 —— `True == 1` 在 Python 里成立，不比类型会漏掉真变异）。`path` 语法：`a.b[0].c`
 - `{"path": ..., "len": N}`：取容器长度，给「8 格」「14 条」「42 个键」这类计数用
-- **`claim` 里每个数字**要么被某条 `value`/`len` 覆盖，要么写进 `notes` 的 **`派生量：`** 块。
-  该块是笔记**最后**的一段，块内必须含 `=`（写明算法），块内数字才算已声明。
-  合并中位数、按状态过滤的计数这类**产物里没有直接字段**的量，走派生量块，不假造一条断言
+- **`claim` 里每个数字**要么被某条 `value`/`len` 覆盖，要么写进 `derived`（见下）。
+  既绑不上产物、又说不出算法的数字，**该做的是从 `claim` 里删掉它** —— 不是造一条 `derived` 糊过去。
+  这条是这一层的真正价值：它逼出「这个数字到底有没有出处」，而不只是把它记下来
+
+### `derived`：算出来的数字也必须先绑来源
+
+```json
+{"value": 1245, "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位", "refs": ["records"]}
+```
+
+产物里**没有直接字段**的量（合并中位数、按状态过滤后的计数）走这里。它曾经是 `notes` 里一段
+`派生量：` 散文 —— 实测「`派生量：9999=9999，77=77`」这种写法**全绿**：任意数字配个恒等式即可逃逸。
+散文锁看不见，于是改成结构化字段，锁去核对声明。三条同时成立才算绑定：
+
+1. `refs` 非空，且逐个落在**本条目 `assertions` 的 `path` 集合**里 —— 派生量只能从已绑定的量派生
+2. `value` 不等于任何单个 `ref` 解析出的值（**恒等式即红**，比类型：`0 == False` 成立）
+3. `formula` 非空
+
+为什么这样能拦住旧写法：要让一个数字合法，作者必须**先把它依赖的量绑到产物上** ——
+逃逸的成本变成了「先把真话说出来」。`derived` 对 `runtime-measured` / `unverifiable` 必须 `null`
+（与 `assertions`、`script_role` 同规则）；`verified` 没有派生量时写**空列表**，那是表态，不是省略。
+
+**已知上限**（如实记）：`value` 是不是**真**由 `refs` 算出，静态不可判 —— `refs` 里写一个已绑定的
+容器路径、`formula` 写一句像样的话，锁就核对到此为止。这与 `producer` 那条边界同源：静态只能
+核到「来源已绑定」，核不到「算法是真的」。**核不出来的部分靠 review，不靠再收一层正则。**
 
 **口径对照写在哪**（硬要求）：文档表格名与产物字段名不一致时，`assertion` 记**产物字段名**，
 `claim` 写文档口径，`notes` 记对照。`AGENTS.md` 那次 `8191 / 1245`（合并后 nearest-rank 上中位）
-与 `summary[].out_tokens_p50`（分档下中位）就是两个口径 —— assertion 钉产物字段，两者靠 notes 显式
-对照。这不是形式主义，是那次事故的直接产物。
+与 `summary[].out_tokens_p50`（分档下中位）就是两个口径 —— assertion 钉产物字段，
+合并中位数进 `derived`（`refs` 指 `records`），两者靠 `notes` 显式对照。
+这不是形式主义，是那次事故的直接产物。
 
 **止于何处**：「`producer` 脚本跑出来是不是**真**这份产物」静态不可判 —— 查到「脚本在库、
 数字与产物相等」为止。再往上就得真跑脚本，那是 LLM 调用、非确定性、且可能重跑顶替旧结论。
@@ -107,7 +132,7 @@
 
 | status | 含义 | 必填 | 锁校验 |
 |---|---|---|---|
-| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` `assertions` | `artifact` 被 `git ls-files` 命中；`script` 在库；`reproduce` 路径解析得到；`code_sha` 解得开或为哨兵；`assertions` 非空且与产物严格相等 |
+| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` `assertions` `derived` | `artifact` 被 `git ls-files` 命中；`script` 在库；`reproduce` 路径解析得到；`code_sha` 解得开或为哨兵；`assertions` 非空且与产物严格相等；`derived` 的 `refs` 落在本条目 assertions 里 |
 | `runtime-measured` | 运行时实测，非仓库数据 | `env` `measured_at` + `notes` 写明**扫描方法** | `artifact` 必须为 `null` |
 | `unverifiable` | 当时结论，现已不可复现 | `measured_at` `env` + `notes` 写明**为什么现在复现不了** | `artifact` 必须为 `null` |
 
@@ -159,7 +184,8 @@
 6. **指称闭合**：`script` 在库（两种 `script_role` 都查）；`reproduce` 里的仓内路径逐个解析；
    `code_sha` 解得开一个 commit 或精确等于哨兵 `unknown(scratch)`；`notes`/`claim` 里的路径
    tracked，或属已知 gitignored 前缀且**同条目内**带非仓库标注
-7. **数值闭合**：见 `assertions` 一节 —— 非空、与产物严格相等、`claim` 数字全覆盖
+7. **数值闭合**：见 `assertions` / `derived` 两节 —— assertion 非空、与产物严格相等、
+   `derived` 的 `refs` 落在本条目 assertions 里且非恒等式、`claim` 数字全覆盖
 
 `tests/test_evidence_integrity_mutations.py`：**变异矩阵**。每条清单语义断言必须有自己的
 专属红源 —— 每个变异**只跑指定的那一条**断言，证明它不靠渲染锁兜住。渲染新鲜度锁会因为

@@ -32,6 +32,20 @@ def _cell(text: object, limit: int = 140) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 
+def _derived_cell(entry: dict) -> str:
+    """`derived` 的显式标注 —— 读者要能一眼分出「直接测的」和「算出来的」。
+
+    算出来的数字**没有**产物字段可查，只能回溯到已绑定的 refs；不标出来，两者在表里长得
+    一模一样，混用口径那次事故（合并中位数 vs 分档中位数）就会从纸面上重演。
+    """
+    items = [d for d in (entry.get("derived") or []) if isinstance(d, dict)]
+    if not items:
+        return "—（直接测）"
+    # str() 先包一层：`_cell` 里的 `text or ""` 会把 0 / False 当成空 —— 零是量值，不能吞
+    return "；".join(f"**{_cell(str(d.get('value')), 20)}** = {_cell(d.get('formula'), 100)}"
+                    for d in items)
+
+
 def render(entries: list[dict]) -> str:
     writable = [e for e in entries if e.get("status") == _WRITABLE]
     unwritable = [e for e in entries if e.get("status") != _WRITABLE]
@@ -48,15 +62,15 @@ def render(entries: list[dict]) -> str:
         "",
         f"## 一、可写（`verified`，{len(writable)} 条）",
         "",
-        "| 数字 / 结论 | 证据 | 一句话复现口径 |",
-        "|---|---|---|",
+        "| 数字 / 结论 | 证据 | 一句话复现口径 | 派生量（算出来的，产物里没有直接字段）|",
+        "|---|---|---|---|",
     ]
     for e in writable:
         # corroborating 要显眼：跑那个脚本**不会**重生成产物，只覆盖同一断言
         tag = "（**只佐证**，非产出脚本）" if e.get("script_role") == "corroborating" else ""
         out.append(
             f"| {_cell(e.get('claim'))} | `ev:{e['id']}` | `{_cell(e.get('reproduce'))}` "
-            f"（脚本 `{_cell(e.get('script'), 80)}`{tag}） |")
+            f"（脚本 `{_cell(e.get('script'), 80)}`{tag}） | {_derived_cell(e)} |")
 
     out += [
         "",

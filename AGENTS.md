@@ -245,8 +245,9 @@ config.yaml 现值（现读，非转述）：
   - **清单即唯一真源** `docs/evidence/manifest.json`：三档 status（`verified` / `runtime-measured` / `unverifiable`）。正文引用改写字形 `ev:<id>`，文档里的数字与简历口径都是清单的**渲染**，不是第二份手写表
   - **双向满射锁** `tests/test_evidence_integrity.py`（39 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）；`script_role` 逐条表态
   - **指称闭合**（v3 补的方向）：锁原先只校验**形状**，字段值从不解析回仓库 —— `producer` 可以指向不存在的脚本而全绿。现补：`script` 在库、`reproduce` 路径逐个解析、`code_sha` 解得开 commit 或精确等于哨兵 `unknown(scratch)`、`notes`/`claim` 里的路径 tracked 或带非仓库标注
-  - **数值闭合**：`verified` 条目必填非空 `assertions`（`{"path","value"}` 严格相等；`{"path","len"}` 给计数），`claim` 里**每个数字**要么被覆盖、要么写进 notes 末尾的 `派生量：` 块（块内须含 `=` 写明算法）。这是简历数字与入库产物之间**唯一**的连接点 —— `claim` 在 v3 之前是自由文本，口径混用那次（算出 `6487 / 1205`）就是这么漏的
-  - **变异矩阵** `tests/test_evidence_integrity_mutations.py`（22 行）：渲染新鲜度锁会因为**任何**清单变异而红，于是变异测试失去鉴别力（红的不是你以为是的那条）。矩阵对每个变异**只跑指定的那一条**断言，证明它有专属红源。**新增任何清单语义断言必须同时补一行**
+  - **数值闭合**：`verified` 条目必填非空 `assertions`（`{"path","value"}` 严格相等；`{"path","len"}` 给计数），`claim` 里**每个数字**要么被覆盖、要么写进结构化 `derived`（`{"value","formula","refs"}`，`refs` 必须落在本条目 assertions 里且非恒等式）。这是简历数字与入库产物之间**唯一**的连接点 —— `claim` 在 v3 之前是自由文本，口径混用那次（算出 `6487 / 1205`）就是这么漏的
+  - **`derived` 升为字段**（v4）：算出来的数字（合并中位数、按状态过滤的计数）原先写在 notes 的 `派生量：` 块里 —— **散文锁看不见**，实测 `派生量：9999=9999，77=77` 全绿。现要求「派生量只能从已绑定的量派生」：`refs` ⊆ 本条目 assertions 的 path，`value` 不得等于任何单个 ref 的值（恒等式即红），`formula` 非空。既绑不上产物、又说不出算法的数字，处置是**从 claim 里删掉它**，不是造一条 derived 糊过去
+  - **变异矩阵** `tests/test_evidence_integrity_mutations.py`：渲染新鲜度锁会因为**任何**清单变异而红，于是变异测试失去鉴别力（红的不是你以为是的那条）。矩阵对每个变异**只跑指定的那一条**断言，证明它有专属红源。「新增任何清单语义断言必须同时补一行」这条约定本身也已机器化（`TestMutationCoverage` 反射全部 `Test*` 类求差集，豁免走带理由的 `_NO_MUTATION_NEEDED` dict）—— 此前它是文件头的一句散文，实测不补行/删行都是全绿
   - **止于何处**：「`producer` 脚本跑出来是不是**真**这份产物」静态不可判，查到「脚本在库、数字与产物相等」为止 —— 见 `docs/evidence/README.md`
 - **收编的存量缺口**：缺陷 2 的 `out_v5.json` → `ev:incomplete-v5`（只留统计量，正文段 `sampleChunk` 按白名单挡在库外）；`chunk_size` 来历 → `ev:chunk-size-provenance`（**订正**：原文写「`git log -S` 全仓无 4500/12000 命中」过宽 —— 有命中，只是无一处当 chunk_size 用）；A2 接线变异实验 → `ev:a2-wiring-mutation`；`TECHNICAL_REPORT.md` 的图谱统计 → `ev:graphify-snapshot-2026-08-15`（`unverifiable`）。具名/正文类产物一律**脱字段不删文件**
 - **不重跑顶替**（硬要求）：产物丢失时不得重跑生成一份新的顶上 —— 重跑得到的是今天的数字，文档写的是当时的结论，拿新数字填旧引用是把「无出处」伪装成「有出处」。产物的 `code_sha` 只在推断能落到唯一 commit 时才填，否则 `unknown(scratch)` + `notes` 交代依据不足

@@ -50,6 +50,20 @@ def _drop_whitelist(entries, mp):
     mp.delitem(evidence_writer._ALLOWED_BY_ID, "incomplete-v5")
 
 
+def _launder_number_through_derived(entries):
+    """spec v4 §三 的逃逸复验：claim 加一个凭空数字，再用 `derived` 给它编个来源。
+
+    `refs` 写的是 `summary[0].out_tokens_p50` —— 那是**另一个条目**的 assertion path，
+    不在 `incomplete-v5` 的 assertions 里，所以「从已绑定的量派生」这条当场不成立。
+    claim 侧反而过得去（9999 被 derived 的 value 覆盖），这正是要证明的：**光有 claim 侧
+    的覆盖不够**，`derived` 自己得先合法。
+    """
+    e = _by_id(entries, "incomplete-v5")
+    e["claim"] += "；另有 9999 片"
+    e["derived"].append(
+        {"value": 9999, "formula": "x", "refs": ["summary[0].out_tokens_p50"]})
+
+
 class _DummySemanticAssertion:
     """注入用的假类：反射能扫到、`MUTATIONS` 里没有对应行。
 
@@ -106,7 +120,7 @@ _NO_MUTATION_NEEDED = {
               "迁移入口测试：同上（tmp 清单 + tmp 落点），与仓库清单内容无关",
               ["test_registers_existing_artifact_with_historical_date",
                "test_missing_artifact_refused",
-               "test_register_requires_script_role_and_assertions",
+               "test_register_requires_declarations_without_defaults",
                "test_bad_script_role_refused",
                "test_unregistered_id_refused"]),
 }
@@ -211,9 +225,28 @@ MUTATIONS = [
      lambda m, mp: _by_id(m, "incomplete-v5").update(
          claim=_by_id(m, "incomplete-v5")["claim"] + "；另有 9999 片"),
      "TestClaimBindings::test_claim_numbers_are_bound_or_declared_derived"),
-    ("derived_block_without_algorithm",
-     lambda m, mp: _by_id(m, "incomplete-v5").update(notes="派生量：随便写写"),
-     "TestClaimBindings::test_claim_numbers_are_bound_or_declared_derived"),
+    ("claim_number_laundered_through_coined_derived",
+     lambda m, mp: _launder_number_through_derived(m),
+     "TestClaimBindings::test_derived_values_come_from_bound_refs"),
+    ("derived_identity_value",
+     lambda m, mp: _by_id(m, "thinking-maplen-after")["derived"].append(
+         {"value": 2097, "formula": "复述 ref 自己", "refs": ["summary[1].out_tokens_max"]}),
+     "TestClaimBindings::test_derived_values_come_from_bound_refs"),
+    ("derived_ref_not_in_assertions",
+     lambda m, mp: _by_id(m, "thinking-maplen-after")["derived"].append(
+         {"value": 777, "formula": "随手一算", "refs": ["summary[9].out_tokens_p50"]}),
+     "TestClaimBindings::test_derived_values_come_from_bound_refs"),
+    ("derived_blank_formula",
+     lambda m, mp: _by_id(m, "thinking-maplen-after")["derived"].append(
+         {"value": 777, "formula": "   ", "refs": ["records"]}),
+     "TestClaimBindings::test_derived_values_come_from_bound_refs"),
+    ("derived_on_unverifiable",
+     lambda m, mp: _by_id(m, "a2-wiring-mutation").update(
+         derived=[{"value": 1, "formula": "x", "refs": ["a"]}]),
+     "TestClaimBindings::test_derived_present_for_verified_and_null_otherwise"),
+    ("derived_missing_on_verified",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(derived=None),
+     "TestClaimBindings::test_derived_present_for_verified_and_null_otherwise"),
     ("assertions_on_unverifiable",
      lambda m, mp: _by_id(m, "graphify-snapshot-2026-08-15").update(
          assertions=[{"path": "a", "value": 1}]),

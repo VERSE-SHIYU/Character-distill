@@ -106,6 +106,7 @@ def write_evidence(
     reproduce: str | None = None,
     script_role: str = "producer",
     assertions: list[dict] | None = None,
+    derived: list[dict] | None = None,
     extra_notes: str | None = None,
 ) -> Path:
     """写 ``docs/evidence/<id>.json`` 并 upsert 清单条目（``status = verified``）。
@@ -114,8 +115,10 @@ def write_evidence(
     ``claim`` ``script`` ``env`` ``code_sha`` 任一缺失或空白 / ``script_role`` 非法 /
     payload 不是 dict。探针产产物，故 ``script_role`` 默认 ``producer``。
 
-    ``assertions``（``claim`` 里每个数字的产物出处，见 ``docs/evidence/README.md``）默认
-    为空 —— 探针不传时**锁会红**：实测产物刚跑出来，哪些数字是它的主张，只有作者知道。
+    ``assertions``（``claim`` 里每个数字的产物出处）默认空 —— 探针不传时**锁会红**：
+    实测产物刚跑出来，哪些数字是它的主张，只有作者知道。``derived``（产物里没有直接字段、
+    由已绑定量算出的数字，如合并中位数）默认空 —— 新产物多数没有这类量。契约见
+    ``docs/evidence/README.md``。
     """
     allowed = _ALLOWED_BY_ID.get(evidence_id)
     if allowed is None:
@@ -158,6 +161,7 @@ def write_evidence(
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "assertions": list(assertions or []),
+        "derived": list(derived or []),
         "env": env.strip(),
         "measured_at": date.today().isoformat(),
         "code_sha": code_sha.strip(),
@@ -177,6 +181,7 @@ def register_artifact(
     measured_at: str,
     script_role: str,
     assertions: list[dict],
+    derived: list[dict],
     reproduce: str | None = None,
     redacted_fields: tuple[str, ...] | list[str] = (),
     notes: str | None = None,
@@ -187,10 +192,11 @@ def register_artifact(
     迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
     所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
 
-    ``script_role`` 与 ``assertions`` **无默认值、必须表态** —— 迁移路径正是最容易
-    静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是产出脚本）。给默认值
+    ``script_role`` / ``assertions`` / ``derived`` **无默认值、必须表态** —— 迁移路径正是
+    最容易静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是产出脚本）。给默认值
     就等于给「照抄时留空」留口子：``assertions`` 是 ``claim`` 与产物之间唯一的连接点，
-    空着它 ``claim`` 就又变回自由文本。
+    空着它 ``claim`` 就又变回自由文本；``derived`` 空着则等于把「这个数字是算出来的」又塞回
+    散文里。没有派生量时传空列表 —— 那是**表态**，不是省略。
     """
     if evidence_id not in _ALLOWED_BY_ID:
         raise ValueError(
@@ -216,6 +222,7 @@ def register_artifact(
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "assertions": list(assertions),
+        "derived": list(derived),
         "env": env.strip(),
         "measured_at": measured_at.strip(),
         "code_sha": code_sha.strip(),
