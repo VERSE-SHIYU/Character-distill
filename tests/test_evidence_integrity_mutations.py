@@ -76,6 +76,23 @@ MUTATIONS = [
     ("manifest_entry_unregistered_whitelist",
      _add_ghost_entry,
      "TestManifestEntries::test_every_entry_has_a_registered_whitelist"),
+    # —— L2 指称闭合（TestManifestEntries）——
+    ("ghost_script",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(script="tests/perf/ghost_probe.py"),
+     "TestManifestEntries::test_script_is_tracked"),
+    ("ghost_path_in_reproduce",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(
+         reproduce="python tests/perf/ghost_probe.py"),
+     "TestManifestEntries::test_reproduce_paths_resolve"),
+    ("fabricated_code_sha",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(code_sha="deadbee"),
+     "TestManifestEntries::test_code_sha_resolves"),
+    ("ghost_path_in_notes",
+     lambda m, mp: _by_id(m, "a2-wiring-mutation").update(notes="见 tests/perf/ghost_probe.py"),
+     "TestManifestEntries::test_notes_and_claim_paths_resolve"),
+    ("gitignored_path_without_marker",
+     lambda m, mp: _by_id(m, "a2-wiring-mutation").update(notes="见 `.claude/sessions/x.md`"),
+     "TestManifestEntries::test_notes_and_claim_paths_resolve"),
     # —— 正文引用闭合（TestReferenceClosure）——
     ("doc_ref_loses_its_entry",
      lambda m, mp: m.remove(_by_id(m, "incomplete-v5")),

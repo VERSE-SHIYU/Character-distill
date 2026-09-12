@@ -35,6 +35,19 @@ _REQUIRED = {
 _STATUSES = ("verified", "runtime-measured", "unverifiable")
 _SCRIPT_ROLES = ("producer", "corroborating")
 
+# ── L2 指称闭合（缺陷 14 v3 §四）：字段值必须解析回仓库里的实体，不能只校验形状 ──
+# `producer` 的定义是「跑它能重生成这份产物」，脚本不在库里这个定义当场不成立 ——
+# 而在此之前没有任何断言看 `script` 一眼。
+_SHA_SENTINELS = ("unknown(scratch)",)
+# 正文里允许出现的「非仓库」路径：这些前缀下的文件本来就不入库，但必须**在同一条目内**
+# 带一句非仓库标注，读者才知道按它去查是查不到的。
+_GITIGNORED_PREFIXES = (".claude/sessions/", "e2e/scratch/", "graphify-out/", "config.yaml")
+# reproduce 允许引用的运行期输入（语料库等）—— 复现命令读它没问题，只是它不入库
+_RUNTIME_OK_PREFIXES = ("data/",) + _GITIGNORED_PREFIXES
+_NONREPO_MARKERS = ("未入库", "不在仓库", "gitignored", "scratch", ".gitignore")
+_PATH_RE = re.compile(
+    r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|json|md|sh|txt|ya?ml|cjs|js|ts|tsx|sql|toml|ini|cfg)")
+
 sys.path.insert(0, str(PERF))
 import evidence_writer  # noqa: E402
 
@@ -65,6 +78,11 @@ def _is_tracked(rel: str) -> bool:
     r = subprocess.run(
         ["git", "ls-files", "--error-unmatch", rel], cwd=ROOT, capture_output=True)
     return r.returncode == 0
+
+
+def _path_tokens(text: str) -> set[str]:
+    """正文里长得像仓库文件路径的 token（带已知后缀、至少一段目录或裸文件名）。"""
+    return {m.group(0) for m in _PATH_RE.finditer(text or "")}
 
 
 class TestReferenceClosure:
@@ -155,6 +173,73 @@ class TestManifestEntries:
         missing = sorted({e["id"] for e in _manifest()
                           if e["id"] not in evidence_writer._ALLOWED_BY_ID})
         assert not missing, f"清单条目未在 _ALLOWED_BY_ID 注册白名单：{missing}"
+
+    # ── L2：字段值解析回仓库实体（形状对 ≠ 指得着）──────────────────────────
+
+    def test_script_is_tracked(self):
+        """`producer` 的定义蕴含「脚本在库」；`corroborating` 指向的佐证用例同样得在库。"""
+        bad = [(e["id"], e["script"]) for e in _manifest()
+               if e.get("script") and not _is_tracked(e["script"])]
+        assert not bad, (
+            f"script 指向的文件不在 git 管理下：{bad}。"
+            "producer 的定义是「跑它能重生成这份产物」—— 脚本不在库，这个定义当场不成立。")
+
+    def test_reproduce_paths_resolve(self):
+        """复现命令里的仓内路径必须存在，否则读者粘进终端就是 No such file。
+
+        运行期输入（`data/` 语料库等）与非仓库前缀放行 —— 复现命令读它们没问题。
+        """
+        bad = []
+        for e in _manifest():
+            for tok in _path_tokens(e.get("reproduce") or ""):
+                if _is_tracked(tok) or tok.startswith(_RUNTIME_OK_PREFIXES):
+                    continue
+                bad.append((e["id"], tok))
+        assert not bad, (
+            f"reproduce 引用了库里没有的路径：{bad}。"
+            "复现命令是本清单的对外承诺，指向空文件等于没承诺。")
+
+    def test_code_sha_resolves(self):
+        """`code_sha` 要么解得开一个 commit，要么精确等于哨兵值。
+
+        哨兵锁死成枚举：不锁死就会出现第二种写法，然后两种都不被校验。
+        先例 `incomplete-v5` 的 `unknown(scratch)` 是**合规**的 —— 产出时点只能界在一个
+        commit 窗口内、落不到唯一点，如实记。本条保护的正是这种诚实标注不被随手改成
+        一个编造的 sha（复算的人 checkout 到错的点，然后得出「数字对不上」）。
+        """
+        bad = []
+        for e in _manifest():
+            sha = (e.get("code_sha") or "").strip()
+            if sha in _SHA_SENTINELS:
+                continue
+            r = subprocess.run(["git", "cat-file", "-t", sha], cwd=ROOT, capture_output=True)
+            if r.returncode or r.stdout.decode("utf-8", "replace").strip() != "commit":
+                bad.append((e["id"], sha))
+        assert not bad, (
+            f"code_sha 不是 commit 也不是 {_SHA_SENTINELS}：{bad}。"
+            "编一个近似 sha 比留哨兵坏得多 —— 它会让复算的人 checkout 一个错的点。")
+
+    def test_notes_and_claim_paths_resolve(self):
+        """notes / claim 里的路径要么 tracked，要么带非仓库标注。
+
+        迁移与改名是这类漂移的高发场景：文档里那条路径早已不在，读者按它去查是空的，
+        而清单本身看起来完好。
+        """
+        bad = []
+        for e in _manifest():
+            blob = " ".join(str(e.get(f) or "") for f in ("claim", "notes"))
+            for tok in _path_tokens(blob):
+                if _is_tracked(tok):
+                    continue
+                if tok.startswith(_GITIGNORED_PREFIXES):
+                    if not any(m in blob for m in _NONREPO_MARKERS):
+                        bad.append((e["id"], tok, "gitignored 前缀但全条无「非仓库」标注"))
+                    continue
+                bad.append((e["id"], tok, "不在库"))
+        assert not bad, (
+            f"notes/claim 里的路径解析不到：{bad}。"
+            f"gitignored 前缀 {_GITIGNORED_PREFIXES} 必须带非仓库标注（如「未入库」）。")
+
 
 
 class TestWriterContract:
