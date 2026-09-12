@@ -351,13 +351,18 @@ config.yaml 现值（现读，非转述）：
   - **删卡/解绑的清理口径：不动**（保守裁决）。删卡不产生孤儿行（行身份 `(user, text, character)` 与卡无关），清理由文本死亡路径负责；改成「按 `(user, text, character)` 找最近一条可复用行」是**加功能**，另立项
 - **未接停止信号的其余删除点（本轮只记不修）**：`web/routers/card.py` 的卡删除路由（`hard_delete("card")` ×2 / `soft_delete("card")` ×1），以及 `web/routers/market.py` 的 `delete_market_card`（直接调 `storage.delete_card`）—— 要把在跑的任务对上被删的卡需要 `(text_id, character)`，而 `character` 在 identify 步解析出名字之前是空串，匹配不可靠；且与上面「删卡口径不动」是同一件事
 
-**21. `079_remote_user_profiles.sql` 从未接线 —— SQLite 新库缺 `remote_user_profiles` 表** —— 状态：未修（记账，2026-09-12 缺陷 15 排查时发现）
+**21. `079_remote_user_profiles.sql` 从未接线 —— SQLite 新库缺 `remote_user_profiles` 表** —— 状态：**已修（2026-09-13）**
 - 事实（实测）：`storage/migrations/079_remote_user_profiles.sql` 躺在目录里，但既不在 SQLite 次序表，PG 侧也无对应（PG 用 `migrations_pg/012_remote_user_profiles.sql`，其 glob 驱动已接线）。故 SQLite 新库**没有**这张表
-- 而 `storage/sqlite_store.py` 已在用它：`:4610` `INSERT OR REPLACE INTO remote_user_profiles`、`:4625` `SELECT ... FROM remote_user_profiles`、`:4795` `LEFT JOIN remote_user_profiles` → 新库走到这几条即 `no such table` 抛错
+- 而 `storage/sqlite_store.py` 已在用它：`INSERT OR REPLACE INTO remote_user_profiles` / `SELECT ... FROM remote_user_profiles` / `LEFT JOIN remote_user_profiles` → 新库走到这几条即 `no such table` 抛错
 - 影响面同缺陷 5：生产是 PG（不受影响），受影响的是新开发环境 / `start_all.bat` 建的 SQLite 库
-- **未同轮修的理由**：铁律 3「新发现只记缺陷表，不当场修」；且该表属跨区同步特性，接线后 SQLite 新库凭空多一张表，语义待定
-- 现由 `tests/test_migration_dispatch.py::_NOT_APPLIED` 以「未接线」理由显式豁免 —— 这是**带理由的记账出口**，不是沉默放过；豁免条目一旦指向不存在的文件也会红
-- 同族风险（本次已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故新增「目录 ↔ 次序表求差集」形态锁
+- **定性订正（2026-09-13 排查）**：此条**不是**「静默不执行」而是「**带理由地不执行**」—— 分发形态锁 `tests/test_migration_dispatch.py` 早已存在（`c1a8131`），079 躺在它的 `_NOT_APPLIED` 豁免名单里，所以锁是绿的。真正的洞是**豁免出口没有闭环**：写下理由即永久放过，而理由里写的后果（「新库缺表、代码在用」）没有任何东西去验。原设想的「每个文件必须有明确归宿」形态锁**不必新做** —— 它已存在，且正是被绕过的那一个
+- **处置（2026-09-13，四步，均只记/只验不越界）**：
+  - **接线**（`4be3ecf`）：`079_remote_user_profiles.sql` 加进 SQLite 执行器次序元组，从 `_NOT_APPLIED` 移除。位次依据：它建独立表、无依赖，按编号自然位次排。验收：新库实跑后表存在，三个引用点在真新库上不再抛 `no such table`
+  - **闭环锁**（`4a608f9`）：`tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop` 断言「**SQLite 新库实跑后的表集合 ⊇ `migrations_pg/` 声明的表集合**」（排除 `sqlite_sequence`）。锁的是**症状本身**，不是「文件有没有登记」这个可被合法豁免绕过的代理指标；真源选 PG 目录，因为 PG 执行器是 glob、目录即清单、无豁免出口 —— 「PG 目录里有的表」= 「应该存在的表」的可靠定义。与 `test_sqlite_fresh_schema` 同一套基础设施，CI 可行，不需要真 PG
+  - **store 层同族形态全量收敛**（`2ab669a`）：本轮另一条线，见下面「第七个同族形态」
+  - **未修**：本条目自身已闭环，无遗留
+- 同族风险（已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故 `test_migration_dispatch` 有「目录 ↔ 次序表求差集」形态锁
+- **本条目衍生出的第七个同族形态 —— store 层「失败与空结果不可区分」**：SQLite 新库缺 `remote_user_profiles` 表时，`storage/sqlite_store.py` 的 `get_conversations` 把 `OperationalError` 吞成空列表 → 私信收件箱**恒为空、不报错、不 500**，日志里只有一行 print。根因不是「那一处吞错了」，而是 store 层用**同一个返回值**同时表达「查到了，结果是空」与「查询失败了」两种互斥语义。这正是前六个同族形态（线程弃船 / 384 维度 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断）**都因为「只修出问题那处」**才长出第七个的原因，故 `2ab669a` 全量收敛：A 类 176 处（基线 `4a608f9`，sqlite 88 / pg 88）全改，不变量「**store 层的空返回值只表示「无数据」，永不表示「失败」**」定于 `storage/base.py` 的 `StoreError` 单一定义，容忍策略上移到调用方并注明理由。普查全集与 A/B 分类见 `2ab669a` 的 commit message，可 `python tests/perf/store_swallow_census.py --ref 4a608f9` 逐字复算
 
 **22. `async_chat` 的 usage 被丢弃 —— Map 阶段与代词消解的 token 完全没记账** —— 状态：未修（记账，2026-09-12 查缺陷 16 时发现）
 - 事实（实测）：`adapters/llm_adapter.py` 的 `async_chat` 返回 `(result, usage)`，且**不写 `self.last_usage`**（该文件 `_async_chat_span` 注释自己写明了）。四个调用点里三个是 `result, _ = await ...`，usage 就地丢弃：
@@ -368,6 +373,14 @@ config.yaml 现值（现读，非转述）：
 - 后果比缺陷 16 更大：Map 是 MapReduce 里**最烧 token 的一段**（每片一次调用，片数几十到几百），而它**一条记录都没有**；reduce / 初次 / 重修 / 流式各自都记。于是 `distill_*` 系列 action 的用量被系统性低估，且低估幅度随文本变长而放大
 - **不属缺陷 16 的同源修法**：16 的病灶是「记账出口分散 + 一处漏」，收敛到一个 `_chat_initial` 出口即解决；本条的病灶是**记账出口从未写**，`_chat_initial` 覆盖不到（Map 不走它）。修它要先裁决「N 次并发调用怎么记」——N 条独立记录（写放大）还是一条聚合（需新增聚合态），是**设计决策**不是补漏
 - 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且本条改动会显著改变用量/计费口径，属**行为变更**，须单独一轮带验收锁
+
+**23. PG 侧无对称形态锁 —— 加了 `migrations/` 迁移却不加 `migrations_pg/` 会静默漂移（079 的反向）** —— 状态：未修（记账，2026-09-13 缺陷 21 排查时发现）
+- 缺陷 21 方向：SQLite 有目录文件但没接线（由 `test_migration_dispatch` 的目录↔次序表差集锁 + `TestExemptionClosedLoop` 的 PG⊇SQLite 表集合锁兜住）。**反方向无锁**：新增 `storage/migrations/NNN_x.sql` 而忘了写对应 `storage/migrations_pg/NNN_x.sql`，SQLite 新库有这张表、PG 永远没有，且**无任何报警** —— PG 执行器是 `sorted(migrations_dir.glob("*.sql"))`，目录里没有就没有，不会被「多余文件」察觉
+- 属缺陷 21 同族（迁移接线的静默通道），但缺口在 PG 侧而非 SQLite 侧。锁法同 21 的闭环锁：**两目录的迁移基线编号集合须互相覆盖**（或更弱：PG 目录声明的表集合 ⊆ SQLite 新库表集合，与 `TestExemptionClosedLoop` 同源但反向断言）
+- 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且反向锁需要先裁决两目录的编号是否本就允许不对称（PG 已有 `012_` 对应 SQLite `079_` 的先例，说明编号不必一一对应）
+- 同轮另两条观察（**非缺陷，只记**）：
+  - **豁免名单住在测试里，不在执行器里**：`tests/test_migration_dispatch.py::_NOT_APPLIED` 是唯一记录「哪个迁移被豁免、为什么」的地方，而读 `storage/sqlite_store.py` 的人只看到次序元组，**看不到「本应在这却没在」**。可观性问题，非正确性缺陷；若要改，方向是把豁免登记移进执行器模块或让它可被执行器导入
+  - **PG `001_init.sql` 保留了 SQLite 侧已删的 4 个遗留列**（`users` 的 `password_hash` / `api_key` / `base_url` / `model`，`migrations_pg/001_init.sql:93-98` 内联声明）。**已复核，运行期 schema 无漂移**：这 4 列由 `migrations_pg/005_data_residency.sql` 的 `DROP COLUMN IF EXISTS` 删掉；两侧逐表逐列求交集（`001_init` + 全部 `ALTER` − drop）**完全相同**（用 `tests/perf/migration_coverage_audit.py` 的 `_objects_from_sql` 复算）。漂移只在**文件层**：读 PG 的 `001_init.sql` 会看到一个最终库里并不存在的列清单（SQLite 侧这 4 列本就不在 `001_init` 声明、是后来 `ALTER` 加的，故它的 `001_init` 天然干净）。**非缺陷**，但会误导「按 bootstrap 文件推断 schema」的人 —— 与上面两条同属「文件的陈述与运行期事实不一致」
 
 ### 四、验证纪律
 
@@ -395,6 +408,7 @@ config.yaml 现值（现读，非转述）：
 - **monkeypatch 之前先确认打的模块对象就是被测代码用的那一个**。判据：patch 完必须用「把被 patch 的东西真的弄坏」的方式验证（而不是「改完跑绿了」）。案例：`import web.deps` 与 `import deps` 在本仓是**两个不同的模块对象**（同一文件、两份 globals，因为 `web/` 没有 `__init__.py` 且 `web/` 在 `sys.path` 上）——patch 前者完全打空，套件照样绿，真门还开着
 - **验证方法本身可能静默没生效 —— 先确认「探针真的在探」，再采信它的结论**。判据：① 确认那条命令真的产出了你假设的环境，而不是「它没报错」；② 再用一个**独立信号**交叉确认，别让同一次动作既当操作又当证据。案例：为复现 CI 浅克隆跑 `git clone --depth 1 . <dir>`，git 打印 `warning: --depth is ignored in local clones; use file:// instead` 后**静默给了完整历史**（1202 个 commit），六个待核 sha 全部 resolve —— 探针什么都没证（本地 clone 走硬链接优化，`--depth` 被忽略）。改用 `file://` 才拿到真浅克隆（1 个 commit + 存在 `.git/shallow`），六个 sha 齐报 `fatal: Not a valid object name`。独立信号 = 与 CI 失败日志**逐字节比对**（同 11 条、同序、同断言行），确认修的是真问题而不是像的问题。**「我验过了」不构成证据，除非能说清那次验证的方法本身就成立**
 - **变异红了 ≠ 判别器起作用，可能只是环境让所有输入都红**。判据：变异验证只在**基线为绿**的环境里构成证据；看到「变异也红了」先反问「这次改动**之前**，那个目标用例是绿的吗」。基线本身就红时，变异红可能与被改坏的那行毫无关系。案例：CI 浅克隆下**任何**非哨兵 `code_sha` 都 `fatal`，于是 `tests/test_evidence_integrity.py::test_mutation_reds_its_own_assertion[fabricated_code_sha]` 的「必须变红」被**环境**满足而非被判别器满足 —— 该变异锁在 CI 里一直没有判别力，只是碰巧红着，且不会有任何告警（它被 `test_code_sha_resolves` 同时报红掩盖）。修法是修环境而不是修变异：`build.yml` 的 test job 显式 `fetch-depth: 0`（commit `62fad5c`）。**这条比它附带的那次修复值钱：适用于本仓证据锁的全部变异用例**
+- **豁免机制本身会成为新的静默通道 —— 一把锁允许「写理由即可跳过」，就必须有**另一样东西**去验那条理由声明的后果**。判据：给任何锁加「豁免出口」时，**同一次改动里**必须同时给出验证该后果的独立断言；否则豁免 = 永久放行。案例：`tests/test_migration_dispatch.py::_NOT_APPLIED` 允许以理由豁免迁移接线，`079_remote_user_profiles.sql` 就躺在里面 —— 三把锁（`test_migration_dispatch` / `test_sqlite_fresh_schema` / 分发形态锁）**各自尽职、全部绿**，而 SQLite 新库仍然缺表；更刺眼的是 079 的豁免理由里**白纸黑字写着**「新库缺表、代码在用」，却没有任何东西去验这句话。理由本身不是闭环，它只是把「未修」从代码搬进了注释。修法是**补一条验后果的锁**（`TestExemptionClosedLoop`：新库表集合 ⊇ `migrations_pg/` 声明的表集合，锁症状本身），**不是**再加一条「文件有没有登记」的形态锁 —— 后者正是被那个合法豁免绕过的那一个。推论：`skip` / `xfail` / allowlist / 豁免名单 / `# type: ignore` 这类机制都应按此自查「谁在验我这条理由」；本轮的 `# store-empty-ok:` 标记同理，其后果由 `tests/test_store_failure_visibility.py` 的动态探针（真的把库打坏，看失败有没有消失）来验，而不是靠标记本身
 
 ### 五、验证工具现状
 
