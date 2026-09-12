@@ -175,9 +175,11 @@ config.yaml 现值（现读，非转述）：
 - **200 条上限是显式上报的截断，不是静默截断** —— 见 §四「有上限的路径必须显式上报被裁过」
 - 回归锁：`tests/test_admin_tasks_api.py`（`TestVisibleAfterRestart` 覆盖「重启后 interrupted 行可见」、`TestOutputWhitelist` 覆盖 `user_id` / `_db` 不出现、`TestEnvelope` 覆盖 `total` / `truncated`）
 
-**7. `get_upload_task_status` 注入 user 但不校验归属**
-- `web/routers/text.py` 的 `get_upload_task_status`：签名取 `user: dict = Depends(get_current_user)`，函数体只 `_upload_tasks.get(task_id)`，**全程无归属比对**
-- 且条目本身不含属主：写入的键只有 `status` / `progress_pct` / `message` / `text_id` → 想校验也无从校验。状态：未修
+**7. `get_upload_task_status` 注入 user 但不校验归属** —— 状态：**已修**（归属 `a0a3a4d`，2026-09-10；拒绝码 404 于 `35e5794`）
+- 原形态：`web/routers/text.py` 的 `get_upload_task_status` 签名取 `user: dict = Depends(get_current_user)`，函数体只 `_upload_tasks.get(task_id)`，**全程无归属比对**；且条目本身不含属主（写入的键只有 `status` / `progress_pct` / `message` / `text_id`）→ 想校验也无从校验
+- **订正（2026-09-12）**：本条一直记「未修」，与代码事实不符 —— `a0a3a4d` 修的正是这一条，且条目的**两个症状都覆盖**：三处写入点补 `user_id`（`_run_upload_task` 正常/异常分支、`upload_text`），读取时 `task is None or task.get("user_id") != user["id"]` fail closed（条目缺 `user_id` 也拒，不因「无从校验」放行），返回前剥离 `user_id` 不上屏
+- 回归锁：`tests/test_upload_task_ownership.py`（含变异验证：删掉校验 → 越权断言变红）
+- 与缺陷 9 的 `text.py` 那条是**同一处端点的两个面**：本条是归属面（有没有校验），缺陷 9 是拒绝码面（403 还是 404）
 
 **8. `_GEN_DEADLINE_S = 60.0` 写死，不可 env 覆盖** —— 状态：**保留记账**
 - `_GEN_DEADLINE_S`（`adapters/llm_adapter.py`）；同组的三个 ceiling `LLM_DECISION_ATTEMPT_S` / `LLM_GEN_ATTEMPT_S` / `LLM_STREAM_ATTEMPT_S` 都可 env 覆盖，deadline 仍无出口
@@ -255,10 +257,26 @@ config.yaml 现值（现读，非转述）：
 - 未同轮修的理由：改 usage 语义属**行为变更**，与截断自愈是两条线；混进来会污染本轮的验收边界（判据来自 `_try_record_usage` 三处不对称，是**选型依据**，不是顺带修的借口）
 - 需先核：`distill` 的上游（任务层 / 路由层）是否有补记，没有才是真漏记
 
-**17. 蒸馏失败上屏双重前缀 + 运维口径泄漏** —— 状态：未修（已立项）
-- `core/distiller.py` 的终态 `ValueError` 自带「蒸馏失败：」前缀，`web/routers/distill.py` 的 `send_error` 又拼一次「蒸馏失败：」→ 用户看到「蒸馏失败：蒸馏失败：角色卡内容超长被截断（max_tokens 不足）。请提高生成角色卡调用的 max_tokens 上限，或精简角色卡内容。」
-- 且后半句是**运维口径**（抬 `max_tokens` / 精简内容）给终端用户看；适配器层为此专门分了 `_INCOMPLETE_ACTIONS`（运维）与 `_INCOMPLETE_USER_MESSAGES`（上屏）两张表，这条路径没走那张上屏表
-- 属用户可见的文案问题，不紧急
+**17. 蒸馏失败上屏双重前缀 + 运维口径泄漏** —— 状态：**已修**（commit `396079f`，2026-09-12）
+- 原形态是**三重**（不止双重前缀）：① 源头 `core/distiller.py` 的终态 `ValueError` 自带「蒸馏失败：」前缀，路由 `web/routers/distill.py` 又拼一次 →「蒸馏失败：蒸馏失败：…」；② 源头文案本身就是**运维口径**（原话「请提高生成角色卡调用的 max_tokens 上限，或精简角色卡内容」直接给终端用户）；③ 兜底分支还打 `type(exc).__name__`，流式两条链直接 `str(exc)` 上屏
+- 根因是**错误上屏没有统一出口**，不是「蒸馏那句话写错了」——所以修法不是改文案，是收敛出口
+- 出口：`adapters/llm_adapter.py`（既有边界模块）新增 `user_facing_error(exc, *, preserve_unknown=False)`。优先级：`llm_error_payload`（**复用** `_INCOMPLETE_USER_MESSAGES` 上屏表，未拆第二张消息表）→ `getattr(exc, "user_message")`（duck typing，**不 import 异常类**，守住 `tests/test_chat_stream_error.py` 的边界锁）→ 通用文案。`preserve_unknown` 只给 chat 的 SSE 帧，保住「未登记异常原样透出」既有契约；蒸馏路径一律不传
+- 配套：`core/distiller.py` 新增 `DistillError(ValueError)`，`user_message`（上屏）与 `str()`（运维：`last_error` / 分片计数 / 处置建议）两口径分离；继承 `ValueError` 使路径上既有 `except ValueError` 语义不变
+- **全仓 grep 覆盖清单**（「把异常转成用户可见文案」的地方，8 处全改）：
+  1–2. `core/distiller.py` 9 处 `raise ValueError("蒸馏失败…")` → `DistillError`
+  3–4. 同文件流式 Map / Reduce 两条 queue 支路：`q.put(("error", str(exc)))` → 改传异常本体，`yield {"error": f"…阶段失败：{item[1]}"}` → `user_facing_error`（阶段名是内部实现词，改为只进日志）
+  5. `web/routers/distill.py` 后台任务兜底（旧：拼前缀 + `str(exc).split("\n")[0]` + 类名兜底）
+  6. 同文件 SSE 流异常帧（旧：`str(exc)`）
+  7. 同文件保存失败帧（旧：`f'保存角色卡失败：{exc}'`）
+  8. `web/routers/chat.py` 的 `_stream_error_payload`（旧：`llm_error_payload(exc) or {"error": str(exc)}`）
+  - 另附同文件同形态但**非异常来源**的两处：ValidationError 上屏（旧带字段名与输入值，可能含原文片段）、空格式输出（旧文案「请查看服务器日志」是运维口径）
+- **本轮不改、记残留**（同源但属其它子系统，未验证其错误契约前不动）：`web/server.py` / `web/routers/auth.py` 的连接测试端点（响应本身就是给运维的诊断载荷）、`web/routers/group.py` 流式帧、`web/routers/text.py` 上传任务 `message`、`web/app.py` 的 `gr.Error(str(exc))`
+- 不变量锁：`tests/test_error_user_facing.py`（9 例）——A 已知异常集合逐个过出口，断言上屏不含内部标识（异常类名 / `max_tokens` / `finish_reason` / 分片计数 / 内部路径）**且**运维细节确实留在 `str()`；B AST 锁（蒸馏失败的 raise 必须抛 `DistillError`；上屏字面量扫禁词，覆盖 raise 首参与 dict 的 `error`/`message` 值）；C 真实路径真跑 `Distiller.distill` 真抛 `DistillError`，断言上屏只有一个「蒸馏失败：」前缀
+- 变异已验证（5 个，全红后还原）：`ValueError` 取代 `DistillError` → B 红；兜底改回 `type(exc).__name__` → A 红；往 `user_message` 塞 `max_tokens` → A/B/C + truncation 用例共 4 条红；删 truncated 的 `ops_detail` → truncation 用例红；往 dict `message` 塞 `finish_reason` → B 红
+- **既有用例订正**（两处，都是缺陷 17 的**固化**——测的就是被修掉的那个行为）：
+  - `tests/test_distiller_truncation_selfheal.py` 的上限用例：断言从「`max_tokens` 在文案里」翻成「`max_tokens` **不在** `user_message` 里、但在 `str()` 里」
+  - `tests/test_distiller_routing.py` 的 3 条（`test_sync_429_bail` / `test_stream_429_bail` / `test_stream_generic_bail`，`adcb0a9`）：改锁方向相反的两条——上屏含「限流」/「重试」且**不含** 429 / 个分片 / `connection timeout`，而 `str()` 里那些必须**还在**（区分「分口径」与「删信息」）。`pytest.raises` 从 `ValueError` 收窄到 `DistillError`，锁住「必须带 `user_message`」
+  - 注：断言用「个分片」而非裸「分片」——上屏文案「部分片段处理失败」是合法中文，裸词假阳（本文件 §四 禁词表同此处理）
 
 **18. `IncompleteResponseError` 不可 pickle** —— 状态：未修（记账）
 - `__init__(self, finish_reason, where, content="")` 调 `super().__init__(<单条消息>)` → `args == (msg,)`。pickle 还原时按 `args` 调构造器 → 缺 `where` → `TypeError`
@@ -272,6 +290,33 @@ config.yaml 现值（现读，非转述）：
 - **这正是缺陷 13 的 32 处只能手写路由层合并、且删一处不会红的原因**——本轮 `tests/test_ownership_404.py` 是补的语义用例（第二层防线），形态锁（第一层）仍缺
 - 处置方向（须单独一轮，本轮不动，裁决 3）：按资源类型补语义用例全仓覆盖，或把锁的判据从「名字后缀」扩到「读取原语白名单 + 必须就地使用身份」——后者要先把无身份读取原语枚举出来
 - 与 §四「形态锁与语义用例是两层防线，各管各的」直接相关：缺陷 11 的两层都齐，这一类只有第二层
+
+**20. 蒸馏断点行的删除路径不对称 + 「删卡保留断点」的理由与代码事实相反**（会话文件里记作 **F**）—— 状态：**已修**（行清理 `6753f17`；线程停止 `bee9993`；注释订正 `53494ae`，2026-09-12）；删卡/解绑口径裁决为**不动**（另一件「加功能」已立项）
+
+- **零外键**：`storage/migrations/084_distill_tasks.sql` 的 `distill_tasks` / `distill_chunks` **都没有 REFERENCES / ON DELETE**（PG 侧建表同样零外键）。所以级联指望不上，**每一处清理都必须显式删两张表**，顺序先父后子（父行一消失，`save_distill_chunk` 的 `WHERE EXISTS` 即失效，写路径随之关闭）
+- **删除路径残留矩阵**（2026-09-12 现跑现测，sqlite 与 PG 逐格相同；脚本 `tests/perf/distill_orphan_matrix.py`，产物 `tests/perf/out_distill_orphan_evidence.txt`）：
+
+  | 删除路径 | distill_tasks | distill_chunks | 判定 |
+  |---|---|---|---|
+  | `delete_text`（软删） | 保留 | 保留 | 对：可 restore，断点该留 |
+  | `hard_delete_text`（两个 `keep_cards` 分支） | 清 | 清 | 已清 |
+  | `delete_card`（软删）/ `purge_card` / `detach_text_cards` | 保留 | 保留 | 裁决：不动（行身份与卡无关；断点跟文本走） |
+  | `delete_user` | 清 | 清 | 已清（`6753f17`）+ 线程停止（`bee9993`） |
+
+- **「删卡保留断点」的注释理由是错的**：`storage/sqlite_store.py` 的 `hard_delete_text` 里写着「不清理 `delete_card` / `purge_card` / `detach_text_cards`：蒸馏行身份是 (user, text, character)，card_id 只是产物反向指针；删卡重蒸是常规迭代，文本还在就不该清掉续跑断点（否则下次重蒸从头烧 API）」。但续跑发现 `find_interrupted_distill` **只匹配 `status = 'interrupted'`**。删卡时行的状态通常是 `running` / `done` / `error` —— **永远命不中**，断点留着也用不上；只有 boot reconcile 把 `running` 翻成 `interrupted` 之后才可达
+  - 现跑现测（`tests/perf/distill_resume_reachability.py`，同产物文件）：`running` / `done` / `error` 三个状态删卡后**都命不中**（整批重跑），只有 `interrupted` 命中。「删卡保留」目前 = 纯占空间、零 API 收益
+  - 即：注释宣称的保护在主流路径上不存在。要么承认它无用而连带清掉，要么改成「按 (user, text, character) 找最近一条可复用行」——后者是**加功能**，不是修 bug
+- **残留行的 `card_id` 是死指针，但症状是静默 no-op 而非报错**：蒸馏状态查询端点（`web/routers/distill.py` 里构造状态响应体的那处）原样回 `row["card_id"]`；卡被 `purge_card` 之后该 id 已不存在。前端三处消费点**都做了存在性守卫**（`DistillTaskBar.jsx` 与 `DistillWorkbench.jsx` 的 `tryChat` 是 `if (card)`，导出按钮挂在 `view?.canChat` 下），所以不会 404、不会崩——**点了「打开 / 试聊当前版本」什么也不发生**。属「失败被吞成正常返回」同族，但等级低（无数据损坏，只是无反馈）。*（初判为「前端取卡必 404」，实读前端后订正）*
+- **running 任务这一问已有实现**：`web/routers/text.py` 的软删与永久删**都在** `soft_delete` / `hard_delete` 之前调 `cancel_distill_tasks_by_text_id` —— 它同时置内存 `error`（bg 线程在 `distill_incremental_stream` 的消费循环里读这个当停止信号）与 DB `cancel_distills_by_text_id`。所以「删文本时有 running 任务怎么办」的答案是「删了让任务停」，且已落地，**无需再裁决**
+- **真缺口：`admin.delete_user` 这条路没接**。`web/routers/admin.py` 的 `delete_user` 直接调 `storage.delete_user`，**不停在跑的蒸馏线程**；`storage/postgres_store.py` 的 `delete_user` 注释自己承认了这一点。行被清、线程还在烧 LLM 额度，且其 `save_distill_chunk` / `update_distill_task` 双双落空（`WHERE EXISTS` + UPDATE-only），结果是**不可观测的野线程**
+- **野线程还能把刚清掉的东西再造回来**：`storage/migrations/001_init.sql` 的 `cards` 只在 `text_id` 上有 FK（`REFERENCES texts(id) ON DELETE CASCADE`），`cards.user_id` **没有** FK。所以 `delete_user` 清完行之后，那条仍在跑的蒸馏线程走到收尾的 `save_card` / `update_card`，会**给一个已删除的用户建出一张新卡**（孤儿行，且 `delete_user` 已经跑过去了，不会再有第二次清理）。这是本缺陷里唯一会**新增不可达数据**的路径，不只是「该清没清」
+- **判据小结**：断点行本身的生命周期是**跟文本走**的（每条文本死亡路径都已清、且行随文本 soft-delete 一起停留），所以「删卡/解绑要级联清」这个前提不成立；真正要修的是**文本/用户死亡时仍在跑的那条线程**
+- **处置（2026-09-12 完成）**：
+  - **用户死亡路径已修**（`bee9993`）：`cancel_distill_tasks_by_user_id` 与按 text 的变体同族（命名对齐既有的 `cancel_distill_tasks_by_text_id`，未复制逻辑），`web/routers/admin.py` 的 `delete_user` 与 `batch_delete_users` **两处都**在 `storage.delete_user` **之前**调它。只置内存停止信号、不扫 DB —— DB 那半多余（同一请求紧接着就删掉该用户的全部蒸馏行），该判断已写进函数 docstring，免得后人以为漏了
+  - **顺序不变量锁**：`tests/test_admin_user_delete_distill.py` —— 取证点选在 spy 的 `delete_user` **内部**读 `_tasks`，比「停止函数有没有被调用」强（能识破「先删库后发信号」这种顺序颠倒的假修）；batch 路径逐用户发信号，不是只发第一个
+  - **注释订正**（`53494ae`）：两 store 的 `hard_delete_text` 注释改成真实口径（断点生命周期跟文本走；非 `interrupted` 的残留行重蒸命不中，是已知取舍），证据脚本 `tests/perf/distill_resume_reachability.py` 与 `distill_orphan_matrix.py` 及其产物一并入库
+  - **删卡/解绑的清理口径：不动**（保守裁决）。删卡不产生孤儿行（行身份 `(user, text, character)` 与卡无关），清理由文本死亡路径负责；改成「按 `(user, text, character)` 找最近一条可复用行」是**加功能**，另立项
+- **未接停止信号的其余删除点（本轮只记不修）**：`web/routers/card.py` 的卡删除路由（`hard_delete("card")` ×2 / `soft_delete("card")` ×1），以及 `web/routers/market.py` 的 `delete_market_card`（直接调 `storage.delete_card`）—— 要把在跑的任务对上被删的卡需要 `(text_id, character)`，而 `character` 在 identify 步解析出名字之前是空串，匹配不可靠；且与上面「删卡口径不动」是同一件事
 
 ### 四、验证纪律
 
