@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from unittest.mock import MagicMock, patch
 
-from core.distiller import Distiller
+from core.distiller import DistillError, Distiller
 
 
 class TestEstimateTokens:
@@ -168,35 +168,44 @@ class TestMapPhaseFailureHandling:
     # ── sync path (distill_incremental) ──────────────────────────────────
 
     def test_sync_429_bail(self):
-        """>50% fail with 429 → ValueError with 'API 限流'."""
+        """>50% fail with 429 → DistillError；上屏说限流，运维口径（429 / 分片数）只进日志。
+
+        缺陷 17：这两条断言的方向是相反的——上屏**不能**有 429 / 分片，``str()`` **必须**有，
+        否则就是把「分了口径」做成了「删了信息」。
+        """
         mock_llm = MagicMock()
         mock_llm.last_usage = None
         mock_llm.async_chat = self._make_429_failing_async(fail_after=1)  # 3/4 fail = 75%
 
         d = self._make_distiller(mock_llm)
 
-        with pytest.raises(ValueError, match="API 限流"):
+        with pytest.raises(DistillError) as excinfo:
             d.distill_incremental("AB" * 5000, "AB")
 
+        assert "限流" in excinfo.value.user_message
+        assert "429" not in excinfo.value.user_message
+        assert "个分片" not in excinfo.value.user_message
+        assert "429" in str(excinfo.value)
+
     def test_sync_generic_bail(self):
-        """>50% fail with non-429 → ValueError describing failures."""
+        """>50% fail with non-429 → 上屏通用文案；最后错误只进日志（缺陷 17 不变量）。"""
         mock_llm = MagicMock()
         mock_llm.last_usage = None
         mock_llm.async_chat = self._make_generic_failing_async(fail_after=1)
 
         d = self._make_distiller(mock_llm)
 
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(DistillError) as excinfo:
             d.distill_incremental("AB" * 5000, "AB")
 
-        msg = str(excinfo.value)
-        assert "API 限流" not in msg
-        assert "connection timeout" in msg
+        assert "限流" not in excinfo.value.user_message
+        assert "connection timeout" not in excinfo.value.user_message
+        assert "connection timeout" in str(excinfo.value)   # 排障线索不丢
 
     # ── stream path (distill_incremental_stream) ─────────────────────────
 
     def test_stream_429_bail(self):
-        """>50% fail with 429 → yields {'error': 'API 限流'}."""
+        """>50% fail with 429 → 上屏帧说限流，不带 429 / 分片（运维口径）。"""
         mock_llm = MagicMock()
         mock_llm.last_usage = None
         mock_llm.async_chat = self._make_429_failing_async(fail_after=1)
@@ -208,10 +217,12 @@ class TestMapPhaseFailureHandling:
 
         errors = [r for r in results if isinstance(r, dict) and "error" in r]
         assert len(errors) == 1
-        assert "API 限流" in errors[0]["error"]
+        assert "限流" in errors[0]["error"]
+        assert "429" not in errors[0]["error"]
+        assert "个分片" not in errors[0]["error"]
 
     def test_stream_generic_bail(self):
-        """>50% fail with non-429 → yields {'error': describing failures}."""
+        """>50% fail with non-429 → 上屏帧是通用文案，最后错误不上屏（旧断言锁的正是泄漏）。"""
         mock_llm = MagicMock()
         mock_llm.last_usage = None
         mock_llm.async_chat = self._make_generic_failing_async(fail_after=1)
@@ -223,5 +234,7 @@ class TestMapPhaseFailureHandling:
 
         errors = [r for r in results if isinstance(r, dict) and "error" in r]
         assert len(errors) == 1
-        assert "API 限流" not in errors[0]["error"]
-        assert "connection timeout" in errors[0]["error"]
+        assert "connection timeout" not in errors[0]["error"]
+        # 用「个分片」而非裸「分片」：上屏的「部分片段处理失败」是合法中文，裸词会假阳
+        assert "个分片" not in errors[0]["error"]
+        assert "重试" in errors[0]["error"]
