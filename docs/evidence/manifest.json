@@ -9,6 +9,9 @@
     "reproduce": null,
     "assertions": null,
     "derived": null,
+    "non_repo_paths": [
+      ".claude/sessions/2026-09-10-distill-dbtruth-closeout.md"
+    ],
     "env": "本机工作树（2026-09-10 当天 HEAD）+ sqlite 夹具；无外部服务依赖",
     "measured_at": "2026-09-10",
     "code_sha": "9d2a9e4",
@@ -25,6 +28,9 @@
     "reproduce": null,
     "assertions": null,
     "derived": null,
+    "non_repo_paths": [
+      "config.yaml"
+    ],
     "env": "本机仓库工作树 + 未入库的 config.yaml（现值 chunk_size=5000）与 .claude/sessions/（`.gitignore:228`）；扫描不需外部服务",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -41,6 +47,9 @@
     "reproduce": null,
     "assertions": null,
     "derived": null,
+    "non_repo_paths": [
+      "config.yaml"
+    ],
     "env": "运行环境的 config.yaml（未入库，被 .gitignore 覆盖，随部署环境可变）；仓库内可核的是代码默认值",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -98,6 +107,7 @@
       }
     ],
     "derived": [],
+    "non_repo_paths": [],
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -143,6 +153,7 @@
       }
     ],
     "derived": [],
+    "non_repo_paths": [],
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -159,6 +170,9 @@
     "reproduce": null,
     "assertions": null,
     "derived": null,
+    "non_repo_paths": [
+      "graphify-out/graph.json"
+    ],
     "env": "2026-08-15 的工作树（构建 commit eb72a3bd）+ 当时的 graphify 工具链；语义标注经 `graphify label --backend=deepseek` 生成，即依赖 LLM 调用",
     "measured_at": "2026-08-15",
     "code_sha": "eb72a3bd",
@@ -208,6 +222,9 @@
       }
     ],
     "derived": [],
+    "non_repo_paths": [
+      "e2e/scratch/resume_probe.py"
+    ],
     "env": "本机 sqlite（e2e/scratch/e2e_db.sqlite 副本）+ 真后端 127.0.0.1:7899；config.yaml 将 llm.base_url 指向计数 mock 127.0.0.1:7898（包 tests/perf/mock_llm_server.py，truncate 档：map 返回 52 字节截断串）；distill longctx_threshold=1 / chunk_size=500 / map_concurrency=1 强制走分片路径。无真实供应商调用。",
     "measured_at": "2026-09-10",
     "code_sha": "unknown(scratch)",
@@ -259,6 +276,7 @@
         ]
       }
     ],
+    "non_repo_paths": [],
     "env": "本机 .env 持有供应商 key（nokey 档以 PROBE_NO_KEY=1 模拟无 key 机器）；无外部服务依赖",
     "measured_at": "2026-09-12",
     "code_sha": "5bacc48",
@@ -284,6 +302,7 @@
       }
     ],
     "derived": [],
+    "non_repo_paths": [],
     "env": "本机 .env 持有供应商 key（nokey 档以 PROBE_NO_KEY=1 模拟无 key 机器）；无外部服务依赖",
     "measured_at": "2026-09-12",
     "code_sha": "5bacc48",
@@ -341,6 +360,7 @@
         ]
       }
     ],
+    "non_repo_paths": [],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "5ba7b9e",
@@ -411,6 +431,7 @@
         ]
       }
     ],
+    "non_repo_paths": [],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "bc19511",
@@ -477,6 +498,7 @@
         ]
       }
     ],
+    "non_repo_paths": [],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "bc19511",

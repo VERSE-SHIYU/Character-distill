@@ -41,6 +41,7 @@ def _add_ghost_entry(entries, _mp):
     entries.append({
         "id": "ghost-unregistered", "claim": "c", "status": "runtime-measured",
         "artifact": None, "script": None, "script_role": None, "reproduce": None,
+        "assertions": None, "derived": None, "non_repo_paths": [],
         "env": "e", "measured_at": "2026-01-01", "code_sha": "deadbee",
         "redacted_fields": [], "notes": "n",
     })
@@ -199,10 +200,18 @@ MUTATIONS = [
      "TestManifestEntries::test_code_sha_resolves"),
     ("ghost_path_in_notes",
      lambda m, mp: _by_id(m, "a2-wiring-mutation").update(notes="见 tests/perf/ghost_probe.py"),
-     "TestManifestEntries::test_notes_and_claim_paths_resolve"),
-    ("gitignored_path_without_marker",
-     lambda m, mp: _by_id(m, "a2-wiring-mutation").update(notes="见 `.claude/sessions/x.md`"),
-     "TestManifestEntries::test_notes_and_claim_paths_resolve"),
+     "TestManifestEntries::test_non_repo_paths_are_declared_both_ways"),
+    ("undeclared_non_repo_path",
+     lambda m, mp: _by_id(m, "a2-wiring-mutation").update(
+         notes="见 `.claude/sessions/other-x.md`"),
+     "TestManifestEntries::test_non_repo_paths_are_declared_both_ways"),
+    ("tracked_path_falsely_declared_non_repo",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(
+         non_repo_paths=["tests/perf/evidence_writer.py"]),
+     "TestManifestEntries::test_non_repo_paths_are_declared_both_ways"),
+    ("non_repo_paths_missing_on_verified",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(non_repo_paths=None),
+     "TestManifestEntries::test_required_fields_present_and_non_empty"),
     # —— 正文引用闭合（TestReferenceClosure）——
     ("doc_ref_loses_its_entry",
      lambda m, mp: m.remove(_by_id(m, "incomplete-v5")),

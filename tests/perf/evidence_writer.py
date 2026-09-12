@@ -107,6 +107,7 @@ def write_evidence(
     script_role: str = "producer",
     assertions: list[dict] | None = None,
     derived: list[dict] | None = None,
+    non_repo_paths: list[str] | None = None,
     extra_notes: str | None = None,
 ) -> Path:
     """写 ``docs/evidence/<id>.json`` 并 upsert 清单条目（``status = verified``）。
@@ -117,7 +118,8 @@ def write_evidence(
 
     ``assertions``（``claim`` 里每个数字的产物出处）默认空 —— 探针不传时**锁会红**：
     实测产物刚跑出来，哪些数字是它的主张，只有作者知道。``derived``（产物里没有直接字段、
-    由已绑定量算出的数字，如合并中位数）默认空 —— 新产物多数没有这类量。契约见
+    由已绑定量算出的数字，如合并中位数）与 ``non_repo_paths``（``claim`` / ``notes`` 里
+    解析不到仓库的路径，逐条声明）默认空 —— 新产物多数两者皆无。契约见
     ``docs/evidence/README.md``。
     """
     allowed = _ALLOWED_BY_ID.get(evidence_id)
@@ -162,6 +164,7 @@ def write_evidence(
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "assertions": list(assertions or []),
         "derived": list(derived or []),
+        "non_repo_paths": list(non_repo_paths or []),
         "env": env.strip(),
         "measured_at": date.today().isoformat(),
         "code_sha": code_sha.strip(),
@@ -182,6 +185,7 @@ def register_artifact(
     script_role: str,
     assertions: list[dict],
     derived: list[dict],
+    non_repo_paths: list[str],
     reproduce: str | None = None,
     redacted_fields: tuple[str, ...] | list[str] = (),
     notes: str | None = None,
@@ -192,11 +196,12 @@ def register_artifact(
     迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
     所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
 
-    ``script_role`` / ``assertions`` / ``derived`` **无默认值、必须表态** —— 迁移路径正是
-    最容易静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是产出脚本）。给默认值
-    就等于给「照抄时留空」留口子：``assertions`` 是 ``claim`` 与产物之间唯一的连接点，
-    空着它 ``claim`` 就又变回自由文本；``derived`` 空着则等于把「这个数字是算出来的」又塞回
-    散文里。没有派生量时传空列表 —— 那是**表态**，不是省略。
+    ``script_role`` / ``assertions`` / ``derived`` / ``non_repo_paths`` **无默认值、必须表态**
+    —— 迁移路径正是最容易静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是
+    产出脚本）。给默认值就等于给「照抄时留空」留口子：``assertions`` 是 ``claim`` 与产物之间
+    唯一的连接点，空着它 ``claim`` 就又变回自由文本；``derived`` 空着则等于把「这个数字是
+    算出来的」又塞回散文里；``non_repo_paths`` 空着则把「这条路径不在库」又留给读者猜。
+    没有对应内容时传空列表 —— 那是**表态**，不是省略。
     """
     if evidence_id not in _ALLOWED_BY_ID:
         raise ValueError(
@@ -223,6 +228,7 @@ def register_artifact(
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "assertions": list(assertions),
         "derived": list(derived),
+        "non_repo_paths": list(non_repo_paths),
         "env": env.strip(),
         "measured_at": measured_at.strip(),
         "code_sha": code_sha.strip(),

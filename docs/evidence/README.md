@@ -58,6 +58,7 @@
   "assertions": [{"path": "summary[1].out_tokens_max", "value": 2097}],
   "derived": [{"value": 1245, "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位",
                "refs": ["records"]}],
+  "non_repo_paths": ["config.yaml"],
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
   "code_sha": "产出时的 commit",
@@ -108,9 +109,58 @@
 合并中位数进 `derived`（`refs` 指 `records`），两者靠 `notes` 显式对照。
 这不是形式主义，是那次事故的直接产物。
 
-**止于何处**：「`producer` 脚本跑出来是不是**真**这份产物」静态不可判 —— 查到「脚本在库、
-数字与产物相等」为止。再往上就得真跑脚本，那是 LLM 调用、非确定性、且可能重跑顶替旧结论。
-这个边界是刻意的，不是漏掉的。
+### 止步声明（这套锁查到哪里为止）
+
+静态能核到的全部，就是这四件事：
+
+1. **路径在库** —— `script` / `reproduce` 里的仓内路径都解析得到；不在库的
+   （`claim` / `notes` 里的）逐条声明进 `non_repo_paths` 且**确实**不在库
+2. **数字与产物相等** —— `claim` 里每个数字都绑到 `assertions`（严格相等，比类型）或 `derived`
+3. **派生量可回溯到已绑定量** —— `derived.refs` 落在本条目 assertions 的 path 里，且非恒等式
+4. **脚本在库** —— `producer` / `corroborating` 指向的文件被 git 命中
+
+再往上**静态不可判**，本档不追：
+
+- 「`producer` 脚本跑出来是不是**真**这份产物」—— 要真跑，那是 LLM 调用、非确定性，
+  且可能重跑顶替旧结论
+- 「`derived.value` 是不是**真**由 `refs` 算出」—— `refs` 里写一个已绑定的容器路径、
+  `formula` 写一句像样的话，锁就核对到此为止
+- 「`non_repo_paths` 是不是**全**了」—— 依赖 `_path_tokens` 认得出是个路径；认不出的形态
+  既不会被查、也不会被要求声明（那组语料钉的就是这个面，见下节）
+
+这两条边界是刻意的，不是漏掉的。**核不出来的部分靠 review，不靠再收一层正则。**
+写明是为了让下一个人别以为还漏了一层 —— 再往上加正则，只会把散文换成更脆的启发式。
+
+
+### `non_repo_paths`：非仓库路径逐条表态
+
+`claim` / `notes` 里会引用不在 git 管理下的东西（gitignored 的 `config.yaml`、`.claude/sessions/`
+下的会话档、`e2e/scratch/` 的一次性脚本）。它们解析不到仓库，但**不该让读者按它去查时扑空**
+却毫无提示。此前判据是「整条 blob 里找『未入库』等词」（`any(m in blob for m in _NONREPO_MARKERS)`）
+—— 一条 `notes` 里两条路径、只标一条也过：标注与它管的那条路径之间没有绑定，锁看不见。
+
+现改成逐条声明的字段，锁**双向**核对：
+
+1. `claim` / `notes` 里解析不到仓库的路径 token，**必须**逐个出现在 `non_repo_paths` 里
+2. `non_repo_paths` 里的每一条，**必须**确实解析不到仓库（tracked 的路径写进来即红）
+
+**为什么双向**：只查方向 1，作者可以把整个仓库路径表倒进来一劳永逸（全声明 = 没声明）；
+只查方向 2，漏标的路径照旧无人发现。双向才让这个字段等价于一次**逐路径的显式表态**。
+
+前缀白名单（`_GITIGNORED_PREFIXES`）随之删除 —— 有了逐条声明，前缀猜测就是多余的，而且
+它本身就是启发式（新增一个 gitignored 目录就漏）。`reproduce` 是例外：它允许引用运行期输入
+（`data/` 下的语料库），因为复现命令读它没问题，只是它不入库 —— 这张小放行表硬编码在锁里，
+只有 `data/` 一个前缀。
+
+### 判据的另一半：提取器本身要被钉住
+
+`_path_tokens` / `_numbers` 是整套判据里唯一**不可能靠「声明」消除**的启发式 —— 没被提取成
+路径的东西，既不会被查、也不会被要求声明：**你没法声明你没注意到的东西**。这不是能修掉的病，
+是真边界。能做的只是防它退化成空过：把识别面钉成一组语料（反引号包裹 / 行内代码 / 中文标点
+紧邻 / `AGENTS.md:349` 行号后缀 / 相对路径 / `docs/evidence/<id>.json`；数字侧 `n=14` /
+`p50 1245` / `8192` / `94%` / `12441/12413`），提取器必须**全部识别**，识别不到的记进
+`_PATH_KNOWN_MISSES`。判据写在 `tests/test_evidence_integrity.py` 里（`TestExtractorPins`），
+不写在本档 —— 识别不到的形态就是这道门的真实边界，摆出来让人看见。
 
 
 ### `script_role`：`script` 有两种语义，必须逐条表态
@@ -132,9 +182,9 @@
 
 | status | 含义 | 必填 | 锁校验 |
 |---|---|---|---|
-| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` `assertions` `derived` | `artifact` 被 `git ls-files` 命中；`script` 在库；`reproduce` 路径解析得到；`code_sha` 解得开或为哨兵；`assertions` 非空且与产物严格相等；`derived` 的 `refs` 落在本条目 assertions 里 |
-| `runtime-measured` | 运行时实测，非仓库数据 | `env` `measured_at` + `notes` 写明**扫描方法** | `artifact` 必须为 `null` |
-| `unverifiable` | 当时结论，现已不可复现 | `measured_at` `env` + `notes` 写明**为什么现在复现不了** | `artifact` 必须为 `null` |
+| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` `assertions` `derived` `non_repo_paths` | `artifact` 被 `git ls-files` 命中；`script` 在库；`reproduce` 路径解析得到；`code_sha` 解得开或为哨兵；`assertions` 非空且与产物严格相等；`derived` 的 `refs` 落在本条目 assertions 里；`non_repo_paths` 双向核对 |
+| `runtime-measured` | 运行时实测，非仓库数据 | `env` `measured_at` `non_repo_paths` + `notes` 写明**扫描方法** | `artifact` 必须为 `null` |
+| `unverifiable` | 当时结论，现已不可复现 | `measured_at` `env` `non_repo_paths` + `notes` 写明**为什么现在复现不了** | `artifact` 必须为 `null` |
 
 **`runtime-measured` 与 `unverifiable` 的分界**：环境还在、只是数据没入库 → 前者；
 环境 / 快照已不存在 → 后者。有产物却标这两档 = 该转正没转，锁红。
@@ -183,11 +233,17 @@
 5. 出口不接受路径类参数、不读环境变量（落点不可覆盖）
 6. **指称闭合**：`script` 在库（两种 `script_role` 都查）；`reproduce` 里的仓内路径逐个解析；
    `code_sha` 解得开一个 commit 或精确等于哨兵 `unknown(scratch)`；`notes`/`claim` 里的路径
-   tracked，或属已知 gitignored 前缀且**同条目内**带非仓库标注
+   tracked，或逐条声明进 `non_repo_paths`（**双向**核对）
 7. **数值闭合**：见 `assertions` / `derived` 两节 —— assertion 非空、与产物严格相等、
    `derived` 的 `refs` 落在本条目 assertions 里且非恒等式、`claim` 数字全覆盖
+8. **提取器反空过**：`_path_tokens` / `_numbers` 对钉住的语料形态必须全部识别
 
 `tests/test_evidence_integrity_mutations.py`：**变异矩阵**。每条清单语义断言必须有自己的
 专属红源 —— 每个变异**只跑指定的那一条**断言，证明它不靠渲染锁兜住。渲染新鲜度锁会因为
 **任何**清单变异而红，没有这个矩阵，新增断言的「绿」可能是假的。**此后新增任何清单语义
 断言，必须同时补一行矩阵。**
+
+这条约定本身也是机器校验的：`TestMutationCoverage` **反射**两个模块里全部 `Test*` 类的
+`test_*`（不列举类名 —— 列举就等于给「新开一个类」留后门），与 `MUTATIONS` 的 nodeid 集合
+求差集，非空即红。确实不需要变异行的断言走 `_NO_MUTATION_NEEDED`，**写成 dict 并交代理由**
+（list 允许一行字符串把断言悄悄豁免掉）。元断言自己也占一行 —— 它同样得有专属红源。

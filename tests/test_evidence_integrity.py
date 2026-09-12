@@ -28,9 +28,10 @@ MANIFEST = ROOT / "docs" / "evidence" / "manifest.json"
 EV_RE = re.compile(r"ev:([a-z0-9][a-z0-9._-]*)")
 
 _REQUIRED = {
-    "verified": ("artifact", "script", "script_role", "reproduce", "assertions", "derived"),
-    "runtime-measured": ("env", "measured_at", "notes"),
-    "unverifiable": ("measured_at", "env", "notes"),
+    "verified": ("artifact", "script", "script_role", "reproduce", "assertions", "derived",
+                 "non_repo_paths"),
+    "runtime-measured": ("env", "measured_at", "notes", "non_repo_paths"),
+    "unverifiable": ("measured_at", "env", "notes", "non_repo_paths"),
 }
 _STATUSES = ("verified", "runtime-measured", "unverifiable")
 _SCRIPT_ROLES = ("producer", "corroborating")
@@ -39,12 +40,10 @@ _SCRIPT_ROLES = ("producer", "corroborating")
 # `producer` 的定义是「跑它能重生成这份产物」，脚本不在库里这个定义当场不成立 ——
 # 而在此之前没有任何断言看 `script` 一眼。
 _SHA_SENTINELS = ("unknown(scratch)",)
-# 正文里允许出现的「非仓库」路径：这些前缀下的文件本来就不入库，但必须**在同一条目内**
-# 带一句非仓库标注，读者才知道按它去查是查不到的。
-_GITIGNORED_PREFIXES = (".claude/sessions/", "e2e/scratch/", "graphify-out/", "config.yaml")
-# reproduce 允许引用的运行期输入（语料库等）—— 复现命令读它没问题，只是它不入库
-_RUNTIME_OK_PREFIXES = ("data/",) + _GITIGNORED_PREFIXES
-_NONREPO_MARKERS = ("未入库", "不在仓库", "gitignored", "scratch", ".gitignore")
+# reproduce 允许引用的运行期输入（语料库等）—— 复现命令读它没问题，只是它不入库。
+# 只剩 `data/`：其余非仓库路径一律走 `non_repo_paths` 逐条声明（前缀猜测是启发式，
+# 新增一个 gitignored 目录就漏）。
+_RUNTIME_OK_PREFIXES = ("data/",)
 _PATH_RE = re.compile(
     r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+"
     r"\.(?:py|json|md|sh|txt|ya?ml|cjs|js|ts|tsx|sql|toml|ini|cfg)(?![\w])")
@@ -301,26 +300,34 @@ class TestManifestEntries:
             f"code_sha 不是 commit 也不是 {_SHA_SENTINELS}：{bad}。"
             "编一个近似 sha 比留哨兵坏得多 —— 它会让复算的人 checkout 一个错的点。")
 
-    def test_notes_and_claim_paths_resolve(self):
-        """notes / claim 里的路径要么 tracked，要么带非仓库标注。
+    def test_non_repo_paths_are_declared_both_ways(self):
+        """notes / claim 里的非仓库路径必须**逐条**声明进 `non_repo_paths`，且只能声明非仓库的。
 
-        迁移与改名是这类漂移的高发场景：文档里那条路径早已不在，读者按它去查是空的，
-        而清单本身看起来完好。
+        此前是「整条 blob 里找『未入库』等词」（`any(m in blob)`）—— 一条目两条路径只标一条
+        也过,标注与它管的那条路径之间没有绑定。改成声明式字段后**双向**核对：
+
+        1. 解析不到仓库的 token 必须逐个出现在 `non_repo_paths`
+        2. `non_repo_paths` 里的每一条必须**确实**解析不到仓库
+
+        只查方向 1，作者可以把整个仓库路径表倒进来一劳永逸；只查方向 2，漏标的路径照旧无人
+        发现。双向才让这个字段等价于一次**逐路径的显式表态**。前缀白名单（`_GITIGNORED_PREFIXES`）
+        随之删除 —— 有了逐条声明，前缀猜测就是多余的，而且它本身就是启发式。
         """
         bad = []
         for e in _manifest():
+            declared = e.get("non_repo_paths") or []
             blob = " ".join(str(e.get(f) or "") for f in ("claim", "notes"))
-            for tok in _path_tokens(blob):
-                if _is_tracked(tok):
-                    continue
-                if tok.startswith(_GITIGNORED_PREFIXES):
-                    if not any(m in blob for m in _NONREPO_MARKERS):
-                        bad.append((e["id"], tok, "gitignored 前缀但全条无「非仓库」标注"))
-                    continue
-                bad.append((e["id"], tok, "不在库"))
+            undeclared = sorted(t for t in _path_tokens(blob)
+                                if not _is_tracked(t) and t not in declared)
+            if undeclared:
+                bad.append((e["id"], "未声明", undeclared))
+            falsely = sorted(t for t in declared if _is_tracked(t))
+            if falsely:
+                bad.append((e["id"], "谎称不在库", falsely))
         assert not bad, (
-            f"notes/claim 里的路径解析不到：{bad}。"
-            f"gitignored 前缀 {_GITIGNORED_PREFIXES} 必须带非仓库标注（如「未入库」）。")
+            f"`non_repo_paths` 双向核对失败：{bad}。"
+            "方向一：claim/notes 里解析不到仓库的路径必须逐条声明；"
+            "方向二：声明进来的路径必须真的不在库（tracked 的写进来即红）。")
 
 
 
@@ -548,7 +555,7 @@ class TestRegisterArtifact:
         evidence_writer.register_artifact(
             "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
             code_sha="abc1234", measured_at="2026-09-10", script_role="producer", notes="n",
-            assertions=[{"path": "a", "value": 1}], derived=[],
+            assertions=[{"path": "a", "value": 1}], derived=[], non_repo_paths=[],
             redacted_fields=("content_head", "preview"))
         e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
         assert e["status"] == "verified"
@@ -557,16 +564,18 @@ class TestRegisterArtifact:
         assert e["artifact"] == "docs/evidence/tmp-id.json"
         assert e["assertions"] == [{"path": "a", "value": 1}]
         assert e["derived"] == []
+        assert e["non_repo_paths"] == []
         assert e["redacted_fields"] == ["content_head", "preview"]
 
     def test_missing_artifact_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="不存在"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], non_repo_paths=[],
+                code_sha="a", measured_at="2026-09-12")
 
     def test_register_requires_declarations_without_defaults(self, tmp_evidence):
-        """迁移入口的 `script_role` / `assertions` / `derived` 无默认值 —— 漏填 TypeError，不静默兜底。"""
+        """迁移入口的 `script_role` / `assertions` / `derived` / `non_repo_paths` 无默认值 —— 漏填 TypeError。"""
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         with pytest.raises(TypeError):
             evidence_writer.register_artifact(
@@ -578,13 +587,15 @@ class TestRegisterArtifact:
         with pytest.raises(ValueError, match="script_role 只允许"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="secondary",
-                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], non_repo_paths=[],
+                code_sha="a", measured_at="2026-09-12")
 
     def test_unregistered_id_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="未在 evidence_writer"):
             evidence_writer.register_artifact(
                 "never-registered", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], derived=[], code_sha="a", measured_at="2026-09-12")
+                assertions=[], derived=[], non_repo_paths=[],
+                code_sha="a", measured_at="2026-09-12")
 
 
 class TestRenderedResumeList:
