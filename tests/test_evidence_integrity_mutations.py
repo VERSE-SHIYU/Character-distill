@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -50,6 +51,21 @@ def _drop_whitelist(entries, mp):
 
 # (名字, 变异, 期望红的 nodeid)。nodeid 用 `Class::method`，在本文件内直接调用该方法。
 MUTATIONS = [
+    # —— M0 提取器反空过（TestExtractorPins）——
+    ("path_corpus_loses_a_shape",
+     lambda m, mp: mp.delitem(lock._PATH_CORPUS, "带行号后缀"),
+     "TestExtractorPins::test_path_extractor_recognizes_the_pinned_shapes"),
+    ("path_extractor_loses_a_shape",
+     lambda m, mp: mp.setattr(
+         lock, "_PATH_RE", re.compile(r"(?<=\s)(?:[\w.-]+/)*[\w.-]+\.py(?![\w])")),
+     "TestExtractorPins::test_path_extractor_recognizes_the_pinned_shapes"),
+    ("number_corpus_loses_a_shape",
+     lambda m, mp: mp.delitem(lock._NUM_CORPUS, "斜杠分隔"),
+     "TestExtractorPins::test_number_extractor_recognizes_the_pinned_shapes"),
+    ("number_extractor_loses_a_shape",
+     lambda m, mp: mp.setattr(
+         lock, "_NUM_RE", re.compile(r"(?<![0-9A-Za-z_])\d{4,}(?![0-9A-Za-z_])")),
+     "TestExtractorPins::test_number_extractor_recognizes_the_pinned_shapes"),
     # —— 条目形状断言（TestManifestEntries）——
     ("status_fourth_value",
      lambda m, mp: _by_id(m, "incomplete-v5").update(status="rejected"),

@@ -55,6 +55,38 @@ _NUM_RE = re.compile(r"(?<![0-9A-Za-z_])\d+(?![0-9A-Za-z_])")
 # 派生量声明块：notes 里 `派生量：` 之后的全部文本。块内数字视为已声明（附算法）。
 _DERIVED_MARKER = "派生量："
 
+# ── M0 提取器反空过（缺陷 14 v4 §二之二）────────────────────────────────────
+# `_path_tokens` / `_numbers` 是整套判据里**唯一不可能靠「声明」消除**的启发式：没被提取到的
+# 东西，既不会被查、也不会被要求声明 —— 你不能声明你没注意到的东西。这不是能修掉的病，是真
+# 边界。但必须防它退化成空过，所以把识别面钉成语料：提取器将来放宽或收紧，这组语料就是它的
+# 回归锁。**判据写在这里，不写在 README 里** —— 识别不到的形态就是这道门的真实边界，
+# 摆出来让人看见，而不是靠注释声明「大概能认」。
+_PATH_CORPUS = {
+    "反引号包裹": ("见 `tests/perf/x.py` 处的实现", {"tests/perf/x.py"}),
+    "行内代码块": ("调用 `tests/perf/map_len_probe.py` 得到", {"tests/perf/map_len_probe.py"}),
+    "中文标点紧邻": ("见 tests/perf/x.py，随后按脚本重跑", {"tests/perf/x.py"}),
+    "带行号后缀": ("AGENTS.md:349 那一段", {"AGENTS.md"}),
+    "相对路径": ("改动 tests/test_evidence_integrity.py 时", {"tests/test_evidence_integrity.py"}),
+    "证据产物形态": ("产物落在 docs/evidence/incomplete-v5.json",
+                     {"docs/evidence/incomplete-v5.json"}),
+}
+# 语料形态清单**独立一份**：只靠语料自身，删掉一行没人红（少查一行照样绿）。
+_PATH_SHAPES = frozenset({
+    "反引号包裹", "行内代码块", "中文标点紧邻", "带行号后缀", "相对路径", "证据产物形态",
+})
+# 已知不识别（边界，不是待修）：`<id>` 占位符不是文件名字符。清单里的真实写法是把 id 写实。
+_PATH_KNOWN_MISSES = {"docs/evidence/<id>.json": "占位符形态（`<` 不是文件名字符）"}
+
+_NUM_CORPUS = {
+    "等号赋值": ("n=14 条记录", {14}),
+    "字段名后跟量": ("p50 1245 与 1446 两档", {1245, 1446}),
+    "裸整数": ("上限 8192 未触顶", {8192}),
+    "百分号": ("占 94% 的样本", {94}),
+    "斜杠分隔": ("12441/12413 两个字符数", {12441, 12413}),
+}
+# 同样独立一份：字段名里的数字**不算量值**（`p50` 抽成 50 会让 claim 长出幻影数字）。
+_NUM_SHAPES = frozenset({"等号赋值", "字段名后跟量", "裸整数", "百分号", "斜杠分隔"})
+
 sys.path.insert(0, str(PERF))
 import evidence_writer  # noqa: E402
 
@@ -123,6 +155,39 @@ class TestReferenceClosure:
         assert not missing, (
             f"证据 id 未在 evidence_writer._ALLOWED_BY_ID 注册：{missing}。"
             "没有注册就没有白名单，脱敏会退回「记得删」。")
+
+
+class TestExtractorPins:
+    """M0 —— 提取器必须认得住已知形态，否则它的「没报错」是空过。
+
+    `_path_tokens` / `_numbers` 认不出的 token，既不进「必须解析到仓库」的判据，也不进
+    「必须被声明」的判据。于是提取器一旦悄悄变窄，整套闭合会**整体空过**而全绿。
+    """
+
+    def test_path_extractor_recognizes_the_pinned_shapes(self):
+        assert set(_PATH_CORPUS) == _PATH_SHAPES, (
+            f"路径语料形态被增删：{sorted(set(_PATH_CORPUS) ^ _PATH_SHAPES)}。"
+            "删一行等于悄悄缩小识别面 —— 要么补回，要么同步改 _PATH_SHAPES 并说明理由。")
+        bad = [(name, text, want, _path_tokens(text))
+               for name, (text, want) in _PATH_CORPUS.items()
+               if _path_tokens(text) != want]
+        assert not bad, (
+            f"路径提取器认不出这些形态（名字, 语料, 期望, 实际）：{bad}。"
+            "空过点在这里：认不出的路径不会被查、也不会被要求声明。")
+        leaked = sorted(t for t in _PATH_KNOWN_MISSES if _path_tokens(t))
+        assert not leaked, (
+            f"原以为是边界、现在能认了：{leaked}。这是好事 —— 但把语料与 "
+            "_PATH_KNOWN_MISSES 同步更新，别让边界描述漂移。")
+
+    def test_number_extractor_recognizes_the_pinned_shapes(self):
+        assert set(_NUM_CORPUS) == _NUM_SHAPES, (
+            f"数字语料形态被增删：{sorted(set(_NUM_CORPUS) ^ _NUM_SHAPES)}。")
+        bad = [(name, text, want, _numbers(text))
+               for name, (text, want) in _NUM_CORPUS.items()
+               if _numbers(text) != want]
+        assert not bad, (
+            f"数字提取器认不出这些形态（名字, 语料, 期望, 实际）：{bad}。"
+            "注意 `p50` 这类字段名里的数字**不该**被抽成量值 —— 那会让 claim 长出幻影数字。")
 
 
 class TestManifestEntries:
