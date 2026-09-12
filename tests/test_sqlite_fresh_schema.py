@@ -12,12 +12,41 @@ except 漏掉，新库永远缺 users.embedding_key / embedding_region，
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import uuid
+from pathlib import Path
 
 from storage.sqlite_store import SQLiteStore
 
+ROOT = Path(__file__).resolve().parents[1]
+PG_DIR = ROOT / "storage" / "migrations_pg"
+
 EMBEDDING_COLS = ("embedding_key", "embedding_region")
+
+# SQLite 自建、不出现在任何迁移文件里的内部表
+_SQLITE_INTERNAL_TABLES = frozenset({"sqlite_sequence"})
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<table>\w+)", re.IGNORECASE)
+_COMMENT_RE = re.compile(r"--[^\n]*")
+
+
+def _pg_declared_tables() -> set[str]:
+    """`migrations_pg/` 声明的全部表名（去注释后扫 CREATE TABLE）。"""
+    names: set[str] = set()
+    for p in sorted(PG_DIR.glob("*.sql")):
+        sql = _COMMENT_RE.sub("", p.read_text(encoding="utf-8"))
+        names |= {m.group("table") for m in _CREATE_TABLE_RE.finditer(sql)}
+    return names
+
+
+def _tables_in(db_path: str) -> set[str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
 
 
 async def _init(store: SQLiteStore, capsys) -> str:
@@ -120,3 +149,39 @@ class TestFreshSqliteSchema:
         cols = _columns(db_path)
         for col in EMBEDDING_COLS:
             assert col in cols, f"半成品库 init 后缺 {col}；实际列={sorted(cols)}"
+
+
+class TestExemptionClosedLoop:
+    """豁免出口的闭环（缺陷 21）。
+
+    锁的是**症状本身**，不是「文件有没有登记」这个代理指标 —— 后者可被合法豁免绕过。
+    实测反例（2026-09-13）：`079_remote_user_profiles.sql` 从没接进 SQLite 执行器，
+    而 `test_migration_dispatch` 一直绿着，因为它躺在 `_NOT_APPLIED` 里带理由豁免。
+    **三把锁各自尽职、全部绿，库仍然缺表**：
+
+    - `test_migration_dispatch` 只管「有没有归宿」，不管归宿是否可接受；
+    - `test_schema_parity` 是正则扫 `.sql` 文本，079 文件在盘上就认为两侧对称；
+    - `TestFreshSqliteSchema` 只断言 init 无失败输出与 embedding 两列 —— 没有任何东西
+      试图建那张表，所以不会失败。
+
+    所以豁免机制本身成了新的静默通道：写下理由即永久放行，而理由里声明的后果
+    （「新库缺表、代码在用」）没有任何东西去验。本类补上那一半。
+
+    真源选 `migrations_pg/`：PG 执行器是 `sorted(glob('*.sql'))`（`postgres_store.py`），
+    **目录即清单、没有豁免出口** —— 故「PG 目录里声明的表」就是「应该存在的表」的可靠定义。
+
+    **变异判别力（实测）**：把 079 从次序元组移回 `_NOT_APPLIED` →
+    `test_fresh_db_covers_every_table_pg_declares` 红，而
+    `test_every_migration_file_is_dispatched` **仍绿**。旧锁抓不到的那一类，正是本锁抓的。
+    """
+
+    async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):
+        store, db_path = _fresh_store(tmp_path)
+        await _init(store, capsys)
+        missing = sorted(_pg_declared_tables() - _tables_in(db_path) - _SQLITE_INTERNAL_TABLES)
+        assert not missing, (
+            f"这些表 `migrations_pg/` 声明了、SQLite 新库却没有：{missing}。"
+            "两个 store 的 schema 漂移了 —— 要么把对应迁移接进 `storage/sqlite_store.py` "
+            "的次序元组（并写清位次理由），要么在 `tests/test_migration_dispatch.py` "
+            "的 `_NOT_APPLIED` 里显式豁免**并说明该表为何 SQLite 侧不需要**。")
+
