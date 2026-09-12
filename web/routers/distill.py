@@ -775,7 +775,12 @@ async def _distill_start_impl(
         base_url = api_config.get("base_url", "https://api.deepseek.com")
         allowed, reason = check_api_allowed(_client_ip, base_url)
         if not allowed:
-            await storage.record_geo_block(user_id, _client_ip, base_url, reason)
+            # 审计写入失败不得改写判定：本支的语义是「不配 per-user LLM，用全局兜底」，
+            # 不是「整个蒸馏请求失败」。store 现在会对库失败上抛，容忍策略就地写。
+            try:
+                await storage.record_geo_block(user_id, _client_ip, base_url, reason)
+            except Exception as exc:
+                print(f"[distill] Record geo block failed (non-fatal): {exc}")
         else:
             from adapters.llm_adapter import LLMAdapter
             try:

@@ -12,7 +12,7 @@ from typing import Any
 
 import asyncpg  # type: ignore[import-not-found]
 
-from .base import StorageBase
+from .base import StorageBase, StoreError
 
 
 class _PoolContext:
@@ -31,6 +31,8 @@ class _PoolContext:
             try:
                 await self.pool.release(self.conn)
             except Exception as release_exc:
+                # store-empty-ok: 归还失败不改变本次操作的结果 —— 同 sqlite 侧 __aexit__：
+                # 上抛会顶替调用方真正的异常。池的泄漏风险由这行 print 可见。
                 print(f"[PostgresStore] Release connection failed: {release_exc}")
             self.conn = None
 
@@ -58,6 +60,9 @@ class PostgresStore(StorageBase):
         try:
             return int(tag.split()[-1])
         except (ValueError, IndexError):
+            # store-empty-ok: 捕获的是「asyncpg 命令标签格式不符预期」，不是查询失败 ——
+            # 语句本身已经执行成功，只是拿不到行数。此处 0 = 「行数未知」，调用方按
+            # 「可能没改到行」处理，与「无数据」同侧。
             return 0
 
     async def _ensure_initialized(self) -> None:
@@ -518,7 +523,7 @@ class PostgresStore(StorageBase):
                 return card
         except Exception as exc:
             print(f"[PostgresStore] Get card detail failed: {exc}")
-            return None
+            raise StoreError("get_card_detail", exc) from exc
 
     async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
         """Get a single public card detail with author info. Falls back to remote_cards."""
@@ -565,7 +570,7 @@ class PostgresStore(StorageBase):
             return remote
         except Exception as exc:
             print(f"[PostgresStore] Get market card detail failed: {exc}")
-            return None
+            raise StoreError("get_market_card_detail", exc) from exc
 
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
@@ -640,7 +645,7 @@ class PostgresStore(StorageBase):
                 return None
         except Exception as exc:
             print(f"[PostgresStore] Get card avatar failed: {exc}")
-            return None
+            raise StoreError("get_card_avatar", exc) from exc
 
     # ── Market / public card methods ──────────────────────────
 
@@ -752,7 +757,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[PostgresStore] List public cards total failed: {exc}")
-            return 0
+            raise StoreError("list_public_cards_total", exc) from exc
 
     async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
         """Search public cards UNION remote_cards by name match."""
@@ -816,7 +821,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[PostgresStore] Search public cards total failed: {exc}")
-            return 0
+            raise StoreError("search_public_cards_total", exc) from exc
 
     async def global_search(self, keyword: str, user_id: str = "") -> dict:
         """Search cards, texts, users by keyword. Returns max 5 per type."""
@@ -866,7 +871,7 @@ class PostgresStore(StorageBase):
             return {"cards": cards, "texts": texts, "users": users}
         except Exception as exc:
             print(f"[PostgresStore] Global search failed: {exc}")
-            return {"cards": [], "texts": [], "users": []}
+            raise StoreError("global_search", exc) from exc
 
     async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
         """Deep copy a public card for a new user. Returns the new card dict."""
@@ -882,7 +887,7 @@ class PostgresStore(StorageBase):
                     return None
         except Exception as exc:
             print(f"[PostgresStore] Fork card visibility check failed: {exc}")
-            return None
+            raise StoreError("fork_card", exc) from exc
 
         try:
             text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
@@ -971,7 +976,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Delete card failed: {exc}")
-            return False
+            raise StoreError("delete_card", exc) from exc
 
     async def restore_card(self, card_id: str) -> bool:
         """Restore a soft-deleted card."""
@@ -984,7 +989,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Restore card failed: {exc}")
-            return False
+            raise StoreError("restore_card", exc) from exc
 
     async def purge_card(self, card_id: str) -> bool:
         """Permanently delete a card, enqueue outbox atomically."""
@@ -1011,7 +1016,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Purge card failed: {exc}")
-            return False
+            raise StoreError("purge_card", exc) from exc
 
     async def list_deleted_cards(self, user_id: str) -> list[dict]:
         """List soft-deleted cards for a user (recycle bin)."""
@@ -1039,7 +1044,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Update card visibility failed: {exc}")
-            return False
+            raise StoreError("update_card_visibility", exc) from exc
 
     async def get_liked_card_ids(self, user_id: str) -> list[str]:
         """Return all card IDs the user has liked (for frontend highlight)."""
@@ -1051,7 +1056,7 @@ class PostgresStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[PostgresStore] Get liked card ids failed: {exc}")
-            return []
+            raise StoreError("get_liked_card_ids", exc) from exc
 
     async def get_recent_card_session(self, card_id: str, exclude_id: str = "") -> dict | None:
         """Get the most recent session for a card (excluding a given session id)."""
@@ -1078,7 +1083,7 @@ class PostgresStore(StorageBase):
                 return None
         except Exception as exc:
             print(f"[PostgresStore] Get recent card session failed: {exc}")
-            return None
+            raise StoreError("get_recent_card_session", exc) from exc
 
     async def save_session(self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = "") -> dict:
         """Save or update one session record."""
@@ -1723,7 +1728,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row) if row else None
         except Exception as exc:
             print(f"[PostgresStore] Get DM message failed: {exc}")
-            return None
+            raise StoreError("get_dm_message", exc) from exc
 
     async def get_dm_reactions(self, user_id: str, other_id: str) -> dict:
         """Return reactions for messages in the conversation between user_id and other_id.
@@ -1816,6 +1821,9 @@ class PostgresStore(StorageBase):
             try:
                 card_parsed = json.loads(card["card_json"])
             except json.JSONDecodeError as exc:
+                # store-empty-ok: 这不是「查询失败」而是「单张卡的存量数据损坏」。导出仍完整
+                # 产出，且降级在载荷里显式可见（{"raw": <原始串>} 取代解析后的卡对象）。
+                # 上抛会让一张坏卡毁掉整次导出。
                 print(f"[PostgresStore] Parse card_json failed: {exc}")
                 card_parsed = {"raw": card["card_json"]}
         if fmt == "json":
@@ -1928,7 +1936,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Set user privacy failed: {exc}")
-            return False
+            raise StoreError("set_user_privacy", exc) from exc
 
     async def set_user_presence_visibility(self, user_id: str, visibility: str) -> bool:
         """Set presence_visibility for a user."""
@@ -1943,7 +1951,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Set presence visibility failed: {exc}")
-            return False
+            raise StoreError("set_user_presence_visibility", exc) from exc
 
     # ---- Email & verification codes ----
 
@@ -2063,6 +2071,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update last_login failed: {exc}")
+            raise StoreError("update_last_login", exc) from exc
 
     async def update_last_active(self, user_id: str) -> None:
         """Update the last_active_at timestamp for a user."""
@@ -2075,6 +2084,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update last_active failed: {exc}")
+            raise StoreError("update_last_active", exc) from exc
 
     async def get_dashboard_stats(self) -> dict:
         """Aggregate dashboard statistics for admin panel."""
@@ -2194,7 +2204,7 @@ class PostgresStore(StorageBase):
                     return self._get_fernet().decrypt(val.encode()).decode()
                 except Exception as exc:
                     print(f"[PostgresStore] decrypt failed: {exc}")
-                    return ""
+                    raise StoreError("_decrypt", exc) from exc
 
             return {
                 "api_key": _decrypt(row[0] or ""),
@@ -2356,6 +2366,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Record geo block failed: {exc}")
+            raise StoreError("record_geo_block", exc) from exc
 
     async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
         """Record user's consent to legal agreements for compliance audit trail."""
@@ -2367,6 +2378,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Record user consent failed: {exc}")
+            raise StoreError("record_user_consent", exc) from exc
 
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
@@ -2793,6 +2805,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save config change failed: {exc}")
+            raise StoreError("save_config_change", exc) from exc
 
     async def get_config_changelog(self, limit: int = 50) -> list[dict]:
         try:
@@ -2803,7 +2816,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get config changelog failed: {exc}")
-            return []
+            raise StoreError("get_config_changelog", exc) from exc
 
     # ---- Review log ----
 
@@ -2816,6 +2829,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save review log failed: {exc}")
+            raise StoreError("save_review_log", exc) from exc
 
     async def get_review_logs(self, limit: int = 50) -> list[dict]:
         try:
@@ -2831,7 +2845,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get review logs failed: {exc}")
-            return []
+            raise StoreError("get_review_logs", exc) from exc
 
     async def get_latest_review_log(self, card_id: str) -> dict | None:
         """Return the most recent review_log row for a card (by monotonic id)."""
@@ -2845,7 +2859,7 @@ class PostgresStore(StorageBase):
             return self._list_rows([row])[0] if row else None
         except Exception as exc:
             print(f"[PostgresStore] Get latest review log failed: {exc}")
-            return None
+            raise StoreError("get_latest_review_log", exc) from exc
 
     # ---- Usage stats ----
 
@@ -2858,6 +2872,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Record usage failed: {exc}")
+            raise StoreError("record_usage", exc) from exc
 
     async def get_usage_stats(self, user_id: str) -> dict:
         try:
@@ -2944,7 +2959,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get session affinity failed: {exc}")
-            return None
+            raise StoreError("get_session_affinity", exc) from exc
 
     async def save_affinity_state(self, session_id: str, state_json: str) -> None:
         try:
@@ -2958,6 +2973,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save affinity state failed: {exc}")
+            raise StoreError("save_affinity_state", exc) from exc
 
     # ── Distill task persistence ────────────────
 
@@ -3196,7 +3212,7 @@ class PostgresStore(StorageBase):
             return row[0] or "", bool(row[1])
         except Exception as exc:
             print(f"[PostgresStore] Load affinity state failed: {exc}")
-            return "", False
+            raise StoreError("load_affinity_state", exc) from exc
 
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
@@ -3216,6 +3232,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Update group affinity failed: {exc}")
+            raise StoreError("update_group_affinity", exc) from exc
 
     async def get_group_affinity(self, group_id: str, card_id: str) -> dict | None:
         try:
@@ -3229,7 +3246,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get group affinity failed: {exc}")
-            return None
+            raise StoreError("get_group_affinity", exc) from exc
 
     # ── Comments ──
 
@@ -3250,7 +3267,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comments failed: {exc}")
-            return []
+            raise StoreError("get_comments", exc) from exc
 
     async def add_comment(self, card_id: str, user_id: str, username: str, content: str) -> dict:
         import uuid
@@ -3279,7 +3296,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] get_public_cards_by_text_id failed: {exc}")
-            return []
+            raise StoreError("get_public_cards_by_text_id", exc) from exc
 
     async def add_ai_reply_comment(self, card_id: str, ai_card_id: str, ai_version_label: str,
                                    content: str, reply_to_comment_id: str) -> dict:
@@ -3312,7 +3329,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else None
         except Exception as exc:
             print(f"[PostgresStore] Get card author failed: {exc}")
-            return None
+            raise StoreError("get_card_author_id", exc) from exc
 
     async def get_comment(self, comment_id: str) -> dict | None:
         try:
@@ -3323,7 +3340,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get comment failed: {exc}")
-            return None
+            raise StoreError("get_comment", exc) from exc
 
     async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, is_admin: bool = False) -> bool:
         try:
@@ -3335,7 +3352,7 @@ class PostgresStore(StorageBase):
             return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Delete comment failed: {exc}")
-            return False
+            raise StoreError("delete_comment", exc) from exc
 
     async def batch_delete_comments(self, comment_ids: list[str]) -> bool:
         if not comment_ids:
@@ -3350,7 +3367,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Batch delete comments failed: {exc}")
-            return False
+            raise StoreError("batch_delete_comments", exc) from exc
 
     # ── Comment Reports ──
 
@@ -3368,7 +3385,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Add comment report failed: {exc}")
-            return False
+            raise StoreError("add_comment_report", exc) from exc
 
     async def get_comment_reports(self, status: str = 'pending') -> list[dict]:
         try:
@@ -3389,7 +3406,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comment reports failed: {exc}")
-            return []
+            raise StoreError("get_comment_reports", exc) from exc
 
     async def resolve_report(self, report_id: str, resolver_id: str) -> bool:
         try:
@@ -3403,7 +3420,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Resolve report failed: {exc}")
-            return False
+            raise StoreError("resolve_report", exc) from exc
 
     async def delete_comment_and_resolve_report(self, comment_id: str, report_id: str, resolver_id: str) -> bool:
         try:
@@ -3419,7 +3436,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Delete comment and resolve report failed: {exc}")
-            return False
+            raise StoreError("delete_comment_and_resolve_report", exc) from exc
 
     async def get_comment_reports_grouped(self, status: str = 'pending') -> list[dict]:
         try:
@@ -3442,7 +3459,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get comment reports grouped failed: {exc}")
-            return []
+            raise StoreError("get_comment_reports_grouped", exc) from exc
 
     async def resolve_all_reports(self, comment_id: str, resolver_id: str) -> bool:
         try:
@@ -3456,7 +3473,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Resolve all reports failed: {exc}")
-            return False
+            raise StoreError("resolve_all_reports", exc) from exc
 
     async def delete_comment_and_resolve_reports(self, comment_id: str, resolver_id: str) -> bool:
         try:
@@ -3472,7 +3489,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Delete comment and resolve reports failed: {exc}")
-            return False
+            raise StoreError("delete_comment_and_resolve_reports", exc) from exc
 
     # ── Card Reports ──
 
@@ -3490,7 +3507,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Add card report failed: {exc}")
-            return False
+            raise StoreError("add_card_report", exc) from exc
 
     async def get_card_reports_grouped(self, status: str = 'pending') -> list[dict]:
         try:
@@ -3513,7 +3530,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get card reports grouped failed: {exc}")
-            return []
+            raise StoreError("get_card_reports_grouped", exc) from exc
 
     async def resolve_all_card_reports(self, card_id: str, resolver_id: str) -> bool:
         try:
@@ -3527,7 +3544,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Resolve all card reports failed: {exc}")
-            return False
+            raise StoreError("resolve_all_card_reports", exc) from exc
 
     async def takedown_card_and_resolve_reports(self, card_id: str, resolver_id: str) -> bool:
         try:
@@ -3546,7 +3563,7 @@ class PostgresStore(StorageBase):
                 return cur.rowcount > 0
         except Exception as exc:
             print(f"[PostgresStore] Takedown card and resolve reports failed: {exc}")
-            return False
+            raise StoreError("takedown_card_and_resolve_reports", exc) from exc
 
     # ── Follows ──
 
@@ -3559,7 +3576,7 @@ class PostgresStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[PostgresStore] Get followers failed: {exc}")
-            return []
+            raise StoreError("get_followers", exc) from exc
 
     async def get_followers_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
         try:
@@ -3574,7 +3591,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get followers details failed: {exc}")
-            return []
+            raise StoreError("get_followers_details", exc) from exc
 
     async def get_following(self, user_id: str) -> list[str]:
         try:
@@ -3585,7 +3602,7 @@ class PostgresStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[PostgresStore] Get following failed: {exc}")
-            return []
+            raise StoreError("get_following", exc) from exc
 
     async def get_following_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
         try:
@@ -3600,7 +3617,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get following details failed: {exc}")
-            return []
+            raise StoreError("get_following_details", exc) from exc
 
     async def toggle_follow(self, follower_id: str, following_id: str) -> dict:
         try:
@@ -3623,7 +3640,7 @@ class PostgresStore(StorageBase):
                     return {"following": True}
         except Exception as exc:
             print(f"[PostgresStore] Toggle follow failed: {exc}")
-            return {"following": False}
+            raise StoreError("toggle_follow", exc) from exc
 
     # ── Author ──
 
@@ -3643,7 +3660,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get author cards failed: {exc}")
-            return []
+            raise StoreError("get_author_cards", exc) from exc
 
     # ── User Posts ──
 
@@ -3686,7 +3703,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get user posts failed: {exc}")
-            return []
+            raise StoreError("get_user_posts", exc) from exc
 
     async def delete_post(self, post_id: str, user_id: str) -> bool:
         try:
@@ -3698,7 +3715,7 @@ class PostgresStore(StorageBase):
             return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Delete post failed: {exc}")
-            return False
+            raise StoreError("delete_post", exc) from exc
 
     async def get_feed_posts(self, user_id: str, page: int = 1, page_size: int = 20) -> list[dict]:
         try:
@@ -3726,7 +3743,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get feed posts failed: {exc}")
-            return []
+            raise StoreError("get_feed_posts", exc) from exc
 
     async def toggle_post_like(self, post_id: str, user_id: str) -> dict:
         try:
@@ -3779,7 +3796,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get post comments failed: {exc}")
-            return []
+            raise StoreError("get_post_comments", exc) from exc
 
     async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str, ip_location: str = "") -> dict:
         import uuid
@@ -3798,6 +3815,8 @@ class PostgresStore(StorageBase):
                     if avatar_row and avatar_row[0]:
                         avatar_data = avatar_row[0]
                 except Exception as exc:
+                    # store-empty-ok: 本条评论已经写入；头像只是回包里的装饰字段，查不到就留空。
+                    # 上抛会把「评论已创建」变成「创建失败」，让调用方误以为没写进去。
                     print(f"[PostgresStore] Avatar data query failed: {exc}")
             return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
         except Exception as exc:
@@ -3813,7 +3832,7 @@ class PostgresStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[PostgresStore] Get liked post ids failed: {exc}")
-            return []
+            raise StoreError("get_liked_post_ids", exc) from exc
 
     # ── Text Comments ──
 
@@ -3925,7 +3944,7 @@ class PostgresStore(StorageBase):
             return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Delete text comment failed: {exc}")
-            return False
+            raise StoreError("delete_text_comment", exc) from exc
 
     async def get_liked_comment_ids(self, comment_ids: list[str], user_id: str) -> set[str]:
         if not comment_ids:
@@ -3940,7 +3959,7 @@ class PostgresStore(StorageBase):
             return {r[0] for r in rows}
         except Exception as exc:
             print(f"[PostgresStore] Get liked comment ids failed: {exc}")
-            return set()
+            raise StoreError("get_liked_comment_ids", exc) from exc
 
     # ── Direct Messages ──
 
@@ -4090,7 +4109,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get remote card failed: {exc}")
-            return None
+            raise StoreError("get_remote_card", exc) from exc
 
     # ── Remote user profiles (cross-border user stubs) ──────
 
@@ -4287,7 +4306,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get conversations failed: {exc}")
-            return []
+            raise StoreError("get_conversations", exc) from exc
 
     async def get_conversation_messages(self, user_id: str, other_id: str, page: int = 1, page_size: int = 30) -> list[dict]:
         try:
@@ -4306,7 +4325,7 @@ class PostgresStore(StorageBase):
             return messages
         except Exception as exc:
             print(f"[PostgresStore] Get conversation messages failed: {exc}")
-            return []
+            raise StoreError("get_conversation_messages", exc) from exc
 
     async def mark_read(self, user_id: str, other_id: str) -> int:
         try:
@@ -4318,7 +4337,7 @@ class PostgresStore(StorageBase):
             return self._parse_rowcount(tag)
         except Exception as exc:
             print(f"[PostgresStore] Mark read failed: {exc}")
-            return 0
+            raise StoreError("mark_read", exc) from exc
 
     async def get_unread_count(self, user_id: str) -> int:
         try:
@@ -4330,7 +4349,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[PostgresStore] Get unread count failed: {exc}")
-            return 0
+            raise StoreError("get_unread_count", exc) from exc
 
     # ── Text Visibility & Author Public Data ──
 
@@ -4347,7 +4366,7 @@ class PostgresStore(StorageBase):
             return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Update text visibility failed: {exc}")
-            return False
+            raise StoreError("update_text_visibility", exc) from exc
 
     async def get_author_texts(self, user_id: str, viewer_id: str = "") -> list[dict]:
         try:
@@ -4369,7 +4388,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get author texts failed: {exc}")
-            return []
+            raise StoreError("get_author_texts", exc) from exc
 
     async def get_followers_count(self, user_id: str) -> int:
         try:
@@ -4381,7 +4400,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[PostgresStore] Get followers count failed: {exc}")
-            return 0
+            raise StoreError("get_followers_count", exc) from exc
 
     async def get_following_count(self, user_id: str) -> int:
         try:
@@ -4393,7 +4412,7 @@ class PostgresStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[PostgresStore] Get following count failed: {exc}")
-            return 0
+            raise StoreError("get_following_count", exc) from exc
 
     async def is_following(self, user_id: str, target_id: str) -> bool:
         try:
@@ -4405,7 +4424,7 @@ class PostgresStore(StorageBase):
             return row[0] > 0 if row else False
         except Exception as exc:
             print(f"[PostgresStore] Is following check failed: {exc}")
-            return False
+            raise StoreError("is_following", exc) from exc
 
     async def is_friend(self, user_id: str, target_id: str) -> bool:
         try:
@@ -4421,7 +4440,7 @@ class PostgresStore(StorageBase):
             return a > 0 and b > 0
         except Exception as exc:
             print(f"[PostgresStore] Is friend check failed: {exc}")
-            return False
+            raise StoreError("is_friend", exc) from exc
 
     async def can_see_online_status(self, viewer_id: str, target_id: str, is_admin: bool = False) -> bool:
         if viewer_id == target_id:
@@ -4441,7 +4460,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Can see online status failed: {exc}")
-            return False
+            raise StoreError("can_see_online_status", exc) from exc
 
         if viewer_row and viewer_row[0] == 'none':
             return False
@@ -4509,7 +4528,7 @@ class PostgresStore(StorageBase):
             return fork_id
         except Exception as exc:
             print(f"[PostgresStore] Publish card failed: {exc}")
-            return None
+            raise StoreError("publish_card", exc) from exc
 
     async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
         try:
@@ -4521,6 +4540,8 @@ class PostgresStore(StorageBase):
                     if old.get(k) != new_parsed.get(k):
                         diff[k] = {"old": old.get(k, ""), "new": new_parsed.get(k, "")}
             except Exception:
+                # store-empty-ok: 同 export_session —— 存量 JSON 坏了不是「查询失败」，
+                # 降级在写入的 diff 里显式可见（{"_full": "parse error"}），写入本身照常进行。
                 diff = {"_full": "parse error"}
             diff_json = json.dumps(diff, ensure_ascii=False)
 
@@ -4551,7 +4572,7 @@ class PostgresStore(StorageBase):
                 }
         except Exception as exc:
             print(f"[PostgresStore] Update published card failed: {exc}")
-            return None
+            raise StoreError("update_published_card", exc) from exc
 
     async def get_card_versions(self, card_id: str) -> list[dict]:
         try:
@@ -4564,7 +4585,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get card versions failed: {exc}")
-            return []
+            raise StoreError("get_card_versions", exc) from exc
 
     async def delete_card_version(self, card_id: str, version_id: str) -> bool:
         try:
@@ -4582,7 +4603,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Delete card version failed: {exc}")
-            return False
+            raise StoreError("delete_card_version", exc) from exc
 
     async def update_card_version(self, card_id: str, version_id: str, publish_message: str) -> bool:
         try:
@@ -4600,7 +4621,7 @@ class PostgresStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[PostgresStore] Update card version failed: {exc}")
-            return False
+            raise StoreError("update_card_version", exc) from exc
 
     async def get_card_forks(self, card_id: str) -> list[dict]:
         try:
@@ -4618,7 +4639,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get card forks failed: {exc}")
-            return []
+            raise StoreError("get_card_forks", exc) from exc
 
     # ---- Admin: Featured Cards ----
 
@@ -4639,7 +4660,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get featured cards failed: {exc}")
-            return []
+            raise StoreError("get_featured_cards", exc) from exc
 
     async def add_featured_card(self, card_id: str) -> str | None:
         import uuid
@@ -4654,7 +4675,7 @@ class PostgresStore(StorageBase):
             return fid
         except Exception as exc:
             print(f"[PostgresStore] Add featured card failed: {exc}")
-            return None
+            raise StoreError("add_featured_card", exc) from exc
 
     async def remove_featured_card(self, id: str) -> bool:
         try:
@@ -4663,7 +4684,7 @@ class PostgresStore(StorageBase):
                 return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Remove featured card failed: {exc}")
-            return False
+            raise StoreError("remove_featured_card", exc) from exc
 
     async def reorder_featured_cards(self, ids: list[str]) -> None:
         try:
@@ -4693,6 +4714,7 @@ class PostgresStore(StorageBase):
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save reading progress failed: {exc}")
+            raise StoreError("save_reading_progress", exc) from exc
 
     async def get_reading_progress(self, user_id: str, text_id: str) -> dict | None:
         try:
@@ -4704,7 +4726,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get reading progress failed: {exc}")
-            return None
+            raise StoreError("get_reading_progress", exc) from exc
 
     async def get_all_reading_progress(self, user_id: str) -> list[dict]:
         try:
@@ -4716,7 +4738,7 @@ class PostgresStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[PostgresStore] Get all reading progress failed: {exc}")
-            return []
+            raise StoreError("get_all_reading_progress", exc) from exc
 
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
@@ -4730,5 +4752,5 @@ class PostgresStore(StorageBase):
                 return self._parse_rowcount(tag)
         except Exception as exc:
             print(f"[PostgresStore] Cleanup empty cards failed: {exc}")
-            return 0
+            raise StoreError("cleanup_empty_cards", exc) from exc
 

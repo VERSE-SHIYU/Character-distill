@@ -367,7 +367,7 @@ async def login(request: Request, req: AuthRequest, storage: StorageBase = Depen
 
     access_token = _create_access_token(user["id"], user["username"])
     refresh_token, _ = await _create_refresh_token(user["id"], storage)
-    await storage.update_last_login(user["id"])
+    await _touch_last_login(storage, user["id"])
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -398,7 +398,7 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
                         new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
                         # Chain forward: update already-used row's replaced_by
                         await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
-                        await storage.update_last_login(user["id"])
+                        await _touch_last_login(storage, user["id"])
                         return {
                             "access_token": access_token,
                             "refresh_token": new_refresh_token,
@@ -423,7 +423,7 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
     new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
     # Chain: mark old token as used, pointing to the new token
     await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
-    await storage.update_last_login(user["id"])
+    await _touch_last_login(storage, user["id"])
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_token,
@@ -489,7 +489,12 @@ async def update_api_config(
     client_ip = get_client_ip(request)
     allowed, reason = check_api_allowed(client_ip, req.base_url)
     if not allowed:
-        await storage.record_geo_block(user["id"], client_ip, req.base_url, reason)
+        # 审计写入失败不得改写判定：这里必须仍然回 403。store 现在会对库失败上抛，
+        # 容忍策略写在这里（原先藏在 store 的 `except: print` 里，看不出是策略还是漏改）。
+        try:
+            await storage.record_geo_block(user["id"], client_ip, req.base_url, reason)
+        except Exception as exc:
+            logger.warning("Record geo block failed (non-fatal): %s", exc)
         raise HTTPException(403, detail=reason)
 
     try:
@@ -732,6 +737,20 @@ async def get_user_online_status(
 
 
 # ---- Helpers ----
+
+async def _touch_last_login(storage: StorageBase, user_id: str) -> None:
+    """记录登录时间；失败只记日志，**不得**让登录失败。
+
+    store 层现在对库失败一律抛 `StoreError`（不变量：空返回只表示无数据）。
+    容忍是**调用方的策略**，必须写在这里而不是藏回 store —— 刷新令牌那一支
+    （`/refresh`）在这行之前已经 `mark_refresh_token_used` 提交了新令牌，
+    若此处上抛，客户端拿到 500、手里的旧令牌又已作废 = 被登出。
+    """
+    try:
+        await storage.update_last_login(user_id)
+    except Exception as exc:
+        logger.warning("Update last_login failed (non-fatal) for %s: %s", user_id, exc)
+
 
 def _create_access_token(user_id: str, username: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)

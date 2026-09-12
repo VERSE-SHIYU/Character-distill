@@ -92,7 +92,14 @@ async def get_user_llm(user_id: str, storage: StorageBase | None = None, client_
                 base_url = config.get("base_url", "https://api.deepseek.com")
                 allowed, reason = check_api_allowed(client_ip, base_url)
                 if not allowed:
-                    await storage.record_geo_block(user_id, client_ip, base_url, reason)
+                    # 审计写入失败不得改写判定。**这里必须自己吞**：外层 `except Exception`
+                    # 会把非 HTTPException 一律吃掉并回落到全局管理员 key 的 LLM ——
+                    # 若让 store 的 StoreError 冒到外层，被拦截的境内 IP 反而拿到了全局 key。
+                    # 容忍策略必须在 HTTPException 之前就地表达，不能藏回 store。
+                    try:
+                        await storage.record_geo_block(user_id, client_ip, base_url, reason)
+                    except Exception as exc:
+                        print(f"[deps] Record geo block failed (non-fatal): {exc}")
                     raise HTTPException(403, detail=reason)
 
             llm = LLMAdapter(

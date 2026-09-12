@@ -7,6 +7,28 @@ import uuid as _uuid
 from abc import ABC, abstractmethod
 
 
+class StoreError(RuntimeError):
+    """store 层的**可辨失败语义** —— 「查询/写入失败」，与「无数据」互斥。
+
+    **不变量**：store 方法的空返回值只表示「无数据」，永不表示「失败」。任何失败一律经
+    此异常上抛，由 `web/server.py` 的全局异常处理器记 traceback 并回 500 —— 失败可见。
+
+    存在理由（缺陷 21，第七个同族形态）：此前两个 store 里有 154 处
+    `except Exception: print(...); return <空值>`，让「查到了、结果是空」与「查询失败了」
+    在返回值上**不可分辨**。于是 SQLite 新库缺 `remote_user_profiles` 表时，
+    `get_conversations` 把 `OperationalError` 吞成空列表 —— 私信收件箱恒为空，
+    不报错、不 500，日志里只有一行 print。前六个同族形态都是因为「只修出问题那处」
+    才长出来的，故本轮全量收敛到这一个类型。
+
+    「无数据」不走这里：查不到行是**正常返回**（None / 空列表），不是异常。
+    """
+
+    def __init__(self, op: str, exc: BaseException) -> None:
+        """记下出错的 store 方法名；原始异常由调用点的 `from exc` 链上。"""
+        super().__init__(f"storage operation {op!r} failed: {exc}")
+        self.op = op
+
+
 def new_review_id() -> str:
     """Monotonic review_log id: ms-since-epoch prefix + random tail.
 

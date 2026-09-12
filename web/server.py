@@ -335,14 +335,19 @@ async def update_settings_config(
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
-        # Log config changes
+        # Log config changes —— 审计写入失败不得让「已落盘」的配置保存回 500：
+        # config.yaml 在上面已经写完，回错会让人以为没保存。容忍策略就地写，
+        # 不藏回 store（store 现在对库失败一律上抛）。
         if changes:
             import uuid
             for field, old_val, new_val in changes:
-                await storage.save_config_change(
-                    uuid.uuid4().hex[:12], admin_user["id"], admin_user.get("username", ""),
-                    field, old_val, new_val,
-                )
+                try:
+                    await storage.save_config_change(
+                        uuid.uuid4().hex[:12], admin_user["id"], admin_user.get("username", ""),
+                        field, old_val, new_val,
+                    )
+                except Exception as exc:
+                    print(f"[admin] Save config change failed (non-fatal): {exc}")
 
         # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
         reset_llm_and_dependents()

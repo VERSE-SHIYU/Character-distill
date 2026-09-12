@@ -18,7 +18,7 @@ try:
 except ModuleNotFoundError:
     aiosqlite = None  # type: ignore[assignment]
 
-from .base import StorageBase
+from .base import StorageBase, StoreError
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,9 @@ class _ConnectionContext:
         try:
             await self.conn.close()
         except Exception as close_exc:
+            # store-empty-ok: 关闭失败不改变本次操作的结果 —— 连接在此即弃；且 __aexit__
+            # 上抛会顶替调用方真正的异常（Python 把它链成新异常），把真因埋掉。
+            # 泄漏风险由这行 print 可见，不归 StoreError 管。
             print(f"[SQLiteStore] Close connection failed: {close_exc}")
 
 
@@ -743,7 +746,7 @@ class SQLiteStore(StorageBase):
                 return card
         except Exception as exc:
             print(f"[SQLiteStore] Get card detail failed: {exc}")
-            return None
+            raise StoreError("get_card_detail", exc) from exc
 
     async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
         """Get a single public card detail with author info. Falls back to remote_cards."""
@@ -791,7 +794,7 @@ class SQLiteStore(StorageBase):
             return remote
         except Exception as exc:
             print(f"[SQLiteStore] Get market card detail failed: {exc}")
-            return None
+            raise StoreError("get_market_card_detail", exc) from exc
 
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
@@ -872,7 +875,7 @@ class SQLiteStore(StorageBase):
                 return None
         except Exception as exc:
             print(f"[SQLiteStore] Get card avatar failed: {exc}")
-            return None
+            raise StoreError("get_card_avatar", exc) from exc
 
     # ── Market / public card methods ──────────────────────────
 
@@ -963,7 +966,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] List public cards total failed: {exc}")
-            return 0
+            raise StoreError("list_public_cards_total", exc) from exc
 
     async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
         """Search public cards by name match (case-insensitive). Also searches remote_cards."""
@@ -1028,7 +1031,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Search public cards total failed: {exc}")
-            return 0
+            raise StoreError("search_public_cards_total", exc) from exc
 
     async def global_search(self, keyword: str, user_id: str = "") -> dict:
         """Search cards, texts, users by keyword. Returns max 5 per type."""
@@ -1082,7 +1085,7 @@ class SQLiteStore(StorageBase):
             return {"cards": cards, "texts": texts, "users": users}
         except Exception as exc:
             print(f"[SQLiteStore] Global search failed: {exc}")
-            return {"cards": [], "texts": [], "users": []}
+            raise StoreError("global_search", exc) from exc
 
     async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
         """Deep copy a public card for a new user. Returns the new card dict."""
@@ -1100,7 +1103,7 @@ class SQLiteStore(StorageBase):
                     return None
         except Exception as exc:
             print(f"[SQLiteStore] Fork card visibility check failed: {exc}")
-            return None
+            raise StoreError("fork_card", exc) from exc
 
         try:
             text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
@@ -1196,7 +1199,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Delete card failed: {exc}")
-            return False
+            raise StoreError("delete_card", exc) from exc
 
     async def restore_card(self, card_id: str) -> bool:
         """Restore a soft-deleted card."""
@@ -1210,7 +1213,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Restore card failed: {exc}")
-            return False
+            raise StoreError("restore_card", exc) from exc
 
     async def purge_card(self, card_id: str) -> bool:
         """Permanently delete a card, enqueue outbox atomically."""
@@ -1236,7 +1239,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Purge card failed: {exc}")
-            return False
+            raise StoreError("purge_card", exc) from exc
 
     async def list_deleted_cards(self, user_id: str) -> list[dict]:
         """List soft-deleted cards for a user (recycle bin)."""
@@ -1266,7 +1269,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Update card visibility failed: {exc}")
-            return False
+            raise StoreError("update_card_visibility", exc) from exc
 
     async def get_liked_card_ids(self, user_id: str) -> list[str]:
         """Return all card IDs the user has liked (for frontend highlight)."""
@@ -1279,7 +1282,7 @@ class SQLiteStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get liked card ids failed: {exc}")
-            return []
+            raise StoreError("get_liked_card_ids", exc) from exc
 
     async def get_recent_card_session(self, card_id: str, exclude_id: str = "") -> dict | None:
         """Get the most recent session for a card (excluding a given session id)."""
@@ -1309,7 +1312,7 @@ class SQLiteStore(StorageBase):
                 return None
         except Exception as exc:
             print(f"[SQLiteStore] Get recent card session failed: {exc}")
-            return None
+            raise StoreError("get_recent_card_session", exc) from exc
 
     async def save_session(
         self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = ""
@@ -2015,7 +2018,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row) if row else None
         except Exception as exc:
             print(f"[SQLiteStore] Get DM message failed: {exc}")
-            return None
+            raise StoreError("get_dm_message", exc) from exc
 
     async def get_dm_reactions(self, user_id: str, other_id: str) -> dict:
         """Return reactions for messages in the conversation between user_id and other_id.
@@ -2115,6 +2118,9 @@ class SQLiteStore(StorageBase):
             try:
                 card_parsed = json.loads(card["card_json"])
             except json.JSONDecodeError as exc:
+                # store-empty-ok: 这不是「查询失败」而是「单张卡的存量数据损坏」。导出仍完整
+                # 产出，且降级在载荷里显式可见（{"raw": <原始串>} 取代解析后的卡对象）。
+                # 上抛会让一张坏卡毁掉整次导出。
                 print(f"[SQLiteStore] Parse card_json failed: {exc}")
                 card_parsed = {"raw": card["card_json"]}
 
@@ -2235,7 +2241,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Set user privacy failed: {exc}")
-            return False
+            raise StoreError("set_user_privacy", exc) from exc
 
     async def set_user_presence_visibility(self, user_id: str, visibility: str) -> bool:
         """Set presence_visibility for a user: 'all', 'fans', 'mutual', or 'none'."""
@@ -2251,7 +2257,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Set presence visibility failed: {exc}")
-            return False
+            raise StoreError("set_user_presence_visibility", exc) from exc
 
     # ---- Email & verification codes ----
 
@@ -2381,6 +2387,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update last_login failed: {exc}")
+            raise StoreError("update_last_login", exc) from exc
 
     async def update_last_active(self, user_id: str) -> None:
         """Update the last_active_at timestamp for a user."""
@@ -2394,6 +2401,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update last_active failed: {exc}")
+            raise StoreError("update_last_active", exc) from exc
 
     async def get_dashboard_stats(self) -> dict:
         """Aggregate dashboard statistics for admin panel."""
@@ -2528,7 +2536,7 @@ class SQLiteStore(StorageBase):
                     return self._get_fernet().decrypt(val.encode()).decode()
                 except Exception as exc:
                     print(f"[SQLiteStore] decrypt failed: {exc}")
-                    return ""
+                    raise StoreError("_decrypt", exc) from exc
 
             return {
                 "api_key": _decrypt(row[0] or ""),
@@ -2701,6 +2709,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Record geo block failed: {exc}")
+            raise StoreError("record_geo_block", exc) from exc
 
     async def record_user_consent(self, user_id: str, terms_version: str, privacy_version: str, ip: str) -> None:
         """Record user's consent to legal agreements for compliance audit trail."""
@@ -2713,6 +2722,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Record user consent failed: {exc}")
+            raise StoreError("record_user_consent", exc) from exc
 
     async def create_invite_code(self, code: str, created_by: str) -> dict:
         import uuid as _uuid
@@ -3198,6 +3208,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save config change failed: {exc}")
+            raise StoreError("save_config_change", exc) from exc
 
     async def get_config_changelog(self, limit: int = 50) -> list[dict]:
         """Return recent config changelog entries."""
@@ -3210,7 +3221,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get config changelog failed: {exc}")
-            return []
+            raise StoreError("get_config_changelog", exc) from exc
 
     # ---- P3-2: Review log ----
 
@@ -3225,6 +3236,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save review log failed: {exc}")
+            raise StoreError("save_review_log", exc) from exc
 
     async def get_review_logs(self, limit: int = 50) -> list[dict]:
         """Return recent review logs with card info."""
@@ -3242,7 +3254,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get review logs failed: {exc}")
-            return []
+            raise StoreError("get_review_logs", exc) from exc
 
     async def get_latest_review_log(self, card_id: str) -> dict | None:
         """Return the most recent review_log row for a card (by monotonic id)."""
@@ -3257,7 +3269,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get latest review log failed: {exc}")
-            return None
+            raise StoreError("get_latest_review_log", exc) from exc
 
     # ---- Usage stats ----
 
@@ -3271,6 +3283,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Record usage failed: {exc}")
+            raise StoreError("record_usage", exc) from exc
 
     async def get_usage_stats(self, user_id: str) -> dict:
         try:
@@ -3366,7 +3379,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get session affinity failed: {exc}")
-            return None
+            raise StoreError("get_session_affinity", exc) from exc
 
     async def save_affinity_state(self, session_id: str, state_json: str) -> None:
         try:
@@ -3381,6 +3394,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save affinity state failed: {exc}")
+            raise StoreError("save_affinity_state", exc) from exc
 
     # ── Distill task persistence ────────────────
 
@@ -3622,7 +3636,7 @@ class SQLiteStore(StorageBase):
             return row[0] or "", bool(row[1])
         except Exception as exc:
             print(f"[SQLiteStore] Load affinity state failed: {exc}")
-            return "", False
+            raise StoreError("load_affinity_state", exc) from exc
 
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
@@ -3643,6 +3657,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update group affinity failed: {exc}")
+            raise StoreError("update_group_affinity", exc) from exc
 
     async def get_group_affinity(self, group_id: str, card_id: str) -> dict | None:
         try:
@@ -3657,7 +3672,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get group affinity failed: {exc}")
-            return None
+            raise StoreError("get_group_affinity", exc) from exc
 
     # ── Comments ──
 
@@ -3679,7 +3694,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comments failed: {exc}")
-            return []
+            raise StoreError("get_comments", exc) from exc
 
     async def add_comment(self, card_id: str, user_id: str, username: str, content: str) -> dict:
         import uuid
@@ -3711,7 +3726,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] get_public_cards_by_text_id failed: {exc}")
-            return []
+            raise StoreError("get_public_cards_by_text_id", exc) from exc
 
     async def add_ai_reply_comment(
         self, card_id: str, ai_card_id: str, ai_version_label: str,
@@ -3749,7 +3764,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else None
         except Exception as exc:
             print(f"[SQLiteStore] Get card author failed: {exc}")
-            return None
+            raise StoreError("get_card_author_id", exc) from exc
 
     async def get_comment(self, comment_id: str) -> dict | None:
         """Get a single comment by ID."""
@@ -3762,7 +3777,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment failed: {exc}")
-            return None
+            raise StoreError("get_comment", exc) from exc
 
     async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, is_admin: bool = False) -> bool:
         """Delete a card comment. Caller must verify permission."""
@@ -3776,7 +3791,7 @@ class SQLiteStore(StorageBase):
             return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete comment failed: {exc}")
-            return False
+            raise StoreError("delete_comment", exc) from exc
 
     async def batch_delete_comments(self, comment_ids: list[str]) -> bool:
         """Batch delete card comments by IDs."""
@@ -3793,7 +3808,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Batch delete comments failed: {exc}")
-            return False
+            raise StoreError("batch_delete_comments", exc) from exc
 
     # ── Comment Reports ──
 
@@ -3812,7 +3827,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Add comment report failed: {exc}")
-            return False
+            raise StoreError("add_comment_report", exc) from exc
 
     async def get_comment_reports(self, status: str = 'pending') -> list[dict]:
         """List reports for admin view, grouped by comment with report count."""
@@ -3835,7 +3850,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment reports failed: {exc}")
-            return []
+            raise StoreError("get_comment_reports", exc) from exc
 
     async def resolve_report(self, report_id: str, resolver_id: str) -> bool:
         """Dismiss a report (mark resolved, don't delete comment)."""
@@ -3852,7 +3867,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Resolve report failed: {exc}")
-            return False
+            raise StoreError("resolve_report", exc) from exc
 
     async def delete_comment_and_resolve_report(self, comment_id: str, report_id: str, resolver_id: str) -> bool:
         """Delete the reported comment and resolve the report."""
@@ -3870,7 +3885,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Delete comment and resolve report failed: {exc}")
-            return False
+            raise StoreError("delete_comment_and_resolve_report", exc) from exc
 
     async def get_comment_reports_grouped(self, status: str = 'pending') -> list[dict]:
         """List pending reports grouped by comment for admin view."""
@@ -3895,7 +3910,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get comment reports grouped failed: {exc}")
-            return []
+            raise StoreError("get_comment_reports_grouped", exc) from exc
 
     async def resolve_all_reports(self, comment_id: str, resolver_id: str) -> bool:
         """Resolve all pending reports for a specific comment."""
@@ -3912,7 +3927,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Resolve all reports failed: {exc}")
-            return False
+            raise StoreError("resolve_all_reports", exc) from exc
 
     async def delete_comment_and_resolve_reports(self, comment_id: str, resolver_id: str) -> bool:
         """Delete a comment and resolve all its pending reports."""
@@ -3930,7 +3945,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Delete comment and resolve reports failed: {exc}")
-            return False
+            raise StoreError("delete_comment_and_resolve_reports", exc) from exc
 
     # ── Card Reports ──
 
@@ -3949,7 +3964,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Add card report failed: {exc}")
-            return False
+            raise StoreError("add_card_report", exc) from exc
 
     async def get_card_reports_grouped(self, status: str = 'pending') -> list[dict]:
         """List pending card reports grouped by card for admin view."""
@@ -3974,7 +3989,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get card reports grouped failed: {exc}")
-            return []
+            raise StoreError("get_card_reports_grouped", exc) from exc
 
     async def resolve_all_card_reports(self, card_id: str, resolver_id: str) -> bool:
         """Resolve all pending reports for a card (dismiss, keep card)."""
@@ -3991,7 +4006,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Resolve all card reports failed: {exc}")
-            return False
+            raise StoreError("resolve_all_card_reports", exc) from exc
 
     async def takedown_card_and_resolve_reports(self, card_id: str, resolver_id: str) -> bool:
         """Takedown a public card and resolve all its pending reports."""
@@ -4012,7 +4027,7 @@ class SQLiteStore(StorageBase):
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Takedown card and resolve reports failed: {exc}")
-            return False
+            raise StoreError("takedown_card_and_resolve_reports", exc) from exc
 
     # ── Follows ──
 
@@ -4026,7 +4041,7 @@ class SQLiteStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get followers failed: {exc}")
-            return []
+            raise StoreError("get_followers", exc) from exc
 
     async def get_followers_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
         """Get followers with id, username, avatar_data, is_following, cards_count."""
@@ -4043,7 +4058,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get followers details failed: {exc}")
-            return []
+            raise StoreError("get_followers_details", exc) from exc
 
     async def get_following(self, user_id: str) -> list[str]:
         try:
@@ -4055,7 +4070,7 @@ class SQLiteStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get following failed: {exc}")
-            return []
+            raise StoreError("get_following", exc) from exc
 
     async def get_following_details(self, user_id: str, viewer_id: str = "") -> list[dict]:
         """Get followed users with id, username, avatar_data, is_following, cards_count."""
@@ -4072,7 +4087,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get following details failed: {exc}")
-            return []
+            raise StoreError("get_following_details", exc) from exc
 
     async def toggle_follow(self, follower_id: str, following_id: str) -> dict:
         try:
@@ -4099,7 +4114,7 @@ class SQLiteStore(StorageBase):
                     return {"following": True}
         except Exception as exc:
             print(f"[SQLiteStore] Toggle follow failed: {exc}")
-            return {"following": False}
+            raise StoreError("toggle_follow", exc) from exc
 
     # ── Author ──
 
@@ -4120,7 +4135,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get author cards failed: {exc}")
-            return []
+            raise StoreError("get_author_cards", exc) from exc
 
     # ── User Posts ──
 
@@ -4168,7 +4183,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get user posts failed: {exc}")
-            return []
+            raise StoreError("get_user_posts", exc) from exc
 
     async def delete_post(self, post_id: str, user_id: str) -> bool:
         """Delete a post by id, only if owned by user_id. Returns True if deleted."""
@@ -4182,7 +4197,7 @@ class SQLiteStore(StorageBase):
             return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete post failed: {exc}")
-            return False
+            raise StoreError("delete_post", exc) from exc
 
     async def get_feed_posts(self, user_id: str, page: int = 1, page_size: int = 20) -> list[dict]:
         """Get public posts from followed users, newest first."""
@@ -4212,7 +4227,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get feed posts failed: {exc}")
-            return []
+            raise StoreError("get_feed_posts", exc) from exc
 
     async def toggle_post_like(self, post_id: str, user_id: str) -> dict:
         """Toggle like on a post. Returns {'liked': bool, 'likes': int}."""
@@ -4271,7 +4286,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get post comments failed: {exc}")
-            return []
+            raise StoreError("get_post_comments", exc) from exc
 
     async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str, ip_location: str = "") -> dict:
         """Add a comment to a post."""
@@ -4293,6 +4308,8 @@ class SQLiteStore(StorageBase):
                     if row and row[0]:
                         avatar_data = row[0]
                 except Exception as exc:
+                    # store-empty-ok: 本条评论已经写入；头像只是回包里的装饰字段，查不到就留空。
+                    # 上抛会把「评论已创建」变成「创建失败」，让调用方误以为没写进去。
                     print(f"[SQLiteStore] Avatar data query failed: {exc}")
             return {"id": cid, "post_id": post_id, "user_id": user_id, "username": username, "content": content, "created_at": now, "ip_location": ip_location, "avatar_data": avatar_data}
         except Exception as exc:
@@ -4310,7 +4327,7 @@ class SQLiteStore(StorageBase):
             return [r[0] for r in rows]
         except Exception as exc:
             print(f"[SQLiteStore] Get liked post ids failed: {exc}")
-            return []
+            raise StoreError("get_liked_post_ids", exc) from exc
 
     # ── Text Comments ──
 
@@ -4434,7 +4451,7 @@ class SQLiteStore(StorageBase):
             return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Delete text comment failed: {exc}")
-            return False
+            raise StoreError("delete_text_comment", exc) from exc
 
     async def get_liked_comment_ids(self, comment_ids: list[str], user_id: str) -> set[str]:
         """Return set of comment_ids that the user has liked."""
@@ -4451,7 +4468,7 @@ class SQLiteStore(StorageBase):
             return {r[0] for r in rows}
         except Exception as exc:
             print(f"[SQLiteStore] Get liked comment ids failed: {exc}")
-            return set()
+            raise StoreError("get_liked_comment_ids", exc) from exc
 
     # ── Direct Messages ──
 
@@ -4610,7 +4627,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get remote card failed: {exc}")
-            return None
+            raise StoreError("get_remote_card", exc) from exc
 
     # ── Remote user profiles (cross-border user stubs) ──────
 
@@ -4812,7 +4829,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get conversations failed: {exc}")
-            return []
+            raise StoreError("get_conversations", exc) from exc
 
     async def get_conversation_messages(self, user_id: str, other_id: str, page: int = 1, page_size: int = 30) -> list[dict]:
         """Get paginated messages between two users."""
@@ -4833,7 +4850,7 @@ class SQLiteStore(StorageBase):
             return messages
         except Exception as exc:
             print(f"[SQLiteStore] Get conversation messages failed: {exc}")
-            return []
+            raise StoreError("get_conversation_messages", exc) from exc
 
     async def mark_read(self, user_id: str, other_id: str) -> int:
         """Mark all messages from other_id to user_id as read. Returns count updated."""
@@ -4847,7 +4864,7 @@ class SQLiteStore(StorageBase):
             return cursor.rowcount
         except Exception as exc:
             print(f"[SQLiteStore] Mark read failed: {exc}")
-            return 0
+            raise StoreError("mark_read", exc) from exc
 
     async def get_unread_count(self, user_id: str) -> int:
         """Get total unread message count."""
@@ -4861,7 +4878,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Get unread count failed: {exc}")
-            return 0
+            raise StoreError("get_unread_count", exc) from exc
 
     # ── Text Visibility & Author Public Data ──
 
@@ -4880,7 +4897,7 @@ class SQLiteStore(StorageBase):
             return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Update text visibility failed: {exc}")
-            return False
+            raise StoreError("update_text_visibility", exc) from exc
 
     async def get_author_texts(self, user_id: str, viewer_id: str = "") -> list[dict]:
         """Get texts for an author profile. Returns all texts if viewer is the author, public only otherwise."""
@@ -4904,7 +4921,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get author texts failed: {exc}")
-            return []
+            raise StoreError("get_author_texts", exc) from exc
 
     async def get_followers_count(self, user_id: str) -> int:
         """Count of users following this user."""
@@ -4918,7 +4935,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Get followers count failed: {exc}")
-            return 0
+            raise StoreError("get_followers_count", exc) from exc
 
     async def get_following_count(self, user_id: str) -> int:
         """Count of users this user is following."""
@@ -4932,7 +4949,7 @@ class SQLiteStore(StorageBase):
             return row[0] if row else 0
         except Exception as exc:
             print(f"[SQLiteStore] Get following count failed: {exc}")
-            return 0
+            raise StoreError("get_following_count", exc) from exc
 
     async def is_following(self, user_id: str, target_id: str) -> bool:
         """Check if user_id follows target_id."""
@@ -4946,7 +4963,7 @@ class SQLiteStore(StorageBase):
             return row[0] > 0 if row else False
         except Exception as exc:
             print(f"[SQLiteStore] Is following check failed: {exc}")
-            return False
+            raise StoreError("is_following", exc) from exc
 
     async def is_friend(self, user_id: str, target_id: str) -> bool:
         """Mutual follow = friend."""
@@ -4965,7 +4982,7 @@ class SQLiteStore(StorageBase):
             return a > 0 and b > 0
         except Exception as exc:
             print(f"[SQLiteStore] Is friend check failed: {exc}")
-            return False
+            raise StoreError("is_friend", exc) from exc
 
     async def can_see_online_status(self, viewer_id: str, target_id: str, is_admin: bool = False) -> bool:
         """Check if viewer can see target's online status based on target's privacy setting + reciprocity."""
@@ -4990,7 +5007,7 @@ class SQLiteStore(StorageBase):
                 viewer_row = await cursor.fetchone()
         except Exception as exc:
             print(f"[SQLiteStore] Can see online status failed: {exc}")
-            return False
+            raise StoreError("can_see_online_status", exc) from exc
 
         # Reciprocity: if viewer hides their own status, they can't see others'
         if viewer_row and viewer_row[0] == 'none':
@@ -5084,7 +5101,7 @@ class SQLiteStore(StorageBase):
             return fork_id
         except Exception as exc:
             print(f"[SQLiteStore] Publish card failed: {exc}")
-            return None
+            raise StoreError("publish_card", exc) from exc
 
     async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
         """Update card fields, generate field-level diff, write next card_versions entry. Returns the new version record or None."""
@@ -5097,6 +5114,8 @@ class SQLiteStore(StorageBase):
                     if old.get(k) != new_parsed.get(k):
                         diff[k] = {"old": old.get(k, ""), "new": new_parsed.get(k, "")}
             except Exception:
+                # store-empty-ok: 同 export_session —— 存量 JSON 坏了不是「查询失败」，
+                # 降级在写入的 diff 里显式可见（{"_full": "parse error"}），写入本身照常进行。
                 diff = {"_full": "parse error"}
 
             diff_json = json.dumps(diff, ensure_ascii=False)
@@ -5131,7 +5150,7 @@ class SQLiteStore(StorageBase):
                 }
         except Exception as exc:
             print(f"[SQLiteStore] Update published card failed: {exc}")
-            return None
+            raise StoreError("update_published_card", exc) from exc
 
     async def get_card_versions(self, card_id: str) -> list[dict]:
         """List all versions for a card in descending order."""
@@ -5146,7 +5165,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get card versions failed: {exc}")
-            return []
+            raise StoreError("get_card_versions", exc) from exc
 
     async def delete_card_version(self, card_id: str, version_id: str) -> bool:
         """Delete a specific version of a card."""
@@ -5166,7 +5185,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Delete card version failed: {exc}")
-            return False
+            raise StoreError("delete_card_version", exc) from exc
 
     async def update_card_version(self, card_id: str, version_id: str, publish_message: str) -> bool:
         """Update the publish_message of a specific version."""
@@ -5186,7 +5205,7 @@ class SQLiteStore(StorageBase):
             return True
         except Exception as exc:
             print(f"[SQLiteStore] Update card version failed: {exc}")
-            return False
+            raise StoreError("update_card_version", exc) from exc
 
     async def get_card_forks(self, card_id: str) -> list[dict]:
         """List public cards forked from this card_id."""
@@ -5206,7 +5225,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get card forks failed: {exc}")
-            return []
+            raise StoreError("get_card_forks", exc) from exc
 
     # ---- Admin: Featured Cards ----
 
@@ -5229,7 +5248,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get featured cards failed: {exc}")
-            return []
+            raise StoreError("get_featured_cards", exc) from exc
 
     async def add_featured_card(self, card_id: str) -> str | None:
         """Add a card to featured. Returns the new row id or None on failure."""
@@ -5249,7 +5268,7 @@ class SQLiteStore(StorageBase):
             return fid
         except Exception as exc:
             print(f"[SQLiteStore] Add featured card failed: {exc}")
-            return None
+            raise StoreError("add_featured_card", exc) from exc
 
     async def remove_featured_card(self, id: str) -> bool:
         try:
@@ -5259,7 +5278,7 @@ class SQLiteStore(StorageBase):
                 return cursor.rowcount > 0
         except Exception as exc:
             print(f"[SQLiteStore] Remove featured card failed: {exc}")
-            return False
+            raise StoreError("remove_featured_card", exc) from exc
 
     async def reorder_featured_cards(self, ids: list[str]) -> None:
         """Update sort_order based on array index."""
@@ -5294,6 +5313,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save reading progress failed: {exc}")
+            raise StoreError("save_reading_progress", exc) from exc
 
     async def get_reading_progress(self, user_id: str, text_id: str) -> dict | None:
         """Get reading progress for a user+text pair."""
@@ -5307,7 +5327,7 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get reading progress failed: {exc}")
-            return None
+            raise StoreError("get_reading_progress", exc) from exc
 
     async def get_all_reading_progress(self, user_id: str) -> list[dict]:
         """Get all reading progress records for a user."""
@@ -5321,7 +5341,7 @@ class SQLiteStore(StorageBase):
             return self._list_rows(rows)
         except Exception as exc:
             print(f"[SQLiteStore] Get all reading progress failed: {exc}")
-            return []
+            raise StoreError("get_all_reading_progress", exc) from exc
 
     async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
         """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
@@ -5335,4 +5355,4 @@ class SQLiteStore(StorageBase):
                 return cursor.rowcount
         except Exception as exc:
             print(f"[SQLiteStore] Cleanup empty cards failed: {exc}")
-            return 0
+            raise StoreError("cleanup_empty_cards", exc) from exc
