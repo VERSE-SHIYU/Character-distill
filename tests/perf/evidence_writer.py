@@ -61,6 +61,20 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
     "tools-leak-window": frozenset(
         {"probe", "embed_hang_ms", "baseline_threads", "peak_threads", "thread_delta",
          "requests_done_s", "leak_window_s", "settle_s", "samples"}),
+    # e2e/scratch/resume_probe.py 的 v5 迁移快照（断点续跑：52 字节落满 6 片、二次续跑 map=0）。
+    # 只收统计量：sampleChunk 是 52 字节被截断的**正文段**，finalMessage 是装饰文案，
+    # taskId 是运行期句柄 —— 三者都没有证据价值，留在白名单外才是结构上的保证。
+    "incomplete-v5": frozenset(
+        {"probe", "item", "totalChunks", "startStatus", "finalStatus", "mockTruncateEnabled",
+         "stats", "chunksInDb", "chunkLengths", "allNonEmpty", "allEqualTruncated",
+         "chunkParsesAsJson", "resumeStartStatus", "resumeFinalStatus", "resumeStats",
+         "resumeMapCalls", "truncatedReusedByGate2", "ok"}),
+    # ── 以下三条**没有产物**（status = runtime-measured / unverifiable）：空白名单是它们的
+    # 正确登记形态 —— 注册一个空集，结构上就堵死了「哪天有人往里写产物」这条路。
+    # write_evidence 只在**调用时**拒绝空集（见其 docstring），注册时不拦，正是为此。
+    "a2-wiring-mutation": frozenset(),
+    "chunk-size-provenance": frozenset(),
+    "graphify-snapshot-2026-08-15": frozenset(),
 }
 
 

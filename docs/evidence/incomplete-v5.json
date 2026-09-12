@@ -1,0 +1,39 @@
+{
+  "probe": "v5",
+  "item": "v5",
+  "totalChunks": 6,
+  "startStatus": 200,
+  "finalStatus": "done",
+  "mockTruncateEnabled": true,
+  "stats": {
+    "total": 11,
+    "map": 6,
+    "reduce": 1,
+    "format": 1,
+    "other": 3
+  },
+  "chunksInDb": 6,
+  "chunkLengths": [
+    52,
+    52,
+    52,
+    52,
+    52,
+    52
+  ],
+  "allNonEmpty": true,
+  "allEqualTruncated": true,
+  "chunkParsesAsJson": false,
+  "resumeStartStatus": 200,
+  "resumeFinalStatus": "done",
+  "resumeStats": {
+    "total": 5,
+    "map": 0,
+    "reduce": 1,
+    "format": 1,
+    "other": 3
+  },
+  "resumeMapCalls": 0,
+  "truncatedReusedByGate2": true,
+  "ok": true
+}

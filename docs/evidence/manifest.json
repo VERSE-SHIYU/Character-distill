@@ -1,5 +1,31 @@
 [
   {
+    "id": "a2-wiring-mutation",
+    "claim": "把 _run_distill_task 的两处 confirm 兜底调用从 finally 里整行删掉，原有 14 条蒸馏用例仍全绿 —— 该接线当时没有任何用例覆盖；随后补 TestA2Wiring 两条（commit 9d2a9e4）",
+    "status": "runtime-measured",
+    "artifact": null,
+    "script": null,
+    "reproduce": null,
+    "env": "本机工作树（2026-09-10 当天 HEAD）+ sqlite 夹具；无外部服务依赖",
+    "measured_at": "2026-09-10",
+    "code_sha": "9d2a9e4",
+    "redacted_fields": [],
+    "notes": "扫描方法：变异实验本身（删掉兜底调用 → 跑当时树上的蒸馏用例 → 观察全绿），仓内可核的是**补齐动作**：`git show 9d2a9e4 -- tests/test_distill_task_api.py`（+51 行，TestA2Wiring）。原始记载只在未入库的 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`（`.gitignore:228` 覆盖 `.claude/`），故标 runtime-measured 而非 verified。纪律条文见 AGENTS.md §四「修复必须做变异验证」。"
+  },
+  {
+    "id": "chunk-size-provenance",
+    "claim": "chunk_size 无统一标准：3000 起于 2026-05-19（commit 5aee0609），代码默认 3000，classic 地板 6000（effective_chunk_size）；「3000/4500/6000/12000 四档实测对比」经全仓扫描无出处",
+    "status": "runtime-measured",
+    "artifact": null,
+    "script": null,
+    "reproduce": null,
+    "env": "本机仓库工作树 + 未入库的 config.yaml（现值 chunk_size=5000）与 .claude/sessions/（`.gitignore:228`）；扫描不需外部服务",
+    "measured_at": "2026-09-12",
+    "code_sha": "e389fdc",
+    "redacted_fields": [],
+    "notes": "扫描方法（2026-09-12 现跑，判定「四档对比无出处」这个**否定命题**）：`git log -S 4500 --all --oneline` 得 3 处、`-S 12000` 得 5 处，逐一核对后**无一处把这两个数当 chunk_size** —— 命中的是 AGENTS.md 自述行、core/distiller.py 的 max_profile_len 下限（≥12000）、web/frontend/e2e/avatar-fallback-verify.cjs 的 settleMs=4500；`git grep -E '\b(4500|12000)\b' -- docs/` 零命中；`.claude/sessions/` 无记录。另注：现值 5000 出自**未入库**的 config.yaml（git ls-files 无命中），与四档对比无关，但同属「数字指向 gitignored 文件」家族，见 AGENTS.md §二。"
+  },
+  {
     "id": "distill-orphan-matrix",
     "claim": "8 条删除路径删完后 distill_tasks / distill_chunks 残留矩阵（8 格）；sqlite 与 PG 逐格相同",
     "status": "verified",
@@ -24,6 +50,36 @@
     "code_sha": "e389fdc",
     "redacted_fields": [],
     "notes": ""
+  },
+  {
+    "id": "graphify-snapshot-2026-08-15",
+    "claim": "graphify 知识图谱快照（2026-08-15，构建 commit eb72a3bd）的统计组：语料 369 文件/~65 万词、节点 4686、边 9606、社区 434（展示 227）、语义标注 94% EXTRACTED · 6% INFERRED（603 边，平均置信 0.56）、导入环无；docs/TECHNICAL_REPORT.md §3 起的 God Node 边数（StorageBase 372 等）同源",
+    "status": "unverifiable",
+    "artifact": null,
+    "script": null,
+    "reproduce": null,
+    "env": "2026-08-15 的工作树（构建 commit eb72a3bd）+ 当时的 graphify 工具链；语义标注经 `graphify label --backend=deepseek` 生成，即依赖 LLM 调用",
+    "measured_at": "2026-08-15",
+    "code_sha": "eb72a3bd",
+    "redacted_fields": [],
+    "notes": "为什么现在复现不了（三件事写全）：① 数字产生于 2026-08-15，当时工作树为 commit eb72a3bd，图谱产物 graphify-out/graph.json **从未入库**（`.gitignore:253` 覆盖），引用它等于没有出处；② 环境已变 —— 此后代码大量改动，现在跑 `graphify update .` 得到的是**今天的**图，不是这份快照；换算成「checkout eb72a3bd 重建」也不成立：③ 语义标注走 DeepSeek（百分比与平均置信由 LLM 判定，非确定性，且依赖当时的工具版本与 key），重建出的 94%/6%/0.56 不保证复得。故标 unverifiable，不试图重跑顶替。报告中可核的部分是**按符号名回代码**的结构结论（如 StorageBase 为存储抽象基类），不可核的是统计量。"
+  },
+  {
+    "id": "incomplete-v5",
+    "claim": "断点续跑：mock 截断下 6 片各 52 字节全部落库且闸 2 放行；二次续跑 map=0（分片未重算）",
+    "status": "verified",
+    "artifact": "docs/evidence/incomplete-v5.json",
+    "script": "tests/test_distill_resume.py",
+    "reproduce": "python -m pytest tests/test_distill_resume.py -q",
+    "env": "本机 sqlite（e2e/scratch/e2e_db.sqlite 副本）+ 真后端 127.0.0.1:7899；config.yaml 将 llm.base_url 指向计数 mock 127.0.0.1:7898（包 tests/perf/mock_llm_server.py，truncate 档：map 返回 52 字节截断串）；distill longctx_threshold=1 / chunk_size=500 / map_concurrency=1 强制走分片路径。无真实供应商调用。",
+    "measured_at": "2026-09-10",
+    "code_sha": "unknown(scratch)",
+    "redacted_fields": [
+      "finalMessage",
+      "sampleChunk",
+      "taskId"
+    ],
+    "notes": "快照为当时运行产物，迁移时未重跑（重跑得到的是今天的数字，正文写的是当时的结论）。原始产出脚本是 e2e/scratch/resume_probe.py —— 该脚本是一次性 scratch，未入库，故 script 字段指向仓内覆盖同一断言的可复跑用例 tests/test_distill_resume.py（:110 :121 :169 三条钉住 52 字节截断串仍过闸 2 / 到达下游 / 只重跑坏片）。code_sha 填 unknown(scratch)：该产物的产出时点只能界在 e5bb4c6(10:56) 之后、64d2d14(16:48) 之前（finish_reason 检查落地前的窗口），窗口内多个 commit 均可能产出该行为，落不到唯一 commit —— 编一个近似 sha 会让复算的人 checkout一个错的点。依据不足，如实记。"
   },
   {
     "id": "ownership-reachability",

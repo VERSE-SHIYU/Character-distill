@@ -100,13 +100,17 @@ PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield \
 - **去标识**：`char` 的真实角色名（真人姓名）与脚本注释里的作品名（真人同人）**全部移除**，
   改为 `角色A`…`角色D` 占位；`text_id` **保留** —— 它是不可读 hex，既能追溯又不透露语料身份。
   本仓是公开作品集，语料是哪几部作品对证据结论毫无价值，不留在台面上。三个脚本 / 三份 JSON 同口径。
-- `e2e/scratch/out_capfield.prefix.json` 与 `out_capfield.json` 逐字节相同（同一次运行的副本），
-  故只入库一份，即本目录 `thinking-capfield.json`。
+- `out_capfield.prefix.json` 与 `out_capfield.json` 逐字节相同（同一次运行的副本），
+  故只入库一份，即本目录 `thinking-capfield.json`。**同源同数据、未单独入库** ——
+  清单是唯一真源，给同一批数字再开一条条目只是把一份证据记两遍。
+  （两者都曾是 `e2e/scratch/` 下的 scratch 文件，2026-09-12 迁移时前者已在本地丢失、
+  后者经证据出口入库，故本条只留这句记载，不留产物。）
 
 ## 6. 待核 / 未入库的相关证据
 
 - **`docs/engineering-evidence.md`**：截至 2026-09-11 **不在仓库内，也从未被 git 跟踪过**
   （`git log --all -- '*engineering-evidence*'` 无输出）。本批证据与它无依赖关系，先落本目录。
-- 缺陷 2（`finish_reason`）引用的 `e2e/scratch/out_v5.json` 亦在 gitignored 目录，**本批未入库**
-  （不在本次范围内）—— 同类「已报数字指向 gitignored 产物」的缺口，可能还有其它处，待逐项清点。
+- 缺陷 2（`finish_reason`）引用的 `out_v5.json`（scratch）**已于 2026-09-12 经证据出口迁移入库**，
+  即 `incomplete-v5.json` —— 只留统计量（52 字节落满 6 片、二次续跑 map=0），
+  正文段 `sampleChunk` 与装饰文案 `finalMessage` 按白名单挡在库外。见 `ev:incomplete-v5`。
 - 生产是否仍有 >60s 调用（缺陷 8 的「待验证」）**仍未验证**，本批数据不回答它。

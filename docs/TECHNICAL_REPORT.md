@@ -1,12 +1,14 @@
 # Character-distill 技术报告
 
-> 依据 graphify 知识图谱（`graphify-out/graph.json`，2026-08-15 快照）重建的架构技术报告。图谱由 tree-sitter 静态提取 + DeepSeek 语义标注生成；本文所有结构结论均来自图数据，可追溯回代码。
+> 依据 graphify 知识图谱（2026-08-15 快照，构建 commit `eb72a3bd`）重建的架构技术报告。图谱由 tree-sitter 静态提取 + DeepSeek 语义标注生成。
+>
+> **可追溯性声明**：图谱产物 `graphify-out/graph.json` 被 `.gitignore` 覆盖、**从未入库**，且语义标注经 LLM 判定（非确定性）。故 §2 的图谱统计与 §3 起的 God Node 边数属**当时快照的结论，现已不可复现**（证据：`ev:graphify-snapshot-2026-08-15`）；重建只会得到**今天**的图，不是这份快照。本文中可核的部分是**按符号名回代码**的结构结论（如 `StorageBase` 是业务层唯一依赖的存储接口），不可核的是那些统计量。
 
 ## 1. 项目概览
 
 角色模拟器（Character Simulator）——上传任意文本（小说 / 聊天记录 / 人物描写），自动蒸馏出角色人格后进行沉浸式对话。FastAPI + React 全栈，支持 SQLite / PostgreSQL 双存储后端、双区域（深圳 / 新加坡）独立部署。
 
-## 2. 图谱统计（快照事实）
+## 2. 图谱统计（快照事实，不可复现 —— 见卷首声明；证据：`ev:graphify-snapshot-2026-08-15`）
 
 | 指标 | 值 |
 |------|-----|

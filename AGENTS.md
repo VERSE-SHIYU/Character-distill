@@ -80,7 +80,7 @@ config.yaml 现值（现读，非转述）：
 
 **模型规格**：deepseek-v4-pro 上下文 1M token / 最大输出 384K —— **待验证**（代码与仓库内无此声明，来自口述的「官方 GA 0813」，未找到出处）。
 
-**chunk_size 的来历**：**待验证·无记载**。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S` 全仓无 `4500` / `12000` 命中，`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`；见 `.claude/sessions/2026-05-19-incremental-distill.md`），现值 5000，classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。
+**chunk_size 的来历**：**待验证·无记载**（证据：`ev:chunk-size-provenance`）。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S 4500` / `-S 12000` 有命中，但逐处核对后**无一处把这两个数当 chunk_size**（命中的是本节自述行、`core/distiller.py` 的 `max_profile_len` 下限、`web/frontend/e2e/avatar-fallback-verify.cjs` 的 `settleMs`）；`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`），代码默认 3000（`distill_cfg.get("chunk_size", 3000)`），现值 5000（出自**未入库**的 `config.yaml`），classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。扫描口径与逐处核对写在清单条目的 `notes` 里。
 
 **max_tokens 的来历**（数值轨迹有据，「为什么最终是 4096」无量化依据）：
 
@@ -96,7 +96,7 @@ config.yaml 现值（现读，非转述）：
 
 **关掉思考后的实测基线**（2026-09-10，方言层落地 `f2dfd23` 之后）：
 
-同一批 14 次 map 调用，真实语料 + 生产提示词，同一份探针（`e2e/scratch/map_len_probe.py`；探针内把 `max_tokens` 抬到 8192，测的是**自然输出长度**而非被截断后的长度）：
+同一批 14 次 map 调用，真实语料 + 生产提示词，同一份探针（`tests/perf/map_len_probe.py`；探针内把 `max_tokens` 抬到 8192，测的是**自然输出长度**而非被截断后的长度）：
 
 | 指标 | 修复前 | 修复后 |
 |---|---|---|
@@ -125,7 +125,7 @@ config.yaml 现值（现读，非转述）：
 **2. 适配器从不读 `finish_reason`** —— 状态：**已修**（commit `64d2d14`，2026-09-10；`content_filter` 等未完成值收严于 `d068242`）
 - 证据（修复前）：全仓生产代码零命中，仅测试 mock 出现（`tests/perf/mock_llm_server.py` 的 mock 分支）
 - 后果（修复前）：截断/饿死的响应被当成功返回并落库
-- 实测证据：`e2e/scratch/out_v5.json`——52 字节半截内容落满 6 片、二次续跑 map 调用 = 0（第二道门判「非空」即复用）
+- 实测证据：`docs/evidence/incomplete-v5.json`（证据：`ev:incomplete-v5`）——52 字节半截内容落满 6 片、二次续跑 map 调用 = 0（第二道门判「非空」即复用）。产物于 2026-09-12 从 scratch 迁入，只留统计量，正文段按白名单挡在库外
 - 修法：`_check_finish_reason` 为唯一裁决点。`_INCOMPLETE_FINISH_REASONS` = `{length, content_filter, insufficient_system_resource}` → 抛 `IncompleteResponseError`（带 `finish_reason` 字段）；`stop` / `tool_calls` 放行；**真正陌生的值**与缺失点名 WARN 后放行（供应商语义确实不一，不阻断——但 `content_filter` / `insufficient_system_resource` 不是陌生值，是已知未完成终态，放行等于当成功）
 - 四个提取点收敛：`chat` / `async_chat` → `_extract_content`，`chat_with_tools` → `_checked_message`，`chat_stream` 每 chunk 先校验再吐、流尽仍无终态判缺失
 - 可辨性：截断（`IncompleteResponseError`）≠ 网络失败（`RuntimeError`）≠ 空内容（放行但返回 `""`）
@@ -237,11 +237,16 @@ config.yaml 现值（现读，非转述）：
 - **既有测试一并订正**：`tests/test_security_authz.py` 的 `test_03/04/05`（card get/export、group history）与 `tests/test_distill_task_api.py` 的「他人任务」用例——它们原先断言 403，标签与断言都已翻成 404
 - 残留 403 现共 **10 处 = B 6 + C 4**（`admin.py` require_admin；`auth.py` 三处账号禁用 + 一处 geo；`market.py` 三处审核门 + 一处仅管理员；`message.py` retract）；routers 之外另有 `web/deps.py` 的 geo 白名单与 `web/server.py` 的账号禁用（均 B/C）
 
-**14. 已报数字指向 gitignored 产物（可追溯性缺口）** —— 状态：未修（已立项）
+**14. 已报数字指向 gitignored 产物（可追溯性缺口）** —— 状态：**已修**（2026-09-12）
 - 形态：AGENTS.md / 会话记录引用的原始产物留在 `e2e/scratch/`（被 `.gitignore` 的 `/e2e/` 规则覆盖），读者按引用去查是空的 —— **引用等于没有出处**，而这正是证据档存在的意义
-- 已知一例：缺陷 2 引用的 `e2e/scratch/out_v5.json`。**全仓清点尚未做**，同类可能还有其它处
-- 处置方向：逐个确认「产数脚本 + 原始产物」是否入库（落点沿用 `tests/perf/` 先例）；产物含正文或凭据的**删字段不删文件**
-- 已处置可参照：缺陷 1 / 缺陷 8 与 §二 基线表的产物已于 2026-09-11 提入库，见 §五「思考参数证据档」
+- **根因（不在那 8 处，在机制）**：仓里没有「证据产物」这个一等类别，于是① 探针默认落点全是 gitignored 目录（`map_len_probe` / `capfield_probe` 的 `PROBE_OUT_DIR or e2e/scratch`、`raise_probe` 的脚本同目录、`distill_orphan_matrix` 的 stdout 重定向 —— 三套约定）；② 「调试脚本不入库」与「文档数字必须可追溯」两条规则正面相撞，凡被引用的数字就要临时开一次例外；③ 脱敏靠记性（本档记着「入库产物已删 `preview` / `content_head`」，一次手工动作）。**不消灭「例外」这个动作，修完必然长回来** —— 所以本轮改的是机制，不是逐个 sed
+- 处置（commit `8dd99d3` 立契约 / `e389fdc`+`ac11cfe` 落点迁移 / 本轮收编存量）：
+  - **唯一写入出口** `tests/perf/evidence_writer.py`：落点固定 `docs/evidence/<id>.json`（**不提供路径参数、不读环境变量** —— 留口子就等于留回退路径）、按**白名单**在写入时脱敏（黑名单只挡已知字段名，探针加一个字段就漏）、同时 upsert 清单条目。七个探针全部接入，各自的 `OUT_DIR` / `OUT` / `PROBE_OUT_DIR` / `PROBE_OUT` 与 `json.dump` 已删
+  - **清单即唯一真源** `docs/evidence/manifest.json`：三档 status（`verified` / `runtime-measured` / `unverifiable`）。正文引用改写字形 `ev:<id>`，文档里的数字与简历口径都是清单的**渲染**，不是第二份手写表
+  - **双向满射锁** `tests/test_evidence_integrity.py`（27 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）
+- **收编的存量缺口**：缺陷 2 的 `out_v5.json` → `ev:incomplete-v5`（只留统计量，正文段 `sampleChunk` 按白名单挡在库外）；`chunk_size` 来历 → `ev:chunk-size-provenance`（**订正**：原文写「`git log -S` 全仓无 4500/12000 命中」过宽 —— 有命中，只是无一处当 chunk_size 用）；A2 接线变异实验 → `ev:a2-wiring-mutation`；`TECHNICAL_REPORT.md` 的图谱统计 → `ev:graphify-snapshot-2026-08-15`（`unverifiable`）。具名/正文类产物一律**脱字段不删文件**
+- **不重跑顶替**（硬要求）：产物丢失时不得重跑生成一份新的顶上 —— 重跑得到的是今天的数字，文档写的是当时的结论，拿新数字填旧引用是把「无出处」伪装成「有出处」。产物的 `code_sha` 只在推断能落到唯一 commit 时才填，否则 `unknown(scratch)` + `notes` 交代依据不足
+- 契约细节（三档 status 的必填字段、白名单上限、`ev:` 语法、commit hash 的保留例外）见 `docs/evidence/README.md`
 
 **15. `034_post_enhancements` 在已建库上每次 init 都打一行假失败；另有 19 处裸吞** —— 状态：未修（已立项）
 - 修 067（缺陷 5）时顺带实测到：同一个库第二次 `_ensure_initialized` 会打 `[SQLiteStore] Post enhancements migration failed: duplicate column name: images`。该块（`storage/sqlite_store.py` 的 034 段）是 `except Exception: print` **连 duplicate column 都不吞**，故「已建库重跑」这一正常路径每次都报失败
@@ -325,7 +330,7 @@ config.yaml 现值（现读，非转述）：
 - **SQLite 全绿不构成并发命题的证据**：SQLite 写是库级序列化，窗口从根上不存在（`storage/sqlite_store.py` 的 `save_distill_chunk` 自述），生产是 PG。同一段逻辑在 sqlite 上验不出 PG 的行锁语义
 - **mock 的形态 ≠ 被测对象的形态**。案例：mock 回 canned JSON，据此误判 map 输出是 JSON——实际是自然语言（prompt 见 `core/distiller.py` 的 `_map_system_prompt` / `_map_user_prompt`；消费侧只判「非空且 ≠『无』」，见 `distill_incremental_stream` 内 `raw_analyses`）。据此设计的 JSON 校验会否掉所有真实 map 结果
 - **测试通过 ≠ 命题成立**，可能只是那条路径根本没被走到。案例：分片续跑逻辑落地后长期未真实执行——短文本恒走长上下文路径（分流在 `distill_incremental_stream`），从不进分片。要验分片路径必须显式强制（见第五节）
-- **修复必须做变异验证**：改坏它，指定测试必须变红。案例：把兜底调用从 `finally` 里整行删掉，**原 14 个测试仍全绿** → 接线没被覆盖；随后补 `TestA2Wiring` 两条（commit `9d2a9e4`，见 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`）
+- **修复必须做变异验证**：改坏它，指定测试必须变红。案例：把兜底调用从 `finally` 里整行删掉，**原 14 个测试仍全绿** → 接线没被覆盖；随后补 `TestA2Wiring` 两条（commit `9d2a9e4`；变异实验本身与扫描口径见 `ev:a2-wiring-mutation`。补齐动作可 `git show 9d2a9e4` 直查，但「删掉后仍全绿」这个**运行期观测**只记在未入库的会话文件里，故它单独入了清单）
 - **变异必须可判定：要让它「红」，不能让它「挂死」**。判据：设计用例时先想清楚「这条用例被改坏后会怎样」——若会死循环/长时间阻塞，那条变异就**不可判定**（跑不出结果，等于没验）。做法：把输入设计成**有限且末尾通向成功**（如「上限 N 次截断、第 N+1 次成功」），于是「上限改成无限」的变异会走到第 N+1 次并成功返回，与断言的「应当抛出」立刻冲突 → 红。案例：`tests/test_distiller_truncation_selfheal.py::test_repair_cap_raises_truncation_error_not_format_error`
 - **测「某字段是承重的」时，被删的字段必须经真实产生产出**。判据：若测试自己直接构造了那个对象/异常，删掉字段的**传递链**不会红——因为测试根本没走那条链。案例：截断自愈用例若直接 `IncompleteResponseError(..., content=X)`，则「去掉 `_extract_content` 的 content 传递」只红 adapter 用例、正向自愈用例全绿；改成经真实 `_extract_content` 产出后才 3 条齐红
 - **「X 消失了」不足以证明 Y 修好了——要找独立、可交叉验证的指标**。案例：关掉思考后「空正文片数 3→0」，但空正文消失本身也可能只是采样波动，用它证明「思考关掉了」是同义反复。真正的实证是 **tokens / 正文字符 3.85 → 0.62**，与本仓自己的 `_estimate_tokens = int(len*0.6)` 吻合——两个互相独立的量对上，结论才立得住
@@ -346,10 +351,10 @@ config.yaml 现值（现读，非转述）：
 ### 五、验证工具现状
 
 - `tests/perf/mock_llm_server.py`：mock LLM，挂 `/chat/completions` + `/embeddings`，另有 `/admin/set` 控制面
-- **思考参数证据档**：`docs/evidence/thinking_budget_evidence.md` + `tests/perf/map_len_probe.py` / `tests/perf/capfield_probe.py` + 原始产物 `docs/evidence/thinking-maplen-before.json` / `thinking-maplen-after.json` / `thinking-capfield.json`。2026-09-11 自 `e2e/scratch/` 提入库、2026-09-12 随「证据产物一等化」迁入 `docs/evidence/`（「调试脚本不入库」的例外：这批数字被 AGENTS.md 正文引用，产物不入库就无从追溯；此类产物走 `tests/perf/evidence_writer.py` 落盘并登记清单）；入库产物已删 `preview` / `content_head`（会逐字带出原文对话），只留统计量
+- **思考参数证据档**：`docs/evidence/thinking_budget_evidence.md` + `tests/perf/map_len_probe.py` / `tests/perf/capfield_probe.py` + 原始产物 `docs/evidence/thinking-maplen-before.json` / `thinking-maplen-after.json` / `thinking-capfield.json`。2026-09-11 自 `e2e/scratch/` 提入库、2026-09-12 随「证据产物一等化」迁入 `docs/evidence/`（这批数字被 AGENTS.md 正文引用，产物不入库就无从追溯；此类产物走 `tests/perf/evidence_writer.py` 落盘并登记清单，不是「调试脚本不入库」的例外而是唯一路径）；入库产物已删 `preview` / `content_head`（会逐字带出原文对话），只留统计量
 - **用例到达性证据档**：`tests/perf/raise_probe.py`（pytest 插件，包住 `HTTPException.__init__` 记录实际命中的 `file:line:func`）+ `tests/perf/check_reachability.py`（逐条比对期望 handler）+ 原始产物 `docs/evidence/ownership-reachability.json` / `ownership-reachability-nokey.json`，叙述见 `docs/evidence/raise_sites_evidence.md`。用于证明「每条属主用例真的走到了属主判定」以及「夹具已与测试机凭据无关」（`PROBE_NO_KEY=1` 模拟无 key 机器，须仍全绿）
-- `e2e/scratch/`：一次性探针。gitignore 覆盖见 `.gitignore` 的 `/e2e/` 规则；注意另有 `web/frontend/e2e/` 的一组规则，勿混。**调试脚本不入库**
-- **强制走分片路径**：配置里把 `longctx_threshold` 调到 1（另可把 `chunk_size` 调小、`map_concurrency` 调 1 以确定性截杀），**不要改源码**。做法记录于 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`
+- `e2e/scratch/`：一次性探针。gitignore 覆盖见 `.gitignore` 的 `/e2e/` 规则；注意另有 `web/frontend/e2e/` 的一组规则，勿混。**调试脚本不入库**（被正文引用数字的探针产物不算例外，走 `tests/perf/evidence_writer.py` 落 `docs/evidence/` 并登记清单 —— 见「开发工作流约束」的「调试脚本不入 main」条）
+- **强制走分片路径**：配置里把 `longctx_threshold` 调到 1（另可把 `chunk_size` 调小、`map_concurrency` 调 1 以确定性截杀），**不要改源码**。该做法跑通的证据是 `ev:incomplete-v5`（产物 `docs/evidence/incomplete-v5.json`）。原引的 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md` 未入库（`.gitignore` 覆盖 `.claude/`），本行不再以它为唯一出处 —— 上面三行配置项是自足的，跑完该分片路径是否真被走到由那份产物判定
 - **PG 验证用 throwaway 容器**：`scripts/restore_verify.sh` 里的 `docker run -d --rm` / `docker rm -f`。本仓惯例见会话记录（「PG throwaway（55433）N passed，随后 `docker rm -f`」等）
 - **`e2e/helpers.cjs` 路径更正**：根 `e2e/` 下无此文件，实际在 **`web/frontend/e2e/helpers.cjs`**，`BASE = 'http://localhost:7861'`。本机实测 7861 端口**现有 3 条 LISTENING**（PID 21116 占 `0.0.0.0:7861` 与 `[::]:7861`，PID 11408 占 `[::1]:7861`），与「四重监听」不符，以现测为准。**待改成 `127.0.0.1`**；「会连到 Docker 里的旧 build」一说**待验证**
 
