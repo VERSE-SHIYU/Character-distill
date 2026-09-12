@@ -8,8 +8,9 @@
 本文件对每个变异**只跑指定的那一条**断言（进程内直接调用，不经 pytest 收集，因此不可能
 被别的锁兜住），红则证明该命题有专属红源。
 
-硬要求（spec §三）：此后新增任何清单语义断言，必须同时在本文件 `MUTATIONS` 补一行。
-不补 = 该断言可能只被渲染锁掩盖，而作者会以为有覆盖。
+「新增断言必须补一行」这条约定**本身也是机器校验的**（见 `TestMutationCoverage`）——
+它曾经只是本文件头部的一句散文：实测「新增断言不补行」与「删掉一行覆盖」都是全绿，
+静默。散文约定 = 锁看不见 = 迟早漂移。豁免必须写进 `_NO_MUTATION_NEEDED` 并交代理由。
 
 渲染新鲜度锁自己也占一行 —— 它的职责（渲染产物别过期）正当，但按上面的机制，得有人
 证明它**同样**有专属红源，不是靠别的锁顶。
@@ -47,6 +48,85 @@ def _add_ghost_entry(entries, _mp):
 
 def _drop_whitelist(entries, mp):
     mp.delitem(evidence_writer._ALLOWED_BY_ID, "incomplete-v5")
+
+
+class _DummySemanticAssertion:
+    """注入用的假类：反射能扫到、`MUTATIONS` 里没有对应行。
+
+    元断言必须因此红 —— 否则证明它其实是靠硬编码类名过的（那就把 M1 要修的病往后挪了一层：
+    新开的第五个类照样漏）。
+    """
+
+    def test_something_semantic(self):
+        raise AssertionError("从不被执行 —— 它在差集里就够了")
+
+
+def _drop_a_covering_row(_entries, mp):
+    """删掉一行覆盖 → 元断言必须红。
+
+    挑 `status_fourth_value`：它那个 nodeid **只**被这一行覆盖（其余 nodeid 都有第二行兜底），
+    删掉它差集才非空。若将来 `MUTATIONS` 结构变了、这行不再是唯一覆盖，本条会先红 ——
+    正是想要的信号：自指变异不能变成空过。
+    """
+    mp.setattr(sys.modules[__name__], "MUTATIONS",
+               [r for r in MUTATIONS if r[0] != "status_fourth_value"])
+
+
+def _exempt(prefix: str, reason: str, methods: list[str]) -> dict[str, str]:
+    """把一组同因豁免展开成 `{nodeid: 理由}`。
+
+    方法名仍**逐个列出**：新增方法照样落进差集、照样红。写成推导式扫全类就等于给
+    「新增断言不表态」开了后门，与 `_NO_MUTATION_NEEDED` 要防的东西是同一个。
+    """
+    return {f"{prefix}::{m}": reason for m in methods}
+
+
+# 不需要变异行的断言 —— **必须带理由**。写成 dict 而不是 list 就是为了这个：list 允许一行
+# 字符串把断言悄悄豁免掉，dict 强制交代，下一个 reviewer 才能判断豁免是否成立。
+_NO_MUTATION_NEEDED = {
+    "TestReferenceClosure::test_the_scan_actually_reads_the_docs":
+        "断言扫描面本身是活的（tracked .md 数量与关键文件在不在），与清单内容无关 —— "
+        "变异清单不会也不该让它红",
+    **_exempt("TestWriterContract",
+              "出口行为测试：靶是 fixture 临时搬过去的 tmp 清单与 tmp 落点，"
+              "与仓库清单内容无关 —— 变异仓库清单不会让它红",
+              ["test_landing_zone_is_evidence_dir_and_id_named",
+               "test_manifest_entry_is_verified_and_complete",
+               "test_whitelist_drops_and_accounts_unlisted_keys",
+               "test_upsert_replaces_same_id_instead_of_appending",
+               "test_subset_may_narrow",
+               "test_subset_may_not_widen",
+               "test_unregistered_id_refused",
+               "test_empty_whitelist_refused",
+               "test_blank_manifest_fields_refused",
+               "test_non_dict_payload_refused",
+               "test_writer_exposes_no_path_or_whitelist_override",
+               "test_landing_zone_is_not_env_overridable"]),
+    **_exempt("TestRegisterArtifact",
+              "迁移入口测试：同上（tmp 清单 + tmp 落点），与仓库清单内容无关",
+              ["test_registers_existing_artifact_with_historical_date",
+               "test_missing_artifact_refused",
+               "test_register_requires_script_role_and_assertions",
+               "test_bad_script_role_refused",
+               "test_unregistered_id_refused"]),
+}
+
+
+def _assertion_nodeids() -> set[str]:
+    """两个模块里**全部** `Test*` 类的 `test_*` —— 反射，不列举类名。
+
+    列举类名 = 「新增断言」走不变量、「新增类」不走：将来有人新开第五个类，这里扫不到、
+    元断言照旧绿，覆盖照样漏。两类新增必须走同一条不变量。
+
+    两个模块都扫：M1 的元断言按设计住在本模块（它管的是矩阵自己），只扫 `lock` 会把它自己
+    漏在差集之外 —— 那正是「覆盖检查自己有盲区」的重演。
+    """
+    out: set[str] = set()
+    for mod in (lock, sys.modules[__name__]):
+        for name, obj in vars(mod).items():
+            if name.startswith("Test") and isinstance(obj, type):
+                out |= {f"{name}::{attr}" for attr in dir(obj) if attr.startswith("test_")}
+    return out
 
 
 # (名字, 变异, 期望红的 nodeid)。nodeid 用 `Class::method`，在本文件内直接调用该方法。
@@ -141,7 +221,51 @@ MUTATIONS = [
     ("empty_assertions_on_verified",
      lambda m, mp: _by_id(m, "incomplete-v5").update(assertions=[]),
      "TestClaimBindings::test_assertions_present_for_verified_and_null_otherwise"),
+    # —— M1 覆盖不变量（TestMutationCoverage）—— 元断言自己也进矩阵
+    ("dummy_method_without_a_mutation_row",
+     lambda m, mp: mp.setattr(
+         lock.TestManifestEntries, "test_dummy_semantic", lambda self: None, raising=False),
+     "TestMutationCoverage::test_every_semantic_assertion_has_a_mutation_row"),
+    ("dummy_class_without_a_mutation_row",
+     lambda m, mp: mp.setattr(lock, "TestInjectedDummy", _DummySemanticAssertion, raising=False),
+     "TestMutationCoverage::test_every_semantic_assertion_has_a_mutation_row"),
+    ("covering_row_deleted",
+     _drop_a_covering_row,
+     "TestMutationCoverage::test_every_semantic_assertion_has_a_mutation_row"),
 ]
+
+
+class TestMutationCoverage:
+    """M1 —— 「每个清单语义断言都有专属红源」本身必须是机器校验的，不是文件头的一句散文。
+
+    实测过的两个静默逃逸：新增一条语义断言而不补行 → 62 passed；删掉一行覆盖 → 60 passed。
+    散文约定锁看不见，于是这条不变量一直没有红源。
+    """
+
+    def test_every_semantic_assertion_has_a_mutation_row(self):
+        all_ids = _assertion_nodeids()
+        covered = {row[2] for row in MUTATIONS}
+        missing = sorted(all_ids - set(_NO_MUTATION_NEEDED) - covered)
+        assert not missing, (
+            "这些断言语义上属于清单，却没有专属变异行 —— 它的绿可能是被渲染新鲜度锁掩盖的："
+            f"{missing}。补一行 MUTATIONS，或加进 _NO_MUTATION_NEEDED 并写明理由。")
+        unknown = sorted(covered - all_ids)
+        assert not unknown, f"MUTATIONS 指向了不存在的断言：{unknown}"
+        stale = sorted(set(_NO_MUTATION_NEEDED) - all_ids)
+        assert not stale, f"_NO_MUTATION_NEEDED 里的豁免指向已不存在的断言：{stale}"
+
+
+def _target_method(nodeid: str):
+    """按 nodeid 取断言方法 —— 先在锁模块里找，再在本模块里找。
+
+    靶不总在 `lock` 里：M1 的元断言按设计住在本模块（它管的是矩阵自己）。
+    """
+    cls_name, method_name = nodeid.split("::")
+    for mod in (lock, sys.modules[__name__]):
+        cls = getattr(mod, cls_name, None)
+        if isinstance(cls, type):
+            return getattr(cls(), method_name)
+    raise LookupError(f"没有哪个模块定义了 {cls_name}")
 
 
 @pytest.mark.parametrize("name,mutate,nodeid", MUTATIONS, ids=[m[0] for m in MUTATIONS])
@@ -153,7 +277,5 @@ def test_mutation_reds_its_own_assertion(tmp_path, monkeypatch, name, mutate, no
     mutated.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
     monkeypatch.setattr(lock, "MANIFEST", mutated)
 
-    cls_name, method_name = nodeid.split("::")
-    method = getattr(getattr(lock, cls_name)(), method_name)
     with pytest.raises(AssertionError):
-        method()
+        _target_method(nodeid)()
