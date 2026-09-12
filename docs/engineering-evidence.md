@@ -239,7 +239,7 @@
 | 分片级 sha256 指纹门（防错位复用） | `core/distiller.py` `text_fingerprint`（任务级与分片级共用，避免两份漂移）+ `_resume_hit`（三重门） | ✅ 代码核实 |
 | 续跑命中片**零 LLM 调用** | `tests/test_distill_resume.py::TestResumeSavesCalls::test_full_hit_zero_map_calls`（tracked） | ✅ |
 | 六条验收断言 + 两条防"空过"对照 | 断言落在 `tests/test_distill_resume.py`（tracked：`TestResumeHitDoors` 三条 + `TestResumeSavesCalls` / `TestResumeIdempotent` / `TestSecondGateRerunsBadChunk` / `TestFailedChunkNotCheckpointed` / `TestMainPathUnchanged` 各一条，共 **8 个用例**）；「六条」这个**计数标签**出自 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`（**gitignored**） | ✅（用例）/ ⚠️ 待核（"六条"的计数口径） |
-| 分流阈值 15 万 token ≈ 25 万字符 | `config.yaml` `longctx_threshold: 150000`；25 万字符 = 150000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径 | ✅ 代码核实 |
+| 分流阈值 15 万 token ≈ 25 万字符 | `config.yaml` `longctx_threshold: 150000`；25 万字符 = 150000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径。**该值来源 `config.yaml` 不在仓库**（`git ls-files` 零命中）—— 运行期实测，`ev:config-yaml-values` | ✅ 运行期 |
 | 分片残留矩阵（8 条删除路径 × `distill_tasks`/`distill_chunks`，sqlite 与 PG 逐格相同） | `ev:distill-orphan-matrix`（脚本 `tests/perf/distill_orphan_matrix.py`，无 LLM、确定性） | ✅ |
 | 「删卡保留断点」的注释理由在主流路径上**不成立** | `ev:distill-resume-reachability`：`find_interrupted_distill` 只匹配 `interrupted`，删卡后常见的 `running`/`done`/`error` 三个状态**都命不中**（整批重跑），断点留着是纯占空间 | ✅ |
 | 非空半截落库即被第二道门复用（二次续跑不再重算分片） | `ev:incomplete-v5`（同为修复前形态，见 §四） | ✅ |

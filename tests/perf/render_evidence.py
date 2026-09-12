@@ -52,9 +52,11 @@ def render(entries: list[dict]) -> str:
         "|---|---|---|",
     ]
     for e in writable:
+        # corroborating 要显眼：跑那个脚本**不会**重生成产物，只覆盖同一断言
+        tag = "（**只佐证**，非产出脚本）" if e.get("script_role") == "corroborating" else ""
         out.append(
             f"| {_cell(e.get('claim'))} | `ev:{e['id']}` | `{_cell(e.get('reproduce'))}` "
-            f"（脚本 `{_cell(e.get('script'), 80)}`） |")
+            f"（脚本 `{_cell(e.get('script'), 80)}`{tag}） |")
 
     out += [
         "",
@@ -73,13 +75,14 @@ def render(entries: list[dict]) -> str:
         "",
         f"## 三、出处索引（全部 {len(entries)} 条）",
         "",
-        "| id | status | 产物 | 脚本 | 产出 commit | 测量日 |",
-        "|---|---|---|---|---|---|",
+        "| id | status | 产物 | 脚本 | 脚本角色 | 产出 commit | 测量日 |",
+        "|---|---|---|---|---|---|---|",
     ]
     for e in entries:
         out.append(
             f"| `{e['id']}` | `{e.get('status')}` | {_cell(e.get('artifact') or '—', 60)} | "
-            f"{_cell(e.get('script') or '—', 60)} | `{_cell(e.get('code_sha') or '—', 30)}` | "
+            f"{_cell(e.get('script') or '—', 60)} | {_cell(e.get('script_role') or '—', 20)} | "
+            f"`{_cell(e.get('code_sha') or '—', 30)}` | "
             f"{_cell(e.get('measured_at') or '—', 20)} |")
 
     return "\n".join(out) + "\n"

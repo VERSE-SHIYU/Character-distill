@@ -41,6 +41,12 @@ MANIFEST = EVIDENCE_DIR / "manifest.json"
 
 STATUSES = ("verified", "runtime-measured", "unverifiable")
 
+# script 字段的两种语义 —— 不加这个字段，区别只活在散文里，锁看不见，
+# 下一个人照抄「verified + script 指向别的文件」的形态就会填出一条真不可复现的条目。
+#   producer      —— 跑它**重生成**这份产物
+#   corroborating —— 只覆盖同一断言（例如产物来自未入库的一次性 scratch 脚本）
+SCRIPT_ROLES = ("producer", "corroborating")
+
 # id → 允许落盘的顶层键。**新探针接入时必须在此注册**，未注册直接抛错：
 # 没注册就没有白名单，脱敏又回到「记得删」。锁测试扫正文的 ev: 引用，未注册即红。
 _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
@@ -74,6 +80,7 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
     # write_evidence 只在**调用时**拒绝空集（见其 docstring），注册时不拦，正是为此。
     "a2-wiring-mutation": frozenset(),
     "chunk-size-provenance": frozenset(),
+    "config-yaml-values": frozenset(),
     "graphify-snapshot-2026-08-15": frozenset(),
 }
 
@@ -97,12 +104,14 @@ def write_evidence(
     code_sha: str,
     subset: frozenset[str] | set[str] | None = None,
     reproduce: str | None = None,
+    script_role: str = "producer",
     extra_notes: str | None = None,
 ) -> Path:
     """写 ``docs/evidence/<id>.json`` 并 upsert 清单条目（``status = verified``）。
 
     拒绝（抛 ``ValueError``，不落文件）：id 未注册 / 白名单为空 / ``subset`` 越界 /
-    ``claim`` ``script`` ``env`` ``code_sha`` 任一缺失或空白 / payload 不是 dict。
+    ``claim`` ``script`` ``env`` ``code_sha`` 任一缺失或空白 / ``script_role`` 非法 /
+    payload 不是 dict。探针产产物，故 ``script_role`` 默认 ``producer``。
     """
     allowed = _ALLOWED_BY_ID.get(evidence_id)
     if allowed is None:
@@ -126,6 +135,7 @@ def write_evidence(
             raise ValueError(f"清单字段 {name!r} 缺失或为空白 —— 缺它这条就不可追溯。")
     if not isinstance(payload, dict):
         raise ValueError(f"payload 必须是 dict，收到 {type(payload).__name__}。")
+    _check_script_role(script_role)
 
     # 按 payload 原顺序保留允许的键；白名单外的键丢弃并记账
     body = {k: v for k, v in payload.items() if k in keep}
@@ -141,6 +151,7 @@ def write_evidence(
         "status": "verified",
         "artifact": artifact.relative_to(ROOT).as_posix(),
         "script": script,
+        "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "env": env.strip(),
         "measured_at": date.today().isoformat(),
@@ -159,6 +170,7 @@ def register_artifact(
     env: str,
     code_sha: str,
     measured_at: str,
+    script_role: str,
     reproduce: str | None = None,
     redacted_fields: tuple[str, ...] | list[str] = (),
     notes: str | None = None,
@@ -168,6 +180,10 @@ def register_artifact(
     ``write_evidence`` 是「跑探针 → 产生产物」；本函数是「产物本来就在 → 补登记」。
     迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
     所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
+
+    ``script_role`` **无默认值、必须表态** —— 迁移路径正是「script 指向的不是产出脚本」
+    最容易发生的地方（先例：``incomplete-v5`` 的产物来自未入库的 scratch 脚本），
+    给默认值就等于给「照抄时静默填错」留口子。
     """
     if evidence_id not in _ALLOWED_BY_ID:
         raise ValueError(
@@ -176,6 +192,7 @@ def register_artifact(
                         ("code_sha", code_sha), ("measured_at", measured_at)):
         if not (isinstance(value, str) and value.strip()):
             raise ValueError(f"清单字段 {name!r} 缺失或为空白 —— 缺它这条就不可追溯。")
+    _check_script_role(script_role)
 
     artifact = EVIDENCE_DIR / f"{evidence_id}.json"
     if not artifact.exists():
@@ -189,6 +206,7 @@ def register_artifact(
         "status": "verified",
         "artifact": artifact.relative_to(ROOT).as_posix(),
         "script": script,
+        "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
         "env": env.strip(),
         "measured_at": measured_at.strip(),
@@ -197,6 +215,14 @@ def register_artifact(
         "notes": (notes or "").strip(),
     })
     return artifact
+
+
+def _check_script_role(script_role: str) -> None:
+    if script_role not in SCRIPT_ROLES:
+        raise ValueError(
+            f"script_role 只允许 {SCRIPT_ROLES}，收到 {script_role!r}。"
+            "对已入库产物用 producer；script 指向的文件不产这份产物就用 corroborating"
+            "（且必须在 notes 里说明产出脚本是谁、为什么没入库）。")
 
 
 def _upsert(entry: dict) -> None:

@@ -28,11 +28,12 @@ MANIFEST = ROOT / "docs" / "evidence" / "manifest.json"
 EV_RE = re.compile(r"ev:([a-z0-9][a-z0-9._-]*)")
 
 _REQUIRED = {
-    "verified": ("artifact", "script", "reproduce"),
+    "verified": ("artifact", "script", "script_role", "reproduce"),
     "runtime-measured": ("env", "measured_at", "notes"),
     "unverifiable": ("measured_at", "env", "notes"),
 }
 _STATUSES = ("verified", "runtime-measured", "unverifiable")
+_SCRIPT_ROLES = ("producer", "corroborating")
 
 sys.path.insert(0, str(PERF))
 import evidence_writer  # noqa: E402
@@ -124,6 +125,31 @@ class TestManifestEntries:
                if e.get("artifact") is not None
                and not str(e["artifact"]).startswith("docs/evidence/")]
         assert not bad, f"产物必须落在 docs/evidence/ 下：{bad}"
+
+    def test_script_role_is_declared_and_legal(self):
+        """`script` 有两种语义（产出这份产物 / 只佐证同一断言），必须逐条表态。
+
+        不给这一条，区别就只活在散文里：下一个人照抄一条 `verified + script 指向别的文件`
+        的形态，就填出一条**真不可复现**的条目，而锁全绿。
+        """
+        bad = []
+        for e in _manifest():
+            role = e.get("script_role")
+            if e.get("status") == "verified":
+                if role not in _SCRIPT_ROLES:
+                    bad.append((e["id"], role))
+            elif role is not None:
+                bad.append((e["id"], role))
+        assert not bad, (
+            f"script_role 对 verified 必须是 {_SCRIPT_ROLES} 之一、对其余两档必须是 null：{bad}")
+
+    def test_corroborating_script_must_be_explained(self):
+        """script 不是产出脚本时，`notes` 必须说明产出脚本是谁、为什么没入库。"""
+        bad = [e["id"] for e in _manifest()
+               if e.get("script_role") == "corroborating" and not (e.get("notes") or "").strip()]
+        assert not bad, (
+            f"script_role=corroborating 却没有 notes 交代产出脚本：{bad}。"
+            "「为什么这个 script 不产这份产物」不能只靠读者猜。")
 
     def test_every_entry_has_a_registered_whitelist(self):
         missing = sorted({e["id"] for e in _manifest()
@@ -226,24 +252,40 @@ class TestRegisterArtifact:
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         evidence_writer.register_artifact(
             "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
-            code_sha="abc1234", measured_at="2026-09-10", notes="n",
+            code_sha="abc1234", measured_at="2026-09-10", script_role="producer", notes="n",
             redacted_fields=("content_head", "preview"))
         e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
         assert e["status"] == "verified"
         assert e["measured_at"] == "2026-09-10"
+        assert e["script_role"] == "producer"
         assert e["artifact"] == "docs/evidence/tmp-id.json"
         assert e["redacted_fields"] == ["content_head", "preview"]
 
     def test_missing_artifact_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="不存在"):
             evidence_writer.register_artifact(
+                "tmp-id", claim="c", script="s", env="e", script_role="producer",
+                code_sha="a", measured_at="2026-09-12")
+
+    def test_register_requires_script_role(self, tmp_evidence):
+        """迁移入口的 `script_role` 无默认值 —— 漏填给 TypeError，不给静默兜底。"""
+        (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
+        with pytest.raises(TypeError):
+            evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e",
+                code_sha="a", measured_at="2026-09-12")
+
+    def test_bad_script_role_refused(self, tmp_evidence):
+        (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
+        with pytest.raises(ValueError, match="script_role 只允许"):
+            evidence_writer.register_artifact(
+                "tmp-id", claim="c", script="s", env="e", script_role="secondary",
                 code_sha="a", measured_at="2026-09-12")
 
     def test_unregistered_id_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="未在 evidence_writer"):
             evidence_writer.register_artifact(
-                "never-registered", claim="c", script="s", env="e",
+                "never-registered", claim="c", script="s", env="e", script_role="producer",
                 code_sha="a", measured_at="2026-09-12")
 
 

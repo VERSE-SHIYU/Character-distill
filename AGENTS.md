@@ -80,7 +80,7 @@ config.yaml 现值（现读，非转述）：
 
 **模型规格**：deepseek-v4-pro 上下文 1M token / 最大输出 384K —— **待验证**（代码与仓库内无此声明，来自口述的「官方 GA 0813」，未找到出处）。
 
-**chunk_size 的来历**：**待验证·无记载**（证据：`ev:chunk-size-provenance`）。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S 4500` / `-S 12000` 有命中，但逐处核对后**无一处把这两个数当 chunk_size**（命中的是本节自述行、`core/distiller.py` 的 `max_profile_len` 下限、`web/frontend/e2e/avatar-fallback-verify.cjs` 的 `settleMs`）；`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`），代码默认 3000（`distill_cfg.get("chunk_size", 3000)`），现值 5000（出自**未入库**的 `config.yaml`），classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。扫描口径与逐处核对写在清单条目的 `notes` 里。
+**chunk_size 的来历**：**待验证·无记载**（证据：`ev:chunk-size-provenance`）。「实测对比 3000/4500/6000/12000 四档、以卡片质量对标整本喂、12000 太慢 3000 太碎」——`git log -S 4500` / `-S 12000` 有命中，但逐处核对后**无一处把这两个数当 chunk_size**（命中的是本节自述行、`core/distiller.py` 的 `max_profile_len` 下限、`web/frontend/e2e/avatar-fallback-verify.cjs` 的 `settleMs`）；`docs/` 与 `.claude/sessions/` 亦无记录。可查到的只有：3000 起于 2026-05-19（commit `5aee0609`），代码默认 3000（`distill_cfg.get("chunk_size", 3000)`），现值 5000 与 `longctx_threshold: 150000`（均出自**未入库**的 `config.yaml`，见缺陷 14 的 `ev:config-yaml-values`），classic 地板 6000（`effective_chunk_size`）。结论：**暂定值，无统一标准**。扫描口径与逐处核对写在清单条目的 `notes` 里。
 
 **max_tokens 的来历**（数值轨迹有据，「为什么最终是 4096」无量化依据）：
 
@@ -243,9 +243,11 @@ config.yaml 现值（现读，非转述）：
 - 处置（commit `8dd99d3` 立契约 / `e389fdc`+`ac11cfe` 落点迁移 / 本轮收编存量）：
   - **唯一写入出口** `tests/perf/evidence_writer.py`：落点固定 `docs/evidence/<id>.json`（**不提供路径参数、不读环境变量** —— 留口子就等于留回退路径）、按**白名单**在写入时脱敏（黑名单只挡已知字段名，探针加一个字段就漏）、同时 upsert 清单条目。七个探针全部接入，各自的 `OUT_DIR` / `OUT` / `PROBE_OUT_DIR` / `PROBE_OUT` 与 `json.dump` 已删
   - **清单即唯一真源** `docs/evidence/manifest.json`：三档 status（`verified` / `runtime-measured` / `unverifiable`）。正文引用改写字形 `ev:<id>`，文档里的数字与简历口径都是清单的**渲染**，不是第二份手写表
-  - **双向满射锁** `tests/test_evidence_integrity.py`（27 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）
+  - **双向满射锁** `tests/test_evidence_integrity.py`（32 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）；`script_role` 逐条表态
 - **收编的存量缺口**：缺陷 2 的 `out_v5.json` → `ev:incomplete-v5`（只留统计量，正文段 `sampleChunk` 按白名单挡在库外）；`chunk_size` 来历 → `ev:chunk-size-provenance`（**订正**：原文写「`git log -S` 全仓无 4500/12000 命中」过宽 —— 有命中，只是无一处当 chunk_size 用）；A2 接线变异实验 → `ev:a2-wiring-mutation`；`TECHNICAL_REPORT.md` 的图谱统计 → `ev:graphify-snapshot-2026-08-15`（`unverifiable`）。具名/正文类产物一律**脱字段不删文件**
 - **不重跑顶替**（硬要求）：产物丢失时不得重跑生成一份新的顶上 —— 重跑得到的是今天的数字，文档写的是当时的结论，拿新数字填旧引用是把「无出处」伪装成「有出处」。产物的 `code_sha` 只在推断能落到唯一 commit 时才填，否则 `unknown(scratch)` + `notes` 交代依据不足
+- **`script` 有两种语义，已升为字段**：`script_role: producer | corroborating`（`verified` 必填其一、其余两档必须 `null`；`corroborating` 还必须带 `notes` 交代产出脚本是谁、为什么没入库）。先例 `ev:incomplete-v5` —— 它的 `script` 指向仓内覆盖同一断言的用例，产出脚本实为未入库的 scratch；不加这个字段，区别就只活在散文里，下一个人照抄那个形态就会填出一条**真不可复现**的 `verified`
+- **残余未收编**：`.claude/sessions/`（gitignored）仍被正文引用 **5 处**（`docs/engineering-evidence.md` L59/63/191/241/282，均已标 `⚠️ 待核`）。处置：机械收编成 `runtime-measured`，本档已裁定**做，但排在缺陷 15 之后**（价值中等，不急）
 - 契约细节（三档 status 的必填字段、白名单上限、`ev:` 语法、commit hash 的保留例外）见 `docs/evidence/README.md`
 
 **15. `034_post_enhancements` 在已建库上每次 init 都打一行假失败；另有 19 处裸吞** —— 状态：未修（已立项）

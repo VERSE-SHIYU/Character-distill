@@ -53,6 +53,7 @@
   "status": "verified | runtime-measured | unverifiable",
   "artifact": "docs/evidence/<id>.json 或 null",
   "script": "tests/perf/<probe>.py 或 null",
+  "script_role": "producer | corroborating | null",
   "reproduce": "一条能粘进终端的复现命令或 null",
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
@@ -62,11 +63,26 @@
 }
 ```
 
+### `script_role`：`script` 有两种语义，必须逐条表态
+
+| 值 | 含义 | 用在 |
+|---|---|---|
+| `producer` | 跑 `script` 会**重生成**这份产物 | 绝大多数 `verified` |
+| `corroborating` | `script` 只覆盖**同一断言**，不产这份产物 | 产物出自未入库的一次性 scratch 脚本（先例：`incomplete-v5`） |
+| `null` | 没有 `script` | `runtime-measured` / `unverifiable` 两档 |
+
+**为什么这是一个字段而不是一句散文**（与缺陷 14 同根）：`verified` 的定义是「产物在仓库、脚本可
+重跑」，但「可重跑」有两种意思 —— 「跑它能得到这份产物」和「跑它能验证同一个结论」。只写在
+`notes` 里，锁看不见，下一个人照抄那个形态就会填出一条**真不可复现**的 `verified`，而套件全绿。
+锁的两条：`verified` 的 `script_role` 必须是上表前两个值之一（其余两档必须 `null`）；
+`corroborating` 必须带非空 `notes` 交代产出脚本是谁、为什么没入库。
+迁移用的 `register_artifact` **要求这个参数且无默认值** —— 迁移路径正是最容易填错的那条。
+
 ### 三档 status（**只有三档，第四值锁测试直接红**）
 
 | status | 含义 | 必填 | 锁校验 |
 |---|---|---|---|
-| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `reproduce` | `artifact` 必须被 `git ls-files` 命中 |
+| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` | `artifact` 必须被 `git ls-files` 命中 |
 | `runtime-measured` | 运行时实测，非仓库数据 | `env` `measured_at` + `notes` 写明**扫描方法** | `artifact` 必须为 `null` |
 | `unverifiable` | 当时结论，现已不可复现 | `measured_at` `env` + `notes` 写明**为什么现在复现不了** | `artifact` 必须为 `null` |
 
