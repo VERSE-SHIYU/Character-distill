@@ -36,7 +36,10 @@
 ```
 
 `<id>` 必须同时出现在 `manifest.json` 与 `evidence_writer._ALLOWED_BY_ID`（未注册即红）。
-渲染（出处列、简历可用清单）由人从清单生成，见 `resume-numbers.md`。
+
+**渲染**：「哪些数字能写进简历」由清单渲染成 `resume-numbers.md` ——
+`python tests/perf/render_evidence.py`。渲染产物**勿手改**：锁会重渲染一遍与盘上文件逐字节比对，
+清单改了不重跑就红。正文的出处列写 `ev:<id>` 而不是手抄路径，也是同一个理由（手抄必漂移）。
 
 **保留例外**：`git log` 能直查的 commit hash 不入清单——它本身就可追溯，入清单是冗余
 （`engineering-evidence.md` 现有的 `✅ 代码核实` 行即此类）。

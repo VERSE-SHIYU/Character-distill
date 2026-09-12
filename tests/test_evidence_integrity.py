@@ -247,6 +247,22 @@ class TestRegisterArtifact:
                 code_sha="a", measured_at="2026-09-12")
 
 
+class TestRenderedResumeList:
+    """渲染产物不得与清单脱钩 —— 改了清单而没重跑脚本，这里红。
+
+    `docs/evidence/resume-numbers.md` 是给人看的「哪些数字能写进简历」，内容全部来自清单。
+    没有这道锁，它一周内就会变成第三份手工表（正是缺陷 14 要消灭的形态）。
+    """
+
+    def test_resume_numbers_is_current(self):
+        import render_evidence
+        entries = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        assert entries, "清单为空 —— 这条断言会空过，先查为什么没有条目"
+        assert render_evidence.OUT.read_text(encoding="utf-8") == render_evidence.render(entries), (
+            "docs/evidence/resume-numbers.md 与清单不一致 —— 重跑 "
+            "`python tests/perf/render_evidence.py`（本文件是渲染产物，勿手改）")
+
+
 @pytest.fixture
 def tmp_evidence(tmp_path, monkeypatch):
     """把出口的 ROOT / 落点整体搬到 tmp —— 断言里的 docs/evidence/ 前缀因此仍然成立。"""

@@ -12,6 +12,17 @@
 | `✅ 仓库文档` | 在仓库内文档中（含 commit hash 与结果文件引用），未自行复跑 |
 | `⚠️ 待核` | 只有对话印象，仓库中无支撑，**不得写进简历** |
 
+### 证据 id（`ev:`）：出处由清单渲染（2026-09-12）
+
+出处列里出现 `ev:<id>` 的，指 `docs/evidence/manifest.json` 中的一条条目 —— **canonical 出处
+（产物路径 / 产数脚本 / 复现命令 / 产出 commit / 脱敏记录）一律以清单为准**，本文不再手抄路径
+（手抄就会漂移）。三档 status：`verified`（产物在仓库、脚本可重跑 —— **只有这类能写进简历**）、
+`runtime-measured`（运行期实测，产物没入库）、`unverifiable`（当时结论，现已不可复现）。
+渲染出的可写清单见 `docs/evidence/resume-numbers.md`（由清单生成，勿手改）。
+
+上面三个标记（`✅ 代码核实` / `✅ 仓库文档` / `⚠️ 待核`）与清单的 status **是两个维度**：前者说
+「本人是怎么核的」，后者说「产物能不能追溯」。一条可以既 `✅ 代码核实` 又 `unverifiable`。
+
 ### 入库核对说明（2026-09-11）
 
 本文自用户手上的 `ev.md` 提入库（`docs/`，非 `tests/perf/`）。入库时只做三件事，**未改任何数字、未去掉任何标记**：
@@ -98,6 +109,7 @@
 | 数字 | 出处 | 判定 |
 |---|---|---|
 | 全套 before/after（p50、max、撞上限、空正文、耗时、tok/char） | `docs/evidence/thinking-maplen-before.json`（修复前）/ `thinking-maplen-after.json`（修复后）——证据 `ev:thinking-maplen-before` / `ev:thinking-maplen-after`，**已入库**，可复算；复现口径见 `docs/evidence/thinking_budget_evidence.md` §4 | ✅ |
+| 「顶满上限而 `content` 为空」的原始观测（本节的发现起点） | `ev:thinking-capfield`（3 条里 2 条 `content_chars=0` + `reasoning_content` 12441/12413 + `finish_reason=length`） | ✅ |
 | `_estimate_tokens = int(len*0.6)` | `core/distiller.py` `Distiller._estimate_tokens` | ✅ 代码核实 |
 | 四处 Qwen 方言硬编码（修复前形态） | 现为 `adapters/llm_adapter.py` `_THINKING_DISABLED` / `_DIALECT_QWEN`；修复前是该字面量的四处硬编码 | ✅ 代码核实 |
 | commit `f2dfd23` | `git log` 存在 | ✅ |
@@ -117,7 +129,7 @@
 |---|---|
 | **怎么发现** | 全仓 grep：`finish_reason` **只在 `tests/perf/mock_llm_server.py` 里出现，生产代码零引用**。四个响应提取点各自 `content or ""` 直接返回。 |
 | **根因** | 缺响应校验层。截断（`length`）、内容过滤（`content_filter`）、资源不足（`insufficient_system_resource`）三类未完成终态，全部被当成功。 |
-| **准确表述（重要）** | 后果是**截断响应被当成功返回、静默降质**。<br>❌ 不要写成"半截结果落库被复用"——截断片落的是**空串**，续跑第二道门（非空校验）拦得住，不会被复用。这个说法一问就破。 |
+| **准确表述（重要）** | 后果是**截断响应被当成功返回、静默降质**。<br>❌ 不要写成"半截结果落库被复用"——**在空串这一形态下**（缺陷 1 的思考吃光预算就是这一形态）截断片落的是**空串**，续跑第二道门（非空校验）拦得住。但第二道门判的**只是非空**：`ev:incomplete-v5` 实测过另一形态 —— mock 截断档下 52 字节的**非空**半截（连 `chunkParsesAsJson` 都是 false）落满 6 片、二次续跑 map=0，被当成功复用。**两种形态要分开讲，别用一句话盖住。** |
 | **修复** | `_check_finish_reason` 单一裁决点：三类未完成终态抛 `IncompleteResponseError`（带 `finish_reason` 字段，三类处置可辨：抬预算 / 改输入 / 可重试）；陌生值 WARN 放行（供应商语义不一）。错误边界收敛为 `llm_error_payload(exc)`，路由层不 import 异常类；HTTP 状态码按 `finish_reason` 分（`content_filter`→400、`length`→502、资源不足→503），不再一律 500。 |
 | **后续（2026-09-11）** | 本层引入过一个**回归**并同轮修掉：`chat` 对 `length` 先抛后，`core/distiller.py` 里那条**截断感知的重修自愈环**主触发路径不可达（半截文本永远到不了 `_parse_json_with_retry`）。修法是让异常**携带**已生成正文（`content` 属性，不进 message）并新增边界出口 `incomplete_response_info`（与 `llm_error_payload` 同构，core 侧仍不 import 异常类）——**边界零泄漏不变**。这不是新增失败，是把"静默降质"换成"显式报错"后，在保持诚实的前提下把可用性拿回来；细节见 `AGENTS.md` 缺陷 2 的接回段。 |
 | **量化** | 属"缺陷消除"类，无 before/after 数字。**别硬凑。**可讲的是设计：三类可辨 + 边界零泄漏（`core/` `web/` `storage/` 对 `IncompleteResponseError` 零命中，且有源文件级边界锁测试，重现即红）。 |
@@ -132,6 +144,7 @@
 | 边界锁测试（重现即红） | `tests/test_llm_adapter_finish_reason.py`（另有 `test_chat_http_status.py` / `test_chat_stream_error.py` 锁路由层状态码） | ✅ |
 | `content_filter`→400 / `length`→502 / 资源不足→503 | `web/routers/chat.py` `_INCOMPLETE_HTTP_STATUS` 映射表 | ✅ 代码核实 |
 | `_check_finish_reason` / `IncompleteResponseError` / `llm_error_payload` | `adapters/llm_adapter.py` 三符号均存在 | ✅ 代码核实 |
+| 第二道门只判「非空」→ **非空**半截可被复用（修复前形态） | `ev:incomplete-v5`：mock 截断档下 6 片各 52 字节全部落库、`chunkParsesAsJson=false`、`truncatedReusedByGate2=true`、二次续跑 `map=0`。快照为 2026-09-10 运行产物，迁移未重跑 | ✅ |
 | commits `64d2d14` `d068242` `b77c0d5` `e949a94` `2cac39c` | `git log` 逐个存在 | ✅ |
 
 ---
@@ -227,6 +240,10 @@
 | 续跑命中片**零 LLM 调用** | `tests/test_distill_resume.py::TestResumeSavesCalls::test_full_hit_zero_map_calls`（tracked） | ✅ |
 | 六条验收断言 + 两条防"空过"对照 | 断言落在 `tests/test_distill_resume.py`（tracked：`TestResumeHitDoors` 三条 + `TestResumeSavesCalls` / `TestResumeIdempotent` / `TestSecondGateRerunsBadChunk` / `TestFailedChunkNotCheckpointed` / `TestMainPathUnchanged` 各一条，共 **8 个用例**）；「六条」这个**计数标签**出自 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`（**gitignored**） | ✅（用例）/ ⚠️ 待核（"六条"的计数口径） |
 | 分流阈值 15 万 token ≈ 25 万字符 | `config.yaml` `longctx_threshold: 150000`；25 万字符 = 150000 / 0.6，与 `_estimate_tokens = int(len*0.6)` 同口径 | ✅ 代码核实 |
+| 分片残留矩阵（8 条删除路径 × `distill_tasks`/`distill_chunks`，sqlite 与 PG 逐格相同） | `ev:distill-orphan-matrix`（脚本 `tests/perf/distill_orphan_matrix.py`，无 LLM、确定性） | ✅ |
+| 「删卡保留断点」的注释理由在主流路径上**不成立** | `ev:distill-resume-reachability`：`find_interrupted_distill` 只匹配 `interrupted`，删卡后常见的 `running`/`done`/`error` 三个状态**都命不中**（整批重跑），断点留着是纯占空间 | ✅ |
+| 非空半截落库即被第二道门复用（二次续跑不再重算分片） | `ev:incomplete-v5`（同为修复前形态，见 §四） | ✅ |
+| 「兜底接线未被任何用例覆盖」的变异实验 | `ev:a2-wiring-mutation` —— 运行期观测，原始记载在未入库的会话文件里，清单已按 `runtime-measured` 标 | ✅ 运行期 |
 | commits（10 个） | `git log` 逐个存在 | ✅ |
 
 > 「六条」与 tracked 测试文件的 8 个用例对不上，是因为**验收是人工六步、测试是落地后的等价覆盖**（会话档 L205 明说「已用单测覆盖其逻辑等价」）。数字本身没错，错的是把它读成"六条断言在测试里"。
@@ -297,7 +314,7 @@
 ## 十一、贯穿全程的方法论（面试最该讲的）
 
 1. **失败必须可见，还要可辨。** 三次同类缺陷（线程弃船、维度不符、截断响应）都是"失败被吞成正常返回"。修完一处不够——`CollectionUnusableError` 被上层宽 `except` 吞成通用错误时，"确定性不可用"和"瞬时故障"混成一条日志，看日志分不出该重建还是该等。
-2. **修复必须做变异验证。** 改坏它，指定测试必须变红。案例：兜底调用从 `finally` 删掉，14 个测试仍全绿 = 那条接线根本没被覆盖。
+2. **修复必须做变异验证。** 改坏它，指定测试必须变红。案例：兜底调用从 `finally` 删掉，14 个测试仍全绿 = 那条接线根本没被覆盖（证据：`ev:a2-wiring-mutation`）。
 3. **测试通过 ≠ 命题成立**，可能只是那条路径没被走到。案例：分片续跑逻辑落地后，因短文本恒走长上下文路径，一直未被真实执行。
 4. **"X 消失了"不足以证明"Y 修好了"**，要找独立可交叉验证的指标。案例见 §三。
 5. **先读代码验证前提，再决定要不要跑。** 案例见 §二——按原计划跑会产出误导性的"未泄漏"。
