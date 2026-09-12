@@ -153,7 +153,7 @@ config.yaml 现值（现读，非转述）：
 - 该约束由 `tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage` 强制（**文本级 grep——注释与 docstring 也拦**）
 - 门的**范围**由活断言钉住：`tests/test_distill_resume.py::TestResumeHitDoors::test_truncated_nonempty_result_passes_second_gate`（非空截断的自由文本必须穿过、不得被拦）——给本门加结构校验会让它变红
 
-**4. 改原文后旧分片永不刷新** —— 状态：**已修**（2026-09-12）
+**4. 改原文后旧分片永不刷新** —— 状态：**已修**（commit `9611ce3`，2026-09-12）
 - 根因：两个 store（`storage/sqlite_store.py:3507`、`storage/postgres_store.py:3081`）的 `save_distill_chunk` 都是 `INSERT ... ON CONFLICT (task_id, chunk_index) DO NOTHING`
 - 现象：原文变 → 片指纹变 → 门 3（`_resume_hit` 第 3 道）拒绝复用 → 重跑该片 → 新结果想写回，撞 `DO NOTHING` → 库里仍是旧 `result` + 旧 fingerprint → 下次续跑门 3 再次拒绝 → **该片每次续跑都重跑，永不收敛到满复用**
 - 影响面：只掉「省调用量」，不掉正确性——当前轮 reduce 吃的是内存里的新结果（`distill_incremental_stream` 内 `map_results.append` → `raw_analyses`），落库副本陈旧只影响下次续跑的复用判据
@@ -272,11 +272,16 @@ config.yaml 现值（现读，非转述）：
 - **变异验证（实测红，验后 sha256 逐字节还原）**：(1) 084 迁移追加非法 SQL + 在 AFTER 循环外包 `except: print` → (c)(d) 两条**断言**红 + AST 锁红（三红）；(2) 从 `_MIGRATIONS_AFTER_USER_REBUILD` 摘掉 `084` → **只有** dispatch 锁红，fresh-schema 5 条全绿 —— 正是缺陷 20 那种「静默掉一个文件」的形态
 - 附带：5 处「因缺陷 5」的 `get_user_api_config` 空配置夹具绕过已删（`test_security_authz.py` 1 + `test_distill_task_api.py` 3 + `test_rag_unusable.py` 1），夹具注释同步订正；`web/routers/group.py:287` 对该读本就套了宽 `except: pass`，故那处 stub 双重多余
 
-**16. `distill` 站点初次调用漏记 usage（三处站点口径不一致）** —— 状态：未修（已立项）
-- 三个 `_parse_json_with_retry` 站点的初次调用记账不对称：`distill`（`core/distiller.py`）初次成功后**不记**，只在重修成功时（`repair_stage` 2/3）记；`distill_longcontext` / `distill_format` 初次成功后**立即记**（`_try_record_usage` 紧跟在 `_chat_initial` 之后）
-- 后果：`distill` 的第一次调用（happy path，绝大多数情况）不产生 usage 记录 → 该 action 的用量被系统性低估
-- 未同轮修的理由：改 usage 语义属**行为变更**，与截断自愈是两条线；混进来会污染本轮的验收边界（判据来自 `_try_record_usage` 三处不对称，是**选型依据**，不是顺带修的借口）
-- 需先核：`distill` 的上游（任务层 / 路由层）是否有补记，没有才是真漏记
+**16. `distill` 站点初次调用漏记 usage（三处站点口径不一致）** —— 状态：**已修**（2026-09-12）
+- 三个站点各调一次 `_chat_initial`：`distill`（短文本截断模式）、`_distill_longcontext`（整本蒸）、`distill_incremental` 的收尾格式化。原状口径不一致：后两处各自紧跟一条 `_try_record_usage`，而 `distill` 那处**根本没有** → happy path（绝大多数情况）零记录，该 action 用量被系统性低估
+- **「需先核」已核**：`web/` 层无任何补记（全仓 `record_usage` 调用点只有 `core/distiller.py` 与 `core/chat_engine.py` 两处），确系真漏记
+- **修法不是三处各改各的**（那是补丁），是收敛到**唯一出口**：`_chat_initial` 加 `action` 参数，成功即恰记一条 —— 不变量 = 一次成功的 `_chat_initial` 调用恒对应一条记录
+  - 该出口覆盖「正常 return」与「`length` 截断 return」两条路：截断那次 token 已烧、半截正文还要进重修环，同样是成功调用，照记；`raise` 那条路不记
+  - 随之**删除**两处站点各自的外部补记（`_distill_longcontext` / `distill_incremental` 格式化站点）—— 否则出口 + 外部会双记
+  - 重修调用是**另一条独立出口**（`_parse_json_with_retry` 的 `repair_stage` 2/3），它记的是另一笔真实调用，不动。故「初次坏 + 重修好」= 两条，正确
+  - 流式两条链（`_distill_longcontext_stream`，以及 `distill_incremental_stream` 内联的 Phase 3）走 `chat_stream`、不经 `_chat_initial`，本就一调用一记，不动
+- 形态锁：`tests/test_distill_usage_accounting.py`（5 例）——替换 `core.distiller.try_record_usage` 做同步计数，锁「出口发了几次、带什么 action」，不锁 storage 落库链路（那有独立测试）
+- 变异已验证（4 个，全红后逐字节还原，`sha256 542c179a…`）：① 删出口记录 → `distill` 初次用例红；② 整本蒸外部补记加回 → 双记用例红；③ 截断分支改成早退不记 → 截断用例红；④ 格式化外部补记加回 → `distill_incremental` 格式化站点用例红
 
 **17. 蒸馏失败上屏双重前缀 + 运维口径泄漏** —— 状态：**已修**（commit `396079f`，2026-09-12）
 - 原形态是**三重**（不止双重前缀）：① 源头 `core/distiller.py` 的终态 `ValueError` 自带「蒸馏失败：」前缀，路由 `web/routers/distill.py` 又拼一次 →「蒸馏失败：蒸馏失败：…」；② 源头文案本身就是**运维口径**（原话「请提高生成角色卡调用的 max_tokens 上限，或精简角色卡内容」直接给终端用户）；③ 兜底分支还打 `type(exc).__name__`，流式两条链直接 `str(exc)` 上屏
@@ -346,6 +351,16 @@ config.yaml 现值（现读，非转述）：
 - **未同轮修的理由**：铁律 3「新发现只记缺陷表，不当场修」；且该表属跨区同步特性，接线后 SQLite 新库凭空多一张表，语义待定
 - 现由 `tests/test_migration_dispatch.py::_NOT_APPLIED` 以「未接线」理由显式豁免 —— 这是**带理由的记账出口**，不是沉默放过；豁免条目一旦指向不存在的文件也会红
 - 同族风险（本次已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故新增「目录 ↔ 次序表求差集」形态锁
+
+**22. `async_chat` 的 usage 被丢弃 —— Map 阶段与代词消解的 token 完全没记账** —— 状态：未修（记账，2026-09-12 查缺陷 16 时发现）
+- 事实（实测）：`adapters/llm_adapter.py` 的 `async_chat` 返回 `(result, usage)`，且**不写 `self.last_usage`**（该文件 `_async_chat_span` 注释自己写明了）。四个调用点里三个是 `result, _ = await ...`，usage 就地丢弃：
+  - `_run_map_concurrent` 的 `_one`（sync MapReduce 的 Map）
+  - `distill_incremental_stream` 的 `_one`（SSE MapReduce 的 Map）
+  - `coref_resolve` 的 `_resolve_chunk`（代词消解分片）
+  - 唯一正确记账的是 `_single_reduce_async`（`result, usage = await ...` → `_try_record_usage("distill_reduce", usage)`）
+- 后果比缺陷 16 更大：Map 是 MapReduce 里**最烧 token 的一段**（每片一次调用，片数几十到几百），而它**一条记录都没有**；reduce / 初次 / 重修 / 流式各自都记。于是 `distill_*` 系列 action 的用量被系统性低估，且低估幅度随文本变长而放大
+- **不属缺陷 16 的同源修法**：16 的病灶是「记账出口分散 + 一处漏」，收敛到一个 `_chat_initial` 出口即解决；本条的病灶是**记账出口从未写**，`_chat_initial` 覆盖不到（Map 不走它）。修它要先裁决「N 次并发调用怎么记」——N 条独立记录（写放大）还是一条聚合（需新增聚合态），是**设计决策**不是补漏
+- 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且本条改动会显著改变用量/计费口径，属**行为变更**，须单独一轮带验收锁
 
 ### 四、验证纪律
 

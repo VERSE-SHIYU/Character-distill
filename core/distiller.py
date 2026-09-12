@@ -439,22 +439,32 @@ class Distiller:
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
     def _chat_initial(
-        self, system_prompt: str, messages: list[dict[str, Any]], label: str,
+        self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
     ) -> tuple[str, bool]:
         """初次生成调用 → ``(回复文本, 上游是否已确定截断)``。
 
         ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
         `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
         其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
+
+        **初次调用的唯一记账出口**（缺陷 16）：三个站点（`distill` /
+        `_distill_longcontext` / `distill_incremental` 的收尾格式化）原本各记各的——
+        两处各补一条 `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用
+        漏记。收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
+        截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记。
+        重修调用是另一条出口，记在 `_parse_json_with_retry`。
         """
+        truncated = False
         try:
-            return self._llm.chat(system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS), False
+            reply = self._llm.chat(system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS)
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is None or info[0] != "length" or not info[1]:
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            return info[1], True
+            reply, truncated = info[1], True
+        self._try_record_usage(action)
+        return reply, truncated
 
     def _parse_json_with_retry(
         self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
@@ -895,7 +905,7 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "角色蒸馏")
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "角色蒸馏", "distill")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -977,9 +987,7 @@ class Distiller:
         )
 
         user_messages = [{"role": "user", "content": user_content}]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "整本蒸馏")
-
-        self._try_record_usage("distill_longcontext")
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1360,9 +1368,7 @@ class Distiller:
             f"- personality_traits 每条必须附带具体场景证据\n\n"
             f"{profile_draft}"
         }]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "最终格式化")
-
-        self._try_record_usage("distill_format")
+        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "最终格式化", "distill_format")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
