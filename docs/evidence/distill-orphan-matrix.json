@@ -1,0 +1,89 @@
+{
+  "probe": "orphan_matrix",
+  "stores": {
+    "sqlite": [
+      {
+        "case": "(基线：不删任何东西)",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "delete_text（软删）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "hard_delete_text(keep_cards=False)",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      },
+      {
+        "case": "hard_delete_text(keep_cards=True)",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      },
+      {
+        "case": "delete_card（软删卡）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "purge_card（永久删卡）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "detach_text_cards（解绑不删）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "delete_user（删用户）",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      }
+    ],
+    "pg": [
+      {
+        "case": "(基线：不删任何东西)",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "delete_text（软删）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "hard_delete_text(keep_cards=False)",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      },
+      {
+        "case": "hard_delete_text(keep_cards=True)",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      },
+      {
+        "case": "delete_card（软删卡）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "purge_card（永久删卡）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "detach_text_cards（解绑不删）",
+        "distill_tasks": 1,
+        "distill_chunks": 1
+      },
+      {
+        "case": "delete_user（删用户）",
+        "distill_tasks": 0,
+        "distill_chunks": 0
+      }
+    ]
+  }
+}

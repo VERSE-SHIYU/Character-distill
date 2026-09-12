@@ -43,7 +43,25 @@ STATUSES = ("verified", "runtime-measured", "unverifiable")
 
 # id → 允许落盘的顶层键。**新探针接入时必须在此注册**，未注册直接抛错：
 # 没注册就没有白名单，脱敏又回到「记得删」。锁测试扫正文的 ev: 引用，未注册即红。
-_ALLOWED_BY_ID: dict[str, frozenset[str]] = {}
+_ALLOWED_BY_ID: dict[str, frozenset[str]] = {
+    # map_len_probe —— 修复 thinking 方言前后各一批（n=14，同语料同提示词）
+    "thinking-maplen-after": frozenset(
+        {"probe", "model", "measure_max_tokens", "prod_max_tokens", "records", "summary"}),
+    "thinking-maplen-before": frozenset(
+        {"probe", "model", "measure_max_tokens", "prod_max_tokens", "records", "summary"}),
+    # capfield_probe —— 顶到 8192 上限时 token 花在哪
+    "thinking-capfield": frozenset({"probe", "model", "cap", "records"}),
+    # raise_probe（pytest 插件）—— 每条属主用例实际命中的 raise 站点
+    "ownership-reachability": frozenset({"no_key_mode", "records"}),
+    "ownership-reachability-nokey": frozenset({"no_key_mode", "records"}),
+    # 断点行删除路径残留 + 续跑可达性（双 store，确定性，无 LLM）
+    "distill-orphan-matrix": frozenset({"probe", "stores"}),
+    "distill-resume-reachability": frozenset({"probe", "stores"}),
+    # leak_probe —— rig 上单真实请求的线程残留窗（需 mock + 容器，见 tests/perf/README.md）
+    "tools-leak-window": frozenset(
+        {"probe", "embed_hang_ms", "baseline_threads", "peak_threads", "thread_delta",
+         "requests_done_s", "leak_window_s", "settle_s", "samples"}),
+}
 
 
 def code_sha() -> str:
@@ -115,6 +133,54 @@ def write_evidence(
         "code_sha": code_sha.strip(),
         "redacted_fields": redacted,
         "notes": (extra_notes or "").strip(),
+    })
+    return artifact
+
+
+def register_artifact(
+    evidence_id: str,
+    *,
+    claim: str,
+    script: str,
+    env: str,
+    code_sha: str,
+    measured_at: str,
+    reproduce: str | None = None,
+    redacted_fields: tuple[str, ...] | list[str] = (),
+    notes: str | None = None,
+) -> Path:
+    """登记一份**已经在盘上**的产物（迁移冻结快照用，探针不要调这个）。
+
+    ``write_evidence`` 是「跑探针 → 产生产物」；本函数是「产物本来就在 → 补登记」。
+    迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
+    所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
+    """
+    if evidence_id not in _ALLOWED_BY_ID:
+        raise ValueError(
+            f"证据 id {evidence_id!r} 未在 evidence_writer._ALLOWED_BY_ID 注册。")
+    for name, value in (("claim", claim), ("script", script), ("env", env),
+                        ("code_sha", code_sha), ("measured_at", measured_at)):
+        if not (isinstance(value, str) and value.strip()):
+            raise ValueError(f"清单字段 {name!r} 缺失或为空白 —— 缺它这条就不可追溯。")
+
+    artifact = EVIDENCE_DIR / f"{evidence_id}.json"
+    if not artifact.exists():
+        raise ValueError(
+            f"{artifact.relative_to(ROOT).as_posix()} 不存在 —— 迁移用本函数，"
+            "新产物请跑探针走 write_evidence。")
+
+    _upsert({
+        "id": evidence_id,
+        "claim": claim.strip(),
+        "status": "verified",
+        "artifact": artifact.relative_to(ROOT).as_posix(),
+        "script": script,
+        "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
+        "env": env.strip(),
+        "measured_at": measured_at.strip(),
+        "code_sha": code_sha.strip(),
+        "redacted_fields": sorted(redacted_fields),
+        "notes": (notes or "").strip(),
     })
     return artifact
 

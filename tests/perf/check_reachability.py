@@ -1,7 +1,8 @@
 """核对探针产物：每条用例命中的 raise 站点，是否就是它声称要验的那个属主 guard。
 
-用法：
-    python e2e/scratch/check_reachability.py e2e/scratch/raise_sites.json [更多.json...]
+用法（入参即 raise_probe 的产物，落点见 docs/evidence/README.md）：
+    python tests/perf/check_reachability.py docs/evidence/ownership-reachability.json \
+        docs/evidence/ownership-reachability-nokey.json
 
 判定：
   - 32 条 A 类：必须恰好命中 1 个 raise，status==404，且 site 的函数名 == 期望的 handler
@@ -127,6 +128,6 @@ def check(path: str) -> int:
 
 if __name__ == "__main__":
     rc = 0
-    for p in sys.argv[1:] or ["e2e/scratch/raise_sites.json"]:
+    for p in sys.argv[1:] or ["docs/evidence/ownership-reachability.json"]:
         rc |= check(p)
     sys.exit(rc)

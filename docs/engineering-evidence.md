@@ -31,7 +31,7 @@
 | **根因** | `adapters/llm_adapter.py` 外层重试预算 3 次（非 429 退避 5s+10s）× OpenAI SDK 内置 `max_retries=2` = 单请求最多 **9 次 HTTP**。降级只在重试全部耗尽后触发。 |
 | **修复** | 对齐 Google SRE 分层重试预算：SDK 归零消除嵌套乘法；抽 `_RetryBudget` 把三份重复重试循环收敛为单一控制点（次数 × 总时限双维，先到先弃）；退避夹逼 deadline；429 独立计数上限；per-attempt `create(timeout=min(ceiling, 剩余−margin))` 让 deadline 在 attempt 内也生效。 |
 | **量化** | raise30 p95 **62.1s → 5.3s**；hang8 p95 **100.4s → 8.1s**；blackhole（零字节挂 30s）**斩在 ~6.5s**，ok 6/6；超 15s 阈值请求 **14 → 0**。 |
-| **来源** | `✅ 仓库文档` `tests/perf/phase24_closure.md` §1 全表<br>`✅ 代码核实` `a41fcfd` `a609e62` `2bc3658` `8ad5f05` |
+| **来源** | `✅ 仓库文档` `docs/evidence/phase24_closure.md` §1 全表<br>`✅ 代码核实` `a41fcfd` `a609e62` `2bc3658` `8ad5f05` |
 
 **面试要点**：这条的价值不在数字，在**排除法**。被问"你怎么确定不是并发排队"，答案是 PG 池峰值 17/30 从不封顶 + span 间无 gap + C=1 零并发下仍复现 26s。
 
@@ -39,11 +39,11 @@
 
 | 数字 | 出处 | 判定 |
 |---|---|---|
-| raise30 p95 62.1s → 5.3s | `tests/perf/phase24_closure.md` §1：`fb2_raise_30` p95 `62062` → `d1b_raise_30` p95 `5297` | ✅ |
+| raise30 p95 62.1s → 5.3s | `docs/evidence/phase24_closure.md` §1：`fb2_raise_30` p95 `62062` → `d1b_raise_30` p95 `5297` | ✅ |
 | hang8 p95 100.4s → 8.1s | 同表：`hg_hang_30` `100438` → `d1b2_hang8000_30` `8077` | ✅ |
 | blackhole 斩在 ~6.5s、ok 6/6 | 同表：`d1b2_blackhole_100` p50/p95 `6547` / `7436`，`rec=ok=6` | ✅ |
 | 超 15s 阈值 14 → 0 | 同表 `over15s` 列：`fb2_raise_30` = 14 → D1a/D1b = 0 | ✅ |
-| PG 池峰值 17/30 | `tests/perf/phase24_closure.md` §3 | ✅ |
+| PG 池峰值 17/30 | `docs/evidence/phase24_closure.md` §3 | ✅ |
 | 重试预算 3 次 / SDK `max_retries=2` / 最多 9 次 HTTP | `adapters/llm_adapter.py` `_RetryBudget` 及模块上方注释（修复前/后对照就写在注释里） | ✅ 代码核实 |
 | TTFT p95 10.4s（rate=10 档）、6× 增幅 | `.claude/sessions/2026-09-09-step4-press.md`（**gitignored**）。仓库内文档只有双峰结论与各档 p95，无 10.4s 这个点 | ⚠️ 待核 |
 | 62.3s / 59.4s span 分解、26.06s C=1 隔离复现 | 同上 gitignored 会话（trace id、单发隔离实验记录都在那里） | ⚠️ 待核 |
@@ -63,7 +63,7 @@
 | **修复** | 对齐 gRPC deadline propagation：不靠上层强杀，改为**把超时预算逐层传到底层**，让它在外层超时前自行返回。实现上因中间隔着 mem0/chroma 两个第三方库（签名传不进去），收敛为 `ContextVar` scope + `_call_api` 单一收口点读取——比改四层函数签名覆盖更全。 |
 | **量化** | 线程残留 **16.5s → 0.8s**；span 由 `execute_tool=5012ms` / 子 `embed.api=17540ms`（**子超父 12.5s**）收敛为 **3908 / 3907ms**（子在父内结束）。 |
 | **读表警告** | 父 span 5012→3908ms **不是 embed 变快**：5012 是外层弃船时刻（精确命中 5s 超时），3908 是 embed 在 `timeout−1s=4s` 预算内自行收手的返回点。两次测的都是"工具调用何时解套"，不是吞吐提升。 |
-| **来源** | `✅ 仓库文档` `tests/perf/phase24_closure.md` §1<br>`✅ 代码核实` `7834d6c` `e05da8b` `0a3eb2c` |
+| **来源** | `✅ 仓库文档` `docs/evidence/phase24_closure.md` §1<br>`✅ 代码核实` `7834d6c` `e05da8b` `0a3eb2c` |
 
 **面试要点**：`3908 / 3907` 这一对（子比父少 1ms）是"弃船彻底消失"的最强证据——不是"改善了"，是"没有了"。
 
@@ -74,7 +74,7 @@
 | `MEMORY_TIMEOUT = 5` / `WEB_TIMEOUT = 15` | `core/agent/tools.py` 模块常量 | ✅ 代码核实 |
 | `fut.result(timeout=5)` / `shutdown(cancel_futures=True)` | `core/agent/tools.py` `execute` 路径 | ✅ 代码核实 |
 | 内层 embed `timeout=8.0, max_retries=2`（≈24s 上限） | `core/embeddings.py`：`AsyncOpenAI(..., timeout=8.0, max_retries=2)` | ✅ 代码核实 |
-| 线程残留 16.5s → 0.8s | `tests/perf/phase24_closure.md` §1 D2 表（探针 = `leak_probe`，mock `search_memory`） | ✅ |
+| 线程残留 16.5s → 0.8s | `docs/evidence/phase24_closure.md` §1 D2 表（探针 = `leak_probe`，mock `search_memory`） | ✅ |
 | `5012 / 17540` → `3908 / 3907` | 同表 `Jaeger execute_tool / 子 embed.api` 列 | ✅ |
 | commits `7834d6c` `e05da8b` `0a3eb2c` | `git log` 逐个存在 | ✅ |
 
@@ -97,7 +97,7 @@
 
 | 数字 | 出处 | 判定 |
 |---|---|---|
-| 全套 before/after（p50、max、撞上限、空正文、耗时、tok/char） | `tests/perf/out_maplen.prefix.json`（修复前）/ `out_maplen.json`（修复后）——**已入库**，可复算；复现口径见 `tests/perf/thinking_budget_evidence.md` §4 | ✅ |
+| 全套 before/after（p50、max、撞上限、空正文、耗时、tok/char） | `docs/evidence/thinking-maplen-before.json`（修复前）/ `thinking-maplen-after.json`（修复后）——证据 `ev:thinking-maplen-before` / `ev:thinking-maplen-after`，**已入库**，可复算；复现口径见 `docs/evidence/thinking_budget_evidence.md` §4 | ✅ |
 | `_estimate_tokens = int(len*0.6)` | `core/distiller.py` `Distiller._estimate_tokens` | ✅ 代码核实 |
 | 四处 Qwen 方言硬编码（修复前形态） | 现为 `adapters/llm_adapter.py` `_THINKING_DISABLED` / `_DIALECT_QWEN`；修复前是该字面量的四处硬编码 | ✅ 代码核实 |
 | commit `f2dfd23` | `git log` 存在 | ✅ |
@@ -105,7 +105,7 @@
 > **口径显式对照（本仓纪律要求，`AGENTS.md` §四「聚合统计必须写明口径」）**
 > 本节表格里的 `out_tokens` **p50** 是 14 条**合并后**的 nearest-rank **上**中位（`sorted(outs)[n//2]`，n=14 → 下标 7）→ **8191 / 1245**。
 > 产物 JSON 里**同名但不是同一个东西**的字段是 `summary[].out_tokens_p50` —— 它按档（5000 / 6000 字符）**分组**、用 `int(round(0.5*(n-1)))` 取**下**中位，合并前 **8192 / 6079**、合并后 **1446 / 1177**。
-> **文档表格名「`out_tokens` p50」≠ 产物字段名 `summary[].out_tokens_p50`**；混用两者会算出 6487 / 1205，**看着像数字对不上**。复算时认准本节这一行，出处见 `tests/perf/thinking_budget_evidence.md` §4 与 `AGENTS.md` §四。
+> **文档表格名「`out_tokens` p50」≠ 产物字段名 `summary[].out_tokens_p50`**；混用两者会算出 6487 / 1205，**看着像数字对不上**。复算时认准本节这一行，出处见 `docs/evidence/thinking_budget_evidence.md` §4 与 `AGENTS.md` §四。
 >
 > 另两处易混口径同此理：`tokens/正文字符` = `sum(out_tokens)/sum(out_chars)` 且**仅计 `out_chars>0`** 的记录（不是逐条比值再平均）；`撞上限 7 → 0` = `count(clipped_by_probe_cap)`。
 
@@ -282,14 +282,14 @@
 
 另一条方法论结论：**TTFT 呈双峰分布**——健康峰 3.6–4.7s / 降级峰（修复前）26–133s。聚合 P95 是两峰混叠的误导值，取决于故障混合比例而非系统真实水位，**必须分峰报**。修复后三类故障 p95 全部收敛到 5.3–8.1s，与健康峰拉到同量级，跨峰聚合才有意义。
 
-`✅ 仓库文档` `tests/perf/phase24_closure.md` §2 §3
+`✅ 仓库文档` `docs/evidence/phase24_closure.md` §2 §3
 
 **数字核对**
 
 | 数字 | 出处 | 判定 |
 |---|---|---|
-| PG 池峰值 17/30、内存 276 MiB（limit 768m）、线程 241→257 | `tests/perf/phase24_closure.md` §3「空线索如实写」表 | ✅ |
-| 双峰：健康峰 3.6–4.7s / 降级峰 26–133s | `tests/perf/phase24_closure.md` §2 | ✅ |
+| PG 池峰值 17/30、内存 276 MiB（limit 768m）、线程 241→257 | `docs/evidence/phase24_closure.md` §3「空线索如实写」表 | ✅ |
+| 双峰：健康峰 3.6–4.7s / 降级峰 26–133s | `docs/evidence/phase24_closure.md` §2 | ✅ |
 | 修复后三类故障 p95 收敛到 5.3–8.1s | 同 §2（对应 §1 表：raise30 5297 / hang8 8077 / blackhole 7436） | ✅ |
 
 ---

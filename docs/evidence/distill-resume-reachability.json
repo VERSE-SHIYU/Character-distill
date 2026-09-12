@@ -1,0 +1,49 @@
+{
+  "probe": "resume_reachability",
+  "stores": {
+    "sqlite": [
+      {
+        "status_at_card_delete": "running",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "done",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "error",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "interrupted",
+        "resume_hits_row": true,
+        "checkpoint_reusable": true
+      }
+    ],
+    "pg": [
+      {
+        "status_at_card_delete": "running",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "done",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "error",
+        "resume_hits_row": false,
+        "checkpoint_reusable": false
+      },
+      {
+        "status_at_card_delete": "interrupted",
+        "resume_hits_row": true,
+        "checkpoint_reusable": true
+      }
+    ]
+  }
+}

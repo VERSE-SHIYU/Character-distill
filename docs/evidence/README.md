@@ -54,7 +54,7 @@
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
   "code_sha": "产出时的 commit",
-  "redacted_fields": ["被白名单丢弃的顶层键"],
+  "redacted_fields": ["本产物已知被移除的顶层键"],
   "notes": "口径落差、扫描方法、或为什么现在复现不了"
 }
 ```
@@ -82,7 +82,9 @@
 
 ## 写入时脱敏：白名单，不是黑名单
 
-出口按**白名单**序列化：`_ALLOWED_BY_ID[id]` 之外的顶层键一律丢弃，并计入 `redacted_fields`。
+出口按**白名单**序列化：`_ALLOWED_BY_ID[id]` 之外的顶层键一律丢弃，并计入 `redacted_fields`
+（该字段的完整含义是「本产物已知被移除的顶层键」——含写入时被白名单丢弃的，以及入库前手工删掉的，
+后者靠 `notes` 与 `AGENTS.md` 追溯）。
 黑名单只挡已知字段名，探针加一个新字段就漏；白名单把脱敏从「记得删」变成「结构上过不去」
 （同一手法先例：`adapters/llm_adapter.py::user_facing_error` 把运维口径挡在上屏之外）。
 

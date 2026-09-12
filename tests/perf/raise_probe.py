@@ -5,21 +5,26 @@ raise（属主判定），而不是被前面的门（LLM 配置 503 / 参数 400
 挡下返回了一个「巧合正确」的码。
 
 用法：
-    PYTHONPATH=.;tests/perf python -m pytest tests/test_ownership_404.py -q -p raise_probe
+    PYTHONPATH=.;tests/perf PROBE_EVIDENCE_ID=ownership-reachability \
+        python -m pytest tests/test_ownership_404.py -q -p raise_probe
     # 追加 PROBE_NO_KEY=1 模拟「本机 .env 无 key」的机器，验证用例已环境无关
 
-产物：PROBE_OUT（默认 tests/perf/out_raise_sites.json）逐用例的 (status, detail, 站点)。
-核对：python tests/perf/check_reachability.py tests/perf/out_raise_sites.json
+产物：`docs/evidence/<PROBE_EVIDENCE_ID>.json`（写入出口定落点，本插件不自选路径），
+逐用例的 (status, detail, 站点)。id 无默认值 —— 缺了就在 session 结束时抛错。
+核对：python tests/perf/check_reachability.py docs/evidence/ownership-reachability.json
 """
 from __future__ import annotations
 
-import json
 import os
+import sys
 import traceback
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = Path(os.environ.get("PROBE_OUT", str(Path(__file__).resolve().parent / "out_raise_sites.json")))
+sys.path.insert(0, str(Path(__file__).resolve().parent))   # 插件模式下本目录不在 sys.path
+from evidence_writer import code_sha, write_evidence        # noqa: E402
+
+ENV = "本机 .env 持有供应商 key（nokey 档以 PROBE_NO_KEY=1 模拟无 key 机器）；无外部服务依赖"
 
 _records: dict[str, list[dict]] = {}
 _current: list[dict] | None = None
@@ -83,11 +88,17 @@ def pytest_runtest_teardown(item, nextitem):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({
-        "no_key_mode": bool(os.environ.get("PROBE_NO_KEY")),
-        "records": _records,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    no_key = bool(os.environ.get("PROBE_NO_KEY"))
+    evidence_id = os.environ.get("PROBE_EVIDENCE_ID")
+    out = write_evidence(
+        evidence_id, {"no_key_mode": no_key, "records": _records},
+        claim=(f"属主 404 用例各自命中的 raise 站点（{'无 key 模拟' if no_key else '本机有 key'}，"
+               f"{len(_records)} 条用例）"),
+        script="tests/perf/raise_probe.py", env=ENV, code_sha=code_sha(),
+        reproduce=("PROBE_NO_KEY=1 " if no_key else "")
+        + f'PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID={evidence_id} '
+          "python -m pytest tests/test_ownership_404.py -q -p raise_probe",
+    )
 
     print("\n" + "=" * 100)
     print(f"{'test':<64} {'status':>6}  site")
@@ -109,4 +120,4 @@ def pytest_sessionfinish(session, exitstatus):
         print("非 404 或未触发的用例：")
         for u in unreached:
             print("  -", u)
-    print(f"产物: {OUT}")
+    print(f"产物: {out}")

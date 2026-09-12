@@ -14,11 +14,15 @@
 测量：
   全程 0.4s 采 /proc/1/task 线程数；记录请求完成时刻；断言完成后线程仍高（泄漏），
   到 embed 放弃(~26s)才回落。输出：baseline、峰值增量、回落耗时。
+
+产物：写入出口落 `docs/evidence/<PROBE_EVIDENCE_ID>.json`（本档恒为 `tools-leak-window`）。
+本探针需要 rig（app 容器 + mock + PG，见 `README.md`），不是本机裸跑可复现的。
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -33,9 +37,16 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests" / "perf"))
 import step4_load as L  # noqa: E402
 import e2e_otel as E  # noqa: E402
+from evidence_writer import code_sha, write_evidence  # noqa: E402
 
 APP = "http://127.0.0.1:7862"
 MOCK = "http://127.0.0.1:60950"
+
+EVIDENCE_ID = os.environ.get("PROBE_EVIDENCE_ID", "")
+if not EVIDENCE_ID:
+    raise SystemExit("必须指定 PROBE_EVIDENCE_ID=tools-leak-window —— 落点与清单条目由它决定。")
+ENV = ("rig（tests/perf/README.md 的拓扑）：app 容器 7862 + mock 60950 + PG 5435，"
+       "mock preset=fast、MOCK_TOOL=search_memory，embed 挂起由 mock `embed_hang_ms` 注入")
 
 
 def mock_post(**d) -> dict:
@@ -148,6 +159,18 @@ def main() -> None:
             mark = "   <== requests done" if abs(dt - done_at) < 0.35 else ""
             print(f"   t={dt:5.1f}s threads={cur}{mark}", flush=True)
             prev = cur
+
+    leak_window = round(over_after_done[-1] - done_at, 1) if over_after_done else 0.0
+    print("EVIDENCE " + write_evidence(
+        EVIDENCE_ID,
+        {"probe": "tools_leak", "embed_hang_ms": args.hang_ms,
+         "baseline_threads": base, "peak_threads": peak, "thread_delta": peak - base,
+         "requests_done_s": round(done_at, 1), "leak_window_s": leak_window,
+         "settle_s": round(settle_t, 1) if settle_t else None, "samples": n},
+        claim=(f"{n} 个真实请求 done 后线程仍 > 基线 {leak_window}s"
+               f"（baseline {base} → peak {peak}，embed 挂 {args.hang_ms}ms）"),
+        script="tests/perf/leak_probe.py", env=ENV, code_sha=code_sha(),
+    ).as_posix(), flush=True)
 
     mock_post(decision_fail_rate=0, embed_hang_ms=0, tool_query="")
     print("[probe] mock reset embed_hang_ms=0 tool_query=''", flush=True)

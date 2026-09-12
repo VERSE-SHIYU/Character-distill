@@ -206,15 +206,45 @@ class TestWriterContract:
 
     def test_writer_exposes_no_path_or_whitelist_override(self):
         """落点与白名单不能由调用方改 —— 留口子就等于留回退路径。"""
-        params = set(inspect.signature(evidence_writer.write_evidence).parameters)
         forbidden = {"path", "out", "out_dir", "out_path", "evidence_dir", "dir",
                      "allowed", "allowed_keys", "keys", "relax", "force"}
-        assert not (params & forbidden), f"出口出现了可覆盖的口子：{sorted(params & forbidden)}"
+        for fn in (evidence_writer.write_evidence, evidence_writer.register_artifact):
+            params = set(inspect.signature(fn).parameters)
+            assert not (params & forbidden), \
+                f"{fn.__name__} 出现了可覆盖的口子：{sorted(params & forbidden)}"
 
     def test_landing_zone_is_not_env_overridable(self):
         src = (PERF / "evidence_writer.py").read_text(encoding="utf-8")
         assert "os.environ" not in src and "getenv" not in src, (
             "落点不得读环境变量 —— PROBE_OUT_DIR 的默认值就是这么变成 gitignored 的。")
+
+
+class TestRegisterArtifact:
+    """迁移侧入口 —— 产物已在盘上，只补登记（不重跑顶替）。"""
+
+    def test_registers_existing_artifact_with_historical_date(self, tmp_evidence):
+        (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
+        evidence_writer.register_artifact(
+            "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
+            code_sha="abc1234", measured_at="2026-09-10", notes="n",
+            redacted_fields=("content_head", "preview"))
+        e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
+        assert e["status"] == "verified"
+        assert e["measured_at"] == "2026-09-10"
+        assert e["artifact"] == "docs/evidence/tmp-id.json"
+        assert e["redacted_fields"] == ["content_head", "preview"]
+
+    def test_missing_artifact_refused(self, tmp_evidence):
+        with pytest.raises(ValueError, match="不存在"):
+            evidence_writer.register_artifact(
+                "tmp-id", claim="c", script="s", env="e",
+                code_sha="a", measured_at="2026-09-12")
+
+    def test_unregistered_id_refused(self, tmp_evidence):
+        with pytest.raises(ValueError, match="未在 evidence_writer"):
+            evidence_writer.register_artifact(
+                "never-registered", claim="c", script="s", env="e",
+                code_sha="a", measured_at="2026-09-12")
 
 
 @pytest.fixture
@@ -224,4 +254,6 @@ def tmp_evidence(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence_writer, "EVIDENCE_DIR", tmp_path / "docs" / "evidence")
     monkeypatch.setattr(evidence_writer, "MANIFEST", tmp_path / "docs" / "evidence" / "manifest.json")
     monkeypatch.setitem(evidence_writer._ALLOWED_BY_ID, "tmp-id", frozenset({"a", "b"}))
-    return tmp_path / "docs" / "evidence"
+    ev = tmp_path / "docs" / "evidence"
+    ev.mkdir(parents=True, exist_ok=True)
+    return ev

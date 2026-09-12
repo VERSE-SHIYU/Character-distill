@@ -6,7 +6,7 @@
 「脚本 + 参数 + 前置」的代码支撑，三个月后仍可复现。结果 JSON / 编排器 / .env.s4
 在 `data/eval_scratch/s4/`（gitignored，那是数据不是代码）。
 
-**阶段 ②④ 收口报告**：`phase24_closure.md`（D1a/D1b/D2 主线发现、before/after 全表、
+**阶段 ②④ 收口报告**：`docs/evidence/phase24_closure.md`（D1a/D1b/D2 主线发现、before/after 全表、
 双峰结论、空线索、行业对齐、未实现清单）。
 
 ## 拓扑

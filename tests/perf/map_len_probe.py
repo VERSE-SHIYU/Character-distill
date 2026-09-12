@@ -4,8 +4,9 @@
   classic 档 effective_chunk_size = 6000 字符，map 规则 2 要求「原文对话原句必须完整保留」
   → 输出量接近输入量。若有一批片贴线/超线，Tier 1 落地会把静默截断变成可见失败。
 
-产出数字（修复 thinking 方言前后各跑一批，n=14）见 `thinking_budget_evidence.md`；
-原始产物 `out_maplen.prefix.json`（修复前）/ `out_maplen.json`（修复后）同目录入库。
+产出数字（修复 thinking 方言前后各跑一批，n=14）见 `docs/evidence/thinking_budget_evidence.md`；
+原始产物由写入出口落 `docs/evidence/thinking-maplen-after.json`（修复后）/
+`thinking-maplen-before.json`（修复前）—— id 由 `PROBE_EVIDENCE_ID` 指定（无默认值）。
 
 方法（不改生产代码）：
   - 语料：`data/character_sim.db` 真实 story 语料（本地无 classic 语料；classic 档与 story 档
@@ -17,7 +18,8 @@
 
 可替换项（换语料/换机器时改这三处）：
   - `PROBE_DB` 环境变量（默认 `data/character_sim.db`）
-  - `PROBE_OUT_DIR` 环境变量（默认 `e2e/scratch/`，gitignored；**不会覆盖入库产物**）
+  - `PROBE_EVIDENCE_ID`：必填，决定产物落点与清单条目（**落点不由本脚本选**，
+    见 `docs/evidence/README.md`；修复前的 before 档复现要先回退方言，见清单 reproduce）
   - `PLAN` 里的 text_id（本机库行 id）与**角色名占位符**（`角色A`…`角色D`）：换语料必须替换，
     未替换时脚本拒绝运行（见 `PLACEHOLDER_CHARS`）
 
@@ -27,7 +29,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sqlite3
 import sys
@@ -40,6 +41,7 @@ sys.path.insert(0, str(ROOT))
 import adapters.llm_adapter as A                      # noqa: E402
 from adapters.llm_adapter import LLMAdapter          # noqa: E402
 from core.distiller import Distiller                  # noqa: E402
+from evidence_writer import code_sha, write_evidence  # noqa: E402
 
 # 仅本测量脚本内抬高预算：生产生成轮是 45s 单次上限 / 60s deadline，真实长输出会撞线
 # 超时（首次运行 22/24 超时）。测的是「模型自然输出多长」，不是「45s 内能吐多少」。
@@ -48,7 +50,13 @@ A._GEN_ATTEMPT_S = 120.0
 A._GEN_DEADLINE_S = 240.0
 
 DB = Path(os.environ.get("PROBE_DB", str(ROOT / "data" / "character_sim.db")))
-OUT_DIR = Path(os.environ.get("PROBE_OUT_DIR", str(ROOT / "e2e" / "scratch")))
+EVIDENCE_ID = os.environ.get("PROBE_EVIDENCE_ID", "")
+if not EVIDENCE_ID:
+    raise SystemExit(
+        "必须指定 PROBE_EVIDENCE_ID=thinking-maplen-after（或 -before）—— 产物落点与清单条目"
+        "由它决定，没有默认值（留默认值就等于留一条绕过写入出口的路）。")
+ENV = ("deepseek-v4-pro（单供应商），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S "
+       "抬到 120/240（生产 45/60）；语料 data/character_sim.db（真实语料，不入库）")
 MEASURE_MAX_TOKENS = 8192     # 高于 4096：只在极少数情况下才会成为限制
 PROD_CAP = 4096               # config.yaml llm.max_tokens
 CONC = 3
@@ -186,7 +194,7 @@ def main() -> None:
     for it in items:
         it.pop("chunk", None)     # 原始正文不进产物
     tiers = sorted({it["cs"] for it in items})
-    result = {
+    payload = {
         "probe": "map_len",
         "model": llm.model,
         "measure_max_tokens": MEASURE_MAX_TOKENS,
@@ -194,10 +202,17 @@ def main() -> None:
         "records": items,
         "summary": [summarize([it for it in items if it["cs"] == cs], cs) for cs in tiers],
     }
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / "out_maplen.json"
-    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("RESULT " + json.dumps(result, ensure_ascii=False, indent=2))
+    # claim 由本次实测现算，不写死：写死的 claim 与产物迟早对不上
+    outs = sorted(it["out_tokens"] for it in items if it.get("out_tokens") is not None)
+    n = len(outs)
+    p50 = outs[min(n - 1, round(0.5 * (n - 1)))] if n else None
+    claim = (f"map 自然输出 out_tokens p50 {p50}、max {outs[-1] if n else None}（n={n}）；"
+             f"撞 8192 探针上限 {sum(1 for it in items if it.get('clipped_by_probe_cap'))}/{len(items)}、"
+             f"空正文 {sum(1 for it in items if it.get('out_chars') == 0)}/{len(items)}")
+    print("EVIDENCE " + write_evidence(
+        EVIDENCE_ID, payload, claim=claim, script="tests/perf/map_len_probe.py",
+        env=ENV, code_sha=code_sha(),
+    ).as_posix())
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@
 
 结论：是 (b)。三条里两条 `content_chars=0` / `reasoning_content_chars=12441|12413` /
 `finish_reason='length'` —— 思考与正文共享 max_tokens 预算，思考吃光预算。
-原始产物 `out_capfield.json` 同目录入库。
+原始产物由写入出口落 `docs/evidence/thinking-capfield.json`（id 由 `PROBE_EVIDENCE_ID` 指定）。
 
 方法与 map_len_probe 同源：生产 _split_chunks 还原同一片、生产 map 提示词、生产参数
 （temperature / presence_penalty）。唯一差别是本脚本**自己发 create()**（不走 async_chat），
@@ -19,7 +19,7 @@ DeepSeek 静默忽略）——它是「修复前」的可复现演示，不是�
 
 可替换项（换语料/换机器时改这三处）：
   - `PROBE_DB` 环境变量（默认 `data/character_sim.db`）
-  - `PROBE_OUT_DIR` 环境变量（默认 `e2e/scratch/`，gitignored；**不会覆盖入库产物**）
+  - `PROBE_EVIDENCE_ID`：必填（本档恒为 `thinking-capfield`），决定落点与清单条目
   - `CASES` 里的 text_id（本机库行 id）与**角色名占位符**：换语料必须替换，
     未替换时脚本拒绝运行（见 `PLACEHOLDER_CHARS`）
 
@@ -42,12 +42,19 @@ sys.path.insert(0, str(ROOT))
 import adapters.llm_adapter as A                      # noqa: E402
 from adapters.llm_adapter import LLMAdapter           # noqa: E402
 from core.distiller import Distiller                  # noqa: E402
+from evidence_writer import code_sha, write_evidence  # noqa: E402
 
 A._GEN_ATTEMPT_S = 120.0
 A._GEN_DEADLINE_S = 240.0
 
 DB = Path(os.environ.get("PROBE_DB", str(ROOT / "data" / "character_sim.db")))
-OUT_DIR = Path(os.environ.get("PROBE_OUT_DIR", str(ROOT / "e2e" / "scratch")))
+EVIDENCE_ID = os.environ.get("PROBE_EVIDENCE_ID", "")
+if not EVIDENCE_ID:
+    raise SystemExit(
+        "必须指定 PROBE_EVIDENCE_ID=thinking-capfield —— 产物落点与清单条目由它决定，"
+        "没有默认值（留默认值就等于留一条绕过写入出口的路）。")
+ENV = ("deepseek-v4-pro（单供应商），temperature=0.7；探针**故意**发修复前的错方言 "
+       "extra_body={'enable_thinking': False}；语料 data/character_sim.db（真实语料，不入库）")
 CAP = 8192
 CONC = 3
 
@@ -129,12 +136,14 @@ async def main() -> None:
     finally:
         await client.close()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    out = OUT_DIR / "out_capfield.json"
-    out.write_text(json.dumps({"probe": "capfield", "model": llm._model,
-                               "cap": CAP, "records": rows},
-                              ensure_ascii=False, indent=2), encoding="utf-8")
-    print("RESULT " + json.dumps(rows, ensure_ascii=False, indent=2))
+    empty = sum(1 for r in rows if r.get("content_chars") == 0)
+    lengths = [r.get("finish_reason") for r in rows]
+    claim = (f"顶到 {CAP} 上限时 {empty}/{len(rows)} 条 content_chars=0、"
+             f"finish_reason={lengths} —— 思考（reasoning_content）与正文共享 max_tokens 预算")
+    print("EVIDENCE " + write_evidence(
+        EVIDENCE_ID, {"probe": "capfield", "model": llm._model, "cap": CAP, "records": rows},
+        claim=claim, script="tests/perf/capfield_probe.py", env=ENV, code_sha=code_sha(),
+    ).as_posix())
 
 
 if __name__ == "__main__":
