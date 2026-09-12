@@ -243,7 +243,11 @@ config.yaml 现值（现读，非转述）：
 - 处置（commit `8dd99d3` 立契约 / `e389fdc`+`ac11cfe` 落点迁移 / 本轮收编存量）：
   - **唯一写入出口** `tests/perf/evidence_writer.py`：落点固定 `docs/evidence/<id>.json`（**不提供路径参数、不读环境变量** —— 留口子就等于留回退路径）、按**白名单**在写入时脱敏（黑名单只挡已知字段名，探针加一个字段就漏）、同时 upsert 清单条目。七个探针全部接入，各自的 `OUT_DIR` / `OUT` / `PROBE_OUT_DIR` / `PROBE_OUT` 与 `json.dump` 已删
   - **清单即唯一真源** `docs/evidence/manifest.json`：三档 status（`verified` / `runtime-measured` / `unverifiable`）。正文引用改写字形 `ev:<id>`，文档里的数字与简历口径都是清单的**渲染**，不是第二份手写表
-  - **双向满射锁** `tests/test_evidence_integrity.py`（32 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）；`script_role` 逐条表态
+  - **双向满射锁** `tests/test_evidence_integrity.py`（39 条）：正文每个 `ev:` 引用必须解析到条目；条目按状态满足必填字段与产物存在性（`verified` 的 artifact 必须被 `git ls-files` 命中；另两档 artifact 必须为 `null`）；`script_role` 逐条表态
+  - **指称闭合**（v3 补的方向）：锁原先只校验**形状**，字段值从不解析回仓库 —— `producer` 可以指向不存在的脚本而全绿。现补：`script` 在库、`reproduce` 路径逐个解析、`code_sha` 解得开 commit 或精确等于哨兵 `unknown(scratch)`、`notes`/`claim` 里的路径 tracked 或带非仓库标注
+  - **数值闭合**：`verified` 条目必填非空 `assertions`（`{"path","value"}` 严格相等；`{"path","len"}` 给计数），`claim` 里**每个数字**要么被覆盖、要么写进 notes 末尾的 `派生量：` 块（块内须含 `=` 写明算法）。这是简历数字与入库产物之间**唯一**的连接点 —— `claim` 在 v3 之前是自由文本，口径混用那次（算出 `6487 / 1205`）就是这么漏的
+  - **变异矩阵** `tests/test_evidence_integrity_mutations.py`（22 行）：渲染新鲜度锁会因为**任何**清单变异而红，于是变异测试失去鉴别力（红的不是你以为是的那条）。矩阵对每个变异**只跑指定的那一条**断言，证明它有专属红源。**新增任何清单语义断言必须同时补一行**
+  - **止于何处**：「`producer` 脚本跑出来是不是**真**这份产物」静态不可判，查到「脚本在库、数字与产物相等」为止 —— 见 `docs/evidence/README.md`
 - **收编的存量缺口**：缺陷 2 的 `out_v5.json` → `ev:incomplete-v5`（只留统计量，正文段 `sampleChunk` 按白名单挡在库外）；`chunk_size` 来历 → `ev:chunk-size-provenance`（**订正**：原文写「`git log -S` 全仓无 4500/12000 命中」过宽 —— 有命中，只是无一处当 chunk_size 用）；A2 接线变异实验 → `ev:a2-wiring-mutation`；`TECHNICAL_REPORT.md` 的图谱统计 → `ev:graphify-snapshot-2026-08-15`（`unverifiable`）。具名/正文类产物一律**脱字段不删文件**
 - **不重跑顶替**（硬要求）：产物丢失时不得重跑生成一份新的顶上 —— 重跑得到的是今天的数字，文档写的是当时的结论，拿新数字填旧引用是把「无出处」伪装成「有出处」。产物的 `code_sha` 只在推断能落到唯一 commit 时才填，否则 `unknown(scratch)` + `notes` 交代依据不足
 - **`script` 有两种语义，已升为字段**：`script_role: producer | corroborating`（`verified` 必填其一、其余两档必须 `null`；`corroborating` 还必须带 `notes` 交代产出脚本是谁、为什么没入库）。先例 `ev:incomplete-v5` —— 它的 `script` 指向仓内覆盖同一断言的用例，产出脚本实为未入库的 scratch；不加这个字段，区别就只活在散文里，下一个人照抄那个形态就会填出一条**真不可复现**的 `verified`

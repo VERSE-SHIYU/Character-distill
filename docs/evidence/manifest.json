@@ -7,6 +7,7 @@
     "script": null,
     "script_role": null,
     "reproduce": null,
+    "assertions": null,
     "env": "本机工作树（2026-09-10 当天 HEAD）+ sqlite 夹具；无外部服务依赖",
     "measured_at": "2026-09-10",
     "code_sha": "9d2a9e4",
@@ -21,6 +22,7 @@
     "script": null,
     "script_role": null,
     "reproduce": null,
+    "assertions": null,
     "env": "本机仓库工作树 + 未入库的 config.yaml（现值 chunk_size=5000）与 .claude/sessions/（`.gitignore:228`）；扫描不需外部服务",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -35,6 +37,7 @@
     "script": null,
     "script_role": null,
     "reproduce": null,
+    "assertions": null,
     "env": "运行环境的 config.yaml（未入库，被 .gitignore 覆盖，随部署环境可变）；仓库内可核的是代码默认值",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -49,11 +52,53 @@
     "script": "tests/perf/distill_orphan_matrix.py",
     "script_role": "producer",
     "reproduce": "DATABASE_URL=<一次性 PG> python tests/perf/distill_orphan_matrix.py",
+    "assertions": [
+      {
+        "path": "stores.sqlite",
+        "len": 8
+      },
+      {
+        "path": "stores.pg",
+        "len": 8
+      },
+      {
+        "path": "stores.sqlite[1].distill_tasks",
+        "value": 1
+      },
+      {
+        "path": "stores.pg[1].distill_tasks",
+        "value": 1
+      },
+      {
+        "path": "stores.sqlite[2].distill_tasks",
+        "value": 0
+      },
+      {
+        "path": "stores.sqlite[2].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[2].distill_tasks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[2].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.sqlite[7].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[7].distill_chunks",
+        "value": 0
+      }
+    ],
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
     "redacted_fields": [],
-    "notes": ""
+    "notes": "派生量：「8 条删除路径」= stores.sqlite / stores.pg 各自的用例条数（len 已钉）；两 store 逐格相同这一命题由脚本内的 same 判定并写入 stderr，清单不重复声明。"
   },
   {
     "id": "distill-resume-reachability",
@@ -63,6 +108,36 @@
     "script": "tests/perf/distill_resume_reachability.py",
     "script_role": "producer",
     "reproduce": "DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py",
+    "assertions": [
+      {
+        "path": "stores.sqlite",
+        "len": 4
+      },
+      {
+        "path": "stores.sqlite[3].resume_hits_row",
+        "value": true
+      },
+      {
+        "path": "stores.pg[3].resume_hits_row",
+        "value": true
+      },
+      {
+        "path": "stores.sqlite[0].resume_hits_row",
+        "value": false
+      },
+      {
+        "path": "stores.pg[0].resume_hits_row",
+        "value": false
+      },
+      {
+        "path": "stores.sqlite[2].checkpoint_reusable",
+        "value": false
+      },
+      {
+        "path": "stores.pg[2].checkpoint_reusable",
+        "value": false
+      }
+    ],
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
     "code_sha": "e389fdc",
@@ -77,6 +152,7 @@
     "script": null,
     "script_role": null,
     "reproduce": null,
+    "assertions": null,
     "env": "2026-08-15 的工作树（构建 commit eb72a3bd）+ 当时的 graphify 工具链；语义标注经 `graphify label --backend=deepseek` 生成，即依赖 LLM 调用",
     "measured_at": "2026-08-15",
     "code_sha": "eb72a3bd",
@@ -91,6 +167,40 @@
     "script": "tests/test_distill_resume.py",
     "script_role": "corroborating",
     "reproduce": "python -m pytest tests/test_distill_resume.py -q",
+    "assertions": [
+      {
+        "path": "totalChunks",
+        "value": 6
+      },
+      {
+        "path": "chunksInDb",
+        "value": 6
+      },
+      {
+        "path": "chunkLengths",
+        "len": 6
+      },
+      {
+        "path": "chunkLengths[0]",
+        "value": 52
+      },
+      {
+        "path": "allEqualTruncated",
+        "value": true
+      },
+      {
+        "path": "truncatedReusedByGate2",
+        "value": true
+      },
+      {
+        "path": "resumeStats.map",
+        "value": 0
+      },
+      {
+        "path": "resumeMapCalls",
+        "value": 0
+      }
+    ],
     "env": "本机 sqlite（e2e/scratch/e2e_db.sqlite 副本）+ 真后端 127.0.0.1:7899；config.yaml 将 llm.base_url 指向计数 mock 127.0.0.1:7898（包 tests/perf/mock_llm_server.py，truncate 档：map 返回 52 字节截断串）；distill longctx_threshold=1 / chunk_size=500 / map_concurrency=1 强制走分片路径。无真实供应商调用。",
     "measured_at": "2026-09-10",
     "code_sha": "unknown(scratch)",
@@ -99,7 +209,7 @@
       "sampleChunk",
       "taskId"
     ],
-    "notes": "快照为当时运行产物，迁移时未重跑（重跑得到的是今天的数字，正文写的是当时的结论）。原始产出脚本是 e2e/scratch/resume_probe.py —— 该脚本是一次性 scratch，未入库，故 script 字段指向仓内覆盖同一断言的可复跑用例 tests/test_distill_resume.py（:110 :121 :169 三条钉住 52 字节截断串仍过闸 2 / 到达下游 / 只重跑坏片）。code_sha 填 unknown(scratch)：该产物的产出时点只能界在 e5bb4c6(10:56) 之后、64d2d14(16:48) 之前（finish_reason 检查落地前的窗口），窗口内多个 commit 均可能产出该行为，落不到唯一 commit —— 编一个近似 sha 会让复算的人 checkout一个错的点。依据不足，如实记。"
+    "notes": "快照为当时运行产物，迁移时未重跑（重跑得到的是今天的数字，正文写的是当时的结论）。原始产出脚本是 e2e/scratch/resume_probe.py —— 该脚本是一次性 scratch，未入库，故 script 字段指向仓内覆盖同一断言的可复跑用例 tests/test_distill_resume.py（:110 :121 :169 三条钉住 52 字节截断串仍过闸 2 / 到达下游 / 只重跑坏片）。code_sha 填 unknown(scratch)：该产物的产出时点只能界在 e5bb4c6(10:56) 之后、64d2d14(16:48) 之前（finish_reason 检查落地前的窗口），窗口内多个 commit 均可能产出该行为，落不到唯一 commit —— 编一个近似 sha 会让复算的人 checkout一个错的点。依据不足，如实记。 派生量：「闸 2」的 2 是第二道门（非空校验）的编号、非量值；6 = totalChunks 与 chunkLengths 长度，52 = 每片字节数（chunkLengths[0]），0 = resumeStats.map 与 resumeMapCalls。"
   },
   {
     "id": "ownership-reachability",
@@ -109,11 +219,21 @@
     "script": "tests/perf/raise_probe.py",
     "script_role": "producer",
     "reproduce": "PYTHONPATH=\".;tests/perf\" PROBE_EVIDENCE_ID=ownership-reachability python -m pytest tests/test_ownership_404.py -q -p raise_probe",
+    "assertions": [
+      {
+        "path": "no_key_mode",
+        "value": false
+      },
+      {
+        "path": "records",
+        "len": 42
+      }
+    ],
     "env": "本机 .env 持有供应商 key（nokey 档以 PROBE_NO_KEY=1 模拟无 key 机器）；无外部服务依赖",
     "measured_at": "2026-09-12",
     "code_sha": "5bacc48",
     "redacted_fields": [],
-    "notes": "核对脚本：python tests/perf/check_reachability.py docs/evidence/ownership-reachability.json"
+    "notes": "核对脚本：python tests/perf/check_reachability.py docs/evidence/ownership-reachability.json 派生量：records 逐条取值 —— status==404 的 32 条（A 类）、status==403 的 3 条（B 类）、TestMessageParity 下 7 条（文案一致性）；404 本身是 HTTP 状态码。**不按 nodeid 键钉**：产物以 `tests/...::Class::test_*` 为键，绑定键名会让清单随用例改名而红，那是把不稳定标识符写进契约，代价大于收益，故止于计数口径。"
   },
   {
     "id": "ownership-reachability-nokey",
@@ -123,11 +243,21 @@
     "script": "tests/perf/raise_probe.py",
     "script_role": "producer",
     "reproduce": "PROBE_NO_KEY=1 PYTHONPATH=\".;tests/perf\" PROBE_EVIDENCE_ID=ownership-reachability-nokey python -m pytest tests/test_ownership_404.py -q -p raise_probe",
+    "assertions": [
+      {
+        "path": "no_key_mode",
+        "value": true
+      },
+      {
+        "path": "records",
+        "len": 42
+      }
+    ],
     "env": "本机 .env 持有供应商 key（nokey 档以 PROBE_NO_KEY=1 模拟无 key 机器）；无外部服务依赖",
     "measured_at": "2026-09-12",
     "code_sha": "5bacc48",
     "redacted_fields": [],
-    "notes": "用于证明断言不依赖测试机凭据：无 key 模拟下仍须全绿且命中同一批站点。"
+    "notes": "用于证明断言不依赖测试机凭据：无 key 模拟下仍须全绿且命中同一批站点。 派生量：`PROBE_NO_KEY=1` 的 1 是环境变量取值（无 key 档开关）、非量值；42 = records 键数（len 已钉）。「两档站点表逐行相同」靠本条目与 ev:ownership-reachability 的 records 对照，不重复声明。"
   },
   {
     "id": "thinking-capfield",
@@ -137,13 +267,47 @@
     "script": "tests/perf/capfield_probe.py",
     "script_role": "producer",
     "reproduce": "PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield python tests/perf/capfield_probe.py",
+    "assertions": [
+      {
+        "path": "cap",
+        "value": 8192
+      },
+      {
+        "path": "records",
+        "len": 3
+      },
+      {
+        "path": "records[0].content_chars",
+        "value": 0
+      },
+      {
+        "path": "records[1].content_chars",
+        "value": 0
+      },
+      {
+        "path": "records[2].content_chars",
+        "value": 2060
+      },
+      {
+        "path": "records[0].reasoning_content_chars",
+        "value": 12441
+      },
+      {
+        "path": "records[1].reasoning_content_chars",
+        "value": 12413
+      },
+      {
+        "path": "records[0].finish_reason",
+        "value": "length"
+      }
+    ],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "5ba7b9e",
     "redacted_fields": [
       "content_head"
     ],
-    "notes": "本探针**故意**发修复前那套错方言 extra_body={'enable_thinking': False}（Qwen 方言，DeepSeek 静默忽略），是「修复前」的可复现演示，不是待修代码；生产侧正确方言见 adapters.llm_adapter._THINKING_DISABLED。脚本在 HEAD 上可直接重跑。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+    "notes": "本探针**故意**发修复前那套错方言 extra_body={'enable_thinking': False}（Qwen 方言，DeepSeek 静默忽略），是「修复前」的可复现演示，不是待修代码；生产侧正确方言见 adapters.llm_adapter._THINKING_DISABLED。脚本在 HEAD 上可直接重跑。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。 派生量：2 = records 中 content_chars==0 的条数（[0] 与 [1] 两条已分别钉住）；12441 / 12413 为各自 reasoning_content_chars。"
   },
   {
     "id": "thinking-maplen-after",
@@ -153,6 +317,44 @@
     "script": "tests/perf/map_len_probe.py",
     "script_role": "producer",
     "reproduce": "PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after python tests/perf/map_len_probe.py",
+    "assertions": [
+      {
+        "path": "measure_max_tokens",
+        "value": 8192
+      },
+      {
+        "path": "summary[1].out_tokens_max",
+        "value": 2097
+      },
+      {
+        "path": "summary[1].out_tokens_p50",
+        "value": 1177
+      },
+      {
+        "path": "summary[0].out_tokens_p50",
+        "value": 1446
+      },
+      {
+        "path": "summary[1].n",
+        "value": 10
+      },
+      {
+        "path": "summary[0].n",
+        "value": 4
+      },
+      {
+        "path": "records",
+        "len": 14
+      },
+      {
+        "path": "summary[0].any_clipped_by_probe_cap",
+        "value": false
+      },
+      {
+        "path": "summary[1].any_clipped_by_probe_cap",
+        "value": false
+      }
+    ],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "bc19511",
@@ -160,7 +362,7 @@
       "content_head",
       "preview"
     ],
-    "notes": "口径：文档表格名 `out_tokens` p50 是 14 条合并后的 nearest-rank 上中位，≠ 产物字段 summary[].out_tokens_p50（按档分组的下中位）。混用会算出对不上的数，复算认准 docs/evidence/thinking_budget_evidence.md §4。 产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+    "notes": "口径：文档表格名 `out_tokens` p50 是 14 条合并后的 nearest-rank 上中位，≠ 产物字段 summary[].out_tokens_p50（按档分组的下中位）。混用会算出对不上的数，复算认准 docs/evidence/thinking_budget_evidence.md §4。 产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。 派生量：1245 = 14 条 records[].out_tokens 的合并 nearest-rank 上中位（**≠** 产物 `summary[].out_tokens_p50` 的分档下中位 1177 / 1446 —— assertion 钉产物字段名、claim 写文档口径，混用得 6487 / 1205，对照见 docs/evidence/thinking_budget_evidence.md §4）；撞探针上限 0/14 与空正文 0/14 均为 records 上的计数（clipped_by_probe_cap 为 true 者 0 条、out_chars==0 者 0 条）。"
   },
   {
     "id": "thinking-maplen-before",
@@ -170,6 +372,32 @@
     "script": "tests/perf/map_len_probe.py",
     "script_role": "producer",
     "reproduce": "git checkout f2dfd23^ -- adapters/llm_adapter.py && PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-before python tests/perf/map_len_probe.py && git checkout HEAD -- adapters/llm_adapter.py",
+    "assertions": [
+      {
+        "path": "measure_max_tokens",
+        "value": 8192
+      },
+      {
+        "path": "records[3].out_tokens",
+        "value": 8191
+      },
+      {
+        "path": "summary[1].out_tokens_max",
+        "value": 8192
+      },
+      {
+        "path": "records",
+        "len": 14
+      },
+      {
+        "path": "summary[0].any_clipped_by_probe_cap",
+        "value": true
+      },
+      {
+        "path": "summary[1].any_clipped_by_probe_cap",
+        "value": true
+      }
+    ],
     "env": "deepseek-v4-pro（单供应商，config.yaml 自 2026-09-09 无提交），temperature=0.7，探针内把 _GEN_ATTEMPT_S/_GEN_DEADLINE_S 抬到 120/240（生产 45/60）；语料 = data/character_sim.db（真实语料，不入库）",
     "measured_at": "2026-09-10",
     "code_sha": "bc19511",
@@ -177,6 +405,6 @@
       "content_head",
       "preview"
     ],
-    "notes": "不得重跑顶替：修复前的方言已从代码移除，直接跑 HEAD 只会得到 after 数字，复现必须先回退 adapters/llm_adapter.py 到 f2dfd23^（见 reproduce）。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+    "notes": "不得重跑顶替：修复前的方言已从代码移除，直接跑 HEAD 只会得到 after 数字，复现必须先回退 adapters/llm_adapter.py 到 f2dfd23^（见 reproduce）。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。 派生量：7 = records 中 clipped_by_probe_cap 为 true 的条数；3 = out_chars==0 的条数；8191 = 14 条 out_tokens 的合并 nearest-rank 上中位（与产物分档字段是两个口径，同上）。"
   }
 ]

@@ -28,7 +28,7 @@ MANIFEST = ROOT / "docs" / "evidence" / "manifest.json"
 EV_RE = re.compile(r"ev:([a-z0-9][a-z0-9._-]*)")
 
 _REQUIRED = {
-    "verified": ("artifact", "script", "script_role", "reproduce"),
+    "verified": ("artifact", "script", "script_role", "reproduce", "assertions"),
     "runtime-measured": ("env", "measured_at", "notes"),
     "unverifiable": ("measured_at", "env", "notes"),
 }
@@ -46,7 +46,14 @@ _GITIGNORED_PREFIXES = (".claude/sessions/", "e2e/scratch/", "graphify-out/", "c
 _RUNTIME_OK_PREFIXES = ("data/",) + _GITIGNORED_PREFIXES
 _NONREPO_MARKERS = ("未入库", "不在仓库", "gitignored", "scratch", ".gitignore")
 _PATH_RE = re.compile(
-    r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+\.(?:py|json|md|sh|txt|ya?ml|cjs|js|ts|tsx|sql|toml|ini|cfg)")
+    r"(?<![\w./-])(?:[\w.-]+/)*[\w.-]+"
+    r"\.(?:py|json|md|sh|txt|ya?ml|cjs|js|ts|tsx|sql|toml|ini|cfg)(?![\w])")
+
+# ── L3 数值闭合（缺陷 14 v3 §五）：claim 里的数字必须落在入库产物上 ──
+# 只认独立的数字串：`9d2a9e4` 是 commit 的一部分，不是量值。
+_NUM_RE = re.compile(r"(?<![0-9A-Za-z_])\d+(?![0-9A-Za-z_])")
+# 派生量声明块：notes 里 `派生量：` 之后的全部文本。块内数字视为已声明（附算法）。
+_DERIVED_MARKER = "派生量："
 
 sys.path.insert(0, str(PERF))
 import evidence_writer  # noqa: E402
@@ -83,6 +90,18 @@ def _is_tracked(rel: str) -> bool:
 def _path_tokens(text: str) -> set[str]:
     """正文里长得像仓库文件路径的 token（带已知后缀、至少一段目录或裸文件名）。"""
     return {m.group(0) for m in _PATH_RE.finditer(text or "")}
+
+
+def _numbers(text: str) -> set[int]:
+    return {int(x) for x in _NUM_RE.findall(text or "")}
+
+
+def _resolve(obj, path: str):
+    """`summary[1].out_tokens_p50` 形式的取值路径 —— 点取键、方括号取下标。"""
+    cur = obj
+    for tok in re.findall(r"[^.\[\]]+|\[\d+\]", path):
+        cur = cur[int(tok[1:-1])] if tok.startswith("[") else cur[tok]
+    return cur
 
 
 class TestReferenceClosure:
@@ -242,6 +261,75 @@ class TestManifestEntries:
 
 
 
+class TestClaimBindings:
+    """L3 —— `claim` 的数字必须能从入库产物按声明路径取出并相等（缺陷 14 v3 §五）。
+
+    这是「简历数字」与「入库产物」之间**唯一**的连接点。在此之前 `claim` 是自由文本：
+    清单可以声称任何数字，直接渲染进 `resume-numbers.md`。口径混用那次（合并中位数 vs
+    分档中位数，算出 6487 / 1205 而正确值是 8191 / 1245）就是这么漏过去的，靠人工发现。
+
+    止步于「脚本在库、数字与产物相等」：`producer` 跑出来是不是**真**这份产物，静态不可判。
+    """
+
+    def _artifact(self, e: dict) -> dict:
+        return json.loads((ROOT / e["artifact"]).read_text(encoding="utf-8"))
+
+    def test_assertions_present_for_verified_and_null_otherwise(self):
+        bad = []
+        for e in _manifest():
+            a = e.get("assertions", "缺失")
+            if e.get("status") == "verified":
+                if not isinstance(a, list) or not a:
+                    bad.append((e["id"], a))
+            elif a is not None:
+                bad.append((e["id"], a))
+        assert not bad, (
+            f"verified 必须有非空 assertions、其余两档必须 null：{bad}。"
+            "空列表等于零绑定 —— claim 又变回自由文本。")
+
+    def test_assertion_values_match_artifact(self):
+        bad = []
+        for e in _manifest():
+            if e.get("status") != "verified":
+                continue
+            art = self._artifact(e)
+            for a in e["assertions"]:
+                try:
+                    got = _resolve(art, a["path"])
+                except Exception as ex:  # 键不存在 / 下标越界 / 类型不对
+                    bad.append((e["id"], a["path"], f"解析失败：{type(ex).__name__}"))
+                    continue
+                if "len" in a:
+                    ok = hasattr(got, "__len__") and len(got) == a["len"]
+                    want = a["len"]
+                else:
+                    want = a["value"]
+                    # 严格相等：`True == 1` 在 Python 里成立，不比对类型会漏掉真变异
+                    ok = type(got) is type(want) and got == want
+                if not ok:
+                    bad.append((e["id"], a["path"], f"产物 {got!r} ≠ 声明 {want!r}"))
+        assert not bad, (
+            f"assertion 与产物对不上（id, path, 差异）：{bad}。"
+            "改数据前先确认是产物变了还是声明写错了 —— 不得用重跑顶替旧结论。")
+
+    def test_claim_numbers_are_bound_or_declared_derived(self):
+        bad = []
+        for e in _manifest():
+            if e.get("status") != "verified":
+                continue
+            bound = {v for a in e["assertions"] for v in (a.get("value"), a.get("len"))
+                     if isinstance(v, int) and not isinstance(v, bool)}
+            notes = e.get("notes") or ""
+            derived_text = notes.split(_DERIVED_MARKER, 1)[1] if _DERIVED_MARKER in notes else ""
+            if _DERIVED_MARKER in notes and "=" not in derived_text:
+                bad.append((e["id"], "派生量块没有算法（缺 `=`）"))
+            missing = sorted(_numbers(e.get("claim") or "") - bound - _numbers(derived_text))
+            if missing:
+                bad.append((e["id"], f"claim 数字无出处：{missing}"))
+        assert not bad, (
+            f"claim 的数字必须被某条 assertion 覆盖，或写进 `{_DERIVED_MARKER}` 块（附算法）：{bad}。")
+
+
 class TestWriterContract:
     """出口行为 —— 闸 1 的变异靶。落点由 fixture 指到 tmp，边界条件与真实目录无关。"""
 
@@ -272,6 +360,7 @@ class TestWriterContract:
         assert e["reproduce"] == "PROBE_EVIDENCE_ID=tmp-id python tests/perf/probe.py"
         assert e["env"] == "e" and e["code_sha"] == "deadbee"
         assert e["measured_at"] == date.today().isoformat()
+        assert e["assertions"] == []
         assert e["redacted_fields"] == []
 
     def test_whitelist_drops_and_accounts_unlisted_keys(self, tmp_evidence):
@@ -338,22 +427,24 @@ class TestRegisterArtifact:
         evidence_writer.register_artifact(
             "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
             code_sha="abc1234", measured_at="2026-09-10", script_role="producer", notes="n",
+            assertions=[{"path": "a", "value": 1}],
             redacted_fields=("content_head", "preview"))
         e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
         assert e["status"] == "verified"
         assert e["measured_at"] == "2026-09-10"
         assert e["script_role"] == "producer"
         assert e["artifact"] == "docs/evidence/tmp-id.json"
+        assert e["assertions"] == [{"path": "a", "value": 1}]
         assert e["redacted_fields"] == ["content_head", "preview"]
 
     def test_missing_artifact_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="不存在"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="producer",
-                code_sha="a", measured_at="2026-09-12")
+                assertions=[], code_sha="a", measured_at="2026-09-12")
 
-    def test_register_requires_script_role(self, tmp_evidence):
-        """迁移入口的 `script_role` 无默认值 —— 漏填给 TypeError，不给静默兜底。"""
+    def test_register_requires_script_role_and_assertions(self, tmp_evidence):
+        """迁移入口的 `script_role` / `assertions` 无默认值 —— 漏填给 TypeError，不给静默兜底。"""
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         with pytest.raises(TypeError):
             evidence_writer.register_artifact(
@@ -365,13 +456,13 @@ class TestRegisterArtifact:
         with pytest.raises(ValueError, match="script_role 只允许"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="secondary",
-                code_sha="a", measured_at="2026-09-12")
+                assertions=[], code_sha="a", measured_at="2026-09-12")
 
     def test_unregistered_id_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="未在 evidence_writer"):
             evidence_writer.register_artifact(
                 "never-registered", claim="c", script="s", env="e", script_role="producer",
-                code_sha="a", measured_at="2026-09-12")
+                assertions=[], code_sha="a", measured_at="2026-09-12")
 
 
 class TestRenderedResumeList:

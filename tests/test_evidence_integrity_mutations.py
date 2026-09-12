@@ -104,6 +104,27 @@ MUTATIONS = [
     ("measured_at_drifts_from_render",
      lambda m, mp: _by_id(m, "incomplete-v5").update(measured_at="2020-01-01"),
      "TestRenderedResumeList::test_resume_numbers_is_current"),
+    # —— L3 数值闭合（TestClaimBindings）——
+    ("assertion_value_off_by_one",
+     lambda m, mp: _by_id(m, "incomplete-v5")["assertions"][0].update(value=7),
+     "TestClaimBindings::test_assertion_values_match_artifact"),
+    ("assertion_path_typo",
+     lambda m, mp: _by_id(m, "incomplete-v5")["assertions"][0].update(path="totalChunksX"),
+     "TestClaimBindings::test_assertion_values_match_artifact"),
+    ("unbound_claim_number",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(
+         claim=_by_id(m, "incomplete-v5")["claim"] + "；另有 9999 片"),
+     "TestClaimBindings::test_claim_numbers_are_bound_or_declared_derived"),
+    ("derived_block_without_algorithm",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(notes="派生量：随便写写"),
+     "TestClaimBindings::test_claim_numbers_are_bound_or_declared_derived"),
+    ("assertions_on_unverifiable",
+     lambda m, mp: _by_id(m, "graphify-snapshot-2026-08-15").update(
+         assertions=[{"path": "a", "value": 1}]),
+     "TestClaimBindings::test_assertions_present_for_verified_and_null_otherwise"),
+    ("empty_assertions_on_verified",
+     lambda m, mp: _by_id(m, "incomplete-v5").update(assertions=[]),
+     "TestClaimBindings::test_assertions_present_for_verified_and_null_otherwise"),
 ]
 
 

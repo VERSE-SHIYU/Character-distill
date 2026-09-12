@@ -105,6 +105,7 @@ def write_evidence(
     subset: frozenset[str] | set[str] | None = None,
     reproduce: str | None = None,
     script_role: str = "producer",
+    assertions: list[dict] | None = None,
     extra_notes: str | None = None,
 ) -> Path:
     """写 ``docs/evidence/<id>.json`` 并 upsert 清单条目（``status = verified``）。
@@ -112,6 +113,9 @@ def write_evidence(
     拒绝（抛 ``ValueError``，不落文件）：id 未注册 / 白名单为空 / ``subset`` 越界 /
     ``claim`` ``script`` ``env`` ``code_sha`` 任一缺失或空白 / ``script_role`` 非法 /
     payload 不是 dict。探针产产物，故 ``script_role`` 默认 ``producer``。
+
+    ``assertions``（``claim`` 里每个数字的产物出处，见 ``docs/evidence/README.md``）默认
+    为空 —— 探针不传时**锁会红**：实测产物刚跑出来，哪些数字是它的主张，只有作者知道。
     """
     allowed = _ALLOWED_BY_ID.get(evidence_id)
     if allowed is None:
@@ -153,6 +157,7 @@ def write_evidence(
         "script": script,
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
+        "assertions": list(assertions or []),
         "env": env.strip(),
         "measured_at": date.today().isoformat(),
         "code_sha": code_sha.strip(),
@@ -171,6 +176,7 @@ def register_artifact(
     code_sha: str,
     measured_at: str,
     script_role: str,
+    assertions: list[dict],
     reproduce: str | None = None,
     redacted_fields: tuple[str, ...] | list[str] = (),
     notes: str | None = None,
@@ -181,9 +187,10 @@ def register_artifact(
     迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
     所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
 
-    ``script_role`` **无默认值、必须表态** —— 迁移路径正是「script 指向的不是产出脚本」
-    最容易发生的地方（先例：``incomplete-v5`` 的产物来自未入库的 scratch 脚本），
-    给默认值就等于给「照抄时静默填错」留口子。
+    ``script_role`` 与 ``assertions`` **无默认值、必须表态** —— 迁移路径正是最容易
+    静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是产出脚本）。给默认值
+    就等于给「照抄时留空」留口子：``assertions`` 是 ``claim`` 与产物之间唯一的连接点，
+    空着它 ``claim`` 就又变回自由文本。
     """
     if evidence_id not in _ALLOWED_BY_ID:
         raise ValueError(
@@ -208,6 +215,7 @@ def register_artifact(
         "script": script,
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
+        "assertions": list(assertions),
         "env": env.strip(),
         "measured_at": measured_at.strip(),
         "code_sha": code_sha.strip(),

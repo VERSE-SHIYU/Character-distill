@@ -55,6 +55,7 @@
   "script": "tests/perf/<probe>.py 或 null",
   "script_role": "producer | corroborating | null",
   "reproduce": "一条能粘进终端的复现命令或 null",
+  "assertions": [{"path": "summary[1].out_tokens_max", "value": 2097}],
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
   "code_sha": "产出时的 commit",
@@ -62,6 +63,30 @@
   "notes": "口径落差、扫描方法、或为什么现在复现不了"
 }
 ```
+
+### `assertions`：`claim` 里的数字必须落在产物上
+
+`claim` 是唯一会渲染进 `resume-numbers.md` 的字段。在 `assertions` 之前它是**自由文本** ——
+清单可以声称任何数字，没人比对。口径混用那次（合并中位数 vs 分档中位数，算出 `6487 / 1205`
+而正确值是 `8191 / 1245`）就是这么漏过去的，靠人工发现。现在是结构上的门：
+
+- `verified` 必填**非空**列表；`runtime-measured` / `unverifiable` 必须 `null`（与 `artifact`、`script_role` 同规则）
+- 每条 `{"path": ..., "value": V}`：按 `path` 从 `docs/evidence/<id>.json` 取值，**严格相等**
+  （比类型 —— `True == 1` 在 Python 里成立，不比类型会漏掉真变异）。`path` 语法：`a.b[0].c`
+- `{"path": ..., "len": N}`：取容器长度，给「8 格」「14 条」「42 个键」这类计数用
+- **`claim` 里每个数字**要么被某条 `value`/`len` 覆盖，要么写进 `notes` 的 **`派生量：`** 块。
+  该块是笔记**最后**的一段，块内必须含 `=`（写明算法），块内数字才算已声明。
+  合并中位数、按状态过滤的计数这类**产物里没有直接字段**的量，走派生量块，不假造一条断言
+
+**口径对照写在哪**（硬要求）：文档表格名与产物字段名不一致时，`assertion` 记**产物字段名**，
+`claim` 写文档口径，`notes` 记对照。`AGENTS.md` 那次 `8191 / 1245`（合并后 nearest-rank 上中位）
+与 `summary[].out_tokens_p50`（分档下中位）就是两个口径 —— assertion 钉产物字段，两者靠 notes 显式
+对照。这不是形式主义，是那次事故的直接产物。
+
+**止于何处**：「`producer` 脚本跑出来是不是**真**这份产物」静态不可判 —— 查到「脚本在库、
+数字与产物相等」为止。再往上就得真跑脚本，那是 LLM 调用、非确定性、且可能重跑顶替旧结论。
+这个边界是刻意的，不是漏掉的。
+
 
 ### `script_role`：`script` 有两种语义，必须逐条表态
 
@@ -82,7 +107,7 @@
 
 | status | 含义 | 必填 | 锁校验 |
 |---|---|---|---|
-| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` | `artifact` 必须被 `git ls-files` 命中 |
+| `verified` | 产物在仓库、脚本可重跑 | `artifact` `script` `script_role` `reproduce` `assertions` | `artifact` 被 `git ls-files` 命中；`script` 在库；`reproduce` 路径解析得到；`code_sha` 解得开或为哨兵；`assertions` 非空且与产物严格相等 |
 | `runtime-measured` | 运行时实测，非仓库数据 | `env` `measured_at` + `notes` 写明**扫描方法** | `artifact` 必须为 `null` |
 | `unverifiable` | 当时结论，现已不可复现 | `measured_at` `env` + `notes` 写明**为什么现在复现不了** | `artifact` 必须为 `null` |
 
@@ -131,3 +156,12 @@
 3. `status` 只能是三值之一
 4. 每个条目 id / `ev:` 引用都在 `_ALLOWED_BY_ID` 有注册
 5. 出口不接受路径类参数、不读环境变量（落点不可覆盖）
+6. **指称闭合**：`script` 在库（两种 `script_role` 都查）；`reproduce` 里的仓内路径逐个解析；
+   `code_sha` 解得开一个 commit 或精确等于哨兵 `unknown(scratch)`；`notes`/`claim` 里的路径
+   tracked，或属已知 gitignored 前缀且**同条目内**带非仓库标注
+7. **数值闭合**：见 `assertions` 一节 —— 非空、与产物严格相等、`claim` 数字全覆盖
+
+`tests/test_evidence_integrity_mutations.py`：**变异矩阵**。每条清单语义断言必须有自己的
+专属红源 —— 每个变异**只跑指定的那一条**断言，证明它不靠渲染锁兜住。渲染新鲜度锁会因为
+**任何**清单变异而红，没有这个矩阵，新增断言的「绿」可能是假的。**此后新增任何清单语义
+断言，必须同时补一行矩阵。**
