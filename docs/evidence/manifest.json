@@ -8,7 +8,7 @@
     "reproduce": "DATABASE_URL=<一次性 PG> python tests/perf/distill_orphan_matrix.py",
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
-    "code_sha": "8dd99d3",
+    "code_sha": "e389fdc",
     "redacted_fields": [],
     "notes": ""
   },
@@ -21,7 +21,7 @@
     "reproduce": "DATABASE_URL=<一次性 PG> python tests/perf/distill_resume_reachability.py",
     "env": "本地 sqlite（临时库文件）+ 一次性 PG（postgres:16-alpine，POSTGRES_HOST_AUTH_METHOD=trust）；无 LLM 调用、无网络依赖，确定性",
     "measured_at": "2026-09-12",
-    "code_sha": "8dd99d3",
+    "code_sha": "e389fdc",
     "redacted_fields": [],
     "notes": ""
   },

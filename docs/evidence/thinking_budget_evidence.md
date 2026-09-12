@@ -1,15 +1,16 @@
 # thinking 参数修复 — 证据档（LLM token 预算实测）
 
-- 日期：2026-09-10 测量，2026-09-11 入库
+- 日期：2026-09-10 测量，2026-09-11 入库；2026-09-12 迁入 `docs/evidence/`
 - 范围：`thinking` 方言写错导致「思考吃光 `max_tokens` 预算 → 正文为空」的前后对照
-- 代码支撑：`map_len_probe.py` / `capfield_probe.py` + 原始产物 JSON（均在本目录，入库）
+- 代码支撑：`tests/perf/map_len_probe.py` / `tests/perf/capfield_probe.py` + 原始产物 JSON
+  （`thinking-maplen-before.json` / `thinking-maplen-after.json` / `thinking-capfield.json`，本目录）
 - 结论去向：`AGENTS.md` §二（基线表）、§三 缺陷 1 / 缺陷 2 / 缺陷 8
 
 **为什么要入库**：这组数字是本项目最硬的一组前后对照，但产它的脚本与原始 JSON 原在
 `e2e/scratch/`（gitignored）。后果是「换个会话就说不清怎么测的」，且已实际发生过一次
-（把已有的数字当成缺口去猜）。落点选本目录而非新建 `docs/evidence/`：本目录已是仓库内
-「产数脚本 + 原始产物 + 复现手册」的既定落点（先例 `phase24_closure.md` / `README.md`），
-不另起第二套惯例。
+（把已有的数字当成缺口去猜）。2026-09-11 先提到 `tests/perf/`，2026-09-12 随「证据产物
+一等化」迁到 `docs/evidence/` —— 探针脚本留 `tests/perf/`（可执行验证工具），产物与结论文档
+归此目录；落点与脱敏由 `tests/perf/evidence_writer.py` 强制，契约见本目录 `README.md`。
 
 ---
 
@@ -17,8 +18,8 @@
 
 | 脚本 | 回答的问题 | 产物 |
 |------|-----------|------|
-| `map_len_probe.py` | 生产 `map` 提示词下，模型**自然输出**多长？`max_tokens=4096` 够不够？ | `out_maplen.prefix.json`（修复前）/ `out_maplen.json`（修复后） |
-| `capfield_probe.py` | 输出顶到 8192 上限时，token 花在哪？content 被截断，还是 content 为空、预算被别处吃掉？ | `out_capfield.json` |
+| `map_len_probe.py` | 生产 `map` 提示词下，模型**自然输出**多长？`max_tokens=4096` 够不够？ | `thinking-maplen-before.json`（修复前）/ `thinking-maplen-after.json`（修复后） |
+| `capfield_probe.py` | 输出顶到 8192 上限时，token 花在哪？content 被截断，还是 content 为空、预算被别处吃掉？ | `thinking-capfield.json` |
 
 `capfield_probe.py` 的答案是后者：**思考（`reasoning_content`）吃光了共享预算**。
 它**故意**发修复前那套错方言 `extra_body={"enable_thinking": False}`（Qwen 方言，DeepSeek
@@ -44,15 +45,17 @@
 
 ```bash
 # 依赖：本机 data/character_sim.db（真实语料）+ .env 里的供应商凭据
-PROBE_DB=data/character_sim.db python tests/perf/map_len_probe.py
-PROBE_DB=data/character_sim.db python tests/perf/capfield_probe.py
+PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after \
+  python tests/perf/map_len_probe.py
+PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield \
+  python tests/perf/capfield_probe.py
 
 # 换机器/换语料：替换 PLAN / CASES 里的 text_id（本机库行 id）
-# 产物默认落 e2e/scratch/（gitignored）；用 PROBE_OUT_DIR 改
-PROBE_OUT_DIR=/tmp python tests/perf/map_len_probe.py
+# 落点由 PROBE_EVIDENCE_ID 决定（一律 docs/evidence/<id>.json），无路径参数可改 —— 见 README.md
 ```
 
-- 产物默认写 `e2e/scratch/`，**不会覆盖本目录的入库产物**（入库的是冻结快照）。
+- 产物一律写 `docs/evidence/<PROBE_EVIDENCE_ID>.json`，**覆盖同名文件**；入库的那些是冻结快照，
+  要重跑对照请换一个 id（如 `thinking-maplen-after-2026xx`），别顶替已入库的那份。
 - 两个脚本都不是 `test_*.py`，pytest 不会收集，不进 CI。
 - **重跑不会得到相同数字**（LLM 采样、`temperature=0.7`）。可复现的是**结论**与量级，不是逐条数值。
 - 需要本机持有 `data/character_sim.db`（含真实语料，不入库、不可分发）——脚本本身可读可跑，
@@ -74,7 +77,7 @@ PROBE_OUT_DIR=/tmp python tests/perf/map_len_probe.py
 | 耗时 > 60s | 11/14 | 0/14 | `count(elapsed_s > 60)` |
 | tokens / 正文字符 | 3.85 | 0.62 | `sum(out_tokens)/sum(out_chars)`，仅 `out_chars > 0` 的记录 |
 
-修复前 = `out_maplen.prefix.json`，修复后 = `out_maplen.json`。
+修复前 = `thinking-maplen-before.json`，修复后 = `thinking-maplen-after.json`。
 
 **p50 口径**：表里的 p50 是**14 条合并后的 nearest-rank 上中位**（`sorted(outs)[7]`），
 **不是**产物里 `summary[].out_tokens_p50`（那是按档（5000 / 6000 字符）分组的、
@@ -82,7 +85,7 @@ PROBE_OUT_DIR=/tmp python tests/perf/map_len_probe.py
 两者都自洽，但混用会得出 6487 / 1205 这种对不上的数 —— 复算时认准这一行。
 **同一份数据两种口径 = 看起来像造假**，判据已成文于 `AGENTS.md` §四「聚合统计必须写明口径」。
 
-`capfield` 侧（`out_capfield.json`）：3 条里 2 条 `content_chars=0` + `finish_reason='length'`
+`capfield` 侧（`thinking-capfield.json`）：3 条里 2 条 `content_chars=0` + `finish_reason='length'`
 + `reasoning_content_chars` 12441 / 12413 + 耗时 161.9s / 122.4s；第 3 条 `content_chars=2060`
 + reasoning 8735 + `stop` + 131.5s。即缺陷 1 的实测形态。
 
@@ -98,7 +101,7 @@ PROBE_OUT_DIR=/tmp python tests/perf/map_len_probe.py
   改为 `角色A`…`角色D` 占位；`text_id` **保留** —— 它是不可读 hex，既能追溯又不透露语料身份。
   本仓是公开作品集，语料是哪几部作品对证据结论毫无价值，不留在台面上。三个脚本 / 三份 JSON 同口径。
 - `e2e/scratch/out_capfield.prefix.json` 与 `out_capfield.json` 逐字节相同（同一次运行的副本），
-  故只入库 `out_capfield.json` 一份。
+  故只入库一份，即本目录 `thinking-capfield.json`。
 
 ## 6. 待核 / 未入库的相关证据
 

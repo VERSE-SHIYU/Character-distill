@@ -20,17 +20,19 @@
 了哪个 raise」是直接观测值，不是推断。
 
 ```bash
-# 本机环境
-PYTHONPATH=".;tests/perf" python -m pytest tests/test_ownership_404.py -q -p raise_probe
+# 本机环境（落点与清单条目由 PROBE_EVIDENCE_ID 决定，无路径参数 —— 见本目录 README.md）
+PROBE_EVIDENCE_ID=ownership-reachability \
+  PYTHONPATH=".;tests/perf" python -m pytest tests/test_ownership_404.py -q -p raise_probe
 # 模拟「测试机没配 API key」——用例必须仍全绿，否则说明断言依赖测试机凭据
-PROBE_NO_KEY=1 PROBE_OUT="tests/perf/out_raise_sites_nokey.json" \
+PROBE_NO_KEY=1 PROBE_EVIDENCE_ID=ownership-reachability-nokey \
   PYTHONPATH=".;tests/perf" python -m pytest tests/test_ownership_404.py -q -p raise_probe
 
 # 核对：逐条比对「期望 handler」与「实际命中的站点」
-python tests/perf/check_reachability.py tests/perf/out_raise_sites.json tests/perf/out_raise_sites_nokey.json
+python tests/perf/check_reachability.py \
+  docs/evidence/ownership-reachability.json docs/evidence/ownership-reachability-nokey.json
 ```
 
-产物：`out_raise_sites.json`（本机）、`out_raise_sites_nokey.json`（无 key 模拟）。
+产物：`docs/evidence/ownership-reachability.json`（本机）、`docs/evidence/ownership-reachability-nokey.json`（无 key 模拟）。
 两者 `check_reachability.py` 退出码均为 0。
 
 ## 结果（现跑现取，2026-09-12）
