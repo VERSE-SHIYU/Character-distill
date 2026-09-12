@@ -54,9 +54,12 @@ _MIGRATIONS_BEFORE_USER_REBUILD = (
 )
 
 # 必须排在 users 表重建之后 —— 重建会把 idx_users_username_lower 一起丢掉。
+# 079 建的是独立表（无外键、不碰 users），重建边界对它没有约束；放在这里是为了保住
+# 「≤077 在重建前 / ≥078 在重建后」这条分段不变量，编号在段内仍单调。
 _MIGRATIONS_AFTER_USER_REBUILD = (
-    "078_username_lower.sql", "080_group_user_avatar.sql", "081_refresh_token_grace.sql",
-    "082_affinity_state.sql", "083_card_reports.sql", "084_distill_tasks.sql",
+    "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
+    "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
+    "084_distill_tasks.sql",
 )
 
 # `ALTER TABLE t ADD COLUMN c ...;` —— 迁移里唯一「重复执行即报错」的形态。
