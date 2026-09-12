@@ -199,9 +199,16 @@ config.yaml 现值（现读，非转述）：
 - 边界锁：`tests/test_auth_param_used.py` 固化这次 AST 扫描 + 白名单，将来新增同类端点自动变红，不必靠人再扫一遍
 - 注：`voice.py` 内既有四处查属主返回 **403**（`get_ref_audio` / `preview_ref_audio` / `upload_ref_audio` / `delete_ref_audio`），与新修的 404 并存，口径待统一 —— **已于 2026-09-12 统一为 404**（缺陷 13）
 
-**10. `market.py` 的 `list_post_comments` 不标 `liked_by_me`** —— 状态：未修
-- 同类端点 `text.py` 的 `get_text_comments` 用 `user["id"]` 标了 `liked_by_me`，这个没标——它也因此进了上面第 9 条的扫描名单（读 user 与否在这里是「功能与否」，不是「越权与否」）
-- 属**功能缺口，非安全问题**
+**10. post / card 评论点赞特性整体缺失（原记为「`list_post_comments` 不标 `liked_by_me`」）** —— 状态：未修（**重记**，2026-09-12 裁定「不做」）
+- **原记账被证伪**：原条目称「同类端点 `text.py` 的 `get_text_comments` 标了 `liked_by_me`、`list_post_comments` 没标，按 `text.py` 的写法对齐即可」。实读后前提不成立 —— 照做只会写死一个恒 `False` 的**假默认值**（本仓明令禁止，见 §四）
+- 证据（2026-09-12 现跑现查）：
+  - **无表**：全仓没有 `post_comment_likes` / 卡评论点赞表；`_likes` 家族只有 `text_comment_likes`（`storage/migrations/031_text_comments.sql` 及 PG 等价物）与 `post_likes`（点赞**帖子**本身，`web/routers/market.py` 的 `like_post` → `toggle_post_like`）
+  - **无路由**：`toggle_post_comment_like` 全仓零命中 —— post 评论根本没有点赞入口
+  - **无原语**：`storage/sqlite_store.py` 的 `get_liked_comment_ids` **硬编码** `text_comment_likes`（PG 侧同），拿 post 评论 id 去查恒返空集
+  - **无消费**：前端 `web/frontend/src/components/common/PostCard.jsx` 渲染 post 评论（头像 / 用户名 / IP 属地 / 时间 / 正文）**没有点赞按钮**，从不读该字段；`post.liked_by_me` 是**帖子**的赞，不是评论的
+- 即：真缺口是**「post / card 评论点赞」这个特性从来不存在**，不是「某端点漏标一个字段」。对齐写法 ≠ 修 bug，是**加功能**（建表 + 双方言 migration + toggle 路由 + `get_liked_post_comment_ids` 原语 + 前端按钮），且要新增一张表
+- 处置裁定（用户，2026-09-12）：**不做，重记缺陷**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量
+- 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
 
 **11. 越权读取的根因：storage 读取原语没有身份概念** —— 状态：**已修**（2026-09-11）
 - 形态：`storage/base.py` 的读取原语 `get_text(id)` / `get_session(id)` 签名里没有 user——读取本身不带身份，于是**每个调用点都必须自己记得**补一次属主比对，忘一个漏一个，且漏了没有任何报警
