@@ -3079,7 +3079,14 @@ class PostgresStore(StorageBase):
             raise
 
     async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
-        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op.
+        """Persist one finished map chunk. Same (task_id, chunk_index) is replaced, never duplicated.
+
+        **冲突即原地覆盖（upsert），不是 first-write-wins**。联合 PK 仍保证不重复行
+        （同一 `(task_id, chunk_index)` 恒只有一行），变的只是：同一片允许被**更新的结果**
+        覆盖。旧写法 `DO NOTHING` 让「原文变 → 片指纹变 → 门 3 拒绝复用 → 重跑该片」这条
+        正常路径永远写不进新结果 —— 库里还是旧 `result` + 旧 `chunk_fingerprint`，下次续跑
+        门 3 再次拒绝，**该片每次续跑都重跑，永不收敛**（缺陷 4）。`created_at` 不动，
+        保留该片**首次**落库的时间。（SQLite 侧同语义，语法是 `excluded.` 小写。）
 
         WHERE EXISTS 父行 + FOR SHARE：父任务行不在（文本被删、行已清）则零行写入、不报错。
         FOR SHARE 是关键 —— 单独 EXISTS 只是**快照读**，挡的是"父行已不存在"，挡不住
@@ -3102,7 +3109,9 @@ class PostgresStore(StorageBase):
                     """INSERT INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint)
                        SELECT $1, $2, $3, $4
                        WHERE EXISTS (SELECT 1 FROM distill_tasks WHERE task_id = $1 FOR SHARE)
-                       ON CONFLICT (task_id, chunk_index) DO NOTHING""",
+                       ON CONFLICT (task_id, chunk_index) DO UPDATE
+                           SET result = EXCLUDED.result,
+                               chunk_fingerprint = EXCLUDED.chunk_fingerprint""",
                     task_id, chunk_index, result, fingerprint,
                 )
         except Exception as exc:

@@ -7,6 +7,7 @@
 3 第二道门：缓存 result 为空/失效 → 只重跑该片，不崩、不复用坏结果
 4 主路径零回归：resume_candidates=None 时与不续跑行为完全一致
 5 失败片不落 checkpoint：Map 分片抛异常 → 不进 on_chunk_done，门 2 不再是唯一屏障
+6 改原文后旧片收敛（缺陷 4）：落库是 upsert 而非 DO NOTHING → 第二次续跑命中复用
 
 任务级门（改 chunk_size / 改原文 → 整批重跑）落在 /start，见
 tests/test_distill_task_api.py::TestEResumeGate（同一提交）。
@@ -14,6 +15,7 @@ tests/test_distill_task_api.py::TestEResumeGate（同一提交）。
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import sys
@@ -23,6 +25,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from core.distiller import Distiller, _resume_hit, text_fingerprint
+from storage.sqlite_store import SQLiteStore
 
 
 CHUNK_SIZE = 40
@@ -72,13 +75,13 @@ def _make_distiller(llm) -> Distiller:
     return d
 
 
-def _run(llm, candidates):
+def _run(llm, candidates, text=None):
     """消费 stream，返回 (on_chunk_done 记录, format 产出的 token 拼接)。"""
     d = _make_distiller(llm)
     done: list[tuple[int, str, str]] = []
     tokens: list[str] = []
     for piece in d.distill_incremental_stream(
-        TEXT, "角色", [], "story",
+        text if text is not None else TEXT, "角色", [], "story",
         on_chunk_done=lambda i, r, fp: done.append((i, r, fp)),
         resume_candidates=candidates,
     ):
@@ -91,6 +94,28 @@ def _run(llm, candidates):
 
 def _candidates(done):
     return {i: {"result": r, "fingerprint": fp} for i, r, fp in done}
+
+
+# ── 真实 store 往返（缺陷 4 用）──────────────────────────────────────────────
+
+def _arun(coro):
+    """distiller 内部自己调 asyncio.run，故含 store 的用例写成同步、store 调用单跑一轮。"""
+    return asyncio.run(coro)
+
+
+async def _persist(store, task_id, done) -> None:
+    for i, r, fp in done:
+        await store.save_distill_chunk(task_id, i, r, fp)
+
+
+def _candidates_from(store, task_id) -> dict:
+    """把库里读回的片还原成 resume_candidates —— 与 _candidates 同形状。"""
+    async def _read():
+        return await store.get_distill_chunks(task_id)
+    return {
+        c["chunk_index"]: {"result": c["result"], "fingerprint": c["chunk_fingerprint"]}
+        for c in _arun(_read())
+    }
 
 
 # ── 分片三重门纯逻辑 ─────────────────────────────────────────────────────────
@@ -201,8 +226,10 @@ class TestFailedChunkNotCheckpointed:
     """失败的 Map 分片不进 checkpoint。
 
     修复前落的是「空串 + 一个完全合法的指纹」：续跑时 _resume_hit 门 1（形状）与门 3
-    （指纹）都过，只有门 2（非空）拦得住 —— 门 2 是唯一屏障。且 save_distill_chunk 是
-    ON CONFLICT DO NOTHING，那行空串永久占位，重跑成功也写不进去，全程静默。
+    （指纹）都过，只有门 2（非空）拦得住 —— 门 2 是唯一屏障。（当时 save_distill_chunk 是
+    ON CONFLICT DO NOTHING，那行空串还会永久占位、重跑成功也写不进去；该落库契约已随
+    缺陷 4 改为 upsert，见 TestChangedChunkConverges —— 但**本类的前提没变**：失败片
+    压根不进 checkpoint，靠的是上游不调 on_chunk_done，不是靠落库去重。）
 
     失败片仍产出 (idx, "") 汇入 map_results，但**这不是契约**：空串被 raw_analyses
     过滤、条目缺失则根本没有，下游完全等价；失败率判断用的是 map_failures，与本条
@@ -268,3 +295,46 @@ class TestMainPathUnchanged:
         done, _out = _run(llm, None)
         assert llm.map_calls == len(done) > 1, "不续跑时每片都发调用"
         assert all(r.strip() for _i, r, _f in done)
+
+
+# ── 6 改原文后旧片收敛（落库 upsert）────────────────────────────────────────
+#
+# 缺陷 4：`save_distill_chunk` 曾是 `ON CONFLICT DO NOTHING`。于是
+# 原文变 → 片指纹变 → 门 3 拒绝复用 → 重跑该片 → 新结果撞 DO NOTHING →
+# 库里仍是旧 result + 旧 fingerprint → 下次续跑门 3 再次拒绝 → **永不收敛**。
+#
+# 走真实 SQLite store（不是内存 dict），因为病灶在落库语义，不在门逻辑。
+# 门逻辑本身已有用例（上面的 TestResumeHitDoors / TestSecondGateRerunsBadChunk）。
+
+class TestChangedChunkConverges:
+    """改原文 → 续跑一次 → 再续跑一次：第二次该片应命中复用。"""
+
+    def test_changed_chunk_converges_to_reuse(self, tmp_path):
+        store = SQLiteStore(str(tmp_path / "converge.db"))
+        task_id, text_id, user_id = "dtConv", "txtConv", "u1"
+        _arun(store.create_distill_task(task_id, user_id, text_id, character="角色"))
+
+        # 首轮全量 → 落库
+        done1, _out1 = _run(_FakeLLM(), None)
+        assert done1, "首轮应有分片落库"
+        _arun(_persist(store, task_id, done1))
+
+        # 改原文：**等长**替换 → 分片边界不变，只有含该句的那一片指纹变
+        changed = TEXT.replace("第5句话", "第五句话")
+        assert changed != TEXT and len(changed) == len(TEXT)
+
+        # 续跑一次（原文已变）：变了的片重跑，新结果必须写回库
+        llm2 = _FakeLLM()
+        done2, _ = _run(llm2, _candidates_from(store, task_id), text=changed)
+        assert done2, "原文变了，至少该片应重跑（否则用例无判别力）"
+        _arun(_persist(store, task_id, done2))
+
+        # 再续跑：库里已是新指纹 → 门 3 通过 → 全命中、零 Map 调用
+        llm3 = _FakeLLM()
+        done3, out3 = _run(llm3, _candidates_from(store, task_id), text=changed)
+        assert llm3.map_calls == 0, (
+            "第二次续跑该片应命中复用。仍重跑即「永不收敛」—— "
+            "旧 DO NOTHING 契约下库里留着旧指纹，门 3 每次都拒绝。")
+        assert done3 == [], "命中的片不该重复落库"
+        out_full = _run(_FakeLLM(), None, text=changed)[1]
+        assert out3 == out_full, "收敛后产出应与「直接全量跑改后原文」逐字节一致"

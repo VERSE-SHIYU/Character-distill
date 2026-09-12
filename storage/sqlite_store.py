@@ -3505,10 +3505,17 @@ class SQLiteStore(StorageBase):
             raise
 
     async def save_distill_chunk(self, task_id: str, chunk_index: int, result: str, fingerprint: str = "") -> None:
-        """Persist one finished map chunk. Idempotent: re-saving the same chunk_index is a no-op.
+        """Persist one finished map chunk. Same (task_id, chunk_index) is replaced, never duplicated.
 
         WHERE EXISTS 父行：父任务行不在（文本被删、行已清）则零行写入、不报错。
         与 update-only 同一条不变量 —— 孤儿分片写不进来。
+
+        **冲突即原地覆盖（upsert），不是 first-write-wins**。联合 PK 仍保证不重复行
+        （同一 `(task_id, chunk_index)` 恒只有一行），变的只是：同一片允许被**更新的结果**
+        覆盖。旧写法 `DO NOTHING` 让「原文变 → 片指纹变 → 门 3 拒绝复用 → 重跑该片」这条
+        正常路径永远写不进新结果 —— 库里还是旧 `result` + 旧 `chunk_fingerprint`，下次续跑
+        门 3 再次拒绝，**该片每次续跑都重跑，永不收敛**（缺陷 4）。`created_at` 不动，
+        保留该片**首次**落库的时间。
 
         这里不需要 PG 那侧的 FOR SHARE：SQLite 写是**库级序列化**的（单写者，删除事务
         持写锁直至提交），并发分片写入要么在删除事务前提交（随即被一并删掉），要么阻塞
@@ -3521,7 +3528,9 @@ class SQLiteStore(StorageBase):
                     """INSERT INTO distill_chunks (task_id, chunk_index, result, chunk_fingerprint)
                        SELECT ?, ?, ?, ?
                        WHERE EXISTS (SELECT 1 FROM distill_tasks WHERE task_id = ?)
-                       ON CONFLICT (task_id, chunk_index) DO NOTHING""",
+                       ON CONFLICT (task_id, chunk_index) DO UPDATE
+                           SET result = excluded.result,
+                               chunk_fingerprint = excluded.chunk_fingerprint""",
                     (task_id, chunk_index, result, fingerprint, task_id),
                 )
                 await conn.commit()

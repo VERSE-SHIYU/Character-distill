@@ -153,11 +153,15 @@ config.yaml 现值（现读，非转述）：
 - 该约束由 `tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage` 强制（**文本级 grep——注释与 docstring 也拦**）
 - 门的**范围**由活断言钉住：`tests/test_distill_resume.py::TestResumeHitDoors::test_truncated_nonempty_result_passes_second_gate`（非空截断的自由文本必须穿过、不得被拦）——给本门加结构校验会让它变红
 
-**4. 改原文后旧分片永不刷新**
-- 根因：两个 store（`storage/sqlite_store.py`、`storage/postgres_store.py`）的 `save_distill_chunk` 都是 `INSERT ... ON CONFLICT (task_id, chunk_index) DO NOTHING`
+**4. 改原文后旧分片永不刷新** —— 状态：**已修**（2026-09-12）
+- 根因：两个 store（`storage/sqlite_store.py:3507`、`storage/postgres_store.py:3081`）的 `save_distill_chunk` 都是 `INSERT ... ON CONFLICT (task_id, chunk_index) DO NOTHING`
 - 现象：原文变 → 片指纹变 → 门 3（`_resume_hit` 第 3 道）拒绝复用 → 重跑该片 → 新结果想写回，撞 `DO NOTHING` → 库里仍是旧 `result` + 旧 fingerprint → 下次续跑门 3 再次拒绝 → **该片每次续跑都重跑，永不收敛到满复用**
 - 影响面：只掉「省调用量」，不掉正确性——当前轮 reduce 吃的是内存里的新结果（`distill_incremental_stream` 内 `map_results.append` → `raw_analyses`），落库副本陈旧只影响下次续跑的复用判据
-- 状态：未修
+- 修法（**语义差异写进两处 docstring**）：`DO NOTHING` → `DO UPDATE SET result / chunk_fingerprint`（SQLite 用 `excluded.`，PG 用 `EXCLUDED.`）。**联合 PK 仍保证不重复行**（同一 `(task_id, chunk_index)` 恒只有一行），变的只是：同一片允许被更新的结果覆盖。`created_at` 不动，保留该片首次落库时间
+- 验收锁：`tests/test_distill_resume.py::TestChangedChunkConverges`（走**真实 SQLite store**，不是内存 dict —— 病灶在落库语义不在门逻辑）：等长替换改原文 → 续跑一次（该片重跑并写回）→ 再续跑 **零 Map 调用**、产出与「直接全量跑改后原文」逐字节一致
+- 契约锁：`test_storage.py` / `test_postgres_store.py` 各两条（`_last_write_wins` / `_replaces_same_index_no_duplicate_row`）——原为 first-write-wins，已随契约翻转
+- 变异验证（实测红，SHA256 逐字节还原）：sqlite 改回 `DO NOTHING` → 三条齐红，且 `TestChangedChunkConverges` 红在**目标断言**上（`assert 1 == 0`，该片第二次续跑仍在重跑 = 永不收敛）
+- **双 store 分别验**：SQLite 本地跑；PG 用一次性容器（`postgres:16-alpine`，本机空闲端口 + 运行期生成的一次性口令）建真库实跑 —— `tests/test_postgres_store.py` **45 passed**（本地无 `DATABASE_URL` 时这 45 条恒为 error）。验毕 `docker rm -fv` 连匿名卷一起删，`character-distill-postgres-1` 未受触碰
 
 **5. sqlite 新库缺 `users.embedding_key` / `embedding_region`** —— 状态：**已修**（commit `dae4928`，2026-09-11）
 - 病灶两层：(1) `storage/migrations/067_embedding_config.sql` 用 `ALTER TABLE users ADD COLUMN IF NOT EXISTS ...`——SQLite 无此语法，`executescript` 解析期即抛 `near "EXISTS": syntax error`；(2) 执行块的 `except` 只吞「duplicate column」，这条错误串不匹配 → 打一行 print 就放过。**报错真的发生了，被按字符串匹配漏掉，静默继续**

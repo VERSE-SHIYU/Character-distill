@@ -1454,29 +1454,31 @@ class TestDistillTaskPersistence:
         assert got["chunk_size"] is None and got["overlap"] is None
         assert got["text_fingerprint"] == ""
 
-    async def test_chunk_fingerprint_roundtrip_and_first_write_wins(self, store, text_id):
-        # 3b：chunk_fingerprint 随片落库可读；同 index 重写（含不同指纹）仍 first-wins。
+    async def test_chunk_fingerprint_roundtrip_and_last_write_wins(self, store, text_id):
+        # 3b：chunk_fingerprint 随片落库可读；同 index 重写**原地覆盖**（result 与指纹都换新）。
+        # 覆盖而非 first-wins 是缺陷 4 的修法：旧契约下「原文变→指纹变→重跑」的新结果
+        # 永远写不进去，该片每次续跑都重跑。
         await store.create_distill_task("dtFp", "u1", text_id, character="A")
         await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "二"}, ensure_ascii=False),
                                        fingerprint="fp2")
         await store.save_distill_chunk("dtFp", 2, json.dumps({"r": "重写"}, ensure_ascii=False),
                                        fingerprint="fp2_other")
         chunks = await store.get_distill_chunks("dtFp")
-        assert len(chunks) == 1
-        assert chunks[0]["chunk_fingerprint"] == "fp2"
-        assert chunks[0]["result"] == json.dumps({"r": "二"}, ensure_ascii=False)
+        assert len(chunks) == 1, "联合 PK 仍保证不重复行"
+        assert chunks[0]["chunk_fingerprint"] == "fp2_other"
+        assert chunks[0]["result"] == json.dumps({"r": "重写"}, ensure_ascii=False)
 
-    async def test_chunk_save_idempotent(self, store, text_id):
+    async def test_chunk_save_replaces_same_index_no_duplicate_row(self, store, text_id):
         await store.create_distill_task("dt4", "u1", text_id, character="A")
         await store.save_distill_chunk("dt4", 3, json.dumps({"r": "三"}, ensure_ascii=False))
         await store.save_distill_chunk("dt4", 3, json.dumps({"r": "重写"}, ensure_ascii=False))
         await store.save_distill_chunk("dt4", 1, json.dumps({"r": "一"}, ensure_ascii=False))
         chunks = await store.get_distill_chunks("dt4")
-        # composite PK: re-save of index 3 is a no-op, first write wins
+        # 联合 PK 仍保证行不重复；同 index 重写覆盖内容，最后一次写赢
         assert len(chunks) == 2
         assert [c["chunk_index"] for c in chunks] == [1, 3]
         by_index = {c["chunk_index"]: c["result"] for c in chunks}
-        assert by_index[3] == json.dumps({"r": "三"}, ensure_ascii=False)
+        assert by_index[3] == json.dumps({"r": "重写"}, ensure_ascii=False)
 
     async def test_chunk_write_blocked_without_parent(self, store):
         # 改动 B：父任务行不在 → 零行写入、不报错（孤儿分片写不进来）。
