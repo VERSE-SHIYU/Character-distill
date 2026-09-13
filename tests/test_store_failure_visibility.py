@@ -14,9 +14,12 @@ SQLite 新库缺 `remote_user_profiles` 表 → `get_conversations` 把 `Operati
 
 1. `TestNoSwallowingHandlers` —— **形态锁**：AST 扫两个 store 文件，任何 `except` 处理块
    把失败吞成空值（显式 `return <空值>` **或** 只 print 后落到隐式 `None`）即红。
-   口径内的 B 类豁免 2 条（sqlite `__aexit__` / pg `_parse_rowcount`），必须写
-   `# store-empty-ok:` 注释；另有 7 处「吞了但不在本口径内」的同类处理（非终末位置、
-   不返回空值，如 `export_session` 的 JSON 降级）也加了同样的标记说明，不计入本锁。
+   口径内的 B 类豁免 1 条（pg `_parse_rowcount`），必须写 `# store-empty-ok:` 注释；
+   另有 9 处「吞了但不在本口径内」的同类处理（非终末位置、不返回空值，如 `export_session`
+   的 JSON 降级、连接层的 close / rollback）也加了同样的标记说明，不计入本锁。
+   （计数现跑现取：`python tests/perf/store_swallow_census.py`。sqlite 的 close 标记从
+   口径内移到口径外，是缺陷 24 给 `__aexit__` 加 `try/finally` 之后 —— 它不再位于函数
+   终末，故不再是「落到隐式 None」形态。）
 2. `TestFailureIsDistinguishable` —— **动态断言**：把连接换成必然失败的桩，
    遍历每个真正碰库的方法，断言失败被上抛（而非空值 / 静默兜底）。
 3. `TestZeroSevenNineRegression` —— **原始缺陷的复现断言**：删表 → 三个引用点报错而非静默。

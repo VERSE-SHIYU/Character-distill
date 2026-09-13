@@ -1,17 +1,18 @@
 """缺陷 21 步骤 3.1 普查：store 层「把失败吞成空值」的 except 块全集（AST，不是肉眼 grep）。
 
-**为什么要入库**：commit message 里写了「154 处显式 + 20 处隐式 = 174 处 A 类，
-7 处 B 类豁免」，这个数字必须能被复算。本脚本支持 `--ref`，所以改完之后仍能
-拿历史版本重跑出同一份清单：
+**为什么要入库**：commit message 里引用的数字必须能被复算。本脚本支持 `--ref`，
+所以改完之后仍能拿历史版本重跑出同一份清单（数字现跑现取，勿照抄）：
 
-    python tests/perf/store_swallow_census.py --ref 4a608f9   # 改之前：174 A + 7 B
-    python tests/perf/store_swallow_census.py                 # 改之后：0 A + 7 B
+    python tests/perf/store_swallow_census.py --ref 4a608f9   # 改之前：A 176（显式 155 + 隐式 21）/ B 0
+    python tests/perf/store_swallow_census.py                 # 改之后：A 0 / B 1（pg _parse_rowcount）
 
 两种形态（同族，必须一起数）：
   - 显式 `except ...: print(...); return <空值>`
   - 隐式 `except ...: print(...)` 且该 try 是函数体最后一句 → 落到 `return None`
 
 `# store-empty-ok:` 标记 = B 类豁免（捕获的异常与「结果为空」无关），不计入 A 类。
+注意标记总数 ≠ B 类数：只有落在「口径内」（显式空返回 / 终末隐式 None）的才算 B，
+其余（非终末位置、返回值非空）只是同一格式的说明注释，**不计入 B**。
 """
 from __future__ import annotations
 

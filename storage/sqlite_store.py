@@ -104,7 +104,28 @@ async def _apply_migration(conn: Any, path: Path) -> None:
 
 
 class _ConnectionContext:
-    """Wrap an opened aiosqlite connection for `async with await ...` usage."""
+    """Wrap an opened aiosqlite connection for `async with await ...` usage.
+
+    **提交语义由本类承担（承重，勿改回「只 close」）** —— `aiosqlite.connect()` 默认
+    `isolation_level=''`（legacy 事务模式）：INSERT / UPDATE / DELETE / REPLACE 会隐式开一个
+    事务，**不 commit 就不落盘，close 时被回滚**。所以「作用域退出即提交」不是可选优化，
+    是本类的契约：
+
+      - 作用域无异常退出 → `commit()`：写方法**不需要**自己记得写 `await conn.commit()`
+      - 作用域因异常退出 → `rollback()`：整个作用域原子回滚，不留半写状态
+      - 两者都先于 `close()`；`close()` 在 `finally` 里，保证连接一定归还
+
+    为什么把提交收在这里、而不是「每个写方法自己 commit」（缺陷 24，第八次同族显形）：
+    后者把正确性寄托在人的记忆上 —— 忘了不报错、不告警，只是数据不在。实测两处漏网：
+    `add_post_comment` 漏 commit，函数照常返回构造好的 dict，前端把评论显示出来、刷新即消失；
+    `cleanup_empty_cards` 同形，返回真实的 `rowcount` 却什么都没写。收口后**新写方法完全
+    不知道这件事也不会错**；`delete_user`（单连接 12 条写）/ `hard_delete_text`（8 条）等 27 个
+    多步写方法依赖的原子性也由此保留（它们本就在末尾显式 commit，这里是兜底而非替代）。
+
+    只读作用域上 `commit()` / `rollback()` 是 no-op（没有打开的事务），语义与开销都不变。
+    绕过本类的写法（自己 `aiosqlite.connect()`）没有提交保障，由
+    `tests/test_store_connect_lock.py` 拦。
+    """
 
     def __init__(self, conn: Any) -> None:
         self.conn = conn
@@ -114,14 +135,31 @@ class _ConnectionContext:
         return self.conn
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        """Always close connection on scope exit."""
+        """提交（无异常）或回滚（有异常），然后关闭 —— 提交语义的唯一出口。
+
+        改动前先读类 docstring：把这里的 commit 拿掉会让**所有**写方法静默丢数据。
+        """
         try:
-            await self.conn.close()
-        except Exception as close_exc:
-            # store-empty-ok: 关闭失败不改变本次操作的结果 —— 连接在此即弃；且 __aexit__
-            # 上抛会顶替调用方真正的异常（Python 把它链成新异常），把真因埋掉。
-            # 泄漏风险由这行 print 可见，不归 StoreError 管。
-            print(f"[SQLiteStore] Close connection failed: {close_exc}")
+            if exc_type is None:
+                # 失败必须上抛、不得吞：吞掉 = 调用方以为写成功了，而库没有 ——
+                # 那正是本类要消灭的那个形态，不能在提交这一步自己再造一个。
+                await self.conn.commit()
+            else:
+                try:
+                    await self.conn.rollback()
+                except Exception as rollback_exc:
+                    # store-empty-ok: 走的是异常路径，调用方的原始异常仍在飞；此处上抛会
+                    # 顶替它（Python 把新异常链上去），把真因埋掉 —— 与下面 close 同一口径。
+                    # 回滚失败本身由这行 print 可见。
+                    print(f"[SQLiteStore] Rollback failed: {rollback_exc}")
+        finally:
+            try:
+                await self.conn.close()
+            except Exception as close_exc:
+                # store-empty-ok: 关闭失败不改变本次操作的结果 —— 连接在此即弃；且 __aexit__
+                # 上抛会顶替调用方真正的异常（Python 把它链成新异常），把真因埋掉。
+                # 泄漏风险由这行 print 可见，不归 StoreError 管。
+                print(f"[SQLiteStore] Close connection failed: {close_exc}")
 
 
 class SQLiteStore(StorageBase):
