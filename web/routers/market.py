@@ -397,7 +397,7 @@ async def get_book_versions(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """查同书所有 public 版本，供 @ 选择器使用。不需登录。"""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_unscoped(card_id)
     if not card:
         raise HTTPException(404, "卡不存在")
     text_id = card.get("text_id") or ""
@@ -494,9 +494,9 @@ async def publish_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Publish a card to the market (first-time publish)."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
 
     # Publish pre-screen: pending-review gate (2.6) + keyword pre-screen (2.2)
@@ -553,7 +553,7 @@ async def publish_card(
     # Synchronously forward to peer node so the card is visible
     # on both regions immediately (best-effort, don't block response).
     try:
-        card_record = await storage.get_card(ok)
+        card_record = await storage.get_card_owned(ok, user["id"])
         if card_record:
             await forward_card_to_peer(card_record, storage)
     except Exception as exc:
@@ -572,9 +572,9 @@ async def update_published_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Update an already-published card (with field-level diff)."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
     # Same pre-screen as first-time publish: gate + keyword + two-channel review,
     # applied to the *incoming* payload (that is the untrusted content being pushed).
@@ -642,9 +642,9 @@ async def update_card_version(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Update version publish_message — card author only."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
     message = (body.get("publish_message") or "").strip()
     if not message:
@@ -677,9 +677,13 @@ async def delete_market_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a card from market: soft-delete + set visibility private."""
-    card = await storage.get_card(card_id)
+    # 管理员跨属主删除是显式例外，属主谓词表达不了 → 该分支落 unscoped。
+    if user.get("is_admin"):
+        card = await storage.get_card_unscoped(card_id)
+    else:
+        card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404（admin 仍可）；403 会让人靠状态码枚举出 card_id 存在。
-    if not card or (not user.get("is_admin") and card.get("user_id") != user["id"]):
+    if not card:
         raise HTTPException(404, "Card not found")
     ok = await storage.delete_card(card_id)
     if not ok:
@@ -701,7 +705,7 @@ async def list_post_comments(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a post."""
-    comments = await storage.get_post_comments(post_id)
+    comments = await storage.get_post_comments_owned(post_id, user["id"])
     return {"comments": comments}
 
 
@@ -768,7 +772,7 @@ async def list_comments(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get all comments for a card."""
-    comments = await storage.get_comments(card_id)
+    comments = await storage.get_comments_owned(card_id, (user or {}).get("id"))
     return {"comments": comments}
 
 
@@ -803,11 +807,11 @@ async def at_reply(
     from core.schema import CharacterCard
 
     # 1. 校验 at_card_id 是同书 public 卡
-    src_card = await storage.get_card(card_id)
+    src_card = await storage.get_card_unscoped(card_id)
     if not src_card:
         raise HTTPException(404, "卡不存在")
     text_id = src_card.get("text_id") or ""
-    at_card = await storage.get_card(body.at_card_id)
+    at_card = await storage.get_card_unscoped(body.at_card_id)
     if not at_card or at_card.get("visibility") != "public":
         raise HTTPException(400, "被@角色不是公开版本")
     if text_id and at_card.get("text_id") != text_id:
@@ -893,20 +897,18 @@ async def delete_comment(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a comment — card author/comment author/admin can delete, others get 404."""
-    card_author_id = await storage.get_card_author_id(card_id)
-    # Get comment to check ownership
-    comment = await storage.get_comment(comment_id)
-    if not comment:
-        raise HTTPException(404, "评论不存在")
-    is_comment_author = comment["user_id"] == user["id"]
-    is_card_author = card_author_id == user["id"]
+    # 属主谓词（评论作者 ∨ 卡作者）在 SQL；管理员例外不在属主谓词内 → 该分支落 unscoped。
+    if user.get("is_admin"):
+        comment = await storage.get_comment_unscoped(comment_id)
+    else:
+        comment = await storage.get_comment_owned(comment_id, user["id"])
     # 非属主（非评论作者/卡作者/管理员）与不存在同判 404：403 会让人靠状态码枚举出 comment_id 存在。
-    if not is_comment_author and not is_card_author and not user.get("is_admin"):
+    if not comment:
         raise HTTPException(404, "评论不存在")
     ok = await storage.delete_comment(comment_id, user["id"])
     if not ok:
         # Idempotent: if another request already deleted it, that's fine
-        double_check = await storage.get_comment(comment_id)
+        double_check = await storage.get_comment_unscoped(comment_id)
         if double_check:
             raise HTTPException(500, "删除失败")
     return {"ok": True}
@@ -977,7 +979,7 @@ async def like_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle like on a public card."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_unscoped(card_id)
     if not card:
         raise HTTPException(404, "Card not found")
     return await storage.toggle_like(card_id, user["id"])
@@ -993,9 +995,9 @@ async def set_visibility(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Set card visibility (public/private). Only the card owner can change it."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
     ok = await storage.update_card_visibility(card_id, body.visibility)
     if not ok:

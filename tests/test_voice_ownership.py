@@ -65,7 +65,10 @@ class _Storage:
     def __init__(self, card):
         self._card = card
 
-    async def get_card(self, card_id):
+    async def get_card_owned(self, card_id, user_id):
+        """属主谓词（与真实 SQL 口径一致）：非属主与不存在同判 None。"""
+        if not self._card or self._card.get("user_id") != user_id:
+            return None
         return self._card
 
 

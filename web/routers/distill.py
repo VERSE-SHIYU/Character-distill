@@ -965,9 +965,9 @@ async def distill_task_status(
     细化展示；status/progress_pct/所有权/存在性永远以 DB 为准，绝不被内存覆盖。
     跨重启后内存空 → stage 为空串、message 回落 DB 值，展示不崩、四态不谎。
     """
-    row = await storage.get_distill_task(task_id)
+    row = await storage.get_distill_task_owned(task_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
-    if row is None or row.get("user_id") != user["id"]:
+    if row is None:
         raise HTTPException(404, "Task not found")
     # 只读覆盖展示字段：需同时满足 DB running + 本进程内存有该活跃条目。锁内浅拷一份，
     # 锁外只读 —— 序列化器不持锁，避免把 _task_lock 扩散进纯函数。
@@ -993,9 +993,9 @@ async def cancel_distill_task(
     bg 线程收到信号后走 abort 路径，其 _set_task(terminal) 会把 DB 终态补写回来，
     盖掉 cancel 与 bg 之间可能交错的最后一次 running 进度写。
     """
-    row = await storage.get_distill_task(task_id)
+    row = await storage.get_distill_task_owned(task_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
-    if row is None or row.get("user_id") != user["id"]:
+    if row is None:
         raise HTTPException(404, "Task not found")
     with _task_lock:
         task = _tasks.get(task_id)
@@ -1020,9 +1020,9 @@ async def distill_task_params(
     DB 是真相源：内存终态 pop 之后或跨重启后仍能取到 text_id/character，否则
     「任务成功完成」与「任务不存在」在该接口上不可分。不留内存回退分支。
     """
-    row = await storage.get_distill_task(task_id)
+    row = await storage.get_distill_task_owned(task_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 task_id 存在。
-    if row is None or row.get("user_id") != user["id"]:
+    if row is None:
         raise HTTPException(404, "Task not found")
     return {
         "task_id": task_id,
@@ -1245,9 +1245,9 @@ async def update_card(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ):
-    record = await storage.get_card(card_id)
+    record = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not record or record.get("user_id") != user["id"]:
+    if not record:
         raise HTTPException(404, "Card not found")
     # Schema gate: raw PATCH had no filter — a card editor payload that is not a
     # structurally valid CharacterCard is rejected instead of blindly persisted.
@@ -1307,9 +1307,9 @@ async def export_card(
     ``format=tavern`` returns SillyTavern character-card-v2 JSON
     with ``Content-Disposition: attachment`` for direct download.
     """
-    record = await storage.get_card(card_id)
+    record = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not record or record.get("user_id") != user["id"]:
+    if not record:
         raise HTTPException(404, "Card not found")
 
     try:
@@ -1366,7 +1366,7 @@ async def start_session(
     per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
     text_manager = get_text_manager(llm=per_user_llm)
 
-    card_rec = await storage.get_card(req.card_id)
+    card_rec = await storage.get_card_owned(req.card_id, user_id)
     if not card_rec:
         raise HTTPException(404, "Card not found")
 

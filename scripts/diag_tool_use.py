@@ -41,7 +41,7 @@ def pprint(label: str, content: str, tool_calls: list | None) -> None:
 
 async def load_card(card_id: str) -> CharacterCard:
     storage = get_store()
-    rec = await storage.get_card(card_id)
+    rec = await storage.get_card_unscoped(card_id)
     if not rec:
         print(f"Card {card_id} not found")
         sys.exit(1)

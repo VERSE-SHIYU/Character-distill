@@ -718,14 +718,14 @@ class SQLiteStore(StorageBase):
                         (card_json, existing_id),
                     )
                     await conn.commit()
-                    return await self.get_card(existing_id) or {}
+                    return await self.get_card_unscoped(existing_id) or {}
                 else:
                     await conn.execute(
                         "INSERT INTO cards (id, text_id, name, card_json, user_id) VALUES (?, ?, ?, ?, ?)",
                         (id, text_id, name, card_json, user_id),
                     )
                     await conn.commit()
-                    return await self.get_card(id) or {}
+                    return await self.get_card_unscoped(id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Save card failed: {exc}")
             raise
@@ -739,13 +739,18 @@ class SQLiteStore(StorageBase):
                     (json.dumps(card_json, ensure_ascii=False), card_id),
                 )
                 await conn.commit()
-                return await self.get_card(card_id) or {}
+                return await self.get_card_unscoped(card_id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Update card failed: {exc}")
             raise
 
-    async def get_card(self, id: str) -> dict | None:
-        """Get one card record by id."""
+    async def get_card_unscoped(self, id: str) -> dict | None:
+        """Get one card record by id — 无身份读。
+
+        公开/跨属主调用点专用（market 公开视图、admin、mcp、scripts）。登录用户读自己的卡
+        用 `get_card_owned`。每一处调用点须登记在
+        `tests/test_storage_scope_lock.py::UNSCOPED_ALLOWLIST` 并写明为何不需要身份。
+        """
         try:
             pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
                        " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
@@ -758,6 +763,25 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get card failed: {exc}")
+            raise
+
+    async def get_card_owned(self, id: str, user_id: str) -> dict | None:
+        """Get one card record by id, only if the user owns it — None otherwise.
+
+        属主过滤在 SQL（`cards.user_id`）。非属主与不存在同判 None，调用方统一 404。
+        """
+        try:
+            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
+                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?",
+                    (id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card (owned) failed: {exc}")
             raise
 
     async def get_card_detail(self, card_id: str, user_id: str) -> dict | None:
@@ -905,8 +929,12 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Save card avatar failed: {exc}")
             raise
 
-    async def get_card_avatar(self, card_id: str) -> str | None:
-        """Get base64 avatar image for a card, or None."""
+    async def get_card_avatar_unscoped(self, card_id: str) -> str | None:
+        """Get base64 avatar for any card — 无身份读。
+
+        仅 `fork_card` 深拷贝公开卡时用（原卡已验 public）。用户语境用
+        `get_card_avatar_owned`。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -919,7 +947,27 @@ class SQLiteStore(StorageBase):
                 return None
         except Exception as exc:
             print(f"[SQLiteStore] Get card avatar failed: {exc}")
-            raise StoreError("get_card_avatar", exc) from exc
+            raise StoreError("get_card_avatar_unscoped", exc) from exc
+
+    async def get_card_avatar_owned(self, card_id: str, user_id: str) -> str | None:
+        """Get base64 avatar image for a card the user owns, or None.
+
+        属主过滤在 SQL。非属主与「无头像」同判 None；调用方先 `get_card_owned` 判存在性，
+        或直接以 None 统一 404（本仓口径：非属主与不存在不可区分）。
+        """
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT avatar_data FROM cards WHERE id = ? AND user_id = ?",
+                    (card_id, user_id),
+                )
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    return row[0]
+                return None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get card avatar (owned) failed: {exc}")
+            raise StoreError("get_card_avatar_owned", exc) from exc
 
     # ── Market / public card methods ──────────────────────────
 
@@ -1133,7 +1181,7 @@ class SQLiteStore(StorageBase):
 
     async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
         """Deep copy a public card for a new user. Returns the new card dict."""
-        original = await self.get_card(card_id)
+        original = await self.get_card_unscoped(card_id)
         if not original:
             return None
         # Verify the original is public
@@ -1159,16 +1207,16 @@ class SQLiteStore(StorageBase):
                 )
                 existing = await cursor.fetchone()
                 if existing:
-                    return await self.get_card(existing[0])
+                    return await self.get_card_unscoped(existing[0])
                 await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, user_id, avatar_data, forked_from, visibility)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 'private')""",
                     (new_id, text_id, original["name"],
                      original.get("card_json", "{}"), new_user_id,
-                     await self.get_card_avatar(card_id) or "", card_id),
+                     await self.get_card_avatar_unscoped(card_id) or "", card_id),
                 )
                 await conn.commit()
-            return await self.get_card(new_id)
+            return await self.get_card_unscoped(new_id)
         except Exception as exc:
             print(f"[SQLiteStore] Fork card failed: {exc}")
             raise
@@ -1675,18 +1723,18 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Update card voice_ref failed: {exc}")
             raise
 
-    async def get_session_voice_ref(self, card_id: str) -> str | None:
-        """Get voice_ref_json from the card (not session)."""
+    async def get_session_voice_ref_owned(self, card_id: str, user_id: str) -> str | None:
+        """Get voice_ref_json from a card the user owns (not session), or None."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT voice_ref_json FROM cards WHERE id = ?",
-                    (card_id,),
+                    "SELECT voice_ref_json FROM cards WHERE id = ? AND user_id = ?",
+                    (card_id, user_id),
                 )
                 row = await cursor.fetchone()
             return row[0] if row and row[0] else None
         except Exception as exc:
-            print(f"[SQLiteStore] Get card voice_ref failed: {exc}")
+            print(f"[SQLiteStore] Get card voice_ref (owned) failed: {exc}")
             raise
 
     # ---- WeChat user mapping ----
@@ -1804,12 +1852,13 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Create group session failed: {exc}")
             raise
 
-    async def get_group_session(self, id: str) -> dict | None:
+    async def get_group_session_owned(self, id: str, user_id: str) -> dict | None:
+        """Get one group session by id, only if the user owns it — None otherwise."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ?",
-                    (id,),
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ? AND user_id = ?",
+                    (id, user_id),
                 )
                 row = await cursor.fetchone()
             if row is None:
@@ -1818,7 +1867,7 @@ class SQLiteStore(StorageBase):
             d["card_ids"] = json.loads(d["card_ids"])
             return d
         except Exception as exc:
-            print(f"[SQLiteStore] Get group session failed: {exc}")
+            print(f"[SQLiteStore] Get group session (owned) failed: {exc}")
             raise
 
     async def list_group_sessions(self, user_id: str) -> list[dict]:
@@ -2050,8 +2099,11 @@ class SQLiteStore(StorageBase):
         """Toggle a DM reaction. Returns True if added, False if removed."""
         return await self._toggle_reaction_generic("dm_reactions", message_id, user_id, emoji)
 
-    async def get_dm_message(self, message_id: str) -> dict | None:
-        """Return a single direct message by id."""
+    async def get_dm_message_unscoped(self, message_id: str) -> dict | None:
+        """Return a single direct message by id — 无身份读。
+
+        仅限无身份通道（inter_node 跨节点同步）。用户语境一律用 `get_dm_message_owned`。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -2063,6 +2115,23 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get DM message failed: {exc}")
             raise StoreError("get_dm_message", exc) from exc
+
+    async def get_dm_message_owned(self, message_id: str, user_id: str) -> dict | None:
+        """Return a single DM by id, only if the user is sender or receiver — None otherwise.
+
+        属主谓词是**多路**（收发双方），不是单列等值；过滤仍在 SQL 里完成。
+        """
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, sender_id, receiver_id, content, is_read, created_at FROM direct_messages WHERE id = ? AND (sender_id = ? OR receiver_id = ?)",
+                    (message_id, user_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row) if row else None
+        except Exception as exc:
+            print(f"[SQLiteStore] Get DM message (owned) failed: {exc}")
+            raise StoreError("get_dm_message_owned", exc) from exc
 
     async def get_dm_reactions(self, user_id: str, other_id: str) -> dict:
         """Return reactions for messages in the conversation between user_id and other_id.
@@ -2155,7 +2224,7 @@ class SQLiteStore(StorageBase):
         if session is None:
             raise ValueError("session not found")
         messages = await self.get_messages(session_id)
-        card = await self.get_card(session["card_id"])
+        card = await self.get_card_unscoped(session["card_id"])
 
         card_parsed: dict[str, Any] = {}
         if card and card.get("card_json"):
@@ -3465,13 +3534,16 @@ class SQLiteStore(StorageBase):
             async with await self._connect() as conn:
                 await conn.execute(sql, vals)
                 await conn.commit()
-            return await self.get_distill_task(task_id) or {}
+            return await self.get_distill_task_owned(task_id, user_id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Create distill task failed: {exc}")
             raise
 
-    async def get_distill_task(self, task_id: str) -> dict | None:
-        """Return one distillation task row by task_id, or None if absent."""
+    async def get_distill_task_unscoped(self, task_id: str) -> dict | None:
+        """Return one distillation task row by task_id, no ownership filter — 无身份读。
+
+        测试读回专用（tests/* 无登录语境）。用户语境一律用 `get_distill_task_owned`。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -3485,6 +3557,23 @@ class SQLiteStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get distill task failed: {exc}")
+            raise
+
+    async def get_distill_task_owned(self, task_id: str, user_id: str) -> dict | None:
+        """Return one distillation task row by task_id the user owns, or None if absent/not owner."""
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT task_id, user_id, text_id, character, status, progress_pct, message,
+                              card_id, awakening, chunk_size, overlap, text_fingerprint,
+                              created_at, updated_at
+                       FROM distill_tasks WHERE task_id = ? AND user_id = ?""",
+                    (task_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get distill task (owned) failed: {exc}")
             raise
 
     async def find_interrupted_distill(self, user_id: str, text_id: str, character: str) -> dict | None:
@@ -3720,7 +3809,13 @@ class SQLiteStore(StorageBase):
 
     # ── Comments ──
 
-    async def get_comments(self, card_id: str) -> list[dict]:
+    async def get_comments_owned(self, card_id: str, user_id: str | None) -> list[dict]:
+        """Get comments for a card, narrowed by the card's visibility.
+
+        卡评论是**公开列表**：公开卡的评论任何人可读，但**私卡评论只给卡主**。
+        属主收窄在 SQL：`c2.user_id = ? OR c2.visibility = 'public'`。匿名（user_id=None）
+        只命中 public 分支（`c2.user_id = NULL` 恒不成立）—— 这正是「私卡评论不泄漏」。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -3730,15 +3825,17 @@ class SQLiteStore(StorageBase):
                     "COALESCE(c.ai_card_id, '') AS ai_card_id, "
                     "COALESCE(c.ai_version_label, '') AS ai_version_label, "
                     "COALESCE(c.reply_to_comment_id, '') AS reply_to_comment_id "
-                    "FROM card_comments c LEFT JOIN users u ON c.user_id = u.id "
-                    "WHERE c.card_id = ? ORDER BY c.created_at ASC",
-                    (card_id,),
+                    "FROM card_comments c JOIN cards c2 ON c2.id = c.card_id "
+                    "LEFT JOIN users u ON c.user_id = u.id "
+                    "WHERE c.card_id = ? AND (c2.user_id = ? OR c2.visibility = 'public') "
+                    "ORDER BY c.created_at ASC",
+                    (card_id, user_id),
                 )
                 rows = await cursor.fetchall()
             return self._list_rows(rows)
         except Exception as exc:
-            print(f"[SQLiteStore] Get comments failed: {exc}")
-            raise StoreError("get_comments", exc) from exc
+            print(f"[SQLiteStore] Get comments (owned) failed: {exc}")
+            raise StoreError("get_comments_owned", exc) from exc
 
     async def add_comment(self, card_id: str, user_id: str, username: str, content: str) -> dict:
         import uuid
@@ -3810,8 +3907,12 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get card author failed: {exc}")
             raise StoreError("get_card_author_id", exc) from exc
 
-    async def get_comment(self, comment_id: str) -> dict | None:
-        """Get a single comment by ID."""
+    async def get_comment_unscoped(self, comment_id: str) -> dict | None:
+        """Get a single comment by ID — 无身份读。
+
+        admin 跨属主删除路径专用（属主谓词表达不了管理员例外）。用户语境用
+        `get_comment_owned`。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -3822,6 +3923,25 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get comment failed: {exc}")
             raise StoreError("get_comment", exc) from exc
+
+    async def get_comment_owned(self, comment_id: str, user_id: str) -> dict | None:
+        """Get a single comment the user may act on, or None.
+
+        属主是**多路**：评论作者 ∨ 卡作者（删除权限见 market.delete_comment）。管理员例外不在
+        属主谓词内，由调用点显式落 `get_comment_unscoped`。
+        """
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    """SELECT cc.* FROM card_comments cc JOIN cards c ON c.id = cc.card_id
+                       WHERE cc.id = ? AND (cc.user_id = ? OR c.user_id = ?)""",
+                    (comment_id, user_id, user_id),
+                )
+                row = await cursor.fetchone()
+            return self._row_to_dict(row)
+        except Exception as exc:
+            print(f"[SQLiteStore] Get comment (owned) failed: {exc}")
+            raise StoreError("get_comment_owned", exc) from exc
 
     async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, is_admin: bool = False) -> bool:
         """Delete a card comment. Caller must verify permission."""
@@ -4313,24 +4433,28 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Toggle post like failed: {exc}")
             raise
 
-    async def get_post_comments(self, post_id: str) -> list[dict]:
-        """Get all comments for a post."""
+    async def get_post_comments_owned(self, post_id: str, user_id: str | None) -> list[dict]:
+        """Get comments for a post, narrowed by the post's visibility.
+
+        与 `get_comments_owned` 同范式：公开帖评论任何人可读，私密帖评论只给发帖人。
+        `user_posts.visibility` 默认 'public'；匿名（None）只命中 public 分支。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """SELECT pc.id, pc.user_id, pc.username, pc.content, pc.created_at, pc.ip_location,
                               COALESCE(u.avatar_data, '') AS avatar_data
-                       FROM post_comments pc
+                       FROM post_comments pc JOIN user_posts p ON p.id = pc.post_id
                        LEFT JOIN users u ON pc.user_id = u.id
-                       WHERE pc.post_id = ?
+                       WHERE pc.post_id = ? AND (p.user_id = ? OR p.visibility = 'public')
                        ORDER BY pc.created_at DESC""",
-                    (post_id,),
+                    (post_id, user_id),
                 )
                 rows = await cursor.fetchall()
             return self._list_rows(rows)
         except Exception as exc:
-            print(f"[SQLiteStore] Get post comments failed: {exc}")
-            raise StoreError("get_post_comments", exc) from exc
+            print(f"[SQLiteStore] Get post comments (owned) failed: {exc}")
+            raise StoreError("get_post_comments_owned", exc) from exc
 
     async def add_post_comment(self, post_id: str, user_id: str, username: str, content: str, ip_location: str = "") -> dict:
         """Add a comment to a post."""

@@ -86,10 +86,10 @@ async def test_get_dm_reactions_conversation_scoped(store, user_a, user_b):
 async def test_get_dm_message(store, user_a, user_b):
     """get_dm_message returns message by id."""
     msg = await store.send_message(user_a, user_b, "test")
-    found = await store.get_dm_message(msg["id"])
+    found = await store.get_dm_message_unscoped(msg["id"])
     assert found is not None
     assert found["sender_id"] == user_a
     assert found["receiver_id"] == user_b
 
-    not_found = await store.get_dm_message("nonexistent")
+    not_found = await store.get_dm_message_unscoped("nonexistent")
     assert not_found is None

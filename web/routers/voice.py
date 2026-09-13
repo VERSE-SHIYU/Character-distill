@@ -242,11 +242,11 @@ async def voice_synthesize(
         # 此前缺这道校验，任何登录用户传别人的 card_id 即可用其克隆音色合成。非属主与卡不
         # 存在同判 404（不用 403，避免靠状态码枚举 card_id）。校验须在下面吞异常的 try 之外，
         # 否则 HTTPException 会被 except 吞掉、静默退回 Edge TTS。
-        card = await storage.get_card(card_id)
-        if not card or card.get("user_id") != user["id"]:
+        card = await storage.get_card_owned(card_id, user["id"])
+        if not card:
             raise HTTPException(404, "角色卡不存在")
         try:
-            ref_json_str = await storage.get_session_voice_ref(card_id)
+            ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
             if ref_json_str:
                 ref_data = json.loads(ref_json_str)
                 ref_path = ref_data.get("path", "")
@@ -278,12 +278,12 @@ async def preview_ref_audio(
     voice_client: VoiceCloneClient = Depends(get_voice_client),
 ) -> Response:
     """Synthesize a test phrase using GPT-SoVITS with the card's reference audio."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "角色卡不存在")
 
-    ref_json_str = await storage.get_session_voice_ref(card_id)
+    ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
     if not ref_json_str:
         return JSONResponse({"error": "该角色尚未绑定参考音频"}, status_code=400)
 
@@ -317,12 +317,12 @@ async def get_ref_audio(
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Get reference audio info for a character card."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "角色卡不存在")
     try:
-        ref_json_str = await storage.get_session_voice_ref(card_id)
+        ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
         if ref_json_str:
             ref_data = json.loads(ref_json_str)
             if ref_data.get("path") and Path(ref_data["path"]).exists():
@@ -346,9 +346,9 @@ async def upload_ref_audio(
     Supports audio (wav/mp3/flac) and video (mp4/mov/avi/mkv/webm).
     Video files are auto-converted: audio track extracted to 16kHz mono wav.
     """
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "角色卡不存在")
 
     ext = Path(file.filename).suffix.lower() if file.filename else ""
@@ -404,12 +404,12 @@ async def delete_ref_audio(
     storage = Depends(get_storage),
 ) -> JSONResponse:
     """Delete reference audio for a character card."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "角色卡不存在")
     try:
-        ref_json_str = await storage.get_session_voice_ref(card_id)
+        ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
         if ref_json_str:
             ref_data = json.loads(ref_json_str)
             filepath = ref_data.get("path")

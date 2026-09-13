@@ -32,11 +32,11 @@ async def get_card_avatar(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get saved avatar for a card. Returns {data: base64_string} or 404."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
-    data = await storage.get_card_avatar(card_id)
+    data = await storage.get_card_avatar_owned(card_id, user["id"])
     if data is None:
         raise HTTPException(404, "Avatar not found")
     return {"data": data}
@@ -52,9 +52,9 @@ async def save_card_avatar(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Save avatar image (base64) for a card."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
     if not body.data or len(body.data) < 10:
         raise HTTPException(400, "Avatar data too short")
@@ -74,9 +74,9 @@ async def export_card(
     storage: StorageBase = Depends(get_storage),
 ) -> Response:
     """Export a character card's full JSON as a downloadable file."""
-    record = await storage.get_card(card_id)
+    record = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not record or record.get("user_id") != user["id"]:
+    if not record:
         raise HTTPException(404, "Card not found")
 
     # Parse card_json to extract the character name
@@ -135,9 +135,9 @@ async def get_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get a character card by ID."""
-    card = await storage.get_card(card_id)
+    card = await storage.get_card_owned(card_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if not card or card.get("user_id") != user["id"]:
+    if not card:
         raise HTTPException(404, "Card not found")
     return card
 

@@ -94,8 +94,22 @@ class StorageBase(ABC):
         """Save a character card and return the stored record."""
 
     @abstractmethod
-    async def get_card(self, id: str) -> dict | None:
-        """Get a card record by ID."""
+    async def get_card_unscoped(self, id: str) -> dict | None:
+        """Get a card record by ID, with no ownership filter.
+
+        Only for callers with no user context (storage internals, admin
+        cross-owner paths, public endpoints, MCP, scripts). Anything reachable
+        from a logged-in request must use get_card_owned instead.
+        """
+
+    @abstractmethod
+    async def get_card_owned(self, id: str, user_id: str) -> dict | None:
+        """Get a card record by ID only if it belongs to user_id.
+
+        Ownership is filtered in SQL. Returns None both when the card does not
+        exist and when it belongs to someone else — the caller decides whether
+        that becomes 404 or 403.
+        """
 
     @abstractmethod
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
@@ -434,10 +448,20 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def get_distill_task(self, task_id: str) -> dict | None:
-        """Return one distillation task row by task_id, or None if absent.
+    async def get_distill_task_unscoped(self, task_id: str) -> dict | None:
+        """Return one distillation task row by task_id, with no ownership filter.
 
         Row includes chunk_size/overlap/text_fingerprint for the resume task gate.
+        Tests read back with this; anything reachable from a logged-in request
+        must use get_distill_task_owned instead.
+        """
+
+    @abstractmethod
+    async def get_distill_task_owned(self, task_id: str, user_id: str) -> dict | None:
+        """Return one distillation task row by task_id only if it belongs to user_id.
+
+        Ownership is filtered in SQL. Returns None both when the task does not
+        exist and when it belongs to someone else.
         """
 
     @abstractmethod

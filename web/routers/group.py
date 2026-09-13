@@ -75,10 +75,8 @@ async def _rebuild_group_session(
     from core.group_session import GroupSession
     from deps import get_rag_config, get_memory_manager
 
-    session = await storage.get_group_session(group_id)
+    session = await storage.get_group_session_owned(group_id, user_id)
     if not session:
-        return None
-    if session.get("user_id") != user_id:
         return None
 
     per_user_llm = await get_user_llm(user_id, storage)
@@ -108,7 +106,8 @@ async def _rebuild_group_session(
         # Skip the played character — user is that character, not AI
         if persona_type == "character" and card_id == persona_card_id:
             try:
-                card_rec = await storage.get_card(card_id)
+                # 人设卡 id 来自会话 card_ids，创建时已验属主；同一属主谓词收窄。
+                card_rec = await storage.get_card_owned(card_id, user_id)
                 if card_rec:
                     card = CharacterCard.model_validate_json(card_rec["card_json"])
                     played_card_name = card.name
@@ -116,10 +115,8 @@ async def _rebuild_group_session(
                 pass
             continue
 
-        card_rec = await storage.get_card(card_id)
+        card_rec = await storage.get_card_owned(card_id, user_id)
         if not card_rec:
-            continue
-        if card_rec.get("user_id") != user_id:
             continue
         try:
             card = CharacterCard.model_validate_json(card_rec["card_json"])
@@ -295,9 +292,9 @@ async def create_group(
     played_card_name = ""
 
     for card_id in req.card_ids:
-        card_rec = await storage.get_card(card_id)
+        card_rec = await storage.get_card_owned(card_id, user_id)
         # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
-        if not card_rec or card_rec.get("user_id") != user_id:
+        if not card_rec:
             raise HTTPException(404, f"角色卡 {card_id} 不存在")
 
         try:
@@ -397,8 +394,8 @@ async def _filter_valid_card_ids(groups: list[dict], user_id: str, storage: Stor
     valid: set[str] = set()
     for cid in all_ids:
         try:
-            card = await storage.get_card(cid)
-            if card and card.get("user_id") == user_id:
+            card = await storage.get_card_owned(cid, user_id)
+            if card:
                 valid.add(cid)
         except Exception:
             pass
@@ -441,8 +438,8 @@ async def cleanup_orphan_card_ids(
     valid: set[str] = set()
     for cid in all_ids:
         try:
-            card = await storage.get_card(cid)
-            if card and card.get("user_id") == user_id:
+            card = await storage.get_card_owned(cid, user_id)
+            if card:
                 valid.add(cid)
         except Exception:
             pass
@@ -484,7 +481,7 @@ async def send_message(
     if req.target_card_id not in group.engines:
         raise HTTPException(400, "目标角色不在群聊中")
 
-    session_rec = await storage.get_group_session(group_id)
+    session_rec = await storage.get_group_session_owned(group_id, user_id)
     if session_rec and session_rec.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")
 
@@ -552,7 +549,7 @@ async def broadcast_message(
     if invalid:
         raise HTTPException(400, f"目标角色不在群聊中: {invalid}")
 
-    session_rec = await storage.get_group_session(group_id)
+    session_rec = await storage.get_group_session_owned(group_id, user_id)
     if session_rec and session_rec.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")
 
@@ -647,9 +644,9 @@ async def list_group_affinities(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List all characters' affinity / stage in this group."""
-    session_rec = await storage.get_group_session(group_id)
+    session_rec = await storage.get_group_session_owned(group_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
-    if not session_rec or session_rec.get("user_id") != user["id"]:
+    if not session_rec:
         raise HTTPException(404, "群聊不存在")
 
     card_ids: list[str] = session_rec.get("card_ids", [])
@@ -680,9 +677,9 @@ async def toggle_reaction(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Toggle a reaction emoji on a message."""
-    session = await storage.get_group_session(group_id)
+    session = await storage.get_group_session_owned(group_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
-    if not session or session.get("user_id") != user["id"]:
+    if not session:
         raise HTTPException(404, "群聊不存在")
 
     if not req.emoji.strip():
@@ -700,9 +697,9 @@ async def get_history(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """获取群聊历史消息。"""
-    session = await storage.get_group_session(group_id)
+    session = await storage.get_group_session_owned(group_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
-    if not session or session.get("user_id") != user["id"]:
+    if not session:
         raise HTTPException(404, "群聊不存在")
 
     if session.get("deleted_at"):
@@ -740,9 +737,9 @@ async def rename_group(
     """重命名群聊。"""
     if not req.name.strip():
         raise HTTPException(400, "名称不能为空")
-    session = await storage.get_group_session(group_id)
+    session = await storage.get_group_session_owned(group_id, user["id"])
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 group_id 存在。
-    if not session or session.get("user_id") != user["id"]:
+    if not session:
         raise HTTPException(404, "群聊不存在")
     if session.get("deleted_at"):
         raise HTTPException(410, "群聊已被删除")

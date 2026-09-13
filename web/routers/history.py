@@ -200,7 +200,7 @@ async def resume_session(
         raise HTTPException(404, "Session not found")
 
     card_id = db_session["card_id"]
-    card_rec = await storage.get_card(card_id)
+    card_rec = await storage.get_card_owned(card_id, user_id)
     if not card_rec:
         raise HTTPException(404, "Card not found")
 

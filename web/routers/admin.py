@@ -847,7 +847,7 @@ async def admin_review_approve(
     """Approve a flagged card: writes a 'pass' row so the publish gate (latest
     review_log == 'flag') lifts. Only admins may clear a flag — this is the sole
     unlock for the manual-review queue."""
-    card = await storage.get_card(req.card_id)
+    card = await storage.get_card_unscoped(req.card_id)
     if not card:
         raise HTTPException(404, "Card not found")
     from storage.base import new_review_id

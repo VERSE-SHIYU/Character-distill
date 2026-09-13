@@ -460,7 +460,7 @@ class TestEResumeGate:
         assert resp.json()["task_id"] == task_id      # 仍复用原 id（不是新铸）
         assert cands is None
         assert "切分参数变更" in capsys.readouterr().out
-        assert _run_async(store.get_distill_task(task_id))["chunk_size"] == 3000
+        assert _run_async(store.get_distill_task_unscoped(task_id))["chunk_size"] == 3000
 
     def test_text_change_rejects_even_if_chunk_fp_wellformed(self, store, user_id,
                                                             monkeypatch, capsys):
@@ -482,7 +482,7 @@ class TestEResumeGate:
         assert resp.json()["task_id"] == task_id
         assert cands is None
         assert "原文变更" in capsys.readouterr().out
-        assert _run_async(store.get_distill_task(task_id))["text_fingerprint"] == text_fingerprint(body)
+        assert _run_async(store.get_distill_task_unscoped(task_id))["text_fingerprint"] == text_fingerprint(body)
 
     def test_matching_checkpoint_loads_candidates(self, store, user_id, monkeypatch):
         """正向对照：任务级门全过 → 分片行真的被读成候选（防上面两条门测试空过）。"""
@@ -695,7 +695,7 @@ class TestFPerUserGate:
             )
             assert resp.status_code == 200, resp.text
             threads[-1].join(timeout=30)
-            rows.append(_run_async(store.get_distill_task(resp.json()["task_id"])))
+            rows.append(_run_async(store.get_distill_task_unscoped(resp.json()["task_id"])))
 
         assert sem.acquires == 4
         for i in range(3):
@@ -782,7 +782,7 @@ class TestGRaceStaleWriteAfterDelete:
         prog = _run_async(_race())
 
         assert prog["at_delete"] > 0, "删除必须落在 writer 运行期间，否则退化成顺序场景"
-        assert _run_async(store.get_distill_task(task_id)) is None
+        assert _run_async(store.get_distill_task_unscoped(task_id)) is None
         assert _run_async(store.get_distill_chunks(task_id)) == []
         assert _run_async(store.count_running_distills(user_id)) == 0
 

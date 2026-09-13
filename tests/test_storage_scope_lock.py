@@ -35,10 +35,45 @@ UNSCOPED_ALLOWLIST = {
         "存储层导出原语，签名里没有 user；属主校验由调用方端点 history.py:export_session 用 get_session_owned 完成",
     "storage/postgres_store.py:export_session":
         "同上（PG 实现）",
+    "storage/sqlite_store.py:save_card":
+        "写后回读自身刚 upsert 的行填返回值；此刻加身份过滤会误伤 user_id='' 的匿名卡",
+    "storage/postgres_store.py:save_card":
+        "同上（PG 实现）",
+    "storage/sqlite_store.py:update_card":
+        "写后回读自身刚更新的行填返回值；签名里没有 user_id，无处传身份",
+    "storage/postgres_store.py:update_card":
+        "同上（PG 实现）",
+    "storage/sqlite_store.py:fork_card":
+        "深拷贝源卡是**他人**的公开卡（fork 的语义就是复制别人的），身份过滤会把源卡滤没",
+    "storage/postgres_store.py:fork_card":
+        "同上（PG 实现）",
     "mcp_server/server.py:_toolkit_for":
         "MCP stdio 通道无身份语境：进程级服务，按 card_id 路由，可服务任意已蒸馏卡",
+    "mcp_server/client_demo.py:_case_a_routing_isolation":
+        "演示脚本，无登录语境，按 card_id 取卡验证 toolkit 路由隔离",
+    "scripts/diag_tool_use.py:load_card":
+        "诊断脚本，card_id 由命令行传入，无登录语境",
+    "scripts/run_agent_eval.py:load_card":
+        "评测脚本，card_id 由命令行传入，无登录语境",
     "web/routers/text.py:get_text_deletion_impact":
         "admin 跨属主查看删除影响的显式逃生口：先 get_text_owned，拿不到且 user.is_admin 时才落到这里",
+    "web/routers/admin.py:admin_review_approve":
+        "管理员复核任意用户被 flag 的卡 —— 跨属主就是该职责本身",
+    "web/routers/inter_node.py:receive_dm":
+        "跨节点 DM 同步信道：HMAC 鉴权无用户身份，按 msg_id 幂等去重",
+    "web/routers/message.py:retract_dm_message":
+        "撤回是「仅发送者」的公开规则，非发送者（含非收发双方）须 403 而非 404；"
+        "身份过滤会把 403 变 404，故显式无身份读",
+    "web/routers/market.py:get_book_versions":
+        "公开端点（声明「不需登录」）：按 card_id 取 text_id，随后只返回 public 版本",
+    "web/routers/market.py:at_reply":
+        "@ 回复只读卡设定：src 卡取 text_id，at 卡已验 visibility=='public'，无属主语义",
+    "web/routers/market.py:like_card":
+        "点赞对象是他人公开卡（market 语义），身份过滤会把公开卡滤没",
+    "web/routers/market.py:delete_comment":
+        "管理员跨属主删评论的显式逃生口：非管理员走 get_comment_owned（评论作者∨卡作者）",
+    "web/routers/market.py:delete_market_card":
+        "管理员跨属主下架的显式逃生口：非管理员走 get_card_owned",
     "tests/*":
         "测试直接构造/读写资源，没有登录语境，按定义就该用 *_unscoped",
 }

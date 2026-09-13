@@ -182,7 +182,8 @@ async def _toolkit_for(card_id: str):
     if cached is not None:
         return cached
 
-    card_rec = await _get_storage().get_card(card_id)
+    # _unscoped：MCP stdio 通道无身份语境，按 card_id 路由，可服务任意已蒸馏卡。
+    card_rec = await _get_storage().get_card_unscoped(card_id)
     if not card_rec:
         raise _NoCardError(f"card not found：{card_id!r}")
 

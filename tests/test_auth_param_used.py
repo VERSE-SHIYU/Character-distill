@@ -13,7 +13,6 @@ import pathlib
 ALLOWLIST = {
     "auth.py:get_announcement",     # 全局公告
     "market.py:get_card_forks",     # 公开 fork 列表
-    "market.py:list_post_comments", # 公开帖评论
     "voice.py:voice_status",        # 全局服务状态
     "voice.py:speech_to_text",      # 全局 ASR
 }

@@ -114,7 +114,7 @@ class TestFullUserFlow:
         assert len(cards) == 2
 
         # Get individual card
-        card = await store.get_card(card_ids[0])
+        card = await store.get_card_unscoped(card_ids[0])
         assert card is not None
         assert card["name"] == "Alice"
 

@@ -458,6 +458,87 @@ class TestDefect19PrimitiveLeaks:
         assert r.json()["versions"] == [], f"非属主拿到了他人卡的版本历史：{r.json()}"
 
 
+class TestDefect19Commit2OwnedPrimitives:
+    """commit 2：B1 其余九个原语补齐 `*_owned`，判据 = **SQL 层就过滤**。
+
+    每条都在真实 SQLiteStore 上跑：非属主（或匿名 None）读不到、属主读得到。把任一
+    对应 SQL 里的身份谓词删掉，该用例即红 —— 这就是它的红源。路由级用例（本文件
+    test_01~25、test_ownership_404.py）只保证调用点接上了 `*_owned`，锁不住 SQL。
+    """
+
+    def test_26_card_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        assert _run_async(store.get_card_owned(cid, user_a))["id"] == cid
+        assert _run_async(store.get_card_owned(cid, user_b)) is None
+
+    def test_27_card_avatar_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        _run_async(store.save_card_avatar(cid, "QVhBVkFUQVI="))
+        assert _run_async(store.get_card_avatar_owned(cid, user_a)) == "QVhBVkFUQVI="
+        assert _run_async(store.get_card_avatar_owned(cid, user_b)) is None
+
+    def test_28_session_voice_ref_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        _run_async(store.update_session_voice_ref(cid, '{"path": "/x.wav"}'))
+        assert _run_async(store.get_session_voice_ref_owned(cid, user_a)) == '{"path": "/x.wav"}'
+        assert _run_async(store.get_session_voice_ref_owned(cid, user_b)) is None
+
+    def test_29_group_session_owned_sql_filter(self, store, user_a, user_b):
+        gid = _create_group(store, user_a)
+        assert _run_async(store.get_group_session_owned(gid, user_a))["name"] == "群聊A"
+        assert _run_async(store.get_group_session_owned(gid, user_b)) is None
+
+    def test_30_dm_message_owned_is_multiway(self, store, user_a, user_b, user_c):
+        """DM 的属主是**收发双方**：会话外第三人读不到。"""
+        mid = _run_async(store.send_message(user_a, user_b, "悄悄话"))["id"]
+        assert _run_async(store.get_dm_message_owned(mid, user_a)) is not None
+        assert _run_async(store.get_dm_message_owned(mid, user_b)) is not None
+        assert _run_async(store.get_dm_message_owned(mid, user_c)) is None
+
+    def test_31_distill_task_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        tsk = f"dt_{uuid.uuid4().hex}"
+        _run_async(store.create_distill_task(tsk, user_a, tid))
+        assert _run_async(store.get_distill_task_owned(tsk, user_a))["task_id"] == tsk
+        assert _run_async(store.get_distill_task_owned(tsk, user_b)) is None
+
+    def test_32_comment_owned_is_multiway(self, store, user_a, user_b, user_c):
+        """评论的属主是**评论作者 ∨ 卡作者**（删除权限，见 market.delete_comment）。"""
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        cmid = _run_async(store.add_comment(cid, user_b, "B", "路过"))["id"]
+        assert _run_async(store.get_comment_owned(cmid, user_a)) is not None  # 卡作者
+        assert _run_async(store.get_comment_owned(cmid, user_b)) is not None  # 评论作者
+        assert _run_async(store.get_comment_owned(cmid, user_c)) is None
+
+    def test_33_comments_owned_is_visibility_narrowed(self, store, user_a, user_b):
+        """公开列表：公开卡评论任何人可读，私卡评论只给卡主，匿名只命中公开分支。"""
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)  # 默认 private
+        _run_async(store.add_comment(cid, user_b, "B", "私卡评论"))
+        assert len(_run_async(store.get_comments_owned(cid, user_a))) == 1
+        assert _run_async(store.get_comments_owned(cid, user_b)) == []
+        assert _run_async(store.get_comments_owned(cid, None)) == []
+        _run_async(store.update_card_visibility(cid, "public"))
+        assert len(_run_async(store.get_comments_owned(cid, user_b))) == 1
+        assert len(_run_async(store.get_comments_owned(cid, None))) == 1
+
+    def test_34_post_comments_owned_is_visibility_narrowed(self, store, user_a, user_b):
+        """帖子同范式：私密帖评论只给发帖人，公开帖评论任何人可读。"""
+        priv = _run_async(store.add_post(user_a, "私密帖", "private"))["id"]
+        pub = _run_async(store.add_post(user_a, "公开帖", "public"))["id"]
+        _run_async(store.add_post_comment(priv, user_b, "B", "私帖评论"))
+        _run_async(store.add_post_comment(pub, user_b, "B", "公开帖评论"))
+        assert len(_run_async(store.get_post_comments_owned(priv, user_a))) == 1
+        assert _run_async(store.get_post_comments_owned(priv, user_b)) == []
+        assert _run_async(store.get_post_comments_owned(priv, None)) == []
+        assert len(_run_async(store.get_post_comments_owned(pub, user_b))) == 1
+        assert len(_run_async(store.get_post_comments_owned(pub, None))) == 1
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Control: User A can access own resources; nonexistent IDs return 404
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -525,7 +606,7 @@ class TestErrorSanitization:
         async def _broken(*args, **kwargs):
             raise RuntimeError("秘密密码: postgres://user:pass@prod-db:5432/charsim")
 
-        monkeypatch.setattr(store, "get_card", _broken)
+        monkeypatch.setattr(store, "get_card_owned", _broken)
         r = client_a_no_raise.get(f"/api/cards/{cid}")
         assert r.status_code == 500, f"Expected 500, got {r.status_code}: {r.json()}"
         detail = r.json().get("detail", "")
@@ -549,7 +630,7 @@ class TestErrorSanitization:
         async def _broken(*args, **kwargs):
             raise RuntimeError("内部爆炸")
 
-        monkeypatch.setattr(store, "get_card", _broken)
+        monkeypatch.setattr(store, "get_card_owned", _broken)
         r = client_c_no_raise.get(f"/api/cards/{cid}")
         assert r.status_code == 500, f"Expected 500, got {r.status_code}"
         text = r.text

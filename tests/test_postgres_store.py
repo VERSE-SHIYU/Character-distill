@@ -177,12 +177,12 @@ class TestCardCrud:
         result = await store.save_card(card_id, text_id, "Alice", card_json, user_id="usr1")
         assert result.get("id") == card_id
 
-        got = await store.get_card(card_id)
+        got = await store.get_card_unscoped(card_id)
         assert got is not None
         assert got["name"] == "Alice"
 
     async def test_get_card_not_found(self, store):
-        got = await store.get_card("nonexistent")
+        got = await store.get_card_unscoped("nonexistent")
         assert got is None
 
     async def test_get_cards_by_text(self, store, text_id):
@@ -309,10 +309,10 @@ class TestUserPurgeDistillCascade:
         assert counts["distill_tasks"] == 1
         assert counts["distill_chunks"] == 2
 
-        assert await store.get_distill_task("dt_pg1") is None
+        assert await store.get_distill_task_unscoped("dt_pg1") is None
         assert await store.get_distill_chunks("dt_pg1") == []
         # 其它用户的蒸馏行不受影响
-        assert await store.get_distill_task("dt_pg2") is not None
+        assert await store.get_distill_task_unscoped("dt_pg2") is not None
         assert len(await store.get_distill_chunks("dt_pg2")) == 1
 
     async def test_text_deletion_impact_counts_distill_rows(self, store, text_id, user_id):
@@ -387,7 +387,7 @@ class TestGroupSessionCrud:
         gid = f"grp_{uuid.uuid4().hex}"
         await store.create_group_session(gid, "Test Group", ["card1", "card2"], user_id="")
 
-        got = await store.get_group_session(gid)
+        got = await store.get_group_session_owned(gid, "")
         assert got is not None
         assert got["name"] == "Test Group"
 
@@ -446,15 +446,15 @@ class TestDistillTaskPersistence:
         row = await store.create_distill_task(task_id, user_id, text_id, character="角色A")
         assert row["task_id"] == task_id and row["status"] == "queued"
 
-        got = await store.get_distill_task(task_id)
+        got = await store.get_distill_task_unscoped(task_id)
         assert got is not None and got["character"] == "角色A"
 
         assert await store.update_distill_task(task_id, progress_pct=42, message="跑到一半") == 1
-        got2 = await store.get_distill_task(task_id)
+        got2 = await store.get_distill_task_unscoped(task_id)
         assert got2["progress_pct"] == 42 and got2["message"] == "跑到一半"
         assert got2["status"] == "queued"  # untouched field preserved
         await store.update_distill_task(task_id, status="done", progress_pct=100)
-        got3 = await store.get_distill_task(task_id)
+        got3 = await store.get_distill_task_unscoped(task_id)
         assert got3["status"] == "done" and got3["message"] == "跑到一半"
 
     async def test_create_duplicate_id_raises(self, store, text_id, user_id):
@@ -473,12 +473,12 @@ class TestDistillTaskPersistence:
         task_id = f"dt_{uuid.uuid4().hex}"
         await store.create_distill_task(task_id, user_id, text_id, character="A",
                                         chunk_size=8000, overlap=500, text_fingerprint="fp_full")
-        got = await store.get_distill_task(task_id)
+        got = await store.get_distill_task_unscoped(task_id)
         assert got["chunk_size"] == 8000 and got["overlap"] == 500
         assert got["text_fingerprint"] == "fp_full"
 
         await store.update_distill_task(task_id, status="running", progress_pct=50)
-        got2 = await store.get_distill_task(task_id)
+        got2 = await store.get_distill_task_unscoped(task_id)
         assert got2["chunk_size"] == 8000 and got2["overlap"] == 500
         assert got2["text_fingerprint"] == "fp_full"
 
@@ -534,7 +534,7 @@ class TestDistillTaskPersistence:
         assert await store.count_running_distills(user_id) == 0
 
     async def test_get_nonexistent(self, store, user_id):
-        assert await store.get_distill_task(f"dt_{uuid.uuid4().hex}") is None
+        assert await store.get_distill_task_unscoped(f"dt_{uuid.uuid4().hex}") is None
         assert await store.get_distill_chunks(f"dt_{uuid.uuid4().hex}") == []
         assert await store.count_running_distills(f"usr_{uuid.uuid4().hex}") == 0
 
@@ -558,7 +558,7 @@ class TestDistillTaskPersistence:
         await store.create_distill_task(task_id, user_id, text_id, character="A",
                                       status="done", progress_pct=100, message="完成",
                                       card_id="cardX", awakening="你醒了？")
-        got = await store.get_distill_task(task_id)
+        got = await store.get_distill_task_unscoped(task_id)
         assert got["card_id"] == "cardX" and got["awakening"] == "你醒了？"
 
     async def test_mark_interrupted_flips_running(self, store, text_id, user_id):
@@ -567,7 +567,7 @@ class TestDistillTaskPersistence:
         await store.create_distill_task(b, user_id, text_id, status="done")
         await store.create_distill_task(c, user_id, text_id, status="interrupted")
         assert await store.mark_interrupted_distills() == 1
-        got = await store.get_distill_task(a)
+        got = await store.get_distill_task_unscoped(a)
         assert got["status"] == "interrupted"
         assert "重启" in got["message"]
         assert await store.count_running_distills(user_id) == 0
@@ -607,9 +607,9 @@ class TestDistillTaskPersistence:
         await store.create_distill_task(z, user_id, text_id, status="done")
         n = await store.cancel_distills_by_text_id(text_id)
         assert n == 2
-        assert (await store.get_distill_task(x))["status"] == "error"
-        assert (await store.get_distill_task(y))["status"] == "error"
-        assert (await store.get_distill_task(z))["status"] == "done"
+        assert (await store.get_distill_task_unscoped(x))["status"] == "error"
+        assert (await store.get_distill_task_unscoped(y))["status"] == "error"
+        assert (await store.get_distill_task_unscoped(z))["status"] == "done"
 
     async def test_hard_delete_purges_distill_rows_and_chunks(self, store):
         # 改动 C：硬删文本 → 该 text 的 distill 两表清零，别的 text 不受影响。
@@ -625,9 +625,9 @@ class TestDistillTaskPersistence:
 
         assert await store.hard_delete_text(ta) is True
 
-        assert await store.get_distill_task(va) is None
+        assert await store.get_distill_task_unscoped(va) is None
         assert await store.get_distill_chunks(va) == []
-        assert (await store.get_distill_task(vb))["task_id"] == vb
+        assert (await store.get_distill_task_unscoped(vb))["task_id"] == vb
         assert len(await store.get_distill_chunks(vb)) == 1
 
     async def test_hard_delete_nonexistent_text_no_raise(self, store):
@@ -640,7 +640,7 @@ class TestDistillTaskPersistence:
         v = f"dt_{uuid.uuid4().hex}"
         await store.create_distill_task(v, "u1", tid, status="done")
         assert await store.delete_text(tid) is True
-        assert (await store.get_distill_task(v))["task_id"] == v
+        assert (await store.get_distill_task_unscoped(v))["task_id"] == v
 
 
 # ── 交错竞态（6.2 / 6.4#3，PG 专属）：写入循环运行期间删文本 → 两表零行 ─────────

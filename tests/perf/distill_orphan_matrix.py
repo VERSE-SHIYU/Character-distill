@@ -54,7 +54,7 @@ async def _seed(store, uid):
 
 
 async def _count(store, dtid):
-    task = await store.get_distill_task(dtid)
+    task = await store.get_distill_task_unscoped(dtid)
     chunks = await store.get_distill_chunks(dtid)
     return (1 if task else 0), len(chunks)
 

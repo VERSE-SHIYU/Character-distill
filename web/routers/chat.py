@@ -166,7 +166,7 @@ async def _ensure_session(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     card_id = db_session["card_id"]
-    card_rec = await storage.get_card(card_id)
+    card_rec = await storage.get_card_owned(card_id, user_id)
     if not card_rec:
         raise HTTPException(404, "Card not found")
     text_rec = await storage.get_text_owned(card_rec["text_id"], user_id)

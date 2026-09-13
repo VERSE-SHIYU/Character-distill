@@ -161,9 +161,9 @@ async def react_to_dm(
     if not req.emoji.strip():
         raise HTTPException(400, "Emoji cannot be empty")
 
-    msg = await storage.get_dm_message(message_id)
+    msg = await storage.get_dm_message_owned(message_id, user["id"])
     # 非收发双方与不存在同判 404：403 会让人靠状态码枚举出 message_id 存在。
-    if not msg or (msg["sender_id"] != user["id"] and msg["receiver_id"] != user["id"]):
+    if not msg:
         raise HTTPException(404, "消息不存在")
 
     added = await storage.toggle_dm_reaction(message_id, user["id"], req.emoji)
@@ -180,7 +180,9 @@ async def retract_dm_message(
 ) -> dict:
     """Retract a direct message (sender only). Only enqueues cross-border
     propagation if sender and receiver are in different regions."""
-    msg = await storage.get_dm_message(message_id)
+    # 撤回只有发送者一条规则、且是对外可公开的规则，不是资源归属 —— 非发送者一律 403
+    # （含非收发双方），故这里必须无身份读，不能换成 get_dm_message_owned（那会把 403 变 404）。
+    msg = await storage.get_dm_message_unscoped(message_id)
     if not msg:
         raise HTTPException(404, "消息不存在")
     if msg["sender_id"] != user["id"]:

@@ -41,7 +41,7 @@ async def receive_dm(
         raise HTTPException(400, "Missing required message fields")
 
     # Idempotent insert: ON CONFLICT DO NOTHING via store check
-    existing = await storage.get_dm_message(msg_id)
+    existing = await storage.get_dm_message_unscoped(msg_id)
     if existing:
         return {"ok": True, "duplicate": True}
 

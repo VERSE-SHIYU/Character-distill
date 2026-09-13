@@ -121,7 +121,7 @@ class TestOutputWhitelist:
     def test_spread_of_row_would_leak(self, store, user_id):
         """对照：直接把 DB 行 spread 出去确实会带 user_id —— 证明上面那条有判别力。"""
         task_id = _seed(store, user_id, status="done", pct=100)
-        row = _run_async(store.get_distill_task(task_id))
+        row = _run_async(store.get_distill_task_unscoped(task_id))
         assert "user_id" in row                      # 行里本就有
         assert "user_id" not in D._task_response(row)  # 白名单把它挡在外面
 
@@ -132,7 +132,7 @@ class TestFieldSetMatchesContract:
     def test_item_equals_task_response_of_db_row(self, store, user_id):
         """每一项必须逐字段等于 _task_response(DB 行) —— 不另起字段集。"""
         task_id = _seed(store, user_id, status="error", pct=37, message="蒸馏失败: x")
-        row = _run_async(store.get_distill_task(task_id))
+        row = _run_async(store.get_distill_task_unscoped(task_id))
         expected = D._task_response(row)
         item = _build_client(store).get("/api/admin/tasks").json()["tasks"][0]
         assert item == expected

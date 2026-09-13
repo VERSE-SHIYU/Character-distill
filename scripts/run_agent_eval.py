@@ -604,8 +604,8 @@ def write_raw(results: list[CaseResult], raw_path: Path) -> None:
 async def load_card(card_id: str) -> CharacterCard:
     """从存储加载角色卡。"""
     storage = get_store()
-    # SQLiteStore.get_card 是 async
-    card_rec = await storage.get_card(card_id)
+    # SQLiteStore.get_card_unscoped 是 async
+    card_rec = await storage.get_card_unscoped(card_id)
     if not card_rec:
         print(f"Card {card_id} not found in storage.")
         sys.exit(1)

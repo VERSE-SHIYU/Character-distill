@@ -77,8 +77,8 @@ async def _case_a_routing_isolation() -> None:
     print(f"  -> toolkit 不同实例：{distinct}")
     assert distinct, "两卡 toolkit 是同一实例 —— 未按 card_id 隔离"
 
-    tid_a = (await st.get_card(DEFAULT_CARD_A)).get("text_id")
-    tid_b = (await st.get_card(DEFAULT_CARD_B)).get("text_id")
+    tid_a = (await st.get_card_unscoped(DEFAULT_CARD_A)).get("text_id")
+    tid_b = (await st.get_card_unscoped(DEFAULT_CARD_B)).get("text_id")
     ra_engine, rb_engine = ta._ctx.rag, tb._ctx.rag
     print(f"  -> rag 引擎不同实例：{ra_engine is not rb_engine}  "
           f"target=text_{tid_a} vs text_{tid_b}")
