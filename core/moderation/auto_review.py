@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.utils import try_record_usage
 
 _REVIEW_SYSTEM_PROMPT = (
     "你是一个内容审核助手。你收到的内容是角色卡 JSON，包含角色的设定、性格、背景等信息。"
@@ -19,12 +20,14 @@ _REVIEW_SYSTEM_PROMPT = (
 )
 
 
-async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None = None) -> dict[str, Any]:
+async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None = None,
+                           storage: Any = None, user_id: str = "") -> dict[str, Any]:
     """Review a character card for policy violations.
 
     Args:
         card_json: The character card dict (name, personality, background, etc.)
         llm: Optional LLMAdapter instance. If None, imports the global one from deps.
+        storage/user_id: 记账归属上下文；缺省不记（调用方应传，否则这次审核花费不入账）。
 
     Returns:
         {"pass": bool, "reason": str}
@@ -45,6 +48,7 @@ async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None = N
 
     try:
         result = await llm.achat(_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
+        try_record_usage(storage, user_id, llm, "moderation_card_review", source="auto_review")
         import json as _json
         parsed = _json.loads(result.strip())
         return {
@@ -72,7 +76,8 @@ _SPLIT_REVIEW_SYSTEM_PROMPT = (
 )
 
 
-async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None = None) -> dict[str, Any]:
+async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None = None,
+                            storage: Any = None, user_id: str = "") -> dict[str, Any]:
     """Two-channel publish review: content (fail-open) + injection (fail-to-flag).
 
     Returns::
@@ -100,6 +105,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None = 
     review_text = _flatten_card(card_json)
     try:
         result = await llm.achat(_SPLIT_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
+        try_record_usage(storage, user_id, llm, "moderation_publish_review", source="auto_review")
         import json as _json
 
         parsed = _json.loads(result.strip())

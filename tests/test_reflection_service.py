@@ -18,12 +18,15 @@ class FakeMemory:
         self.enabled = True
         self._memories = memories or []
         self.reflect_captured: list[dict] | None = None
+        self.reflect_accounting: dict | None = None
 
     def get_all(self, card_id: str) -> list[dict]:
         return self._memories
 
-    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str) -> None:
+    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
+                storage=None, user_id: str = "") -> None:
         self.reflect_captured = recent_memories
+        self.reflect_accounting = {"storage": storage, "user_id": user_id}
 
 
 def _make_mem(importance: int = 5, assertion_confidence: int = 50, is_reflection: bool = False) -> dict:
@@ -173,3 +176,24 @@ class TestReflectionDualCondition:
         # 累加器归零
         assert svc._importance_acc == 0
         assert svc._rounds_since_reflect == 0
+
+    def test_forwards_accounting_context_to_memory_reflect(self):
+        """storage/user_id 必须透传下去 —— 反思在后台线程里跑 LLM，调用方事后补记不了。
+
+        不透传 = 这段 LLM 花费永远进不了 usage 表（缺陷 22 的形态，只是换了个入口）。
+        """
+        memories = [
+            _make_mem(importance=8, assertion_confidence=70),
+            _make_mem(importance=7, assertion_confidence=65),
+            _make_mem(importance=9, assertion_confidence=80),
+            _make_mem(importance=6, assertion_confidence=75),
+        ]
+        memory = FakeMemory(memories)
+        svc = ReflectionService(memory, "card_test")
+        svc._importance_acc = REFLECTION_THRESHOLD
+        svc._rounds_since_reflect = REFLECTION_MIN_ROUNDS
+
+        sentinel = object()
+        svc.maybe_reflect(1, FakeLLM(), "测试角色", storage=sentinel, user_id="u-42")
+
+        assert memory.reflect_accounting == {"storage": sentinel, "user_id": "u-42"}

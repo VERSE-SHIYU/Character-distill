@@ -22,7 +22,7 @@ from openai import AsyncOpenAI
 from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_facing_error
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
-from core.utils import try_record_usage
+from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
 from core import telemetry as T  # OTel context 传播点（ctx_thread/ctx_submit）
 
 # ── identify_characters TTL cache ───────────────────────────────────────
@@ -682,6 +682,8 @@ class Distiller:
         except Exception as exc:
             print(f"调用 LLM 进行角色识别失败：{exc}")
             raise
+        # 紧跟在调用后读 last_usage —— 下一次调用会覆盖它，攒着记必然串号
+        self._try_record_usage("distill_identify")
 
         try:
             result = _parse_list(reply)
@@ -692,6 +694,7 @@ class Distiller:
             except Exception as exc:
                 print(f"角色识别重试调用 LLM 失败：{exc}")
                 raise
+            self._try_record_usage("distill_identify")
             try:
                 result = _parse_list(reply_retry)
             except Exception as exc:
@@ -789,11 +792,14 @@ class Distiller:
                 break
             start = end
 
+        usages: list[dict | None] = []
+
         async def _resolve_chunk(chunk_text: str) -> str:
-            result, _ = await self._llm.async_chat(
+            result, usage = await self._llm.async_chat(
                 system_prompt,
                 [{"role": "user", "content": chunk_text}],
             )
+            usages.append(usage)
             return result
 
         async def _resolve_all():
@@ -816,13 +822,20 @@ class Distiller:
         except RuntimeError:
             loop = None
 
-        if loop and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                # OTel context 传播点：submit 不拷贝 contextvar → ctx_submit
-                results = T.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
-        else:
-            results = asyncio.run(_resolve_all())
+        try:
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    # OTel context 传播点：submit 不拷贝 contextvar → ctx_submit
+                    results = T.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
+            else:
+                results = asyncio.run(_resolve_all())
+        finally:
+            # 分片级并发调用整个烧掉的那段 token 在这里补记：整阶段汇总一条 + 调用次数。
+            # 放 finally —— gather 半途炸掉时已完成的分片也是花掉的钱，不记即系统性偏低。
+            merged = aggregate_usage(usages, len(usages))
+            if merged is not None:
+                self._try_record_usage("distill_coref", merged)
 
         return "".join(results)
 
@@ -937,6 +950,9 @@ class Distiller:
         ]
 
         yield from self._llm.chat_stream(system_prompt, user_messages, max_tokens=self.CARD_MAX_TOKENS)
+        # 流耗尽后 last_usage 才可读（_distill_longcontext_stream 同形）——生成器被消费方
+        # 半途丢弃时这行不会执行，与既有的流式记账口径一致，不额外兜底。
+        self._try_record_usage("distill_stream")
 
     def generate_opening(self, card_json: dict, user_role: str) -> str:
         """Generate context-aware opening based on character card + user role."""
@@ -956,10 +972,12 @@ class Distiller:
             "要体现你对这个人的态度和你们之间的关系。"
             "直接说台词，不要旁白、不要动作描写。30字以内。"
         )
-        return self._llm.chat(
+        reply = self._llm.chat(
             f"你是「{name}」，请严格按照角色设定说话。只输出一句开场白，不要任何额外内容。",
             [{"role": "user", "content": prompt}],
         )
+        self._try_record_usage("distill_opening")
+        return reply
 
     # ── Auto-tagging ───────────────────────────────────────────────────
 
@@ -1050,6 +1068,7 @@ class Distiller:
                 "你是一个角色分类助手。只返回JSON数组，不要任何其他内容。",
                 [{"role": "user", "content": prompt}],
             )
+            self._try_record_usage("distill_autotag")
             import re
             m = re.search(r"\[.*?\]", reply.strip(), re.DOTALL)
             if m:
@@ -1081,6 +1100,7 @@ class Distiller:
         done_count = [0]
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
+        usages: list[dict | None] = []
         map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
         map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
@@ -1088,23 +1108,33 @@ class Distiller:
             async with sem:
                 system = map_system_fn(character_name)
                 user = map_user_fn(chunk, character_name)
+                usage = None
                 try:
-                    result, _ = await self._llm.async_chat(
+                    result, usage = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}], client=client
                     )
                 except Exception as exc:
                     print(f"[distiller] Map chunk {i} failed: {exc}")
+                    # 失败分片照样烧了 token（重试墙下空烧 26–100s）—— prompt 侧按字符
+                    # 估算补记，completion 未知记 0 并标 estimated。只记成功 = 统计系统性偏低。
+                    usage = estimate_usage_from_chars(len(system) + len(user))
                     async with lock:
                         failures.append((i, exc))
                     result = ""
             async with lock:
                 done_count[0] += 1
+                usages.append(usage)
             if on_chunk_done:
                 on_chunk_done(i, result)
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
         results = await asyncio.gather(*tasks)
+        # Map 是 MapReduce 里最烧 token 的一段：整阶段汇总一条 + 调用次数（不是分片数 ——
+        # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
+        merged = aggregate_usage(usages, len(usages))
+        if merged is not None:
+            self._try_record_usage("distill_map", merged)
         return results, failures
 
     async def _run_reduce_concurrent(
@@ -1338,16 +1368,24 @@ class Distiller:
 
         # Compress if needed
         if len(profile_draft) > max_profile_len:
+            compress_system = (
+                f"压缩以下「{character_name}」的角色档案到{max_profile_len}字以内。\n"
+                "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
+                "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
+                "合并重复信息，但不要删除矛盾点。"
+            )
+            compress_user = f"请压缩到{max_profile_len}字以内：\n\n{profile_draft}"
+            # 失败被吞（fails open）也要落账 —— 先备好估算值，成功再换成真实值。
+            # 一条记录覆盖两条路径：两条记录会让「只摘一条」看不出缺口。
+            compress_usage = estimate_usage_from_chars(len(compress_system) + len(compress_user))
             try:
                 profile_draft = self._llm.chat(
-                    f"压缩以下「{character_name}」的角色档案到{max_profile_len}字以内。\n"
-                    "优先级：原文对话原句 > 行为证据 > 性格总结 > 背景信息。\n"
-                    "口癖和说话风格的原文例句必须保留，这是最重要的。\n"
-                    "合并重复信息，但不要删除矛盾点。",
-                    [{"role": "user", "content": f"请压缩到{max_profile_len}字以内：\n\n{profile_draft}"}],
+                    compress_system, [{"role": "user", "content": compress_user}],
                 )
+                compress_usage = self._llm.last_usage or compress_usage
             except Exception as exc:
                 print(f"[distiller] Profile compression failed: {exc}")
+            self._try_record_usage("distill_compress", compress_usage)
 
         # Phase 3: Format — produce CharacterCard JSON
         try:
@@ -1471,6 +1509,7 @@ class Distiller:
                 done_count = [0]
                 lock = asyncio.Lock()
                 failures: list[tuple[int, Exception]] = []
+                usages: list[dict | None] = []
 
                 async def _one(i: int, chunk: str) -> tuple[int, str]:
                     cached = _resume_hit(i, chunk, resume_candidates)
@@ -1482,8 +1521,9 @@ class Distiller:
                         async with sem:
                             system = map_system(character_name)
                             user = map_user(chunk, character_name)
+                            usage = None
                             try:
-                                result, _ = await self._llm.async_chat(
+                                result, usage = await self._llm.async_chat(
                                     system, [{"role": "user", "content": user}], client=run_client
                                 )
                             except Exception as exc:
@@ -1505,6 +1545,11 @@ class Distiller:
                                 # 是随机饿死而非确定性截断，故重发有概率成功、不是死循环。
                                 result = ""
                                 checkpoint_ok = False
+                                # 失败片照样烧 token（重试墙下空烧 26–100s）——prompt 侧
+                                # 按字符估算补记，completion 未知记 0 并标 estimated。
+                                usage = estimate_usage_from_chars(len(system) + len(user))
+                            async with lock:
+                                usages.append(usage)
                         from_cache = False
                     async with lock:
                         done_count[0] += 1
@@ -1514,6 +1559,10 @@ class Distiller:
 
                 tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
                 await asyncio.gather(*tasks)
+                # 整阶段汇总一条：命中缓存的片零调用不进 usages，chunk_count 数的是真调用次数
+                merged = aggregate_usage(usages, len(usages))
+                if merged is not None:
+                    self._try_record_usage("distill_map", merged)
                 q.put(("done", failures))
             finally:
                 await run_client.close()

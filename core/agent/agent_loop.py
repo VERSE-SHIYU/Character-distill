@@ -14,6 +14,7 @@ from typing import Any
 from adapters.llm_adapter import ToolsNotSupportedError
 from core.agent.tools import EMPTY_RESULT
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+from core.utils import try_record_usage
 
 ROUTER_SYSTEM_PROMPT = (
     "你是一个对话系统的检索决策器。你的唯一职责是判断："
@@ -46,9 +47,13 @@ class AgentLoop:
 
     MAX_STEPS = 3
 
-    def __init__(self, llm: Any, toolkit: Any) -> None:
+    def __init__(self, llm: Any, toolkit: Any, storage: Any = None, user_id: str = "") -> None:
         self._llm = llm
         self._toolkit = toolkit
+        # 记账上下文由调用方（ChatEngine）注入；缺省 None → try_record_usage 显式报「无法记账」，
+        # 不静默丢弃。每步决策都是一次真实 LLM 花费，必须落账。
+        self._storage = storage
+        self._user_id = user_id
 
     @T.spanned("agent.plan", op="plan")
     def run(self, character_hint: str, messages: list[dict]) -> AgentLoopResult:
@@ -80,6 +85,10 @@ class AgentLoop:
             except Exception as exc:
                 print(f"[AgentLoop] chat_with_tools error: {exc}")
                 return AgentLoopResult(messages=original, steps=steps, degraded=True, retrieved=retrieved)
+
+            # 每步决策都是一次真实 LLM 花费，紧跟调用后落账。last_usage 在 chat_with_tools
+            # 入口已置 None，故厂商未回 usage 时记「无数据」而非冒用上一轮的值（串号比漏记更糟）。
+            try_record_usage(self._storage, self._user_id, self._llm, "chat_agent_route", source="AgentLoop")
 
             if not msg.tool_calls:
                 break

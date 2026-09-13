@@ -11,6 +11,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from core.utils import try_record_usage
+
 
 @dataclass
 class EvalContext:
@@ -30,6 +32,7 @@ class EvalContext:
     llm: Any
     reaction_appraisal: str = ""
     departure_notice: str = ""
+    user_id: str = ""
 
 
 @dataclass
@@ -123,6 +126,8 @@ class EvaluationPipeline:
                         "你是精确的JSON输出器，只输出JSON。",
                         [{"role": "user", "content": prompt}],
                     )
+                    try_record_usage(ctx.storage, ctx.user_id, ctx.llm,
+                                     "chat_affinity_eval", source="EvaluationPipeline")
                     break
                 except Exception as exc:
                     if attempt == 0:

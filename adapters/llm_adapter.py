@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI, BadRequestError, OpenAI
 
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+from core.utils import estimate_usage_from_chars  # 字符→token 估算的唯一出口
 
 
 def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
@@ -526,10 +527,14 @@ class LLMAdapter:
         return dict(_THINKING_DISABLED[self._dialect])
 
     async def achat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
-        """异步非流式对话，返回完整文本回复。最多重试3次。"""
+        """异步非流式对话，返回完整文本回复。最多重试3次。
+
+        调用方（群聊等）靠 ``last_usage`` 记账，故**无条件**回写：厂商未回 usage 时
+        置 ``None``（显式「无数据」），不能保留上一次的值 —— 否则记账方会把上一轮
+        的 token 当成这一轮的，比不记更糟（错数据冒充真实值）。
+        """
         result, usage = await self.async_chat(system_prompt, messages, max_tokens=max_tokens)
-        if usage:
-            self.last_usage = usage
+        self.last_usage = usage
         return result
 
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
@@ -540,6 +545,7 @@ class LLMAdapter:
         budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
                               ceiling_s=_GEN_ATTEMPT_S, backoff_mult_s=_GEN_BACKOFF_S,
                               err_prefix="LLM API")
+        self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
             timeout = budget.attempt_timeout()
             try:
@@ -671,13 +677,10 @@ class LLMAdapter:
                     yield piece
             if not saw_finish_reason:
                 _check_finish_reason(None, where="chat_stream")  # 流尽仍无终态 → 记缺失
-            # 厂商全程未回 usage chunk → 字符估算兜底
+            # 厂商全程未回 usage chunk → 字符估算兜底（估算口径的唯一出口在 core.utils，
+            # Map 失败分片走的是同一个函数，改系数不会漏一边）
             if self.last_usage is None:
-                self.last_usage = {
-                    "prompt_tokens": int(prompt_chars / 1.5),
-                    "completion_tokens": int(completion_chars / 1.5),
-                    "estimated": True,
-                }
+                self.last_usage = estimate_usage_from_chars(prompt_chars, completion_chars)
                 print(f"[llm] usage chunk missing, estimated from chars (pt~{self.last_usage['prompt_tokens']} ct~{self.last_usage['completion_tokens']})")
         except IncompleteResponseError:
             raise  # 截断是确定性失败：不吞、不打「读取失败」误导日志、不重试
@@ -706,6 +709,7 @@ class LLMAdapter:
                               ceiling_s=_DECISION_ATTEMPT_S, backoff_mult_s=_DECISION_BACKOFF_S,
                               log_prefix="LLMAdapter chat_with_tools",
                               err_prefix="chat_with_tools")
+        self.last_usage = None  # 切断上一轮污染：本轮无 usage 时不能冒充真实值
         while True:
             timeout = budget.attempt_timeout()
             try:

@@ -34,6 +34,7 @@ import re
 from dataclasses import dataclass, field
 
 from adapters.llm_adapter import LLMAdapter
+from core.utils import try_record_usage
 from core import telemetry as T  # OTel context 传播点（ctx_thread）
 
 _LEAF_CAP = 160  # per-leaf char cap for the judge payload
@@ -114,7 +115,8 @@ def _parse_flagged(raw: str) -> list[dict]:
     return out
 
 
-def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0) -> GuardVerdict:
+def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0,
+               storage=None, user_id: str = "") -> GuardVerdict:
     """Run the field judge over a card dict. One LLM call. Fails to verdict.error."""
     if llm is None:
         return GuardVerdict(flagged=[], error=True, error_msg="llm is None")
@@ -134,6 +136,8 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0) -> GuardVerdi
                     [{"role": "user", "content": payload}],
                     max_tokens=1200,
                 )
+                # 落账必须在线程内：join(timeout) 超时后线程仍在跑，调用方无法事后补记
+                try_record_usage(storage, user_id, llm, "moderation_card_guard", source="card_guard")
             except Exception as exc:  # noqa: BLE001
                 box["ok"] = False
                 box["err"] = f"{type(exc).__name__}: {exc}"
@@ -203,13 +207,15 @@ def neutralize(card: dict, paths: list[str]) -> int:
     return count
 
 
-def guard_card_obj(card_obj, llm: LLMAdapter, timeout: float = 60.0) -> GuardVerdict:
+def guard_card_obj(card_obj, llm: LLMAdapter, timeout: float = 60.0,
+                   storage=None, user_id: str = "") -> GuardVerdict:
     """Judge a CharacterCard in place, neutralizing flagged leaves on the same object.
 
     ``card_obj`` is mutated so any later ``model_dump()`` by the caller (e.g. the
     awakening-message rewrite in the distill bg thread) sees the scrubbed card.
     """
-    verdict = judge_card(card_obj.model_dump(), llm, timeout=timeout)
+    verdict = judge_card(card_obj.model_dump(), llm, timeout=timeout,
+                         storage=storage, user_id=user_id)
     if verdict.flagged and not verdict.error:
         scrubbed = card_obj.model_dump()
         verdict.neutralized = neutralize(scrubbed, [f["path"] for f in verdict.flagged])

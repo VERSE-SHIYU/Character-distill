@@ -21,6 +21,7 @@ from adapters.llm_adapter import user_facing_error
 from core.distiller import Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
+from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from storage.base import StorageBase
 from limiter import get_client_ip, limiter
@@ -282,7 +283,7 @@ async def cancel_distill_tasks_by_user_id(user_id: str) -> int:
     return n
 
 
-def _generate_awakening(llm, card: CharacterCard) -> str:
+def _generate_awakening(llm, card: CharacterCard, storage=None, user_id: str = "") -> str:
     """Generate an awakening line for a newly distilled character.
 
     Returns the line text, or empty string on any failure.
@@ -302,6 +303,7 @@ def _generate_awakening(llm, card: CharacterCard) -> str:
             f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
         )
         result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
+        try_record_usage(storage, user_id, llm, "chat_awakening", source="distill")
         result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
         if not result or len(result) > 100:
             return ""
@@ -569,7 +571,7 @@ def _run_distill_task(
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         # Generate awakening line (non-fatal, outside lock)
-        awakening = _generate_awakening(per_user_llm, card)
+        awakening = _generate_awakening(per_user_llm, card, storage=get_storage(), user_id=user_id)
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
@@ -1162,7 +1164,10 @@ async def distill_stream(
         # Generate awakening line (fails open, async context)
         awakening = ""
         if per_user_llm is not None:
-            awakening = await asyncio.to_thread(_generate_awakening, per_user_llm, card)
+            awakening = await asyncio.to_thread(
+                _generate_awakening, per_user_llm, card,
+                storage=get_storage(), user_id=user_id,
+            )
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
@@ -1460,6 +1465,7 @@ async def start_session(
             opening = await asyncio.to_thread(
                 per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
             )
+            try_record_usage(storage, user_id, per_user_llm, "chat_session_opening", source="distill")
             opening = opening.strip().strip('"').strip("'").strip("「」")
             if opening and len(opening) <= 100:
                 print(f"[start_session] Generated opening: {opening}")

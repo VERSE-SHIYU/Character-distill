@@ -7,6 +7,7 @@ from typing import Any
 from core.schema import CharacterCard
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
+from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 
@@ -71,12 +72,14 @@ class ContextEngine:
         card_id: str = "",
         llm=None,
         model: str = "",
+        usage_ctx=None,
     ) -> None:
         self.card = card
         self.rag = rag
         self.memory = memory_manager
         self.card_id = card_id
         self._llm = llm
+        self._usage_ctx = usage_ctx
         self.web_search_enabled = False
 
         # Dynamic token budget based on model
@@ -87,6 +90,20 @@ class ContextEngine:
         self.MAX_MEMORY = budgets["memory"]
         self.MAX_CARD_EXT = budgets["card_ext"]
         print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
+
+    # ── 记账 ──────────────────────────────────────────────────
+
+    def _record_usage(self, action: str) -> None:
+        """把本引擎内的 LLM 花费接进唯一记账出口。
+
+        归属上下文（storage/user_id）由构造方以 ``usage_ctx`` 延迟提供：ChatEngine
+        的这两个字段在构造之后才被路由绑定，构造时取值会拿到 None。延迟取值保证
+        任何时刻调用都读到当前绑定值。
+        """
+        if self._usage_ctx is None:
+            return
+        storage, user_id = self._usage_ctx()
+        try_record_usage(storage, user_id, self._llm, action, source="ContextEngine")
 
     # ── 公开接口 ──────────────────────────────────────────────
 
@@ -348,6 +365,7 @@ class ContextEngine:
         )
         try:
             filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
+            self._record_usage("chat_web_filter")
             if not filtered.strip():
                 return ""
             return f"【角色的见闻感知】\n{filtered}"

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from core import telemetry as T  # OTel context 传播点（ctx_thread）
+from core.utils import try_record_usage
 
 # ── 加权检索常量（两级门控: base = α·rel + β·rec + γ·imp, final = base × (1+λ·emo)）──
 RERANK_ALPHA = 0.60    # 语义相关性权重（含原 DELTA 并入）
@@ -364,11 +365,14 @@ class MemoryManager:
             print(f"[MemoryManager] manual add failed: {exc}")
             return False
 
-    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str) -> None:
+    def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
+                storage=None, user_id: str = "") -> None:
         """把近期高重要性记忆综合成 1-2 条高阶洞察，后台写回。
 
         recent_memories: 已过滤的非反思记忆，每项含 text/importance/mood 等。
         llm: 复用 engine 的 LLM client（llm.chat(sp, [msg])）。
+        storage/user_id: 记账归属上下文 —— 反思跑在后台线程、调用方无法在事后补记，
+        故必须由调用方传入，在线程内紧跟调用落账。
         """
         if not self.enabled:
             return
@@ -396,6 +400,7 @@ class MemoryManager:
                     "你是一个善于反思和内省的AI角色。",
                     [{"role": "user", "content": prompt}],
                 )
+                try_record_usage(storage, user_id, llm, "memory_reflect", source="MemoryManager")
                 print(f"[Reflection] LLM reply ({len(reply)} chars): {reply[:300]}")
 
                 insights = [

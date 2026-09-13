@@ -164,6 +164,7 @@ class ChatEngine:
             card_id=card_id,
             llm=llm,
             model=getattr(llm, "model", ""),
+            usage_ctx=lambda: (self._storage, self._user_id),
         )
         self.agent_mode: bool = False
 
@@ -283,7 +284,7 @@ class ChatEngine:
         from core.agent.agent_loop import AgentLoop
 
         toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
-        result = AgentLoop(self.llm, toolkit).run(system_prompt, llm_messages)
+        result = AgentLoop(self.llm, toolkit, storage=self._storage, user_id=self._user_id).run(system_prompt, llm_messages)
         set_current_attr("degraded", bool(result.degraded))
         if result.degraded:
             print("[ChatEngine] agent degraded → legacy context injection")
@@ -482,7 +483,10 @@ class ChatEngine:
                 self._card_id,
                 metadata={"importance": self._last_importance, "mood": self._mood, "affinity": self._affinity, "assertion_confidence": self._last_assertion_confidence},
             )
-        reflected = self._reflection_service.maybe_reflect(self._last_importance, self.llm, self.card.name)
+        reflected = self._reflection_service.maybe_reflect(
+            self._last_importance, self.llm, self.card.name,
+            storage=self._storage, user_id=self._user_id,
+        )
         if reflected:
             self._extract_catchwords()
             self._persist_catchwords()
@@ -658,6 +662,7 @@ class ChatEngine:
             llm=self.llm,
             reaction_appraisal=reaction_appraisal,
             departure_notice=departure_notice,
+            user_id=self._user_id,
         )
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance
@@ -1263,6 +1268,7 @@ class ChatEngine:
         )
         try:
             result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            self._try_record_usage("chat_silence_gate")
             should = "true" in result.strip().lower()
         except Exception as exc:
             print(f"[Silence] LLM gate failed, falling back to normal reply: {exc}")
@@ -1293,6 +1299,7 @@ class ChatEngine:
         )
         try:
             result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            self._try_record_usage("chat_retract_gate")
             return "true" in result.strip().lower()
         except Exception:
             return False
@@ -1404,6 +1411,7 @@ class ChatEngine:
                 }
 
             response = self.llm.chat(system_prompt, messages)
+            self._try_record_usage("chat_reunion_greeting")
 
             greeting = response.strip().strip('"\'').strip('「」')
             if not greeting or len(greeting) > 130:

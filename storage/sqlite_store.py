@@ -59,7 +59,7 @@ _MIGRATIONS_BEFORE_USER_REBUILD = (
 _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
-    "084_distill_tasks.sql",
+    "084_distill_tasks.sql", "085_usage_chunk_count.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -3400,12 +3400,12 @@ class SQLiteStore(StorageBase):
 
     # ---- Usage stats ----
 
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False) -> None:
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated) VALUES (?, ?, ?, ?, ?, ?)",
-                    (user_id, action, prompt_tokens, completion_tokens, model, int(is_estimated)),
+                    "INSERT INTO usage_stats (user_id, action, prompt_tokens, completion_tokens, model, is_estimated, chunk_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (user_id, action, prompt_tokens, completion_tokens, model, int(is_estimated), chunk_count),
                 )
                 await conn.commit()
         except Exception as exc:

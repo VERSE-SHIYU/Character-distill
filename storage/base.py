@@ -313,8 +313,12 @@ class StorageBase(ABC):
         """Delete all refresh tokens for a user (logout)."""
 
     @abstractmethod
-    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False) -> None:
-        """Record a usage stat entry."""
+    async def record_usage(self, user_id: str, action: str, prompt_tokens: int, completion_tokens: int, model: str = "", is_estimated: bool = False, chunk_count: int | None = None) -> None:
+        """Record a usage stat entry.
+
+        ``chunk_count``：本条记录聚合了几次 LLM 调用（Map 阶段按阶段汇总时填）。
+        **不是文本分片数** —— 续跑命中/重试会让二者不一致。非聚合记录留 ``None``。
+        """
 
     @abstractmethod
     async def get_usage_stats(self, user_id: str) -> dict:

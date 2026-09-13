@@ -16,6 +16,7 @@ from deps import get_storage
 from geo_guard import ip_location
 from limiter import get_client_ip, limiter
 from storage.base import StorageBase
+from core.utils import try_record_usage
 from routers.auth import get_current_user, get_optional_user
 
 router = APIRouter(prefix="/api/market", tags=["market"])
@@ -467,7 +468,7 @@ async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> tu
 
     # 2) LLM two-channel review (2.5). Content fails open (unchanged);
     #    injection failure is routed to the manual queue, never silently passed.
-    review = await auto_review_split(card_json, LLMAdapter())
+    review = await auto_review_split(card_json, LLMAdapter(), storage=storage, user_id=user["id"])
     if review["injection"].get("error"):
         reason = f"[publish-injection] 审核调用失败：{review['injection'].get('reason', '')}"
         print(f"[market-pregate] injection review error → flag: {reason}")
@@ -847,6 +848,7 @@ async def at_reply(
         ai_text = await asyncio.to_thread(
             llm.chat, system_prompt, [{"role": "user", "content": user_content}]
         )
+        try_record_usage(storage, user["id"], llm, "chat_ai_reply", source="market")
     except Exception as exc:
         raise HTTPException(500, f"AI 生成失败，请稍后重试：{exc}")
 
