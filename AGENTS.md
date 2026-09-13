@@ -185,11 +185,12 @@ config.yaml 现值（现读，非转述）：
 - 回归锁：`tests/test_upload_task_ownership.py`（含变异验证：删掉校验 → 越权断言变红）
 - 与缺陷 9 的 `text.py` 那条是**同一处端点的两个面**：本条是归属面（有没有校验），缺陷 9 是拒绝码面（403 还是 404）
 
-**8. `_GEN_DEADLINE_S = 60.0` 写死，不可 env 覆盖** —— 状态：**保留记账**
-- `_GEN_DEADLINE_S`（`adapters/llm_adapter.py`）；同组的三个 ceiling `LLM_DECISION_ATTEMPT_S` / `LLM_GEN_ATTEMPT_S` / `LLM_STREAM_ATTEMPT_S` 都可 env 覆盖，deadline 仍无出口
-- 关掉思考后（2026-09-10 实测，n=14）：**0/14 超 60s，max 31.3s**（>45s 也是 0/14）→ 当前工作负载已不再顶它，见 §二基线表
-- 历史（修复前，思考未真正关闭）：单次 map 调用 12.0–160.0s，>45s 12/14、>60s 11/14（证据：`ev:thinking-maplen-before`）→ 当时超过 60s 的调用在生产上必然失败
-- 生产是否仍有超时：**待验证**（受本机吞吐、网络、prod `.env` 覆盖值影响）。常量仍写死不可 env 覆盖，保留记账
+**8. `_GEN_DEADLINE_S = 60.0` 写死，不可 env 覆盖** —— 状态：**已修**（2026-09-13）
+- 原形态：`_GEN_DEADLINE_S`（`adapters/llm_adapter.py`）写死；同组的三个 ceiling `LLM_DECISION_ATTEMPT_S` / `LLM_GEN_ATTEMPT_S` / `LLM_STREAM_ATTEMPT_S` 都可 env 覆盖，deadline 仍无出口 → 「超时可调」名不副实（生成轮 60s 总墙钟烧死在代码里）
+- **修法（同族一并，不只点名的那个）**：抽 `_env_timeout_s(name, default_s, floor_s)` 统一出口，**三个 deadline 与三个 ceiling 全部**改走它。floor 防「填 0 静默关超时」：ceiling 取 `_ATTEMPT_MIN_S`（防 `create(timeout=0)` 变 no-timeout），deadline 取 `_ATTEMPT_WINDOW_S`（deadline 撑不起一次有效窗 = 静默关掉全部 attempt）。默认值一字不变：deadline 6 / 60 / 8，ceiling 5 / 45 / 7
+- **同族普查（硬要求，不允许「只修点名的那个」）**：全仓扫超时类常量 —— 适用本出口的只有这 6 个；`_*_ATTEMPTS` / `_*_BACKOFF_S` / `_ATTEMPT_MIN_S` / `_ATTEMPT_TIMEOUT_MARGIN_S` / `_RATE_LIMIT_ATTEMPTS` 是次数 / 退避 / 内部机制，不属「填 0 静默关超时」形态；`core/embeddings.py` 的 `_EMBED_ATTEMPT_S` 早已 env 化（floor 0.1）。**无第五个漏网同类**
+- 回归锁：`tests/test_llm_adapter_retry.py` 三条 —— helper 的缺省 / 覆盖 / floor、六个常量真消费 env（`importlib.reload` 实跑，堵「只测 helper、常量没用它」的假绿）、默认值不变。变异：`_GEN_DEADLINE_S` 改回硬编码 60.0 → `test_timeout_family_constants_consume_env` 红
+- 历史背景（仍成立）：关掉思考后（2026-09-10 实测，n=14）**0/14 超 60s，max 31.3s**；修复前单次 map 12.0–160.0s，>60s 11/14（`ev:thinking-maplen-before`）。**本轮只补出口、不动默认值** —— 生产是否仍有超时由运维按 `.env` 调
 
 **9. 端点注入 `get_current_user` 却不引用 `user`（越权一类）** —— 状态：**已修**（2026-09-10）
 - 形态：签名取 `user: dict = Depends(get_current_user)`，函数体从不引用它 → 无归属校验，任何登录用户拿 id 就能读他人资源
@@ -311,10 +312,12 @@ config.yaml 现值（现读，非转述）：
   - `tests/test_distiller_routing.py` 的 3 条（`test_sync_429_bail` / `test_stream_429_bail` / `test_stream_generic_bail`，`adcb0a9`）：改锁方向相反的两条——上屏含「限流」/「重试」且**不含** 429 / 个分片 / `connection timeout`，而 `str()` 里那些必须**还在**（区分「分口径」与「删信息」）。`pytest.raises` 从 `ValueError` 收窄到 `DistillError`，锁住「必须带 `user_message`」
   - 注：断言用「个分片」而非裸「分片」——上屏文案「部分片段处理失败」是合法中文，裸词假阳（本文件 §四 禁词表同此处理）
 
-**18. `IncompleteResponseError` 不可 pickle** —— 状态：未修（记账）
-- `__init__(self, finish_reason, where, content="")` 调 `super().__init__(<单条消息>)` → `args == (msg,)`。pickle 还原时按 `args` 调构造器 → 缺 `where` → `TypeError`
-- 现无跨进程传递（异常在同一进程的线程内上抛与捕获，map 的 `failures` 列表也不出进程），故未动
-- **将来若上多进程部署（进程池 / 队列传异常），这是个会突然炸的点**——届时改成让 `args` 载全部构造参数，或在边界层先翻成可序列化结构
+**18. `IncompleteResponseError` 不可 pickle** —— 状态：**已修（2026-09-13）**
+- 原形态：`__init__(self, finish_reason, where, content="")` 调 `super().__init__(<单条消息>)` → `args == (msg,)`。`BaseException.__reduce__` 在 `__dict__` 非空时返回 `(cls, self.args, self.__dict__)`，反序列化按 `args` 调构造器 → 缺 `where` → `TypeError`，**炸成另一个异常、掩盖真因**（跨进程 / 队列传异常时正是这个场景）
+- **全仓普查（AST，硬要求）**：带自定义状态的异常类共 **7** 个，逐个真 pickle 往返验证 —— 需修 3 处：`IncompleteResponseError`（补 `__reduce__` + 存 `where`）、`StoreError`（`args` 是格式化 message、`__init__` 要 `(op, exc)`，且原始 `exc` 未必可序列化 → 只带 `op`+message 过河，模块级 `_rebuild_store_error` 绕开再格式化）、测试替身 `_RateLimitError429` / `_RateLimit429` / `_BadRequest400`（参数与 `args` 对不上）。其余（`DistillError` / `CollectionUnusableError`）额外参数可默认，`cls(*args)` 本就成立、无需 `__reduce__`
+- **形态锁**：`tests/test_exception_pickle_lock.py`，两层（§四）——①形态层：全仓带自定义状态的异常类集合 == 登记表，漏登 / 陈旧都红；②语义层：每类真 `dumps`/`loads`，断言类型 / `vars()` / `str()` 全不变。**判据有意用「带自定义字段即须往返通过」而非「无 `__reduce__` 即红」**——后者是代理指标，会误伤上述两个本就可序列化的类（锁症状，不锁代理）
+- 变异（实测）：删 `IncompleteResponseError.__reduce__` → 语义层红（`TypeError: missing 'where'`，即病根症状本身）；新增一个带自定义字段的异常类 → 形态层红
+- 扫描范围排除 vendored `services/gptsovits`（22738 个 `.py`、未入库）与构建 / 缓存产物 —— 第三方异常的序列化行为不归本仓管
 
 **19. 边界锁只守 `*_unscoped` 命名，无身份读取原语裸奔** —— 状态：**已修（5 commit，2026-09-13）**
 - 形态：`tests/test_storage_scope_lock.py` 用 AST 扫调用点，判据是 `_is_unscoped_call` → `attr.endswith("_unscoped")`。**只有名字以 `_unscoped` 结尾的调用**才进白名单校验
@@ -330,6 +333,7 @@ config.yaml 现值（现读，非转述）：
 - **commit 4/5 `09742cc`（B3 裁决落地）**：`get_reactions(message_ids)`（旧签名收一组**调用方自拼的 message_id**，无身份谓词）**重键**为 `get_session_reactions_owned(session_id, user_id)`（属主谓词落 SQL，`JOIN sessions` + `WHERE m.session_id = ? AND s.user_id = ?`）+ 私有 `_get_group_reactions(group_id)`（群反应按 group_id，`char:<card_id>` 合成行保留）；据此删掉「任意 message_ids」这个越权面。为什么不能按 `mr.user_id` 收窄：群角色反应写法是 `toggle_reaction(mid, f"char:{card_id}", emoji)`（group.py），按 reactor 过滤会把角色反应一并滤掉 —— `TestDefect19Commit4B3Verdicts.test_36` 就是这条理由的红源。另：`get_recent_card_session` **无调用点=死代码，删**；`get_remote_card` 仅被 `upsert_remote_card` 内部调用 → **改私有 `_get_remote_card`**（私有方法不进公开原语普查，问题自然消失）；`get_card_author_id` **保留显式无身份**并标注 **`identity_primitive`**（它是校验的**第一步**，输出供属主比对，与「有意跨属主读」区分，改 `_owned` 反而成循环依赖）。**变异验证**：删 `AND s.user_id = ?` → `test_35` 红（「非属主拿到了他人会话的反应」）；改回 `mr.user_id = ?` → `test_36` 红（「角色反应被属主过滤掉了」）；各自独立红源，已字节还原
 - **commit 4 未落的两条 B3 裁决 → commit 5 按事实重裁（2026-09-13）**：① `get_latest_review_log` 的「归 A 组管理」不成立 —— SQL 无身份谓词（按本项目 A 组判据就不是 A 组），唯一调用点在 `market._publish_preflight`（用户发布路径，非 admin），硬写断言当天即红；改法 **补 `_owned`**（`JOIN cards c ... WHERE r.card_id = ? AND c.user_id = ?`），按 SQL 事实自动成为「已收窄」，与 `get_reactions` 同型。② `get_comment_reports` **零调用点=死代码**，「调用点全在 admin.py」对空集恒真=断言空转（§四已收此案例）；按 `get_recent_card_session` 先例**删掉**。真 A 组断言落在 `get_comment_reports_grouped`（admin.py 调它）
 - **commit 5/5（本 commit，两把锁）**：① **SQL 事实锁**（`test_no_owner_table_read_without_identity_or_declaration`）判据 = 不存在「读属主表 ∧ WHERE 无身份列谓词 ∧ 无身份参数 ∧ 不叫 `_unscoped` ∧ 不在 `OWNER_READ_ALLOWLIST`」的原语；属主表/身份列由 `storage/migrations_pg/*.sql` 现推（29 张），真源是 SQL 事实而非命名 —— 补上命名锁「改回原名就漏」的盲区。当前登记 **21** 处豁免：7 公开面（`get_card_forks` / `get_featured_cards` / `get_public_cards_by_text_id` / `list_public_cards` / `list_public_cards_total` / `search_public_cards` / `search_public_cards_total`）+ 11 管理面（`count_distill_tasks` / `get_all_usage_summary` / `get_card_reports_grouped` / `get_comment_reports_grouped` / `get_config_changelog` / `get_dashboard_stats` / `get_review_logs` / `get_usage_quality_stats` / `list_all_cards_admin` / `list_all_posts_admin` / `list_distill_tasks`）+ 2 凭据路径（`get_refresh_token` / `get_user_by_email`）+ 1 identity_primitive（`get_card_author_id`）。② **管理面调用点断言**（`test_admin_management_primitives_are_called_only_from_admin`）：11 个管理原语中 `get_comment_reports` 已删，余 **10** 个的生产调用点必须全在 `web/routers/admin.py`（tests/ 豁免）；**并带非空守卫**——每个名字至少一个生产调用点，否则报「空转假绿」（对治上一条死代码教训）。**变异验证**：新增一个读 cards、无身份、不在白名单的原语 → SQL 事实锁红；把一个管理原语的调用点挪到 `market.py` → 调用点断言红；把一个零调用点名字塞进管理集合 → 非空守卫红。三条独立红源，已字节还原
+- **收口（2026-09-13，`5ba2a7a`）**：commit 5 的 SQL 事实锁**只扫 sqlite 一边** —— 「方法集一致」（覆盖断言只比方法名）**≠**「SQL 体一致」，PG 版某原语少一个身份谓词，两把锁都看不见。修法：`_BACKENDS` 声明两后端，`_scan_class(path, cls_name, idc)` 同一判据、同一代码路径各扫一遍取并集（**不是**「加一条断言比对两边判定结果」——那是在锁外再套一层间接，真源仍只有 sqlite 一边）。另补 PG 侧**运行期**语义用例 `tests/test_postgres_store.py::TestPgOwnedIdentityIsolation`（非属主读 `get_text_owned` / `get_card_owned` 必须 None），并做 PG 侧变异实跑：删 PG 版 `get_card_owned` 的身份谓词 → 语义用例红；删谓词**同时**删参数 → 静态锁红（只删谓词不删参数时静态锁不红，见缺陷 25）
 - 与 §四「形态锁与语义用例是两层防线，各管各的」直接相关：缺陷 11 的两层都齐，这一类只有第二层
 
 **20. 蒸馏断点行的删除路径不对称 + 「删卡保留断点」的理由与代码事实相反**（会话文件里记作 **F**）—— 状态：**已修**（行清理 `6753f17`；线程停止 `bee9993`；注释订正 `53494ae`，2026-09-12）；删卡/解绑口径裁决为**不动**（另一件「加功能」已立项）
@@ -369,6 +373,7 @@ config.yaml 现值（现读，非转述）：
   - **闭环锁**（`4a608f9`）：`tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop` 断言「**SQLite 新库实跑后的表集合 ⊇ `migrations_pg/` 声明的表集合**」（排除 `sqlite_sequence`）。锁的是**症状本身**，不是「文件有没有登记」这个可被合法豁免绕过的代理指标；真源选 PG 目录，因为 PG 执行器是 glob、目录即清单、无豁免出口 —— 「PG 目录里有的表」= 「应该存在的表」的可靠定义。与 `test_sqlite_fresh_schema` 同一套基础设施，CI 可行，不需要真 PG
   - **store 层同族形态全量收敛**（`2ab669a`）：本轮另一条线，见下面「第七个同族形态」
   - **未修**：本条目自身已闭环，无遗留
+  - **后续（2026-09-13）**：豁免的事实源从测试移进执行器 —— `tests/test_migration_dispatch.py::_NOT_APPLIED` → `storage/sqlite_store.py::_MIGRATIONS_NOT_APPLIED`（与次序元组同一处，读执行器的人一眼看到「哪个迁移被有意略过」）；测试与 `tests/perf/migration_coverage_audit.py` 只读那一份，不再自持副本。不变量：**豁免只有一个源**
 - 同族风险（已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故 `test_migration_dispatch` 有「目录 ↔ 次序表求差集」形态锁
 - **本条目衍生出的第七个同族形态 —— store 层「失败与空结果不可区分」**：SQLite 新库缺 `remote_user_profiles` 表时，`storage/sqlite_store.py` 的 `get_conversations` 把 `OperationalError` 吞成空列表 → 私信收件箱**恒为空、不报错、不 500**，日志里只有一行 print。根因不是「那一处吞错了」，而是 store 层用**同一个返回值**同时表达「查到了，结果是空」与「查询失败了」两种互斥语义。这正是前六个同族形态（线程弃船 / 384 维度 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断）**都因为「只修出问题那处」**才长出第七个的原因，故 `2ab669a` 全量收敛：A 类 176 处（基线 `4a608f9`，sqlite 88 / pg 88）全改，不变量「**store 层的空返回值只表示「无数据」，永不表示「失败」**」定于 `storage/base.py` 的 `StoreError` 单一定义，容忍策略上移到调用方并注明理由。普查全集与 A/B 分类见 `2ab669a` 的 commit message，可 `python tests/perf/store_swallow_census.py --ref 4a608f9` 逐字复算
 
@@ -394,7 +399,7 @@ config.yaml 现值（现读，非转述）：
 - **变异（实测两次）**：删 `012_remote_user_profiles.sql`（代码仍引用）→ 只有「引用表」那条红；让一条迁移「声明了但建不出来」→ 只有「声明表」那条红。两条各抓一类，互不代偿。
 - 原「反方向无锁」判断的正误：**形态判断对（确实缺生产侧闭环），但把模板当成了表集合**。立项时的推断「PG 目录声明的表集合 ⊆ SQLite 新库表集合」也不对 —— 该方向早已被 `TestExemptionClosedLoop` 覆盖，真正缺的是**反向的、且对着真 PG 库**。
 - 同轮另两条观察（**非缺陷，只记**）：
-  - **豁免名单住在测试里，不在执行器里**：`tests/test_migration_dispatch.py::_NOT_APPLIED` 是唯一记录「哪个迁移被豁免、为什么」的地方，而读 `storage/sqlite_store.py` 的人只看到次序元组，**看不到「本应在这却没在」**。可观性问题，非正确性缺陷；若要改，方向是把豁免登记移进执行器模块或让它可被执行器导入
+  - **豁免名单住在测试里，不在执行器里** —— **已修（2026-09-13）**：豁免的事实源移到执行器 `storage/sqlite_store.py::_MIGRATIONS_NOT_APPLIED`（与次序元组同一处，改执行器的人一眼看到「哪个迁移被有意略过、为什么」），其余三处读者（`tests/test_migration_dispatch.py` / `tests/perf/migration_coverage_audit.py::_exemptions` / `tests/test_sqlite_fresh_schema.py` 的报错文案）全部改从执行器读，**不再自持副本** —— 不变量：豁免只有一个源。新增 `test_exemption_has_one_source_in_the_executor`：往执行器声明塞一条指向不存在文件的假豁免，dispatch 锁必须相应变红（证明测试读的确实是执行器那份）。仓外变异：执行器加 `"999_ghost.sql"` → `test_every_migration_file_is_dispatched` 红（stale 分支）
   - **PG `001_init.sql` 保留了 SQLite 侧已删的 4 个遗留列**（`users` 的 `password_hash` / `api_key` / `base_url` / `model`，`migrations_pg/001_init.sql:93-98` 内联声明）。**已复核，运行期 schema 无漂移**：这 4 列由 `migrations_pg/005_data_residency.sql` 的 `DROP COLUMN IF EXISTS` 删掉；两侧逐表逐列求交集（`001_init` + 全部 `ALTER` − drop）**完全相同**（用 `tests/perf/migration_coverage_audit.py` 的 `_objects_from_sql` 复算）。漂移只在**文件层**：读 PG 的 `001_init.sql` 会看到一个最终库里并不存在的列清单（SQLite 侧这 4 列本就不在 `001_init` 声明、是后来 `ALTER` 加的，故它的 `001_init` 天然干净）。**非缺陷**，但会误导「按 bootstrap 文件推断 schema」的人 —— 与上面两条同属「文件的陈述与运行期事实不一致」
 
 **24. 提交责任无归属 —— SQLite store 的写方法漏 `commit` 就静默丢数据，「失败被吞成正常返回」的第八次显形** —— 状态：已修（2026-09-13，`4a91868`）
@@ -410,6 +415,13 @@ config.yaml 现值（现读，非转述）：
 - **PG 侧无需改**：asyncpg 语句默认自动提交，另有 18 处显式 `async with conn.transaction():`（原生 clean-exit 提交 / 异常回滚语义），缺陷 24 是 SQLite legacy 事务模式特有的
 - 同轮范围核查（**已扫，无缺口**）：store 之外的直接 sqlite 连接全查过 —— 4 个带 `sqlite3.connect` 的运维/诊断脚本（`check_missing_card` / `diagnose_psyche` / `export_shiyu` / `integration_check`）全为只读，`rebuild_384_collections` 用 `mode=ro` URI，`migrate_sqlite_to_pg` 只读 SQLite、写 PG（asyncpg 自动提交）。无需处理
 
+**25. SQL 事实锁的盲区 —— 签名留着身份参数、SQL 却不再用它过滤，静态锁看不见** —— 状态：未修（记账，2026-09-13 收口缺陷 19 时发现）
+- 形态：缺陷 19 commit 5 的 SQL 事实锁判据是「读属主表 ∧ WHERE 无身份列谓词 ∧ 无身份参数 ∧ 不叫 `_unscoped` ∧ 不在白名单」。其中**「签名有身份参数」单独足以**判为已收窄 —— 于是「参数还在、SQL 里已经不用它过滤了」这一类隐形
+- 实测（缺陷 19 收口时做 PG 侧变异）：删 PG 版 `get_card_owned` 的 `AND c.user_id = $2`、**保留签名参数** → 静态 SQL 锁**绿**（覆盖断言也绿，它只比方法名）；把谓词与参数一起去掉 → 静态锁红。所以这一类只有**运行期语义用例**抓得住（sqlite：`tests/test_security_authz.py`；PG：`tests/test_postgres_store.py::TestPgOwnedIdentityIsolation`）—— 又一个「形态锁绿 ≠ 读取安全」的实例（§四）
+- 面有多大：AST 扫出每后端 **8** 个「有身份参数但 SQL 无身份谓词」的方法（`idp` 盲区）。逐条实读 SQL，**多数是提取器假阳** —— 身份是经别名列施加的（`u.id` / `following_id` / `receiver_id` 等），而提取器只认属主表的主身份列，故看漏。当前**未发现真漏**
+- 为什么不当场修：收紧判据要先改提取器（让身份列识别覆盖别名 / 关联列），是另一个工作面；且现状无真漏。按铁律「新发现只记缺陷表，不当场修」记账
+- 建议方向（择一）：①提取器识别「身份列的别名」；②加一条独立断言「签名有身份参数 ∧ SQL 无该列谓词 → 红」，把「参数存在」与「参数被用来过滤」两件事分开验
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
@@ -423,7 +435,7 @@ config.yaml 现值（现读，非转述）：
 - **「X 消失了」不足以证明 Y 修好了——要找独立、可交叉验证的指标**。案例：关掉思考后「空正文片数 3→0」，但空正文消失本身也可能只是采样波动，用它证明「思考关掉了」是同义反复。真正的实证是 **tokens / 正文字符 3.85 → 0.62**，与本仓自己的 `_estimate_tokens = int(len*0.6)` 吻合——两个互相独立的量对上，结论才立得住
 - **别人给的 premise 与代码不符时，报更正、只修真缺口，不去实现那个不存在的修复**。案例：SSE「截断会硬断流，因为 `_next_piece` 只捕 `StopIteration`」——实读 `chat.py` 外层 `except` 早已 `yield {"error": ...}`、`client.js` 早已渲染，连接不会掉。真缺口是**可识别性**（帧里没有 `code`/`finish_reason`）与**文案漏内部标识**，修的是这两样。按错前提动手会改出一段无人需要、还掩盖真问题的代码
 - **修复一处越权 ≠ 这一类修完**。案例：`text.py` 上报的越权与 `voice.py` 两处同形（都因「注入 `user` 却不引用」）；用 AST 扫一遍全仓同类形态，才把 9 处一次分清（3 真越权 / 6 良性），并把扫描固化成测试（见缺陷 9）。逐处手工排查会漏，且下次照旧
-- **判「这条 SQL 有没有按身份收窄」时，JOIN 条件不算数 —— 只有 WHERE 筛得掉非属主行**。`JOIN users u ON c.user_id = u.id` 只约束连接行怎么配对，不排除任何行；把它当成身份过滤，会让「无过滤」的原语看起来已收窄。案例：缺陷 19 的普查初版据此把 `get_card` 误判为「已收窄」，命中数 **41**；把判据限定到 WHERE 子句（先在 `GROUP BY`/`ORDER BY`/`LIMIT`/`HAVING` 处截断，再测身份列谓词）后为 **46**。一般化：**判定一个条件是否构成「过滤」，必须问「它能否独立地排除目标行」，而不是「它提到了这个列」**——同一个列名出现在 JOIN ON、ORDER BY、SELECT 列表里，都不构成过滤
+- **判「这条 SQL 有没有按身份收窄」时，JOIN 条件不算数 —— 只有 WHERE 筛得掉非属主行**。`JOIN users u ON c.user_id = u.id` 只约束连接行怎么配对，不排除任何行；把它当成身份过滤，会让「无过滤」的原语看起来已收窄。案例：缺陷 19 的普查初版据此把 `get_card` 误判为「已收窄」，命中数 **41**；把判据限定到 WHERE 子句（先在 `GROUP BY`/`ORDER BY`/`LIMIT`/`HAVING` 处截断，再测身份列谓词）后为 **46**。一般化：**判定一个条件是否构成「过滤」，必须问「它能否独立地排除目标行」，而不是「它提到了这个列」**——同一个列名出现在 JOIN ON、ORDER BY、SELECT 列表里，都不构成过滤。**同族推论：签名里有身份参数，也不证明那个参数参与了筛选** —— 静态锁把「有身份参数」单独当作已收窄的充分条件，于是「参数还在、SQL 不再用它」隐形（缺陷 25）；这类只能由运行期语义用例抓（§四「锁绿 ≠ 读取安全」）
 - **任何「新建/添加/引入」类动作，先确认它是否已存在**（仓库里多半已有同形实现或同名字段）
 - **授权失败一律 404，不用 403**：403 说「资源存在但你没权限」，泄漏存在性；404 让「非属主」与「不存在」不可区分。攻击者拿一批 id 扫描时，403/404 的差异就是存在性枚举的预言机。新增端点沿用此口径；已下沉到 storage `*_owned` 原语的端点天然如此（拿不到行即 404）。判据与理由落在 `tests/test_security_authz.py::TestReadAuthorization` 的文档串里。**B 权限型（非管理员/账号禁用）与 C 业务门（审核待审/geo 白名单）仍用 403**——它们答的是「你这个人不能做这事」，与资源是否存在无关，不构成枚举信道。存量 32 处属主型 403 已于 2026-09-12 翻齐（缺陷 13）
 - **同一判定的两条分支必须同判一个拒绝码**。案例：`web/routers/chat.py` 的 `_ensure_session`，内存命中分支对非属主判 403、DB 重建分支判 404。状态码在分支间不一致，攻击者反复请求、靠命中/未命中的差异就能推断资源是否存在——内存路径把 DB 路径的防枚举漏掉了。已统一为 404（含同一条文案），由 `tests/test_security_authz.py::TestHoleOwnershipRegression::test_19_chat_memory_hit_non_owner_404` 锁住
