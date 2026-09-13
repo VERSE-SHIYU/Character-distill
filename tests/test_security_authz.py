@@ -580,6 +580,21 @@ class TestDefect19Commit4B3Verdicts:
         assert f"char:{cid}" in users, f"角色反应被属主过滤掉了：{owner}"
 
 
+class TestDefect19Commit5OwnedPrimitives:
+    """commit 5：`get_latest_review_log` 补 `_owned`（JOIN cards 收窄），与 `get_reactions` 同型。
+
+    红源：删掉 `AND c.user_id = ?`，test_37 即红 —— 非属主会读到他人卡的审核行（发布预检的
+    待审门因此可被他人卡的 flag 行误关）。
+    """
+
+    def test_37_latest_review_log_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        _run_async(store.save_review_log(f"rev_{uuid.uuid4().hex}", cid, user_a, "flag", "待审"))
+        assert _run_async(store.get_latest_review_log_owned(cid, user_a))["result"] == "flag"
+        assert _run_async(store.get_latest_review_log_owned(cid, user_b)) is None
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Control: User A can access own resources; nonexistent IDs return 404
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -3362,20 +3362,28 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get review logs failed: {exc}")
             raise StoreError("get_review_logs", exc) from exc
 
-    async def get_latest_review_log(self, card_id: str) -> dict | None:
-        """Return the most recent review_log row for a card (by monotonic id)."""
+    async def get_latest_review_log_owned(self, card_id: str, user_id: str) -> dict | None:
+        """Return the most recent review_log row for a card the caller owns.
+
+        Ownership is filtered in SQL (JOIN cards, WHERE c.user_id = ?) — the only
+        caller is the publish pre-flight (market._publish_preflight), which runs on
+        the caller's own card. Returns None for "absent" and "not yours" alike.
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    """SELECT id, card_id, user_id, result, reason, created_at
-                       FROM review_log WHERE card_id = ? ORDER BY id DESC LIMIT 1""",
-                    (card_id,),
+                    """SELECT r.id, r.card_id, r.user_id, r.result, r.reason, r.created_at
+                       FROM review_log r
+                       JOIN cards c ON c.id = r.card_id
+                       WHERE r.card_id = ? AND c.user_id = ?
+                       ORDER BY r.id DESC LIMIT 1""",
+                    (card_id, user_id),
                 )
                 row = await cursor.fetchone()
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[SQLiteStore] Get latest review log failed: {exc}")
-            raise StoreError("get_latest_review_log", exc) from exc
+            raise StoreError("get_latest_review_log_owned", exc) from exc
 
     # ---- Usage stats ----
 
@@ -3993,29 +4001,6 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Add comment report failed: {exc}")
             raise StoreError("add_comment_report", exc) from exc
-
-    async def get_comment_reports(self, status: str = 'pending') -> list[dict]:
-        """List reports for admin view, grouped by comment with report count."""
-        try:
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    """SELECT r.id, r.comment_id, r.card_id, r.reporter_id, r.reason,
-                              r.status, r.created_at, r.resolved_at, r.resolver_id,
-                              c.content AS comment_content, c.user_id AS comment_author_id,
-                              c.username AS comment_author_name,
-                              (SELECT COUNT(*) FROM card_comment_reports r2
-                               WHERE r2.comment_id = r.comment_id AND r2.status = 'pending') AS report_count
-                       FROM card_comment_reports r
-                       JOIN card_comments c ON c.id = r.comment_id
-                       WHERE r.status = ?
-                       ORDER BY report_count DESC, r.created_at ASC""",
-                    (status,),
-                )
-                rows = await cursor.fetchall()
-            return self._list_rows(rows)
-        except Exception as exc:
-            print(f"[SQLiteStore] Get comment reports failed: {exc}")
-            raise StoreError("get_comment_reports", exc) from exc
 
     async def resolve_report(self, report_id: str, resolver_id: str) -> bool:
         """Dismiss a report (mark resolved, don't delete comment)."""

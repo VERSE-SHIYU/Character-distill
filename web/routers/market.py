@@ -446,7 +446,7 @@ async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> tu
 
     # 0) Pending-review gate (2.6): a distill-time flag holds the card out of the
     #    market until an admin writes a pass row. Checked before any LLM spend.
-    latest = await storage.get_latest_review_log(card_id)
+    latest = await storage.get_latest_review_log_owned(card_id, user["id"])
     if latest and latest.get("result") == "flag":
         return "gate", ""
 
