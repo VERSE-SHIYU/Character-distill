@@ -237,6 +237,26 @@ class TestReadAuthorization:
         r = client_b.get(f"/api/chat/affinity/{sid}")
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
 
+    def test_07_text_deletion_impact_gated_to_owner_or_admin(self, store, user_a, user_b, client_b):
+        """非属主 404、admin 才放行 —— 这正是 `OWNER_READ_ALLOWLIST` 里
+        `get_text_deletion_impact` 那条豁免的**依据本身**，所以它得有人验。
+
+        storage 原语只按 text_id 筛（SQL 里没有身份谓词），跨属主的口子开在 router：
+        先 `get_text_owned`，落空且 `is_admin` 才走 `get_text_unscoped`。把 SQL 补上身份
+        谓词会把管理员看到的数字抹成 0，故不能补 —— 但「不能补」的前提是这道门真的在。
+        """
+        tid = _create_text(store, user_a)
+        r = client_b.get(f"/api/text/{tid}/deletion-impact")
+        assert r.status_code == 404, f"非属主读到了删除影响：{r.status_code} {r.json()}"
+
+        admin_app = _make_app(store, user_b)
+        admin_app.dependency_overrides[get_current_user] = lambda: {
+            "id": user_b, "username": "testuser", "is_admin": True,
+        }
+        r = TestClient(admin_app).get(f"/api/text/{tid}/deletion-impact")
+        assert r.status_code == 200, f"admin 逃生口被堵：{r.status_code} {r.json()}"
+        assert r.json()["card_count"] == 0
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Regression: the 7 ownership holes closed by the *_owned capability split
