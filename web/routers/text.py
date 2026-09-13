@@ -441,7 +441,7 @@ async def get_text_detail(
     if not text:
         raise HTTPException(404, "Text not found")
     # Count comments
-    comments = await storage.get_text_comments(text_id, 1, 1)
+    comments = await storage.get_text_comments_owned(text_id, user["id"], 1, 1)
     text.pop("content", None)
     text["comment_count"] = comments["total"]
     return {"text": text}
@@ -456,7 +456,8 @@ async def get_text_comments(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get paginated comments for a text."""
-    result = await storage.get_text_comments(text_id, page, page_size)
+    # 属主过滤在 SQL（JOIN texts）—— 非属主与「无评论」同判，都返回空页。
+    result = await storage.get_text_comments_owned(text_id, user["id"], page, page_size)
     # Mark liked comments
     all_ids = []
     for c in result["comments"]:

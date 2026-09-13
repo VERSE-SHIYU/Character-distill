@@ -30,6 +30,8 @@ from routers.history import router as history_router
 from routers.group import router as group_router
 from routers.chat import router as chat_router
 from routers.distill import router as distill_router
+from routers.market import router as market_router
+from routers.text import router as text_router
 from storage.sqlite_store import SQLiteStore
 
 
@@ -76,6 +78,8 @@ def _make_app(store, user_id, *, include_error_handler=True):
     app.include_router(group_router)
     app.include_router(chat_router)
     app.include_router(distill_router)
+    app.include_router(text_router)
+    app.include_router(market_router)
 
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
@@ -152,6 +156,17 @@ def _create_card(store, user_id, text_id):
     card_id = f"card_{uuid.uuid4().hex}"
     _run_async(store.save_card(card_id, text_id, "张三", '{"name": "张三"}', user_id=user_id))
     return card_id
+
+
+def _publish_card(store, user_id, text_id):
+    """发布私卡 → 落一条 card_versions（历史版本），返回 fork id。
+
+    fork id 是 `card_versions.card_id` 的主键来源，market 的 /versions 端点按它取版本。
+    """
+    card_id = _create_card(store, user_id, text_id)
+    return _run_async(store.publish_card(
+        card_id, user_id, "desc", "tag", "v1", '{"name": "张三"}',
+    ))
 
 
 def _create_session(store, user_id, card_id):
@@ -356,6 +371,91 @@ class TestHoleOwnershipRegression:
         finally:
             get_sessions().pop(sid, None)
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 缺陷 19：读取原语本身无身份（与上面那批「调用点忘写 if」不同型）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDefect19PrimitiveLeaks:
+    """三处实锤越权：读原语无身份概念，调用点漏校验 → 非属主可读。
+
+    与 TestHoleOwnershipRegression 的区别：那批的根因是**某个调用点忘了写 if**，修法是
+    在那个调用点补校验；这三条的根因是**原语签名里没有 user**，于是每个调用点都得记得校验，
+    忘一个漏一个，而漏了没有报警。修法是原语拆出 `*_owned`（属主过滤在 SQL，复用缺陷 11
+    的 `get_text_owned` / `get_session_owned` 范式），调用点无处可选。
+
+    所以这批用例的判据不是「路由返回 404」，而是**原语在 SQL 层就返回空**；路由级用例只
+    保证调用点接上了 `*_owned`。
+
+    `test_12` 为什么不能覆盖 `get_characters` 的越权：它建的文本**没有缓存**
+    （`characters_json` 为空），旧代码读缓存得 None、照样往下走 404，所以旧代码下它也绿。
+    真正的判别力要求**缓存已存在**——见 test_23。这就是「探针自效性」：夹具没走到那条
+    分支，用例就是恒绿的。
+    """
+
+    def test_20_characters_owned_sql_filter(self, store, user_a, user_b):
+        """原语层：非属主读他人文本的角色缓存得 None（属主过滤在 SQL）。"""
+        tid = _create_text(store, user_a)
+        _run_async(store.save_characters(tid, [{"name": "张三", "aliases": ["三哥"]}]))
+        assert _run_async(store.get_characters_owned(tid, user_a)) == [{"name": "张三", "aliases": ["三哥"]}]
+        assert _run_async(store.get_characters_owned(tid, user_b)) is None
+
+    def test_21_text_comments_owned_sql_filter(self, store, user_a, user_b):
+        """原语层：非属主读他人文本的评论得空页，不是「无权限」也不是别人家的评论。
+
+        属主列在 `texts` 上 —— `text_comments.user_id` 是**评论作者**，用它过滤是错的
+        （会把「别人在我文本下的评论」滤掉，同时把「我在别人文本下的评论」漏出来）。
+        """
+        tid = _create_text(store, user_a)
+        _run_async(store.add_text_comment(tid, user_a, "A", "我的评论"))
+        mine = _run_async(store.get_text_comments_owned(tid, user_a, 1, 20))
+        assert mine["total"] == 1 and mine["comments"][0]["content"] == "我的评论"
+        theirs = _run_async(store.get_text_comments_owned(tid, user_b, 1, 20))
+        assert theirs == {"comments": [], "total": 0}
+
+    def test_22_card_versions_owned_sql_filter(self, store, user_a, user_b):
+        """原语层：非属主读他人卡的版本历史得空列表。
+
+        属主是**卡的属主**，不是版本行的 `user_id`；快照里有卡全文，不能给非属主看。
+        """
+        tid = _create_text(store, user_a)
+        fork_id = _publish_card(store, user_a, tid)
+        assert fork_id, "夹具没建出已发布版本，本用例会恒绿"
+        mine = _run_async(store.get_card_versions_owned(fork_id, user_a))
+        assert len(mine) >= 1
+        assert _run_async(store.get_card_versions_owned(fork_id, user_b)) == []
+
+    def test_23_distill_identify_non_owner_404_with_cache(self, store, user_a, client_b, llm_gate_open):
+        """路由层：**缓存已存在**时，非属主仍 404 —— 这条才锁得住校验与读缓存的顺序。
+
+        旧代码把 `get_characters` 放在 `get_text_owned` 之前，非属主直接命中别人的缓存并
+        返回 200；补上 `*_owned` 后即使顺序写反也读不到，但顺序仍必须是「先校验后读」，
+        否则 404 是死代码。两条都锁：状态码 + 不返回他人缓存内容。
+        """
+        tid = _create_text(store, user_a)
+        _run_async(store.save_characters(tid, [{"name": "张三", "aliases": ["三哥"]}]))
+        r = client_b.post("/api/distill/identify", json={"text_id": tid})
+        assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
+        assert "张三" not in r.text, "非属主拿到了他人文本的角色缓存"
+
+    def test_24_text_comments_route_non_owner_sees_nothing(self, store, user_a, client_b):
+        """路由层：非属主读他人文本的评论端点，看不到别人的评论。"""
+        tid = _create_text(store, user_a)
+        _run_async(store.add_text_comment(tid, user_a, "A", "我的评论"))
+        r = client_b.get(f"/api/text/{tid}/comments")
+        assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.json()}"
+        assert r.json()["total"] == 0, f"非属主看到了他人文本的评论：{r.json()}"
+        assert "我的评论" not in r.text
+
+    def test_25_card_versions_route_non_owner_sees_nothing(self, store, user_a, client_b):
+        """路由层：非属主读他人卡的版本历史，拿不到任何版本（快照含卡全文）。"""
+        tid = _create_text(store, user_a)
+        fork_id = _publish_card(store, user_a, tid)
+        assert fork_id, "夹具没建出已发布版本，本用例会恒绿"
+        r = client_b.get(f"/api/market/{fork_id}/versions")
+        assert r.status_code == 200, f"Expected 200, got {r.status_code}: {r.json()}"
+        assert r.json()["versions"] == [], f"非属主拿到了他人卡的版本历史：{r.json()}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

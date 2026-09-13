@@ -604,8 +604,12 @@ async def get_card_versions(
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
-    """List all published versions for a card."""
-    versions = await storage.get_card_versions(card_id)
+    """List all published versions for a card — card owner only.
+
+    非属主与「无版本」同判：都返回空列表（非属主/不存在不可区分是本仓既定口径）。
+    版本快照含卡全文，不能给非属主看。
+    """
+    versions = await storage.get_card_versions_owned(card_id, user["id"])
     return {"versions": versions}
 
 

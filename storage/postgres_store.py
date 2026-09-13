@@ -260,18 +260,24 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Save characters failed: {exc}")
             raise
 
-    async def get_characters(self, text_id: str) -> list | None:
-        """Get cached identified characters for a text, or None."""
+    async def get_characters_owned(self, text_id: str, user_id: str) -> list | None:
+        """Get cached identified characters for a text the user owns, or None.
+
+        属主过滤在 SQL 里 —— 与 `get_text_owned` 同范式（缺陷 11）。返回 None 同时表示
+        「无缓存」与「非属主」，调用方先用 `get_text_owned` 判定存在性/属主，再读缓存。
+        **读缓存必须在属主校验之后**：顺序反了等于没有校验（distill 路由踩过）。
+        """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT characters_json FROM texts WHERE id = $1", text_id,
+                    "SELECT characters_json FROM texts WHERE id = $1 AND user_id = $2",
+                    text_id, user_id,
                 )
             if row and row[0]:
                 return json.loads(row[0])
             return None
         except Exception as exc:
-            print(f"[PostgresStore] Get characters failed: {exc}")
+            print(f"[PostgresStore] Get characters (owned) failed: {exc}")
             raise
 
     async def delete_text(self, id: str) -> bool:
@@ -3836,22 +3842,29 @@ class PostgresStore(StorageBase):
 
     # ── Text Comments ──
 
-    async def get_text_comments(self, text_id: str, page: int = 1, page_size: int = 20) -> dict:
+    async def get_text_comments_owned(self, text_id: str, user_id: str, page: int = 1, page_size: int = 20) -> dict:
+        """Get paginated top-level comments with nested replies — text owner only.
+
+        属主过滤在 SQL 里（JOIN texts 按 `t.user_id`）。**非属主与「无评论」同判**：
+        都返回空页，调用方不必再判存在性 —— 非属主与不存在不可区分是本仓既定口径。
+        注：`text_comments.user_id` 是**评论作者**，不是可用来做属主过滤的列；属主在 texts 上。
+        """
         try:
             offset = (page - 1) * page_size
             async with await self._connect() as conn:
                 total = await conn.fetchval(
-                    "SELECT COUNT(*) FROM text_comments WHERE text_id = $1 AND parent_id = ''",
-                    text_id,
+                    """SELECT COUNT(*) FROM text_comments tc JOIN texts t ON t.id = tc.text_id
+                       WHERE tc.text_id = $1 AND tc.parent_id = '' AND t.user_id = $2""",
+                    text_id, user_id,
                 ) or 0
 
                 rows = await conn.fetch(
-                    """SELECT id, text_id, user_id, username, content, parent_id, likes, created_at
-                       FROM text_comments
-                       WHERE text_id = $1 AND parent_id = ''
-                       ORDER BY created_at DESC
-                       LIMIT $2 OFFSET $3""",
-                    text_id, page_size, offset,
+                    """SELECT tc.id, tc.text_id, tc.user_id, tc.username, tc.content, tc.parent_id, tc.likes, tc.created_at
+                       FROM text_comments tc JOIN texts t ON t.id = tc.text_id
+                       WHERE tc.text_id = $1 AND tc.parent_id = '' AND t.user_id = $2
+                       ORDER BY tc.created_at DESC
+                       LIMIT $3 OFFSET $4""",
+                    text_id, user_id, page_size, offset,
                 )
                 comments = self._list_rows(rows)
 
@@ -3877,7 +3890,7 @@ class PostgresStore(StorageBase):
 
             return {"comments": comments, "total": total}
         except Exception as exc:
-            print(f"[PostgresStore] Get text comments failed: {exc}")
+            print(f"[PostgresStore] Get text comments (owned) failed: {exc}")
             raise
 
     async def add_text_comment(self, text_id: str, user_id: str, username: str, content: str, parent_id: str = "") -> dict:
@@ -4574,18 +4587,26 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Update published card failed: {exc}")
             raise StoreError("update_published_card", exc) from exc
 
-    async def get_card_versions(self, card_id: str) -> list[dict]:
+    async def get_card_versions_owned(self, card_id: str, user_id: str) -> list[dict]:
+        """List all versions for a card the user owns, descending. Empty list if not owner.
+
+        属主是**卡的属主**（`cards.user_id`），不是版本行自己的 `user_id` ——
+        版本历史归卡主，`card_json_snapshot` 含卡全文，不能给非属主看。
+        非属主与「无版本」同判：都返回空列表。
+        """
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    """SELECT id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot, created_at
-                       FROM card_versions WHERE card_id = $1 ORDER BY version_num DESC""",
-                    card_id,
+                    """SELECT cv.id, cv.card_id, cv.user_id, cv.version_num, cv.publish_message, cv.diff_json, cv.card_json_snapshot, cv.created_at
+                       FROM card_versions cv JOIN cards c ON c.id = cv.card_id
+                       WHERE cv.card_id = $1 AND c.user_id = $2
+                       ORDER BY cv.version_num DESC""",
+                    card_id, user_id,
                 )
             return self._list_rows(rows)
         except Exception as exc:
-            print(f"[PostgresStore] Get card versions failed: {exc}")
-            raise StoreError("get_card_versions", exc) from exc
+            print(f"[PostgresStore] Get card versions (owned) failed: {exc}")
+            raise StoreError("get_card_versions_owned", exc) from exc
 
     async def delete_card_version(self, card_id: str, version_id: str) -> bool:
         try:

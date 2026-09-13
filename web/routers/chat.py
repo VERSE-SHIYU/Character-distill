@@ -179,7 +179,7 @@ async def _ensure_session(
         raise HTTPException(500, "Card data is corrupted") from exc
 
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
-    all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards)
+    all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards, user_id)
 
     emb_key = ""
     emb_region = ""

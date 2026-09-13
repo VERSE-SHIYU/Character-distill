@@ -498,7 +498,7 @@ class TextManager:
                 print(f"[TextManager] Opening variation failed, using original: {exc}")
 
         try:
-            all_characters = await self._build_all_characters(text_id, existing_cards)
+            all_characters = await self._build_all_characters(text_id, existing_cards, user_id)
             session_id = await asyncio.to_thread(
                 self._create_session, content, card, all_characters, None,
                 card_id, user_id,
@@ -559,7 +559,7 @@ class TextManager:
         content = text_rec.get("content", "")
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
-        all_chars = await self._build_all_characters(text_id, existing_cards)
+        all_chars = await self._build_all_characters(text_id, existing_cards, user_id)
 
         session_id = await asyncio.to_thread(
             self._create_session, content, card, all_chars, None,
@@ -591,11 +591,15 @@ class TextManager:
 
     # ---- Internal helpers ----
 
-    async def _build_all_characters(self, text_id: str, existing_cards: list[dict]) -> list[dict[str, Any]]:
-        """Build all_characters list with aliases merged from cached identify results."""
+    async def _build_all_characters(self, text_id: str, existing_cards: list[dict], user_id: str) -> list[dict[str, Any]]:
+        """Build all_characters list with aliases merged from cached identify results.
+
+        user_id 必需：别名缓存走属主过滤，缺失即 TypeError 而不是静默读到他人缓存
+        （与 get_or_distill 同口径）。
+        """
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
         try:
-            cached = await self._storage.get_characters(text_id)
+            cached = await self._storage.get_characters_owned(text_id, user_id)
             if cached:
                 name_to_aliases = {c["name"]: c.get("aliases", []) for c in cached}
                 for char in all_characters:

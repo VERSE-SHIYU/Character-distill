@@ -668,12 +668,14 @@ async def identify_by_text_id(
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
-    cached = await storage.get_characters(req.text_id)
-    if cached:
-        return {"characters": cached}
+    # 属主校验必须排在读缓存之前 —— 反过来的话非属主能直接命中别人的缓存并返回，
+    # 后面那道 404 就成了死代码（本路由踩过，见缺陷 19）。
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
+    cached = await storage.get_characters_owned(req.text_id, user_id)
+    if cached:
+        return {"characters": cached}
     result = await _do_identify(text_rec["content"], distiller)
     await storage.save_characters(req.text_id, result["characters"])
     return result
@@ -1383,7 +1385,7 @@ async def start_session(
                 raise HTTPException(404, "Text not found")
             content = _get_distill_content(text_rec)
             existing_cards = await storage.list_cards(req.text_id, user_id)
-            all_characters = await text_manager._build_all_characters(req.text_id, existing_cards)
+            all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
             emb_key = ""
             emb_region = ""
             try:
