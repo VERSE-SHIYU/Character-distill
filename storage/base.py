@@ -7,6 +7,20 @@ import uuid as _uuid
 from abc import ABC, abstractmethod
 
 
+def _rebuild_store_error(op: str, message: str) -> "StoreError":
+    """StoreError 的 pickle 还原口（缺陷 18）。
+
+    不能走默认路径：BaseException.__reduce__ 用 self.args（已格式化的 message）回调
+    cls(*args)，而 __init__ 要的是 (op, exc) —— 反序列化炸成 TypeError，把「查询失败」
+    变成另一个异常。更关键的是原始 exc（如驱动层的 OperationalError）未必可序列化，
+    不该被打包；故只带 op + 已渲染的 message 过河，重建时绕开 __init__ 的格式化。
+    """
+    obj = StoreError.__new__(StoreError)
+    RuntimeError.__init__(obj, message)
+    obj.op = op
+    return obj
+
+
 class StoreError(RuntimeError):
     """store 层的**可辨失败语义** —— 「查询/写入失败」，与「无数据」互斥。
 
@@ -27,6 +41,9 @@ class StoreError(RuntimeError):
         """记下出错的 store 方法名；原始异常由调用点的 `from exc` 链上。"""
         super().__init__(f"storage operation {op!r} failed: {exc}")
         self.op = op
+
+    def __reduce__(self):
+        return (_rebuild_store_error, (self.op, str(self)))
 
 
 def new_review_id() -> str:

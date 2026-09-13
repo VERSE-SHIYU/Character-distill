@@ -315,6 +315,7 @@ class IncompleteResponseError(RuntimeError):
 
     def __init__(self, finish_reason: str, where: str, content: str = "") -> None:
         self.finish_reason = finish_reason
+        self.where = where
         self.content = content
         self.hint = _INCOMPLETE_ACTIONS.get(
             finish_reason, "未登记处置 —— 补 adapters/llm_adapter.py 的 _INCOMPLETE_ACTIONS")
@@ -322,6 +323,12 @@ class IncompleteResponseError(RuntimeError):
             f"{where}: 上游响应不完整（finish_reason={finish_reason!r}）—— {self.hint}；"
             f"已按失败处理、不作为结果返回，已生成部分见 .content。"
         )
+
+    def __reduce__(self):
+        """跨进程重建（缺陷 18）：BaseException.__reduce__ 会调 cls(*self.args)，而 args 是
+        格式化后的 message、与本类 __init__(finish_reason, where) 参数对不上 —— 反序列化炸成
+        TypeError，把真因换成另一个异常。显式还原三个字段（hint 由 finish_reason 重算）。"""
+        return (self.__class__, (self.finish_reason, self.where, self.content))
 
     @property
     def user_message(self) -> str:

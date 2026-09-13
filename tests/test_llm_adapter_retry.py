@@ -118,8 +118,12 @@ class _RateLimitError429(RuntimeError):
 
     def __init__(self, retry_after: str):
         super().__init__("429 upstream rate limit")
+        self.retry_after = retry_after
         self.status_code = 429
         self.response = SimpleNamespace(headers={"Retry-After": retry_after})
+
+    def __reduce__(self):
+        return (self.__class__, (self.retry_after,))
 
 
 def _storm(exc):

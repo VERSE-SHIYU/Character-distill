@@ -282,15 +282,15 @@ class TestModerationInterception:
 class _RateLimit429(RuntimeError):
     """429 假异常：status_code 驱动 _is_retryable_embed，response.headers 回 Retry-After。"""
 
-    def __init__(self):
-        super().__init__("429 upstream rate limit")
+    def __init__(self, message: str = "429 upstream rate limit"):
+        super().__init__(message)
         self.status_code = 429
         self.response = SimpleNamespace(headers={"Retry-After": "0"})
 
 
 class _BadRequest400(RuntimeError):
-    def __init__(self):
-        super().__init__("400 bad request")
+    def __init__(self, message: str = "400 bad request"):
+        super().__init__(message)
         self.status_code = 400
 
 
