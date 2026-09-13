@@ -295,3 +295,44 @@ def test_chat_stream_create_storm_capped():
     with pytest.raises(RuntimeError):
         next(gen)
     assert fake.chat.completions.calls == 2  # ≤_STREAM_ATTEMPTS
+
+
+# ── 缺陷 8：超时族全走 env（口径统一）──────────────────────────────────
+# 三个 ceiling 早已 env 化，三个 deadline 漏网 → 「超时可调」名不副实。这里锁：
+#   1. _env_timeout_s 缺变量取默认、有变量取变量、0/负被 floor 夹回（防静默关超时）；
+#   2. 六个模块常量真的消费 env（reload 实跑，而非只看 helper 行为）；
+#   3. 无 env 时默认值一字不变（决策 6/60/8、ceiling 5/45/7）。
+
+
+def test_env_timeout_s_default_override_and_floor(monkeypatch):
+    monkeypatch.delenv("UT_S", raising=False)
+    assert M._env_timeout_s("UT_S", 9.0, 1.0) == 9.0
+    monkeypatch.setenv("UT_S", "42")
+    assert M._env_timeout_s("UT_S", 9.0, 1.0) == 42.0
+    for bad in ("0", "-3", "0.0"):
+        monkeypatch.setenv("UT_S", bad)
+        assert M._env_timeout_s("UT_S", 9.0, 1.25) == 1.25, f"{bad} 未夹 floor → 超时被静默关掉"
+
+
+def test_timeout_family_defaults_unchanged():
+    assert (M._DECISION_DEADLINE_S, M._GEN_DEADLINE_S, M._STREAM_DEADLINE_S) == (6.0, 60.0, 8.0)
+    assert (M._DECISION_ATTEMPT_S, M._GEN_ATTEMPT_S, M._STREAM_ATTEMPT_S) == (5.0, 45.0, 7.0)
+
+
+def test_timeout_family_constants_consume_env(monkeypatch):
+    """reload 实跑：证明六个常量确由 env 派生，堵住「只测 helper、常量没用它」的假绿。"""
+    import importlib
+
+    monkeypatch.setenv("LLM_GEN_DEADLINE_S", "120")
+    monkeypatch.setenv("LLM_STREAM_DEADLINE_S", "0")     # → floor
+    monkeypatch.setenv("LLM_DECISION_DEADLINE_S", "-1")  # → floor
+    monkeypatch.setenv("LLM_GEN_ATTEMPT_S", "0")         # → floor
+    try:
+        importlib.reload(M)
+        assert M._GEN_DEADLINE_S == 120.0
+        assert M._STREAM_DEADLINE_S == M._ATTEMPT_WINDOW_S
+        assert M._DECISION_DEADLINE_S == M._ATTEMPT_WINDOW_S
+        assert M._GEN_ATTEMPT_S == M._ATTEMPT_MIN_S
+    finally:
+        monkeypatch.undo()
+        importlib.reload(M)  # 复原无 env 的模块常量，避免污染后续用例

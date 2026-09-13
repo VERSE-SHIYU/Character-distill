@@ -40,6 +40,14 @@ def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
     return is_429, retry_after
 
 
+def _env_timeout_s(name: str, default_s: float, floor_s: float) -> float:
+    """超时类常量的统一 env 出口：缺变量取默认值，floor 兜住 0/负把超时静默关掉。
+
+    填 0 → create(timeout=0) 或 deadline=0 会静默撤掉超时封顶，比配个偏小的值更危险，故夹 floor。
+    """
+    return max(float(os.getenv(name, str(default_s))), floor_s)
+
+
 # ── 阶段 D 重试预算组（唯一重试控制点参数）────────────────────────────
 # 缺陷 #1（retry 嵌套）：旧 chat/async_chat/chat_with_tools 各复制一份 budget×SDK 默认
 # max_retries=2，至多 9 次 HTTP；非 429 退避 (attempt+1)*5s → 决策轮 degrade 前固定烧 5s+10s。
@@ -56,16 +64,13 @@ def _classify_retry(exc: Exception) -> tuple[bool, float | None]:
 # 决策轮=路由：失败应快速降级 → 2 次 / 6s / 退避 1s（旧 5s+10s）。
 # 生成轮=交付物：值得多试 → 3 次 / 60s / 退避 5s 线性（保留旧节奏，被 deadline 夹逼）。
 _DECISION_ATTEMPTS = 2
-_DECISION_DEADLINE_S = 6.0
 _DECISION_BACKOFF_S = 1.0
 _GEN_ATTEMPTS = 3
-_GEN_DEADLINE_S = 60.0
 _GEN_BACKOFF_S = 5.0
 # 流式首 token 补偿：SDK 重试撤除后 create()（吐 chunk 前）连接失败不再被 SDK 静默重试，
 # 折叠到同一 _RetryBudget（≤_STREAM_ATTEMPTS / ≤_STREAM_DEADLINE_S / 退避 1s）。
 # 一旦已 yield 内容即不可安全重放，只包 create() 返回前。
 _STREAM_ATTEMPTS = 2
-_STREAM_DEADLINE_S = 8.0
 _STREAM_BACKOFF_S = 1.0
 # 429 独立次数上限（旧 rate_limit_budget=5 语义，D1a 审计必修2）：429 不计入非429 attempts，
 # 但需自身上限，否则 Retry-After 极小(如 0.1)时决策轮 6s 内可高频重打数十次 → 加速 provider
@@ -73,18 +78,25 @@ _STREAM_BACKOFF_S = 1.0
 _RATE_LIMIT_ATTEMPTS = 5
 # D1b per-attempt timeout 组：
 #   _*_ATTEMPT_S           role ceiling（单次 create 超时上限），决策 5 / 生成 45 / 流式 7。
-#                          三个 ceiling 均可 env 覆盖（LLM_DECISION_ATTEMPT_S /
-#                          LLM_GEN_ATTEMPT_S / LLM_STREAM_ATTEMPT_S，默认值不变，同
-#                          CARD_GUARD_ENABLED 模式）——生产发现太紧改环境变量即可，不发版。
+#   _*_DEADLINE_S          budget 起算的总墙钟上限，决策 6 / 生成 60 / 流式 8。
+#   六者同走 _env_timeout_s 出口（LLM_DECISION_ATTEMPT_S / LLM_GEN_ATTEMPT_S /
+#   LLM_STREAM_ATTEMPT_S / LLM_DECISION_DEADLINE_S / LLM_GEN_DEADLINE_S /
+#   LLM_STREAM_DEADLINE_S，默认值不变，同 CARD_GUARD_ENABLED 模式）——生产发现太紧
+#   改环境变量即可，不发版。缺陷 8：此前只 env 化了三个 ceiling，deadline 漏网 →
+#   「超时可调」名不副实（生成轮 60s 墙钟被烧死在代码里）。
 #   _ATTEMPT_TIMEOUT_MARGIN_S  超时触发(on_failure 裁决)须落在 deadline 内的收尾余量
 #   _ATTEMPT_MIN_S             一次有效 attempt 的最小超时；剩余连 margin+min 都撑不起则拒发
 _ATTEMPT_TIMEOUT_MARGIN_S = 1.0
 _ATTEMPT_MIN_S = 0.25
 _ATTEMPT_WINDOW_S = _ATTEMPT_TIMEOUT_MARGIN_S + _ATTEMPT_MIN_S  # 撑起一次 attempt 所需剩余 = 1.25s
-# floor=_ATTEMPT_MIN_S：防 0/负 ceiling 把 create(timeout=0) 变 no-timeout，静默撤掉 D1b 单次封顶。
-_DECISION_ATTEMPT_S = max(float(os.getenv("LLM_DECISION_ATTEMPT_S", "5.0")), _ATTEMPT_MIN_S)
-_GEN_ATTEMPT_S = max(float(os.getenv("LLM_GEN_ATTEMPT_S", "45.0")), _ATTEMPT_MIN_S)
-_STREAM_ATTEMPT_S = max(float(os.getenv("LLM_STREAM_ATTEMPT_S", "7.0")), _ATTEMPT_MIN_S)
+# floor：ceiling 取 _ATTEMPT_MIN_S（防 create(timeout=0) 变 no-timeout，静默撤掉单次封顶）；
+# deadline 取 _ATTEMPT_WINDOW_S（deadline 撑不起一次有效窗 = 静默关掉全部 attempt）。
+_DECISION_ATTEMPT_S = _env_timeout_s("LLM_DECISION_ATTEMPT_S", 5.0, _ATTEMPT_MIN_S)
+_GEN_ATTEMPT_S = _env_timeout_s("LLM_GEN_ATTEMPT_S", 45.0, _ATTEMPT_MIN_S)
+_STREAM_ATTEMPT_S = _env_timeout_s("LLM_STREAM_ATTEMPT_S", 7.0, _ATTEMPT_MIN_S)
+_DECISION_DEADLINE_S = _env_timeout_s("LLM_DECISION_DEADLINE_S", 6.0, _ATTEMPT_WINDOW_S)
+_GEN_DEADLINE_S = _env_timeout_s("LLM_GEN_DEADLINE_S", 60.0, _ATTEMPT_WINDOW_S)
+_STREAM_DEADLINE_S = _env_timeout_s("LLM_STREAM_DEADLINE_S", 8.0, _ATTEMPT_WINDOW_S)
 
 
 class _RetryBudget:
