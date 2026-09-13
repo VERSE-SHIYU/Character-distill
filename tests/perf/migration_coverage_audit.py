@@ -20,7 +20,6 @@
 """
 from __future__ import annotations
 
-import ast
 import importlib.util
 import re
 import sys
@@ -33,7 +32,6 @@ from storage import sqlite_store  # noqa: E402
 
 SQLITE_DIR = ROOT / "storage" / "migrations"
 PG_DIR = ROOT / "storage" / "migrations_pg"
-DISPATCH_LOCK = ROOT / "tests" / "test_migration_dispatch.py"
 
 _CREATE_TABLE_RE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<table>\w+)[`\"\]]?\s*\(",
@@ -130,21 +128,13 @@ def _self_check() -> None:
 
 
 def _exemptions() -> dict[str, str]:
-    """从形态锁里读 `_NOT_APPLIED`。
+    """从**执行器**读豁免声明 `_MIGRATIONS_NOT_APPLIED`。
 
-    **注意这本身就是个发现**：豁免名单住在**测试**里，不在执行器里 —— 执行器（与读执行器
-    的人）看不见「079 是被有意略过的」。用 AST 读而不是 import，免得把 pytest 夹具拖进来。
+    豁免只有一个源（缺陷 21 的收口）：声明住在执行器模块里，与次序元组同一处，读
+    `sqlite_store.py` 的人一眼看到「哪个迁移被有意略过、为什么」。本脚本与
+    `tests/test_migration_dispatch.py` 都从这里读，不存在第二份要同步的副本。
     """
-    tree = ast.parse(DISPATCH_LOCK.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == "_NOT_APPLIED" for t in node.targets
-        ):
-            return {
-                k.value: v.value for k, v in zip(node.value.keys, node.value.values)
-                if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
-            }
-    raise SystemExit("读不到 _NOT_APPLIED —— 锁的靶子没了，先修靶子")
+    return dict(sqlite_store._MIGRATIONS_NOT_APPLIED)
 
 
 def main() -> None:

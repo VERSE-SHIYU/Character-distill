@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # 迁移应用次序（缺陷 15）。显式列出而不是 glob 整个目录：077 与 078 之间夹着 users 表
 # 重建，次序有意义。**新增迁移文件必须登记在这里** —— tests/test_migration_dispatch.py
-# 会扫目录求差集，漏登记即红（该文件的 `_NOT_APPLIED` 是唯一豁免出口，必须带理由）。
+# 会扫目录求差集，漏登记即红（唯一豁免出口是下面的 `_MIGRATIONS_NOT_APPLIED`，必须带理由）。
 _MIGRATIONS_BEFORE_USER_REBUILD = (
     "002_voice.sql", "003_wechat.sql", "004_title_desc.sql", "005_characters_cache.sql",
     "006_card_avatar.sql", "007_text_type.sql", "008_original_char_count.sql", "009_users.sql",
@@ -61,6 +61,19 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql",
 )
+
+# 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
+# 从这里读，不另存一份：豁免只有一个源，改执行器的人一眼看到（缺陷 21 的教训 —— 豁免
+# 定义在测试里，读 sqlite_store.py 的人根本看不见 079 曾被有意略过）。
+#
+# **豁免即永久放行**：写下理由这把锁就放过它，而理由里声明的后果**没有任何东西去验**。
+# 079 就是这么漏了一整个版本的 —— 理由白纸黑字写着「新库缺表、代码在用」，三把锁
+# （dispatch / schema_parity / fresh_schema）各自尽职、全部绿，库仍然缺表。闭环由
+# tests/test_sqlite_fresh_schema.py 的 `test_fresh_db_covers_every_table_pg_declares`
+# 补上（锁症状本身，不锁登记动作）。
+_MIGRATIONS_NOT_APPLIED: dict[str, str] = {
+    "037_placeholder.sql": "占位编号，内容只有 SELECT 1，无 schema 变更",
+}
 
 # `ALTER TABLE t ADD COLUMN c ...;` —— 迁移里唯一「重复执行即报错」的形态。
 _ADD_COLUMN_RE = re.compile(

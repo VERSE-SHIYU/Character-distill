@@ -2,12 +2,17 @@
 
 两条不变量，都锁「症状不可能发生」，不是「这次修好了」：
 
-1. `storage/migrations/` 下每个 `.sql` 要么在 sqlite 的迁移次序表里，要么在
-   `_NOT_APPLIED` 里带理由。此前次序是 74 个手写块，**加一个迁移文件忘了接线没有任何东西
-   报警** —— 先例 `079_remote_user_profiles.sql` 漏了一整个版本，SQLite 新库因此缺表。
+1. `storage/migrations/` 下每个 `.sql` 要么在 sqlite 的迁移次序表里，要么在执行器
+   （`storage/sqlite_store.py`）声明的 `_MIGRATIONS_NOT_APPLIED` 里带理由。此前次序是 74
+   个手写块，**加一个迁移文件忘了接线没有任何东西报警** —— 先例
+   `079_remote_user_profiles.sql` 漏了一整个版本，SQLite 新库因此缺表。
 
-   **但这条锁只管「有没有归宿」，不管「归宿是否可接受」** —— 079 当时正是躺在
-   `_NOT_APPLIED` 里、本锁绿着、库依然缺表。豁免理由声明的后果由
+   豁免的事实源在执行器、不在本文件（缺陷 21 的教训）：定义在测试里，读
+   `sqlite_store.py` 的人看不见「079 是被有意略过的」。本测试从执行器读那一份，**不自己
+   维护副本** —— 豁免只有一个源，不存在两处要同步。
+
+   **但这条锁只管「有没有归宿」，不管「归宿是否可接受」** —— 079 当时正是躺在豁免表里、
+   本锁绿着、库依然缺表。豁免理由声明的后果由
    `test_sqlite_fresh_schema.py::test_fresh_db_covers_every_table_pg_declares` 去验。
 2. `_ensure_initialized` 里不得有「失败只 print、从不重抛」的 except 块。此前 74 处
    `except Exception: print` 同时干了两件坏事：真失败被吞成「初始化成功」，
@@ -18,26 +23,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from storage import sqlite_store
 
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = ROOT / "storage" / "migrations"
 SQLITE_STORE = ROOT / "storage" / "sqlite_store.py"
 
-# 有意不接线的迁移文件 —— 必须带理由，写在这里而不是让人猜。
-#
-# **豁免即永久放行**：写下理由这把锁就放过它，而理由里声明的后果**没有任何东西去验**。
-# 079 就是这么漏了一整个版本的 —— 豁免理由白纸黑字写着「新库缺表、代码在用」，
-# 三把锁（本锁 / test_schema_parity / test_sqlite_fresh_schema）各自尽职、全部绿，
-# 库仍然缺表。闭环由 tests/test_sqlite_fresh_schema.py 的
-# `test_fresh_db_covers_every_table_pg_declares` 补上（锁症状本身，不锁登记动作）。
-_NOT_APPLIED = {
-    "037_placeholder.sql": "占位编号，内容只有 SELECT 1，无 schema 变更",
-}
-
 
 def test_every_migration_file_is_dispatched():
     """目录里每个 .sql 都要有归宿 —— 接线了，或明确记下为什么不接。"""
+    not_applied = sqlite_store._MIGRATIONS_NOT_APPLIED
     dispatched = (
         {"001_init.sql"}
         | set(sqlite_store._MIGRATIONS_BEFORE_USER_REBUILD)
@@ -45,14 +42,25 @@ def test_every_migration_file_is_dispatched():
     )
     on_disk = {p.name for p in MIGRATIONS_DIR.glob("*.sql")}
 
-    missing = sorted(on_disk - dispatched - set(_NOT_APPLIED))
+    missing = sorted(on_disk - dispatched - set(not_applied))
     assert not missing, (
         f"这些迁移文件躺在 storage/migrations/ 里却没人应用：{missing}。"
-        "加进 sqlite_store 的次序表，或在 _NOT_APPLIED 里写明理由。")
+        "加进 sqlite_store 的次序表，或在 _MIGRATIONS_NOT_APPLIED 里写明理由。")
     unknown = sorted(dispatched - on_disk)
     assert not unknown, f"次序表指向了不存在的迁移文件：{unknown}"
-    stale = sorted(set(_NOT_APPLIED) - on_disk)
-    assert not stale, f"_NOT_APPLIED 里的豁免指向已不存在的文件：{stale}"
+    stale = sorted(set(not_applied) - on_disk)
+    assert not stale, f"_MIGRATIONS_NOT_APPLIED 里的豁免指向已不存在的文件：{stale}"
+
+
+def test_exemption_has_one_source_in_the_executor(monkeypatch):
+    """证明豁免只有一个源：本测试读的是执行器的声明，不是自己那份副本。
+
+    变异（即本用例）：往执行器的 `_MIGRATIONS_NOT_APPLIED` 塞一条指向不存在文件的假豁免，
+    锁必须相应变红（stale 分支）。若测试另存副本，这条不会生效。
+    """
+    monkeypatch.setitem(sqlite_store._MIGRATIONS_NOT_APPLIED, "999_ghost.sql", "假豁免")
+    with pytest.raises(AssertionError, match="已不存在的文件"):
+        test_every_migration_file_is_dispatched()
 
 
 def test_migration_runner_never_swallows_a_failure():

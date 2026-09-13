@@ -170,8 +170,8 @@ class TestExemptionClosedLoop:
     真源选 `migrations_pg/`：PG 执行器是 `sorted(glob('*.sql'))`（`postgres_store.py`），
     **目录即清单、没有豁免出口** —— 故「PG 目录里声明的表」就是「应该存在的表」的可靠定义。
 
-    **变异判别力（实测）**：把 079 从次序元组移回 `_NOT_APPLIED` →
-    `test_fresh_db_covers_every_table_pg_declares` 红，而
+    **变异判别力（实测）**：把 079 从次序元组移回执行器的豁免表
+    `_MIGRATIONS_NOT_APPLIED` → `test_fresh_db_covers_every_table_pg_declares` 红，而
     `test_every_migration_file_is_dispatched` **仍绿**。旧锁抓不到的那一类，正是本锁抓的。
 
     **镜像（缺陷 23）**：本锁管的是**测试 / 本地后端**（SQLite 新库）。**生产后端**（真 PG 库）
@@ -188,6 +188,6 @@ class TestExemptionClosedLoop:
         assert not missing, (
             f"这些表 `migrations_pg/` 声明了、SQLite 新库却没有：{missing}。"
             "两个 store 的 schema 漂移了 —— 要么把对应迁移接进 `storage/sqlite_store.py` "
-            "的次序元组（并写清位次理由），要么在 `tests/test_migration_dispatch.py` "
-            "的 `_NOT_APPLIED` 里显式豁免**并说明该表为何 SQLite 侧不需要**。")
+            "的次序元组（并写清位次理由），要么在该文件的 `_MIGRATIONS_NOT_APPLIED` 里"
+            "显式豁免**并说明该表为何 SQLite 侧不需要**。")
 
