@@ -574,7 +574,7 @@ class TestCardCrossBorderSync:
             avatar_data="", market_description="desc", market_tags="tag",
             origin_created_at="2026-06-26",
         )
-        card = await store.get_remote_card(cid)
+        card = await store._get_remote_card(cid)
         assert card is not None
         assert card["name"] == "remote"
         assert card["origin_region"] == "sg"
@@ -594,7 +594,7 @@ class TestCardCrossBorderSync:
             avatar_data="", market_description="desc2", market_tags="tag2",
             origin_created_at="2026-06-26",
         )
-        card = await store.get_remote_card(cid)
+        card = await store._get_remote_card(cid)
         assert card is not None
         assert card["name"] == "v2"
         assert card["market_description"] == "desc2"
@@ -610,7 +610,7 @@ class TestCardCrossBorderSync:
             avatar_data="", market_description="", market_tags="",
             origin_created_at="",
         )
-        card = await store.get_remote_card(cid)
+        card = await store._get_remote_card(cid)
         assert card is not None
         assert card["name"] == "isolated"
         assert card["origin_region"] == "us"

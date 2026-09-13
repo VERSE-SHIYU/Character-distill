@@ -705,9 +705,8 @@ async def get_session_reactions(
     if not db_session:
         raise HTTPException(404, "Session not found")
 
-    messages = await storage.get_messages(session_id)
-    msg_ids = [m["id"] for m in messages if m.get("id")]
-    reactions = await storage.get_reactions(msg_ids)
+    # 反应按会话读取，属主谓词在 SQL 里（JOIN sessions）：不再由调用方拼 message_ids
+    reactions = await storage.get_session_reactions_owned(session_id, user["id"])
     return {"reactions": reactions}
 
 

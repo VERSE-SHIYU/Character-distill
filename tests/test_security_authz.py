@@ -539,6 +539,47 @@ class TestDefect19Commit2OwnedPrimitives:
         assert len(_run_async(store.get_post_comments_owned(pub, None))) == 1
 
 
+class TestDefect19Commit4B3Verdicts:
+    """commit 4：B3 裁决落地 —— 重键之后，锁判据随 SQL 事实一起变。
+
+    旧 `get_reactions(message_ids)` 收一组**调用方自拼的 message_id**，没有任何身份
+    谓词；唯一的上界是「调用点碰巧只传本会话的 id」。重键为
+    `get_session_reactions_owned(session_id, user_id)`：属主谓词落在 SQL 里
+    （JOIN sessions），调用方再拼不出「任意 message_ids」这个越权面。
+    删掉那条 SQL 的 `AND s.user_id = ?`，test_35 即红 —— 这就是它的红源。
+
+    test_36 守的是本重键的**理由**：`message_reactions.user_id` 不只是「点赞的人」，
+    群里角色反应写成 `char:<card_id>`（group.py 的 toggle_reaction），所以属主过滤
+    只能走 JOIN sessions，不能按 mr.user_id 收窄。若有人把它改回 mr.user_id 过滤，
+    test_36 即红。
+    """
+
+    def test_35_session_reactions_owned_sql_filter(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        sid = _create_session(store, user_a, cid)
+        mid = _run_async(store.save_message(sid, "user", "hi", ""))["id"]
+        _run_async(store.toggle_reaction(mid, user_a, "👍"))
+
+        owner = _run_async(store.get_session_reactions_owned(sid, user_a))
+        assert owner.get(mid), "属主读不到自己会话的反应，本用例会恒绿"
+        assert owner[mid][0]["emoji"] == "👍"
+        assert _run_async(store.get_session_reactions_owned(sid, user_b)) == {}, \
+            "非属主拿到了他人会话的反应"
+
+    def test_36_session_reactions_owned_keeps_char_reactions(self, store, user_a):
+        """角色反应（user_id = char:<card_id>）在属主路径下必须存活。"""
+        tid = _create_text(store, user_a)
+        cid = _create_card(store, user_a, tid)
+        sid = _create_session(store, user_a, cid)
+        mid = _run_async(store.save_message(sid, "assistant", "（微笑）", ""))["id"]
+        _run_async(store.toggle_reaction(mid, f"char:{cid}", "😊"))
+
+        owner = _run_async(store.get_session_reactions_owned(sid, user_a))
+        users = owner.get(mid, [{}])[0].get("users", [])
+        assert f"char:{cid}" in users, f"角色反应被属主过滤掉了：{owner}"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Control: User A can access own resources; nonexistent IDs return 404
 # ═══════════════════════════════════════════════════════════════════════════════

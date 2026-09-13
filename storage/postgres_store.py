@@ -584,7 +584,7 @@ class PostgresStore(StorageBase):
                     return card
 
             # Fallback: check remote_cards
-            remote = await self.get_remote_card(card_id)
+            remote = await self._get_remote_card(card_id)
             if remote:
                 remote["is_remote"] = True
                 remote["liked_by_me"] = False
@@ -1110,33 +1110,6 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get liked card ids failed: {exc}")
             raise StoreError("get_liked_card_ids", exc) from exc
 
-    async def get_recent_card_session(self, card_id: str, exclude_id: str = "") -> dict | None:
-        """Get the most recent session for a card (excluding a given session id)."""
-        try:
-            async with await self._connect() as conn:
-                if exclude_id:
-                    row = await conn.fetchrow(
-                        """
-                        SELECT id FROM sessions
-                        WHERE card_id = $1 AND id != $2
-                        ORDER BY updated_at DESC LIMIT 1
-                        """, card_id, exclude_id,
-                    )
-                else:
-                    row = await conn.fetchrow(
-                        """
-                        SELECT id FROM sessions
-                        WHERE card_id = $1
-                        ORDER BY updated_at DESC LIMIT 1
-                        """, card_id,
-                    )
-                if row:
-                    return self._row_to_dict(row)
-                return None
-        except Exception as exc:
-            print(f"[PostgresStore] Get recent card session failed: {exc}")
-            raise StoreError("get_recent_card_session", exc) from exc
-
     async def save_session(self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = "") -> dict:
         """Save or update one session record."""
         try:
@@ -1648,11 +1621,9 @@ class PostgresStore(StorageBase):
                     group_id,
                 )
                 messages = self._list_rows(rows)
-                msg_ids = [m["id"] for m in messages]
-                if msg_ids:
-                    reactions_map = await self.get_reactions(msg_ids)
-                    for m in messages:
-                        m["reactions"] = reactions_map.get(m["id"], [])
+                reactions_map = await self._get_group_reactions(group_id)
+                for m in messages:
+                    m["reactions"] = reactions_map.get(m["id"], [])
             return messages
         except Exception as exc:
             print(f"[PostgresStore] Get group messages failed: {exc}")
@@ -1705,23 +1676,49 @@ class PostgresStore(StorageBase):
         """Toggle a reaction. Returns True if added, False if removed."""
         return await self._toggle_reaction_generic("message_reactions", message_id, user_id, emoji)
 
-    async def get_reactions(self, message_ids: list[int]) -> dict[int, list]:
-        """Batch query reactions for given message IDs."""
-        if not message_ids:
-            return {}
+    async def get_session_reactions_owned(self, session_id: str, user_id: str) -> dict[int, list]:
+        """Batch reactions for every message in a session the caller owns.
+
+        Ownership is filtered in SQL (JOIN sessions, WHERE s.user_id = $2). This
+        replaces the old get_reactions(message_ids), which accepted arbitrary
+        message IDs with no identity check. Returns { message_id: [{emoji, count, users}] }.
+        """
         try:
             async with await self._connect() as conn:
-                placeholders = ",".join(f"${i+1}" for i in range(len(message_ids)))
                 rows = await conn.fetch(
-                    f"""SELECT message_id, emoji, user_id
-                        FROM message_reactions
-                        WHERE message_id IN ({placeholders})
-                        ORDER BY id ASC""",
-                    *message_ids,
+                    """SELECT mr.message_id, mr.emoji, mr.user_id
+                       FROM message_reactions mr
+                       JOIN messages m ON m.id = mr.message_id
+                       JOIN sessions s ON s.id = m.session_id
+                       WHERE m.session_id = $1 AND s.user_id = $2
+                       ORDER BY mr.id ASC""",
+                    session_id, user_id,
                 )
             return self._aggregate_reactions(rows)
         except Exception as exc:
-            print(f"[PostgresStore] Get reactions failed: {exc}")
+            print(f"[PostgresStore] Get session reactions failed: {exc}")
+            raise
+
+    async def _get_group_reactions(self, group_id: str) -> dict[int, list]:
+        """Reactions on a group's messages, keyed by message_id.
+
+        Private: only reached through get_group_messages(group_id); group-session
+        ownership is enforced at the request boundary. Rows may carry a synthetic
+        user_id (char:<card_id>) for character reactions, so no per-owner filter.
+        """
+        try:
+            async with await self._connect() as conn:
+                rows = await conn.fetch(
+                    """SELECT mr.message_id, mr.emoji, mr.user_id
+                       FROM message_reactions mr
+                       JOIN group_messages gm ON gm.id = mr.message_id
+                       WHERE gm.group_id = $1
+                       ORDER BY mr.id ASC""",
+                    group_id,
+                )
+            return self._aggregate_reactions(rows)
+        except Exception as exc:
+            print(f"[PostgresStore] Get group reactions failed: {exc}")
             raise
 
     async def get_reactions_after_unscoped(self, session_id: str, after_reaction_id: int) -> list[dict]:
@@ -3419,6 +3416,15 @@ class PostgresStore(StorageBase):
             raise
 
     async def get_card_author_id(self, card_id: str) -> str | None:
+        """Return the user_id of the card's owner.
+
+        identity_primitive: this is the first step of an ownership check — the
+        caller compares the returned id against the authenticated user (see
+        memory.py / market.py). It is NOT an intentionally cross-owner read, and
+        it takes no identity param because it exists precisely to *discover* the
+        owner. Anything that only needs "is this card mine" must use
+        get_card_owned instead.
+        """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -4232,8 +4238,13 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Mark card unsynced failed: {exc}")
             raise
 
-    async def get_remote_card(self, card_id: str) -> dict | None:
-        """Get a remote card by ID."""
+    async def _get_remote_card(self, card_id: str) -> dict | None:
+        """Get a remote card by ID.
+
+        Private: only reached through upsert_remote_card's read-back and
+        get_card_detail's remote fallback. The card is a synced copy of another
+        node's card, so there is no local owner to filter by.
+        """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -4243,7 +4254,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get remote card failed: {exc}")
-            raise StoreError("get_remote_card", exc) from exc
+            raise StoreError("_get_remote_card", exc) from exc
 
     # ── Remote user profiles (cross-border user stubs) ──────
 
