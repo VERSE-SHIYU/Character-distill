@@ -168,6 +168,16 @@ def test_allowlist_has_no_stale_entries():
 # users 的那一列（cards→user_id、direct_messages→sender_id、user_follows→follower_id…）。
 # 「已收窄」= 签名有身份参数 ∨ WHERE 子句（JOIN ... ON 不算过滤，它只配对不筛行）含 idcol
 # 谓词。JOIN 陷阱见 AGENTS.md 缺陷 19 的 41→46 记录。
+#
+# 扫**两后端**（`_BACKENDS`）：只扫 sqlite 会漏「PG 版某原语的 WHERE 少一个身份谓词」——
+# 方法集镜像断言只比方法名，看不见 SQL 体。两后端同一判据、同一代码路径（`_scan_class`）。
+#
+# **已知盲区（有意保留，不是本锁的职责）**：判据里「签名有身份参数」本身就是充分的 —— 所以
+# 「签名还留着 `user_id`、但 SQL 已经不再用它过滤」这一类**本锁看不见**（删 `get_text_owned`
+# 的 `AND user_id = ?` 而保留形参 → 本锁绿）。挡住它的是**运行期层**：sqlite 侧是
+# `tests/test_security_authz.py` 的语义用例，PG 侧是
+# `tests/test_postgres_store.py::TestPgOwnedIdentityIsolation`。见 AGENTS.md §四
+# 「形态锁与语义用例是两层防线」。
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _RE_COMMENT = re.compile(r"--[^\n]*")
@@ -190,6 +200,12 @@ _ID_ALIAS = {"user": "users", "sender": "users", "receiver": "users", "reporter"
              "author": "users", "owner": "users", "creator": "users"}
 # 签名里出现即视为「带身份参数」。
 _ID_PARAMS = {"user_id", "owner_id", "username", "uid", "account_id", "viewer_id"}
+
+# 扫描的两后端：(相对路径, 类名)。两后端应镜像，同一判据各扫一遍取并集。
+_BACKENDS = (
+    ("storage/sqlite_store.py", "SQLiteStore"),
+    ("storage/postgres_store.py", "PostgresStore"),
+)
 
 # 读了属主表却没有身份收窄、又非 `_unscoped` 的原语 —— 每一处都必须是有意为之，理由写这。
 OWNER_READ_ALLOWLIST = {
@@ -290,11 +306,23 @@ def _where_has_idcol(stmt: str, idcols: set[str]) -> bool:
 
 
 def _owner_read_primitives() -> dict[str, list[str]]:
-    """{原语名 -> 读到的属主表}：读属主表 ∧ WHERE 无身份列谓词 ∧ 无身份参数 ∧ 非 `_unscoped`。"""
+    """{原语名 -> 读到的属主表}：读属主表 ∧ WHERE 无身份列谓词 ∧ 无身份参数 ∧ 非 `_unscoped`。
+
+    两后端取并集，判据与代码路径同 `_scan_class` —— 同名原语某一边漏了身份谓词即现形。
+    """
     idc = _owner_table_idcols()
+    flagged: dict[str, set[str]] = {}
+    for rel, cls_name in _BACKENDS:
+        for name, tables in _scan_class(REPO_ROOT / rel, cls_name, idc).items():
+            flagged.setdefault(name, set()).update(tables)
+    return {name: sorted(tables) for name, tables in flagged.items()}
+
+
+def _scan_class(path: pathlib.Path, cls_name: str, idc: dict[str, str]) -> dict[str, list[str]]:
+    """扫一个后端类，返回该类的 {原语名 -> 读到的属主表}（判据同 `_owner_read_primitives`）。"""
     owner_tables = set(idc)
-    tree = _parse(REPO_ROOT / "storage" / "sqlite_store.py")
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SQLiteStore")
+    tree = _parse(path)
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls_name)
     flagged: dict[str, list[str]] = {}
     for fn in cls.body:
         if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name.startswith("_"):
@@ -373,19 +401,21 @@ def test_admin_management_primitives_are_called_only_from_admin():
 
 
 def test_scan_coverage_pg_has_no_read_primitive_absent_from_sqlite():
-    """SQL 事实锁只扫 `sqlite_store.py` —— 前提是两后端公开方法集镜像（PG 只多一个 `close`，
-    无 SQL）。这条把前提变成断言：PG 若新增一个 sqlite 没有的公开方法，先在这里红，提醒
-    把它纳入扫描范围，而不是让锁悄悄漏掉一个只存在于 PG 的原语。"""
+    """两后端公开方法集必须镜像（PG 只多一个 `close`）。
+
+    SQL 事实锁现在已经**同时扫两后端**（`_BACKENDS`），所以 PG 独有的读原语不再靠这条兜 ——
+    这条守的是另一件事：**方法集镜像**本身。锁只关心「读属主表且未收窄」的方法，PG 独有的
+    写方法 / 不读属主表的方法它看不见；两后端漂移出这类方法时由这条红。"""
     def _public(path: pathlib.Path, cls_name: str) -> set[str]:
         tree = _parse(path)
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == cls_name)
         return {f.name for f in cls.body
                 if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef)) and not f.name.startswith("_")}
 
-    sqlite_pub = _public(REPO_ROOT / "storage" / "sqlite_store.py", "SQLiteStore")
-    pg_only = _public(REPO_ROOT / "storage" / "postgres_store.py", "PostgresStore") - sqlite_pub
+    sqlite_pub = _public(REPO_ROOT / _BACKENDS[0][0], _BACKENDS[0][1])
+    pg_only = _public(REPO_ROOT / _BACKENDS[1][0], _BACKENDS[1][1]) - sqlite_pub
     assert pg_only <= {"close"}, (
         f"postgres_store 有 sqlite 没有的公开方法：{sorted(pg_only - {'close'})}。"
-        "SQL 事实锁只扫 sqlite_store，若这些是读原语，锁会漏掉它们 —— "
-        "要么按 sqlite 侧同形补齐（两后端应镜像），要么把锁的扫描范围扩到 PG。"
+        "两后端应镜像（同一 StorageBase 契约）—— 按 sqlite 侧同形补齐；"
+        "若它是 PG 独有的读原语，还要确认 SQL 事实锁扫得到（锁已同时扫两后端）。"
     )

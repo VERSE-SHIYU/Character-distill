@@ -853,3 +853,30 @@ class TestPgFreshSchemaClosure:
             "现场：代码在用、新库没有）。要么补 `migrations_pg/` 迁移，要么改代码别用它。")
         assert len(refs) >= 30, (
             f"只从 postgres_store.py 提出 {len(refs)} 个表名 —— 提取器写歪了，断言会空转")
+
+
+# ── `*_owned` 的身份谓词在 PG 侧真的生效（运行期层）──────────────────────────
+#
+# `tests/test_storage_scope_lock.py` 的 SQL 事实锁是**静态层**（AST 读 SQL 文本）：它证明
+# 「WHERE 里写了身份列谓词」，不证明「这条谓词在真库上真的筛掉了非属主行」。两层各管各的
+# （AGENTS.md §四「形态锁与语义用例是两层防线」）—— SQLite 语义用例在本机跑，PG 语义用例
+# 必须在真 PG 上跑（§四「SQLite 全绿不构成并发/后端命题的证据」）。本类补 PG 侧那一层。
+#
+# **变异（实测）**：删掉 `get_text_owned` 的 `AND user_id = $2`（连带 `$2` 实参，否则
+# asyncpg 参数数不符）→ `test_get_text_owned_hides_non_owner_rows` 红（真库返回了非属主行）。
+# 静态锁在同一次改动里也红 —— 但那是两个独立的红源：静态锁看**文本**，本类看**真库返回**。
+
+class TestPgOwnedIdentityIsolation:
+    async def test_get_text_owned_hides_non_owner_rows(self, store, text_id, user_id):
+        await store.save_text(text_id, "src.txt", "属主内容", user_id=user_id)
+        other = f"usr_{uuid.uuid4().hex}"
+        assert await store.get_text_owned(text_id, user_id) is not None
+        assert await store.get_text_owned(text_id, other) is None, "非属主读到了他人 text"
+
+    async def test_get_card_owned_hides_non_owner_rows(self, store, text_id, card_id, user_id):
+        await store.save_text(text_id, "src.txt", "source", user_id=user_id)
+        await store.save_card(card_id, text_id, "Alice",
+                              json.dumps({"name": "Alice"}), user_id=user_id)
+        other = f"usr_{uuid.uuid4().hex}"
+        assert await store.get_card_owned(card_id, user_id) is not None
+        assert await store.get_card_owned(card_id, other) is None, "非属主读到了他人 card"
