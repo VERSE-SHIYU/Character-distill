@@ -382,6 +382,19 @@ config.yaml 现值（现读，非转述）：
   - **豁免名单住在测试里，不在执行器里**：`tests/test_migration_dispatch.py::_NOT_APPLIED` 是唯一记录「哪个迁移被豁免、为什么」的地方，而读 `storage/sqlite_store.py` 的人只看到次序元组，**看不到「本应在这却没在」**。可观性问题，非正确性缺陷；若要改，方向是把豁免登记移进执行器模块或让它可被执行器导入
   - **PG `001_init.sql` 保留了 SQLite 侧已删的 4 个遗留列**（`users` 的 `password_hash` / `api_key` / `base_url` / `model`，`migrations_pg/001_init.sql:93-98` 内联声明）。**已复核，运行期 schema 无漂移**：这 4 列由 `migrations_pg/005_data_residency.sql` 的 `DROP COLUMN IF EXISTS` 删掉；两侧逐表逐列求交集（`001_init` + 全部 `ALTER` − drop）**完全相同**（用 `tests/perf/migration_coverage_audit.py` 的 `_objects_from_sql` 复算）。漂移只在**文件层**：读 PG 的 `001_init.sql` 会看到一个最终库里并不存在的列清单（SQLite 侧这 4 列本就不在 `001_init` 声明、是后来 `ALTER` 加的，故它的 `001_init` 天然干净）。**非缺陷**，但会误导「按 bootstrap 文件推断 schema」的人 —— 与上面两条同属「文件的陈述与运行期事实不一致」
 
+**24. 提交责任无归属 —— SQLite store 的写方法漏 `commit` 就静默丢数据，「失败被吞成正常返回」的第八次显形** —— 状态：已修（2026-09-13，`4a91868`）
+- 事实（实测）：`_connect()` 用 `aiosqlite.connect()` 且全仓未设 `isolation_level=None` → legacy 事务模式，INSERT / UPDATE / DELETE / REPLACE 隐式开事务，不 commit 则 close 时被回滚；而 `_ConnectionContext.__aexit__` 当时**只 close 不 commit**。于是任何写方法自己忘了 `await conn.commit()`，就「写了、函数照常返回构造好的 dict / rowcount、数据不在、**连异常都没有**」。现场两处：`add_post_comment`（INSERT 后无 commit，仍返回 `{"id": ...}`，前端把评论显示出来、刷新即消失）、`cleanup_empty_cards`（UPDATE 后无 commit，仍返回真实 `cursor.rowcount`）
+- **普查（AST 全量，不是「报一处修一处」）**：扫 235 个「在 `_connect` 作用域内且有调用」的方法，得 **2 处**（`add_post_comment` / `cleanup_empty_cards`）。报告只点名 1 处，全量扫出 2 处 —— 前七次同族形态都因「只修出问题那处」才长出下一次，故本轮先做全集普查再动手
+- **同型定性**：与缺陷 21 的「豁免出口没有闭环」同型 —— **都是把正确性寄托在人的记忆上，没有机制兜底**。这是「失败被吞成正常返回」的第八次显形（前七次：线程弃船 / 384 维度 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断 / store 层 `except: return <空值>`），且是**唯一一次连异常都没有的**
+- **方案裁决（风险实测，不是偏好）**：
+  - 方案 A（`_connect()` 设 `isolation_level=None` 自动提交）：风险 = 27 个「一个连接里做多步写」的方法**失去事务边界**，多步写中途失败会留半写状态 —— 实测把 `_connect` 改成 `isolation_level=None` 后，两个最长的多步写方法（`delete_user` / `hard_delete_text`）的原子性用例**双双变红**。这是把一个静默丢数据换成一个静默留半写，不可接受。（「多步写方法」口径：方法体内 ≥2 条 `execute` / `executemany` 写语句，共 27 个，`delete_user` 12 条 / `hard_delete_text` 8 条最长；可复算）
+  - 方案 B（`_ConnectionContext.__aexit__` 无异常 commit、异常 rollback）：风险集**实测为空** —— 全仓 0 处显式 `rollback`、0 处「故意不提交」、只读作用域上 commit/rollback 是 no-op。**选 B**
+- **改法（单点，不复制补丁）**：提交语义收敛到 `_ConnectionContext.__aexit__` 一处（先 commit/rollback、再 close），`_ConnectionContext` 类 docstring 写明「提交语义由本类承担（承重，勿改回只 close）」。**两处 offender 由机制吸收，不去各自补 commit**；调用方零改动、对外签名与返回语义不变。与 `2ab669a` 的 `StoreError` 单一出口同形（单点定义、调用点不各写各的），未引入第二种事务/错误管理风格
+- **提交这一步本身不得再造同形态失败**：`__aexit__` 的 commit 失败必须上抛（吞掉 = 调用方以为写成功而库没有，正是本类要消灭的形态）；异常路径的 rollback 失败不得顶替调用方原始异常（沿用既有 close 段口径：print 可见、不上抛），两处均写 `# store-empty-ok:` 说明
+- **两层防线（各管各的）**：`tests/test_store_connect_lock.py` —— **形态锁**：sqlite store 任何函数不得绕过 `_ConnectionContext` 直接 `aiosqlite.connect` / `sqlite3.connect`（白名单 `_connect` / `_ensure_initialized` 各附理由 + 名单腐烂检查）；`tests/test_store_commit_contract.py` —— **语义用例**：跨连接读回（不是同连接内的可见性假象）、两处 offender 写入后新连接读得到、多步写抽样（`delete_user` / `hard_delete_text` 在**最后一条写语句**处注入异常 → 全回滚无半写）、只读作用域 commit/rollback 是 no-op。**变异**：删掉 `__aexit__` 的 commit → 3 条语义用例红（形态锁仍绿）—— 证明「只锁形态」不够，两层都要有（§四「形态锁与语义用例是两层防线」）
+- **PG 侧无需改**：asyncpg 语句默认自动提交，另有 18 处显式 `async with conn.transaction():`（原生 clean-exit 提交 / 异常回滚语义），缺陷 24 是 SQLite legacy 事务模式特有的
+- 同轮范围核查（**已扫，无缺口**）：store 之外的直接 sqlite 连接全查过 —— 4 个带 `sqlite3.connect` 的运维/诊断脚本（`check_missing_card` / `diagnose_psyche` / `export_shiyu` / `integration_check`）全为只读，`rebuild_384_collections` 用 `mode=ro` URI，`migrate_sqlite_to_pg` 只读 SQLite、写 PG（asyncpg 自动提交）。无需处理
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
