@@ -265,7 +265,7 @@ async def _cross_border_resync_loop() -> None:
 
         # ── DM resync ──
         try:
-            msgs = await storage.get_unsynced_cross_border_messages(limit=100)
+            msgs = await storage.get_unsynced_cross_border_messages_unscoped(limit=100)
         except Exception as exc:
             print(f"[cross_border_resync] DM query failed: {exc}")
         else:
@@ -281,7 +281,7 @@ async def _cross_border_resync_loop() -> None:
 
         # ── Card resync ──
         try:
-            cards = await storage.get_unsynced_cross_border_cards(limit=100)
+            cards = await storage.get_unsynced_cross_border_cards_unscoped(limit=100)
         except Exception as exc:
             print(f"[cross_border_resync] Card query failed: {exc}")
         else:

@@ -312,16 +312,23 @@ class StorageBase(ABC):
         """Get today's usage quality stats: total, estimated count, ratio."""
 
     @abstractmethod
-    async def get_session_affinity(self, session_id: str) -> dict | None:
-        """Get affinity scores for a session."""
+    async def get_session_affinity_unscoped(self, session_id: str) -> dict | None:
+        """Get affinity scores for a session, with no ownership filter.
+
+        The affinity engine reads its own session_id and has no user context.
+        Anything reachable from a logged-in request must not call this.
+        """
 
     @abstractmethod
     async def save_affinity_state(self, session_id: str, state_json: str) -> None:
         """Persist full affinity state JSON and set affinity_initialized=1."""
 
     @abstractmethod
-    async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
-        """Return (state_json, initialized) for a session.
+    async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
+        """Return (state_json, initialized) for a session, with no ownership filter.
+
+        Called by the affinity engine (no user context). Anything reachable from
+        a logged-in request must not call this.
 
         state_json may be empty if never persisted in new format.
         initialized is True if affinity_initialized=1.
@@ -366,16 +373,21 @@ class StorageBase(ABC):
         """Record user's consent to legal agreements for compliance audit trail."""
 
     @abstractmethod
-    async def get_reactions_after(self, session_id: str, after_reaction_id: int) -> list[dict]:
-        """Return reactions with id > after_reaction_id for a session.
+    async def get_reactions_after_unscoped(self, session_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a session, with no ownership filter.
+
+        Polled by the chat engine via its own session_id (no user context).
 
         Returns list of {reaction_id, emoji, msg_content, user_id}, ordered by
         reaction_id ascending.  Scoped to single-chat messages table.
         """
 
     @abstractmethod
-    async def get_group_reactions_after(self, group_id: str, after_reaction_id: int) -> list[dict]:
-        """Return reactions with id > after_reaction_id for a group session.
+    async def get_group_reactions_after_unscoped(self, group_id: str, after_reaction_id: int) -> list[dict]:
+        """Return reactions with id > after_reaction_id for a group session, with no ownership filter.
+
+        Polled by the group SSE stream via group_id; group-session ownership is
+        checked upstream, rows carry no per-user owner semantics.
 
         Returns list of {reaction_id, emoji, msg_content, speaker_card_id},
         ordered by reaction_id ascending.  Scoped to group_messages table,

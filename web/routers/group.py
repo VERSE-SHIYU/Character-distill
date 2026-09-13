@@ -193,7 +193,7 @@ async def _run_group_affinity(
     """获取群聊未消化点赞，按 speaker_card_id 分桶，对每个角色跑 memory-only 亲和力评估。"""
     cursor = _group_last_reaction_id.get(group_id, 0)
     try:
-        new_reactions = await storage.get_group_reactions_after(group_id, cursor)
+        new_reactions = await storage.get_group_reactions_after_unscoped(group_id, cursor)
     except Exception as exc:
         print(f"[Group Affinity] Fetch reactions failed (non-fatal): {exc}")
         return

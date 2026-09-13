@@ -316,7 +316,7 @@ config.yaml 现值（现读，非转述）：
 - 现无跨进程传递（异常在同一进程的线程内上抛与捕获，map 的 `failures` 列表也不出进程），故未动
 - **将来若上多进程部署（进程池 / 队列传异常），这是个会突然炸的点**——届时改成让 `args` 载全部构造参数，或在边界层先翻成可序列化结构
 
-**19. 边界锁只守 `*_unscoped` 命名，无身份读取原语裸奔** —— 状态：**修（进行中，commit 1/5，2026-09-13）**
+**19. 边界锁只守 `*_unscoped` 命名，无身份读取原语裸奔** —— 状态：**修（进行中，commit 3/5，2026-09-13）**
 - 形态：`tests/test_storage_scope_lock.py` 用 AST 扫调用点，判据是 `_is_unscoped_call` → `attr.endswith("_unscoped")`。**只有名字以 `_unscoped` 结尾的调用**才进白名单校验
 - 漏网：`get_card` / `get_group_session` / `get_dm_message` / `get_distill_task` / `get_card_author_id` 等**读取原语本身就无身份参数**，取回整行后由调用点在 Python 侧比对属主——名字里没有 `_unscoped`，锁看不见。删掉任一调用点的属主 `if`，锁全绿
 - 为什么是缺陷 11 的同族：da0e3b3 只把 `text` / `session` 拆成 `_owned`/`_unscoped` 双变体，锁也只守这两类。其余资源从未拆分，于是「忘一个漏一个」的结构性风险仍在，只是没有报警
@@ -326,6 +326,7 @@ config.yaml 现值（现读，非转述）：
 - **裁决（用户，2026-09-13）**：A 组加「11 个管理原语的调用点必须全在 `web/routers/admin.py`」AST 断言——把「现在是这样」变成「必须是这样」（调用点事实 → 强制事实）；B1 里三处实锤（`get_characters` 先返缓存后校验 / `get_card_versions` 返回含卡全文的快照 / `get_text_comments` 无校验）**先修、单独 commit**，其余九个随后；B3 逐条：`get_card_author_id` 保留显式无身份但标注 **`identity_primitive`**（它是「校验的第一步」，输出供属主比对，与「有意跨属主读」区分开）、`get_reactions` 改 `_owned`、`get_latest_review_log`/`get_comment_reports` 归 A 组管理、`get_recent_card_session` **无调用点=死代码删掉**、`get_remote_card` 改私有 `_get_remote_card`
 - **修法（根因，不是补校验）**：把无身份读取原语在 **storage 层**消灭——扩展缺陷 11 的 `_owned`/`_unscoped` 双变体范式，读属主表的原语要么 SQL 带身份、要么显式命名 `_unscoped` 并进白名单。**锁的判据 = 不存在「读属主表 ∧ WHERE 无身份列谓词 ∧ 无身份参数 ∧ 不叫 `_unscoped` ∨ 不在白名单」的原语**；名字只在**声明豁免**时起作用，真源是 SQL 事实（与缺陷 21「锁症状不锁代理」同范式）
 - **夹具自效性（探针取证）**：既有 `test_12_distill_identify_non_owner_404` 对 `get_characters` 越权**恒绿**——它建的文本无缓存（`characters_json` 空），旧代码读缓存得 None 照样走 404，故旧代码下也绿。判别力要求**缓存已存在**（`test_23` 先 `save_characters` 再打非属主）。这是「探针自效性」的实例：夹具没走到那条分支，用例就是恒绿的
+- **进度（2026-09-13）**：commit 1/5 `6d89bae`（三处实锤越权 → `*_owned`）；commit 2/5 `e3cf9e8`（B1 其余九原语补 `*_owned`，两后端 + 内部调用点 + 20 处外部调用点收窄 + 17 处白名单登记）；commit 3/5（本 commit，B2 八原语：`get_session_affinity` / `load_affinity_state` / `get_reactions_after` / `get_group_reactions_after` / `get_unsynced_cross_border_cards` / `get_unsynced_cross_border_messages` 六个改名加 `_unscoped` 后缀，`get_session_unscoped` / `get_text_unscoped` 早已命名；4 处新调用点逐处写明「无身份语义」理由进白名单）。commit 4/5（B3 六条裁决：删死代码 / 改私有 / 改 `_owned` / 标 `identity_primitive`）、commit 5/5（SQL 事实锁 + A 组 11 个管理原语的调用点断言）待做
 - 与 §四「形态锁与语义用例是两层防线，各管各的」直接相关：缺陷 11 的两层都齐，这一类只有第二层
 
 **20. 蒸馏断点行的删除路径不对称 + 「删卡保留断点」的理由与代码事实相反**（会话文件里记作 **F**）—— 状态：**已修**（行清理 `6753f17`；线程停止 `bee9993`；注释订正 `53494ae`，2026-09-12）；删卡/解绑口径裁决为**不动**（另一件「加功能」已立项）

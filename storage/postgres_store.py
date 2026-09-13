@@ -1724,7 +1724,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get reactions failed: {exc}")
             raise
 
-    async def get_reactions_after(self, session_id: str, after_reaction_id: int) -> list[dict]:
+    async def get_reactions_after_unscoped(self, session_id: str, after_reaction_id: int) -> list[dict]:
         """Return reactions with id > after_reaction_id for a single-chat session."""
         try:
             async with await self._connect() as conn:
@@ -1745,7 +1745,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get reactions after failed: {exc}")
             raise
 
-    async def get_group_reactions_after(self, group_id: str, after_reaction_id: int) -> list[dict]:
+    async def get_group_reactions_after_unscoped(self, group_id: str, after_reaction_id: int) -> list[dict]:
         """Return reactions with id > after_reaction_id for a group session."""
         try:
             async with await self._connect() as conn:
@@ -3021,7 +3021,7 @@ class PostgresStore(StorageBase):
 
     # ---- Affinity ----
 
-    async def get_session_affinity(self, session_id: str) -> dict | None:
+    async def get_session_affinity_unscoped(self, session_id: str) -> dict | None:
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -3031,7 +3031,7 @@ class PostgresStore(StorageBase):
             return self._row_to_dict(row)
         except Exception as exc:
             print(f"[PostgresStore] Get session affinity failed: {exc}")
-            raise StoreError("get_session_affinity", exc) from exc
+            raise StoreError("get_session_affinity_unscoped", exc) from exc
 
     async def save_affinity_state(self, session_id: str, state_json: str) -> None:
         try:
@@ -3291,7 +3291,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Cancel distills by text failed: {exc}")
             raise
 
-    async def load_affinity_state(self, session_id: str) -> tuple[str, bool]:
+    async def load_affinity_state_unscoped(self, session_id: str) -> tuple[str, bool]:
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -3303,7 +3303,7 @@ class PostgresStore(StorageBase):
             return row[0] or "", bool(row[1])
         except Exception as exc:
             print(f"[PostgresStore] Load affinity state failed: {exc}")
-            raise StoreError("load_affinity_state", exc) from exc
+            raise StoreError("load_affinity_state_unscoped", exc) from exc
 
     async def update_group_affinity(
         self, group_id: str, card_id: str, affinity: int, trust: int, mood: str, guard: int, reason: str = ""
@@ -4132,7 +4132,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Mark message synced failed: {exc}")
             raise
 
-    async def get_unsynced_cross_border_messages(self, limit: int = 100) -> list[dict]:
+    async def get_unsynced_cross_border_messages_unscoped(self, limit: int = 100) -> list[dict]:
         """Return unsynced cross-border DMs, oldest first."""
         try:
             async with await self._connect() as conn:
@@ -4190,7 +4190,7 @@ class PostgresStore(StorageBase):
 
     # ── Card cross-border sync ─────────────────────────────
 
-    async def get_unsynced_cross_border_cards(self, limit: int = 100) -> list[dict]:
+    async def get_unsynced_cross_border_cards_unscoped(self, limit: int = 100) -> list[dict]:
         """Return public unsynced cards, oldest first."""
         try:
             async with await self._connect() as conn:

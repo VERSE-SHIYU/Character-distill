@@ -107,7 +107,7 @@ class AffinityService:
 
         *输入格式*：
         - 新格式（affinity_state 列 → from_persist）：所有 11 字段在顶层
-        - 旧格式（独立列 → get_session_affinity）：只有 affinity/trust/mood/guard/reason，
+        - 旧格式（独立列 → get_session_affinity_unscoped）：只有 affinity/trust/mood/guard/reason，
           inner_voice/mood_emoji/user_catchwords 从 reason 内嵌 JSON 解析
         """
         if not data:
@@ -390,13 +390,13 @@ async def read_persisted_affinity(session_id: str, storage) -> tuple[dict[str, A
     优先级：affinity_state → 扁平列。GET 接口与 engine 重建两个调用方共用。
     storage 以参数传入（duck-typed），避免引入 storage 反向依赖。
     """
-    state_json, initialized = await storage.load_affinity_state(session_id)
+    state_json, initialized = await storage.load_affinity_state_unscoped(session_id)
     if initialized and state_json:
         parsed = AffinityService.from_persist(state_json)
         if parsed:
             return parsed, 'state'
         print(f"[affinity] Corrupt affinity_state for session {session_id}; falling back to legacy (non-fatal)")
-    row = await storage.get_session_affinity(session_id)
+    row = await storage.get_session_affinity_unscoped(session_id)
     if row and AffinityService.legacy_looks_evaluated(row):
         return row, 'legacy'
     return row, None

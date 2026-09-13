@@ -121,7 +121,7 @@ async def _seed_session(store, db_path: str) -> str:
 
 
 async def _verify_session_affinity(store, session_id: str) -> dict | None:
-    return await store.get_session_affinity(session_id)
+    return await store.get_session_affinity_unscoped(session_id)
 
 
 async def _verify_group_affinity(store, group_id: str, card_id: str) -> dict | None:

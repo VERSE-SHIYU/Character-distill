@@ -519,7 +519,7 @@ class ChatEngine:
 
         Args:
             data: 情感字段 dict。新格式时来自 from_persist 解析结果，
-                  旧格式来自 get_session_affinity 的 {affinity,trust,mood,guard,reason}。
+                  旧格式来自 get_session_affinity_unscoped 的 {affinity,trust,mood,guard,reason}。
             initialized: 是否已标记 affinity_initialized=1。
         """
         if not data:
@@ -597,7 +597,7 @@ class ChatEngine:
                 from deps import run_on_main_loop
                 import time as _t; _t0 = _t.time()
                 new_reactions = run_on_main_loop(
-                    storage.get_reactions_after(session_id, self._last_reaction_id),
+                    storage.get_reactions_after_unscoped(session_id, self._last_reaction_id),
                     timeout=10,
                 )
                 print(f"[perf] affinity_reactions took {_t.time()-_t0:.2f}s")

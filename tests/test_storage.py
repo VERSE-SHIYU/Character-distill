@@ -444,7 +444,7 @@ class TestCsvExport:
 # ── P2-4: Cross-border DM resync ─────────────────────────────────────
 
 class TestCrossBorderResync:
-    """get_unsynced_cross_border_messages, mark_message_synced."""
+    """get_unsynced_cross_border_messages_unscoped, mark_message_synced."""
 
     async def test_get_unsynced_returns_synced0(self, store):
         uid = "u_cb_sender"
@@ -457,7 +457,7 @@ class TestCrossBorderResync:
         await store.send_message(uid, uid2, "unsynced msg", cross_border_synced=0)
         await store.send_message(uid, uid2, "synced msg", cross_border_synced=1)
 
-        unsynced = await store.get_unsynced_cross_border_messages(limit=10)
+        unsynced = await store.get_unsynced_cross_border_messages_unscoped(limit=10)
         assert len(unsynced) == 1
         assert unsynced[0]["content"] == "unsynced msg"
         assert unsynced[0]["sender_id"] == uid
@@ -472,16 +472,16 @@ class TestCrossBorderResync:
 
         msg = await store.send_message(uid, uid2, "retry msg", cross_border_synced=0)
 
-        unsynced_before = await store.get_unsynced_cross_border_messages()
+        unsynced_before = await store.get_unsynced_cross_border_messages_unscoped()
         assert any(m["id"] == msg["id"] for m in unsynced_before)
 
         await store.mark_message_synced(msg["id"])
 
-        unsynced_after = await store.get_unsynced_cross_border_messages()
+        unsynced_after = await store.get_unsynced_cross_border_messages_unscoped()
         assert not any(m["id"] == msg["id"] for m in unsynced_after)
 
     async def test_empty_when_none_unsynced(self, store):
-        unsynced = await store.get_unsynced_cross_border_messages()
+        unsynced = await store.get_unsynced_cross_border_messages_unscoped()
         assert unsynced == []
 
     async def test_unsynced_limit(self, store):
@@ -494,7 +494,7 @@ class TestCrossBorderResync:
         for i in range(5):
             await store.send_message(uid, uid2, f"msg_{i}", cross_border_synced=0)
 
-        unsynced = await store.get_unsynced_cross_border_messages(limit=3)
+        unsynced = await store.get_unsynced_cross_border_messages_unscoped(limit=3)
         assert len(unsynced) == 3
         # Oldest first
         assert unsynced[0]["content"] == "msg_0"
@@ -504,7 +504,7 @@ class TestCrossBorderResync:
 # ── P2-5: Card cross-border sync ─────────────────────────────────────
 
 class TestCardCrossBorderSync:
-    """get_unsynced_cross_border_cards, mark_card_synced, mark_card_unsynced, remote card ops."""
+    """get_unsynced_cross_border_cards_unscoped, mark_card_synced, mark_card_unsynced, remote card ops."""
 
     async def _mk_public_unsynced_card(self, store, card_id: str, text_id: str, name: str = "test_card"):
         """Helper: save a text + card, then make it public and unsynced."""
@@ -518,7 +518,7 @@ class TestCardCrossBorderSync:
     async def test_get_unsynced_returns_public_synced0(self, store, text_id):
         cid = f"c_{uuid.uuid4().hex}"
         await self._mk_public_unsynced_card(store, cid, text_id)
-        unsynced = await store.get_unsynced_cross_border_cards(limit=10)
+        unsynced = await store.get_unsynced_cross_border_cards_unscoped(limit=10)
         assert any(c["id"] == cid for c in unsynced)
 
     async def test_non_public_not_returned(self, store, text_id):
@@ -530,16 +530,16 @@ class TestCardCrossBorderSync:
             "UPDATE cards SET visibility = 'private', cross_border_synced = 0 WHERE id = ?",
             (cid,),
         )
-        unsynced = await store.get_unsynced_cross_border_cards()
+        unsynced = await store.get_unsynced_cross_border_cards_unscoped()
         assert not any(c["id"] == cid for c in unsynced)
 
     async def test_mark_card_synced_removes_from_unsynced(self, store, text_id):
         cid = f"c_{uuid.uuid4().hex}"
         await self._mk_public_unsynced_card(store, cid, text_id)
-        unsynced_before = await store.get_unsynced_cross_border_cards()
+        unsynced_before = await store.get_unsynced_cross_border_cards_unscoped()
         assert any(c["id"] == cid for c in unsynced_before)
         await store.mark_card_synced(cid)
-        unsynced_after = await store.get_unsynced_cross_border_cards()
+        unsynced_after = await store.get_unsynced_cross_border_cards_unscoped()
         assert not any(c["id"] == cid for c in unsynced_after)
 
     async def test_mark_card_unsynced_makes_it_appear(self, store, text_id):
@@ -551,18 +551,18 @@ class TestCardCrossBorderSync:
             (cid,),
         )
         # Card is public but synced=1 — should not appear
-        unsynced_before = await store.get_unsynced_cross_border_cards()
+        unsynced_before = await store.get_unsynced_cross_border_cards_unscoped()
         assert not any(c["id"] == cid for c in unsynced_before)
         # Mark unsynced — should now appear
         await store.mark_card_unsynced(cid)
-        unsynced_after = await store.get_unsynced_cross_border_cards()
+        unsynced_after = await store.get_unsynced_cross_border_cards_unscoped()
         assert any(c["id"] == cid for c in unsynced_after)
 
     async def test_get_unsynced_limit(self, store, text_id):
         ids = [f"c_{uuid.uuid4().hex}" for _ in range(5)]
         for i, cid in enumerate(ids):
             await self._mk_public_unsynced_card(store, cid, text_id, name=f"test_card_{i}")
-        unsynced = await store.get_unsynced_cross_border_cards(limit=3)
+        unsynced = await store.get_unsynced_cross_border_cards_unscoped(limit=3)
         assert len(unsynced) == 3
 
     async def test_upsert_remote_card_insert(self, store, text_id):

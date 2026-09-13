@@ -31,6 +31,10 @@ UNSCOPED_ALLOWLIST = {
         "同上：引擎读自身 session_id，无调用方身份可传",
     "core/chat_engine.py:generate_reunion_greeting":
         "同上：引擎读自身 session_id，无调用方身份可传",
+    "core/affinity_service.py:read_persisted_affinity":
+        "唯一持久化亲和力读取入口：按 session_id 读，属主校验在调用方完成"
+        "（chat.get_affinity 先 get_session_owned；_rebuild_session / resume_session 上游已验）；"
+        "storage duck-typed，本函数无身份参数可用",
     "storage/sqlite_store.py:export_session":
         "存储层导出原语，签名里没有 user；属主校验由调用方端点 history.py:export_session 用 get_session_owned 完成",
     "storage/postgres_store.py:export_session":
@@ -55,12 +59,19 @@ UNSCOPED_ALLOWLIST = {
         "诊断脚本，card_id 由命令行传入，无登录语境",
     "scripts/run_agent_eval.py:load_card":
         "评测脚本，card_id 由命令行传入，无登录语境",
+    "scripts/smoke_eval_e2e.py:_verify_session_affinity":
+        "评测脚本：session_id 由脚本自建的临时会话提供，无登录语境",
     "web/routers/text.py:get_text_deletion_impact":
         "admin 跨属主查看删除影响的显式逃生口：先 get_text_owned，拿不到且 user.is_admin 时才落到这里",
     "web/routers/admin.py:admin_review_approve":
         "管理员复核任意用户被 flag 的卡 —— 跨属主就是该职责本身",
     "web/routers/inter_node.py:receive_dm":
         "跨节点 DM 同步信道：HMAC 鉴权无用户身份，按 msg_id 幂等去重",
+    "web/cross_border_sync.py:_cross_border_resync_loop":
+        "后台重同步循环（60s 扫全库未同步行推给对端节点），无用户身份 —— 跨属主正是该职责",
+    "web/routers/group.py:_run_group_affinity":
+        "群聊流按 group_id 轮询反应：群会话属主校验在上游（_ensure_group 与各 handler 先 "
+        "get_group_session_owned）；反应行按 speaker_card_id 分桶，无属主语义",
     "web/routers/message.py:retract_dm_message":
         "撤回是「仅发送者」的公开规则，非发送者（含非收发双方）须 403 而非 404；"
         "身份过滤会把 403 变 404，故显式无身份读",
