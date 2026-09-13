@@ -280,6 +280,20 @@ def test_caller_mcp_degrades_no_index():
         mserver._rag_by_text_id.update(orig)
 
 
+def _stub(storage, name: str, **kw) -> None:
+    """给 storage 挂桩，并当场核对**真实 store** 有同名方法。
+
+    桩名从「实际要桩什么」推出（赋值即声明），不另存一份硬编码清单 —— 清单自己会漂：
+    缺陷19 把 group.py 的 get_group_session 改成 get_group_session_owned 后桩名没跟着改，
+    测试只报「MagicMock 不是 awaitable」，指不到根因。名字若不在真实 store 上，本断言先炸。
+    """
+    from storage.sqlite_store import SQLiteStore
+
+    assert hasattr(SQLiteStore, name), (
+        f"桩 {name!r} 在真实 store 上不存在 —— 桩漂移了（方法改名/删除后测试没跟着改）")
+    setattr(storage, name, AsyncMock(**kw))
+
+
 def test_caller_group_rebuild_degrades_no_index():
     """web group.py _rebuild_group_session：CollectionUnusableError → 该卡跳过场景检索 + index 不触发。"""
     from core.schema import CharacterCard, SpeakingStyle
@@ -294,17 +308,17 @@ def test_caller_group_rebuild_degrades_no_index():
         ).model_dump_json()
 
         storage = MagicMock()
-        storage.get_group_session = AsyncMock(return_value={
+        _stub(storage, "get_group_session_owned", return_value={
             "user_id": "u1", "user_persona_type": "director",
             "user_persona_card_id": "", "user_persona_name": "", "user_persona_desc": "",
             "card_ids": ["c1", "c2"],
         })
-        storage.get_card = AsyncMock(side_effect=[
+        _stub(storage, "get_card_owned", side_effect=[
             {"id": "c1", "user_id": "u1", "text_id": "t_unusable_a", "card_json": card_json},
             {"id": "c2", "user_id": "u1", "text_id": "t_unusable_b", "card_json": card_json},
         ])
-        storage.get_text_owned = AsyncMock(side_effect=[{"content": "正文A"}, {"content": "正文B"}])
-        storage.get_group_messages = AsyncMock(return_value=[])
+        _stub(storage, "get_text_owned", side_effect=[{"content": "正文A"}, {"content": "正文B"}])
+        _stub(storage, "get_group_messages", return_value=[])
 
         buf = io.StringIO()
 

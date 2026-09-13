@@ -3,9 +3,18 @@
 These tests require a running PostgreSQL instance.  Set these env vars:
 
   STORAGE_BACKEND=postgres
-  DATABASE_URL=postgresql://postgres:postgres@localhost:5432/charsim_test
+  DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db>
 
-Skip: export SKIP_PG_TESTS=1 to skip all PostgresStore tests.
+**PG 连不上时这些用例显式 skip（原因可见），不是失败。** 一条在标准本地环境（没跑 PG）
+下恒红的断言，会训练所有人忽略红色，最终把真失败也一起忽略掉。
+
+**但 skip 不得变成静默通道**（缺陷 21「豁免即静默放行」同型）：环境用
+`REQUIRE_PG_TESTS=1` 声明「本环境保证有 PG」（CI 就是这么声明的），那时本模块**拒绝跳过**
+—— PG 连不上就直接红，且
+`test_pg_suite_is_not_silently_disabled_where_pg_is_required` 把「在需要 PG 的环境里被
+静默跳过 / 被 SKIP_PG_TESTS 关掉」本身判红。
+
+Skip: export SKIP_PG_TESTS=1 to skip all PostgresStore tests（显式退出，仅本地用）。
 """
 
 from __future__ import annotations
@@ -21,13 +30,10 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from conftest import pg_reachable, pg_required, pg_skip_reason
+
 from storage.postgres_store import PostgresStore
 
-
-pytestmark = pytest.mark.skipif(
-    os.getenv("SKIP_PG_TESTS") == "1",
-    reason="SKIP_PG_TESTS=1 set — skipping PostgresStore tests",
-)
 
 _REPO = Path(__file__).resolve().parent.parent
 _PG_DIR = _REPO / "storage" / "migrations_pg"
@@ -44,6 +50,20 @@ _TABLE_REF_RE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", 
 
 def _dsn() -> str:
     return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+
+
+# 需要真 PG 的用例统一挂这个 mark（含可见原因）。挂在**类**上而非模块级 `pytestmark`：
+# `TestPgFreshSchemaClosure.test_lock_has_teeth` 是纯提取器负控、根本不需要 PG，模块级
+# mark 会连它一起 skip —— 把一条本地跑得动的锁用不相干的理由关掉，正是要消灭的静默通道。
+_PG_SKIP_REASON = pg_skip_reason("PostgresStore 用例")
+_pg = pytest.mark.skipif(
+    os.getenv("SKIP_PG_TESTS") == "1" or (not pg_reachable() and not pg_required()),
+    reason=(
+        "SKIP_PG_TESTS=1 显式关闭了 PostgresStore 用例"
+        if os.getenv("SKIP_PG_TESTS") == "1"
+        else _PG_SKIP_REASON
+    ),
+)
 
 
 async def _pg_tables() -> set[str]:
@@ -128,6 +148,7 @@ def user_id():
 
 # ── Text CRUD ────────────────────────────────────────────────────────────────
 
+@_pg
 class TestTextCrud:
     async def test_save_and_get(self, store, text_id):
         result = await store.save_text(text_id, "test.txt", "Hello world")
@@ -170,6 +191,7 @@ class TestTextCrud:
 
 # ── Card CRUD ────────────────────────────────────────────────────────────────
 
+@_pg
 class TestCardCrud:
     async def test_save_and_get_card(self, store, text_id, card_id):
         await store.save_text(text_id, "src.txt", "source")
@@ -202,6 +224,7 @@ class TestCardCrud:
 
 # ── Session CRUD ─────────────────────────────────────────────────────────────
 
+@_pg
 class TestSessionCrud:
     async def test_save_and_get_session(self, store, text_id, card_id, session_id):
         await store.save_text(text_id, "src.txt", "source")
@@ -227,6 +250,7 @@ class TestSessionCrud:
 
 # ── Message CRUD ─────────────────────────────────────────────────────────────
 
+@_pg
 class TestMessageCrud:
     async def test_save_and_get_messages(self, store, text_id, card_id, session_id):
         await store.save_text(text_id, "src.txt", "source")
@@ -260,6 +284,7 @@ class TestMessageCrud:
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
 
+@_pg
 class TestUserCrud:
     async def test_create_and_get_user(self, store, user_id):
         username = f"testuser_{uuid.uuid4().hex[:8]}"
@@ -290,6 +315,7 @@ class TestUserCrud:
 
 # ── User purge: distill cascade + deletion impact (F) ────────────────────────
 
+@_pg
 class TestUserPurgeDistillCascade:
     """delete_user 同事务清掉该用户的 distill_tasks / distill_chunks（F1），不波及其它用户。"""
 
@@ -327,6 +353,7 @@ class TestUserPurgeDistillCascade:
         assert impact["distill_chunk_count"] == 2
 
 
+@_pg
 class TestUserPurgeDistillRace:
     """delete_user 的蒸馏清理顺序（先父后子）在并发写下的闭合性 —— 实测，不靠推断。
 
@@ -382,6 +409,7 @@ class TestUserPurgeDistillRace:
 
 # ── Group Session CRUD ───────────────────────────────────────────────────────
 
+@_pg
 class TestGroupSessionCrud:
     async def test_create_and_get_group(self, store):
         gid = f"grp_{uuid.uuid4().hex}"
@@ -401,6 +429,7 @@ class TestGroupSessionCrud:
 
 # ── Follow / DM ──────────────────────────────────────────────────────────────
 
+@_pg
 class TestFollowAndDM:
     async def test_follow_user(self, store, user_id):
         other = f"usr_{uuid.uuid4().hex}"
@@ -423,6 +452,7 @@ class TestFollowAndDM:
         assert other not in following
 
 
+@_pg
 class TestDMCrud:
     async def test_send_and_get_dm(self, store, user_id):
         other = f"usr_{uuid.uuid4().hex}"
@@ -438,6 +468,7 @@ class TestDMCrud:
 
 # ── Distill task persistence ─────────────────────────────────────────────────
 
+@_pg
 class TestDistillTaskPersistence:
     """create_distill_task → update → chunks (idempotent) → running-count lifecycle."""
 
@@ -657,6 +688,7 @@ class TestDistillTaskPersistence:
 # 排他锁互斥；先删父行则插入方必阻塞、提交后跳过不写。锁与顺序是一体的，拆开不成立。
 # 单写者命中窗口仅约 7%，故本用例用 K 写者 × R 轮把命中率抬到可判定水平。
 
+@_pg
 class TestDistillRaceStaleWriteAfterDelete:
     ROUNDS = 20
     WRITERS = 6
@@ -726,6 +758,7 @@ class TestDistillRaceStaleWriteAfterDelete:
 # 取同一父行共享锁 —— 同一次蒸馏内进度写与分片写会在父行上互相阻塞。要的是数，不是
 # "单语句事务应该没事"的推断。
 
+@_pg
 class TestDistillLockContention:
     async def test_progress_write_not_starved_by_chunk_writes(self, store, user_id):
         import asyncio as _aio
@@ -832,6 +865,7 @@ class TestPgFreshSchemaClosure:
         # 且它不会把 SQLite-only 的名字悄悄吞掉（词表是并集）
         assert _referenced_tables("SELECT * FROM sqlite_only_t", {"sqlite_only_t"}) == {"sqlite_only_t"}
 
+    @_pg
     async def test_every_declared_table_is_created(self):
         """`migrations_pg/` 写了的表，真 PG 库里必须存在。"""
         created = await _pg_tables()
@@ -841,6 +875,7 @@ class TestPgFreshSchemaClosure:
             "「文件里写了」不等于「库里有」—— 迁移没被执行、或被静默跳过。"
             "生产后端缺表会在运行期炸成 `no such table`（缺陷 21/23 同一病灶）。")
 
+    @_pg
     async def test_every_referenced_table_is_created(self):
         """`postgres_store.py` 引用的表，真 PG 库里必须存在 —— 直接锁 079 的症状形态。"""
         vocabulary = _declared_tables(_PG_DIR) | _declared_tables(_SQLITE_DIR)
@@ -866,6 +901,7 @@ class TestPgFreshSchemaClosure:
 # asyncpg 参数数不符）→ `test_get_text_owned_hides_non_owner_rows` 红（真库返回了非属主行）。
 # 静态锁在同一次改动里也红 —— 但那是两个独立的红源：静态锁看**文本**，本类看**真库返回**。
 
+@_pg
 class TestPgOwnedIdentityIsolation:
     async def test_get_text_owned_hides_non_owner_rows(self, store, text_id, user_id):
         await store.save_text(text_id, "src.txt", "属主内容", user_id=user_id)
@@ -880,3 +916,29 @@ class TestPgOwnedIdentityIsolation:
         other = f"usr_{uuid.uuid4().hex}"
         assert await store.get_card_owned(card_id, user_id) is not None
         assert await store.get_card_owned(card_id, other) is None, "非属主读到了他人 card"
+
+
+# ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
+# 故意**不挂** `@_pg` —— 它是用来验「_pg 到底跳了没跳」的那把尺子，自己不能被同一把尺子量。
+
+def test_pg_suite_is_not_silently_disabled_where_pg_is_required():
+    """声明了需要 PG 的环境（CI）里，本模块必须真跑；靠 skip / SKIP_PG_TESTS 溜过去即红。
+
+    `_pg` 在 PG 不可达时会把整批 PostgresStore 用例变成 skip。这在本地是对的（没 PG 就没得
+    跑），但在 CI 就成了新的静默通道 —— 一条永远 skip 的锁和没有锁是一回事。CI 用
+    `REQUIRE_PG_TESTS=1` 声明「我有 PG」，本断言就是那份声明的对账。
+    """
+    if not pg_required():
+        pytest.skip(
+            "本地未声明 REQUIRE_PG_TESTS=1 —— 本模块按「PG 不可达即显式 skip」处理；"
+            "CI 声明了该变量，在那边本用例会真跑并核对"
+        )
+    assert os.getenv("SKIP_PG_TESTS") != "1", (
+        "REQUIRE_PG_TESTS=1 与 SKIP_PG_TESTS=1 同时置位：skip 成了静默通道。"
+        "要么去掉 SKIP_PG_TESTS，要么别声明 REQUIRE_PG_TESTS —— 不许两边都要。"
+    )
+    assert pg_reachable(), (
+        "REQUIRE_PG_TESTS=1（CI 用它在 build.yml 里声明「保证有 PG」）但探针连不上 PG："
+        "本模块 50 条用例会整体 skip 成静默通道。修 DATABASE_URL / postgres service，"
+        "不要靠关掉这条断言来让它变绿。"
+    )

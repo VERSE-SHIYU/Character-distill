@@ -4,7 +4,10 @@ Simulates the real application flow:
   register → upload text → distill (save card) → chat → history → delete → cleanup
 
 Run:
-  STORAGE_BACKEND=postgres DATABASE_URL=postgresql://... python -m pytest tests/test_e2e_flow.py -v
+  DATABASE_URL=postgresql://... python -m pytest tests/test_e2e_flow.py -v
+
+PG 连不上时整文件显式 skip（原因可见），不是失败。设 `REQUIRE_PG_TESTS=1` 声明「保证有 PG」
+的环境（CI）里则拒绝跳过 —— 见 `tests/conftest.py::pg_required()`。
 """
 
 from __future__ import annotations
@@ -18,10 +21,15 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from conftest import pg_reachable, pg_required, pg_skip_reason
+
+# 判据是「真 PG 连得上」，不是「STORAGE_BACKEND 写着 postgres」—— 后者是代理指标：变量写成
+# postgres 而库连不上时，本文件会以连接错恒红（缺陷 25「代理代替事实」同型）。PG 不可达即
+# 显式 skip（原因可见）；`REQUIRE_PG_TESTS=1` 声明的环境（CI）拒绝跳过。
 pytestmark = [
     pytest.mark.skipif(
-        os.getenv("STORAGE_BACKEND", "sqlite").strip().lower() != "postgres",
-        reason="requires STORAGE_BACKEND=postgres",
+        not pg_reachable() and not pg_required(),
+        reason=pg_skip_reason("test_e2e_flow 全流程用例"),
     ),
     pytest.mark.asyncio,
 ]

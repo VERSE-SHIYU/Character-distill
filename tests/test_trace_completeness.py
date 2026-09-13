@@ -21,8 +21,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHILD = os.path.join(ROOT, "tests", "perf", "trace_assert_child.py")
 
@@ -35,9 +33,15 @@ def _child_env() -> dict[str, str]:
     return env
 
 
-@pytest.mark.skipif(not os.path.exists(CHILD), reason="child assertion script missing")
 def test_trace_completeness_via_child_interpreter() -> None:
-    """子解释器跑完整 trace 断言：无孤儿、无断链、跨线程边界真实。"""
+    """子解释器跑完整 trace 断言：无孤儿、无断链、跨线程边界真实。
+
+    子脚本缺了要**红**，不是 skip：它随仓库提交（`git ls-files tests/perf/trace_assert_child.py`），
+    缺失 = 被误删，不是「环境不满足」。原先的 `skipif(not exists(CHILD))` 是个静默通道 ——
+    删掉子脚本就能让这条 trace 锁无声消失还全绿（缺陷 21「豁免即静默放行」同型）。
+    """
+    assert os.path.exists(CHILD), (
+        f"子断言脚本不在：{CHILD}。它随仓库提交，缺失就是被误删 —— 修回来，别用 skip 绕过。")
     proc = subprocess.run(
         [sys.executable, CHILD],
         cwd=ROOT,

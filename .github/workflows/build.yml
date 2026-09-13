@@ -61,6 +61,10 @@ jobs:
           STORAGE_BACKEND: postgres
           DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
           JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
+          # 声明「本环境保证有 PG」：依赖 PG 的用例据此**拒绝 skip**（连不上就直接红），
+          # 而不是静默跳过。本地不设它 → 没 PG 时显式 skip 并给出原因。
+          # 这是 tests/conftest.py::pg_required() 唯一认的那个声明，别删。
+          REQUIRE_PG_TESTS: "1"
         run: pytest tests/ -v --tb=short
 
   build:
