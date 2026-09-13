@@ -173,6 +173,12 @@ class TestExemptionClosedLoop:
     **变异判别力（实测）**：把 079 从次序元组移回 `_NOT_APPLIED` →
     `test_fresh_db_covers_every_table_pg_declares` 红，而
     `test_every_migration_file_is_dispatched` **仍绿**。旧锁抓不到的那一类，正是本锁抓的。
+
+    **镜像（缺陷 23）**：本锁管的是**测试 / 本地后端**（SQLite 新库）。**生产后端**（真 PG 库）
+    那一面在 `tests/test_postgres_store.py::TestPgFreshSchemaClosure` —— 同一真源的反向断言
+    （真 PG 库 ⊇ `migrations_pg/` 声明表 ∪ `postgres_store.py` 引用表）。两条合起来才是完整
+    闭环；分成两条是因为一条只需 SQLite（无 PG 也能跑），一条必须有真 PG。另有 text 层的
+    `tests/test_schema_parity.py` 断言两目录的表 / 列集合相等 —— 三层各管各的。
     """
 
     async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):

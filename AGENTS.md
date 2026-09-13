@@ -374,10 +374,17 @@ config.yaml 现值（现读，非转述）：
 - **不属缺陷 16 的同源修法**：16 的病灶是「记账出口分散 + 一处漏」，收敛到一个 `_chat_initial` 出口即解决；本条的病灶是**记账出口从未写**，`_chat_initial` 覆盖不到（Map 不走它）。修它要先裁决「N 次并发调用怎么记」——N 条独立记录（写放大）还是一条聚合（需新增聚合态），是**设计决策**不是补漏
 - 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且本条改动会显著改变用量/计费口径，属**行为变更**，须单独一轮带验收锁
 
-**23. PG 侧无对称形态锁 —— 加了 `migrations/` 迁移却不加 `migrations_pg/` 会静默漂移（079 的反向）** —— 状态：未修（记账，2026-09-13 缺陷 21 排查时发现）
-- 缺陷 21 方向：SQLite 有目录文件但没接线（由 `test_migration_dispatch` 的目录↔次序表差集锁 + `TestExemptionClosedLoop` 的 PG⊇SQLite 表集合锁兜住）。**反方向无锁**：新增 `storage/migrations/NNN_x.sql` 而忘了写对应 `storage/migrations_pg/NNN_x.sql`，SQLite 新库有这张表、PG 永远没有，且**无任何报警** —— PG 执行器是 `sorted(migrations_dir.glob("*.sql"))`，目录里没有就没有，不会被「多余文件」察觉
-- 属缺陷 21 同族（迁移接线的静默通道），但缺口在 PG 侧而非 SQLite 侧。锁法同 21 的闭环锁：**两目录的迁移基线编号集合须互相覆盖**（或更弱：PG 目录声明的表集合 ⊆ SQLite 新库表集合，与 `TestExemptionClosedLoop` 同源但反向断言）
-- 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且反向锁需要先裁决两目录的编号是否本就允许不对称（PG 已有 `012_` 对应 SQLite `079_` 的先例，说明编号不必一一对应）
+**23. PG 侧无对称形态锁 —— 迁移的「声明」与「真库」之间无闭环** —— 状态：**已修（2026-09-13，`TestPgFreshSchemaClosure`）**
+- **原立项措辞要订正两处**（立项时按「SQLite 独有 66 表」理解，实测不成立）：
+  - **现存差集是「文件 83 vs 17」，不是「表 0 vs 66」**。`_objects_from_sql` 复算：两目录各声明 **41** 张表，**双向差集都是 0**。「66」是**文件数**差 —— PG `001_init.sql` 并掉了前 66 个 SQLite 迁移文件，故编号结构性不对齐（PG `012_` 对应 SQLite `079_` 是先例），**按编号比不可行，按表集合比才是可判定定义**。
+  - **朴素形态（加了 SQLite 迁移忘了 PG）已被锁住**：`tests/test_schema_parity.py` 早已**双向**断言两目录的表 / 列集合相等（`only_pg` 与 `only_sqlite` 都报错）。所以「反方向无锁」在**表粒度**上不成立 —— 只对「**声明 vs 真库**」成立。
+- **真缺口（已修）**：那三把锁（dispatch / parity / fresh-schema）都只看「文件里写了」，不看「真库建出来了」。SQLite 侧有 `TestExemptionClosedLoop` 兜着（真建库 ⊇ PG 声明，配合 text parity 即 SQLite 侧闭合）；**PG 侧此前一条都没有，而 PG 才是生产**。
+- **锁法**（`tests/test_postgres_store.py::TestPgFreshSchemaClosure`，两条断言）：真 PG 库 ⊇ `migrations_pg/` 声明表 **∪** `postgres_store.py` 引用表。第二条直接锁 079 的症状形态（代码引用库里没有的表）。
+- **零豁免、不需要豁免名单**：真源取「表集合」而非「文件编号」后，上线当天就是绿的（实测 41 声明 / 41 建出 / 引用 41，差集全 0）。**这正是与缺陷 21 的关键差别** —— 拿编号当真源会带一堆豁免，而豁免即永久放行（§四 纪律）。将来真出现 SQLite-only 的表也不在此豁免：它以「不在 `postgres_store.py` 引用集」被第二条断言直接验掉，不靠理由文本。
+- **为什么不与缺陷 21 的锁合并成一条双向断言**：依赖不同（一条只需 SQLite、无 PG 也能跑；一条必须有真 PG —— 本地无 PG 时 PG 段是 skip/error，合并会让本地丢掉 sqlite 侧保护）；盲区不同（一条防本地 / 测试库缺表，一条防**生产**缺表）。两条 docstring 已互相交叉引用。**列级闭合未做**（text parity 已在文件层做列级；运行期列级是新工作量），**记账**。
+- **前提**：库必须「新鲜」（CI 每次给新 postgres service 容器）。对长期存在的 dev 库跑会被残留表掩盖 —— 实测删掉 `012_remote_user_profiles.sql` 后若库里还留着该表，两条断言都绿。已写进 docstring。
+- **变异（实测两次）**：删 `012_remote_user_profiles.sql`（代码仍引用）→ 只有「引用表」那条红；让一条迁移「声明了但建不出来」→ 只有「声明表」那条红。两条各抓一类，互不代偿。
+- 原「反方向无锁」判断的正误：**形态判断对（确实缺生产侧闭环），但把模板当成了表集合**。立项时的推断「PG 目录声明的表集合 ⊆ SQLite 新库表集合」也不对 —— 该方向早已被 `TestExemptionClosedLoop` 覆盖，真正缺的是**反向的、且对着真 PG 库**。
 - 同轮另两条观察（**非缺陷，只记**）：
   - **豁免名单住在测试里，不在执行器里**：`tests/test_migration_dispatch.py::_NOT_APPLIED` 是唯一记录「哪个迁移被豁免、为什么」的地方，而读 `storage/sqlite_store.py` 的人只看到次序元组，**看不到「本应在这却没在」**。可观性问题，非正确性缺陷；若要改，方向是把豁免登记移进执行器模块或让它可被执行器导入
   - **PG `001_init.sql` 保留了 SQLite 侧已删的 4 个遗留列**（`users` 的 `password_hash` / `api_key` / `base_url` / `model`，`migrations_pg/001_init.sql:93-98` 内联声明）。**已复核，运行期 schema 无漂移**：这 4 列由 `migrations_pg/005_data_residency.sql` 的 `DROP COLUMN IF EXISTS` 删掉；两侧逐表逐列求交集（`001_init` + 全部 `ALTER` − drop）**完全相同**（用 `tests/perf/migration_coverage_audit.py` 的 `_objects_from_sql` 复算）。漂移只在**文件层**：读 PG 的 `001_init.sql` 会看到一个最终库里并不存在的列清单（SQLite 侧这 4 列本就不在 `001_init` 声明、是后来 `ALTER` 加的，故它的 `001_init` 天然干净）。**非缺陷**，但会误导「按 bootstrap 文件推断 schema」的人 —— 与上面两条同属「文件的陈述与运行期事实不一致」

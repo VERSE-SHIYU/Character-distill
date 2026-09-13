@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -27,11 +29,58 @@ pytestmark = pytest.mark.skipif(
     reason="SKIP_PG_TESTS=1 set — skipping PostgresStore tests",
 )
 
+_REPO = Path(__file__).resolve().parent.parent
+_PG_DIR = _REPO / "storage" / "migrations_pg"
+_SQLITE_DIR = _REPO / "storage" / "migrations"
+_PG_STORE_SRC = _REPO / "storage" / "postgres_store.py"
+
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<table>\w+)", re.IGNORECASE)
+_COMMENT_RE = re.compile(r"--[^\n]*")
+_TABLE_REF_RE = re.compile(r"\b(?:FROM|JOIN|INTO|UPDATE)\s+([a-z_][a-z0-9_]*)", re.IGNORECASE)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _dsn() -> str:
     return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+
+
+async def _pg_tables() -> set[str]:
+    """真 PG 库 public schema 里的表集合（跑懒初始化 → 迁移已应用）。"""
+    store = PostgresStore(_dsn())
+    await store._ensure_initialized()
+    try:
+        async with await store._connect() as conn:
+            rows = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")
+        return {r["tablename"] for r in rows}
+    finally:
+        await store.close()
+
+
+def _declared_tables(directory: Path) -> set[str]:
+    """某个迁移目录声明的表名（去注释后扫 CREATE TABLE）—— 与 `tests/test_sqlite_fresh_schema.py`
+    的 `_pg_declared_tables` 同一个口径，独立一份免得跨测试文件 import。"""
+    names: set[str] = set()
+    for p in sorted(directory.glob("*.sql")):
+        sql = _COMMENT_RE.sub("", p.read_text(encoding="utf-8"))
+        names |= {m.group("table") for m in _CREATE_TABLE_RE.finditer(sql)}
+    return names
+
+
+def _referenced_tables(src: str, vocabulary: set[str]) -> set[str]:
+    """源码里 SQL 字符串引用的表名，按 DDL 词表过滤后返回。
+
+    **为什么必须过滤**：裸正则会把散文与 f-string 片段当表名（实测 23 个假阳性：
+    `a` / `the` / `this` / `set` / `sort_order` …）。
+
+    **词表取两侧 DDL 的并集，不是本后端声明集** —— 用本后端声明集过滤会让断言恒真
+    （`refs ∩ declared ⊆ declared ⊆ created`），锁就瞎了。用并集则 SQLite-only 的表名
+    能活着走到断言处，从而被抓住。
+    """
+    return {t.lower() for t in _TABLE_REF_RE.findall(src)} & {v.lower() for v in vocabulary}
+
+
 
 
 async def _clean_tables(store: PostgresStore) -> None:
@@ -733,3 +782,74 @@ class TestDistillLockContention:
         assert 0 <= shared["first_sample_at_chunks"] < N, (
             "进度写必须与分片写交错，而非被排到 66 片全写完之后："
             f"首样本时已完成 {shared['first_sample_at_chunks']} 片")
+
+
+# ── 生产后端（PG）的 schema 闭环（缺陷 23）────────────────────────────────────
+
+class TestPgFreshSchemaClosure:
+    """真 PG 库必须覆盖「声明了的表」与「代码引用的表」—— 缺陷 21 那条锁的镜像。
+
+    缺陷 21 的锁（`tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop`）断言
+    **SQLite 新库 ⊇ `migrations_pg/` 声明表**。那是**测试/本地后端**；本条是同一真源的反向、
+    也是**生产后端**那一面：真 PG 库 ⊇（`migrations_pg/` 声明表 ∪ `postgres_store.py` 引用表）。
+
+    **为什么需要它（缺陷 23）**：PG 迁移执行器是 `sorted(glob('*.sql'))`，目录即清单、
+    没有豁免出口，所以「文件有没有被登记」这一层天然不会漏；真正无锁的是**症状层** ——
+    没有任何东西验证「迁移文件里写了」等于「真库建出来了」。SQLite 侧有
+    `TestExemptionClosedLoop` 兜着，PG 侧此前**一条都没有**，而 PG 才是生产。
+
+    **与 `tests/test_schema_parity.py` 的分工**：那条是 text 层（正则扫 `.sql` 文本），
+    断言两目录的表/列集合相等 —— 它抓「加了 SQLite 迁移忘了 PG」，但抓不到
+    「文件写了、真库没有」（方言/语法问题、被静默跳过的语句）。本条是运行期层。
+
+    **零豁免、不需要豁免名单**：真源取「表集合」而不是「文件编号」之后，上线当天就是绿的
+    （实测 41 声明 / 41 建出 / 引用 41，双向差集全 0）。这与缺陷 21 的关键差别就在这里 ——
+    那条锁若拿文件/编号当真源会带一堆豁免，而**豁免即永久放行**（§四 纪律）。将来真出现
+    SQLite-only 的表也不在这里豁免：它以「不在 `postgres_store.py` 引用集里」被
+    `test_every_referenced_table_is_created` 直接验掉，不靠理由文本。
+
+    **判别力（变异，实测）**：删掉 `migrations_pg/012_remote_user_profiles.sql` 而
+    `postgres_store.py` 仍在用它 → 只有第 2 条红；让一条迁移「声明了但不会建出来」→ 只有
+    第 1 条红。两条各抓一类，互不代偿。
+
+    **前提：库必须是「新鲜」的**。CI 每次跑给一个新的 postgres service 容器，成立。对着
+    长期存在的 dev 库跑则会被掩盖 —— 实测：删掉 `012_remote_user_profiles.sql` 后若库里
+    还留着该表，两条断言都绿（`declared` 缩了、`created` 没缩）。复现变异要先
+    `DROP SCHEMA public CASCADE`。本锁判的是「文件与库一致」，不是「能不能从零建出」。
+    """
+
+    def test_lock_has_teeth(self, tmp_path: Path):
+        """负控：探针必须真看得见它要抓的两类事实，否则「0 处」只是它瞎了。"""
+        d = tmp_path / "m"
+        d.mkdir()
+        (d / "001_x.sql").write_text(
+            "-- CREATE TABLE ignored_comment\nCREATE TABLE real_one (id TEXT);\n", encoding="utf-8")
+        assert _declared_tables(d) == {"real_one"}, "DDL 提取器看不见前一行注释里的假 CREATE"
+
+        # 引用提取器：词表里的名字看得见，词表外的散文词被滤掉
+        assert _referenced_tables("SELECT * FROM ghost WHERE x=1", {"ghost"}) == {"ghost"}
+        assert _referenced_tables("SELECT * FROM the WHERE x=1", {"ghost"}) == set()
+        # 且它不会把 SQLite-only 的名字悄悄吞掉（词表是并集）
+        assert _referenced_tables("SELECT * FROM sqlite_only_t", {"sqlite_only_t"}) == {"sqlite_only_t"}
+
+    async def test_every_declared_table_is_created(self):
+        """`migrations_pg/` 写了的表，真 PG 库里必须存在。"""
+        created = await _pg_tables()
+        missing = sorted(_declared_tables(_PG_DIR) - created)
+        assert not missing, (
+            f"这些表 `migrations_pg/` 声明了、真 PG 库却没有：{missing}。"
+            "「文件里写了」不等于「库里有」—— 迁移没被执行、或被静默跳过。"
+            "生产后端缺表会在运行期炸成 `no such table`（缺陷 21/23 同一病灶）。")
+
+    async def test_every_referenced_table_is_created(self):
+        """`postgres_store.py` 引用的表，真 PG 库里必须存在 —— 直接锁 079 的症状形态。"""
+        vocabulary = _declared_tables(_PG_DIR) | _declared_tables(_SQLITE_DIR)
+        refs = _referenced_tables(_PG_STORE_SRC.read_text(encoding="utf-8"), vocabulary)
+        created = await _pg_tables()
+        missing = sorted(refs - created)
+        assert not missing, (
+            f"这些表 `postgres_store.py` 在 SQL 里引用了、真 PG 库却没有：{missing}。"
+            "代码在用一张不存在的表 = 生产运行期 `no such table`（SQLite 侧就是缺陷 079 的"
+            "现场：代码在用、新库没有）。要么补 `migrations_pg/` 迁移，要么改代码别用它。")
+        assert len(refs) >= 30, (
+            f"只从 postgres_store.py 提出 {len(refs)} 个表名 —— 提取器写歪了，断言会空转")
