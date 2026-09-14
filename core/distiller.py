@@ -1165,7 +1165,18 @@ class Distiller:
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, b)) for i, b in enumerate(batches)]
-        return await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks)
+        # Reduce 全空 = 100% 失败，没有 Map 那种「按失败率容忍」的余地：把空列表当合法输入
+        # 交给归并，模型会对零条分析**凭空产出**一份非空档案，下游「输出为空即失败」那道门
+        # 结构上拦不住（缺陷 34）—— 判据要落在**归并的输入有没有内容**上。
+        # 守卫放在此处，因为两条 reduce 路径（stream 的 `_reduce_batches` / 非 stream 的
+        # `_do_reduce`）的批次结果都汇到这一个出口；放在调用点则会漏掉 `_do_reduce` 的递归那一路。
+        if not any(r[1].strip() for r in results):
+            raise DistillError(
+                "蒸馏失败：归并阶段未能产出有效内容，请稍后重试",
+                f"Reduce batch 全空：{len(batches)}/{len(batches)} 失败",
+            )
+        return results
 
     def _single_reduce(self, raw_analyses: list[str], character_name: str) -> str:
         """Merge independent chunk analyses into a single profile (sync)."""

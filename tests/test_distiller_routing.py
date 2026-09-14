@@ -3,9 +3,95 @@
 import asyncio
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.distiller import DistillError, Distiller
+
+
+class TestReduceAllEmptyBails:
+    """缺陷 34：Reduce 全部 batch 返回空 → 显式失败并说明原因，不得落卡。
+
+    假件照**生产实际形状**搭：Map 全成功（100 片 > SAFE_SINGLE_REDUCE=80，故走分批归并），
+    归并批次全部失败（返回空）；而上游对「零条分析的归并请求」会**凭空产出**非空档案。
+    这一条必须模拟 —— 不模拟的话，「输出为空即失败」那道门（``:1726``）在用例里反而
+    拦住了，测的就不是真缺口（正是缺陷 34 那条一般化）。
+
+    变异对象 = ``_run_reduce_concurrent`` 末尾的输入守卫（删掉它）：两条用例都会落到
+    format 阶段 —— ``assert llm.chat.call_count == 0`` / ``formatting`` 帧断言各变红。
+    """
+
+    TEXT = "AB" * 150000          # 300000 字符 ÷ chunk_size 3000 = 100 片
+    FABRICATED = "凭空产出的角色档案"
+    CARD_JSON = '{"name": "AB"}'
+
+    class _Client:
+        async def close(self):
+            pass
+
+    def _make_llm(self):
+        llm = MagicMock()
+        llm.last_usage = None
+        llm._make_async_client = lambda: self._Client()
+        # 判别归并调用靠 _reduce_system_prompt 的首句；「来源片段」只在分析数 > 0 时出现
+        # （_reduce_user_prompt 用 join 渲染，空列表渲染出的正文里没有它）。
+
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            if "你正在整合关于" in system:
+                if "来源片段" in messages[0]["content"]:
+                    return ("", {"prompt_tokens": 1, "completion_tokens": 0})
+                return (self.FABRICATED, {"prompt_tokens": 1, "completion_tokens": 1})
+            return ("分析结果", {"prompt_tokens": 1, "completion_tokens": 1})
+
+        def chat(system, messages, max_tokens=None, **kwargs):
+            if "你正在整合关于" in system:
+                if "来源片段" in messages[0]["content"]:
+                    return ""
+                return self.FABRICATED
+            return self.CARD_JSON
+
+        def chat_stream(system, messages, max_tokens=None, **kwargs):
+            if "你正在整合关于" in system:
+                if "来源片段" not in messages[0]["content"]:
+                    yield self.FABRICATED
+                return
+            yield self.CARD_JSON
+
+        llm.async_chat = AsyncMock(side_effect=async_chat)
+        llm.chat = MagicMock(side_effect=chat)
+        llm.chat_stream = MagicMock(side_effect=chat_stream)
+        return llm
+
+    def _make_distiller(self, llm) -> Distiller:
+        d = Distiller(llm=llm, config_path=None)
+        d._longctx_threshold = 0     # 强制走分片 MapReduce
+        d._chunk_size = 3000
+        return d
+
+    def test_sync_reduce_all_empty_raises_before_format(self):
+        """非 stream（/run 那条）：归并全空 → DistillError，format 阶段不启动。"""
+        llm = self._make_llm()
+        d = self._make_distiller(llm)
+
+        with pytest.raises(DistillError) as excinfo:
+            d.distill_incremental(self.TEXT, "AB")
+
+        assert "归并" in excinfo.value.user_message
+        assert "归并" in str(excinfo.value)      # 运维口径同样点名归并段
+        assert llm.chat.call_count == 0          # 格式化没跑 = 没落卡
+
+    def test_stream_reduce_all_empty_yields_error_before_format(self):
+        """stream（/start、/run_stream 那两条）：归并全空 → 上屏 error 帧，不进 format。"""
+        llm = self._make_llm()
+        d = self._make_distiller(llm)
+
+        frames = list(d.distill_incremental_stream(self.TEXT, "AB", [], "story"))
+
+        errors = [f for f in frames if isinstance(f, dict) and "error" in f]
+        assert len(errors) == 1
+        assert "归并" in errors[0]["error"]
+        assert not any(
+            isinstance(f, dict) and f.get("status") == "formatting" for f in frames
+        )
 
 
 class TestEstimateTokens:
