@@ -179,6 +179,12 @@ class TestExemptionClosedLoop:
     （真 PG 库 ⊇ `migrations_pg/` 声明表 ∪ `postgres_store.py` 引用表）。两条合起来才是完整
     闭环；分成两条是因为一条只需 SQLite（无 PG 也能跑），一条必须有真 PG。另有 text 层的
     `tests/test_schema_parity.py` 断言两目录的表 / 列集合相等 —— 三层各管各的。
+
+    **列级**在 `TestPgFreshSchemaClosure::test_fresh_sqlite_and_fresh_pg_have_the_same_columns`，
+    但它**故意不用上面这个「真库 ⊇ 文本声明」的形状**：`DROP TABLE` 0 处而 `DROP COLUMN`
+    4 处，本仓真的删过列（PG 声明式 DROP + SQLite 的 Python 表重建），而文本提取器两个
+    都看不见 → 套用本形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧
+    真库」。**别把两处统一成同一个形状**，理由是写在代码里的。
     """
 
     async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):

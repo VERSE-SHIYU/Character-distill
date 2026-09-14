@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import sys
 import uuid
 from pathlib import Path
@@ -33,6 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from conftest import pg_reachable, pg_required, pg_skip_reason
 
 from storage.postgres_store import PostgresStore
+from storage.sqlite_store import SQLiteStore
 
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -101,6 +103,86 @@ def _referenced_tables(src: str, vocabulary: set[str]) -> set[str]:
     return {t.lower() for t in _TABLE_REF_RE.findall(src)} & {v.lower() for v in vocabulary}
 
 
+# ── 列级闭环：两侧**真库**的事实对事实（缺陷 23）──────────────────────────────
+#
+# **为什么不复用表级那个形状**（「真库 ⊇ 文本声明」）：那个形状在表级成立，靠的是一个
+# 从没被写下来过的前提 —— **没有任何东西删过表**。本仓实测这个前提的边界：
+#
+#     DROP TABLE   0 处        （两侧迁移目录全扫）
+#     DROP COLUMN  4 处        （migrations_pg/005_data_residency.sql 删 users 的
+#                              password_hash / api_key / base_url / model）
+#
+# 而且同一个删除在两侧由**两套完全不同的机制**完成：PG 是那四条声明式
+# `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是 `storage/sqlite_store.py` 里
+# 的 Python 表重建（`if "password_hash" in all_cols` 触发），`.sql` 文本里**根本没有
+# 这条语句**。
+#
+# 把表级形状套到列级会这样断：`test_schema_parity` 的提取器只认 CREATE TABLE +
+# `ALTER ... ADD COLUMN` —— DROP 不认、Python 更不认，于是 `users` 的**声明列**比真库
+# 多这 4 个 → 锁当场红；要它绿只剩加豁免清单一条路，而「豁免即永久放行」（§四），
+# 且豁免理由（「运行期被删」）没有任何第二条断言闭环。两个盲区（PG 的 DROP、SQLite 的
+# Python 重建）在两侧**互相抵消**，这正是一直没人发现的原因 —— 文本 parity 是绿的。
+#
+# 所以列级不比文本，比**另一侧真库**：两侧都是事实，直接对事实。不需要声明列标尺、
+# 不需要 SQL 解析器、不需要任何豁免清单。将来谁想「顺手统一成表级那个形状」，
+# 上面这几行就是拦他的：那个形状的前提在列级不成立。
+
+
+async def _build_fresh_sqlite(db_path: str) -> None:
+    """真建一个新 SQLite 库、真跑一次迁移。之后用 `_sqlite_columns` 读它。"""
+    await SQLiteStore(db_path)._ensure_initialized()
+
+
+def _sqlite_columns(db_path: str) -> dict[str, set[str]]:
+    """读一个**已建好**的 SQLite 库的 {表: {列}}。
+
+    **只读，绝不重建**：`_ensure_initialized` 会把缺的列补回来（067 那套 PRAGMA 前置
+    就是干这个的、users 重建则是按需触发）。拿它当「读」会让变异被当场修复 ——
+    「单侧删列」的变异永远红不了，红出来的反而是「重跑又加回来」的副作用。
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%'")]
+        return {t: {r[1] for r in conn.execute(f'PRAGMA table_info("{t}")')}
+                for t in tables}
+    finally:
+        conn.close()
+
+
+async def _pg_columns() -> dict[str, set[str]]:
+    """真 PG 库 public schema 的 {表: {列}}（跑懒初始化 → 迁移已应用）。"""
+    store = PostgresStore(_dsn())
+    await store._ensure_initialized()
+    try:
+        async with await store._connect() as conn:
+            rows = await conn.fetch(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema='public'")
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(r["table_name"], set()).add(r["column_name"])
+        return out
+    finally:
+        await store.close()
+
+
+def _column_drift(left: dict[str, set[str]], right: dict[str, set[str]]) -> list[str]:
+    """两侧 {表:{列}} 的全部差异，逐条点名**哪张表、哪一列、缺在哪侧**。"""
+    problems: list[str] = []
+    for t in sorted(set(left) - set(right)):
+        problems.append(f"表 `{t}` 只在 SQLite 新库里有，真 PG 没有")
+    for t in sorted(set(right) - set(left)):
+        problems.append(f"表 `{t}` 只在真 PG 里有，SQLite 新库没有")
+    for t in sorted(set(left) & set(right)):
+        only_sq = sorted(left[t] - right[t])
+        only_pg = sorted(right[t] - left[t])
+        if only_sq:
+            problems.append(f"[{t}] 列 {only_sq} 只在 SQLite 新库里，真 PG 缺这些列")
+        if only_pg:
+            problems.append(f"[{t}] 列 {only_pg} 只在真 PG 里，SQLite 新库缺这些列")
+    return problems
 
 
 async def _clean_tables(store: PostgresStore) -> None:
@@ -849,6 +931,14 @@ class TestPgFreshSchemaClosure:
     长期存在的 dev 库跑则会被掩盖 —— 实测：删掉 `012_remote_user_profiles.sql` 后若库里
     还留着该表，两条断言都绿（`declared` 缩了、`created` 没缩）。复现变异要先
     `DROP SCHEMA public CASCADE`。本锁判的是「文件与库一致」，不是「能不能从零建出」。
+
+    **列级是另一种粒度，用的是另一种形状**：上面两条（以及 SQLite 侧的镜像
+    `tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop`）都是「真库 ⊇ **文本声明**」。
+    列级**不能**套这个形状 —— 全文理由写在下面 `_sqlite_columns` / `_pg_columns` 那段
+    注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 4 处，删列在本仓是既有事实，
+    而声明列提取器看不见 DROP（PG 的声明式 DROP 不认，SQLite 的 Python 表重建更是
+    `.sql` 里没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
+    `test_fresh_sqlite_and_fresh_pg_have_the_same_columns`。
     """
 
     def test_lock_has_teeth(self, tmp_path: Path):
@@ -888,6 +978,93 @@ class TestPgFreshSchemaClosure:
             "现场：代码在用、新库没有）。要么补 `migrations_pg/` 迁移，要么改代码别用它。")
         assert len(refs) >= 30, (
             f"只从 postgres_store.py 提出 {len(refs)} 个表名 —— 提取器写歪了，断言会空转")
+
+    async def test_column_probe_has_teeth(self, tmp_path: Path):
+        """负控（§四「先验探针看得见」）：列级探针不能是靠「读空了」换来的 0 处。
+
+        这一条**不需要 PG** —— 它只验 SQLite 侧的读取与差异函数本身有没有判别力。
+        探针瞎了的 0 处与真无漂移的 0 处长得一模一样，这才是要挡的。
+        """
+        db_path = str(tmp_path / "teeth.db")
+        await _build_fresh_sqlite(db_path)
+        cols = _sqlite_columns(db_path)
+        assert len(cols) >= 30, f"只读到 {len(cols)} 张表 —— 探针瞎了"
+        assert "id" in cols.get("users", set()), (
+            f"读得到 users 却读不到它的列：{sorted(cols.get('users', set()))}")
+
+        # 差异函数两个方向都要点名表+列+侧
+        drift = _column_drift({"t": {"a", "b"}}, {"t": {"a"}})
+        assert any("t" in m and "b" in m for m in drift), drift
+        drift = _column_drift({"t": {"a"}}, {"t": {"a", "b"}})
+        assert any("t" in m and "b" in m for m in drift), drift
+        # 表不存在于另一侧也要报
+        assert _column_drift({"ghost": {"a"}}, {"t": {"a"}}), "只在单侧的表没被报出来"
+
+    @_pg
+    async def test_fresh_sqlite_and_fresh_pg_have_the_same_columns(self, tmp_path: Path):
+        """两侧**真库**逐表列集合必须相等，双向 —— 列级闭环（缺陷 23）。
+
+        真源是「另一侧真库」，没有文本标尺（理由见类 docstring 与 `_column_drift` 上方
+        注释）。两侧都真跑迁移、真读 catalog：SQLite 读 `PRAGMA table_info`，
+        PG 读 `information_schema.columns`。
+        """
+        db_path = str(tmp_path / "fresh.db")
+        await _build_fresh_sqlite(db_path)
+        sqlite_cols = _sqlite_columns(db_path)
+        pg_cols = await _pg_columns()
+
+        # 防空转：读空/提取器写歪时，下面的断言会恒真
+        assert len(sqlite_cols) >= 30, f"只读到 {len(sqlite_cols)} 张表 —— 锁在空转"
+        total = sum(len(c) for c in sqlite_cols.values())
+        assert total >= 250, f"只读到 {total} 个列名 —— 锁在空转"
+
+        drift = _column_drift(sqlite_cols, pg_cols)
+        assert not drift, (
+            "两个后端的真库列集合漂移了：\n"
+            + "\n".join(f"  - {d}" for d in drift)
+            + "\n\n列级漂移 = 某一侧运行期炸 `no column named X`。"
+            "修法：把缺的列补到缺的那一侧的迁移里。"
+            "**不要在本测试里开豁免** —— 列级的真源是「另一侧真库」，没有文本标尺，"
+            "也就没有需要豁免的对象；加豁免清单等于把洞重新打开。")
+
+    @_pg
+    async def test_unilateral_column_change_goes_red(self, tmp_path: Path):
+        """变异：只在**一侧真库**改列 —— 单侧加一列 / 单侧删一列，两条都必须红且点名表+列+侧。
+
+        变异打在**真库**上（对 throwaway SQLite 真跑 ALTER、真重读 catalog），不是改
+        比较函数的入参：只有真库变了，才证明这条锁读的是「真库事实」而不是「传进去的字典」。
+        打 SQLite 而不是 PG，是因为 PG 是共享库 —— 在它上面加删列会污染同一次会话里
+        后面所有用例。
+        """
+        db_path = str(tmp_path / "mut.db")
+        await _build_fresh_sqlite(db_path)
+        pg_cols = await _pg_columns()
+        assert _column_drift(_sqlite_columns(db_path), pg_cols) == [], (
+            "静置态就不绿 —— 先修静置漂移，本条变异无从判定")
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN mutation_probe TEXT")
+            conn.commit()
+        finally:
+            conn.close()
+        added = _column_drift(_sqlite_columns(db_path), pg_cols)
+        assert added, "SQLite 单侧加了一列，列级锁没红 —— 锁瞎了"
+        assert any("users" in m and "mutation_probe" in m for m in added), (
+            f"红了但没点名表+列：{added}")
+
+        conn = sqlite3.connect(db_path)
+        try:
+            # mutation_probe 是变异自己加的，先撤掉，让下面那条只留「单侧缺列」一个红源
+            conn.execute("ALTER TABLE users DROP COLUMN mutation_probe")
+            conn.execute("ALTER TABLE users DROP COLUMN embedding_region")
+            conn.commit()
+        finally:
+            conn.close()
+        dropped = _column_drift(_sqlite_columns(db_path), pg_cols)
+        assert dropped, "SQLite 单侧删了一列，列级锁没红 —— 锁瞎了"
+        assert any("users" in m and "embedding_region" in m for m in dropped), (
+            f"红了但没点名表+列：{dropped}")
 
 
 # ── `*_owned` 的身份谓词在 PG 侧真的生效（运行期层）──────────────────────────
