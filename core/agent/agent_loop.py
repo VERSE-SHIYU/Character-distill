@@ -13,6 +13,7 @@ from typing import Any
 
 from adapters.llm_adapter import ToolsNotSupportedError
 from core.agent.tools import EMPTY_RESULT
+from core.schema import SourceTrace
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core.utils import try_record_usage
 
@@ -35,6 +36,11 @@ class AgentLoopResult:
     steps: list[dict]                # 每步记录 {tool, args, ok, elapsed_ms}
     degraded: bool                   # True = 上层应走 legacy 路径
     retrieved: list[tuple[str, str]] = field(default_factory=list)  # 仅 ok=True 且内容非空的结果
+    # 证据侧出口：每次真实工具调用的 SourceTrace，按调用顺序。与 retrieved 是**两个口径**——
+    # retrieved 只收「ok 且块非空」（prompt 侧口径），evidence 收全部真实调用含空/失败/超时
+    # （证据侧口径）。空与失败不许在这里被吞成「没检索过」，否则前端看到的「检索来源」会静默
+    # 少几条。去重（dedup）的调用不产生新 trace：同一查询没发生第二次检索。
+    evidence: list[SourceTrace] = field(default_factory=list)
 
 
 class AgentLoop:
@@ -67,6 +73,7 @@ class AgentLoop:
         steps: list[dict] = []
         executed: set[tuple[str, str]] = set()
         retrieved: list[tuple[str, str]] = []
+        evidence: list[SourceTrace] = []
 
         # 构建路由器 system prompt：路由指令 + 截断至 300 字符的角色背景
         truncated_hint = (character_hint or "")[:300]
@@ -81,10 +88,16 @@ class AgentLoop:
                     router_sp, messages, self._toolkit.get_schemas()
                 )
             except ToolsNotSupportedError:
-                return AgentLoopResult(messages=original, steps=steps, degraded=True, retrieved=retrieved)
+                return AgentLoopResult(
+                    messages=original, steps=steps, degraded=True,
+                    retrieved=retrieved, evidence=evidence,
+                )
             except Exception as exc:
                 print(f"[AgentLoop] chat_with_tools error: {exc}")
-                return AgentLoopResult(messages=original, steps=steps, degraded=True, retrieved=retrieved)
+                return AgentLoopResult(
+                    messages=original, steps=steps, degraded=True,
+                    retrieved=retrieved, evidence=evidence,
+                )
 
             # 每步决策都是一次真实 LLM 花费，紧跟调用后落账。last_usage 在 chat_with_tools
             # 入口已置 None，故厂商未回 usage 时记「无数据」而非冒用上一轮的值（串号比漏记更糟）。
@@ -123,6 +136,10 @@ class AgentLoop:
                         "ok": ok,
                         "elapsed_ms": result.elapsed_ms,
                     })
+                    # 证据侧：与 ok 无关地收下（空/失败/超时也是「检索发生过」的证据）；
+                    # trace=None（未知工具/缺 query）表示压根没检索，不入。
+                    if result.trace is not None:
+                        evidence.append(result.trace)
                     # 收集成功且非空的结果
                     if ok and result_content and result_content != EMPTY_RESULT:
                         retrieved.append((name, result_content))
@@ -134,4 +151,7 @@ class AgentLoop:
                 })
 
         print(f"[AgentLoop] steps={len(steps)} tools={[s['tool'] for s in steps]}")
-        return AgentLoopResult(messages=messages, steps=steps, degraded=False, retrieved=retrieved)
+        return AgentLoopResult(
+            messages=messages, steps=steps, degraded=False,
+            retrieved=retrieved, evidence=evidence,
+        )

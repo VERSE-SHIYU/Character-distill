@@ -138,9 +138,7 @@ class GroupSession:
         # 转换历史为目标角色视角
         converted = self._convert_history(target_card_id)
         # system prompt 不再含对话历史，历史通过 messages 数组传递
-        system_prompt = engine._ctx_engine.build(
-            message, engine.user_role,
-        )
+        system_prompt = engine._compose_context(message)
         # Inject user persona context + all enhancement blocks (affinity/cognitive/time/event)
         system_prompt += self._build_persona_context()
         system_prompt += engine._build_all_enhancements()
@@ -306,9 +304,7 @@ class GroupSession:
             context_msg = "\n\n".join(ctx_parts)
 
             converted = self._convert_history(card_id)
-            system_prompt = engine._ctx_engine.build(
-                "", engine.user_role,
-            )
+            system_prompt = engine._compose_context("")
             system_prompt += "\n\n" + context_msg
             system_prompt += self._build_persona_context()
             system_prompt += engine._build_all_enhancements()
@@ -317,9 +313,7 @@ class GroupSession:
             response = await engine.llm.achat(system_prompt, llm_messages)
         else:
             converted = self._convert_history(card_id)
-            system_prompt = engine._ctx_engine.build(
-                message, engine.user_role,
-            )
+            system_prompt = engine._compose_context(message)
             system_prompt += self._build_persona_context()
             system_prompt += engine._build_all_enhancements()
             if must_speak:

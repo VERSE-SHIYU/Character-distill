@@ -15,7 +15,7 @@ from adapters.llm_adapter import LLMAdapter
 from core.clock import UserClock, describe_time_period
 from core.context_engine import ContextEngine
 from core.rag import RAGEngine
-from core.schema import CharacterCard
+from core.schema import CharacterCard, SourceTrace
 from core.context_engine import _count_tokens
 from core.utils import try_record_usage
 from core.event_service import EventService
@@ -156,6 +156,10 @@ class ChatEngine:
                 print(f"[ChatEngine] Initial affinity calc failed, using defaults: {exc}")
 
         self._last_rag_context: str = ""
+        # 本轮对话的检索追溯（证据侧出口，与 _last_rag_context 是两回事：后者是 prompt
+        # 侧拼出来的字符串，会被截断；前者是检索层事实）。agent 模式由 _run_agent_phase
+        # 写入，非 agent 模式由 _compose_context 写入。消费方：commit 5 的 SSE/前端。
+        self.last_traces: list[SourceTrace] = []
         self.last_summary: str | None = None  # legacy compat for chat.py
         self._ctx_engine = ContextEngine(
             card=card,
@@ -246,13 +250,24 @@ class ChatEngine:
     def _stage_upgraded(self, v: bool) -> None:
         self._affinity_service.stage_upgraded = v
 
-    def _compose_system_prompt(self, user_message: str, voice_mode: bool = False, include_dynamic: bool = True) -> str:
-        """拼装完整 system prompt：context engine build + 增强块 + 语音模式。"""
-        system_prompt = self._ctx_engine.build(
+    def _compose_context(self, user_message: str, *, include_dynamic: bool = True) -> str:
+        """调 ContextEngine 构建 prompt 的**唯一**出口，顺带落 ``last_traces``。
+
+        两条非 agent 路径（_compose_system_prompt、group_session）都从这里走：
+        「谁构建 prompt」与「谁记录 traces」必须是同一处，分开写必然漂移（一处改了
+        另一处忘改，前端就拿到上一轮的旧证据）。
+        """
+        built = self._ctx_engine.build_ex(
             user_message, self.user_role,
             current_mood=self._mood,
             include_dynamic=include_dynamic,
         )
+        self.last_traces = built.traces
+        return built.prompt
+
+    def _compose_system_prompt(self, user_message: str, voice_mode: bool = False, include_dynamic: bool = True) -> str:
+        """拼装完整 system prompt：context engine build + 增强块 + 语音模式。"""
+        system_prompt = self._compose_context(user_message, include_dynamic=include_dynamic)
         system_prompt += self._build_all_enhancements()
         system_prompt += self._build_visit_awareness_block()
         if voice_mode:
@@ -290,6 +305,9 @@ class ChatEngine:
             print("[ChatEngine] agent degraded → legacy context injection")
             legacy_sp = self._compose_system_prompt(user_message, voice_mode, include_dynamic=True)
             return legacy_sp, llm_messages
+
+        # degraded 分支已由上面的 legacy 重构建覆盖 last_traces；走到这里才是真 agent 产出。
+        self.last_traces = list(result.evidence)
 
         # 拼装检索参考块
         tool_label = {

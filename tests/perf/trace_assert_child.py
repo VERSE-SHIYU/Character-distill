@@ -27,6 +27,7 @@ from types import SimpleNamespace
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "tests"))  # evidence_fakes（与 pytest 下同一份）
 os.chdir(ROOT)
 
 assert os.getenv("OTEL_ENABLED", "").lower() in ("1", "true", "yes", "on"), "child needs OTEL_ENABLED=1"
@@ -243,6 +244,13 @@ def assert_agent_skeleton() -> None:
     """agent 链路骨架：plan → execute_tool 两层在树内（确定性 stub，无网络）。"""
     from core.agent.agent_loop import AgentLoop
     from core.agent.tools import AgentToolkit
+    from core.context_engine import RetrievalResult
+    from evidence_fakes import make_item
+
+    def _hit(source: str, block: str):
+        return RetrievalResult(
+            source=source, block=block, items=[make_item(source)], status="hit"
+        )
 
     class _ToolCall:
         def __init__(self, name):
@@ -263,13 +271,13 @@ def assert_agent_skeleton() -> None:
             return SimpleNamespace(content="ok", tool_calls=[])
 
     class _StubCtx:
-        """离线 ctx 替身：三路检索直接返回固定文本，无网络。"""
-        def _retrieve_scenes(self, query: str) -> str:
-            return "（stub 场景）"
-        def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
-            return "（stub 记忆）"
-        def _search_web(self, query: str) -> str:
-            return "（stub 网页）"
+        """离线 ctx 替身：三路检索直接返回固定 block，无网络（工具层走 ``_ex`` 出口）。"""
+        def _retrieve_scenes_ex(self, query: str):
+            return _hit("scene", "（stub 场景）")
+        def _retrieve_memories_ex(self, query: str, current_mood: str | None = None):
+            return _hit("memory", "（stub 记忆）")
+        def _search_web_ex(self, query: str):
+            return _hit("web", "（stub 网页）")
 
     T.reset_spans()
     with T.span("root.agent"):

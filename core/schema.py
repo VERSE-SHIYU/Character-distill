@@ -1,6 +1,6 @@
 """角色卡与相关结构的 Pydantic 模型定义。"""
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NamedTuple, TypedDict
 
 from pydantic import BaseModel, model_validator
 
@@ -103,6 +103,13 @@ class CharacterCard(BaseModel):
 
 EvidenceKind = Literal["scene", "memory", "web"]
 
+# 一次检索调用对外的四态。**timeout 只由工具执行器产生**（``AgentToolkit.execute`` 的
+# ``fut.result(timeout)`` 弃船路径）——「这次调用没在预算内回来」是调用层事实，不是
+# 检索本体说了什么。故引擎侧的 ``RetrievalStatus`` 只有三态：把 timeout 塞进那里，等于
+# 让引擎的类型承诺一个它永远产不出的值（死分支，本仓缺陷 27 同型）。两者的包含关系由
+# ``tests/test_agent_evidence.py`` 的漂移锁钉住。
+SourceStatus = Literal["hit", "empty", "failed", "timeout"]
+
 
 class SceneMeta(TypedDict):
     """scene 类来源的解释字段。
@@ -189,6 +196,19 @@ class EvidenceItem(BaseModel):
                 f"少={sorted(declared - actual)}（契约见 EVIDENCE_META[{self.kind!r}]）"
             )
         return self
+
+
+class SourceTrace(NamedTuple):
+    """一次检索调用的可追溯记录 —— agent 工具与直调两条路径共用这一个形状。
+
+    **只带 items，不带 block**：block 是喂给模型的字符串（web 的那份还是 LLM 改写
+    结果），带出去会让下游把「改写结果」当成「检索来源」—— 本线根本前提是
+    items ≠ prompt。block 留在 ``RetrievalResult`` 里，跨到 chat 层时被 ``trace()``
+    剥掉。
+    """
+    source: EvidenceKind
+    status: SourceStatus
+    items: list[EvidenceItem]
 
 
 # ── 构造入口：键名的唯一出处 ────────────────────────────────────────────

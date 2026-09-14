@@ -5,10 +5,14 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 from core import telemetry as T  # OTel context 传播点（ctx_submit）
 from core.embeddings import embed_deadline  # D2：库内 embed 的 deadline scope
+from core.schema import EvidenceKind, SourceTrace
+
+if TYPE_CHECKING:  # 仅类型标注用：避免 import 期把 chromadb 拖进工具模块
+    from core.context_engine import RetrievalResult
 
 EMPTY_RESULT = "未找到相关内容"
 
@@ -34,10 +38,40 @@ def _run_with_deadline(deadline: float | None, fn, arg):
 
 @dataclass
 class ToolResult:
-    tool: str
-    ok: bool
+    """一次工具调用的结果。
+
+    ``trace`` 是证据侧出口：``None`` 表示**压根没发生检索**（未知工具 / 缺 query），
+    而不是「检索了但没结果」—— 后者是 status="empty" 的 SourceTrace。两者不许混，
+    本仓最大的盲点就是「没发生」被当成「发生了但空」。
+
+    ``ok`` 由 ``trace`` 派生而非独立字段：写成字段就要与 ``trace.status`` 手工对齐，
+    两个必须一致却无人强制的字段必然漂移。派生后不可能不一致。
+    """
     content: str
     elapsed_ms: int
+    trace: SourceTrace | None = None
+
+    @property
+    def ok(self) -> bool:
+        # 与旧 ``bool(block)`` 逐路径等价：唯一 status="hit" 但块为空的路径是 web 二阶段
+        # 改写失败（_web_items 给 body=""），那时 content 已是 EMPTY_RESULT。
+        return (
+            self.trace is not None
+            and self.trace.status == "hit"
+            and self.content != EMPTY_RESULT
+        )
+
+
+class _ToolEntry(NamedTuple):
+    """工具分发表的一行：handler + 超时预算 + 该工具对应的来源词汇。
+
+    ``source`` 在这里而非从工具名解析：超时/异常路径压根没有 RetrievalResult 可投影，
+    得就地合成 SourceTrace，而合成需要知道来源。让工具名 → 来源的映射只此一份（本表），
+    比在两条失败路径里各写一次好。
+    """
+    handler: Callable[[str], "RetrievalResult"]
+    timeout: int
+    source: EvidenceKind
 
 
 class AgentToolkit:
@@ -106,46 +140,48 @@ class AgentToolkit:
             },
         ]
 
-    def _call_search_scenes(self, query: str) -> str:
-        return self._ctx._retrieve_scenes(query)
+    def _call_search_scenes(self, query: str) -> "RetrievalResult":
+        return self._ctx._retrieve_scenes_ex(query)
 
-    def _call_search_memory(self, query: str) -> str:
-        return self._ctx._retrieve_memories(query, current_mood=self.current_mood)
+    def _call_search_memory(self, query: str) -> "RetrievalResult":
+        return self._ctx._retrieve_memories_ex(query, current_mood=self.current_mood)
 
-    def _call_web_search(self, query: str) -> str:
-        return self._ctx._search_web(query)
+    def _call_web_search(self, query: str) -> "RetrievalResult":
+        return self._ctx._search_web_ex(query)
+
+    def _finish(
+        self,
+        name: str,
+        arguments: dict,
+        started: float,
+        trace: SourceTrace | None,
+        content: str,
+    ) -> ToolResult:
+        """五条出口共用：算耗时、打日志、装结果。日志里的 ok= 读派生值，与旧输出一致。"""
+        res = ToolResult(
+            content=content,
+            elapsed_ms=int((time.monotonic() - started) * 1000),
+            trace=trace,
+        )
+        print(f"[AgentTool] {name} args={arguments} ok={res.ok} {res.elapsed_ms}ms")
+        return res
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
         started = time.monotonic()
 
         dispatch = {
-            "search_scenes": (self._call_search_scenes, self.SCENE_TIMEOUT),
-            "search_memory": (self._call_search_memory, self.MEMORY_TIMEOUT),
-            "web_search": (self._call_web_search, self.WEB_TIMEOUT),
+            "search_scenes": _ToolEntry(self._call_search_scenes, self.SCENE_TIMEOUT, "scene"),
+            "search_memory": _ToolEntry(self._call_search_memory, self.MEMORY_TIMEOUT, "memory"),
+            "web_search": _ToolEntry(self._call_web_search, self.WEB_TIMEOUT, "web"),
         }
 
         entry = dispatch.get(name)
         if entry is None:
-            elapsed = int((time.monotonic() - started) * 1000)
-            print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
-            return ToolResult(
-                tool=name,
-                ok=False,
-                content=f"未知工具: {name}",
-                elapsed_ms=elapsed,
-            )
+            return self._finish(name, arguments, started, None, f"未知工具: {name}")
 
-        handler, timeout = entry
         query = arguments.get("query", "")
         if not query:
-            elapsed = int((time.monotonic() - started) * 1000)
-            print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
-            return ToolResult(
-                tool=name,
-                ok=False,
-                content="缺少 query 参数",
-                elapsed_ms=elapsed,
-            )
+            return self._finish(name, arguments, started, None, "缺少 query 参数")
 
         pool = ThreadPoolExecutor(max_workers=1)
         try:
@@ -153,37 +189,27 @@ class AgentToolkit:
             # 让 handler 内检索/embed 子 span 挂到 execute_tool 下而非孤儿。
             # D2：_run_with_deadline 在 worker 内开 embed scope，预算 = timeout − margin，
             # 让库内 embed 在 fut.result(timeout) 弃船前自行收手（见模块注释）。
-            budget_s = timeout - _EXECUTE_DEADLINE_MARGIN_S
+            budget_s = entry.timeout - _EXECUTE_DEADLINE_MARGIN_S
             deadline = time.monotonic() + budget_s if budget_s > 0 else None
-            fut = T.ctx_submit(pool, _run_with_deadline, deadline, handler, query)
-            result = fut.result(timeout=timeout)
+            fut = T.ctx_submit(pool, _run_with_deadline, deadline, entry.handler, query)
+            result = fut.result(timeout=entry.timeout)
         except TimeoutError:
-            elapsed = int((time.monotonic() - started) * 1000)
-            print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
-            return ToolResult(
-                tool=name,
-                ok=False,
-                content=f"工具执行超时（{timeout}s）",
-                elapsed_ms=elapsed,
+            # 超时是**调用层**事实（弃船），不是检索本体说了什么 —— 故它是 SourceStatus
+            # 的第四态，不进引擎的三态 RetrievalStatus（见 core/schema.py 的说明）。
+            return self._finish(
+                name, arguments, started,
+                SourceTrace(source=entry.source, status="timeout", items=[]),
+                f"工具执行超时（{entry.timeout}s）",
             )
         except Exception as exc:
-            elapsed = int((time.monotonic() - started) * 1000)
-            print(f"[AgentTool] {name} args={arguments} ok=False {elapsed}ms")
-            return ToolResult(
-                tool=name,
-                ok=False,
-                content=f"执行异常: {exc}",
-                elapsed_ms=elapsed,
+            return self._finish(
+                name, arguments, started,
+                SourceTrace(source=entry.source, status="failed", items=[]),
+                f"执行异常: {exc}",
             )
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
-        elapsed = int((time.monotonic() - started) * 1000)
-        ok = bool(result)
-        print(f"[AgentTool] {name} args={arguments} ok={ok} {elapsed}ms")
-        return ToolResult(
-            tool=name,
-            ok=ok,
-            content=result or EMPTY_RESULT,
-            elapsed_ms=elapsed,
+        return self._finish(
+            name, arguments, started, result.trace(), result.block or EMPTY_RESULT
         )

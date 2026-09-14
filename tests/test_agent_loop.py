@@ -12,7 +12,9 @@ from typing import Any
 from adapters.llm_adapter import ToolsNotSupportedError
 from core.agent.agent_loop import AgentLoop
 from core.agent.tools import EMPTY_RESULT, AgentToolkit, ToolResult
+from core.context_engine import RetrievalResult
 from core.embeddings import current_embed_deadline  # D2：回归(a) 验证 scope 进 executor
+from evidence_fakes import make_item, make_trace
 
 
 # ── Fake objects ────────────────────────────────────────────────
@@ -73,7 +75,12 @@ class FakeLLM:
 
 
 class FakeToolkit:
-    """Returns configured ToolResult; records execute calls for assertion."""
+    """Returns configured ToolResult; records execute calls for assertion.
+
+    只回放**预制**结果，不认识工具名 —— 真件里 name→source 的映射由 AgentToolkit 的
+    分发表唯一持有，这里再抄一份就是第二份会漂移的清单。要看真的 source 映射，用
+    ``test_agent_evidence.py`` 里的真 AgentToolkit + 真 ContextEngine。
+    """
 
     def __init__(
         self,
@@ -82,7 +89,8 @@ class FakeToolkit:
     ) -> None:
         self._schemas = schemas or []
         self._result = result or ToolResult(
-            tool="", ok=True, content="fake result", elapsed_ms=0
+            content="fake result", elapsed_ms=0,
+            trace=make_trace("memory", "hit", text="fake result"),
         )
         self.execute_calls: list[tuple[str, dict]] = []
 
@@ -92,15 +100,19 @@ class FakeToolkit:
     def execute(self, name: str, arguments: dict) -> ToolResult:
         self.execute_calls.append((name, arguments))
         return ToolResult(
-            tool=name,
-            ok=self._result.ok,
             content=self._result.content,
             elapsed_ms=self._result.elapsed_ms,
+            trace=self._result.trace,
         )
 
 
 class FakeCtxEngine:
-    """Configurable context engine for testing real AgentToolkit."""
+    """Configurable context engine for testing real AgentToolkit.
+
+    只实现 ``_ex`` 三个出口 —— 真 ContextEngine 的 ``_retrieve_scenes`` 等字符串出口
+    就只是 ``_ex(...).block``，工具层走的是 ``_ex``。假件补一份字符串出口等于给已经
+    没有调用方的接口续命。
+    """
 
     def __init__(self) -> None:
         self.scenes_result = ""
@@ -108,20 +120,34 @@ class FakeCtxEngine:
         self.scenes_exception: Exception | None = None
         self.memory_result = ""
         self.memory_sleep = 0.0
+        self.memory_exception: Exception | None = None
         self.memory_hang_until_deadline = False  # D2：模拟库内 embed 挂死但尊重 scope
         self.memory_deadline_seen: float | None = None  # D2：worker 读到的截止时刻
         self.web_result = ""
         self.web_sleep = 0.0
         self.web_exception: Exception | None = None
 
-    def _retrieve_scenes(self, query: str) -> str:
+    @staticmethod
+    def _mk(source: str, block: str) -> RetrievalResult:
+        """空块 = 真无匹配（empty），非空 = hit 且带一条合法 item。"""
+        if not block:
+            return RetrievalResult(source=source, block="", items=[], status="empty")
+        return RetrievalResult(
+            source=source, block=block, items=[make_item(source)], status="hit"
+        )
+
+    def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
         if self.scenes_exception:
             raise self.scenes_exception
         if self.scenes_sleep > 0:
             time.sleep(self.scenes_sleep)
-        return self.scenes_result
+        return self._mk("scene", self.scenes_result)
 
-    def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
+    def _retrieve_memories_ex(
+        self, query: str, current_mood: str | None = None
+    ) -> RetrievalResult:
+        if self.memory_exception:
+            raise self.memory_exception
         dl = current_embed_deadline()
         if dl is not None:
             self.memory_deadline_seen = dl
@@ -135,17 +161,17 @@ class FakeCtxEngine:
                     time.sleep(rem)
             else:
                 time.sleep(30.0)
-            return ""
+            return self._mk("memory", "")
         if self.memory_sleep > 0:
             time.sleep(self.memory_sleep)
-        return self.memory_result
+        return self._mk("memory", self.memory_result)
 
-    def _search_web(self, query: str) -> str:
+    def _search_web_ex(self, query: str) -> RetrievalResult:
         if self.web_exception:
             raise self.web_exception
         if self.web_sleep > 0:
             time.sleep(self.web_sleep)
-        return self.web_result
+        return self._mk("web", self.web_result)
 
 
 # ── Helper ──────────────────────────────────────────────────────
@@ -230,7 +256,9 @@ def test_dedup_same_tool_same_args():
         FakeMessage(content="done"),
     ])
     toolkit = FakeToolkit(
-        result=ToolResult(tool="search_scenes", ok=True, content="result", elapsed_ms=1)
+        result=ToolResult(
+            content="result", elapsed_ms=1, trace=make_trace("scene", "hit", text="result")
+        )
     )
     loop = AgentLoop(llm, toolkit)
 
@@ -293,13 +321,15 @@ def test_retrieved_collection():
     ])
 
     class _PickyToolkit:
-        """Returns ok=True with content for search_memory, empty for search_scenes."""
+        """search_memory 有内容，search_scenes 命中但块空（= web 改写失败那个形态）。"""
         def get_schemas(self) -> list[dict]:
             return []
         def execute(self, name: str, arguments: dict) -> ToolResult:
-            if name == "search_memory":
-                return ToolResult(tool=name, ok=True, content="real memory", elapsed_ms=1)
-            return ToolResult(tool=name, ok=True, content="", elapsed_ms=1)
+            source = "memory" if name == "search_memory" else "scene"
+            text = "real memory" if name == "search_memory" else ""
+            return ToolResult(
+                content=text, elapsed_ms=1, trace=make_trace(source, "hit", text=text)
+            )
 
     loop = AgentLoop(llm, _PickyToolkit())
     result = loop.run("hint", [_make_msg(content="remember?")])
@@ -308,13 +338,17 @@ def test_retrieved_collection():
     assert result.retrieved[0] == ("search_memory", "real memory")
     assert len(result.steps) == 2  # both tools executed
     assert result.degraded is False
+    # 证据侧：两条都收（命中但块空的也算「检索发生过」），与 retrieved 口径不同
+    assert [(t.source, t.status) for t in result.evidence] == [
+        ("memory", "hit"), ("scene", "hit"),
+    ]
 
 
 def test_toolkit_timeout_and_exception(monkeypatch):
-    """Real AgentToolkit: timeout and exception handling.
+    """Real AgentToolkit: 超时与异常是**两态**，各自带专属红源，不可互换。
 
-    a) _search_web that sleeps → times out → ok=False, content says 超时
-    b) _retrieve_scenes that raises → ok=False, exception not propagated
+    a) _search_web 睡满 → fut.result 弃船 → trace.status="timeout"
+    b) _retrieve_scenes 抛异常 → execute 兜底 except → trace.status="failed"
     """
     monkeypatch.setattr(AgentToolkit, "WEB_TIMEOUT", 1)
     monkeypatch.setattr(AgentToolkit, "SCENE_TIMEOUT", 1)
@@ -330,14 +364,36 @@ def test_toolkit_timeout_and_exception(monkeypatch):
     r = toolkit.execute("web_search", {"query": "test"})
     elapsed = time.monotonic() - t0
     assert r.ok is False
+    assert r.trace.status == "timeout" and r.trace.source == "web"
     assert "超时" in r.content
     assert elapsed < 3.0  # didn't wait 15s
 
-    # b) Exception: caught, returned as ok=False
+    # b) Exception: caught, returned as ok=False，且与超时**不是同一态**
     r2 = toolkit.execute("search_scenes", {"query": "test"})
     assert r2.ok is False
+    assert r2.trace.status == "failed" and r2.trace.source == "scene"
     # The error message should be in the content (caught by except Exception)
     assert r2.content != ""
+
+    # c) 失败路径没有 RetrievalResult 可投影，来源只能由分发表盖章 —— 三条入口各验一次，
+    #    否则「memory 那一行 source 写错」无人发现（a/b 只覆盖 web/scene 两条）
+    ctx2 = FakeCtxEngine()
+    ctx2.memory_exception = RuntimeError("mem 炸了")
+    r3 = AgentToolkit(ctx2).execute("search_memory", {"query": "test"})
+    assert r3.trace.status == "failed" and r3.trace.source == "memory"
+
+
+def test_toolkit_unknown_tool_and_missing_query_have_no_trace():
+    """未发生检索的两条路径 trace=None —— 「没检索」不许伪造成「检索了但空」。"""
+    toolkit = AgentToolkit(FakeCtxEngine())
+
+    r = toolkit.execute("no_such_tool", {"query": "x"})
+    assert r.trace is None and r.ok is False
+    assert r.content == "未知工具: no_such_tool"
+
+    r2 = toolkit.execute("search_scenes", {})
+    assert r2.trace is None and r2.ok is False
+    assert r2.content == "缺少 query 参数"
 
 
 def test_execute_embed_deadline_reaches_worker(monkeypatch):
@@ -365,6 +421,9 @@ def test_execute_embed_deadline_reaches_worker(monkeypatch):
     assert r.ok is False
     assert "工具执行超时" not in r.content  # 不是 fut.result 弃船
     assert r.content == EMPTY_RESULT  # 空检索结果的正常文案
+    # 决定性判据：没弃船 → 是「真无」而不是「超时」。只断言 content 的话，超时态的
+    # 文案里也没有 EMPTY_RESULT，两态分不开。
+    assert r.trace.status == "empty"
     assert elapsed < 5.0  # 早于 MEMORY_TIMEOUT=5 返回，没等弃船
     # budget = timeout − margin = 4s：deadline ≈ 提交时刻 + 4s，handler 睡到截止返回
     assert abs(r.elapsed_ms / 1000.0 - 4.0) < 1.0

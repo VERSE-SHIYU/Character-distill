@@ -6,7 +6,14 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal, NamedTuple
 from urllib.parse import urlparse
 
-from core.schema import CharacterCard, EvidenceItem, memory_evidence, web_evidence
+from core.schema import (
+    CharacterCard,
+    EvidenceItem,
+    EvidenceKind,
+    SourceTrace,
+    memory_evidence,
+    web_evidence,
+)
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
 from core.utils import try_record_usage
@@ -63,16 +70,36 @@ RetrievalStatus = Literal["hit", "empty", "failed"]
 
 
 class RetrievalResult(NamedTuple):
-    """一次检索的产出：结构（items）+ 视图（block）+ 三态。
+    """一次检索的产出：来源（source）+ 结构（items）+ 视图（block）+ 三态。
+
+    ``source`` 是**对外的来源词汇**（``EvidenceKind``：scene/memory/web），不是工具名
+    （``search_scenes``/``search_memory``/``web_search``）—— 工具名是 agent 的调用
+    词汇，来源是证据的词汇，两者不许混。
 
     ``block`` 是 prompt 侧用的字符串（渲染自 items；web 例外，见 ``_web_items``）。
     ``status`` 三值而非 bool：本仓最大的盲点是「失败被吞成正常返回」，而这里天然三态 ——
     命中 / 真无匹配 / 失败。bool 只分两态，调用方得靠「ok=True 且 items 空」自己推
     「这是真无」，那又是靠散文约定而不是字段。
     """
+    source: EvidenceKind
     block: str
     items: list[EvidenceItem]
     status: RetrievalStatus
+
+    def trace(self) -> SourceTrace:
+        """跨边界投影：只带 source/status/items，**不带 block**（block 是 prompt 侧）。"""
+        return SourceTrace(source=self.source, status=self.status, items=list(self.items))
+
+
+class BuildResult(NamedTuple):
+    """``build_ex`` 的产出：prompt 字符串 + 动态区各源的追溯记录。
+
+    prompt 是喂给模型的（prompt 侧）；traces 是检索层事实（证据侧）。两者**不许互相
+    取材** —— traces 只由 ``RetrievalResult.trace()`` 投影而来，绝不从 parts 里回捞。
+    traces 顺序 = 运行顺序 [scene, memory, web]（web 开关关时无末项），按源码顺序确定。
+    """
+    prompt: str
+    traces: list[SourceTrace]
 
 
 class _BlockFmt(NamedTuple):
@@ -198,7 +225,6 @@ class ContextEngine:
 
     # ── 公开接口 ──────────────────────────────────────────────
 
-    @T.spanned("context.build")
     def build(
         self,
         user_message: str,
@@ -206,16 +232,37 @@ class ContextEngine:
         current_mood: str | None = None,
         include_dynamic: bool = True,
     ) -> str:
-        """构建 system prompt，控制在 TOTAL_BUDGET token 内。
+        """system prompt 的字符串出口 = ``build_ex`` 的 prompt（薄委托，不复制逻辑）。"""
+        return self.build_ex(
+            user_message,
+            user_role=user_role,
+            current_mood=current_mood,
+            include_dynamic=include_dynamic,
+        ).prompt
+
+    @T.spanned("context.build")
+    def build_ex(
+        self,
+        user_message: str,
+        user_role: str = "",
+        current_mood: str | None = None,
+        include_dynamic: bool = True,
+    ) -> BuildResult:
+        """构建 system prompt，控制在 TOTAL_BUDGET token 内；另带动态区 traces。
 
         对话历史已从 system prompt 中移出，改为通过 messages 数组传递
         （见 ChatEngine._build_llm_messages），由 role 字段天然区分说话人。
 
         include_dynamic=False 时只输出 card_core + rules + card_ext，
-        跳过 RAG 场景检索／记忆检索／web 搜索（agent 模式下由工具按需调用）。
+        跳过 RAG 场景检索／记忆检索／web 搜索（agent 模式下由工具按需调用），
+        traces 随之为空。
+
+        返回 BuildResult 而非裸字符串：prompt 逐字节与旧版相同，traces 是新增的
+        证据侧出口（不参与下方 parts 拼接）。
         """
         budget = self.TOTAL_BUDGET
         parts: list[str] = []
+        traces: list[SourceTrace] = []
 
         # ① 固定区（核心层 + 规则）
         card_core = self._build_card_core()
@@ -238,14 +285,20 @@ class ContextEngine:
                 # tools.execute 的 budget scope 管。
                 # OTel context 传播点：submit 不拷贝 contextvar，用 ctx_submit 包装，
                 # 否则 worker 里的检索/embed span 会成孤儿。
-                f_scene = T.ctx_submit(pool, self._retrieve_scenes, user_message)
-                f_memory = T.ctx_submit(pool, self._retrieve_memories, user_message, current_mood=current_mood)
+                f_scene = T.ctx_submit(pool, self._retrieve_scenes_ex, user_message)
+                f_memory = T.ctx_submit(
+                    pool, self._retrieve_memories_ex, user_message, current_mood=current_mood
+                )
                 scene = f_scene.result()
                 memory = f_memory.result()
-            sources.append(("scene", scene, self.MAX_SCENE))
-            sources.append(("memory", memory, self.MAX_MEMORY))
+            results = [scene, memory]
+            sources.append(("scene", scene.block, self.MAX_SCENE))
+            sources.append(("memory", memory.block, self.MAX_MEMORY))
             if self.web_search_enabled:
-                sources.append(("web", self._search_web(user_message), self.MAX_WEB))
+                web = self._search_web_ex(user_message)
+                results.append(web)
+                sources.append(("web", web.block, self.MAX_WEB))
+            traces = [r.trace() for r in results]
 
         for _name, content, max_tok in sources:
             if not content or budget <= 0:
@@ -264,7 +317,7 @@ class ContextEngine:
                 f"budget={self.TOTAL_BUDGET}"
             )
 
-        return result
+        return BuildResult(prompt=result, traces=traces)
 
     # ── 固定区 ────────────────────────────────────────────────
 
@@ -369,10 +422,15 @@ class ContextEngine:
     def _retrieve_via(
         self,
         name: str,
+        source: EvidenceKind,
         produce: Callable[[], tuple[list[EvidenceItem], str | None]],
         fmt: _BlockFmt,
     ) -> RetrievalResult:
         """三源共用的机制：跑 produce、异常降级、判空、渲染块 —— 只此一份。
+
+        ``source`` 由调用方传入（本函数不认识自己跑的是哪一源，只负责盖章）：它可以传
+        ``EvidenceKind`` 字面量，但**不许**从 ``name`` 解析 —— 中文日志名与对外词汇是
+        两回事，解析就是在造第二份映射表。
 
         ``produce() -> (items, body)``：``body=None`` 表示块体由 items 渲染（scene /
         memory）。web 的块体是**改写结果**，不能用 items 原文渲染（那会把检索原文灌进
@@ -382,19 +440,23 @@ class ContextEngine:
             items, body = produce()
         except Exception as exc:
             print(f"[ContextEngine] {name} failed: {exc}")
-            return RetrievalResult("", [], "failed")
+            return RetrievalResult(source=source, block="", items=[], status="failed")
         if not items:
-            return RetrievalResult("", [], "empty")
+            return RetrievalResult(source=source, block="", items=[], status="empty")
         if body is None:
             body = "\n".join(f"{fmt.line_prefix}{it.text}" for it in items)
-        return RetrievalResult(_render_block(fmt, body), list(items), "hit")
+        return RetrievalResult(
+            source=source, block=_render_block(fmt, body), items=list(items), status="hit"
+        )
 
     def _retrieve_scenes(self, query: str) -> str:
         """从 RAG 检索相关场景片段（情感加权）。字符串出口 = 结构出口的 block。"""
         return self._retrieve_scenes_ex(query).block
 
     def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
-        return self._retrieve_via("scene RAG", lambda: self._scene_items(query), _SCENE_FMT)
+        return self._retrieve_via(
+            "scene RAG", "scene", lambda: self._scene_items(query), _SCENE_FMT
+        )
 
     def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
         """从 Mem0 检索长期记忆（含情感加权）。"""
@@ -404,7 +466,7 @@ class ContextEngine:
         self, query: str, current_mood: str | None = None
     ) -> RetrievalResult:
         return self._retrieve_via(
-            "memory search", lambda: self._memory_items(query, current_mood), _MEMORY_FMT
+            "memory search", "memory", lambda: self._memory_items(query, current_mood), _MEMORY_FMT
         )
 
     def _search_web(self, query: str) -> str:
@@ -412,7 +474,7 @@ class ContextEngine:
         return self._search_web_ex(query).block
 
     def _search_web_ex(self, query: str) -> RetrievalResult:
-        return self._retrieve_via("Web search", lambda: self._web_items(query), _WEB_FMT)
+        return self._retrieve_via("Web search", "web", lambda: self._web_items(query), _WEB_FMT)
 
     # ── 三源各自的 produce（差异点之一） ──────────────────────
 

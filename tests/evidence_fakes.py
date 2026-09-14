@@ -25,7 +25,14 @@ if str(_repo) not in sys.path:
 
 from core.context_engine import ContextEngine  # noqa: E402
 from core.rag import RAGEngine  # noqa: E402
-from core.schema import CharacterCard  # noqa: E402
+from core.schema import (  # noqa: E402
+    CharacterCard,
+    EvidenceItem,
+    SourceTrace,
+    memory_evidence,
+    scene_evidence,
+    web_evidence,
+)
 
 # 行 = (chroma id, 原文, metadata)。metadata 键集逐键对齐 scene_indexer 实际写入的
 # 形态（emotion / characters / scene_index 三键），上轮教训：fixture 少键会让取值锁空转。
@@ -87,13 +94,22 @@ DDG_NESTED = {
 
 
 class FakeCollection:
-    """chroma Collection 替身：按 n_results 截断，恒返回 ids。"""
+    """chroma Collection 替身：按 n_results 截断，恒返回 ids。
 
-    def __init__(self, rows=SCENE_ROWS, distances=None):
+    ``sleep_s`` 模拟「库内检索卡住」：配合 tools.execute 的弃船预算，用来产出
+    **超时**态（第四态，前三态产不出来）。睡在 query 里 = 睡在 handler 线程里，
+    与真实路径里慢 embed 占住 worker 同形。
+    """
+
+    def __init__(self, rows=SCENE_ROWS, distances=None, sleep_s=0.0):
         self._rows = list(rows)
         self._distances = distances
+        self._sleep_s = sleep_s
 
     def query(self, query_texts=None, n_results=None, include=None, where=None, **kw):
+        if self._sleep_s:
+            import time
+            time.sleep(self._sleep_s)
         rows = self._rows[:n_results]
         if self._distances is not None:
             dists = self._distances[:n_results]
@@ -132,15 +148,22 @@ def make_rag(collection=None) -> RAGEngine:
 
 
 class FakeMemory:
-    """memory_manager 替身。``enabled`` / ``card_id`` 的空值态由构造参数控制。"""
+    """memory_manager 替身。``enabled`` / ``card_id`` 的空值态由构造参数控制。
 
-    def __init__(self, rows=None, enabled=True):
+    ``raise_on_search`` 非空时抛该异常 —— 「失败」态的专属来源（区别于 rows=[] 的
+    「真无匹配」）。
+    """
+
+    def __init__(self, rows=None, enabled=True, raise_on_search: Exception | None = None):
         self._rows = list(MEMORY_ROWS if rows is None else rows)
         self.enabled = enabled
+        self._raise = raise_on_search
         self.calls: list[dict] = []
 
     def search(self, query, card_id, current_mood=None):
         self.calls.append({"query": query, "card_id": card_id, "current_mood": current_mood})
+        if self._raise is not None:
+            raise self._raise
         return [dict(r) for r in self._rows]
 
 
@@ -171,14 +194,24 @@ class _FakeResponse:
         return self._payload
 
 
+# DDG 无任何结果的形态（「真无匹配」态）：用来把 scene/memory 的真无也钉到 web 上。
+DDG_EMPTY = {"AbstractText": "", "Abstract": "", "RelatedTopics": []}
+
+
 @contextlib.contextmanager
-def fake_ddg(payload):
-    """把 ``httpx.get`` 换成返回脚本化 payload 的假件（``_search_web`` 函数内 import httpx）。"""
+def fake_ddg(payload, raise_on_get: Exception | None = None):
+    """把 ``httpx.get`` 换成返回脚本化 payload 的假件（``_search_web`` 函数内 import httpx）。
+
+    ``raise_on_get`` 非空时抛该异常 —— 第一阶段（搜索）失败的专属来源，用来验
+    「web 失败」态与「web 真无」态可辨。
+    """
     import httpx
 
     real, calls = httpx.get, []
 
     def fake_get(url, params=None, timeout=None, **kw):
+        if raise_on_get is not None:
+            raise raise_on_get
         calls.append({"url": url, "params": params})
         return _FakeResponse(payload)
 
@@ -195,6 +228,40 @@ def make_card() -> CharacterCard:
         identity="云梦江氏故人，夷陵老祖",
         background="曾在莲花坞长大，后历经乱世。",
     )
+
+
+def make_item(source: str, text: str = "片段") -> EvidenceItem:
+    """最小**合法** EvidenceItem。
+
+    三源的 meta 键集各不相同，且 ``EvidenceItem`` 的运行期校验门会当场拦下键集不符者，
+    故每个 source 都得按其契约给全键 —— 假件不许造出过不了真门的 items（否则假件比
+    真件宽松，测试就在验一个不存在的世界）。
+    """
+    if source == "scene":
+        return scene_evidence(
+            text=text, final=0.5, semantic=0.5, emotion_affinity=0.5,
+            chunk_id="fake_0", chapter=None,
+        )
+    if source == "memory":
+        return memory_evidence(
+            text=text, relevance=0.5, importance=5, age_seconds=1.0,
+            memory_mood="平静", emo_affinity=0.5, final=0.5,
+        )
+    if source == "web":
+        return web_evidence(
+            text=text, url=None, source=None, fetched_at="2026-01-01T00:00:00+00:00"
+        )
+    raise ValueError(f"未知来源: {source!r}")
+
+
+def make_trace(source: str, status: str = "hit", text: str = "片段") -> SourceTrace:
+    """SourceTrace 假件。
+
+    ``status="hit"`` 时给一条合法 item，其余态给空 items —— 守住「hit ⟹ items 非空」
+    这条真不变量；假件自己塌了这条，依赖它的锁就全空转。
+    """
+    items = [make_item(source, text)] if status == "hit" else []
+    return SourceTrace(source=source, status=status, items=items)
 
 
 def build_ctx(*, rag=None, memory=None, llm=None, card=None) -> ContextEngine:
