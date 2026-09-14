@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import pathlib
 from typing import get_args
 
 from core.agent.agent_loop import AgentLoop
@@ -25,6 +26,7 @@ from core.schema import SourceStatus
 from evidence_fakes import (
     DDG_ABSTRACT,
     DDG_EMPTY,
+    SCENE_ROWS,
     FakeCollection,
     FakeLLM,
     FakeMemory,
@@ -433,3 +435,95 @@ def test_chat_engine_last_traces_wired_on_both_paths():
     # 证据侧带原文，prompt 侧带渲染块 —— 两者不许互相取材
     assert eng.last_traces[0].items[0].text == "屋顶上的旧事，风很凉。"
     assert _SCENE_HIT in final_sp
+
+
+# ── 评测集回归门：40 例输入，证据必须一路活到模型视野 ─────────────
+#
+# 用例集复用 ``tests/eval/agent_eval_cases.jsonl``（现成那套，不新建基建）。脚本由用例
+# **自己的** ``expected_tools`` 生成 —— 判据来自数据，测试侧不另存一份「哪个用例该调什么」。
+#
+# 期望条目数是**从假件语料推出的事实**，既不是拍的、也不是用例白名单：
+#   scene  → SCENE_ROWS 里 characters 命中角色名的行数（复用生产的 filter_by_characters）
+#   memory → 假件直接返回的条数（不经过被测代码）
+#   web    → DDG payload 声明的片段数
+# 推出后与既有的冻结字面量 ``_HIT_SHAPES`` 交叉对齐（下面一条断言）—— 两个独立的量对上，
+# 才敢拿它当判据。
+
+_EVAL_CASES = pathlib.Path(__file__).resolve().parent / "eval" / "agent_eval_cases.jsonl"
+
+# 工具名 → 来源词汇（EvidenceKind）。工具名是 agent 的调用词汇、来源是证据的词汇。
+_TOOL2SOURCE = {"search_scenes": "scene", "search_memory": "memory", "web_search": "web"}
+_SOURCE2MSG = {"scene": _SCENE_HIT, "memory": _MEM_HIT, "web": _WEB_HIT}
+
+# 「注入 prompt 的片段数」数的是**模型实际读到的那串字**里的片段数（scene 逐条一行、
+# memory 逐条一行带 "- " 前缀），不是「由 items 再渲染一遍」—— 后者跟实现一起变。
+_FRAGMENT_SEP = {"scene": "\n", "memory": "\n- "}
+
+
+def _load_eval_cases() -> list[dict]:
+    with _EVAL_CASES.open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _expected_counts() -> dict[str, int]:
+    """命中时**该**有多少条 —— 读语料即得，不经过被测的那三条路径。"""
+    from core.rag import filter_by_characters
+
+    scene = len(filter_by_characters([m for _, _, m in SCENE_ROWS], make_card().name))
+    memory = len(FakeMemory().search(QUERY, "card_test"))
+    # 假件喂的是 DDG_ABSTRACT：AbstractText 非空 → 只取 Abstract 一条
+    web = 1 if DDG_ABSTRACT["AbstractText"] else len(DDG_ABSTRACT["RelatedTopics"])
+    return {"scene": scene, "memory": memory, "web": web}
+
+
+def test_eval_set_evidence_survives_to_the_model_visible_prompt():
+    """40 例离线评测集上的回归门（Evidence 线收口）：
+
+      ① 工具触发 ⟹ evidence 非空且 hit；没触发 ⟹ 无 evidence（一条不变量的两侧）；
+      ② 命中时条目数 = 语料事实 —— 少一条即「检索成功但结构中途丢失」；
+         且 scene/memory 的**模型可见块**里片段数与该条目数一致（结构没在渲染处丢）；
+      ③ 模型可见的 tool 消息逐字节 = 冻结基线（把锁 A 从 11 个场景扩到全用例集）。
+
+    ②的用法说明：把「条目数 == 块里片段数」单独当判据是**空的** —— 两者在同一函数里
+    由同一份 items 产出，同增同减，任何「少产一条」的变异都两边一起少、等式照旧成立。
+    有判别力的是**绝对条数**（语料事实这一侧不动），故本用例钉的是它；等式的半边只
+    负责钉「渲染处没丢结构」。web 的块体是 LLM 改写结果（按设计就是有损的），不适用该
+    等式 —— 那一侧由 ① 的「hit ⟹ items 非空」与 ``TestWebItemsAreRawSnippets`` 守着。
+    """
+    cases = _load_eval_cases()
+    # 用例集条数是本轮 spec 的一部分：被误删/误改要出声（同「不许静默截断」）
+    assert len(cases) == 40, f"评测集条数变了：{len(cases)}"
+
+    counts = _expected_counts()
+    # 语料推出的数 与 冻结字面量 对齐（两个独立来源）
+    assert counts == {shape[0]: shape[2] for shape in _HIT_SHAPES.values()}, counts
+    # 三源都要被用例集覆盖到 —— 否则②那一半对空集恒真（「所有 X 都满足 P」先问 X 会不会是空集）
+    covered = {_TOOL2SOURCE[t] for case in cases for t in case["expected_tools"]}
+    assert covered == set(counts), f"用例集没覆盖全三源：{covered}"
+
+    ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(), llm=FakeLLM())
+    with fake_ddg(DDG_ABSTRACT):
+        for case in cases:
+            tools = case["expected_tools"]
+            steps = [[(t, {"query": case["input"]}) for t in tools]] if tools else []
+            res = AgentLoop(ToolLLM(steps), AgentToolkit(ctx)).run(
+                HINT, [{"role": "user", "content": case["input"]}]
+            )
+            where = case["id"]
+
+            # ① 触发的工具 ⟹ 一一对应的 hit 证据；未触发 ⟹ 空
+            assert [t.source for t in res.evidence] == [_TOOL2SOURCE[t] for t in tools], where
+            for tr in res.evidence:
+                assert tr.status == "hit" and tr.items, f"{where}/{tr.source}: 触发了却没有证据"
+
+            # ② 绝对条数 = 语料事实；块内片段数与该条数一致（先于③，好让「少一条」
+            # 这条变异红在**说得清病灶**的那句上，而不是被字节基线抢答）
+            msgs = _tool_msgs(res)
+            for msg, tr in zip(msgs, res.evidence):
+                assert len(tr.items) == counts[tr.source], f"{where}/{tr.source}: 条目数不对"
+                if tr.source in _FRAGMENT_SEP:
+                    n = msg.count(_FRAGMENT_SEP[tr.source])
+                    assert n == len(tr.items), f"{where}/{tr.source}: 块内 {n} 段 ≠ {len(tr.items)} 条"
+
+            # ③ 模型可见的 tool 消息逐字节 = 冻结基线（顺序 = 调用顺序）
+            assert msgs == [_SOURCE2MSG[_TOOL2SOURCE[t]] for t in tools], where
