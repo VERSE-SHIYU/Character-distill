@@ -234,6 +234,9 @@ async def send_code(
     try:
         send_verification_code(email, code, purpose_label)
     except Exception as exc:
+        # 绑定却不用 = 诊断整条丢弃：用户只看到「邮件发送失败」，运维无从知道是 SMTP 还是
+        # Resend 的哪一步炸了（缺陷 39 顺带，与「线索不能丢」同族）。
+        print(f"[auth] Send verification code failed: {exc!r}")
         raise HTTPException(500, "邮件发送失败，请稍后重试")
     return {"ok": True}
 

@@ -558,23 +558,62 @@ config.yaml 现值（现读，非转述）：
   - **Q4 判据（三种响应形状，接口隔离）**：非流式（响应头未发，handler 能配码）／真 SSE（异常发生时 **HTTP 200 + event-stream 已在线**，处理器产出的是**第二个响应**、Starlette 不会再发 —— **管不到，不是不让管**）／后台任务（连响应都没有，只能写任务状态行）。故**统一的是「文案出口」，码归各形状自己**；把 SSE / 任务硬塞进那张 `(status, text)` 表 = 给不消费 `status` 的调用方发它用不上的字段。那两条继续用 `user_facing_error` 取文案，共用同一份口径链。
   - **一期不动的那 53 处**：见 §四「加了全局处理器 ≠ 所有路径都走它」那条（会先于 handler 拦下 / 30 处文案逐字重复 / 两句通用文案应择一）。
 - **范围边界（三类不迁，**代码里都留了注释**说明为什么不迁 —— 否则下一个人会「顺手统一」把它们一起收进去）**：
-  - **A 类 3 处**（`web/routers/text.py` ×2、`web/routers/history.py` ×1 的 `except ValueError → HTTPException(400, str(exc))`）：裸 `ValueError` 是**用户输入/属主校验失败**，不是领域异常 —— `TextManager` 抛的文案本身就是上屏口径（如「文件编码无法识别，请另存为 UTF-8 后重新上传」）。它没有 `user_message`，走 `user_facing_error` 会落到 `_GENERIC_USER_ERROR`（「服务暂时不可用」）= **删信息**。**「用户输入校验失败」和「领域异常」是两类东西，不该为统一而统一。**（`web/routers/distill.py` 的两处 `except ValueError` 同理，也留了注释。）
+  - **A 类 5 处**（`web/routers/text.py` ×2、`web/routers/history.py` ×1、`web/routers/distill.py` ×2 的 `except ValueError → HTTPException(400, str(exc))`）：这些 raise 的**实参是本仓为人写的用户输入/属主校验文案**（如「文件编码无法识别，请另存为 UTF-8 后重新上传」），本就是上屏口径。它没有 `user_message`，走 `user_facing_error` 会落到 `_GENERIC_USER_ERROR`（「服务暂时不可用」）= **删信息**。**「用户输入校验失败」和「领域异常」是两类东西，不该为统一而统一。**
+    - **判的对象是「这条 `raise` 的实参构成」，不是「异常类型是不是裸 `ValueError`」—— 表述已于 2026-09-15 窄化（缺陷 39）**。原表述按类型判，而缺陷 39 的 **DOCX 双包**证伪了它：`core/text_manager.py` 的 `_extract_docx` 里**同一个 `except Exception` 既接住本仓自己写的 `ValueError("DOCX 文件无有效文本内容")`、又接住 python-docx 的异常**，包完上屏成了 `"DOCX 解析失败: DOCX 文件无有效文本内容"`。同一个 `except ValueError` 后面站着的既有 A 类（人话）、也有 C 类（库原文）⇒ **按异常类型判必然判错**。判据本身（*这段文字是为谁写的*）不变，判定对象换成实参构成。
+    - **影响面 = 0**：接收点行为一字未改（继续 `str(exc)` → 400），变的只有 `TextManager` **抛出点**的实参构成（改走 `core/text_failure.py` 的表）。
   - **B 类 8 处**（`web/routers/inter_node.py` 全部 `except Exception → HTTPException(500, f"...: {exc}")`）：本路由的「用户」是**对端部署的运维**，异常原文是跨节点排障的唯一线索。收到统一出口后对面只剩「操作失败，请稍后重试」，是把可排障变成不可排障。一般化：**上屏文案该不该收，看有没有正当消费者，不看它像不像泄漏。**
   - **C 类 8 处是真泄漏，本期已收**：`voice.py` ×2（ffmpeg `stderr` 含服务器路径）、`market.py` ×2（pydantic 字段级报错 / 上游原文）、`distill.py` 卡片校验 ×1（pydantic 报错）、`server.py` ×1（`Update config failed` 带 `{exc}`）——原文本改只进日志，上屏换为人话。
+    - **补记（缺陷 39，2026-09-15）**：`voice.py` 的 ffmpeg `stderr` 形态**实为 3 处，本期只收了 2 处** —— `:111`/`:382` 收了，`:460`（ASR 转码）漏了。它**不在任何名单上**，是缺陷 39 的**判据（「这段文字是为谁写的」）扫出来的**。已在缺陷 39 批次一并收口。教训落在缺陷 39 条目里：按名单修会漏掉「同形态的第三个」。
 - **回归锁**：`tests/test_domain_exception_exit.py`（A 注册面 / B 非流式 `/run` / **C 反向验收** / D 另两种形状）。**变异验证**：把 `DistillError` 从 `_DOMAIN_ERROR_STATUS` 删掉 → `test_b1_run_distill_error_is_400_...` 红在 **500 ≠ 400**（`raise_server_exceptions=False` 让「没被接住」表现为 500 而非炸成 error）。
 - **反向验收（证明没顺手把 A 类一起迁走）**：`tests/test_security_authz.py::TestErrorSanitization::test_10_value_error_400` 仍绿 —— 它断言 `/export` 的 400 detail 里 `"xlsx" in detail`，A 类被迁则用户需要的信息消失、该条变红。
 - **判据命令**：`git grep -n 'except ValueError as exc' web/routers/distill.py`、`git grep -n '_DOMAIN_ERROR_STATUS\|llm_error_types' web/server.py`
 
-**39. `text_manager.py` 的上屏文案里嵌了第三方库的异常原文 `{str(e)}`** —— 状态：**记账（不修，待裁范围）**（2026-09-14，缺陷 38 收口时顺带普查）
-- **事实**：`core/text_manager.py` 三处把库的异常原文拼进**用户可见**的 `ValueError` —— `:284` `f"PDF 文件无法打开（可能已损坏或加密）：{str(e)}"`、`:300` `f"PDF 解析失败：{str(e)}"`、`:323` `f"DOCX 解析失败: {str(e)}"`（`e` = PyPDF / python-docx 抛出的异常）。
-- **定性**：与缺陷 38 **同形态（上屏文案带内部原文）的轻度泄漏**。轻在「多数情况下确实对用户有用（哪一步坏了）」；重在**泄漏面不可控** —— 库异常原文里常带本机文件路径或库内部结构，且随依赖版本变。
-- **判据（不是本条的理由，是本类问题的判据 —— 缺陷 38 的 A/C 分界同用这一条）**：**问「这段文字是为谁写的」，不问「它像不像泄漏」。**
-  - 为人写的（本仓自己构造的用户文案，如 `text.py` / `history.py` / `distill.py` 的 A 类 `str(exc)`）→ 上屏**是信息**，收走就是**删信息**。`except ValueError → 400, str(exc)` 在这类里是正确写法，不该为「统一」而统一。
+**39. 文本解析层把「异常诊断」和「用户文案」揉在一起** —— 状态：**已修**（2026-09-15，缺陷 38 收口时顺带普查）
+- **症状**：`core/text_manager.py` 三处把库的异常原文拼进**用户可见**的 `ValueError` —— `_extract_pdf` 的 `pymupdf.open` / `pymupdf4llm.to_markdown`、`_extract_docx` 的 `Document`。实测（造件现跑）：损坏 PDF 上屏 `PDF 文件无法打开（可能已损坏或加密）：Failed to open file '\\tmp\\...'` —— **服务器路径直接给了用户**。
+- **根因（不是「顺手多拼了个 `{str(e)}`」，是分层坏了）**：`text_manager.py` 既要知道**怎么解析文件**，又要决定**用户看到什么话** —— 后者不是它的职责。两者揉在一起时，一个 `except` 会同时接住「我们写的用户文案」和「库的异常原文」。
+- **结构性证据 —— DOCX 双包**（决定性，同一缺陷的 A 类边界也因此重划）：
+  ```python
+  try:
+      doc = Document(file_path)
+      paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+      if not paragraphs:
+          raise ValueError("DOCX 文件无有效文本内容")   # ← 本仓人话
+      return "\n\n".join(paragraphs)
+  except Exception as e:
+      raise ValueError(f"DOCX 解析失败: {str(e)}") from e   # ← 把上面那句又包一层
+  ```
+  实测上屏 = `"DOCX 解析失败: DOCX 文件无有效文本内容"` —— **一个 `except` 同时抓「我们的语义」和「库的噪声」**，这就是「揉在一起」的字面证据。
+- **判据（本条与缺陷 38 的 A/C/B 分界同用这一条，2026-09-14 用户要求升格为判据本身）**：**问「这段文字是为谁写的」，不问「它像不像泄漏」。**
+  - 为人写的（本仓撰写的用户指令，如 A 类各处的 `str(exc)`）→ 上屏**是信息**，收走就是**删信息**。
   - 为机器 / 排障写的（第三方库的异常原文、pydantic 字段级报错、ffmpeg `stderr`、内部计数与上游原始码）→ 上屏**是泄漏**，原文只进日志。
   - 判据可判定：取那句文案，问「作者写下它时，读者是用户还是开发者」。答不上来即说明文案本身没想清楚，这本身就是缺陷。
-  - 本条与 A 类的分界即由此推出：同样是 `str(exc)`，A 类拼的是**本仓为人写的**文案，本条拼的是**第三方库的**异常原文 —— 它从来不是为人写的。`B 类（inter_node）` 同样由此判：原文的读者是**对端运维**（是「人」，但是开发侧的人）→ 保留。
-- **处置方向（记在条目里，不实现）**：把 `{str(e)}` 换成按**异常类型**给的人话（如「文件已加密，请解除密码后重试」），原文只进日志。范围待裁：三处是否同一类库异常形态、值不值得一条「第三方异常原文不上屏」的普查。
-- **判据命令**：`git grep -n 'parse failed\|str(e)' core/text_manager.py`
+- **全量普查（判据驱动，不是照名单改）**：两步 —— ① AST 全仓找「`except ... as E` 的绑定名被引用、且**不在 print / 日志调用内**」的点，**267 处**（排除 vendored `services/gptsovits`、`tests/`、`e2e/scratch`）；② 逐点判「这串最终会不会到**终端用户**眼前」，到得了的机制只有四种：HTTP 响应体 / SSE 错误帧 / 后台任务状态行 / admin 可读记录。结果：
+  - **真泄漏、活代码 4 处**：`text_manager.py` ×3（本批收）、**`web/routers/voice.py` 的 ASR 转码 ×1**（本批收）。
+    - `voice.py` 那处**不在任何名单上** —— 它**不是异常对象，是子进程 stderr**，「异常对象被格式化」类的扫法扫不到。同文件同形态的另两处（`:111`/`:382`）已由缺陷 38 收口，**`:460` 是判据找出来的第三个**。漏它就是「改了两处、第三处记账」。
+  - **同判据、但决定面不同 → 单独立项，不塞进本批（2 处）**：`web/routers/group.py` 的 SSE 错误帧、`web/routers/text.py` 的后台任务状态行，都直接 `str(exc)`（可能是 `StoreError` → `storage operation '<op>' failed: <驱动原文>`）。**为什么不顺手收**：它们的「正确形态」`web/routers/chat.py::_stream_error_payload` 本身用 `user_facing_error(exc, preserve_unknown=True)` —— **故意把未登记异常的 `str()` 原样透出**（契约锁 `tests/test_chat_stream_error.py::test_other_errors_keep_original_shape`）。改 group/text 就等于动 `chat.py` 那条契约（三处一起的决定），属于另一个面。
+  - **原文给「人」看、但读者是管理员 / 对端运维 → 保留（14 处）**：`inter_node.py` ×8（对端运维）、`web/server.py` 的 GPT-SoVITS / FunASR 连通性测试 ×2（admin 自点「测试连接」，原文就是他要的答案）、`web/routers/auth.py` 的 embedding key 自测 ×1、写 `review_log` 的 ×3（`market.py` + `card_guard.py` ×2 + `text_manager.py` 的开卡守卫）。
+  - **到不了用户眼前 → 安全（其余 ≈ 245 处）**，机制三类：① 原文进 `ops_detail` 位、出口只取 `user_message`（`DistillError` 各处，缺陷 38 的设计）；② 被 catch 后只 print / 进内部线程队列 / **只做谓词**（`"locked" not in str(exc).lower()` 这类，看着像格式其实是判断）；③ 全局 `Exception` 处理器统一回固定文案 + `traceback.print_exc()`（`StoreError` ×176）。
+  - **死代码（记一笔，不修）**：`web/app.py` ×8（Gradio，docstring 标 `.. deprecated::`）。已核 `Dockerfile` / `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` **零引用**。是雷，但今天不可达 —— 记下来免得下次普查重新花时间。
+- **修法（机制，不是改三行字符串）**：
+  - 新建 **`core/text_failure.py`**：`TEXT_FAILURE_MESSAGES`（12 键）+ 文案。**只放常量、无逻辑**。不塞进 `adapters/llm_adapter.py` —— 那边是 **LLM 侧**失败的口径链（`_INCOMPLETE_USER_MESSAGES` / `user_facing_error`），文本解析失败跟 LLM 无关；共用一个家会让「新增一种 LLM 未完成终态」和「新增一种文件格式」互相牵动。
+  - `text_manager.py` 的 **16 条 `raise ValueError`** 全改成 `_MSG[key]`（4 组同文案合并成 12 键）。**除 3 条泄漏点外文案逐字保留** —— 迁移是纯搬迁，行为按构造不变；3 条改成「删掉原文 + 补一句用户能做的动作」（如 `pdf_open_failed` → 「…请确认文件完整后重试」）。
+  - **DOCX 双包的修法 = 把「我们自己的判定」移出 `except Exception` 网**（`if not paragraphs` 提到 try 外），不是加标记类型。
+  - **原始诊断进日志**：3 处泄漏点 + DOCX 各加 `print(f"[TextManager] <stage> failed: {e!r}")`（该文件本就有 5 处同风格 print）。
+  - **顺带**：`web/routers/auth.py` 发验证码的 `except Exception as exc` 绑了 `exc` 却不用、也不 print，**诊断整条丢弃**（用户只看到「邮件发送失败」，运维无从知道是 SMTP 还是 Resend 炸了）—— 与「线索不能丢」同族，一行 print 并进本批。
+- **不建 `TextParseError` 的论证（写进条目，否则下次有人会再提一次）**：
+  1. **概念确实缺失**（不是「为了方便」）：今天「失败原因」只能用中英文字符串表达，外层 `except` 分不出「我们的事实」与「库的噪声」—— DOCX 双包就是它的症状。这一半成立。
+  2. **但载体不必是异常类型**：缺的是「**机器可辨的原因**」，一个闭集键就是它。`raise ValueError(_MSG[key])` 语义上已经只说「发生了什么」。
+  3. **类带不来增量**：新类型的唯一独有能力是「结构化字段供多个消费者各自投影」，而今天消费者**只有 1 个**（A 类接收点要的那句人话）。字段 `format`/`stage` 零读者 = YAGNI。
+  4. **建类有实际代价**：带自定义字段的异常类会触发 `tests/test_exception_pickle_lock.py::test_census_matches_registry` 的形态门（必须登记 + 提供可重建路径），而文本解析失败是**请求内短命对象、从不过进程边界** —— 为它付跨进程序列化的成本是**为锁而锁**。
+  5. **不变量靠静态门强制**，与有没有类型无关（见下 L1）。用户摆在明处的「唯一正当建类理由」= 「类型强制 + 记日志自动化」，也已由 `print` + L3 `capsys` 覆盖，**不要**。
+- **形态锁 `tests/test_text_failure_messages.py`（4 条，不维护点位白名单）**：
+  - **L1（主判据，静态 AST）**：`core/text_manager.py` 每条 `raise` 的实参必须是 `_MSG[…]` 或 `_MSG[…].format(...)` —— 即**实参内不得出现任何字符串字面量，也不得引用任何 `except` 绑定名**。别名由文件里的 import 语句解析（派生，不是手工清单）。
+  - **L2（闭集）**：`text_manager.py` 用到的键 ⊆ 表键，且表键 ⊆ 用到的键（无陈旧）。
+  - **L3（端到端 + 线索不丢）**：坏 PDF / 空 DOCX / 超长走 `/api/text/upload` → 400 + `detail` **恰等于**表里那句 + 不含 `Failed to open file` / `Traceback` / `pymupdf`；**同时 `capsys` 里必须有原始诊断**。
+  - **L4（非空负控）**：L1 的扫描必须命中 **≥ 16** 条 `raise` —— 防「对空集断言恒真」的假绿（§四「凡『所有 X 都满足 P』形式的断言，先问 X 会不会是空集」；缺陷 25 min-width 那次就栽在这）。
+  - **变异（实测）**：L1 —— 把 `_extract_pdf` 的 raise 改回 `f"…{str(e)}"` → 红在「引用了 except 绑定名」；L2 —— 表里删一个键 → 红；L3 —— 删掉那句 `print` → 红在「线索丢了」。
+  - **跨文件的通用锁（全仓「`except` 绑定名不得进 `HTTPException` 实参」）不做** —— 它需要一张豁免表（`inter_node.py` ×8 是 B 类）才不误伤，而**豁免表就是「守卫与被守对象之间的第二份手工清单」**（本轮已踩过两次）。如实记在此处，不假装有。
+- **判据命令**：`python -W ignore -c "import ast,pathlib;..."`（AST 扫 `raise` 实参形态，见锁文件）、`git grep -n 'str(e)' core/text_manager.py`（应为 0）、`git grep -n 'stderr.decode' web/routers/voice.py`（应全部出现在 `print(` 行内）
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

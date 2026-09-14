@@ -153,11 +153,16 @@ async def upload_text(
                 text_id = result["text_id"]
                 cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
             except ValueError as exc:
-                # **不迁到统一出口**（web/server.py）。这里的裸 ValueError 是「用户输入校验
-                # 失败」，不是领域异常：TextManager 抛的文案本身就是上屏口径（如「文件编码
-                # 无法识别，请另存为 UTF-8 后重新上传」）。裸 ValueError 没有 `user_message`，
-                # 走 user_facing_error 会落到通用文案 —— **那是删信息，不是统一**。
-                # 契约锁：tests/test_security_authz.py::test_10_value_error_400。
+                # **不迁到统一出口**（web/server.py）。判据是「**这段文字是为谁写的**」：
+                # TextManager 抛的文案是本仓为人写的用户指令（如「文件编码无法识别，请另存为
+                # UTF-8 后重新上传」），本就是上屏口径 —— 走 user_facing_error 会落到通用
+                # 文案，**那是删信息，不是统一**。
+                #
+                # 判的对象是**抛出点那条 `raise` 的实参构成**，不是「异常类型是不是裸
+                # ValueError」。缺陷 39 的 DOCX 双包证明按类型判必然判错：同一个
+                # `except ValueError` 接住的，既有本仓人话、也有第三方库的异常原文
+                # （后者已由 core/text_failure.py + 形态锁收口）。
+                # 契约锁：tests/test_security_authz.py::TestErrorSanitization::test_10_value_error_400。
                 raise HTTPException(400, str(exc)) from exc
         finally:
             if temp_path.exists():
@@ -171,7 +176,7 @@ async def upload_text(
             text_id = result["text_id"]
             cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
         except ValueError as exc:
-            # 不迁，理由同上面 upload_text_from_file 那处（A 类：用户输入校验）。
+            # 不迁，理由同上面 upload_text_from_file 那处（A 类：实参由本仓撰写的人话）。
             raise HTTPException(400, str(exc)) from exc
     else:
         raise HTTPException(400, "Must provide file or text")

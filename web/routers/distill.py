@@ -730,10 +730,11 @@ async def distill_by_text_id(
         # （`user_message｜ops_detail`）—— 后半截不该给用户看（缺陷 38）。
         raise
     except ValueError as exc:
-        # **不迁**：下面的 `except Exception` 也够不着它，但这条是**用户输入/属主校验**类
-        # 裸 ValueError（如 TextManager 的 "Text not found"），不是领域异常。它没有
-        # `user_message`，走 user_facing_error 会落到通用文案、把用户需要的信息删掉 ——
-        # 与 text.py / history.py 的 A 类同源。**别为统一而统一。**
+        # **不迁**：下面的 `except Exception` 也够不着它，但这条的实参是**本仓为人写的
+        # 用户/属主校验文案**（如 TextManager 的 "Text not found"，出处
+        # `core/text_failure.py`），不是领域异常。它没有 `user_message`，走
+        # user_facing_error 会落到通用文案、把用户需要的信息删掉 —— 与 text.py /
+        # history.py 的 A 类同源。**别为统一而统一。**
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
@@ -1574,7 +1575,7 @@ async def legacy_distill(
     except DistillError:
         raise      # 放行到统一出口（web/server.py）：配码取文案，路由不碰（缺陷 38）
     except ValueError as exc:
-        # **不迁**，理由同 `/run` 那处：这是用户输入/属主校验类裸 ValueError，不是领域异常。
+        # **不迁**，理由同 `/run` 那处：实参是本仓为人写的用户/属主校验文案，不是领域异常。
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")

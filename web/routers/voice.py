@@ -457,7 +457,9 @@ async def speech_to_text(
             capture_output=True, timeout=15,
         )
         if result.returncode != 0:
-            raise HTTPException(400, f"音频转码失败: {result.stderr.decode()[:200]}")
+            # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 39 收口，形态同 :110 / :380）。
+            print(f"[voice] ffmpeg asr-convert failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
+            raise HTTPException(400, "音频转码失败，请换一个音频文件重试")
 
         with open(tmp_wav_path, "rb") as f:
             wav_data = f.read()

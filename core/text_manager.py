@@ -17,6 +17,7 @@ from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
 from core.moderation.card_guard import GuardVerdict, guard_card_obj
 from core.schema import CharacterCard
+from core.text_failure import TEXT_FAILURE_MESSAGES as _MSG
 from core.utils import try_record_usage
 from storage.base import StorageBase, new_review_id
 
@@ -217,16 +218,16 @@ class TextManager:
         elif ext == ".docx":
             parsed = await asyncio.to_thread(self._extract_docx, file_path)
         else:
-            raise ValueError(f"Unsupported file extension: {ext}")
+            raise ValueError(_MSG["unsupported_ext"].format(ext=ext))
 
         if not parsed or not parsed.strip():
-            raise ValueError("Text content is empty after parsing")
+            raise ValueError(_MSG["empty_after_parse"])
 
         original_chars = len(parsed)
         max_chars = 2_000_000 if text_type == "chat" else 1_000_000
         if original_chars > max_chars:
             limit_text = "200 万" if text_type == "chat" else "100 万"
-            raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
+            raise ValueError(_MSG["too_long"].format(limit_text=limit_text))
 
         # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
         # Layer 2 (character context) is deferred to distillation time.
@@ -237,7 +238,7 @@ class TextManager:
             cleaned = preprocessor.preprocess(cleaned)  # no target → only Layer 0+1
             cleaned_chars = len(cleaned)
             if not cleaned.strip():
-                raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
+                raise ValueError(_MSG["chat_clean_empty"])
 
         text_id = uuid.uuid4().hex[:12]
 
@@ -264,7 +265,7 @@ class TextManager:
                     return await f.read()
             except UnicodeDecodeError:
                 continue
-        raise ValueError("文件编码无法识别，请另存为 UTF-8 后重新上传")
+        raise ValueError(_MSG["encoding_unknown"])
 
     @staticmethod
     def _extract_pdf(file_path: str) -> str:
@@ -281,13 +282,15 @@ class TextManager:
         try:
             doc = pymupdf.open(file_path)
         except Exception as e:
-            raise ValueError(f"PDF 文件无法打开（可能已损坏或加密）：{str(e)}") from e
+            # 库原文含服务器路径（实测 "Failed to open file '\\\\tmp\\\\...'"），只进日志（缺陷 39）。
+            print(f"[TextManager] PDF open failed: {e!r}")
+            raise ValueError(_MSG["pdf_open_failed"]) from e
 
         try:
             page_count = doc.page_count
             if page_count > MAX_PDF_PAGES:
                 raise ValueError(
-                    f"PDF 共 {page_count} 页，超过 {MAX_PDF_PAGES} 页上限，请拆分后上传"
+                    _MSG["pdf_page_limit"].format(page_count=page_count, max_pages=MAX_PDF_PAGES)
                 )
             try:
                 md_text = pymupdf4llm.to_markdown(
@@ -297,15 +300,13 @@ class TextManager:
                     show_progress=False,
                 )
             except Exception as e:
-                raise ValueError(f"PDF 解析失败：{str(e)}") from e
+                print(f"[TextManager] PDF to_markdown failed: {e!r}")
+                raise ValueError(_MSG["pdf_parse_failed"]) from e
         finally:
             doc.close()
 
         if not md_text or not md_text.strip():
-            raise ValueError(
-                "该 PDF 无法提取文字（疑似扫描件或图片 PDF）。"
-                "请上传可复制文字的 PDF，或直接上传 .txt 文件"
-            )
+            raise ValueError(_MSG["pdf_no_text"])
         return md_text
 
     @staticmethod
@@ -316,11 +317,16 @@ class TextManager:
         try:
             doc = Document(file_path)
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            if not paragraphs:
-                raise ValueError("DOCX 文件无有效文本内容")
-            return "\n\n".join(paragraphs)
         except Exception as e:
-            raise ValueError(f"DOCX 解析失败: {str(e)}") from e
+            print(f"[TextManager] DOCX open/read failed: {e!r}")
+            raise ValueError(_MSG["docx_parse_failed"]) from e
+        # 「无有效文本」是本仓的判定，**必须留在这圈 try 之外** —— 放进去会被同一个
+        # `except Exception` 抓走再包一层（缺陷 39 的 DOCX 双包：上屏成了
+        # "DOCX 解析失败: DOCX 文件无有效文本内容"，一个 except 同时接住我们的语义
+        # 和库的噪声）。
+        if not paragraphs:
+            raise ValueError(_MSG["docx_empty"])
+        return "\n\n".join(paragraphs)
 
     # ---- Public API ----
 
@@ -328,13 +334,13 @@ class TextManager:
         """Parse content by file extension, save to storage. Returns dict with text_id and char stats."""
         parsed = self._parse_content(filename, content).strip()
         if not parsed:
-            raise ValueError("Text content is empty after parsing")
+            raise ValueError(_MSG["empty_after_parse"])
 
         original_chars = len(parsed)
         max_chars = 2_000_000 if text_type == "chat" else 1_000_000
         if original_chars > max_chars:
             limit_text = "200 万" if text_type == "chat" else "100 万"
-            raise ValueError(f"文本超过 {limit_text} 字上限，请分卷上传")
+            raise ValueError(_MSG["too_long"].format(limit_text=limit_text))
 
         # Chat preprocessing: Layer 0 (format clean) + Layer 1 (quality filter)
         cleaned = parsed
@@ -344,7 +350,7 @@ class TextManager:
             cleaned = preprocessor.preprocess(cleaned)  # no target → only Layer 0+1
             cleaned_chars = len(cleaned)
             if not cleaned.strip():
-                raise ValueError("聊天记录清洗后无有效内容，请检查文件格式")
+                raise ValueError(_MSG["chat_clean_empty"])
 
         text_id = uuid.uuid4().hex[:12]
 
@@ -365,7 +371,7 @@ class TextManager:
         """
         text_rec = await self._storage.get_text_owned(text_id, user_id)
         if not text_rec:
-            raise ValueError("Text not found")
+            raise ValueError(_MSG["text_not_found"])
         content = text_rec.get("content", "")
 
         try:
@@ -417,7 +423,7 @@ class TextManager:
         """
         text_rec = await self._storage.get_text_owned(text_id, user_id)
         if not text_rec:
-            raise ValueError("Text not found")
+            raise ValueError(_MSG["text_not_found"])
         content = text_rec.get("content", "")
 
         existing_cards = await self._storage.list_cards(text_id, user_id)
