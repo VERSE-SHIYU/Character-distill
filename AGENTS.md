@@ -114,6 +114,9 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
+> **全表状态口径（2026-09-15 现跑现数）**：1–39 共 39 条 —— **已修 30** / **记账 4**（32、33、35、36）/ **记账待补 1**（30）/ **已裁定 1**（31）/ 其余 3 条（3 纵深防御、10 已移出「三之二」、37 证伪）。**待办 = 记账 + 记账待补 = 5**。
+> 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*\d+\.` 的标题行，按其中 `状态：` 的值分组计数。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
+
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
 - 现象（实测）：3 条探针里 2 条吐 `reasoning_content` 12441 / 12413 字符、`content` **0** 字符、`finish_reason='length'`，耗时 161.9s / 122.4s（第 3 条 reasoning 8735、`content` 2060、`stop`、131.5s）。产物见 `docs/evidence/thinking-capfield.json`（证据：`ev:thinking-capfield`）
 - 根因（修复前）：四处调用点都传 `extra_body={"enable_thinking": False}`——那是 Qwen 方言，DeepSeek 不认、静默忽略。DeepSeek 写法是 `extra_body={"thinking": {"type": "disabled"}}`（外部文档，见本节末来源）
@@ -143,7 +146,7 @@ config.yaml 现值（现读，非转述）：
   - **明确不在本期**：`identify_characters` 不走 `_parse_json_with_retry`（自带 `_parse_list` + 一次重试，且要的是 list 不是 dict，形状契约不同）→ 无环可接，本轮不动
 - 回归锁：`tests/test_llm_adapter_finish_reason.py`（含变异验证）、`tests/test_chat_stream_error.py`
 
-**3. 第二道门是「非空」门，不是「结构合法」门** —— 状态：纵深防御（主屏障已上移）
+**3. 第二道门是「非空」门，不是「结构合法」门** —— 状态：**纵深防御（主屏障已上移）**
 - `_resume_hit` 门 2：`if not (isinstance(cand["result"], str) and cand["result"].strip()): return None`
 - 只判非空，挡不住非空的截断文本；docstring 自述即如此（`_resume_hit` docstring：「第 2 道是**纵深防御**，不是契约……不承诺结构校验」）
 - 三门（`_resume_hit`）：门 1 形状、门 2 非空、门 3 指纹
@@ -200,7 +203,7 @@ config.yaml 现值（现读，非转述）：
 - 边界锁：`tests/test_auth_param_used.py` 固化这次 AST 扫描 + 白名单，将来新增同类端点自动变红，不必靠人再扫一遍
 - 注：`voice.py` 内既有四处查属主返回 **403**（`get_ref_audio` / `preview_ref_audio` / `upload_ref_audio` / `delete_ref_audio`），与新修的 404 并存，口径待统一 —— **已于 2026-09-12 统一为 404**（缺陷 13）
 
-**10. （已移出缺陷表 → 见下节「三之二、特性缺失 / 立项」条目 A）** —— **非缺陷**：前提证伪、裁定「不做」（2026-09-12）。为保持编号连续、不改后续条号，此处只留占位；条目全文移入三之二。
+**10. （已移出缺陷表 → 见下节「三之二、特性缺失 / 立项」条目 A）** —— 状态：**已移出（非缺陷）**：前提证伪、裁定「不做」（2026-09-12）。为保持编号连续、不改后续条号，此处只留占位；条目全文移入三之二。
 - 移出理由：它**不是「有东西坏了」，是「有东西从来没建」** —— 混在缺陷表里让「还有几个真缺陷待修」这个数失真（用户 2026-09-14 裁定）。
 
 **11. 越权读取的根因：storage 读取原语没有身份概念** —— 状态：**已修**（2026-09-11）
@@ -404,7 +407,7 @@ config.yaml 现值（现读，非转述）：
   - **豁免名单住在测试里，不在执行器里** —— **已修（2026-09-13）**：豁免的事实源移到执行器 `storage/sqlite_store.py::_MIGRATIONS_NOT_APPLIED`（与次序元组同一处，改执行器的人一眼看到「哪个迁移被有意略过、为什么」），其余三处读者（`tests/test_migration_dispatch.py` / `tests/perf/migration_coverage_audit.py::_exemptions` / `tests/test_sqlite_fresh_schema.py` 的报错文案）全部改从执行器读，**不再自持副本** —— 不变量：豁免只有一个源。新增 `test_exemption_has_one_source_in_the_executor`：往执行器声明塞一条指向不存在文件的假豁免，dispatch 锁必须相应变红（证明测试读的确实是执行器那份）。仓外变异：执行器加 `"999_ghost.sql"` → `test_every_migration_file_is_dispatched` 红（stale 分支）
   - **PG `001_init.sql` 保留了 SQLite 侧已删的 4 个遗留列**（`users` 的 `password_hash` / `api_key` / `base_url` / `model`，`migrations_pg/001_init.sql:93-98` 内联声明）。**已复核，运行期 schema 无漂移**：这 4 列由 `migrations_pg/005_data_residency.sql` 的 `DROP COLUMN IF EXISTS` 删掉；两侧逐表逐列求交集（`001_init` + 全部 `ALTER` − drop）**完全相同**（用 `tests/perf/migration_coverage_audit.py` 的 `_objects_from_sql` 复算）。漂移只在**文件层**：读 PG 的 `001_init.sql` 会看到一个最终库里并不存在的列清单（SQLite 侧这 4 列本就不在 `001_init` 声明、是后来 `ALTER` 加的，故它的 `001_init` 天然干净）。**非缺陷**，但会误导「按 bootstrap 文件推断 schema」的人 —— 与上面两条同属「文件的陈述与运行期事实不一致」
 
-**24. 提交责任无归属 —— SQLite store 的写方法漏 `commit` 就静默丢数据，「失败被吞成正常返回」的第八次显形** —— 状态：已修（2026-09-13，`4a91868`）
+**24. 提交责任无归属 —— SQLite store 的写方法漏 `commit` 就静默丢数据，「失败被吞成正常返回」的第八次显形** —— 状态：**已修**（2026-09-13，`4a91868`）
 - 事实（实测）：`_connect()` 用 `aiosqlite.connect()` 且全仓未设 `isolation_level=None` → legacy 事务模式，INSERT / UPDATE / DELETE / REPLACE 隐式开事务，不 commit 则 close 时被回滚；而 `_ConnectionContext.__aexit__` 当时**只 close 不 commit**。于是任何写方法自己忘了 `await conn.commit()`，就「写了、函数照常返回构造好的 dict / rowcount、数据不在、**连异常都没有**」。现场两处：`add_post_comment`（INSERT 后无 commit，仍返回 `{"id": ...}`，前端把评论显示出来、刷新即消失）、`cleanup_empty_cards`（UPDATE 后无 commit，仍返回真实 `cursor.rowcount`）
 - **普查（AST 全量，不是「报一处修一处」）**：扫 235 个「在 `_connect` 作用域内且有调用」的方法，得 **2 处**（`add_post_comment` / `cleanup_empty_cards`）。报告只点名 1 处，全量扫出 2 处 —— 前七次同族形态都因「只修出问题那处」才长出下一次，故本轮先做全集普查再动手
 - **同型定性**：与缺陷 21 的「豁免出口没有闭环」同型 —— **都是把正确性寄托在人的记忆上，没有机制兜底**。这是「失败被吞成正常返回」的第八次显形（前七次：线程弃船 / 384 维度 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断 / store 层 `except: return <空值>`），且是**唯一一次连异常都没有的**
@@ -471,7 +474,7 @@ config.yaml 现值（现读，非转述）：
 - **待补（将来有群聊夹具时）**：后端各一条 —— ① 群聊写侧调用点不带 evidence（形态锁，同 `test_default_call_sites_are_unchanged`）；② 群聊历史出口读回的条目里没有 evidence 键。判据命令：`git grep -n 'save_group_message\|get_group_messages'`。
 - **跨层覆盖不算单点全包**：前端那行只保证「拿到不带 evidence 的条目时不崩」，不保证「后端不会开始产证据」—— 后者才是这条缺口的实质。
 
-**31. `steps` 的三键（`args` / `ok` / `elapsed_ms`）全仓零读者 —— 表态：保留，定位为执行台账** —— 状态：**记账（已表态，不删）**（Evidence 收口，2026-09-14）
+**31. `steps` 的三键（`args` / `ok` / `elapsed_ms`）全仓零读者 —— 表态：保留，定位为执行台账** —— 状态：**已裁定·保留（不删，定位为执行台账）**（Evidence 收口 2026-09-14；2026-09-15 从「记账」移出）
 - **事实（普查，不是印象）**：读 `steps` 的只有 `s["tool"]`（`scripts/run_agent_eval.py` 取名字集合判「触发是否命中 expected」）与 `len(steps)`（同文件判 chitchat `== 0`；测试里计数）。**`args` / `ok` / `elapsed_ms` 三键零读者**。`elapsed_ms` 在别处也没有同义记录：`ToolResult.elapsed_ms` 只在 `tools.py` 的 print 里用；OTel 的 `agent.execute_tool` span 自带 duration，但 **`OTEL_ENABLED` 关时装饰器原样返回、根本没有 span**。
 - **表态：保留。** 定位 = **执行台账**（「实际跑了哪几次、各花多久、块空不空」）。台账的价值在**多键关联**，不在于单键被谁第一时间读；删掉三键后 `steps` 退化成 `list[str]`，与 `messages` 里 assistant 的 `tool_calls` 完全重复。
 - **但有一条硬要求**：**它们当前不参与任何判定** —— 谁要拿它们做判据，必须先在此登记「谁在读、读它干什么」；不登记就拿来当判据，就是下一个「写了没人读」。三键中 `ok` 是唯一没有现成替代的（span 不带 ok；`retrieved` 与 `evidence` 是两个不同口径的投影，都要两步推导才等价）。
@@ -534,7 +537,7 @@ config.yaml 现值（现读，非转述）：
 - **处置方向（记在条目里，不实现）**：**不一定要「对齐」** —— 两条路由的语义本就不同（`/identify` = 只看角色，`/start` = 全量重跑），`/start` 复用库缓存会让「重跑」不再重跑。要裁的是**产品语义**：「`/start` 该不该复用已有识别结果」，而不是「补一行 cache 读取」。
 - **判据命令**：`git grep -n 'get_characters_owned\|identify_characters' web/routers/distill.py core/distiller.py`
 
-**37.（前提证伪）`get_distiller` 的单例被 `/run_stream` 原地改写 —— 该形态不可达，usage 不会记到别人名下** —— 状态：**证伪，不成立**（2026-09-14 当天记下、当天核掉）
+**37. （前提证伪）`get_distiller` 的单例被 `/run_stream` 原地改写 —— 该形态不可达，usage 不会记到别人名下** —— 状态：**证伪，不成立**（2026-09-14 当天记下、当天核掉）
 - **原假设**：`get_distiller(llm=None)` 返回模块级单例 `_distiller`（`web/deps.py:182-192`），而 `/run_stream` 原地改写其 `_storage` / `_user_id`（`web/routers/distill.py:1075-1076`）→ 共享可变状态跨请求污染 → 之后某个没有 per-user key 的请求取回被污染的单例，usage 记到前一个用户名下。当时标注为「静态读出、未实跑验证」。
 - **证伪：两个前提互斥，不可能同时成立。**
   - `/run_stream` 传的是 `get_distiller(llm=per_user_llm)`（`web/routers/distill.py:1057`），而 `per_user_llm = await get_user_llm(...)`，`get_user_llm` 在用户没配 key 时**不是返回 None，而是回落到 `get_llm()`**（`web/deps.py:118-119`：`# Fallback: global config / admin key` → `return get_llm()`）。故 **`per_user_llm is None` ⟺ `get_llm() is None`**。
@@ -650,6 +653,9 @@ config.yaml 现值（现读，非转述）：
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
 - **台账状态行不是事实，是上一轮的记录** —— 引用「某条未修 / 仍是 X」之前必须核 commit 历史。`git log` / `git show` 是权威；缺陷表、清单、README 的状态行只是**写下的那一刻**的快照，会滞后于实际。案例：缺陷 22 已由 `ac2692f` 修掉，状态行却仍标「未修」，被当作遗留报了出去 —— 漏记的动作只有一个：**只读了状态行，没核 `git log`**。这是上一条的**同源反面**：上一条说「别引用上一轮跑出来的**数字**」，这一条说「**台账本身也是上一轮的结果**」。判据：任何「某条仍未修 / 仍是某形态」的结论，落笔前跑一次 `git log --grep=<关键词>` / `git show <sha>` 核验；核不到、或状态行与历史打架时，**以历史为准并就地订正台账**（订正要在条目里写明「原状态行滞后」及原因，否则下一个人会再踩一次）。**同一动作也适用于本文件的其它清单**（如 §五 工具现状）：清单是索引，不是证据。同族第二案例：`docker-compose.local.yml` 头部自称「这份文件不要提交 git！」，实则**早已入库**（`git ls-files` 命中，`4e69615` 引入）—— **注释也是写下的那一刻的记录**，与状态行同理；判据相同：以 `git ls-files` / `git log` 为准，不以文件自己怎么说为准。已记账，用户裁定**不修**（2026-09-14）
+- **「理由」升格成「判据」有门槛 —— 不设门槛，升格会反噬成台账通货膨胀**。升格的价值在于把台账从**记录**变成**可复用的判据集**：记录只在你翻到那一条时有用，判据在下一个没见过那条的人手里也有用。但只解释一个个案的理由若硬升格，下一个人照着套会**套错，而且套错了不会报错**。资格两条，缺一不可：
+  - **① 能推出至少两个互不相同的分界。** 案例：缺陷 39 那条「这段文字是为谁写的」同时推出 A / C / B / 39 四处分界 → 够格；只覆盖一个个案的不够格。
+  - **② 给得出可判定的操作。** 案例：「取那句文案，问作者写下它时读者是用户还是开发者」可判定；「注意泄漏风险」不可判定。**这一条正是判据与格言的分界。**
 - **同一个理由不要落在三个地方 —— 测试说「验什么」，台账说「为什么会有这条」**。判据：一条改动的**历史成因**（「原来是这么错的、所以现在这么改」）只该有一个权威住所，就是台账（本文件条目 / commit message）；测试的文档串只说**这个用例验什么、为什么这样隔离**，不复述成因。案例：缺陷 28 收口时，同一段「原用例为什么不 hermetic」同时写进了测试 docstring（12 行）、commit message、本文件缺陷 28 条目——三处各一份，将来改一处忘两处，是**注定漂移**的重复。当时改动成本高于收益，故只记不改。一般化：**判「该不该重复」先问「谁会先变」**——若三份副本里有任一份会随实现演进先变，就是漂移点，收成一份（判据：一份是事实源、其余是引用）。这与上一条同源：都在问「这段文字是**证据**，还是**某一刻的记录**」——是记录就别抄到需要证据的地方
 
 - **并发/事务/锁的结论不给「应该如此」，只给「要验什么、怎么验」**。案例：MVCC 下 `WHERE EXISTS` 是快照读、不加锁，挡不住「父行正在被删、还没提交」——必须补 `FOR SHARE`。本仓已成文于 `storage/postgres_store.py` 的 `save_distill_chunk`（含死锁无环分析）
@@ -706,5 +712,7 @@ config.yaml 现值（现读，非转述）：
 - **强制走分片路径**：配置里把 `longctx_threshold` 调到 1（另可把 `chunk_size` 调小、`map_concurrency` 调 1 以确定性截杀），**不要改源码**。该做法跑通的证据是 `ev:incomplete-v5`（产物 `docs/evidence/incomplete-v5.json`）。原引的 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md` 未入库（`.gitignore` 覆盖 `.claude/`），本行不再以它为唯一出处 —— 上面三行配置项是自足的，跑完该分片路径是否真被走到由那份产物判定
 - **PG 验证用 throwaway 容器**：`scripts/restore_verify.sh` 里的 `docker run -d --rm` / `docker rm -f`。本仓惯例见会话记录（「PG throwaway（55433）N passed，随后 `docker rm -f`」等）
 - **`e2e/helpers.cjs` 路径更正**：根 `e2e/` 下无此文件，实际在 **`web/frontend/e2e/helpers.cjs`**，`BASE = 'http://localhost:7861'`。本机实测 7861 端口**现有 3 条 LISTENING**（PID 21116 占 `0.0.0.0:7861` 与 `[::]:7861`，PID 11408 占 `[::1]:7861`），与「四重监听」不符，以现测为准。**待改成 `127.0.0.1`**；「会连到 Docker 里的旧 build」一说**待验证**
+
+- **环境账（2026-09-15）：`pymupdf4llm` 在 Windows + pytest 下 import 即崩一个守护线程（onnxruntime `access violation`），而 pytest 报绿、`exit=0`**。现象：任何走到 PDF 解析路径的用例（`core/text_manager.py::_extract_pdf` 顶部的 `import pymupdf4llm`）都会在解释器退出时打印 `Windows fatal exception: access violation`，崩的栈是 `concurrent.futures.thread._worker` → `pymupdf.layout.onnx.BoxRFDGNN` → import `onnxruntime`。**已定性到「与本仓改动无关」**：只含 `import pymupdf4llm` 的单测即触发。这是「失败被吞成正常返回」的又一形态，只不过**这次吞它的是解释器** —— 不记，哪天它变成偶发红就没人记得见过。首次暴露于缺陷 39 的形态锁（此前无用例走 PDF 路径）。**未定性**：按 §四「定性一个环境缺陷前先做反向对照」，尚未逐个摘变量（pytest faulthandler / 守护线程时机 / Windows DLL 加载），留作下次真出问题时的起点。同机另一处已被定性的 onnxruntime 崩见 §四「测试用例不得依赖测试机的 ambient 状态」
 
 来源（外部文档，非本仓代码）：DeepSeek 思考模式——参数为 `thinking: {"type": "disabled"}`，思考默认开启且 effort=high，思考模式下 `temperature` / `presence_penalty` 被忽略：<https://api-docs.deepseek.com/guides/thinking_mode/>
