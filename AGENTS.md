@@ -495,6 +495,37 @@ config.yaml 现值（现读，非转述）：
 - **与 32 是同一件事的两面**：32 管「缺变量不许静默降级」，33 管「变量从文件来、不从命令行来」。只做 33（补 `.env`）而不做 32 → 缺变量仍静默、凭据仍可能走命令行；只做 32（改成 `:?` 硬失败）而不做 33 → 把「必须显式传入」变成「必须每次打在命令行上」，**反而扩大凭据的扩散面**。**两条同轮才有闭环，单独改任一条都是补丁。**
 - 判据命令：`git grep -n 'POSTGRES_USER'`（列引用点）、`git check-ignore -v .claude/settings.local.json`（确认 ignore 来源）
 
+**34. Reduce 全部 batch 返回空仍产出卡片，用户拿到残次品而界面显示「成功」 —— 「失败被吞成正常返回」的第十次显形** —— 状态：**记账（不修，待裁范围）**（2026-09-14，复现 429 时发现）
+- **症状**：Map 大面积失败 + Reduce 两个 batch 全空，流水线照常走到 `Card saved`，落了卡、返回成功；用户**没有任何信号**知道这张卡是残缺的。日志里有 30 条 `Map chunk N failed`、2 条 `Reduce batch N returned empty, skipped`，界面上只有「成功」。
+- **后果链（本次实测，原文见会话记录）**：128 片里 30 片全灭（27 个 429 打满 5 次、3 个 `Request timed out`）→ 失败率 23% < 50% 门控 → `within tolerance, continuing` → Reduce batch 1 被 `max_tokens` 截断（`finish_reason='length'`）、batch 0 `Request timed out` → 两个 batch 都 `returned empty, skipped` → **仍然落卡**（`card_id=6fc336cfcb23`，`text_id=0b353450811b`）。
+- **根因（不是「429」）**：**Reduce 阶段没有失败门控，Map 有。** 两条不对称，可直接对照：
+  - Map 侧有门：`core/distiller.py:1618` `if failed / total_chunks > 0.5:` → 1620–1628 打 `aborting stream` 并 `yield {"error": …}` + `return`，**中止整条流水线**。
+  - Reduce 侧无对称门：`core/distiller.py:1699-1707` 收集 `batch_results` 时，空的只 `print(f"[distiller] Reduce batch {i} returned empty, skipped")`，**不计数、不判定、不中止**。
+  - **且空输入会走进一条「凭空归并」路径**（这是本条的实质，比「缺少门控」更具体）：`core/distiller.py:1711` `if len(batch_results) <= self.SAFE_SINGLE_REDUCE:`，而 `SAFE_SINGLE_REDUCE = 80`（`core/distiller.py:223`）—— **空列表必然满足**，于是调用 `_single_reduce_stream([], character_name)`，即**对零条分析再发一次归并请求**。`_reduce_user_prompt([], name)`（`core/distiller.py:344`）产出的是「以下是从多段文本中提取的关于「X」的独立分析，请整合为一份完整的角色档案：\n\n」后面**一条分析都没有** —— 模型只能凭空产出。
+  - **唯一那道兜底门此时不成立**：`core/distiller.py:1726` `if not profile_draft.strip():` → 凭空产出的那次输出**非空**，于是放行。
+- **与 429 的关系**：429 只是**本次的触发条件，不是根因**。429 是外部约束（DeepSeek 按余额给并发额度，当前上限 15，而 `map_concurrency=30` 一开跑就超一倍），充值即缓解；**「Reduce 全空仍落卡」是设计缺陷，下次以任何原因（超时 / 截断 / 网络 / 余额）导致 Reduce 失败，都会静默产出垃圾卡**。与 thinking 方言、与本轮任何改动均无关。
+- **定性**：与「线程弃船 / 384 维度不符 / 截断响应当成功 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断 / store 层 `except: return <空值>`（缺陷 24 记为第八次）/ 缺陷 32 compose 静默空串（第九次）」同族 —— **第十次**。前九次都还有「值不对劲」可查，这次是**归并等于没跑，却输出了一张卡**。
+- **可辨性缺口（与缺陷 2 同源）**：`finish_reason=None` 那条 WARN（`[llm] WARNING: chat_stream: 未识别的 finish_reason=None`，本次两条）本身就是「可能截断但被按正常处理」；它出现的位置恰在这次凭空归并与 format 两次调用上，**信号存在但没人把它接到「这张卡可信吗」上**。
+- **处置方向（记在条目里，不实现）**：Reduce 全空应**显式失败并告诉用户原因**，而不是落一张空壳卡。参考口径 = Map 的失败率门控（`core/distiller.py:1618`）：空 `batch_results` 是 100% 失败，比 50% 阈值严重得多，**连 `_single_reduce_stream([])` 都不该发**。范围待裁：是「Reduce 全空即中止」还是「按 batch 失败率定阈值」，以及「已落卡后如何告知/回滚」。
+- **判据命令**：`git grep -n 'returned empty, skipped\|SAFE_SINGLE_REDUCE\|total_chunks > 0.5' core/distiller.py`
+
+**35. `/start` 后台线程路径的 usage 记账全程空转 —— 缺陷 22 收口后的覆盖缺口** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
+- **事实**：本次运行 5 个 action 各打一条 `[Distiller] usage not recorded: storage/user_id missing (user=, action=…)` —— `distill_identify` / `distill_map` / `distill_reduce` / `distill_format` / `distill_autotag`。`user=` 为空即证据（`core/utils.py:64` 的 print 把 `user_id` 直接填进去）。
+- **根因**：`/start`（`web/routers/distill.py:734`）→ `_distill_start_impl`（763）→ `_run_distill_task`（317）**后台线程**。该线程**收到了 `user_id` 参数，但只用它放并发槽**（`_release_user_slot`），**从不把 `distiller._storage` / `distiller._user_id` 接上去**。`Distiller.__init__` 的默认是 `self._user_id = ""`（`core/distiller.py:239`）。
+- **对照（同一仓库里的正确写法）**：`/run_stream`（`web/routers/distill.py:1044`）在 1075–1076 显式写了 `distiller._storage = storage` / `distiller._user_id = user_id`。全仓 `distiller._user_id = …` 只此一处 —— **两条蒸馏路由，一条接、一条不接**。
+- **机制**：`core/utils.py:63` `if not storage or not user_id:` → print + `return`。整条链的记账出口是接上了的（缺陷 22 刚把 36 个 LLM 调用点全部接进该出口），**但这条路上入口的两个实参都是空的**，于是出口空转。
+- **与缺陷 22 的关系（关键）**：22 修的是「**出口从未写**」；本条是「**出口写了、这条路从未注入**」。二者**不重叠**，但**机制锁看不见本条** —— `tests/test_usage_accounting_lock.py` 的判据是**静态调用链**（「存在调用 LLM 但不流向记账出口的调用点即红」），而本条的调用**在代码路径上确实流向出口**，只是运行期早退。**判据是调用图，不是实参** —— 这是该锁的又一类盲区（与缺陷 25「签名的代理代替 SQL 事实」同谱系：静态形态对，运行期事实错）。
+- **后果**：`/start` 这条路上 token 用量**一条都不入库**，而 `/start` 正是前端主要的蒸馏入口 —— 「蒸馏成本统计」在这条路上系统性偏低（偏低的统计比没有更危险，同缺陷 22 的措辞）。
+- **处置方向（记在条目里，不实现）**：① 让 `_run_distill_task` 注入 `storage` / `user_id`（照 `/run_stream` 的写法）；② 更根本的是**补一条运行期判据** —— 蒸馏路径上出现「记账出口空转」不应只是 `print` 一行淹没在 429 风暴里。范围待裁：注入点、以及是否把静态锁扩到「实参非空」这一层（若是，需要先想清怎么在不跑流水线的前提下判定）。
+
+**36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
+- **事实**：`/identify`（`web/routers/distill.py:658`）在属主校验后读 `get_characters_owned`（678），命中即返回、**不发 LLM**；`/start`（734）这条全流水线**不读该缓存** —— 角色识别由流水线内的 `distiller.identify_characters`（`core/distiller.py:635`）直接跑。
+- **它自己的那层缓存不是 `characters_json`**：`identify_characters` 用的是**进程内 TTL memo**（`core/distiller.py:28-32`，`IDENTIFY_CACHE_TTL_SECONDS = 600`），键 = `sha256(前 10000 字) + model`。寿命是**进程**，不是库。
+- **实测**：本次 `/start` 之前该文本的 `characters_json` 已存 8 个角色（早先 `/identify` 的产物），流水线仍在 12:30:07 真发了 identify 调用（`action=distill_identify`）；日志里 `[distill] identify cache hit` **零命中** —— 因为本次 rebuild 刚重启过容器，进程内 memo 是冷的。
+- **意义（解释了上一轮的一个推理为什么只在一条路上成立）**：上一轮判定「再点一次不可能复现，因为 `characters_json` 已缓存 8 个角色、命中即返回」—— 该推理**只在 `/identify` 上成立**。`/start` 不等价。
+- **处置方向（记在条目里，不实现）**：**不一定要「对齐」** —— 两条路由的语义本就不同（`/identify` = 只看角色，`/start` = 全量重跑），`/start` 复用库缓存会让「重跑」不再重跑。要裁的是**产品语义**：「`/start` 该不该复用已有识别结果」，而不是「补一行 cache 读取」。
+- **判据命令**：`git grep -n 'get_characters_owned\|identify_characters' web/routers/distill.py core/distiller.py`
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
