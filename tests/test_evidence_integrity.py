@@ -85,13 +85,15 @@ _NUM_CORPUS = {
 _NUM_SHAPES = frozenset({"等号赋值", "字段名后跟量", "裸整数", "百分号", "斜杠分隔"})
 
 sys.path.insert(0, str(PERF))
+import evidence_annotations  # noqa: E402
 import evidence_writer  # noqa: E402
 
 
 def _manifest() -> list[dict]:
+    """机器层 + 人工层 → 一个视图。锁读的是视图，不是某一个文件。"""
     if not MANIFEST.exists():
         return []
-    return json.loads(MANIFEST.read_text(encoding="utf-8"))
+    return evidence_annotations.compose(json.loads(MANIFEST.read_text(encoding="utf-8")))
 
 
 def _tracked_markdown() -> list[Path]:
@@ -500,8 +502,9 @@ class TestWriterContract:
         assert e["reproduce"] == "PROBE_EVIDENCE_ID=tmp-id python tests/perf/probe.py"
         assert e["env"] == "e" and e["code_sha"] == "deadbee"
         assert e["measured_at"] == date.today().isoformat()
-        assert e["assertions"] == [] and e["derived"] == []
         assert e["redacted_fields"] == []
+        # 人工字段不在机器层 —— 探针这一笔里根本没有它们可写
+        assert not (set(e) & set(evidence_annotations.FIELDS))
 
     def test_whitelist_drops_and_accounts_unlisted_keys(self, tmp_evidence):
         self._write({"a": 1, "b": 2, "preview": "正文", "content_head": "正文"})
@@ -566,28 +569,23 @@ class TestRegisterArtifact:
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         evidence_writer.register_artifact(
             "tmp-id", claim="c", script="tests/perf/map_len_probe.py", env="e",
-            code_sha="abc1234", measured_at="2026-09-10", script_role="producer", notes="n",
-            assertions=[{"path": "a", "value": 1}], derived=[], non_repo_paths=[],
+            code_sha="abc1234", measured_at="2026-09-10", script_role="producer",
             redacted_fields=("content_head", "preview"))
         e = json.loads((tmp_evidence / "manifest.json").read_text(encoding="utf-8"))[0]
         assert e["status"] == "verified"
         assert e["measured_at"] == "2026-09-10"
         assert e["script_role"] == "producer"
         assert e["artifact"] == "docs/evidence/tmp-id.json"
-        assert e["assertions"] == [{"path": "a", "value": 1}]
-        assert e["derived"] == []
-        assert e["non_repo_paths"] == []
         assert e["redacted_fields"] == ["content_head", "preview"]
 
     def test_missing_artifact_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="不存在"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], derived=[], non_repo_paths=[],
                 code_sha="a", measured_at="2026-09-12")
 
-    def test_register_requires_declarations_without_defaults(self, tmp_evidence):
-        """迁移入口的 `script_role` / `assertions` / `derived` / `non_repo_paths` 无默认值 —— 漏填 TypeError。"""
+    def test_register_requires_script_role_without_default(self, tmp_evidence):
+        """迁移入口的 `script_role` 无默认值 —— 漏填 TypeError。"""
         (tmp_evidence / "tmp-id.json").write_text("{}\n", encoding="utf-8")
         with pytest.raises(TypeError):
             evidence_writer.register_artifact(
@@ -599,15 +597,92 @@ class TestRegisterArtifact:
         with pytest.raises(ValueError, match="script_role 只允许"):
             evidence_writer.register_artifact(
                 "tmp-id", claim="c", script="s", env="e", script_role="secondary",
-                assertions=[], derived=[], non_repo_paths=[],
                 code_sha="a", measured_at="2026-09-12")
 
     def test_unregistered_id_refused(self, tmp_evidence):
         with pytest.raises(ValueError, match="未在 evidence_writer"):
             evidence_writer.register_artifact(
                 "never-registered", claim="c", script="s", env="e", script_role="producer",
-                assertions=[], derived=[], non_repo_paths=[],
                 code_sha="a", measured_at="2026-09-12")
+
+
+class TestOwnershipSplit:
+    """字段所有权分层 —— 机器层（探针写的）与人工层（人手填的）物理分开。
+
+    病根：``write_evidence`` 是整条 upsert 覆盖，探针重跑会把 ``assertions`` / ``derived`` /
+    ``non_repo_paths`` / ``notes`` 一起冲掉 —— 丢的是**无法自动重建**的东西（机器测量值重跑
+    就有，人工判断没有再跑一次的机会）。
+
+    这套断言钉的不是「合并策略对不对」，而是**探针有没有能力碰人工层**：
+
+    1. 探针 API 上没有人字段参数 —— 想传也没地方传
+    2. 探针跑完，人工层**逐字节不变** —— 能力上就够不着
+    3. 两层的字段名集合不重叠 —— 分层是结构事实，不是约定
+    4. 两层的 id 集合相等 —— 人工层既不能被漏掉，也不能长出已删条目的孤儿
+
+    第 2 条是关键：若哪天有人给 ``_upsert`` 加一行去写人工层，这里立刻红。前三条只是
+    把「为什么加不进去」摆在纸面上。
+
+    这些断言**不取 fixture** —— 变异矩阵是直接调方法、不经 pytest 收集的（见
+    ``test_evidence_integrity_mutations.py``），取 fixture 的断言没法进矩阵。
+    """
+
+    # 不用 tmp-id：借一个已注册的 id，省去动 `_ALLOWED_BY_ID` 全局
+    _ID = "thinking-maplen-after"
+
+    def test_probe_api_exposes_no_human_field_params(self):
+        bad = []
+        for fn in (evidence_writer.write_evidence, evidence_writer.register_artifact):
+            leaked = sorted(set(inspect.signature(fn).parameters) & set(evidence_annotations.FIELDS))
+            if leaked:
+                bad.append((fn.__name__, leaked))
+        assert not bad, (
+            f"出口函数暴露了人工字段参数（函数, 参数）：{bad}。"
+            "人工字段走 tests/perf/evidence_annotations.py —— 出口一旦收得下它们，"
+            "探针重跑就有了冲掉人工判断的路径。")
+
+    def test_probe_rerun_leaves_the_human_layer_byte_identical(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            ev = root / "docs" / "evidence"
+            ev.mkdir(parents=True)
+            ann = ev / "annotations.json"
+            ann.write_text(json.dumps({self._ID: {
+                "assertions": [{"path": "records", "len": 1}], "derived": [],
+                "non_repo_paths": ["config.yaml"], "notes": "人手填的，机器重建不出来"}},
+                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            before = ann.read_bytes()
+
+            saved = (evidence_writer.ROOT, evidence_writer.EVIDENCE_DIR, evidence_writer.MANIFEST)
+            evidence_writer.ROOT = root
+            evidence_writer.EVIDENCE_DIR = ev
+            evidence_writer.MANIFEST = ev / "manifest.json"
+            try:
+                evidence_writer.write_evidence(
+                    self._ID, {"probe": "x"}, claim="c", script="tests/perf/probe.py",
+                    env="e", code_sha="deadbee")
+            finally:
+                evidence_writer.ROOT, evidence_writer.EVIDENCE_DIR, evidence_writer.MANIFEST = saved
+
+            assert ann.read_bytes() == before, (
+                "探针重跑改变了人工层 —— 人工填的断言/派生/路径/口径被机器覆盖了。"
+                "这正是分层要消灭的形态：机器测量值能重跑，人工判断不能。")
+
+    def test_layers_own_disjoint_field_names(self):
+        overlap = sorted(set(evidence_annotations.FIELDS) & set(evidence_writer._MACHINE_FIELDS))
+        assert not overlap, (
+            f"这些字段同时属于机器层与人工层：{overlap}。"
+            "同一个字段两层都有写入权 = 所有权没划清，冲突只是被推迟到下一次重跑。")
+
+    def test_human_layer_covers_exactly_the_manifest_ids(self):
+        ids = {e["id"] for e in _manifest()}
+        human = set(evidence_annotations.load())
+        assert human == ids, (
+            f"人工层与机器层的 id 集合不一致（只在一侧的）：{sorted(human ^ ids)}。"
+            "只有人工层有这个 id = 条目不在了、标注成了孤儿；只有机器层有 = 没人表态，"
+            "该条目的 assertions/notes 会静默为空。")
 
 
 class TestRenderedResumeList:
@@ -619,7 +694,7 @@ class TestRenderedResumeList:
 
     def test_resume_numbers_is_current(self):
         import render_evidence
-        entries = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        entries = _manifest()
         assert entries, "清单为空 —— 这条断言会空过，先查为什么没有条目"
         assert render_evidence.OUT.read_text(encoding="utf-8") == render_evidence.render(entries), (
             "docs/evidence/resume-numbers.md 与清单不一致 —— 重跑 "

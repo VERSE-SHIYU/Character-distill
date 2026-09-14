@@ -1,7 +1,33 @@
 # docs/evidence — 证据产物落点
 
 > 本目录是**证据产物**（被仓库文档正文引用的数字，其原始产物）的唯一落点。
-> 写入只走一个出口：`tests/perf/evidence_writer.py`。
+> 写入只走两个出口，按**字段所有权**分工：`tests/perf/evidence_writer.py`（机器层）与
+> `tests/perf/evidence_annotations.py`（人工层）。
+
+## 两层文件：机器层 / 人工层（**别再合成一份**）
+
+| 层 | 文件 | 谁写 | 装什么 |
+|---|---|---|---|
+| 机器层 | `manifest.json` | `evidence_writer`（跑探针） | `id` `claim` `status` `artifact` `script` `script_role` `reproduce` `env` `measured_at` `code_sha` `redacted_fields` |
+| 人工层 | `annotations.json` | `evidence_annotations`（人手填） | `assertions` `derived` `non_repo_paths` `notes` |
+
+**为什么分层**：`write_evidence` 是按 `id` 的**整条 upsert 覆盖**，探针重跑会把人手填的
+`assertions` / `derived` / `non_repo_paths` / `notes` 一起冲掉 —— 丢的恰恰是**无法自动重建**
+的那部分（机器测量值重跑就有，人工判断没有再跑一次的机会）。
+
+被否掉的两个方案：**探针自带断言**（把人工判断塞进探针，探针变成半个文档生成器，职责混了）、
+**出口保留既有值**（合并语义含糊，什么时候覆盖、什么时候保留说不清）。
+
+采用的是**字段所有权分层**，不是合并策略：探针产出的（机器测量值）与人工填的（判断、标注、
+豁免理由）是两类数据，不该在同一个 upsert 里争夺所有权。关键区别是**「无权写」而非「写了但
+被保留」**：`write_evidence` 没有人工字段参数，`evidence_writer` 也没有人工层的落点
+（不 import `evidence_annotations`、不持有 `annotations.json`）——所以冲突不是被调和的，
+是**结构上不存在**。锁里四条断言钉住这一点（见文末锁清单第 9 条）。
+
+读的一侧（锁 / 渲染）按 `id` 合成一个视图：`evidence_annotations.compose(machine)`。
+**不要把这个视图当回一个文件存** —— 那就又回到一份 upsert 覆盖的清单了。人工层缺席的 id
+四个字段一律落 `null`（不是「继承上一版」也不是「静默省略」），`verified` 条目因此当场缺
+`assertions`，锁红逼作者表态。
 
 ## 为什么单独开一个目录（机制，不是习惯）
 
@@ -46,6 +72,10 @@
 
 ## 清单条目 schema
 
+一个条目 = **一条机器层记录 + 一条同 id 的人工层记录**，锁与渲染看到的是合成视图。
+
+`manifest.json`（机器层，探针写）：
+
 ```json
 {
   "id": "<kebab-case>",
@@ -55,17 +85,30 @@
   "script": "tests/perf/<probe>.py 或 null",
   "script_role": "producer | corroborating | null",
   "reproduce": "一条能粘进终端的复现命令或 null",
-  "assertions": [{"path": "summary[1].out_tokens_max", "value": 2097}],
-  "derived": [{"value": 1245, "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位",
-               "refs": ["records"]}],
-  "non_repo_paths": ["config.yaml"],
   "env": "模型 / 供应商 / 参数 / 任何影响数字的前置",
   "measured_at": "YYYY-MM-DD",
   "code_sha": "产出时的 commit",
-  "redacted_fields": ["本产物已知被移除的顶层键"],
-  "notes": "口径落差、扫描方法、或为什么现在复现不了"
+  "redacted_fields": ["本产物已知被移除的顶层键"]
 }
 ```
+
+`annotations.json`（人工层，人手填）：
+
+```json
+{
+  "<id>": {
+    "assertions": [{"path": "summary[1].out_tokens_max", "value": 2097}],
+    "derived": [{"value": 1245, "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位",
+                 "refs": ["records"]}],
+    "non_repo_paths": ["config.yaml"],
+    "notes": "口径落差、扫描方法、或为什么现在复现不了"
+  }
+}
+```
+
+写人工层走 `evidence_annotations.write(id, assertions=…, derived=…, non_repo_paths=…, notes=…)`
+—— 四个字段**无默认值、必须表态**（没有对应内容时传空列表 / 空串，那是表态不是省略）。
+`evidence_writer._upsert` 只收机器层字段，多一个少一个当场抛错。
 
 ### `assertions`：`claim` 里的数字必须落在产物上
 
@@ -177,6 +220,7 @@
 锁的两条：`verified` 的 `script_role` 必须是上表前两个值之一（其余两档必须 `null`）；
 `corroborating` 必须带非空 `notes` 交代产出脚本是谁、为什么没入库。
 迁移用的 `register_artifact` **要求这个参数且无默认值** —— 迁移路径正是最容易填错的那条。
+（`notes` 是人工层字段，迁移时另走 `evidence_annotations.write`。）
 
 ### 三档 status（**只有三档，第四值锁测试直接红**）
 
@@ -237,6 +281,9 @@
 7. **数值闭合**：见 `assertions` / `derived` 两节 —— assertion 非空、与产物严格相等、
    `derived` 的 `refs` 落在本条目 assertions 里且非恒等式、`claim` 数字全覆盖
 8. **提取器反空过**：`_path_tokens` / `_numbers` 对钉住的语料形态必须全部识别
+9. **字段所有权分层**（`TestOwnershipSplit`）：出口函数没有人字段参数；探针重跑后人工层
+   **逐字节不变**；两层的字段名集合不重叠；两层的 id 集合相等（人工层既不能漏条目，
+   也不能长出已删条目的孤儿）
 
 `tests/test_evidence_integrity_mutations.py`：**变异矩阵**。每条清单语义断言必须有自己的
 专属红源 —— 每个变异**只跑指定的那一条**断言，证明它不靠渲染锁兜住。渲染新鲜度锁会因为

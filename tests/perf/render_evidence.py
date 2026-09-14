@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+from evidence_annotations import compose
 from evidence_writer import EVIDENCE_DIR, MANIFEST
 
 OUT = EVIDENCE_DIR / "resume-numbers.md"
@@ -103,7 +104,9 @@ def render(entries: list[dict]) -> str:
 
 
 def main() -> None:
-    entries = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    # 两层合成后才渲染：机器层（manifest.json）给 id/claim/status，人工层（annotations.json）
+    # 给 derived 等 —— 渲染读的是视图，不是某一个文件
+    entries = compose(json.loads(MANIFEST.read_text(encoding="utf-8")))
     OUT.write_text(render(entries), encoding="utf-8")
     # ASCII 输出：Windows 控制台默认 GBK，中文会打成乱码（本脚本是要给人手跑的）
     print(f"wrote {OUT.name} ({len(entries)} entries)")

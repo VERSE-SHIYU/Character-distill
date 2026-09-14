@@ -1,0 +1,367 @@
+{
+  "a2-wiring-mutation": {
+    "assertions": null,
+    "derived": null,
+    "non_repo_paths": [
+      ".claude/sessions/2026-09-10-distill-dbtruth-closeout.md"
+    ],
+    "notes": "扫描方法：变异实验本身（删掉兜底调用 → 跑当时树上的蒸馏用例 → 观察全绿），仓内可核的是**补齐动作**：`git show 9d2a9e4 -- tests/test_distill_task_api.py`（+51 行，TestA2Wiring）。原始记载只在未入库的 `.claude/sessions/2026-09-10-distill-dbtruth-closeout.md`（`.gitignore:228` 覆盖 `.claude/`），故标 runtime-measured 而非 verified。纪律条文见 AGENTS.md §四「修复必须做变异验证」。"
+  },
+  "chunk-size-provenance": {
+    "assertions": null,
+    "derived": null,
+    "non_repo_paths": [
+      "config.yaml"
+    ],
+    "notes": "扫描方法（2026-09-12 现跑，判定「四档对比无出处」这个**否定命题**）：`git log -S 4500 --all --oneline` 得 3 处、`-S 12000` 得 5 处，逐一核对后**无一处把这两个数当 chunk_size** —— 命中的是 AGENTS.md 自述行、core/distiller.py 的 max_profile_len 下限（≥12000）、web/frontend/e2e/avatar-fallback-verify.cjs 的 settleMs=4500；`git grep -E '\b(4500|12000)\b' -- docs/` 零命中；`.claude/sessions/` 无记录。另注：现值 5000 出自**未入库**的 config.yaml（git ls-files 无命中），与四档对比无关，但同属「数字指向 gitignored 文件」家族，见 AGENTS.md §二。"
+  },
+  "config-yaml-values": {
+    "assertions": null,
+    "derived": null,
+    "non_repo_paths": [
+      "config.yaml"
+    ],
+    "notes": "扫描方法：直接读运行环境的 `config.yaml`（本机现值 `chunk_size: 5000` / `longctx_threshold: 150000`）；`git ls-files config.yaml` **零命中**。即这两个数字引用的是一个**未入库、且随环境可变**的文件 —— 与「已报数字指向 gitignored 产物」同族，但性质是运行配置而非一次性产物，故标 runtime-measured（环境还在，只是没入库）。**不改配置契约**（把值 env 化是另一件事，需另行立项）。仓库内可核的是代码默认值：`core/distiller.py` 的 `distill_cfg.get(\"chunk_size\", 3000)` 与 `effective_chunk_size` 的 classic 地板 6000。另见 ev:chunk-size-provenance —— 那条管的是另一个命题（「3000/4500/6000/12000 四档实测对比」无出处）。"
+  },
+  "distill-orphan-matrix": {
+    "assertions": [
+      {
+        "len": 8,
+        "path": "stores.sqlite"
+      },
+      {
+        "len": 8,
+        "path": "stores.pg"
+      },
+      {
+        "path": "stores.sqlite[1].distill_tasks",
+        "value": 1
+      },
+      {
+        "path": "stores.pg[1].distill_tasks",
+        "value": 1
+      },
+      {
+        "path": "stores.sqlite[2].distill_tasks",
+        "value": 0
+      },
+      {
+        "path": "stores.sqlite[2].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[2].distill_tasks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[2].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.sqlite[7].distill_chunks",
+        "value": 0
+      },
+      {
+        "path": "stores.pg[7].distill_chunks",
+        "value": 0
+      }
+    ],
+    "derived": [],
+    "non_repo_paths": [],
+    "notes": "「8 条删除路径」是 stores.sqlite / stores.pg 各自的用例条数（len 已钉）；「两 store 逐格相同」由脚本内的 same 判定并写入 stderr，清单不重复声明。"
+  },
+  "distill-resume-reachability": {
+    "assertions": [
+      {
+        "len": 4,
+        "path": "stores.sqlite"
+      },
+      {
+        "path": "stores.sqlite[3].resume_hits_row",
+        "value": true
+      },
+      {
+        "path": "stores.pg[3].resume_hits_row",
+        "value": true
+      },
+      {
+        "path": "stores.sqlite[0].resume_hits_row",
+        "value": false
+      },
+      {
+        "path": "stores.pg[0].resume_hits_row",
+        "value": false
+      },
+      {
+        "path": "stores.sqlite[2].checkpoint_reusable",
+        "value": false
+      },
+      {
+        "path": "stores.pg[2].checkpoint_reusable",
+        "value": false
+      }
+    ],
+    "derived": [],
+    "non_repo_paths": [],
+    "notes": ""
+  },
+  "graphify-snapshot-2026-08-15": {
+    "assertions": null,
+    "derived": null,
+    "non_repo_paths": [
+      "graphify-out/graph.json"
+    ],
+    "notes": "为什么现在复现不了（三件事写全）：① 数字产生于 2026-08-15，当时工作树为 commit eb72a3bd，图谱产物 graphify-out/graph.json **从未入库**（`.gitignore:253` 覆盖），引用它等于没有出处；② 环境已变 —— 此后代码大量改动，现在跑 `graphify update .` 得到的是**今天的**图，不是这份快照；换算成「checkout eb72a3bd 重建」也不成立：③ 语义标注走 DeepSeek（百分比与平均置信由 LLM 判定，非确定性，且依赖当时的工具版本与 key），重建出的 94%/6%/0.56 不保证复得。故标 unverifiable，不试图重跑顶替。报告中可核的部分是**按符号名回代码**的结构结论（如 StorageBase 为存储抽象基类），不可核的是统计量。"
+  },
+  "incomplete-v5": {
+    "assertions": [
+      {
+        "path": "totalChunks",
+        "value": 6
+      },
+      {
+        "path": "chunksInDb",
+        "value": 6
+      },
+      {
+        "len": 6,
+        "path": "chunkLengths"
+      },
+      {
+        "path": "chunkLengths[0]",
+        "value": 52
+      },
+      {
+        "path": "allEqualTruncated",
+        "value": true
+      },
+      {
+        "path": "truncatedReusedByGate2",
+        "value": true
+      },
+      {
+        "path": "resumeStats.map",
+        "value": 0
+      },
+      {
+        "path": "resumeMapCalls",
+        "value": 0
+      }
+    ],
+    "derived": [],
+    "non_repo_paths": [
+      "e2e/scratch/resume_probe.py"
+    ],
+    "notes": "快照为当时运行产物，迁移时未重跑（重跑得到的是今天的数字，正文写的是当时的结论）。原始产出脚本是 e2e/scratch/resume_probe.py —— 该脚本是一次性 scratch，未入库，故 script 字段指向仓内覆盖同一断言的可复跑用例 tests/test_distill_resume.py（:110 :121 :169 三条钉住 52 字节截断串仍过闸 2 / 到达下游 / 只重跑坏片）。code_sha 填 unknown(scratch)：该产物的产出时点只能界在 e5bb4c6(10:56) 之后、64d2d14(16:48) 之前（finish_reason 检查落地前的窗口），窗口内多个 commit 均可能产出该行为，落不到唯一 commit —— 编一个近似 sha 会让复算的人 checkout一个错的点。依据不足，如实记。"
+  },
+  "ownership-reachability": {
+    "assertions": [
+      {
+        "path": "no_key_mode",
+        "value": false
+      },
+      {
+        "len": 42,
+        "path": "records"
+      }
+    ],
+    "derived": [
+      {
+        "formula": "records 中 status == 404 的条数（A 组：属主不存在）",
+        "refs": [
+          "records"
+        ],
+        "value": 32
+      },
+      {
+        "formula": "records 中 status == 403 的条数（B 组：仍拒绝）",
+        "refs": [
+          "records"
+        ],
+        "value": 3
+      },
+      {
+        "formula": "records 中 nodeid 属 TestMessageParity 的条数（文案一致性）",
+        "refs": [
+          "records"
+        ],
+        "value": 7
+      }
+    ],
+    "non_repo_paths": [],
+    "notes": "核对脚本：`python tests/perf/check_reachability.py docs/evidence/ownership-reachability.json`。分组计数（A 组 / B 组 / 文案一致性）见 `derived`，各自的过滤条件写在 formula 里。**不按 nodeid 键钉**：产物以 `tests/...::Class::test_*` 为键，绑定键名会让清单随用例改名而红，那是把不稳定标识符写进契约，代价大于收益，故止于计数口径。"
+  },
+  "ownership-reachability-nokey": {
+    "assertions": [
+      {
+        "path": "no_key_mode",
+        "value": true
+      },
+      {
+        "len": 42,
+        "path": "records"
+      }
+    ],
+    "derived": [],
+    "non_repo_paths": [],
+    "notes": "用于证明断言不依赖测试机凭据：无 key 模拟下仍须全绿且命中同一批站点。「两档站点表逐行相同」靠本条目与 `ev:ownership-reachability` 的 `records` 对照，不重复声明。"
+  },
+  "thinking-capfield": {
+    "assertions": [
+      {
+        "path": "cap",
+        "value": 8192
+      },
+      {
+        "len": 3,
+        "path": "records"
+      },
+      {
+        "path": "records[0].content_chars",
+        "value": 0
+      },
+      {
+        "path": "records[1].content_chars",
+        "value": 0
+      },
+      {
+        "path": "records[2].content_chars",
+        "value": 2060
+      },
+      {
+        "path": "records[0].reasoning_content_chars",
+        "value": 12441
+      },
+      {
+        "path": "records[1].reasoning_content_chars",
+        "value": 12413
+      },
+      {
+        "path": "records[0].finish_reason",
+        "value": "length"
+      }
+    ],
+    "derived": [
+      {
+        "formula": "records 中 content_chars == 0 的条数",
+        "refs": [
+          "records"
+        ],
+        "value": 2
+      }
+    ],
+    "non_repo_paths": [],
+    "notes": "本探针**故意**发修复前那套错方言 extra_body={'enable_thinking': False}（Qwen 方言，DeepSeek 静默忽略），是「修复前」的可复现演示，不是待修代码；生产侧正确方言见 adapters.llm_adapter._THINKING_DISABLED。脚本在 HEAD 上可直接重跑。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+  },
+  "thinking-maplen-after": {
+    "assertions": [
+      {
+        "path": "measure_max_tokens",
+        "value": 8192
+      },
+      {
+        "path": "summary[1].out_tokens_max",
+        "value": 2097
+      },
+      {
+        "path": "summary[1].out_tokens_p50",
+        "value": 1177
+      },
+      {
+        "path": "summary[0].out_tokens_p50",
+        "value": 1446
+      },
+      {
+        "path": "summary[1].n",
+        "value": 10
+      },
+      {
+        "path": "summary[0].n",
+        "value": 4
+      },
+      {
+        "len": 14,
+        "path": "records"
+      },
+      {
+        "path": "summary[0].any_clipped_by_probe_cap",
+        "value": false
+      },
+      {
+        "path": "summary[1].any_clipped_by_probe_cap",
+        "value": false
+      }
+    ],
+    "derived": [
+      {
+        "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位（≠ 产物分档字段 summary[].out_tokens_p50 的下中位）",
+        "refs": [
+          "records"
+        ],
+        "value": 1245
+      },
+      {
+        "formula": "records 中 clipped_by_probe_cap 为 true 的条数（同为 0 的还有 out_chars == 0）",
+        "refs": [
+          "records"
+        ],
+        "value": 0
+      }
+    ],
+    "non_repo_paths": [],
+    "notes": "口径：文档表格名 `out_tokens` p50 是 14 条合并后的 nearest-rank 上中位，≠ 产物字段 summary[].out_tokens_p50（按档分组的下中位）。混用会算出对不上的数，复算认准 docs/evidence/thinking_budget_evidence.md §4。 产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+  },
+  "thinking-maplen-before": {
+    "assertions": [
+      {
+        "path": "measure_max_tokens",
+        "value": 8192
+      },
+      {
+        "path": "records[3].out_tokens",
+        "value": 8191
+      },
+      {
+        "path": "summary[1].out_tokens_max",
+        "value": 8192
+      },
+      {
+        "len": 14,
+        "path": "records"
+      },
+      {
+        "path": "summary[0].any_clipped_by_probe_cap",
+        "value": true
+      },
+      {
+        "path": "summary[1].any_clipped_by_probe_cap",
+        "value": true
+      }
+    ],
+    "derived": [
+      {
+        "formula": "records 中 clipped_by_probe_cap 为 true 的条数",
+        "refs": [
+          "records"
+        ],
+        "value": 7
+      },
+      {
+        "formula": "records 中 out_chars == 0 的条数",
+        "refs": [
+          "records"
+        ],
+        "value": 3
+      },
+      {
+        "formula": "14 条 records[].out_tokens 合并后 nearest-rank 上中位（断言里 records[3].out_tokens 恰为同一个数，但这里的口径是合并中位）",
+        "refs": [
+          "records"
+        ],
+        "value": 8191
+      }
+    ],
+    "non_repo_paths": [],
+    "notes": "不得重跑顶替：修复前的方言已从代码移除，直接跑 HEAD 只会得到 after 数字，复现必须先回退 adapters/llm_adapter.py 到 f2dfd23^（见 reproduce）。产物为 2026-09-11 入库时去标识后的冻结快照（该次已删 preview / content_head 与真实角色名，改占位符），本次迁移未重跑。"
+  }
+}

@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 sys.path.insert(0, str(ROOT / "tests" / "perf"))
 
 import test_evidence_integrity as lock  # noqa: E402
+import evidence_annotations  # noqa: E402
 import evidence_writer  # noqa: E402
 
 
@@ -74,6 +75,49 @@ class _DummySemanticAssertion:
 
     def test_something_semantic(self):
         raise AssertionError("从不被执行 —— 它在差集里就够了")
+
+
+def _writer_regains_a_human_param(_entries, mp):
+    """出口把人工字段参数加回来 —— 探针重跑立刻又有了冲掉人工判断的入口。"""
+    def write_evidence(evidence_id, payload, *, claim, script, env, code_sha,
+                       subset=None, reproduce=None, script_role="producer",
+                       assertions=None):
+        raise AssertionError("从不被执行 —— 签名里出现 assertions 就够了")
+
+    mp.setattr(evidence_writer, "write_evidence", write_evidence)
+
+
+def _writer_clobbers_the_human_layer(_entries, mp):
+    """出口开始写人工层 —— 分层被绕过，人工字段重跑即丢。
+
+    闭包里延迟读 `EVIDENCE_DIR`：目标断言自己把落点搬进临时目录，这里必须跟着走，
+    否则「冲掉」的是真实文档目录。
+    """
+    real = evidence_writer._upsert
+
+    def upsert(entry):
+        real(entry)
+        path = evidence_writer.EVIDENCE_DIR / "annotations.json"
+        human = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        human[entry["id"]] = {"assertions": [], "derived": [], "non_repo_paths": [], "notes": ""}
+        path.write_text(json.dumps(human, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    mp.setattr(evidence_writer, "_upsert", upsert)
+
+
+def _machine_schema_swallows_a_human_field(_entries, mp):
+    mp.setattr(evidence_writer, "_MACHINE_FIELDS",
+               evidence_writer._MACHINE_FIELDS | {"assertions"})
+
+
+def _human_layer_grows_an_orphan_id(_entries, mp):
+    real = evidence_annotations.load
+
+    def load():
+        return {**real(), "ghost-annotation": {"assertions": [], "derived": [],
+                                               "non_repo_paths": [], "notes": ""}}
+
+    mp.setattr(evidence_annotations, "load", load)
 
 
 def _drop_a_covering_row(_entries, mp):
@@ -121,7 +165,7 @@ _NO_MUTATION_NEEDED = {
               "迁移入口测试：同上（tmp 清单 + tmp 落点），与仓库清单内容无关",
               ["test_registers_existing_artifact_with_historical_date",
                "test_missing_artifact_refused",
-               "test_register_requires_declarations_without_defaults",
+               "test_register_requires_script_role_without_default",
                "test_bad_script_role_refused",
                "test_unregistered_id_refused"]),
 }
@@ -223,6 +267,19 @@ MUTATIONS = [
     ("measured_at_drifts_from_render",
      lambda m, mp: _by_id(m, "incomplete-v5").update(measured_at="2020-01-01"),
      "TestRenderedResumeList::test_resume_numbers_is_current"),
+    # —— 字段所有权分层（TestOwnershipSplit）—— 四条各钉住「探针够不着人工层」的一面
+    ("writer_regains_a_human_field_param",
+     _writer_regains_a_human_param,
+     "TestOwnershipSplit::test_probe_api_exposes_no_human_field_params"),
+    ("writer_clobbers_the_human_layer",
+     _writer_clobbers_the_human_layer,
+     "TestOwnershipSplit::test_probe_rerun_leaves_the_human_layer_byte_identical"),
+    ("machine_schema_swallows_a_human_field",
+     _machine_schema_swallows_a_human_field,
+     "TestOwnershipSplit::test_layers_own_disjoint_field_names"),
+    ("human_layer_grows_an_orphan_id",
+     _human_layer_grows_an_orphan_id,
+     "TestOwnershipSplit::test_human_layer_covers_exactly_the_manifest_ids"),
     # —— L3 数值闭合（TestClaimBindings）——
     ("assertion_value_off_by_one",
      lambda m, mp: _by_id(m, "incomplete-v5")["assertions"][0].update(value=7),
@@ -313,11 +370,19 @@ def _target_method(nodeid: str):
 @pytest.mark.parametrize("name,mutate,nodeid", MUTATIONS, ids=[m[0] for m in MUTATIONS])
 def test_mutation_reds_its_own_assertion(tmp_path, monkeypatch, name, mutate, nodeid):
     """只跑目标那一条：它必须**自己**红。别的锁红不红与本行无关（spec 允许）。"""
-    entries = copy.deepcopy(json.loads(lock.MANIFEST.read_text(encoding="utf-8")))
+    entries = copy.deepcopy(lock._manifest())
     mutate(entries, monkeypatch)
-    mutated = tmp_path / "manifest.json"
-    mutated.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 变异作用在**合成视图**上，落盘时要拆回两层 —— 只写机器层的话，人工字段会被
+    # 合成时从原 annotations.json 里捞回来，变异静默失效（分层把「改哪一层」变成必须表态的事）
+    machine, human = evidence_annotations.split(entries)
+    ev = tmp_path / "docs" / "evidence"
+    ev.mkdir(parents=True, exist_ok=True)
+    mutated = ev / "manifest.json"
+    mutated.write_text(json.dumps(machine, ensure_ascii=False, indent=2), encoding="utf-8")
+    (ev / "annotations.json").write_text(
+        json.dumps(human, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     monkeypatch.setattr(lock, "MANIFEST", mutated)
+    monkeypatch.setattr(evidence_writer, "EVIDENCE_DIR", ev)
 
     with pytest.raises(AssertionError):
         _target_method(nodeid)()

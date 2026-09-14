@@ -12,6 +12,12 @@
 2. **脱敏在写入时按白名单执行** —— 黑名单只挡已知字段名，探针加一个新字段就漏
 3. **清单在写入时登记** —— ``manifest.json`` 是唯一真源，正文按 ``id`` 引用
 
+**本模块只写机器层**（`_MACHINE_FIELDS`）。``assertions`` / ``derived`` /
+``non_repo_paths`` / ``notes`` 是人手填的**人工层**，落 ``annotations.json``、由
+``evidence_annotations`` 单写 —— 病根与分层理由见那个模块的 docstring。这里的关键不是
+「保留既有值」而是**无权写**：本模块没有指向人工层的路径（不 import 它、不持有它的落点），
+所以重跑探针不可能碰到人工字段，冲突是结构上不存在的。
+
 探针唯一需要知道的接口::
 
     from evidence_writer import code_sha, write_evidence
@@ -40,6 +46,13 @@ EVIDENCE_DIR = ROOT / "docs" / "evidence"
 MANIFEST = EVIDENCE_DIR / "manifest.json"
 
 STATUSES = ("verified", "runtime-measured", "unverifiable")
+
+# 机器层的字段集合 —— 本模块写出去的东西**恰好**是这些，多一个少一个都在 ``_upsert`` 当场抛错。
+# 人工层（``evidence_annotations.FIELDS``）与本集合必须不重叠，锁里有断言。
+_MACHINE_FIELDS = frozenset({
+    "id", "claim", "status", "artifact", "script", "script_role", "reproduce",
+    "env", "measured_at", "code_sha", "redacted_fields",
+})
 
 # script 字段的两种语义 —— 不加这个字段，区别只活在散文里，锁看不见，
 # 下一个人照抄「verified + script 指向别的文件」的形态就会填出一条真不可复现的条目。
@@ -105,10 +118,6 @@ def write_evidence(
     subset: frozenset[str] | set[str] | None = None,
     reproduce: str | None = None,
     script_role: str = "producer",
-    assertions: list[dict] | None = None,
-    derived: list[dict] | None = None,
-    non_repo_paths: list[str] | None = None,
-    extra_notes: str | None = None,
 ) -> Path:
     """写 ``docs/evidence/<id>.json`` 并 upsert 清单条目（``status = verified``）。
 
@@ -116,11 +125,9 @@ def write_evidence(
     ``claim`` ``script`` ``env`` ``code_sha`` 任一缺失或空白 / ``script_role`` 非法 /
     payload 不是 dict。探针产产物，故 ``script_role`` 默认 ``producer``。
 
-    ``assertions``（``claim`` 里每个数字的产物出处）默认空 —— 探针不传时**锁会红**：
-    实测产物刚跑出来，哪些数字是它的主张，只有作者知道。``derived``（产物里没有直接字段、
-    由已绑定量算出的数字，如合并中位数）与 ``non_repo_paths``（``claim`` / ``notes`` 里
-    解析不到仓库的路径，逐条声明）默认空 —— 新产物多数两者皆无。契约见
-    ``docs/evidence/README.md``。
+    **不接收 ``assertions`` / ``derived`` / ``non_repo_paths`` / ``notes``** —— 那四个是
+    人工字段，探针无权写（新产物的人工层缺席，锁会红，逼作者去 ``evidence_annotations.write``
+    表态）。契约见 ``docs/evidence/README.md``。
     """
     allowed = _ALLOWED_BY_ID.get(evidence_id)
     if allowed is None:
@@ -162,14 +169,10 @@ def write_evidence(
         "script": script,
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
-        "assertions": list(assertions or []),
-        "derived": list(derived or []),
-        "non_repo_paths": list(non_repo_paths or []),
         "env": env.strip(),
         "measured_at": date.today().isoformat(),
         "code_sha": code_sha.strip(),
         "redacted_fields": redacted,
-        "notes": (extra_notes or "").strip(),
     })
     return artifact
 
@@ -183,12 +186,8 @@ def register_artifact(
     code_sha: str,
     measured_at: str,
     script_role: str,
-    assertions: list[dict],
-    derived: list[dict],
-    non_repo_paths: list[str],
     reproduce: str | None = None,
     redacted_fields: tuple[str, ...] | list[str] = (),
-    notes: str | None = None,
 ) -> Path:
     """登记一份**已经在盘上**的产物（迁移冻结快照用，探针不要调这个）。
 
@@ -196,12 +195,10 @@ def register_artifact(
     迁移历史产物时不能重跑顶替（重跑得到的是今天的数字，正文写的是当时的结论），
     所以落点、白名单、字段校验仍与 ``write_evidence`` 同一套，只是不写 payload。
 
-    ``script_role`` / ``assertions`` / ``derived`` / ``non_repo_paths`` **无默认值、必须表态**
-    —— 迁移路径正是最容易静默填错的那条（先例：``incomplete-v5`` 的 ``script`` 指向的不是
-    产出脚本）。给默认值就等于给「照抄时留空」留口子：``assertions`` 是 ``claim`` 与产物之间
-    唯一的连接点，空着它 ``claim`` 就又变回自由文本；``derived`` 空着则等于把「这个数字是
-    算出来的」又塞回散文里；``non_repo_paths`` 空着则把「这条路径不在库」又留给读者猜。
-    没有对应内容时传空列表 —— 那是**表态**，不是省略。
+    ``script_role`` **无默认值、必须表态** —— 迁移路径正是最容易静默填错的那条
+    （先例：``incomplete-v5`` 的 ``script`` 指向的不是产出脚本）。
+    人工字段（``assertions`` / ``derived`` / ``non_repo_paths`` / ``notes``）不在本函数
+    范围内 —— 迁移时另走 ``evidence_annotations.write``，同样无默认值、必须表态。
     """
     if evidence_id not in _ALLOWED_BY_ID:
         raise ValueError(
@@ -226,14 +223,10 @@ def register_artifact(
         "script": script,
         "script_role": script_role,
         "reproduce": reproduce or f"PROBE_EVIDENCE_ID={evidence_id} python {script}",
-        "assertions": list(assertions),
-        "derived": list(derived),
-        "non_repo_paths": list(non_repo_paths),
         "env": env.strip(),
         "measured_at": measured_at.strip(),
         "code_sha": code_sha.strip(),
         "redacted_fields": sorted(redacted_fields),
-        "notes": (notes or "").strip(),
     })
     return artifact
 
@@ -247,7 +240,17 @@ def _check_script_role(script_role: str) -> None:
 
 
 def _upsert(entry: dict) -> None:
-    """清单按 id 替换（不追加第二份），按 id 排序落盘，便于 review diff。"""
+    """清单按 id 替换（不追加第二份），按 id 排序落盘，便于 review diff。
+
+    只收机器层字段：多一个少一个都当场抛错，不写进去。写进去就等于机器层开始持有
+    人工字段，探针重跑也就重新有了冲掉它们的路径 —— 那正是这次要消灭的形态。
+    """
+    got = set(entry)
+    if got != _MACHINE_FIELDS:
+        raise ValueError(
+            f"清单条目字段与机器层 schema 不符：多 {sorted(got - _MACHINE_FIELDS)}、"
+            f"缺 {sorted(_MACHINE_FIELDS - got)}。人工填的字段不属于这里 —— 见 "
+            "tests/perf/evidence_annotations.py。")
     entries: list[dict] = []
     if MANIFEST.exists() and MANIFEST.read_text(encoding="utf-8").strip():
         entries = json.loads(MANIFEST.read_text(encoding="utf-8"))
