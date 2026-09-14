@@ -129,6 +129,9 @@ class MemoryMeta(TypedDict):
     与 scene 同一条规矩：**分量与合成分并列存**，不只留合成分。memory_manager.search
     已算出这几个量（``emo_affinity`` / ``final`` / ``relevance``），接口处只用映射，
     不许重算。（其返回里情绪键叫 ``memory_mood``，此处契约为 ``mood``。）
+
+    也正因 final 不落在 0-1，``EvidenceItem.score`` 对本类恒为 None（见
+    ``memory_evidence`` 的说明）—— 要排序就读这里的 ``final``。
     """
     relevance: float
     importance: int
@@ -139,9 +142,14 @@ class MemoryMeta(TypedDict):
 
 
 class WebMeta(TypedDict):
-    """web 类来源的解释字段。"""
-    url: str
-    source: str
+    """web 类来源的解释字段。
+
+    ``url`` / ``source`` 可以为 None —— 检索到的片段未必带链接（DDG 的 RelatedTopics
+    条目可能没有 FirstURL）。**None 与 "" 是两回事**：取不到就如实 None，不许填空串
+    假装有。``url=None`` 时前端**不得**把它渲染成空链接或死链（commit 5 直接绑这条）。
+    """
+    url: str | None
+    source: str | None
     fetched_at: str
 
 
@@ -181,3 +189,81 @@ class EvidenceItem(BaseModel):
                 f"少={sorted(declared - actual)}（契约见 EVIDENCE_META[{self.kind!r}]）"
             )
         return self
+
+
+# ── 构造入口：键名的唯一出处 ────────────────────────────────────────────
+# 每个 kind 一个工厂，生产方不再手拼 meta dict（键名散在三处 = 将来第四个生产方照样
+# 手拼一个）。工厂**只做两件事**：写键名、纯改名映射（如 memory_mood → mood）。
+# 明令禁止：归一化、裁剪、缺失字段填默认 —— 那会让「编造」藏进工厂，且所有生产方一起
+# 中招（谁在这里塞一句 ``score = min(final, 1.0)``，契约层就开始生产没有依据的数）。
+# 缺字段就该 KeyError/TypeError 当场炸，不许静默补值。validator 退为兜底，防手拼绕过。
+
+def scene_evidence(
+    *,
+    text: str,
+    final: float,
+    semantic: float,
+    emotion_affinity: float,
+    chunk_id: str | None,
+    chapter: str | None,
+) -> EvidenceItem:
+    """scene 来源的构造入口（纯映射，不做任何计算）。"""
+    return EvidenceItem(
+        kind="scene",
+        text=text,
+        score=final,
+        meta=SceneMeta(
+            chapter=chapter,
+            chunk_id=chunk_id,
+            semantic=semantic,
+            emotion_affinity=emotion_affinity,
+            final=final,
+        ),
+    )
+
+
+def memory_evidence(
+    *,
+    text: str,
+    relevance: float,
+    importance: int,
+    age_seconds: float,
+    memory_mood: str,
+    emo_affinity: float,
+    final: float,
+) -> EvidenceItem:
+    """memory 来源的构造入口。``memory_mood → mood`` 是纯改名。
+
+    ``score`` 恒 None：memory 的 ``final = base × (1 + 0.25·emo_affinity)`` 上界 1.25，
+    **不在 EvidenceItem.score 承诺的 0-1 内**，硬压/clamp 是编造契约没承诺的数。
+    前端要排序就用 ``meta["final"]``（同类内可比），不要读 score。
+    """
+    return EvidenceItem(
+        kind="memory",
+        text=text,
+        score=None,
+        meta=MemoryMeta(
+            relevance=relevance,
+            importance=importance,
+            age_seconds=age_seconds,
+            mood=memory_mood,
+            emo_affinity=emo_affinity,
+            final=final,
+        ),
+    )
+
+
+def web_evidence(
+    *,
+    text: str,
+    url: str | None,
+    source: str | None,
+    fetched_at: str,
+) -> EvidenceItem:
+    """web 来源的构造入口。url/source 取不到就是 None，**不许填空串假装有**。"""
+    return EvidenceItem(
+        kind="web",
+        text=text,
+        score=None,
+        meta=WebMeta(url=url, source=source, fetched_at=fetched_at),
+    )

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Callable, Literal, NamedTuple
+from urllib.parse import urlparse
 
-from core.schema import CharacterCard
+from core.schema import CharacterCard, EvidenceItem, memory_evidence, web_evidence
 from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
 from core.utils import try_record_usage
@@ -51,6 +53,95 @@ def _compute_budgets(model: str) -> dict[str, int]:
         "scene": round(total * _SCENE_RATIO),
         "memory": round(total * _MEMORY_RATIO),
     }
+
+
+# ── 检索来源：三源共用的产出/渲染机制 ──────────────────────────────
+# 一次检索 = produce（怎么产出 items）+ fmt（块标题/行格式）。三源共同的「异常降级 /
+# 空结果 / 块渲染 / 两出口的委托」只在 _retrieve_via 一份 —— 三者差异仅此两点。
+
+RetrievalStatus = Literal["hit", "empty", "failed"]
+
+
+class RetrievalResult(NamedTuple):
+    """一次检索的产出：结构（items）+ 视图（block）+ 三态。
+
+    ``block`` 是 prompt 侧用的字符串（渲染自 items；web 例外，见 ``_web_items``）。
+    ``status`` 三值而非 bool：本仓最大的盲点是「失败被吞成正常返回」，而这里天然三态 ——
+    命中 / 真无匹配 / 失败。bool 只分两态，调用方得靠「ok=True 且 items 空」自己推
+    「这是真无」，那又是靠散文约定而不是字段。
+    """
+    block: str
+    items: list[EvidenceItem]
+    status: RetrievalStatus
+
+
+class _BlockFmt(NamedTuple):
+    """块模板：标题 + 行前缀 + 尾注。
+
+    三个模板字面量在本文件各只出现一次 —— 由
+    ``tests/test_context_engine_evidence.py`` 的源码级唯一出处锁守住（防将来新增第四条
+    源自己手拼一块）。
+    """
+    title: str
+    line_prefix: str = ""
+    trailer: str = ""
+
+
+_SCENE_FMT = _BlockFmt(title="【参考原文片段（酌情使用，不要逐字复述）】")
+_MEMORY_FMT = _BlockFmt(
+    title="【你的长期记忆——这些是你和对方之前交流中记住的事】",
+    line_prefix="- ",
+    trailer="\n注意：自然地在对话中体现这些记忆，不要刻意逐条复述。",
+)
+_WEB_FMT = _BlockFmt(title="【角色的见闻感知】")
+
+
+def _render_block(fmt: _BlockFmt, body: str) -> str:
+    """块字符串的**唯一**渲染出口。body 为空 → 空块（不产出光秃秃的标题壳）。"""
+    if not body:
+        return ""
+    return f"{fmt.title}\n{body}{fmt.trailer}"
+
+
+def _ddg_items(data: dict, fetched_at: str) -> tuple[list[EvidenceItem], str]:
+    """把 DDG Instant Answer 的 JSON 拆成 ``(原始片段 items, 拼接文本)``。
+
+    拼接文本就是旧实现的 ``raw_results``（喂给改写阶段的那段），**逐字节相同** ——
+    prompt 侧不许动。items 的 ``text`` 是 DDG 原文，**不是**改写结果：本线只宣称
+    「检索到了什么」。
+
+    url：Abstract 取 AbstractURL，topics 取 FirstURL，**取不到就是 None**（None 与 ""
+    是两回事，不许填空串假装有）。source：Abstract 用 AbstractSource，topics 用 url 的
+    netloc。fetched_at 是一次请求一个时刻，逐条同值。
+
+    只认**顶层**带 Text 的 RelatedTopics 条目、不下钻嵌套 Topics —— 下钻会改变拼接
+    文本（prompt 字节），本轮硬约束是 prompt 侧不变；要不要放开是单独的判定。
+    """
+    abstract = data.get("AbstractText", "") or data.get("Abstract", "")
+    if abstract:
+        return [web_evidence(
+            text=abstract,
+            url=data.get("AbstractURL") or None,
+            source=data.get("AbstractSource") or None,
+            fetched_at=fetched_at,
+        )], abstract
+
+    items: list[EvidenceItem] = []
+    parts: list[str] = []
+    for t in data.get("RelatedTopics", []):
+        if not (isinstance(t, dict) and t.get("Text")):
+            continue
+        url = t.get("FirstURL") or None
+        items.append(web_evidence(
+            text=t["Text"],
+            url=url,
+            source=urlparse(url).netloc if url else None,
+            fetched_at=fetched_at,
+        ))
+        parts.append(t["Text"])
+        if len(parts) >= 3:
+            break
+    return items, "\n".join(parts)
 
 
 class ContextEngine:
@@ -275,82 +366,106 @@ class ContextEngine:
 
     # ── 动态区 ────────────────────────────────────────────────
 
-    def _retrieve_scenes(self, query: str) -> str:
-        """从 RAG 检索相关场景片段（情感加权）。"""
-        if self.rag is None:
-            return ""
+    def _retrieve_via(
+        self,
+        name: str,
+        produce: Callable[[], tuple[list[EvidenceItem], str | None]],
+        fmt: _BlockFmt,
+    ) -> RetrievalResult:
+        """三源共用的机制：跑 produce、异常降级、判空、渲染块 —— 只此一份。
+
+        ``produce() -> (items, body)``：``body=None`` 表示块体由 items 渲染（scene /
+        memory）。web 的块体是**改写结果**，不能用 items 原文渲染（那会把检索原文灌进
+        prompt，改动 prompt 字节），故它显式给 body。
+        """
         try:
-            char_name = self.card.name
-            current_emotion = _detect_emotion(query)
-            # 优先用情感加权检索；若集合无 emotion metadata（chunk 模式）则降级
-            if hasattr(self.rag, "query_with_emotion"):
-                snippets = self.rag.query_with_emotion(
-                    query,
-                    current_emotion=current_emotion,
-                    character_name=char_name,
-                    top_k=3,
-                )
-            else:
-                snippets = self.rag.query(query, character_name=char_name, top_k=3)
+            items, body = produce()
         except Exception as exc:
-            print(f"[ContextEngine] scene RAG failed: {exc}")
-            snippets = []
-        if not snippets:
-            return ""
-        return "【参考原文片段（酌情使用，不要逐字复述）】\n" + "\n".join(snippets)
+            print(f"[ContextEngine] {name} failed: {exc}")
+            return RetrievalResult("", [], "failed")
+        if not items:
+            return RetrievalResult("", [], "empty")
+        if body is None:
+            body = "\n".join(f"{fmt.line_prefix}{it.text}" for it in items)
+        return RetrievalResult(_render_block(fmt, body), list(items), "hit")
+
+    def _retrieve_scenes(self, query: str) -> str:
+        """从 RAG 检索相关场景片段（情感加权）。字符串出口 = 结构出口的 block。"""
+        return self._retrieve_scenes_ex(query).block
+
+    def _retrieve_scenes_ex(self, query: str) -> RetrievalResult:
+        return self._retrieve_via("scene RAG", lambda: self._scene_items(query), _SCENE_FMT)
 
     def _retrieve_memories(self, query: str, current_mood: str | None = None) -> str:
         """从 Mem0 检索长期记忆（含情感加权）。"""
-        if not self.memory or not self.memory.enabled or not self.card_id:
-            return ""
-        try:
-            memories = self.memory.search(query, self.card_id, current_mood=current_mood)
-        except Exception as exc:
-            print(f"[ContextEngine] memory search failed: {exc}")
-            return ""
-        if not memories:
-            return ""
-        mem_block = "\n".join(f"- {m['text']}" for m in memories)
-        return (
-            "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"
-            f"{mem_block}\n"
-            "注意：自然地在对话中体现这些记忆，不要刻意逐条复述。"
+        return self._retrieve_memories_ex(query, current_mood=current_mood).block
+
+    def _retrieve_memories_ex(
+        self, query: str, current_mood: str | None = None
+    ) -> RetrievalResult:
+        return self._retrieve_via(
+            "memory search", lambda: self._memory_items(query, current_mood), _MEMORY_FMT
         )
 
     def _search_web(self, query: str) -> str:
         """两步分离法：搜索 → 角色过滤 → 注入。"""
+        return self._search_web_ex(query).block
+
+    def _search_web_ex(self, query: str) -> RetrievalResult:
+        return self._retrieve_via("Web search", lambda: self._web_items(query), _WEB_FMT)
+
+    # ── 三源各自的 produce（差异点之一） ──────────────────────
+
+    def _scene_items(self, query: str) -> tuple[list[EvidenceItem], str | None]:
+        """rag 的结构化出口。rag 未配置 → 空（真无，不是失败）。"""
+        if self.rag is None:
+            return [], None
+        hits = self.rag.query_with_emotion_ex(
+            query,
+            current_emotion=_detect_emotion(query),
+            character_name=self.card.name,
+            top_k=3,
+        )
+        return list(hits), None
+
+    def _memory_items(
+        self, query: str, current_mood: str | None
+    ) -> tuple[list[EvidenceItem], str | None]:
+        if not self.memory or not self.memory.enabled or not self.card_id:
+            return [], None
+        memories = self.memory.search(query, self.card_id, current_mood=current_mood)
+        return [
+            memory_evidence(
+                text=m["text"],
+                relevance=m["relevance"],
+                importance=m["importance"],
+                age_seconds=m["age_seconds"],
+                memory_mood=m["memory_mood"],
+                emo_affinity=m["emo_affinity"],
+                final=m["final"],
+            )
+            for m in memories
+        ], None
+
+    def _web_items(self, query: str) -> tuple[list[EvidenceItem], str | None]:
+        """web 是两阶段（检索 → 改写）。第一阶段失败上抛（→ failed）；第二阶段失败只
+        降级 body，**items 保留**（检索确实发生过，抹平更绕）。"""
         import httpx
 
         # 第一步：搜索（DuckDuckGo 免费 API）
-        raw_results = ""
-        try:
-            resp = httpx.get(
-                "https://api.duckduckgo.com/",
-                params={"q": query, "format": "json", "no_html": 1},
-                timeout=5,
-            )
-            data = resp.json()
-            raw_results = data.get("AbstractText", "") or data.get("Abstract", "")
-            if not raw_results:
-                topics = data.get("RelatedTopics", [])
-                parts = []
-                for t in topics:
-                    if isinstance(t, dict) and t.get("Text"):
-                        parts.append(t["Text"])
-                    if len(parts) >= 3:
-                        break
-                raw_results = "\n".join(parts)
-        except Exception as exc:
-            print(f"[ContextEngine] Web search failed: {exc}")
-            return ""
-
+        resp = httpx.get(
+            "https://api.duckduckgo.com/",
+            params={"q": query, "format": "json", "no_html": 1},
+            timeout=5,
+        )
+        data = resp.json()
+        items, raw_results = _ddg_items(data, datetime.now(timezone.utc).isoformat())
         if not raw_results.strip():
-            return ""
+            return [], None
+        if not self._llm:
+            return items, ""
 
         # 第二步：角色过滤器（独立 LLM 调用）
-        if not self._llm:
-            return ""
-
         filter_prompt = (
             f"你是「{self.card.name}」的知识过滤器。\n"
             f"角色身份：{self.card.identity}\n"
@@ -366,9 +481,9 @@ class ContextEngine:
         try:
             filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
             self._record_usage("chat_web_filter")
-            if not filtered.strip():
-                return ""
-            return f"【角色的见闻感知】\n{filtered}"
         except Exception as exc:
             print(f"[ContextEngine] Character filter failed: {exc}")
-            return ""
+            return items, ""
+        # 过滤器判定「全不适合」→ prompt 侧无输出、块为空，但来源确实检索到了：items
+        # 照出（这一态的上层表达是 commit 3 的事，这里只保证不丢）。
+        return items, (filtered if filtered.strip() else "")

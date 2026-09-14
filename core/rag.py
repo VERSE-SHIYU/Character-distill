@@ -10,7 +10,7 @@ from chromadb.api.models.Collection import Collection
 from chromadb.errors import NotFoundError
 
 from core.embeddings import create_safe_embedding_fn
-from core.schema import EvidenceItem, SceneMeta
+from core.schema import scene_evidence
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 
@@ -517,19 +517,15 @@ class RAGEngine:
             query_text, current_emotion, character_name, top_k
         )
         items = [
-            EvidenceItem(
-                kind="scene",
+            scene_evidence(
+                # 章节今天无生产方，恒 None（不许塞假章节号）；chunk_id 取
+                # **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本。
+                chapter=(s.meta or {}).get("chapter"),
+                chunk_id=s.chunk_id,
                 text=s.text,
-                score=s.final,
-                meta=SceneMeta(
-                    # 章节今天无生产方，恒 None（不许塞假章节号）；chunk_id 取
-                    # **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本。
-                    chapter=(s.meta or {}).get("chapter"),
-                    chunk_id=s.chunk_id,
-                    semantic=s.semantic,
-                    emotion_affinity=s.emotion_affinity,
-                    final=s.final,
-                ),
+                semantic=s.semantic,
+                emotion_affinity=s.emotion_affinity,
+                final=s.final,
             )
             for s in ranked
         ]
