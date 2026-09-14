@@ -458,6 +458,12 @@ config.yaml 现值（现读，非转述）：
 - **为什么比偶发红更严重**：**打真实 API 的用例本身就是不可信绿**。结论取决于当时的网络与模型输出：网络失败被那条 `except` 兜成 fail-open → 假绿；模型真回一个 `pass: false` → 假红。实测在整套 948 例里出现过 1 次偶发红，单跑 / 单文件 / 重跑整套均绿 —— 「偶发」正是这条信道不可信的证据。
 - **修法方向（未做）**：注入一个 `achat` 必抛的 stub，或显式断言未发生网络调用，锁住「fail-open 不依赖真 LLM」。同族：凡以 `llm=None` 期望 fallback 的用例都要显式隔离。
 
+**29. `agent_loop.py` dedup 分支的 `ok = True` 是死存 —— 与 Evidence 线无关，先记账不动** —— 状态：未修（记录，2026-09-14）
+- **形态**：`core/agent/agent_loop.py` 工具循环里 `if dedup_key in executed:` 分支写 `result_content = "（该工具已用相同参数调用过，请基于已有结果回答）"` 后跟一句 `ok = True`；而 `ok` 的**两处读取**（`steps.append` 的 `"ok": ok`、`if ok and result_content and result_content != EMPTY_RESULT` 的 `retrieved.append`）都在 `else` 分支内、紧随它自己的 `ok = result.ok` 之后。全文件 `\bok\b` 命中 6 处（含两行注释），无一处在该分支之外读 `ok` —— 按当前事实是**写了没人读**。
+- **为什么仍不当「可随手删」**：Evidence commit 3 刚把 dedup 分支的语义定死 = **没发生第二次检索**（不产新 trace、不追加 `steps`），所以「这个位置原先有过一个 if/else 之外的 `steps.append`」是很可能的来路。若将来有人把 dedup 也算进 `steps`，这行就变成**没有执行支撑的 `ok=True`** —— 与本仓「失败被吞成正常返回」同族：用一个没依据的默认值把「没发生」写成「成功」。删还是留取决于那条路径将来收不收步骤，属**待裁**。
+- **为什么不现在修**：与 Evidence commit 4 无关，改动它会把这个 commit 混入无关 diff（违反「无关改动分开 commit」）；且死存不产生行为差异，留着不影响本轮任何断言。
+- **处置**：等 Evidence 线收完再定 —— 要么删，要么按「dedup 也记步」补 `steps.append`。判据命令：`git grep -n '\bok\b' core/agent/agent_loop.py`。
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
