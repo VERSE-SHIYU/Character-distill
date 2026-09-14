@@ -10,6 +10,7 @@ from chromadb.api.models.Collection import Collection
 from chromadb.errors import NotFoundError
 
 from core.embeddings import create_safe_embedding_fn
+from core.schema import EvidenceItem, SceneMeta
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 
@@ -93,6 +94,18 @@ class SceneHits(list):
         candidates_exhausted: 扩大候选重取后，按 characters 过滤仍不足请求条数。
             为 True 表示「返回得比要的少，且已无候选可取」——调用方必须能看见，
             不能把少返回当成正常结果（本仓第五次同类缺陷：失败被吞成正常返回）。
+    """
+
+    def __init__(self, items: Any = (), *, candidates_exhausted: bool = False) -> None:
+        super().__init__(items)
+        self.candidates_exhausted = candidates_exhausted
+
+
+class EvidenceHits(list):
+    """结构化检索结果（Evidence 线）。与 SceneHits 同形：list 子类 + candidates_exhausted。
+
+    元素是 ``core.schema.EvidenceItem``。与 SceneHits 分成两个类型是有意的 ——
+    字符串出口与结构化出口互不改变对方的返回语义（开闭：新增而非修改已稳定代码）。
     """
 
     def __init__(self, items: Any = (), *, candidates_exhausted: bool = False) -> None:
@@ -345,28 +358,28 @@ class RAGEngine:
 
             return _take(docs), _take(dists), _take(metas), exhausted
 
-    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
-    def query_with_emotion(
+    def _rank_with_emotion(
         self,
         query_text: str,
-        current_emotion: str = "平静",
-        character_name: str | None = None,
-        top_k: int = 3,
-    ) -> list[str]:
-        """情感加权检索：语义相似度 0.7 + 情感匹配 0.3。
-
-        Args:
-            query_text: 用户消息。
-            current_emotion: 当前对话情感（由调用方判断）。
-            character_name: 按角色过滤。
-            top_k: 最终返回数量。
+        current_emotion: str,
+        character_name: str | None,
+        top_k: int,
+    ) -> tuple[list[tuple[float, float, float, str, dict[str, Any] | None]], bool]:
+        """情感加权排序的**唯一实现**，两个公开出口都从这里取序。
 
         Returns:
-            按 final_score 排序的 SceneHits。过滤后取不满时 ``candidates_exhausted``
-            为 True（日志同时如实报告），不静默少返回。
+            ``(ranked, exhausted)``。ranked 是截断到 top_k、按 final 降序的
+            ``(final, semantic, emotion_affinity, doc, meta)`` 五元组列表。
+
+        semantic / emotion_affinity 是**未加权原始分量**，final 是
+        ``0.7·semantic + 0.3·emotion_affinity``。拆开存是硬要求：只留 final，
+        「这条凭什么排在前面」就无从解释。
+
+        排序稳定性：list.sort 稳定，同分项保持候选原序；两个出口从同一个列表取序，
+        故条序与内容必然一致（锁见 tests/test_rag_evidence_contract.py）。
         """
         if self.collection is None:
-            return SceneHits()
+            return [], False
 
         docs, dists, metas, exhausted = self._fetch_candidates(
             query_text,
@@ -376,7 +389,7 @@ class RAGEngine:
         )
 
         if not docs:
-            return SceneHits(candidates_exhausted=exhausted)
+            return [], exhausted
 
         _EMO_DISTANCE: dict[tuple[str, str], float] = {
             ("悲伤", "悲伤"): 1.0, ("愤怒", "愤怒"): 1.0,
@@ -404,15 +417,81 @@ class RAGEngine:
 
         max_dist = max(dists) if dists else 1.0
         max_dist = max(max_dist, 1e-6)
-        scored = []
+        ranked: list[tuple[float, float, float, str, dict[str, Any] | None]] = []
         for doc, dist, meta in zip(docs, dists, metas):
             semantic = 1.0 - dist / max_dist
             emotion = (meta or {}).get("emotion", "平静")
-            final = 0.7 * semantic + 0.3 * emo_sim(current_emotion, emotion)
-            scored.append((final, doc))
+            emotion_affinity = emo_sim(current_emotion, emotion)
+            final = 0.7 * semantic + 0.3 * emotion_affinity
+            ranked.append((final, semantic, emotion_affinity, doc, meta))
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return SceneHits([doc for _, doc in scored[:top_k]], candidates_exhausted=exhausted)
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        return ranked[:top_k], exhausted
+
+    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
+    def query_with_emotion(
+        self,
+        query_text: str,
+        current_emotion: str = "平静",
+        character_name: str | None = None,
+        top_k: int = 3,
+    ) -> list[str]:
+        """情感加权检索：语义相似度 0.7 + 情感匹配 0.3。
+
+        Args:
+            query_text: 用户消息。
+            current_emotion: 当前对话情感（由调用方判断）。
+            character_name: 按角色过滤。
+            top_k: 最终返回数量。
+
+        Returns:
+            按 final_score 排序的 SceneHits。过滤后取不满时 ``candidates_exhausted``
+            为 True（日志同时如实报告），不静默少返回。
+        """
+        ranked, exhausted = self._rank_with_emotion(
+            query_text, current_emotion, character_name, top_k
+        )
+        return SceneHits([doc for _, _, _, doc, _ in ranked], candidates_exhausted=exhausted)
+
+    @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
+    def query_with_emotion_ex(
+        self,
+        query_text: str,
+        current_emotion: str = "平静",
+        character_name: str | None = None,
+        top_k: int = 3,
+    ) -> EvidenceHits:
+        """``query_with_emotion`` 的结构化出口：同一份排序，附解释字段。
+
+        **prompt 侧产出与原方法逐字节相等** —— ``[e.text for e in 本方法(...)]``
+        与原方法返回逐元素相同、同序。这是硬不变量，双向锁在
+        ``tests/test_rag_evidence_contract.py``（离线基线 + 两出口相等）。
+        prompt 一变模型行为就漂移，40 例离线评测的结论会静默作废。
+
+        与 ``query_with_emotion`` **共用 span 名** ``rag.query_emotion``：检索命中
+        指标口径不因多一条出口而分叉。
+        """
+        ranked, exhausted = self._rank_with_emotion(
+            query_text, current_emotion, character_name, top_k
+        )
+        items = [
+            EvidenceItem(
+                kind="scene",
+                text=doc,
+                score=final,
+                meta=SceneMeta(
+                    # 章节今天无生产方；scene_index 即该场景在集合内的块标识
+                    # （chroma id 为 scene_{i}）。两者来源如实标注，不编造。
+                    chapter=(meta or {}).get("chapter"),
+                    chunk_id=(meta or {}).get("scene_index"),
+                    semantic=semantic,
+                    emotion_affinity=emotion_affinity,
+                    final=final,
+                ),
+            )
+            for final, semantic, emotion_affinity, doc, meta in ranked
+        ]
+        return EvidenceHits(items, candidates_exhausted=exhausted)
 
     @staticmethod
     def _peek_dimension(col: Collection) -> int | None:

@@ -1,6 +1,8 @@
 """角色卡与相关结构的 Pydantic 模型定义。"""
 
-from pydantic import BaseModel
+from typing import Any, Literal, TypedDict
+
+from pydantic import BaseModel, model_validator
 
 # 预设标签列表 — 用于角色分类和 AI 自动打标
 PRESET_TAGS = [
@@ -80,3 +82,86 @@ class CharacterCard(BaseModel):
     psyche: PsycheProfile = PsycheProfile()
     cognitive: CognitiveProfile = CognitiveProfile()  # 认知/语言画像
     awakening_message: str = ""  # 蒸馏完成时生成的苏醒台词
+
+
+# ── Evidence：检索来源的结构化契约 ─────────────────────────────────────
+# 「检索来源」面板的数据契约：**只描述检索层产出了什么**，不描述下游怎么渲染 ——
+# 这里不许出现「折叠 / 卡片 / 图标 / 颜色」这类前端概念（依赖倒置：契约不依赖渲染）。
+#
+# 为什么 meta 是 dict 而非把三类字段摊平进 EvidenceItem：三类来源的字段各自演化
+# （scene 谈心理解释、memory 谈记忆强度、web 谈出处），摊平会让每个 kind 都拖着
+# 一堆恒为 None 的键。代价是 dict 天生可以「随便塞」—— 所以每个 kind 的键集在下面
+# 用 TypedDict 显式声明，并由 EvidenceItem 的运行期校验门强制（不是只写在注释里）。
+#
+# 选 TypedDict 而非校验函数的理由：声明的键集本身可被机器读（``__annotations__``），
+# 于是「声明」与「校验」同源 —— 校验函数要自带一份键名副本，那是第二份手维护清单，
+# 两份必然漂移（本仓缺陷 21 / 25 的形态）。
+
+EvidenceKind = Literal["scene", "memory", "web"]
+
+
+class SceneMeta(TypedDict):
+    """scene 类来源的解释字段。
+
+    semantic / emotion_affinity 是**未加权的原始分量**，final 是加权和
+    （``0.7·semantic + 0.3·emotion_affinity``）—— 三者并列才解释得了 final 从哪来；
+    只留 final，可解释性就没了。
+    """
+    chapter: str | None       # 章节；今天无生产方（scene_indexer 只写 emotion/characters/scene_index），恒 None
+    chunk_id: str | None      # 块标识，取 chroma 元数据 scene_index
+    semantic: float           # 语义相似度原始分量 0-1
+    emotion_affinity: float   # 情感匹配原始分量 0-1
+    final: float              # 加权总分 0-1
+
+
+class MemoryMeta(TypedDict):
+    """memory 类来源的解释字段（memory_manager.search 已在算：见其返回的 memory_mood）。"""
+    relevance: float
+    importance: int
+    age_seconds: float
+    mood: str
+
+
+class WebMeta(TypedDict):
+    """web 类来源的解释字段。"""
+    url: str
+    source: str
+    fetched_at: str
+
+
+# kind → 键集契约的唯一出处：EvidenceItem 的运行期校验门与测试都从这里读，不另存副本
+EVIDENCE_META: dict[str, Any] = {
+    "scene": SceneMeta,
+    "memory": MemoryMeta,
+    "web": WebMeta,
+}
+
+
+class EvidenceItem(BaseModel):
+    """一条检索来源（原文 / 记忆 / 网络）—— 只宣称「检索到了什么」。
+
+    **不宣称「模型据此生成」**：本仓 judge 证伪（κ≈0）与 arXiv 2606.28358 的激活
+    修补实验同向 —— 内联引用会在答案并未真正基于来源时制造可验证的假象。故字段
+    只描述来源本身，措辞一律「检索来源」，不用「依据」「引用」。
+
+    Attributes:
+        kind: 来源类别。三种就是三种，不留第四种的扩展点。
+        text: 命中原文（交给下游渲染的那段字）。
+        score: 归一化到 0-1 的相关度；该类没有可比分数时为 None。
+        meta: 该 kind 专属的解释字段，键集由 ``EVIDENCE_META[kind]`` 声明并在此强制。
+    """
+    kind: EvidenceKind
+    text: str
+    score: float | None = None
+    meta: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _meta_keys_match_contract(self) -> "EvidenceItem":
+        declared = set(EVIDENCE_META[self.kind].__annotations__)
+        actual = set(self.meta)
+        if actual != declared:
+            raise ValueError(
+                f"{self.kind} 的 meta 键集与契约不符：多={sorted(actual - declared)} "
+                f"少={sorted(declared - actual)}（契约见 EVIDENCE_META[{self.kind!r}]）"
+            )
+        return self
