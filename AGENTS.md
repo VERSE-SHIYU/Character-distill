@@ -546,12 +546,35 @@ config.yaml 现值（现读，非转述）：
 - **教训（落笔时没走完静态链）**：「静态读出」这个标注救不了**没追到源头**的静态链 —— 我只读到 `get_distiller` 自己的两个分支就落了笔，没跟到 `get_user_llm` 的 fallback，于是把**一对互斥条件**当成了可同时成立的组合。核一条静态结论，必须把**每个分支的入参从哪来**追到源头（此处就是那句 `return get_llm()`）；只读被判对象自己，等于只读了半条链。与 §四「别人给的 premise 与代码不符时，报更正」同族 —— 那次是别人的 premise 错，这次是**我自己顺着一个看起来自洽的 premise 往下推**。
 - **判据命令**：`git grep -n 'distiller\._user_id\|distiller\._storage'`（写点数应为 1）、`git grep -n 'global _distiller\|_distiller = Distiller\|return get_llm()' web/deps.py`
 
-**38. `/run` 把 `DistillError` 的运维口径 `str(exc)` 直接当 400 响应体上屏** —— 状态：**记账（不修，待裁范围）**（2026-09-14，修 34 时顺带发现）
+**38. `/run` 把 `DistillError` 的运维口径 `str(exc)` 直接当 400 响应体上屏** —— 状态：**已修**（commit `8aec1a4`，2026-09-14；修 34 时顺带发现）
 - **症状**：走 `/run` 这条蒸馏路径时，任何 `DistillError` 都会把「上屏口径｜运维口径」整串返回给用户。例：Map 失败率门控抛的那条会以 400 返回 `蒸馏失败：部分片段处理失败，请重试｜3/4 个分片失败；最后错误：connection timeout` —— 分片计数与上游原始错误**都是内部标识**，正是缺陷 17 明令不上屏的东西。
 - **根因**：`web/routers/distill.py` 的 `/run` 异常处理写成 `except ValueError as exc: raise HTTPException(400, str(exc))`，而 `DistillError` **继承 `ValueError`**（`core/distiller.py`，为了不改路径上既有的 `except ValueError` 语义），且其 `str()` 被**刻意**定义成运维口径（`f"{user_message}｜{ops_detail}"`）。两条设计各自都对，撞在一起就成了泄漏。同一条路由里 Map 门控（`core/distiller.py:1347`、`:1351`）抛的 `DistillError` **早就在走这条路**，本条不是 34 的修复引入的 —— 34 的修复只是又加了一个走同一形状的入口。
 - **为什么流式两条链没这个问题**：`/start` 的 `_run_distill_task` 与 `/run_stream` 的 error 帧都经 `user_facing_error(exc)`（`adapters/llm_adapter.py:374-376` 取 `exc.user_message`）**唯一出口**收敛；只有 `/run` 这条没走那个出口。
-- **处置方向（记在条目里，不实现）**：在 `except ValueError` **之前**补一条 `except DistillError: raise HTTPException(400, user_facing_error(exc))`（`DistillError` 是 `ValueError` 的子类，顺序不能反）。范围待裁：是只修这一处，还是把「路由层取上屏文案必须经 user_facing_error」扩成一条形态锁（现有 `tests/test_error_user_facing.py` 扫的是 core 侧的上屏出口，**看不见路由层的 `str(exc)`**）。
-- **判据命令**：`git grep -n 'except ValueError as exc' web/routers/distill.py`、`git grep -n 'user_facing_error' web/routers/distill.py`（后者对 `/run` 零命中即为本条）
+- **修法（不是「每个路由各调一次 `user_facing_error`」，是「一处注册处理器」）**：路由层只 `raise` 领域异常，**不碰文案、不碰状态码** —— 这两样本就不是它的职责。集中在 `web/server.py::register_domain_error_handlers` 定义「异常类型 → 码」：`_DOMAIN_ERROR_STATUS = {DistillError: 400}`，文案一律调 `adapters.llm_adapter.user_facing_error`，**不新建第二张消息表**（表里只有码）。这样「新增一种异常 = 表里加一行」，零路由改动。
+  - **表搬家不是再造**：`web/routers/chat.py` 原先自己那张 `finish_reason → 状态码` 表（content_filter→400 / length→502 / 资源不足→503 / 未登记兜 502）整段搬到 `_INCOMPLETE_STATUS`；`chat._do_chat` 改为「`llm_error_payload(exc) is not None` 就 re-raise」，让异常走到出口再配码。
+  - **`register_domain_error_handlers(target_app)` 抽成函数**：测试能在**自己的最小 app** 上装同一份注册 —— 测试与生产共用这一处，才拦得住「注册表被改空而测试没动」的变异（在测试里另抄一份注册表，注册表被改空测试照样绿）。
+  - **不注册 `StoreError`**：`storage/base.py` 的类注释已把「记 traceback 并回 500」指派给下面的全局 `Exception` 处理器。在此注册会**丢掉 traceback** —— 那是降级，不是统一。
+  - **边界锁的绕行（方案与原始设想不同，此处必须写明）**：`tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage` 是**文本级**锁（`core/` `web/` `storage/` 下任何 `.py` 都不得出现 `IncompleteResponseError` 字符串，注释与 docstring 也拦）⇒ **`web/server.py` 根本不能 import 该类**，「注册处写 `isinstance` 不违反」这个设想不成立。解法：由 `adapters/llm_adapter.py` 发布 `llm_error_types()` 返回类型元组（adapters 不在扫描范围），`web/` 只循环注册**不透明的类对象**、不写类名。新增一种 LLM 失败 = 元组里加一个类，装配层零改动。
+  - **Q4 判据（三种响应形状，接口隔离）**：非流式（响应头未发，handler 能配码）／真 SSE（异常发生时 **HTTP 200 + event-stream 已在线**，处理器产出的是**第二个响应**、Starlette 不会再发 —— **管不到，不是不让管**）／后台任务（连响应都没有，只能写任务状态行）。故**统一的是「文案出口」，码归各形状自己**；把 SSE / 任务硬塞进那张 `(status, text)` 表 = 给不消费 `status` 的调用方发它用不上的字段。那两条继续用 `user_facing_error` 取文案，共用同一份口径链。
+  - **一期不动的那 53 处**：见 §四「加了全局处理器 ≠ 所有路径都走它」那条（会先于 handler 拦下 / 30 处文案逐字重复 / 两句通用文案应择一）。
+- **范围边界（三类不迁，**代码里都留了注释**说明为什么不迁 —— 否则下一个人会「顺手统一」把它们一起收进去）**：
+  - **A 类 3 处**（`web/routers/text.py` ×2、`web/routers/history.py` ×1 的 `except ValueError → HTTPException(400, str(exc))`）：裸 `ValueError` 是**用户输入/属主校验失败**，不是领域异常 —— `TextManager` 抛的文案本身就是上屏口径（如「文件编码无法识别，请另存为 UTF-8 后重新上传」）。它没有 `user_message`，走 `user_facing_error` 会落到 `_GENERIC_USER_ERROR`（「服务暂时不可用」）= **删信息**。**「用户输入校验失败」和「领域异常」是两类东西，不该为统一而统一。**（`web/routers/distill.py` 的两处 `except ValueError` 同理，也留了注释。）
+  - **B 类 8 处**（`web/routers/inter_node.py` 全部 `except Exception → HTTPException(500, f"...: {exc}")`）：本路由的「用户」是**对端部署的运维**，异常原文是跨节点排障的唯一线索。收到统一出口后对面只剩「操作失败，请稍后重试」，是把可排障变成不可排障。一般化：**上屏文案该不该收，看有没有正当消费者，不看它像不像泄漏。**
+  - **C 类 8 处是真泄漏，本期已收**：`voice.py` ×2（ffmpeg `stderr` 含服务器路径）、`market.py` ×2（pydantic 字段级报错 / 上游原文）、`distill.py` 卡片校验 ×1（pydantic 报错）、`server.py` ×1（`Update config failed` 带 `{exc}`）——原文本改只进日志，上屏换为人话。
+- **回归锁**：`tests/test_domain_exception_exit.py`（A 注册面 / B 非流式 `/run` / **C 反向验收** / D 另两种形状）。**变异验证**：把 `DistillError` 从 `_DOMAIN_ERROR_STATUS` 删掉 → `test_b1_run_distill_error_is_400_...` 红在 **500 ≠ 400**（`raise_server_exceptions=False` 让「没被接住」表现为 500 而非炸成 error）。
+- **反向验收（证明没顺手把 A 类一起迁走）**：`tests/test_security_authz.py::TestErrorSanitization::test_10_value_error_400` 仍绿 —— 它断言 `/export` 的 400 detail 里 `"xlsx" in detail`，A 类被迁则用户需要的信息消失、该条变红。
+- **判据命令**：`git grep -n 'except ValueError as exc' web/routers/distill.py`、`git grep -n '_DOMAIN_ERROR_STATUS\|llm_error_types' web/server.py`
+
+**39. `text_manager.py` 的上屏文案里嵌了第三方库的异常原文 `{str(e)}`** —— 状态：**记账（不修，待裁范围）**（2026-09-14，缺陷 38 收口时顺带普查）
+- **事实**：`core/text_manager.py` 三处把库的异常原文拼进**用户可见**的 `ValueError` —— `:284` `f"PDF 文件无法打开（可能已损坏或加密）：{str(e)}"`、`:300` `f"PDF 解析失败：{str(e)}"`、`:323` `f"DOCX 解析失败: {str(e)}"`（`e` = PyPDF / python-docx 抛出的异常）。
+- **定性**：与缺陷 38 **同形态（上屏文案带内部原文）的轻度泄漏**。轻在「多数情况下确实对用户有用（哪一步坏了）」；重在**泄漏面不可控** —— 库异常原文里常带本机文件路径或库内部结构，且随依赖版本变。
+- **判据（不是本条的理由，是本类问题的判据 —— 缺陷 38 的 A/C 分界同用这一条）**：**问「这段文字是为谁写的」，不问「它像不像泄漏」。**
+  - 为人写的（本仓自己构造的用户文案，如 `text.py` / `history.py` / `distill.py` 的 A 类 `str(exc)`）→ 上屏**是信息**，收走就是**删信息**。`except ValueError → 400, str(exc)` 在这类里是正确写法，不该为「统一」而统一。
+  - 为机器 / 排障写的（第三方库的异常原文、pydantic 字段级报错、ffmpeg `stderr`、内部计数与上游原始码）→ 上屏**是泄漏**，原文只进日志。
+  - 判据可判定：取那句文案，问「作者写下它时，读者是用户还是开发者」。答不上来即说明文案本身没想清楚，这本身就是缺陷。
+  - 本条与 A 类的分界即由此推出：同样是 `str(exc)`，A 类拼的是**本仓为人写的**文案，本条拼的是**第三方库的**异常原文 —— 它从来不是为人写的。`B 类（inter_node）` 同样由此判：原文的读者是**对端运维**（是「人」，但是开发侧的人）→ 保留。
+- **处置方向（记在条目里，不实现）**：把 `{str(e)}` 换成按**异常类型**给的人话（如「文件已加密，请解除密码后重试」），原文只进日志。范围待裁：三处是否同一类库异常形态、值不值得一条「第三方异常原文不上屏」的普查。
+- **判据命令**：`git grep -n 'parse failed\|str(e)' core/text_manager.py`
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
@@ -603,6 +626,7 @@ config.yaml 现值（现读，非转述）：
 - **「X 消失了」不足以证明 Y 修好了——要找独立、可交叉验证的指标**。案例：关掉思考后「空正文片数 3→0」，但空正文消失本身也可能只是采样波动，用它证明「思考关掉了」是同义反复。真正的实证是 **tokens / 正文字符 3.85 → 0.62**，与本仓自己的 `_estimate_tokens = int(len*0.6)` 吻合——两个互相独立的量对上，结论才立得住
 - **别人给的 premise 与代码不符时，报更正、只修真缺口，不去实现那个不存在的修复**。案例：SSE「截断会硬断流，因为 `_next_piece` 只捕 `StopIteration`」——实读 `chat.py` 外层 `except` 早已 `yield {"error": ...}`、`client.js` 早已渲染，连接不会掉。真缺口是**可识别性**（帧里没有 `code`/`finish_reason`）与**文案漏内部标识**，修的是这两样。按错前提动手会改出一段无人需要、还掩盖真问题的代码
 - **兜底门若判「输出空不空」，而上游能对非法输入产出非空结果，这道门就是结构性失效的 —— 判据要落在「输入是否合法」，不是「输出是否为空」**。案例：缺陷 34 的 Reduce。`if not profile_draft.strip()`（`core/distiller.py:1726`）看着是「归并没产出就报错」的兜底，但上游 `len(batch_results) <= self.SAFE_SINGLE_REDUCE`（`:1711`，阈值 `80`，`:223`）在 `batch_results` **为空时必然成立** → 对**零条分析**再发一次归并请求（`_single_reduce_stream([])`）→ 模型对空输入照样能产出非空内容 → 兜底门**在结构上不可能拦住**。要点：这道门的命题是「输出为空 ⇒ 失败」，而真实的失败形态是「**输入非法但输出非空**」—— 两者不是同一个集合。一般化：**凡「输出为空即失败」形状的守卫，先问「上游能不能对空/非法输入产出非空输出」**；能，则守卫必须**前移到输入校验**（此处：`batch_results` 全空即应中止，那一次调用连发都不该发）。与本节的「凡『所有 X 都满足 P』先问 X 会不会是空集」同族 —— 两条都在问**守卫的判据与被守的失败形态是不是同一个**；判据与被守对象错位时，守卫绿不代表没失败，只代表**失败长得不像它要找的样子**
+- **「加了一个集中的出口」≠「所有路径都走这个出口」—— 更靠内的 `except` 先拦下，处理器永远看不到那些异常**。判据：改「异常 → 响应」的口径前，先数**有多少处自己 `except` 并就地构造响应**；那些点不经处理器，口径改不到它们。案例（2026-09-14，缺陷 38 收口，AST 现数）：`web/` 28 个文件里 79 处 `raise` 落在 `except` 块内，其中 **53 处是 `except Exception → HTTPException(500, ...)`**。它们与全局处理器**产出同一个 500**（`web/server.py:219` 的「服务器内部错误，请稍后重试」），故第一期**零行为变化**就放过了 —— 但它们的性质是**冗余，不是被替代**：异常在那里就停了，全局处理器只兜住剩下的。两个顺手记的账：① **同一行为被复制 30 遍**（30 处文案逐字相同「操作失败，请稍后重试」），将来改这句要动 30 处；② **两句通用文案表示同一件事**（「操作失败，请稍后重试」vs 全局的「服务器内部错误，请稍后重试」），统一时应择一。一般化：**「集中」是装配动作，「覆盖」是路径计数** —— 前者做完就看得见（注册一行），后者要真的数，且数出来的缺口**不会自己报错**（这个 500 和那个 500 长得一模一样）。
 - **修复一处越权 ≠ 这一类修完**。案例：`text.py` 上报的越权与 `voice.py` 两处同形（都因「注入 `user` 却不引用」）；用 AST 扫一遍全仓同类形态，才把 9 处一次分清（3 真越权 / 6 良性），并把扫描固化成测试（见缺陷 9）。逐处手工排查会漏，且下次照旧
 - **判「这条 SQL 有没有按身份收窄」时，JOIN 条件不算数 —— 只有 WHERE 筛得掉非属主行**。`JOIN users u ON c.user_id = u.id` 只约束连接行怎么配对，不排除任何行；把它当成身份过滤，会让「无过滤」的原语看起来已收窄。案例：缺陷 19 的普查初版据此把 `get_card` 误判为「已收窄」，命中数 **41**；把判据限定到 WHERE 子句（先在 `GROUP BY`/`ORDER BY`/`LIMIT`/`HAVING` 处截断，再测身份列谓词）后为 **46**。一般化：**判定一个条件是否构成「过滤」，必须问「它能否独立地排除目标行」，而不是「它提到了这个列」**——同一个列名出现在 JOIN ON、ORDER BY、SELECT 列表里，都不构成过滤。**同族推论：签名里有身份参数，也不证明那个参数参与了筛选** —— 静态锁把「有身份参数」单独当作已收窄的充分条件，于是「参数还在、SQL 不再用它」隐形。该盲区已由缺陷 25 的判据 v2 修掉（只认 WHERE 谓词事实），运行期语义用例仍作第二层兜底（§四「锁绿 ≠ 读取安全」）
 - **变异实验会暴露判据本身的盲区，不只是实现的缺陷**。判据要**故意构造「刚好绕过它」的形态**去撞，而不是只撞「明显的错」。案例：缺陷 19 收口时对 PG 版 `get_card_owned` 的变异是「删 `AND c.user_id = $2`、**保留签名参数**」——照理该红却**绿**；暴露的不是 PG 实现有问题，是**判据把「签名有身份参数」当成了「已收窄」的充分条件**（代理指标还留了半个）。据此把判据改成只认 WHERE 谓词事实（缺陷 25），并把那次变异固化成 `test_storage_scope_lock.py::test_criterion_probe_is_not_vacuous` 的负控。一般化：**一条锁的盲区，只有「为绕过它而设计」的变异才照得出来** —— 设计变异时先问「什么样的错误形态能从这个判据下溜走」，再照着造
