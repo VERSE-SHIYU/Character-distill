@@ -33,7 +33,10 @@ ROUTER_SYSTEM_PROMPT = (
 @dataclass
 class AgentLoopResult:
     messages: list[dict]             # 追加了 assistant(tool_calls)/tool 消息后的完整数组
-    steps: list[dict]                # 每步记录 {tool, args, ok, elapsed_ms}
+    # **实际执行过**的工具调用台账：每条 = 一次执行 {tool, args, ok, elapsed_ms}。
+    # 去重（dedup，见 run()）没发生执行 → 不入。与 MAX_STEPS **不同义**：后者数的是
+    # 决策轮次，一轮可发多个调用，故本字段条数可大于轮数（一轮三调用 → +3 条一轮）。
+    steps: list[dict]
     degraded: bool                   # True = 上层应走 legacy 路径
     retrieved: list[tuple[str, str]] = field(default_factory=list)  # 仅 ok=True 且内容非空的结果
     # 证据侧出口：每次真实工具调用的 SourceTrace，按调用顺序。与 retrieved 是**两个口径**——
@@ -67,6 +70,15 @@ class AgentLoop:
 
         *character_hint* 是角色背景提示（如完整 system prompt 或角色一句话），
         实际发给 LLM 的是 ROUTER_SYSTEM_PROMPT + 截断至前 300 字符的角色背景。
+
+        三个台账**各记各的事实**，互不代偿（同一事件在三处的表述必须一致）：
+
+          ``messages``  = **模型经历的** —— 模型视野的完整数组，含去重那一轮的回填
+          ``steps``     = **实际执行的** —— 每次真实调用一条，带耗时与成败
+          ``evidence``  = **检索发生的** —— 每次真实调用的 ``SourceTrace``，含空/失败/超时
+
+        去重（dedup）是**编排层决策**，不是工具执行结果：没有执行、没有检索，故只进
+        ``messages``。把它塞进 ``steps`` 会让同一事件在两个台账里说法相反。
         """
         original = messages
         messages = list(messages)  # 工作副本，所有 append 只发生在副本上
@@ -122,8 +134,10 @@ class AgentLoop:
 
                 dedup_key = (name, json.dumps(args, sort_keys=True))
                 if dedup_key in executed:
+                    # 编排层决策，**不是**工具执行结果：不记 steps（没发生执行，也就无所谓耗时
+                    # 与成败）、不产新 trace（同一查询没发生第二次检索，Evidence commit 3 定死）。
+                    # 模型确实收到了这一轮回填 —— 那记在 messages 里。三个台账对同一事件一致。
                     result_content = "（该工具已用相同参数调用过，请基于已有结果回答）"
-                    ok = True
                 else:
                     executed.add(dedup_key)
                     with T.span("agent.execute_tool", op="execute_tool", attrs={"tool": name}):
@@ -136,6 +150,8 @@ class AgentLoop:
                         "ok": ok,
                         "elapsed_ms": result.elapsed_ms,
                     })
+                    # 定位：**执行台账**（「实际跑了哪几次、各花多久、块空不空」）。三键当前
+                    # 无判定读者（全仓只读 tool 名与条数），保留是给调试/可观测留的；见缺陷 31。
                     # 证据侧：与 ok 无关地收下（空/失败/超时也是「检索发生过」的证据）；
                     # trace=None（未知工具/缺 query）表示压根没检索，不入。
                     if result.trace is not None:

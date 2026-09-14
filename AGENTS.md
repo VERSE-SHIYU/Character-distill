@@ -458,11 +458,14 @@ config.yaml 现值（现读，非转述）：
 - **为什么比偶发红更严重**：**打真实 API 的用例本身就是不可信绿**。结论取决于当时的网络与模型输出：网络失败被那条 `except` 兜成 fail-open → 假绿；模型真回一个 `pass: false` → 假红。实测在整套 948 例里出现过 1 次偶发红，单跑 / 单文件 / 重跑整套均绿 —— 「偶发」正是这条信道不可信的证据。
 - **修法方向（未做）**：注入一个 `achat` 必抛的 stub，或显式断言未发生网络调用，锁住「fail-open 不依赖真 LLM」。同族：凡以 `llm=None` 期望 fallback 的用例都要显式隔离。
 
-**29. `agent_loop.py` dedup 分支的 `ok = True` 是死存 —— 与 Evidence 线无关，先记账不动** —— 状态：未修（记录，2026-09-14）
-- **形态**：`core/agent/agent_loop.py` 工具循环里 `if dedup_key in executed:` 分支写 `result_content = "（该工具已用相同参数调用过，请基于已有结果回答）"` 后跟一句 `ok = True`；而 `ok` 的**两处读取**（`steps.append` 的 `"ok": ok`、`if ok and result_content and result_content != EMPTY_RESULT` 的 `retrieved.append`）都在 `else` 分支内、紧随它自己的 `ok = result.ok` 之后。全文件 `\bok\b` 命中 6 处（含两行注释），无一处在该分支之外读 `ok` —— 按当前事实是**写了没人读**。
-- **为什么仍不当「可随手删」**：Evidence commit 3 刚把 dedup 分支的语义定死 = **没发生第二次检索**（不产新 trace、不追加 `steps`），所以「这个位置原先有过一个 if/else 之外的 `steps.append`」是很可能的来路。若将来有人把 dedup 也算进 `steps`，这行就变成**没有执行支撑的 `ok=True`** —— 与本仓「失败被吞成正常返回」同族：用一个没依据的默认值把「没发生」写成「成功」。删还是留取决于那条路径将来收不收步骤，属**待裁**。
-- **为什么不现在修**：与 Evidence commit 4 无关，改动它会把这个 commit 混入无关 diff（违反「无关改动分开 commit」）；且死存不产生行为差异，留着不影响本轮任何断言。
-- **处置**：等 Evidence 线收完再定 —— 要么删，要么按「dedup 也记步」补 `steps.append`。判据命令：`git grep -n '\bok\b' core/agent/agent_loop.py`。
+**29. `agent_loop.py` dedup 分支：根因是 `steps` 的语义从未定义，`ok = True` 只是它的症状** —— 状态：**已修**（Evidence 收口，2026-09-14）
+- **最初记的形态**（把症状当成了病）：`if dedup_key in executed:` 分支写 `result_content = ...` 后跟一句 `ok = True`；而 `ok` 的两处读取（`steps.append` 的 `"ok": ok`、`if ok and result_content != EMPTY_RESULT` 的 `retrieved.append`）都在 `else` 分支内、紧随它自己的 `ok = result.ok` 之后 —— 全文件无一处在该分支之外读它，看着就是**死存**。
+- **真问题（用户核代码时指出）**：dedup 分支**整个不进 `steps`**，而模型确实收到了一条 tool 回填、确实消耗了一轮上下文。根因不是那一行死存，是 **`steps` 的语义没定义过**：它数的是「工具执行次数」还是「模型经历的轮次」？`MAX_STEPS` 数的是**决策轮次**（`for _ in range(MAX_STEPS)`），`steps` 数的却是**执行次数**（一轮多调用时条数 > 轮数）—— **同名不同义**，这才是病灶。
+- **判定（依据：谁在读、读它干什么 —— 全仓普查）**：① 生产/路由层**零读者**（`core/chat_engine.py` 的 `_run_agent_phase` 只用 `messages`/`retrieved`/`evidence`/`degraded`；`web/` 全目录无一命中）；② 唯一非测试读者是 `scripts/run_agent_eval.py`，只读 `s["tool"]` 的**名字集合**与 `len(steps)`（chitchat 判 `== 0`）——**两个定义下它给出的结论完全相同**；③ 字段形态 `{tool, args, ok, elapsed_ms}` 本身就是执行台账（`elapsed_ms` 是执行耗时，dedup 没有执行；`ok` 取自 `result.ok`，dedup 没有结果）——给 dedup 造一行就得**发明**这两个值；④ commit 3 的同型先例：`timeout` 从引擎三态拆出去，因为它是**调用层**事实而非检索事实，dedup 同理是**编排层决策**；⑤ **决定性**：commit 3 已定死「dedup 不产新 trace」（同一查询没发生第二次检索）。若让 `steps` 记 dedup，**同一事件在两个台账里说法相反**（`steps` 说发生过、`evidence` 说没发生）。故 `steps` = **实际执行过的工具调用**，dedup 三处一起不记，只留 `messages`。
+- **改法**：删 `ok = True`（症状随之消失，不再需要为一个「没发生」发明成功值）；`AgentLoopResult.steps` 的字段注释 + `run()` 的 docstring 写清语义与 **三个台账的分工**（`messages` 模型经历的 / `steps` 实际执行的 / `evidence` 检索发生的）；dedup 分支加注释说明为何不记步。
+- **验收锁（两条新增，缺一不成）**：① 「模型确实收到了那条 dedup 回填」—— 断 `len(tool_contents) == assistant_calls == 5`（工具协议不变量：每个 `tool_call` 都要有回填）且 `tool_contents.count(_DEDUP_NOTE) == 1`；② 「`MAX_STEPS` 与 `steps` 不同义」—— 断言 `rounds == 2` 且 `len(res.steps) > rounds`，把这个不等变成**被验证的事实**而非注释里靠人读到的一句。两条都在 `test_evidence_accumulation_dedup_and_order`（复用该场景：2 轮 5 调用，其中 1 次去重 + 1 次未知工具 → `steps` 4 条）。
+- **变异（实测，四条各自红在有病灶名的那句上）**：dedup 回填文案改一字 → `assert 0 == 1`（计数）；dedup 分支补一条 `steps.append` → `assert 5 == 4`；`steps` 改成按轮记（两刀：摘掉执行处 append、挪到 `tc` 循环外）→ `assert 2 > 2`；`EMPTY_RESULT` 改一字 → 字节基线两条红（`scene_empty: tool 消息变了`）。脚本 `e2e/scratch/run_defect_29_mutations.py`（gitignored，先验基线 failed=0）。
+- **顺带修掉一处同源恒真**：`_EMPTY` 原先写作 `_EMPTY = EMPTY_RESULT`（**从生产 import**），于是「冻结字节基线」与生产值同源、改 `EMPTY_RESULT` 两边一起变 —— 正是 §四「等式类断言先问两边是不是同一个来源」的形态。改为字面量 `"未找到相关内容"`；上一条变异（M23）即证明它有牙。
 
 **30. 群聊路径的「不渲染证据」只由前端兜底覆盖，后端无专门用例** —— 状态：**记账待补**（Evidence commit 5 自查，2026-09-14）
 - **形态**：证据的**写入**只有 `web/routers/chat.py` 两个调用点（`_do_chat` / `_do_chat_stream`），**读取**只有 `web/routers/history.py` 的 GET 与 resume。群聊走的是另一套原语（`storage.save_group_message` / `get_group_messages`，签名里根本没有 evidence 参数）与另一条历史出口 —— 即群聊的**写侧恒不产证据、读侧恒不带证据**，两条都成立。
@@ -471,6 +474,13 @@ config.yaml 现值（现读，非转述）：
 - **待补（将来有群聊夹具时）**：后端各一条 —— ① 群聊写侧调用点不带 evidence（形态锁，同 `test_default_call_sites_are_unchanged`）；② 群聊历史出口读回的条目里没有 evidence 键。判据命令：`git grep -n 'save_group_message\|get_group_messages'`。
 - **跨层覆盖不算单点全包**：前端那行只保证「拿到不带 evidence 的条目时不崩」，不保证「后端不会开始产证据」—— 后者才是这条缺口的实质。
 
+**31. `steps` 的三键（`args` / `ok` / `elapsed_ms`）全仓零读者 —— 表态：保留，定位为执行台账** —— 状态：**记账（已表态，不删）**（Evidence 收口，2026-09-14）
+- **事实（普查，不是印象）**：读 `steps` 的只有 `s["tool"]`（`scripts/run_agent_eval.py` 取名字集合判「触发是否命中 expected」）与 `len(steps)`（同文件判 chitchat `== 0`；测试里计数）。**`args` / `ok` / `elapsed_ms` 三键零读者**。`elapsed_ms` 在别处也没有同义记录：`ToolResult.elapsed_ms` 只在 `tools.py` 的 print 里用；OTel 的 `agent.execute_tool` span 自带 duration，但 **`OTEL_ENABLED` 关时装饰器原样返回、根本没有 span**。
+- **表态：保留。** 定位 = **执行台账**（「实际跑了哪几次、各花多久、块空不空」）。台账的价值在**多键关联**，不在于单键被谁第一时间读；删掉三键后 `steps` 退化成 `list[str]`，与 `messages` 里 assistant 的 `tool_calls` 完全重复。
+- **但有一条硬要求**：**它们当前不参与任何判定** —— 谁要拿它们做判据，必须先在此登记「谁在读、读它干什么」；不登记就拿来当判据，就是下一个「写了没人读」。三键中 `ok` 是唯一没有现成替代的（span 不带 ok；`retrieved` 与 `evidence` 是两个不同口径的投影，都要两步推导才等价）。
+- **将来二选一的判据（可观测性工作开始时定）**：要么把 `ok`/`elapsed_ms` 提成 `agent.execute_tool` span 的 attr（那里已有 `tool` attr）并**删掉三键**，要么明确 `steps` 就是导出给评测脚本的台账、把这句话写进字段注释。判据命令：`git grep -n 'elapsed_ms\|\["ok"\]'`。
+- **为什么现在不删**：与缺陷 29 是两件事（那是**语义**，这是**去留**）。零读者字段的删除不产生行为差异，混进 29 的 commit 会让「哪行因哪个动因改动」说不清。
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
@@ -478,6 +488,7 @@ config.yaml 现值（现读，非转述）：
 - **SQLite 全绿不构成并发命题的证据**：SQLite 写是库级序列化，窗口从根上不存在（`storage/sqlite_store.py` 的 `save_distill_chunk` 自述），生产是 PG。同一段逻辑在 sqlite 上验不出 PG 的行锁语义
 - **mock 的形态 ≠ 被测对象的形态**。案例：mock 回 canned JSON，据此误判 map 输出是 JSON——实际是自然语言（prompt 见 `core/distiller.py` 的 `_map_system_prompt` / `_map_user_prompt`；消费侧只判「非空且 ≠『无』」，见 `distill_incremental_stream` 内 `raw_analyses`）。据此设计的 JSON 校验会否掉所有真实 map 结果
 - **测试通过 ≠ 命题成立**，可能只是那条路径根本没被走到。案例：分片续跑逻辑落地后长期未真实执行——短文本恒走长上下文路径（分流在 `distill_incremental_stream`），从不进分片。要验分片路径必须显式强制（见第五节）。**同族：对空集的断言恒真**——缺陷 19 的 A 组调用点断言「这 N 个管理原语的调用点必须全在 admin.py」，若把零调用点的死代码原语（`get_comment_reports`）纳进来，命题对空集恒真 = **断言空转假绿**，且不会有任何告警。修法：断言里同时要求「每个名字至少有一个生产调用点」，把「非空」变成断言的一部分（`test_admin_management_primitives_are_called_only_from_admin` 的 `vacuous` 守卫）。一般化：**凡「所有 X 都满足 P」形式的断言，先问 X 会不会是空集**
+- **等式类断言先问「两边是不是同一个来源」—— 同源即恒真，判据为零**（上一条的孪生：上一条是**空集**让断言恒真，这一条是**同一个来源**让断言恒真）。判据：写「A 的数量 == B 的数量」这类一致性断言前，先追一遍两个量的产出路径；只要它们**在同一处、由同一份数据**产出，等式对任何输入都成立，**连变异都红不了**（改动会让两边一起变）。案例：Evidence commit 6 的 spec 要求「条目数与注入 prompt 的片段数一致」，而 `core/context_engine.py` 的 `_retrieve_via` 里 `body is None` 时块体正是**由那份 items 当场渲染**的（`"\n".join(f"{line_prefix}{it.text}")`）—— 少产一条 item，块里也少一段，等式照旧成立；web 更直接：块体是 LLM 改写结果（按设计有损），该等式结构性不适用。**有判别力的形态是钉绝对量，且该量从独立的来源推出**（此处从假件语料推出 —— scene 复用生产的 `filter_by_characters`、memory 直接问假件、web 读 payload —— 再与既有冻结字面量 `_HIT_SHAPES` 交叉对齐：**两个独立来源对上，才敢拿它当判据**）。等式的半边保留，但降级为「钉渲染处没丢结构」，不承担判别力。一般化：**「所有 X 都满足 P」先问 X 会不会是空集；「A == B」先问 A 和 B 是不是同一个来源**
 - **修复必须做变异验证**：改坏它，指定测试必须变红。案例：把兜底调用从 `finally` 里整行删掉，**原 14 个测试仍全绿** → 接线没被覆盖；随后补 `TestA2Wiring` 两条（commit `9d2a9e4`；变异实验本身与扫描口径见 `ev:a2-wiring-mutation`。补齐动作可 `git show 9d2a9e4` 直查，但「删掉后仍全绿」这个**运行期观测**只记在未入库的会话文件里，故它单独入了清单）
 - **变异必须可判定：要让它「红」，不能让它「挂死」**。判据：设计用例时先想清楚「这条用例被改坏后会怎样」——若会死循环/长时间阻塞，那条变异就**不可判定**（跑不出结果，等于没验）。做法：把输入设计成**有限且末尾通向成功**（如「上限 N 次截断、第 N+1 次成功」），于是「上限改成无限」的变异会走到第 N+1 次并成功返回，与断言的「应当抛出」立刻冲突 → 红。案例：`tests/test_distiller_truncation_selfheal.py::test_repair_cap_raises_truncation_error_not_format_error`
 - **测「某字段是承重的」时，被删的字段必须经真实产生产出**。判据：若测试自己直接构造了那个对象/异常，删掉字段的**传递链**不会红——因为测试根本没走那条链。案例：截断自愈用例若直接 `IncompleteResponseError(..., content=X)`，则「去掉 `_extract_content` 的 content 传递」只红 adapter 用例、正向自愈用例全绿；改成经真实 `_extract_content` 产出后才 3 条齐红

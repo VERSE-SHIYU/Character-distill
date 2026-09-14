@@ -112,7 +112,8 @@ def _tool_msgs(res) -> list[str]:
 # 断言的是**模型实际读到的那串字**，不是「由 item 再渲染一次」—— 后者跟着实现一起变，
 # 锁不住任何东西。
 
-_EMPTY = EMPTY_RESULT  # "未找到相关内容"
+_EMPTY = "未找到相关内容"  # 冻结字面量：**不从生产 import** —— 同源会让这条字节锁恒真
+_DEDUP_NOTE = "（该工具已用相同参数调用过，请基于已有结果回答）"  # 同上，冻结副本
 _SCENE_HIT = "【参考原文片段（酌情使用，不要逐字复述）】\n屋顶上的旧事，风很凉。"
 _MEM_HIT = (
     "【你的长期记忆——这些是你和对方之前交流中记住的事】\n"
@@ -326,6 +327,11 @@ def test_evidence_accumulation_dedup_and_order():
 
     「空结果与失败不许被累积成『没检索过』」是本范围的硬要求：前端少显示一条无从察觉，
     显示一条失败却一眼可见。故证据侧收下全部真实调用，不被 ok 过滤。
+
+    同一场景也钉住**三个台账的分工**（缺陷 29 的根因是这里的语义从未定义）：
+    ``messages`` 记模型经历的（去重那轮回填在里面）、``steps`` 记实际执行的（去重不入，
+    因为没发生执行）、``evidence`` 记检索发生的（去重不入，因为没发生第二次检索）。
+    两个台账对同一事件的说法必须一致 —— 去重的调用**三处一起不记**，只留 messages。
     """
     with fake_ddg(DDG_ABSTRACT, raise_on_get=RuntimeError("网络挂了")):
         ctx = build_ctx(rag=make_rag(FakeCollection()), memory=FakeMemory(rows=[]))
@@ -344,9 +350,30 @@ def test_evidence_accumulation_dedup_and_order():
     assert [t.source for t in res.evidence].count("scene") == 1
     # 未知工具 = 压根没检索 → 不入证据（仍在 steps 里留痕）
     assert len(res.evidence) == 3
-    assert len(res.steps) == 4
     # 证据侧与 retrieved 是两个口径：retrieved 只收「ok 且块非空」
     assert [t[0] for t in res.retrieved] == ["search_scenes"]
+
+    # ── 三个台账各半：dedup 只改 messages，不改 steps ────────────────────
+    # 只钉「dedup 不进 steps」不够 —— 反过来「靠删掉那条回填来消掉 dedup」也得红。
+    assistant_calls = sum(
+        len(m["tool_calls"]) for m in res.messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    tool_contents = [m["content"] for m in res.messages if m.get("role") == "tool"]
+    # 工具协议不变量：每个 tool_call 都要有一条 tool 回填（少一条模型侧就是残缺的）
+    assert len(tool_contents) == assistant_calls == 5
+    assert tool_contents.count(_DEDUP_NOTE) == 1   # 去重那一轮的回填确实到了模型
+
+    # ── MAX_STEPS 数「决策轮次」、steps 数「执行次数」：一轮多调用时两者不等 ──
+    # 让「不同义」是被验证的事实，而不是注释里靠人读到的一句说明。
+    rounds = sum(
+        1 for m in res.messages
+        if m.get("role") == "assistant" and m.get("tool_calls")
+    )
+    assert rounds == 2
+    assert len(res.steps) > rounds
+
+    assert len(res.steps) == 4   # 4 次执行（含未知工具那次），去重那次不入台账
 
 
 # ── 漂移锁：两个 Literal 的包含关系 ─────────────────────────────
