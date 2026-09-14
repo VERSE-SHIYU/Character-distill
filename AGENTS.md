@@ -495,7 +495,7 @@ config.yaml 现值（现读，非转述）：
 - **与 32 是同一件事的两面**：32 管「缺变量不许静默降级」，33 管「变量从文件来、不从命令行来」。只做 33（补 `.env`）而不做 32 → 缺变量仍静默、凭据仍可能走命令行；只做 32（改成 `:?` 硬失败）而不做 33 → 把「必须显式传入」变成「必须每次打在命令行上」，**反而扩大凭据的扩散面**。**两条同轮才有闭环，单独改任一条都是补丁。**
 - 判据命令：`git grep -n 'POSTGRES_USER'`（列引用点）、`git check-ignore -v .claude/settings.local.json`（确认 ignore 来源）
 
-**34. Reduce 全部 batch 返回空仍产出卡片，用户拿到残次品而界面显示「成功」 —— 「失败被吞成正常返回」的第十次显形** —— 状态：**记账（不修，待裁范围）**（2026-09-14，复现 429 时发现）
+**34. Reduce 全部 batch 返回空仍产出卡片，用户拿到残次品而界面显示「成功」 —— 「失败被吞成正常返回」的第十次显形** —— 状态：**已修（`de924cd`）**（2026-09-14 记账，同日修；复现 429 时发现）
 - **症状**：Map 大面积失败 + Reduce 两个 batch 全空，流水线照常走到 `Card saved`，落了卡、返回成功；用户**没有任何信号**知道这张卡是残缺的。日志里有 30 条 `Map chunk N failed`、2 条 `Reduce batch N returned empty, skipped`，界面上只有「成功」。
 - **后果链（本次实测，原文见会话记录）**：128 片里 30 片全灭（27 个 429 打满 5 次、3 个 `Request timed out`）→ 失败率 23% < 50% 门控 → `within tolerance, continuing` → Reduce batch 1 被 `max_tokens` 截断（`finish_reason='length'`）、batch 0 `Request timed out` → 两个 batch 都 `returned empty, skipped` → **仍然落卡**（`card_id=6fc336cfcb23`，`text_id=0b353450811b`）。
 - **根因（不是「429」）**：**Reduce 阶段没有失败门控，Map 有。** 两条不对称，可直接对照：
@@ -511,6 +511,11 @@ config.yaml 现值（现读，非转述）：
 - **处置方向（记在条目里，不实现）**：Reduce 全空应**显式失败并告诉用户原因**，而不是落一张空壳卡。参考口径 = Map 的失败率门控（`core/distiller.py:1618`）：空 `batch_results` 是 100% 失败，比 50% 阈值严重得多，**连 `_single_reduce_stream([])` 都不该发**。范围待裁：是「Reduce 全空即中止」还是「按 batch 失败率定阈值」，以及「已落卡后如何告知/回滚」。
 - **判据命令**：`git grep -n 'returned empty, skipped\|SAFE_SINGLE_REDUCE\|total_chunks > 0.5' core/distiller.py`
 - **一般化已入 §四**：「兜底门判『输出空不空』而上游能对非法输入产出非空结果 ⇒ 门结构性失效；判据要落在输入是否合法」。修 34 时按那条口径走（守卫前移到 `batch_results` 是否为空），不要只把 `:1726` 那道门收紧
+- **修法落点（`de924cd`）**：守卫加在 **`core/distiller.py` 的 `_run_reduce_concurrent` 末尾**（`asyncio.gather` 结果之后）：`if not any(r[1].strip() for r in results): raise DistillError(...)`，上屏文案「蒸馏失败：归并阶段未能产出有效内容，请稍后重试」，运维口径带 `Reduce batch 全空：N/N 失败`。
+  - **为什么不在两个调用点各加一行**（原计划是「两处同改」）：`_run_reduce_concurrent` 的调用点**只有两个**（`_do_reduce` 的 `:1217`、stream 的 `:1668`），它就是所有 reduce 批次结果的**唯一汇合点**；且非 stream 那一路的洞在 **`_do_reduce` 的递归**（`:1228` 拿 `merged` 再进 `:1207` 的空列表分支），守在 `:1228` 只堵住一次递归、堵不住语义。守在这里，两条路径**一处覆盖**，且不改变 `_do_reduce` 的形状。
+  - **错误传播是现成的、两条都通**：stream 侧 `_reduce_thread` 的 `except` → `rq.put(("error", exc))` → 消费端 `:1692` `yield {"error": user_facing_error(exc)}`；非 stream 侧直接往上抛。**不需要在调用点加 try/except。**
+  - **变异验证**（`tests/test_distiller_routing.py::TestReduceAllEmptyBails`，两条）：删掉守卫 → 两条双双变红（sync 落到 format 阶段、stream 不再产 error 帧），日志复现原形状 `Reduce batch 0/1 returned empty, skipped` → 第三次 reduce 调用（凭空归并）→ `distill_format` → 落卡。**用例的假件必须模拟「零条分析也产出非空」**，否则 `:1726` 那道门在用例里反而拦住了，测不到真缺口。
+  - **同病第二处已一并覆盖**：`distill_incremental`（`/run` 走的那条）的 `_do_reduce` 递归同样吃空列表，见上方「非 stream 路径同病」条 —— 守卫落在汇合点后，这一处无需另改（递归传入的 `merged` 已被上游拦住）。
 
 **35. `/start` 后台线程路径的 usage 记账全程空转 —— 缺陷 22 收口后的覆盖缺口** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
 - **事实**：本次运行 5 个 action 各打一条 `[Distiller] usage not recorded: storage/user_id missing (user=, action=…)` —— `distill_identify` / `distill_map` / `distill_reduce` / `distill_format` / `distill_autotag`。`user=` 为空即证据（`core/utils.py:64` 的 print 把 `user_id` 直接填进去）。
@@ -541,6 +546,13 @@ config.yaml 现值（现读，非转述）：
 - **教训（落笔时没走完静态链）**：「静态读出」这个标注救不了**没追到源头**的静态链 —— 我只读到 `get_distiller` 自己的两个分支就落了笔，没跟到 `get_user_llm` 的 fallback，于是把**一对互斥条件**当成了可同时成立的组合。核一条静态结论，必须把**每个分支的入参从哪来**追到源头（此处就是那句 `return get_llm()`）；只读被判对象自己，等于只读了半条链。与 §四「别人给的 premise 与代码不符时，报更正」同族 —— 那次是别人的 premise 错，这次是**我自己顺着一个看起来自洽的 premise 往下推**。
 - **判据命令**：`git grep -n 'distiller\._user_id\|distiller\._storage'`（写点数应为 1）、`git grep -n 'global _distiller\|_distiller = Distiller\|return get_llm()' web/deps.py`
 
+**38. `/run` 把 `DistillError` 的运维口径 `str(exc)` 直接当 400 响应体上屏** —— 状态：**记账（不修，待裁范围）**（2026-09-14，修 34 时顺带发现）
+- **症状**：走 `/run` 这条蒸馏路径时，任何 `DistillError` 都会把「上屏口径｜运维口径」整串返回给用户。例：Map 失败率门控抛的那条会以 400 返回 `蒸馏失败：部分片段处理失败，请重试｜3/4 个分片失败；最后错误：connection timeout` —— 分片计数与上游原始错误**都是内部标识**，正是缺陷 17 明令不上屏的东西。
+- **根因**：`web/routers/distill.py` 的 `/run` 异常处理写成 `except ValueError as exc: raise HTTPException(400, str(exc))`，而 `DistillError` **继承 `ValueError`**（`core/distiller.py`，为了不改路径上既有的 `except ValueError` 语义），且其 `str()` 被**刻意**定义成运维口径（`f"{user_message}｜{ops_detail}"`）。两条设计各自都对，撞在一起就成了泄漏。同一条路由里 Map 门控（`core/distiller.py:1347`、`:1351`）抛的 `DistillError` **早就在走这条路**，本条不是 34 的修复引入的 —— 34 的修复只是又加了一个走同一形状的入口。
+- **为什么流式两条链没这个问题**：`/start` 的 `_run_distill_task` 与 `/run_stream` 的 error 帧都经 `user_facing_error(exc)`（`adapters/llm_adapter.py:374-376` 取 `exc.user_message`）**唯一出口**收敛；只有 `/run` 这条没走那个出口。
+- **处置方向（记在条目里，不实现）**：在 `except ValueError` **之前**补一条 `except DistillError: raise HTTPException(400, user_facing_error(exc))`（`DistillError` 是 `ValueError` 的子类，顺序不能反）。范围待裁：是只修这一处，还是把「路由层取上屏文案必须经 user_facing_error」扩成一条形态锁（现有 `tests/test_error_user_facing.py` 扫的是 core 侧的上屏出口，**看不见路由层的 `str(exc)`**）。
+- **判据命令**：`git grep -n 'except ValueError as exc' web/routers/distill.py`、`git grep -n 'user_facing_error' web/routers/distill.py`（后者对 `/run` 零命中即为本条）
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
@@ -564,6 +576,13 @@ config.yaml 现值（现读，非转述）：
 - **处置（用户，2026-09-14）**：**已补，两处同补**
 - **形态**：`<ol>` + 序号徽章 + 纵向序列（体现阶段先后），区别于 `values` 的并列 chip；外壳与折叠各自复用**本文件既有机制**（`MarketCardDetail` 走 `collapsedSections` / `toggleSection`，`CharCard` 本文件无折叠机制故不加）；空值 `?.length > 0` 整节降级。渲染层不抽共享组件（两处外壳本就不同：`CardSection` vs `card-section--wide`+`<h3>`），但 **CSS 共用同一组类名** —— `global.css` 的 `card-arc-list` / `card-arc-item` / `card-arc-index`，全仓只此一处
 - **覆盖证据**：`web/frontend/src/components/__tests__/` 下 `MarketCardDetailCharacterArc.test.jsx` 与 `CharCardCharacterArc.test.jsx`（各两条：有 / 无），外加一条「CSS 只落一处」断言（三条类名定义在 `global.css`、不出现在 `adm-theme.css`）。变异矩阵见会话记录（守卫改恒假 → 两文件各自的「有」用例红；「无」载荷改带弧线 → 「无」用例红）
+
+**C. 重构前置检查项：`/start` 的 scene index 由打开卡片时的 `/start_session` 补偿 —— 踩断它不会报错**（2026-09-14 记账，**不修**）
+- **性质**：**不是缺陷**（当前行为正确），也**不是待建功能**。它是一条**靠巧合成立的隐性契约** —— 统一构造出口那轮重构（三道路由 / deps 两个工厂 / TextManager 两份构造）一动就会断，且**断了不报错**：只表现为「场景预索引不再发生」，聊天的 RAG 召回悄悄变差。故单列，作为**重构前置检查项**。
+- **事实链**：① `/start` 落卡走的是它自己就地拼的 `TextManager`（`web/routers/distill.py` 的 `_save_card`），**没传 `indexing_service`** → `core/text_manager.py:580` 的 `if self._indexing_service:` 为假 → **不调度** `schedule_scene_index`（对照：`/run`、`/run_stream` 都调度，见本文件 §三 缺陷 35 附近的差异全集）。② 补偿发生在**打开卡片**时：`/start_session`（`web/routers/distill.py:1410`）会调度。③ 前端只在 `card.session_id` 为假时才调 `/start_session`（`web/frontend/src/store/useAppStore.js` 的 `selectCard` / `startChat`）。④ 而 `storage/sqlite_store.py` 的 `list_cards` **不投影 `session_id`** → 前端拿到的卡**永远是假值** → 必然调 `/start_session` → 补偿成立。
+- **踩断方式（重构时最容易顺手做的那件事）**：把 `session_id` 加进 `list_cards` 的投影字段。届时前端看到真值 → 不再调 `/start_session` → `/start` 那一侧又不调度 → **scene index 静默停摆**，没有报错、没有日志、用例也不红（该投影无锁）。
+- **重构时的检查动作**：动 `list_cards` 投影、动 `/start_session` 的调度、或动 `_save_card` 的 `TextManager` 构造（补齐 `indexing_service`）时，三处任一处改完都要回答「这一改之后，`/start` 落下的卡由谁保证 scene index 被调度」。最干净的收口是**在 `_save_card` 补齐 `indexing_service`**（让三条路一致），那时本项作废、可连同正文一起删。
+- **判据命令**：`git grep -n 'session_id' storage/sqlite_store.py`（`list_cards` 的投影里应**没有**它）、`git grep -n 'schedule_scene_index' web/routers/distill.py core/text_manager.py`
 
 ### 四、验证纪律
 
