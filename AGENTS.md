@@ -527,17 +527,17 @@ config.yaml 现值（现读，非转述）：
 - **处置方向（记在条目里，不实现）**：**不一定要「对齐」** —— 两条路由的语义本就不同（`/identify` = 只看角色，`/start` = 全量重跑），`/start` 复用库缓存会让「重跑」不再重跑。要裁的是**产品语义**：「`/start` 该不该复用已有识别结果」，而不是「补一行 cache 读取」。
 - **判据命令**：`git grep -n 'get_characters_owned\|identify_characters' web/routers/distill.py core/distiller.py`
 
-**37. `get_distiller` 的模块级单例被 `/run_stream` 原地改写 —— 共享可变状态跨请求污染，usage 记到别人名下** —— 状态：**记账（不修，待裁范围）**（2026-09-14，核缺陷 35 对照面时**静态读出**）
-- **症状**：用户 B 的蒸馏用量被记到用户 A 名下。
-- **根因（两层，缺一层都不成立）**：
-  - `get_distiller(llm=None)` 在 **`llm is None` 时返回模块级单例** `_distiller`（`web/deps.py:182-192`）；只有 `llm is not None` 时才现造每请求新实例（`web/deps.py:185`）。
-  - `/run_stream` 拿到 distiller 后**原地改写该对象的字段**：`distiller._storage = storage` / `distiller._user_id = user_id`（`web/routers/distill.py:1075-1076`）。若它拿到的正是那个单例，写进去的就**不是请求级副本**，而是**全进程共享的那个对象**。
-- **性质：共享可变状态跨请求污染，不是接线问题。** 与缺陷 35 是两类，**故不并入** —— 35 是三条入口里两条**根本没接线**（状态**缺失**），本条是**线接在了共享对象上**（状态**错归**）。修法完全不同：35 = 补注入点；37 = 让请求级状态不落在长生命周期对象上。并在一起会让「修好 35」看起来把两件事都解决了，实际没有。
-- **触发条件（两个缺一不可）**：① 先有一次走 `get_distiller(None)` 的请求（如 `/run_stream` 在用户没配 per-user key 时）把某用户身份写进单例；② 之后有用户走 `/start` 且同样没有 per-user key → `per_user_llm is None` → `get_distiller(None)` 取回**同一个已被污染的单例**。
-- **503 门拦不住**：`/start` 的 `if distiller is None: raise HTTPException(503, "请先在设置页配置 API Key")`（`web/routers/distill.py:802`）**只判「有没有 distiller」**；单例一直存在、永远非 `None` → 这道门对「拿到的 distiller 属于别人」**恒不触发**。它拦的是「没有 LLM」，拦不住「LLM 是别人的」。
-- **⚠️ 标注：静态读出，未实跑验证。** 本次 429 复现观测到的恰是 `usage not recorded … (user=, action=…)` —— `user=` 为**空**，说明那次单例**没有被改写**，这条路当时**没触发**。所以本条**不是**已实证的运行期缺陷，是**从代码结构推出**的（判据 = `get_distiller` 的两分支 + `1075-1076` 的原地赋值 + `802` 的门形状）。**后人不得把它当已实测结论引用**；要定案须补一次实跑，或补一条能红的用例。
-- **处置方向（记在条目里，不实现）**：**单例不该持有请求级状态。** 候选是「请求级上下文」而非「写进单例」—— 与 **D2**（2026-09-09，embed deadline 用 ambient scope 进 executor）同型但**方向相反**：D2 是「签名传不下去 → 用 ContextVar ambient scope」，本条是**状态被塞进了本不该持有它的长生命周期对象**。同一个工具解决的是两个不同问题，故候选顺序应是**先问「这个状态属于请求、还是属于单例」，再选载体**，而不是先挑 ContextVar。
-- **判据命令**：`git grep -n 'distiller\._user_id\|distiller\._storage'`、`git grep -n 'global _distiller\|_distiller = Distiller' web/deps.py`
+**37.（前提证伪）`get_distiller` 的单例被 `/run_stream` 原地改写 —— 该形态不可达，usage 不会记到别人名下** —— 状态：**证伪，不成立**（2026-09-14 当天记下、当天核掉）
+- **原假设**：`get_distiller(llm=None)` 返回模块级单例 `_distiller`（`web/deps.py:182-192`），而 `/run_stream` 原地改写其 `_storage` / `_user_id`（`web/routers/distill.py:1075-1076`）→ 共享可变状态跨请求污染 → 之后某个没有 per-user key 的请求取回被污染的单例，usage 记到前一个用户名下。当时标注为「静态读出、未实跑验证」。
+- **证伪：两个前提互斥，不可能同时成立。**
+  - `/run_stream` 传的是 `get_distiller(llm=per_user_llm)`（`web/routers/distill.py:1057`），而 `per_user_llm = await get_user_llm(...)`，`get_user_llm` 在用户没配 key 时**不是返回 None，而是回落到 `get_llm()`**（`web/deps.py:118-119`：`# Fallback: global config / admin key` → `return get_llm()`）。故 **`per_user_llm is None` ⟺ `get_llm() is None`**。
+  - `get_distiller(None)` 只在 `_distiller is None` 时才去问 `get_llm()`，而 `get_llm()` 为 None 就直接 `return None`（`web/deps.py:187-190`）→ **单例从未被创建**。反向：单例一旦被创建（`deps.py:191`）就要求 `get_llm()` 非 None；且 `_llm` 是非 None 缓存，**全仓没有路径把它设回 None**（`get_llm` 只在成功时赋值；`reset_llm_and_dependents` 的 `_llm = LLMAdapter()` 抛异常时不赋值）。
+  - 合起来：**单例存在 ⟹ `get_llm()` 非 None ⟹ `per_user_llm` 非 None ⟹ `get_distiller(llm=…)` 现造每请求新实例**（`web/deps.py:184-185`）→ 1075-1076 改写的是**请求级副本**。反向：`per_user_llm` 为 None ⟹ 单例不存在 ⟹ `get_distiller(None)` 返 None ⟹ **503 在 `distill.py:802` 先抛**，根本走不到 1075。
+  - 另核写点：全仓 `distiller._user_id = …` / `distiller._storage = …` **只有 1075-1076 一处**（判据命令见下），不存在第二个把身份写进单例的地方。
+- **连带证伪**：「503 门只判 `distiller is None`、拦不住被污染的单例」也不成立 —— 那道门拦的正是「拿不到 LLM」，而单例被污染的前提恰恰是「拿得到 LLM」，两者不共存。
+- **为什么保留本条而不删**：它的**假设形态**（长生命周期对象持有请求级状态 → 跨请求错归）在本仓仍值得警惕，只是当前**没有**这条路径。**复活判据**：① 上条 grep 的写点数从 1 变 2；② `distill.py:1057` 的传参不再是 `llm=per_user_llm`（例如有人改成 `get_distiller()` 取单例）；③ 出现新的、能对单例写请求级字段的调用点。任一条成立，本条立即复活。
+- **教训（落笔时没走完静态链）**：「静态读出」这个标注救不了**没追到源头**的静态链 —— 我只读到 `get_distiller` 自己的两个分支就落了笔，没跟到 `get_user_llm` 的 fallback，于是把**一对互斥条件**当成了可同时成立的组合。核一条静态结论，必须把**每个分支的入参从哪来**追到源头（此处就是那句 `return get_llm()`）；只读被判对象自己，等于只读了半条链。与 §四「别人给的 premise 与代码不符时，报更正」同族 —— 那次是别人的 premise 错，这次是**我自己顺着一个看起来自洽的 premise 往下推**。
+- **判据命令**：`git grep -n 'distiller\._user_id\|distiller\._storage'`（写点数应为 1）、`git grep -n 'global _distiller\|_distiller = Distiller\|return get_llm()' web/deps.py`
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
