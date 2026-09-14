@@ -1481,6 +1481,20 @@ const useAppStore = create((set, get) => {
         console.error('[store] stream failed:', err)
         set({ sending: false, error: err.message })
       },
+      undefined,
+      // evidence 帧先于 token 流到达（后端在首个 token 前发），此刻末条仍是本轮 char 占位。
+      // 认 type 不认字段存在性：未知 type 一律忽略（后端将来加事件不该让前端出意外）。
+      (payload) => {
+        if (payload.type !== 'evidence') return
+        if (get().sessionId !== streamSessionId) return
+        set((s) => {
+          const msgs = [...s.messages]
+          const last = msgs[msgs.length - 1]
+          if (!last || last.role !== 'char') return {}
+          msgs[msgs.length - 1] = { ...last, evidence: payload.evidence ?? null }
+          return { messages: msgs }
+        })
+      },
     )
 
     set({ _chatStreamCancel: cancel })
@@ -1611,6 +1625,7 @@ const useAppStore = create((set, get) => {
         id: m.id,
         timestamp: m.created_at,
         retracted: m.retracted || false,
+        evidence: m.evidence ?? null,
         ...(data.reunion_greeting_id && m.id === data.reunion_greeting_id ? { _reunionTyping: true } : {}),
       }))
       set({

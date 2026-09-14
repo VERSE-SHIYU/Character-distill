@@ -9981,6 +9981,92 @@ select.settings-input {
   color: var(--text);
 }
 
+/* ---- 检索来源（EvidenceRail） ---- */
+/* 默认折叠：角色扮演满屏证据卡会毁掉沉浸感，折叠态只留一行结论，展开才给原文。
+   Reveal 走条件渲染（同 chat-summary / retracted 的范式），不做高度动画。 */
+.evidence-rail {
+  margin: 0 0 6px;
+  max-width: 480px;
+}
+
+.evidence-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: left;
+}
+
+.evidence-toggle:hover {
+  color: var(--text-sec);
+}
+
+.evidence-arrow {
+  flex: none;
+  transition: transform 0.18s var(--ease-out);
+}
+
+.evidence-arrow-open {
+  transform: rotate(180deg);
+}
+
+.evidence-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  background: rgba(var(--accent-rgb), 0.04);
+  animation: fade-up 0.2s var(--ease-out);
+}
+
+.evidence-card + .evidence-card {
+  margin-top: 8px;
+}
+
+.evidence-card-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.evidence-card-status {
+  margin-left: auto;
+  font-style: italic;
+}
+
+.evidence-item {
+  margin-top: 4px;
+  padding-left: 17px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-sec);
+}
+
+.evidence-item-text {
+  white-space: pre-wrap;
+}
+
+.evidence-item-truncated {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.evidence-item-link {
+  display: inline-block;
+  margin-top: 2px;
+  color: var(--accent);
+  font-size: 11.5px;
+  word-break: break-all;
+}
+
 /* ===== Market Page ===== */
 .market-toolbar {
   display: flex;

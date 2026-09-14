@@ -18,7 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
-from core.schema import evidence_to_json
+from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
 
@@ -474,6 +474,12 @@ async def _do_chat_stream(
                 stream = engine.chat_stream(llm_msg, voice_mode=voice_mode)
                 # Drive full stream generation under lock to prevent history interleaving
                 first_piece, done = await asyncio.to_thread(_next_piece, stream)
+                # evidence 帧**必须排在 token 流之前**：驱动首个 next() 时，chat_stream 的
+                # 生成器体已跑到第一个 yield 之前（_compose_context / _run_agent_phase 都在
+                # 那之前），故此刻 last_traces 已是**本轮**检索的事实，早取晚取都是错的那一轮。
+                # 顺序反过来（先流文字、结束后再补证据）说服力就没了 —— 证据先渲染、文字后
+                # 流入，用户看到的才是「先查了什么，再据此说话」。
+                yield f"data: {json.dumps({'type': 'evidence', 'evidence': evidence_snapshots(getattr(engine, 'last_traces', []))}, ensure_ascii=False, default=str)}\n\n"
                 if not done:
                     tokens.append(first_piece)
                     yield f"data: {json.dumps({'token': first_piece}, ensure_ascii=False, default=str)}\n\n"

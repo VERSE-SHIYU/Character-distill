@@ -244,18 +244,19 @@ class EvidenceSnapshot(TypedDict):
     items: list[EvidenceSnapshotItem]
 
 
-def evidence_to_json(traces: list[SourceTrace]) -> str | None:
-    """``SourceTrace`` 列表 → 落库文本。**空 → None**（列留 NULL）。
+def evidence_snapshots(traces: list[SourceTrace]) -> list[EvidenceSnapshot] | None:
+    """``SourceTrace`` 列表 → 快照列表。**空 → None**。
 
-    不写 ``"[]"``：NULL 与 ``"[]"`` 是两种「无证据」，读回来一个 None 一个 ``[]``，
-    下游就得自己裁决该认哪个。只留 NULL 一种表示，「没证据」就只有一个形状。
+    不返回 ``[]``：``None`` 与 ``[]`` 是两种「无证据」，下游就得自己裁决该认哪个。
+    只留 ``None`` 一种表示，「没证据」就只有一个形状。
 
-    这是**唯一编码出口**：生产方不手拼 dict。手拼 = 同一形状第二份定义，两份必然漂移
-    （本仓缺陷 21 / 25 的教训）。
+    这是**唯一形状定义**：落库文本（``evidence_to_json``）、SSE 的 evidence 帧、
+    历史/重逢接口读回来的证据，三处消费的都是本函数产出的形状 —— 前后端不许各拼一份
+    （本仓缺陷 21 / 25 的教训：同一形状第二份定义，两份必然漂移）。
     """
     if not traces:
         return None
-    snapshots: list[EvidenceSnapshot] = [
+    return [
         {
             "source": t.source,
             "status": t.status,
@@ -271,6 +272,13 @@ def evidence_to_json(traces: list[SourceTrace]) -> str | None:
         }
         for t in traces
     ]
+
+
+def evidence_to_json(traces: list[SourceTrace]) -> str | None:
+    """``evidence_snapshots`` 的落库文本形态（``json.dumps``，空 → ``None`` → 列留 NULL）。"""
+    snapshots = evidence_snapshots(traces)
+    if snapshots is None:
+        return None
     return json.dumps(snapshots, ensure_ascii=False)
 
 

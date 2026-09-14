@@ -14,6 +14,9 @@
    为什么只锁这两处：`save_message` 的生产调用点共 8 处，char 落库点 4 处 ——
    另两处（`distill.py` 卡面开场白 / `history.py` 重逢问候）生成于检索之前/之外，
    不传 evidence 落 NULL 才是对的，由 `test_default_call_sites_are_unchanged` 锁住这条机制。
+4. 展示层的输入面（commit 5）：SSE 必须在 **token 流之前**发 evidence 帧（顺序是产品
+   判断，不是实现细节），四态原样过帧；重连/重逢接口（`POST /resume`）与刷新接口
+   （`GET /history/{sid}`）两条读路径都得把证据带回来 —— 只兑现一条等于没兑现。
 
 断言里凡涉及「证据在不在」，都走**接口读回来**（`GET /api/history/{sid}`）而不只看 store ——
 用户看到的就是那一条路。
@@ -85,11 +88,18 @@ def _new_session(store, user_id) -> str:
 
 
 @pytest.fixture
-def client(store, user_id):
+def sessions():
+    """进程内的会话表。**必须是同一个 dict 对象**：resume 会把重建出来的引擎塞进它，
+    每次调用给一个新 dict 的话，resume 那条路永远重建不出引擎（用例恒 500）。"""
+    return {}
+
+
+@pytest.fixture
+def client(store, user_id, sessions):
     app = FastAPI()
     app.include_router(history_router)
     app.dependency_overrides[get_storage] = lambda: store
-    app.dependency_overrides[get_sessions] = lambda: {}
+    app.dependency_overrides[get_sessions] = lambda: sessions
     app.dependency_overrides[get_current_user] = lambda: {
         "id": user_id, "username": "testuser", "is_admin": False,
     }
@@ -459,18 +469,26 @@ def test_do_chat_without_retrieval_stores_null(monkeypatch):
     assert char and char[0]["evidence"] is None
 
 
-async def _drive_stream(storage) -> None:
+async def _drive_stream(storage, **kwargs) -> list[dict]:
     """调用 `_do_chat_stream` 并把 SSE 排干 —— 落库发生在生成器体内，不排干就看不到。
 
     调用与排干在**同一个事件循环**里：`_run_async` 每次新建 loop，跨 loop 用
     `asyncio.Lock` / `to_thread` 是自找麻烦。排干用的是 `StreamingResponse.body_iterator`
     （就是 `T.trace_sse_async(_event_generator(), ...)`，OTel 关时零开销透传）。
+
+    返回按**到达顺序**解析出的事件 payload —— 「evidence 帧排在 token 流之前」这条
+    只能靠顺序断言，故帧不能只被丢掉。
     """
     resp = await chat_router_mod._do_chat_stream(
-        "s1", "hi", storage=storage, sessions={}, user_id="u1",
+        "s1", "hi", storage=storage, sessions={}, user_id="u1", **kwargs,
     )
-    async for _ in resp.body_iterator:
-        pass
+    frames: list[dict] = []
+    async for chunk in resp.body_iterator:
+        text = chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk
+        for line in text.splitlines():
+            if line.startswith("data: "):
+                frames.append(json.loads(line[6:]))
+    return frames
 
 
 def test_do_chat_stream_persists_engine_traces(monkeypatch):
@@ -498,3 +516,169 @@ def test_do_chat_stream_without_retrieval_stores_null(monkeypatch):
 
     char = [s for s in storage.saved if s["role"] == "char"]
     assert char and char[0]["evidence"] is None
+
+
+# ── 4. 展示层的输入面：SSE evidence 帧 ────────────────────────────────
+
+class TestEvidenceFrame:
+    """帧的位置与内容。
+
+    位置是**产品判断**不是实现细节：证据先渲染、文字后流入，用户看到的才是「先查了
+    什么，再据此说话」。把那条帧挪到 token 之后 → `test_..._before_the_first_token` 变红。
+    内容只做一件事：把三源 × 四态**原样**交出去 —— 后端压成一态，前端就再也分不出来。
+    """
+
+    def test_evidence_frame_arrives_before_the_first_token(self, monkeypatch):
+        engine = _Engine([make_trace("scene", "hit", text="屋顶上的旧事。")])
+        storage = _RecordingStorage()
+        _wire(monkeypatch, engine, storage)
+        frames = _run_async(_drive_stream(storage))
+
+        ev = [i for i, f in enumerate(frames) if f.get("type") == "evidence"]
+        tk = [i for i, f in enumerate(frames) if "token" in f]
+        assert ev, "没有 evidence 帧 —— 前端拿不到检索来源"
+        assert tk, "没有 token 帧 —— 本用例的前提不成立"
+        assert ev[0] < tk[0], "evidence 帧排在 token 之后了 —— 先证据后文字的关系倒置"
+        assert frames[ev[0]]["evidence"][0]["source"] == "scene"
+        assert frames[ev[0]]["evidence"][0]["items"][0]["text"] == "屋顶上的旧事。"
+
+    def test_the_frame_carries_all_four_states_intact(self, monkeypatch):
+        """四态原样过帧 —— 后端把 empty/failed/timeout 合并，前端就没得可辨了。"""
+        engine = _Engine([
+            make_trace("scene", "hit", text="屋顶上的旧事。"),
+            make_trace("memory", "empty"),
+            make_trace("web", "failed"),
+            make_trace("web", "timeout"),
+        ])
+        storage = _RecordingStorage()
+        _wire(monkeypatch, engine, storage)
+        frames = _run_async(_drive_stream(storage))
+
+        ev = [f for f in frames if f.get("type") == "evidence"][0]["evidence"]
+        assert [t["status"] for t in ev] == ["hit", "empty", "failed", "timeout"]
+        assert ev[0]["items"], "hit 态的 items 不该是空的"
+        assert all(t["items"] == [] for t in ev[1:]), "未命中的三态不该凭空有 items"
+
+    def test_frame_without_retrieval_is_null_not_empty_list(self, monkeypatch):
+        """非 agent 模式 / 本轮压根没检索：帧里是 null —— 一种「无证据」只有一种表示。
+
+        前端据此不渲染整条 rail（见 EvidenceRail 的 null 用例），且不许因为收到 null 报错。
+        """
+        storage = _RecordingStorage()
+        _wire(monkeypatch, _Engine([]), storage)
+        frames = _run_async(_drive_stream(storage))
+
+        ev = [f for f in frames if f.get("type") == "evidence"]
+        assert ev, "没检索也要发帧 —— 前端否则只能靠超时猜"
+        assert ev[0]["evidence"] is None, "空检索发成了 []，凭空造出一次「查过但没结果」"
+
+    def test_legacy_non_stream_path_carries_no_evidence_key(self, monkeypatch):
+        """legacy 非流式路径（`stream:false`）：响应里没有 evidence 这个键。
+
+        证据的家只有一处（SSE 帧），非流式那条路不产半份形状 —— 前端在它上面不该期待
+        任何证据载荷，也就不会拿一个没约定的字段去渲染。
+        """
+        storage = _RecordingStorage()
+        _wire(monkeypatch, _Engine([make_trace("scene", "hit")]), storage)
+        result = _run_async(chat_router_mod._do_chat(
+            "s1", "hi", storage=storage, sessions={}, user_id="u1"))
+        assert "evidence" not in result
+
+
+# ── 5. 重连/重逢：证据要跟着历史一起回来 ──────────────────────────────
+
+class _StubEngine:
+    """够 `resume_session` 走完的最小引擎替身（只补它真会碰到的字段/方法）。"""
+
+    def __init__(self):
+        self.history: list[dict] = []
+        self.last_summary = ""
+        self.user_role = ""
+        self._user_tz = "UTC"
+        self._storage = None
+
+    def load_affinity(self, data, initialized=False):
+        pass
+
+    def generate_reunion_greeting(self, *_a, **_kw):
+        return ""
+
+
+class TestResumeCarriesEvidence:
+    """服务重启 / 换进程后重连：`POST /resume` 走的是与 `GET /{sid}` **另一条**读路径。
+
+    只修 GET 那条，「刷新后仍能看到检索来源」就只兑现了一半 —— 用户日常重进会话走的
+    恰恰是 resume（还会顺手生成一句重逢问候，那句在本轮检索之外，如实 None）。
+    """
+
+    def test_reunion_after_restart_still_shows_the_sources(
+        self, client, store, user_id, sessions, monkeypatch,
+    ):
+        sid = _new_session(store, user_id)
+        raw = evidence_to_json([make_trace("scene", "hit", text="屋顶上的旧事。")])
+        _run_async(store.save_message(sid, "char", "回复", "rag", evidence=raw))
+        _run_async(store.save_message(sid, "user", "你好", ""))
+
+        engine = _StubEngine()
+
+        class _StubIndexing:
+            def get_rag_for_session(self, *_a, **_kw):
+                return None
+
+        class _StubTextManager:
+            _indexing_service = _StubIndexing()
+
+            def _create_session(self, *_a, **_kw):
+                sessions["ses_rebuilt"] = {"engine": engine}
+                return "ses_rebuilt"
+
+        async def _fake_user_llm(*_a, **_kw):
+            return object()
+
+        import deps
+        monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
+        monkeypatch.setattr(deps, "get_text_manager", lambda *_a, **_kw: _StubTextManager())
+
+        resp = client.post(f"/api/history/{sid}/resume", json={})
+        assert resp.status_code == 200, resp.text
+
+        char_msgs = [m for m in resp.json()["messages"] if m["role"] == "char"]
+        assert char_msgs, "接回来的历史里没有 char 消息"
+        assert char_msgs[0]["evidence"] == json.loads(raw), \
+            "resume 没把证据带回来 —— 重连后检索来源消失"
+        assert [m for m in resp.json()["messages"] if m["role"] == "user"][0]["evidence"] is None
+
+    def test_reunion_greeting_carries_no_evidence(
+        self, client, store, user_id, sessions, monkeypatch,
+    ):
+        """重逢问候生成于本轮检索之外 → 它那条消息的 evidence 如实 None（不是缺键）。"""
+        sid = _new_session(store, user_id)
+        engine = _StubEngine()
+        engine.generate_reunion_greeting = lambda *_a, **_kw: "好久不见。"
+
+        class _StubIndexing:
+            def get_rag_for_session(self, *_a, **_kw):
+                return None
+
+        class _StubTextManager:
+            _indexing_service = _StubIndexing()
+
+            def _create_session(self, *_a, **_kw):
+                sessions["ses_rebuilt"] = {"engine": engine}
+                return "ses_rebuilt"
+
+        async def _fake_user_llm(*_a, **_kw):
+            return object()
+
+        import deps
+        monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
+        monkeypatch.setattr(deps, "get_text_manager", lambda *_a, **_kw: _StubTextManager())
+
+        resp = client.post(f"/api/history/{sid}/resume", json={})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("reunion_greeting") == "好久不见。"
+        greeting = [
+            m for m in body["messages"] if m["id"] == body["reunion_greeting_id"]
+        ][0]
+        assert "evidence" in greeting and greeting["evidence"] is None

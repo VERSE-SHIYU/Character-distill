@@ -339,9 +339,12 @@ async def resume_session(
         engine.set_daily_visits(_visit_count)
 
     # 10. Build messages array for frontend (includes greeting as a regular message)
+    # evidence 与 GET /{session_id} 同一个解码出口（parse_evidence）：重逢后的历史消息
+    # 也要看得见检索来源，否则「刷新/重逢后仍能看到」在两条路径上只兑现了一条。
     frontend_messages = [
         {"role": m["role"], "content": m["content"], "id": m["id"], "created_at": m["created_at"],
-         "retracted": m.get("retracted", False)}
+         "retracted": m.get("retracted", False),
+         "evidence": parse_evidence(m.get("evidence"))}
         for m in db_messages
     ]
     if greeting_data:
@@ -351,6 +354,8 @@ async def resume_session(
             "id": greeting_data["reunion_greeting_id"],
             "created_at": greeting_data["reunion_greeting_created_at"],
             "retracted": False,
+            # 重逢问候在本轮检索之外生成，如实 None
+            "evidence": None,
         })
 
     # 11. Rebuild message_ids so revoke works after resume
