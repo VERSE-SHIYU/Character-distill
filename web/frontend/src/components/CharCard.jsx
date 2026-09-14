@@ -824,6 +824,20 @@ function CardDetail({ card, textId, goBack }) {
           </CardSection>
         )}
 
+        {/* Character arc */}
+        {data.character_arc?.length > 0 && (
+          <CardSection label="角色弧线">
+            <ol className="card-arc-list">
+              {data.character_arc.map((s, i) => (
+                <li key={i} className="card-arc-item">
+                  <span className="card-arc-index">{i + 1}</span>
+                  <span className="card-arc-text">{s}</span>
+                </li>
+              ))}
+            </ol>
+          </CardSection>
+        )}
+
         {/* Background */}
         {data.background && (
           <CardSection label="背景">

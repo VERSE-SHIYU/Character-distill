@@ -494,10 +494,20 @@ config.yaml 现值（现读，非转述）：
 - 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
 - 立项与否 = **产品决策**，不是待办欠账；将来要做，按「新功能」走完整流程，不挂在缺陷表下
 
+**B. `character_arc`（角色弧线）能填不能看 → 已补（2026-09-14，两处同补）**
+- **事实**：字段是 `list[str]`（`core/schema.py`，每阶段一句话），`EditCardModal` 有编辑入口、存进 `card_json`、前端也拿得到；但**两处卡片详情都不渲染它**。同节其余字段（`personality_traits` / `values` / `key_memories` / `inner_tensions` / `relationships`）两处都渲染了
+- **性质**：功能缺失，不是缺陷 —— 没有「该显示却显示错」的可对照现状，是**从来没有这块展示**，故不挂在缺陷表下
+- **两处就是全集**：卡片详情渲染器全仓只有两个 —— `MarketCardDetail`（集市卡）与 `CharCard`（自建卡，`App.jsx` 的 `character` 视图）。普查当时 `character_arc` 在 `web/frontend/src` 下**只命中 `EditCardModal`**，展示侧零命中。只补一处会得到「看别人的卡有弧线、看自己的卡没有」—— 同一缺口的两处显形必须同补
+- **处置（用户，2026-09-14）**：**已补，两处同补**
+- **形态**：`<ol>` + 序号徽章 + 纵向序列（体现阶段先后），区别于 `values` 的并列 chip；外壳与折叠各自复用**本文件既有机制**（`MarketCardDetail` 走 `collapsedSections` / `toggleSection`，`CharCard` 本文件无折叠机制故不加）；空值 `?.length > 0` 整节降级。渲染层不抽共享组件（两处外壳本就不同：`CardSection` vs `card-section--wide`+`<h3>`），但 **CSS 共用同一组类名** —— `global.css` 的 `card-arc-list` / `card-arc-item` / `card-arc-index`，全仓只此一处
+- **覆盖证据**：`web/frontend/src/components/__tests__/` 下 `MarketCardDetailCharacterArc.test.jsx` 与 `CharCardCharacterArc.test.jsx`（各两条：有 / 无），外加一条「CSS 只落一处」断言（三条类名定义在 `global.css`、不出现在 `adm-theme.css`）。变异矩阵见会话记录（守卫改恒假 → 两文件各自的「有」用例红；「无」载荷改带弧线 → 「无」用例红）
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
 - **台账状态行不是事实，是上一轮的记录** —— 引用「某条未修 / 仍是 X」之前必须核 commit 历史。`git log` / `git show` 是权威；缺陷表、清单、README 的状态行只是**写下的那一刻**的快照，会滞后于实际。案例：缺陷 22 已由 `ac2692f` 修掉，状态行却仍标「未修」，被当作遗留报了出去 —— 漏记的动作只有一个：**只读了状态行，没核 `git log`**。这是上一条的**同源反面**：上一条说「别引用上一轮跑出来的**数字**」，这一条说「**台账本身也是上一轮的结果**」。判据：任何「某条仍未修 / 仍是某形态」的结论，落笔前跑一次 `git log --grep=<关键词>` / `git show <sha>` 核验；核不到、或状态行与历史打架时，**以历史为准并就地订正台账**（订正要在条目里写明「原状态行滞后」及原因，否则下一个人会再踩一次）。**同一动作也适用于本文件的其它清单**（如 §五 工具现状）：清单是索引，不是证据
+- **同一个理由不要落在三个地方 —— 测试说「验什么」，台账说「为什么会有这条」**。判据：一条改动的**历史成因**（「原来是这么错的、所以现在这么改」）只该有一个权威住所，就是台账（本文件条目 / commit message）；测试的文档串只说**这个用例验什么、为什么这样隔离**，不复述成因。案例：缺陷 28 收口时，同一段「原用例为什么不 hermetic」同时写进了测试 docstring（12 行）、commit message、本文件缺陷 28 条目——三处各一份，将来改一处忘两处，是**注定漂移**的重复。当时改动成本高于收益，故只记不改。一般化：**判「该不该重复」先问「谁会先变」**——若三份副本里有任一份会随实现演进先变，就是漂移点，收成一份（判据：一份是事实源、其余是引用）。这与上一条同源：都在问「这段文字是**证据**，还是**某一刻的记录**」——是记录就别抄到需要证据的地方
+
 - **并发/事务/锁的结论不给「应该如此」，只给「要验什么、怎么验」**。案例：MVCC 下 `WHERE EXISTS` 是快照读、不加锁，挡不住「父行正在被删、还没提交」——必须补 `FOR SHARE`。本仓已成文于 `storage/postgres_store.py` 的 `save_distill_chunk`（含死锁无环分析）
 - **SQLite 全绿不构成并发命题的证据**：SQLite 写是库级序列化，窗口从根上不存在（`storage/sqlite_store.py` 的 `save_distill_chunk` 自述），生产是 PG。同一段逻辑在 sqlite 上验不出 PG 的行锁语义
 - **mock 的形态 ≠ 被测对象的形态**。案例：mock 回 canned JSON，据此误判 map 输出是 JSON——实际是自然语言（prompt 见 `core/distiller.py` 的 `_map_system_prompt` / `_map_user_prompt`；消费侧只判「非空且 ≠『无』」，见 `distill_incremental_stream` 内 `raw_analyses`）。据此设计的 JSON 校验会否掉所有真实 map 结果

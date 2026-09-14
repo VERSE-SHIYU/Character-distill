@@ -3841,6 +3841,39 @@ label[for] {
   font-size: 14px;
 }
 
+/* Character arc — 有序：纵向序列 + 序号徽章（区别于 values 的并列 chip） */
+.card-arc-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.card-arc-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-sec);
+  line-height: 1.55;
+  padding: 6px 10px;
+  background: var(--glass-bg);
+  border-radius: 8px;
+}
+
+.card-arc-index {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Relationships */
 .card-rel-list {
   display: flex;
