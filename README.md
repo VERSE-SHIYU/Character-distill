@@ -95,6 +95,24 @@ python -m uvicorn web.server:app --host 0.0.0.0 --port 7860
 cd web/frontend && npm run dev
 ```
 
+#### 后端两条路：前端代理跟着走
+
+本地后端有**两套拓扑**，host 侧端口不同。前端 `npm run dev` 会**自动探活**并打印实际用了哪条，不用记；但你得知道自己在哪一套：
+
+| 拓扑 | 后端怎么起 | 后端在 host 的地址 | 前端怎么起 |
+|---|---|---|---|
+| **原生** | `python -m uvicorn web.server:app --host 0.0.0.0 --port 7860`，或双击 `start_all.bat` | `http://localhost:7860` | `npm run dev`（默认即命中，无需环境变量） |
+| **docker local** | `docker compose -f docker-compose.local.yml up -d --build` | `http://localhost:7861`（compose 是 `7861:7860`，**容器内仍是 7860**） | `VITE_PROXY_TARGET=http://localhost:7861 npm run dev` |
+
+`npm run dev` 的探测顺序：`VITE_PROXY_TARGET`（**设了就无条件采信**，探不通只报警不覆盖）→ `7860` → `7861`，取第一个 `/api/health` 探通的。**都不通时打印一行人话**（探过哪些地址 + 两套拓扑分别怎么起），而不是让你对着满屏 502 猜原因。
+
+几个容易踩的点：
+
+- **别名别搞混**：`docker-compose.local.yml` 是**本地**编排（现场 build、host 7861）；`docker-compose.prod.yml` 是**生产**（host 侧 `127.0.0.1:7860`，与原生同号）。**默认值写 7860 就是因为后者**。
+- 生产与本地 docker 都必须带 `-f` 指定 compose 文件，否则 compose 找不到配置。
+- `tests/perf/` 还有一套压测 rig 用 **7862**（容器 `cdload-app-1`），与日常开发无关。
+- 探活只在起 dev server 时发生；`npm run build` 与 `npm test` **不依赖后端存在**。
+
 ### 方式三：Windows 一键启动（本地 + GPT-SoVITS）
 
 ```batch
