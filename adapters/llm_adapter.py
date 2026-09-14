@@ -349,6 +349,16 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
     return None
 
 
+def llm_error_types() -> tuple[type[BaseException], ...]:
+    """本层已知失败的异常类，供装配层注册 ``add_exception_handler``。
+
+    与 ``llm_error_payload`` 同一取向：**装配层不 import 异常类**（边界锁
+    ``tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage``
+    禁 core/web/storage 出现该标识）。新增一种 LLM 失败 = 在这里的元组加一个类，
+    装配层零改动。"""
+    return (IncompleteResponseError,)
+
+
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
 
 

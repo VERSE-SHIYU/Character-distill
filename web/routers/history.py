@@ -122,6 +122,9 @@ async def export_session(
     try:
         content = await storage.export_session(session_id, format)
     except ValueError as exc:
+        # **不迁到统一出口**：裸 ValueError 是「用户输入校验失败」（如「不支持的导出格式」），
+        # 不是领域异常；它没有 `user_message`，走 user_facing_error 会删掉用户需要的信息。
+        # 契约锁：tests/test_security_authz.py::test_10_value_error_400。
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[history] Export session failed: {exc}")

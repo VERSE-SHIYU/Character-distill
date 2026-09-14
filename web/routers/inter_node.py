@@ -1,4 +1,11 @@
-"""Inter-node endpoints: DM receive (HMAC-authenticated, no JWT)."""
+"""Inter-node endpoints: DM receive (HMAC-authenticated, no JWT).
+
+下方 8 处 ``except Exception → HTTPException(500, f"...: {exc}")`` **故意保留异常原文上屏**，
+不迁到 web/server.py 的统一出口：本路由的「用户」是**对端部署的运维**，异常原文是跨节点
+排障的唯一线索。收到统一出口后对面只剩「操作失败，请稍后重试」，那是把可排障变成不可排障。
+（同族：A 类 text.py / history.py 的 `str(exc)` 是唯一上屏通道 —— 理由不同，结论相同：
+**上屏文案该不该收，看有没有正当消费者，不看它像不像泄漏**。）
+"""
 
 from __future__ import annotations
 

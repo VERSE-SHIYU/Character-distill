@@ -153,6 +153,11 @@ async def upload_text(
                 text_id = result["text_id"]
                 cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
             except ValueError as exc:
+                # **不迁到统一出口**（web/server.py）。这里的裸 ValueError 是「用户输入校验
+                # 失败」，不是领域异常：TextManager 抛的文案本身就是上屏口径（如「文件编码
+                # 无法识别，请另存为 UTF-8 后重新上传」）。裸 ValueError 没有 `user_message`，
+                # 走 user_facing_error 会落到通用文案 —— **那是删信息，不是统一**。
+                # 契约锁：tests/test_security_authz.py::test_10_value_error_400。
                 raise HTTPException(400, str(exc)) from exc
         finally:
             if temp_path.exists():
@@ -166,6 +171,7 @@ async def upload_text(
             text_id = result["text_id"]
             cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
         except ValueError as exc:
+            # 不迁，理由同上面 upload_text_from_file 那处（A 类：用户输入校验）。
             raise HTTPException(400, str(exc)) from exc
     else:
         raise HTTPException(400, "Must provide file or text")

@@ -42,24 +42,12 @@ def _stream_error_payload(exc: Exception) -> dict[str, Any]:
     return {"error": user_facing_error(exc, preserve_unknown=True)}
 
 
-# 非流式：上游返回不完整响应不是「服务端出错」，一律 500 语义错——content_filter 更是
-# 用户输入问题，用 500 会让用户当 bug 反复重试。
-_INCOMPLETE_HTTP_STATUS: dict[str, int] = {
-    "content_filter": 400,                 # 用户可修正：改输入（重试无用）
-    "length": 502,                         # 上游返回不完整（截断）
-    "insufficient_system_resource": 503,   # 上游资源不足，稍后可重试
-}
-_INCOMPLETE_HTTP_STATUS_DEFAULT = 502      # 未登记的未完成终态：按上游问题，不按我们的故障
-
-
-def _http_error_from(exc: Exception) -> HTTPException | None:
-    """LLM 侧已知失败 → 带语义状态码的 HTTPException；非 LLM 侧失败返回 None（交调用方兜底）。
-    文案取 adapter 的上屏表，与 SSE 帧同口径。"""
-    info = llm_error_payload(exc)
-    if info is None:
-        return None
-    status = _INCOMPLETE_HTTP_STATUS.get(info["finish_reason"], _INCOMPLETE_HTTP_STATUS_DEFAULT)
-    return HTTPException(status, info["error"])
+# 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，
+# 用 500 会让用户当 bug 反复重试。
+#
+# `finish_reason` → 状态码那张表已**搬到 web/server.py 的 `_INCOMPLETE_STATUS`**（统一出口）：
+# 同一个异常类型下码不同，但「怎么配码」不该散在路由里。此处只放行（见 `_do_chat`），
+# 文案仍走同一份口径链，与 SSE 帧同文案。
 
 # Retraction state machine
 RETRACT_COOLDOWN_TURNS = 4      # 距上次撤回至少间隔的轮数
@@ -332,9 +320,10 @@ async def _do_chat(
             rag_ctx = getattr(engine, '_last_rag_context', '') or ''
     except Exception as exc:
         print(f"[chat] Chat failed: {exc}")
-        http_exc = _http_error_from(exc)
-        if http_exc is not None:
-            raise http_exc from exc
+        # LLM 侧未完成终态放行到统一出口（web/server.py 按 finish_reason 配 400/502/503）；
+        # 其余仍就地 500。判据走 llm_error_payload，不 import 异常类（边界锁）。
+        if llm_error_payload(exc) is not None:
+            raise
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Determine retraction before persisting (session-level state machine)

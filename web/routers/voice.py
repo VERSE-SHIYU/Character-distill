@@ -106,8 +106,9 @@ def _extract_audio_from_video(filepath: Path) -> Path:
         capture_output=True, timeout=60,
     )
     if result.returncode != 0:
-        err_msg = result.stderr.decode()[:200] if result.stderr else "unknown error"
-        raise HTTPException(400, f"视频音频提取失败: {err_msg}")
+        # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 38 同形态）。
+        print(f"[voice] ffmpeg extract failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
+        raise HTTPException(400, "视频音频提取失败，请换成音频文件或换一个视频重试")
     filepath.unlink()  # Remove original video, keep audio only
     return wav_path
 
@@ -375,9 +376,10 @@ async def upload_ref_audio(
             capture_output=True, timeout=60,
         )
         if result.returncode != 0:
-            err_msg = result.stderr.decode()[:200] if result.stderr else "unknown error"
+            # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 38 同形态）。
+            print(f"[voice] ffmpeg extract failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
             filepath.unlink(missing_ok=True)
-            raise HTTPException(400, f"视频音频提取失败: {err_msg}")
+            raise HTTPException(400, "视频音频提取失败，请换成音频文件或换一个视频重试")
         filepath.unlink()  # Remove video, keep audio
         filepath = wav_path
         ext = ".wav"

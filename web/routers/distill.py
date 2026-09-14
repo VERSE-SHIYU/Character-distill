@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from deps import get_indexing_service, get_sessions, get_storage, run_on_main_loop
 from adapters.llm_adapter import user_facing_error
-from core.distiller import Distiller, text_fingerprint
+from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.utils import try_record_usage
@@ -724,7 +724,16 @@ async def distill_by_text_id(
                 all_characters=[], embedding_key=_ek, embedding_region=_er,
             )
         return result
+    except DistillError:
+        # 领域异常：放行到统一出口（web/server.py 的 `_DOMAIN_ERROR_STATUS`）配码取文案。
+        # 原先这里 `str(exc)` 直接上屏，而 DistillError 的 `str()` 是运维口径
+        # （`user_message｜ops_detail`）—— 后半截不该给用户看（缺陷 38）。
+        raise
     except ValueError as exc:
+        # **不迁**：下面的 `except Exception` 也够不着它，但这条是**用户输入/属主校验**类
+        # 裸 ValueError（如 TextManager 的 "Text not found"），不是领域异常。它没有
+        # `user_message`，走 user_facing_error 会落到通用文案、把用户需要的信息删掉 ——
+        # 与 text.py / history.py 的 A 类同源。**别为统一而统一。**
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")
@@ -1261,7 +1270,9 @@ async def update_card(
     try:
         validated = CharacterCard.model_validate(req.card_json)
     except Exception as exc:
-        raise HTTPException(400, f"角色卡数据校验失败：{exc}") from exc
+        # 上屏不带 `{exc}`：那是 pydantic 的字段级报错（内部字段名），细节只进日志。
+        print(f"[distill] Card validation failed: {exc}")
+        raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
     result = await storage.update_card(card_id, validated.model_dump())
     return {"ok": True, "card": result}
 
@@ -1560,7 +1571,10 @@ async def legacy_distill(
             text_id, char_name, user_id=user_id,
             embedding_key=_ek, embedding_region=_er,
         )
+    except DistillError:
+        raise      # 放行到统一出口（web/server.py）：配码取文案，路由不碰（缺陷 38）
     except ValueError as exc:
+        # **不迁**，理由同 `/run` 那处：这是用户输入/属主校验类裸 ValueError，不是领域异常。
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         print(f"[distill] Distill failed: {exc}")

@@ -825,7 +825,9 @@ async def at_reply(
             card_json_str = _json.dumps(card_json_str, ensure_ascii=False)
         char = CharacterCard.model_validate(_json.loads(card_json_str))
     except Exception as exc:
-        raise HTTPException(500, f"角色卡解析失败: {exc}")
+        # 上屏不带 `{exc}`：那是 pydantic 的字段级报错，细节只进日志（缺陷 38 同形态）。
+        print(f"[market] Card parse failed: {exc}")
+        raise HTTPException(500, "角色卡解析失败，请稍后重试")
 
     # 3. 拼 system_prompt（轻量版，只用角色核心设定）
     traits = "\n".join(f"- {t}" for t in (char.personality_traits or []))
@@ -850,7 +852,9 @@ async def at_reply(
         )
         try_record_usage(storage, user["id"], llm, "chat_ai_reply", source="market")
     except Exception as exc:
-        raise HTTPException(500, f"AI 生成失败，请稍后重试：{exc}")
+        # 上屏不带 `{exc}`：上游/驱动原文只进日志（缺陷 38 同形态）。
+        print(f"[market] AI reply failed: {exc}")
+        raise HTTPException(500, "AI 生成失败，请稍后重试")
 
     # 6. 版本标注（author_username 由 get_card + LEFT JOIN users 提供）
     ai_version_label = f"{char.name}（{at_card.get('name', char.name)} · @{at_card.get('author_username') or ''}）"

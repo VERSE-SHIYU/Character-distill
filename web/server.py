@@ -68,6 +68,7 @@ from inter_node_auth import validate_inter_node_secret
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
+from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
 
@@ -144,6 +145,69 @@ async def _rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded)
 
 
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ---- 领域异常 → HTTP 状态码：唯一定义处 ----
+# 路由层只 raise 领域异常，不碰文案、不碰状态码。上屏文案一律取 ``user_facing_error``
+# （adapters 里的唯一出口）—— **不在此新建第二张消息表**，这里只管「码」。
+#
+# 每行的依据是**现状归纳**，不是重新设计（AGENTS.md 缺陷 38）：
+#   DistillError → 400   原先 /run 的 `except ValueError` 就是 400（DistillError 是 ValueError 子类）
+#   StoreError   → **不在表内**：storage/base.py 的类注释已把「记 traceback 并回 500」指派给
+#                  下面的全局处理器。在此注册会**丢掉 traceback** —— 那是降级，不是统一。
+#   未登记异常     → 500   原有兜底，不动
+#
+# 流式（SSE）与后台任务两条链**不走这里**：异常发生时响应头已在线（HTTP 200 +
+# event-stream）或根本没有响应，处理器产出的是第二个响应、Starlette 不会再发 ——
+# 管不到，不是不让管。那两条继续用 `user_facing_error` 取文案，共用同一份口径链。
+from core.distiller import DistillError  # noqa: E402  此处引入，避开文件顶部 meta-tensor 防御块
+
+_DOMAIN_ERROR_STATUS: dict[type, int] = {DistillError: 400}
+
+# LLM 侧未完成终态：同一异常类下 finish_reason 语义不同，故按 finish_reason 分支。
+# content_filter 是用户可修正的输入问题（400，重试无用）、length 是上游截断（502）、
+# 资源不足可稍后重试（503）、未登记兜 502（上游问题，不按我们的故障）。
+# 这张表原先长在 web/routers/chat.py —— **搬家不是再造**。
+_INCOMPLETE_STATUS: dict[str, int] = {
+    "content_filter": 400,
+    "length": 502,
+    "insufficient_system_resource": 503,
+}
+_INCOMPLETE_STATUS_DEFAULT = 502
+
+
+def _domain_error_status(exc: Exception) -> int:
+    """按 MRO 判码 —— 注册按基类做，子类也要命中（Starlette 的分发本身就是按 MRO 走的）。"""
+    for cls, status in _DOMAIN_ERROR_STATUS.items():
+        if isinstance(exc, cls):
+            return status
+    return 500
+
+
+async def _domain_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=_domain_error_status(exc),
+        content={"detail": user_facing_error(exc)},
+    )
+
+
+async def _llm_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    payload = llm_error_payload(exc) or {}
+    status = _INCOMPLETE_STATUS.get(payload.get("finish_reason", ""), _INCOMPLETE_STATUS_DEFAULT)
+    return JSONResponse(status_code=status, content={"detail": user_facing_error(exc)})
+
+
+def register_domain_error_handlers(target_app: FastAPI) -> None:
+    """把领域异常挂到统一出口。抽成函数是为了让测试能在**自己的最小 app** 上装同一份注册 ——
+    测试与生产共用这一处，才拦得住「注册表被改空而测试没动」的变异。"""
+    for _cls in _DOMAIN_ERROR_STATUS:
+        target_app.add_exception_handler(_cls, _domain_error_handler)
+    # LLM 侧异常类由 adapters 发布（此处不 import 类名 —— 边界锁禁 core/web/storage 出现该标识）
+    for _cls in llm_error_types():
+        target_app.add_exception_handler(_cls, _llm_error_handler)
+
+
+register_domain_error_handlers(app)
 
 
 @app.exception_handler(Exception)
@@ -362,7 +426,8 @@ async def update_settings_config(
         }
     except Exception as exc:
         print(f"[server] Update config failed: {exc}")
-        raise HTTPException(500, f"Update config failed: {exc}") from exc
+        # 上屏不带 `{exc}`：与上面的 read 分支同口径（缺陷 38 同形态）。
+        raise HTTPException(500, "Update config failed") from exc
 
 
 @app.post("/api/settings/test-gptsovits")
