@@ -478,6 +478,23 @@ config.yaml 现值（现读，非转述）：
 - **将来二选一的判据（可观测性工作开始时定）**：要么把 `ok`/`elapsed_ms` 提成 `agent.execute_tool` span 的 attr（那里已有 `tool` attr）并**删掉三键**，要么明确 `steps` 就是导出给评测脚本的台账、把这句话写进字段注释。判据命令：`git grep -n 'elapsed_ms\|\["ok"\]'`。
 - **为什么现在不删**：与缺陷 29 是两件事（那是**语义**，这是**去留**）。零读者字段的删除不产生行为差异，混进 29 的 commit 会让「哪行因哪个动因改动」说不清。
 
+**32. `docker-compose.local.yml` 缺 env 变量时静默降级成空串 —— 「失败被吞成正常运行」的再一次显形** —— 状态：**记账（不修）**（2026-09-14，定位容器版本时发现）
+- **形态**：app 服务的 `DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}`，而 `.env` 里**没有** `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` 三个条目 → compose 只打一行 warning（`The "POSTGRES_USER" variable is not set. Defaulting to a blank string.`），然后**照常拼出一个空用户、空库名的 URL 并把容器起起来**。compose 全程不报错。
+- **证据**：`.env` 的键清单只有 `ADMIN_INVITE_CODE` / `ALLOWED_ORIGINS` / `DASHSCOPE_API_KEY` / `DB_PATH` / `DEEPSEEK_API_KEY` / `JWT_SECRET` / `STORAGE_BACKEND`；`docker compose config` 打三行 warning（`up` 时又各一次）；容器内 `${DATABASE_URL##*@}` 为 `postgres:5432/` —— **库名为空**。
+- **后果与「为什么本机看不见」**：本机无感的唯一原因是 `STORAGE_BACKEND=sqlite`，它让 `DATABASE_URL` 成了惰性项。**兜住这件事的是那个偶然配置，不是设计** —— 换一台 `STORAGE_BACKEND` 指向 PG 的机器（或有人把 sqlite 那一行删掉），同一条命令会静默起一个连不上库的 app，且没有任何报错指向这里。
+- **定性**：与本仓「失败被吞成正常运行」的既有形态同族（线程弃船 / 384 维度不符 / 截断响应当成功 / `finish_reason` 缺失 / `$contains` 恒不命中 / 静默截断）。**它不抛异常，只是拼出一个坏值**——坏值比异常难查，因为它长得像正常配置。
+- **与纪律相悖**：「凭据一律 env 化」的判据是**无默认值、缺变量即硬失败并点名变量**。这里是缺变量 → 静默空串，恰好相反。
+- **处置方向（记在条目里，不实现）**：compose 原生支持 `${VAR:?<msg>}` —— 缺变量时在**解析期就失败并打印 msg**（把变量名写进 msg 即为「点名」），而不是 `:-` 那样给默认值。**判据：要的不是「补一份 `.env.example` 让人记得填」** —— 那又是靠人记得，与 §四「守卫与被守对象之间隔着第二份手工维护的清单」同病灶；要的是「缺了就跑不起来，且报错自己说清缺哪个」。
+- **顺带结论**：本次 rebuild 加 `--no-deps` 的必要性正由此而来 —— 三个变量解析为空后 compose 会判定 postgres 配置变更并 **recreate** 它（与「只重建 app、不碰 postgres」的指令冲突）。实测加了 `--no-deps` 后 postgres 容器 id / `StartedAt` 均未变。
+
+**33. 凭据以「命令行前缀」形态传递，明文沉积进 `.claude/settings.local.json` 的权限白名单** —— 状态：**记账（不修；与 32 同轮做才有闭环）**（2026-09-14）
+- **症状**：`.claude/settings.local.json` 的 `permissions` 里存着 `Bash(POSTGRES_USER=…` 这条前缀，**明文**。该文件被 `.gitignore:228` 的 `.claude/` 覆盖，`git ls-files` 未命中 —— **未入库**。
+- **根因（不是「这一条白名单里有口令」）**：**凭据被当成命令行参数传递**。只要还用 `POSTGRES_USER=… POSTGRES_PASSWORD=… docker compose up` 这种形态，同一份口令就会同时落在 **shell history / `ps` 输出 / 权限白名单 / 任何记录命令的地方**。「为了方便自动积累」的白名单只是其中一处。**删掉白名单里那一条 = 治症状**：下次再跑同样的命令，它会被重新写回去。
+- **「没入库」不等于「没风险」**：它明文躺在磁盘上，而且是个**自动积累**的文件，不是人有意选定的凭据存放点。将来解除某个子路径的 ignore、或打包发送配置 / 日志 / 环境快照，它会跟着出去。
+- **处置方向（记在条目里，不实现）**：凭据进一个 **gitignored 的 env 文件**，由 compose 的 `env_file` 读取，命令行不再出现凭据（`docker compose -f … up -d` 即可）。
+- **与 32 是同一件事的两面**：32 管「缺变量不许静默降级」，33 管「变量从文件来、不从命令行来」。只做 33（补 `.env`）而不做 32 → 缺变量仍静默、凭据仍可能走命令行；只做 32（改成 `:?` 硬失败）而不做 33 → 把「必须显式传入」变成「必须每次打在命令行上」，**反而扩大凭据的扩散面**。**两条同轮才有闭环，单独改任一条都是补丁。**
+- 判据命令：`git grep -n 'POSTGRES_USER'`（列引用点）、`git check-ignore -v .claude/settings.local.json`（确认 ignore 来源）
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
