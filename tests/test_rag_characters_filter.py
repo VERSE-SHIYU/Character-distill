@@ -55,9 +55,13 @@ class _ScriptedCollection:
     def query(self, query_texts=None, n_results=None, include=None, where=None, **kw):
         self.calls.append({"n_results": n_results, "where": where})
         if where is not None:
-            return {"documents": [[]], "distances": [[]], "metadatas": [[]]}
+            return {"documents": [[]], "distances": [[]], "metadatas": [[]], "ids": [[]]}
         rows = self._rows[:n_results]
+        # ids 必给：chroma 的 query() 恒返回 ids（不受 include 控制），rag 侧
+        # 结构化出口要拿它当 chunk_id。假件不给会被 IndexError 当场拦下 ——
+        # 假件形状必须与真 chroma 一致，否则测的不是生产形态。
         return {
+            "ids": [[f"chunk_{i}" for i in range(len(rows))]],
             "documents": [[d for d, _ in rows]],
             "distances": [[0.1 * i for i in range(len(rows))]],
             "metadatas": [[m for _, m in rows]],

@@ -85,6 +85,10 @@ class CharacterCard(BaseModel):
 
 
 # ── Evidence：检索来源的结构化契约 ─────────────────────────────────────
+# 命名消歧：仓里 `evidence` 一词已被 `docs/evidence/` + `evidence_writer` +
+# `test_evidence_integrity` 占用（审计探针的产物）。此处 `EvidenceItem` 指
+# **检索来源**（剧情原文 / 记忆 / 网络），与那套审计产物无关，别混淆。
+#
 # 「检索来源」面板的数据契约：**只描述检索层产出了什么**，不描述下游怎么渲染 ——
 # 这里不许出现「折叠 / 卡片 / 图标 / 颜色」这类前端概念（依赖倒置：契约不依赖渲染）。
 #
@@ -106,20 +110,32 @@ class SceneMeta(TypedDict):
     semantic / emotion_affinity 是**未加权的原始分量**，final 是加权和
     （``0.7·semantic + 0.3·emotion_affinity``）—— 三者并列才解释得了 final 从哪来；
     只留 final，可解释性就没了。
+
+    **``semantic`` 是相对量，不是绝对相关度**：它按**本次结果集**的 max_dist 归一化
+    （``1 - dist/max_dist``），跨查询不可比 —— 换一组候选，同一条原文的 semantic 就变了。
+    且本次结果里**距离最大的那条恒为 0**，只命中一条时那条也恒为 0。故契约层不承诺
+    这个数绝对可读，**下游只可用于排序**（前端直接绑这一条，别再自行解读）。
     """
     chapter: str | None       # 章节；今天无生产方（scene_indexer 只写 emotion/characters/scene_index），恒 None
-    chunk_id: str | None      # 块标识，取 chroma 元数据 scene_index
-    semantic: float           # 语义相似度原始分量 0-1
+    chunk_id: str | None      # 块标识，取 **chroma 返回的真 id**（如 scene_3），不取 metadata 影子副本
+    semantic: float           # 语义相似度原始分量 0-1（本次结果集内归一化，跨查询不可比）
     emotion_affinity: float   # 情感匹配原始分量 0-1
     final: float              # 加权总分 0-1
 
 
 class MemoryMeta(TypedDict):
-    """memory 类来源的解释字段（memory_manager.search 已在算：见其返回的 memory_mood）。"""
+    """memory 类来源的解释字段。
+
+    与 scene 同一条规矩：**分量与合成分并列存**，不只留合成分。memory_manager.search
+    已算出这几个量（``emo_affinity`` / ``final`` / ``relevance``），接口处只用映射，
+    不许重算。（其返回里情绪键叫 ``memory_mood``，此处契约为 ``mood``。）
+    """
     relevance: float
     importance: int
     age_seconds: float
     mood: str
+    emo_affinity: float       # 情感加成原始分量
+    final: float              # base × (1 + 0.25·emo_affinity)，上界 1.25 —— **不是 0-1**
 
 
 class WebMeta(TypedDict):

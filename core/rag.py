@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, NamedTuple
 
 import chromadb
 from chromadb.api.models.Collection import Collection
@@ -111,6 +111,35 @@ class EvidenceHits(list):
     def __init__(self, items: Any = (), *, candidates_exhausted: bool = False) -> None:
         super().__init__(items)
         self.candidates_exhausted = candidates_exhausted
+
+
+class _Candidates(NamedTuple):
+    """``_fetch_candidates`` 的产出：经**同一套 keep 下标**过滤后的候选。
+
+    具名而非继续加长位置元组 —— 位置元组与无契约的 dict 是同一种垃圾桶（本轮
+    加 ``ids`` 正好是第 5 个字段，就是升具名的时机）。``dists`` 在未请求 distances
+    的调用方（``query``）下为空列表。
+    """
+    ids: list[str]
+    docs: list[str]
+    dists: list[float]
+    metas: list[dict[str, Any] | None]
+    exhausted: bool
+
+
+class _ScoredScene(NamedTuple):
+    """一条已打分的场景候选 —— ``_rank_with_emotion`` 的产出。
+
+    ``semantic`` / ``emotion_affinity`` 是**未加权原始分量**，``final`` 是
+    ``0.7·semantic + 0.3·emotion_affinity``；``chunk_id`` 是 **chroma 的真 id**，
+    不是 metadata 里 scene_index 那份影子副本（两份 id 必然漂移）。
+    """
+    final: float
+    semantic: float
+    emotion_affinity: float
+    chunk_id: str
+    text: str
+    meta: dict[str, Any] | None
 
 
 class RAGEngine:
@@ -296,13 +325,13 @@ class RAGEngine:
         if self.collection is None:
             return SceneHits()
 
-        docs, _, _, exhausted = self._fetch_candidates(
+        cand = self._fetch_candidates(
             query_text,
             character_name,
             top_k or self._top_k,
             ["documents", "metadatas"],
         )
-        return SceneHits(docs, candidates_exhausted=exhausted)
+        return SceneHits(cand.docs, candidates_exhausted=cand.exhausted)
 
     def _fetch_candidates(
         self,
@@ -310,13 +339,18 @@ class RAGEngine:
         character_name: str | None,
         need: int,
         include: list[str],
-    ) -> tuple[list[str], list, list[dict[str, Any] | None], bool]:
+    ) -> _Candidates:
         """取候选并按 characters 过滤，过滤后不足则扩大候选重取。
 
         Returns:
-            ``(docs, distances, metadatas, candidates_exhausted)``，三者均已按角色
-            过滤过。返回条数可能少于 need；此时 candidates_exhausted 为 True 且
-            （有角色过滤时）日志如实报告 —— 绝不静默少返回。
+            ``_Candidates``：ids / docs / dists / metas 均已用**同一套 keep 下标**
+            过滤过，加 ``exhausted``。返回条数可能少于 need；此时 exhausted 为 True
+            且（有角色过滤时）日志如实报告 —— 绝不静默少返回。
+
+        Note:
+            chroma 的 ``query()`` **恒返回 ids**（不受 ``include`` 控制，见其
+            ``QueryResult`` 文档），故这里直接读、不往 include 里加 ``"ids"``
+            （该值不在合法 include 集合内，加了会抛）。
         """
         want = max(need, 1)
         # 有角色过滤才要超取：无过滤时多取没有意义，徒增候选。
@@ -333,6 +367,7 @@ class RAGEngine:
                 # 显式上抛，由 ContextEngine._retrieve_scenes 降级并记日志。
                 raise CollectionUnusableError(f"向量检索查询失败：{exc}") from exc
 
+            ids = list((results.get("ids") or [[]])[0] or [])
             docs = list((results.get("documents") or [[]])[0] or [])
             dists = list((results.get("distances") or [[]])[0] or [])
             metas = list((results.get("metadatas") or [[]])[0] or [])
@@ -356,7 +391,9 @@ class RAGEngine:
             def _take(seq: list) -> list:
                 return [seq[i] for i in keep] if len(seq) == len(docs) else []
 
-            return _take(docs), _take(dists), _take(metas), exhausted
+            return _Candidates(
+                _take(ids), _take(docs), _take(dists), _take(metas), exhausted
+            )
 
     def _rank_with_emotion(
         self,
@@ -364,12 +401,12 @@ class RAGEngine:
         current_emotion: str,
         character_name: str | None,
         top_k: int,
-    ) -> tuple[list[tuple[float, float, float, str, dict[str, Any] | None]], bool]:
+    ) -> tuple[list[_ScoredScene], bool]:
         """情感加权排序的**唯一实现**，两个公开出口都从这里取序。
 
         Returns:
             ``(ranked, exhausted)``。ranked 是截断到 top_k、按 final 降序的
-            ``(final, semantic, emotion_affinity, doc, meta)`` 五元组列表。
+            ``_ScoredScene`` 列表。
 
         semantic / emotion_affinity 是**未加权原始分量**，final 是
         ``0.7·semantic + 0.3·emotion_affinity``。拆开存是硬要求：只留 final，
@@ -381,15 +418,15 @@ class RAGEngine:
         if self.collection is None:
             return [], False
 
-        docs, dists, metas, exhausted = self._fetch_candidates(
+        cand = self._fetch_candidates(
             query_text,
             character_name,
             top_k,
             ["documents", "distances", "metadatas"],
         )
 
-        if not docs:
-            return [], exhausted
+        if not cand.docs:
+            return [], cand.exhausted
 
         _EMO_DISTANCE: dict[tuple[str, str], float] = {
             ("悲伤", "悲伤"): 1.0, ("愤怒", "愤怒"): 1.0,
@@ -415,18 +452,23 @@ class RAGEngine:
         def emo_sim(e1: str, e2: str) -> float:
             return _EMO_DISTANCE.get((e1, e2)) or _EMO_DISTANCE.get((e2, e1)) or 0.2
 
-        max_dist = max(dists) if dists else 1.0
+        max_dist = max(cand.dists) if cand.dists else 1.0
         max_dist = max(max_dist, 1e-6)
-        ranked: list[tuple[float, float, float, str, dict[str, Any] | None]] = []
-        for doc, dist, meta in zip(docs, dists, metas):
-            semantic = 1.0 - dist / max_dist
+        ranked: list[_ScoredScene] = []
+        # 按下标而非 zip：zip 在任何一列短了时**静默截断**，这里要的是当场炸。
+        # （ids/docs/dists/metas 长度由 chroma 保证一致；乱了就是契约被违反。）
+        for i, doc in enumerate(cand.docs):
+            meta = cand.metas[i]
+            semantic = 1.0 - cand.dists[i] / max_dist
             emotion = (meta or {}).get("emotion", "平静")
             emotion_affinity = emo_sim(current_emotion, emotion)
             final = 0.7 * semantic + 0.3 * emotion_affinity
-            ranked.append((final, semantic, emotion_affinity, doc, meta))
+            ranked.append(
+                _ScoredScene(final, semantic, emotion_affinity, cand.ids[i], doc, meta)
+            )
 
-        ranked.sort(key=lambda x: x[0], reverse=True)
-        return ranked[:top_k], exhausted
+        ranked.sort(key=lambda x: x.final, reverse=True)
+        return ranked[:top_k], cand.exhausted
 
     @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query_with_emotion(
@@ -451,7 +493,7 @@ class RAGEngine:
         ranked, exhausted = self._rank_with_emotion(
             query_text, current_emotion, character_name, top_k
         )
-        return SceneHits([doc for _, _, _, doc, _ in ranked], candidates_exhausted=exhausted)
+        return SceneHits([s.text for s in ranked], candidates_exhausted=exhausted)
 
     @T.spanned("rag.query_emotion", finalize=lambda sp, self, res, exc: _set_hits(sp, res))
     def query_with_emotion_ex(
@@ -477,19 +519,19 @@ class RAGEngine:
         items = [
             EvidenceItem(
                 kind="scene",
-                text=doc,
-                score=final,
+                text=s.text,
+                score=s.final,
                 meta=SceneMeta(
-                    # 章节今天无生产方；scene_index 即该场景在集合内的块标识
-                    # （chroma id 为 scene_{i}）。两者来源如实标注，不编造。
-                    chapter=(meta or {}).get("chapter"),
-                    chunk_id=(meta or {}).get("scene_index"),
-                    semantic=semantic,
-                    emotion_affinity=emotion_affinity,
-                    final=final,
+                    # 章节今天无生产方，恒 None（不许塞假章节号）；chunk_id 取
+                    # **chroma 的真 id**，不取 metadata 里 scene_index 那份影子副本。
+                    chapter=(s.meta or {}).get("chapter"),
+                    chunk_id=s.chunk_id,
+                    semantic=s.semantic,
+                    emotion_affinity=s.emotion_affinity,
+                    final=s.final,
                 ),
             )
-            for final, semantic, emotion_affinity, doc, meta in ranked
+            for s in ranked
         ]
         return EvidenceHits(items, candidates_exhausted=exhausted)
 
