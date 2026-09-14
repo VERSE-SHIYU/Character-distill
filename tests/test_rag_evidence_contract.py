@@ -146,10 +146,15 @@ class TestSceneMetaValueSources:
         assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1", "scene_2"]
 
     def test_chunk_id_follows_the_character_filter(self):
-        """过滤后 chunk_id 跟着走 —— 与 docs 同一套 keep 下标，不许错位。"""
-        ex = _run_ex("B")  # 江澄 → 行 0、1
-        assert [e.text for e in ex] == GOLDEN["B"]["docs"]
-        assert [e.meta["chunk_id"] for e in ex] == ["scene_0", "scene_1"]
+        """过滤后 chunk_id 跟着走 —— 与 docs 同一套 keep 下标，不许错位。
+
+        必须用 **keep 非前缀** 的过滤：金光瑶只命中下标 2。前缀 keep（如江澄 → [0,1]）
+        过滤与不过滤取值相同，判别力为零 —— 变异「``_take(ids)`` 退回 ``ids``（ids 与
+        docs 错位）」在原用例上**全绿**（实测），锁的就是这个失效形态：原文对、来源 id 错。
+        """
+        ex = _ex(query_text="旧事", current_emotion="平静", character_name="金光瑶", top_k=3)
+        assert [e.text for e in ex] == ["金光瑶微微一笑。"]
+        assert [e.meta["chunk_id"] for e in ex] == ["scene_2"]
 
     def test_metadata_scene_index_lie_does_not_leak(self):
         """判别力证明：让 metadata 的 scene_index 撒谎，chunk_id 不受影响。
