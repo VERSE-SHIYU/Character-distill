@@ -367,6 +367,10 @@ config.yaml 现值（现读，非转述）：
 - 事实（实测）：`storage/migrations/079_remote_user_profiles.sql` 躺在目录里，但既不在 SQLite 次序表，PG 侧也无对应（PG 用 `migrations_pg/012_remote_user_profiles.sql`，其 glob 驱动已接线）。故 SQLite 新库**没有**这张表
 - 而 `storage/sqlite_store.py` 已在用它：`INSERT OR REPLACE INTO remote_user_profiles` / `SELECT ... FROM remote_user_profiles` / `LEFT JOIN remote_user_profiles` → 新库走到这几条即 `no such table` 抛错
 - 影响面同缺陷 5：生产是 PG（不受影响），受影响的是新开发环境 / `start_all.bat` 建的 SQLite 库
+- **生产实证（2026-09-14，SZ + SG 两台各一次，只读）**：把上面那句「生产是 PG（不受影响）」从**推断**升级为**证据**。方法：两台 SSH → `sudo docker exec character-distill-postgres-1 sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "\d remote_user_profiles"'`（容器内 unix socket + trust，未涉及任何口令；全程只跑 `\dt` / `\d` / `SELECT`，未跑 DDL、未重启、未跑迁移、未改任何文件）。
+  - **结论：两台都有表，缺陷 21 在生产无影响，本件结束。** SZ 与 SG 均 `public | remote_user_profiles | table | charsim`，列集与 `migrations_pg/012_remote_user_profiles.sql` 声明**逐列一致**（`id text PK NOT NULL` / `username text NOT NULL` / `home_region text NOT NULL DEFAULT ''` / `avatar_data text DEFAULT ''` / `created_at timestamp DEFAULT CURRENT_TIMESTAMP`），索引仅 `remote_user_profiles_pkey`。
+  - 两台 PG 容器均为 `created 2026-07-01`，晚于 `15e5f3e0`（2026-06-28）—— 即 012 上盘后容器确有过重建，glob 迁移链已跑过。故本条**不需要**「未重启」分支的排查。
+  - 影响面据此定稿：**生产（PG）无影响，缺陷 21 的实际损害只存在于 SQLite 侧**（本地 / 测试新库），与上一条一致。
 - **定性订正（2026-09-13 排查）**：此条**不是**「静默不执行」而是「**带理由地不执行**」—— 分发形态锁 `tests/test_migration_dispatch.py` 早已存在（`c1a8131`），079 躺在它的 `_NOT_APPLIED` 豁免名单里，所以锁是绿的。真正的洞是**豁免出口没有闭环**：写下理由即永久放过，而理由里写的后果（「新库缺表、代码在用」）没有任何东西去验。原设想的「每个文件必须有明确归宿」形态锁**不必新做** —— 它已存在，且正是被绕过的那一个
 - **处置（2026-09-13，四步，均只记/只验不越界）**：
   - **接线**（`4be3ecf`）：`079_remote_user_profiles.sql` 加进 SQLite 执行器次序元组，从 `_NOT_APPLIED` 移除。位次依据：它建独立表、无依赖，按编号自然位次排。验收：新库实跑后表存在，三个引用点在真新库上不再抛 `no such table`
