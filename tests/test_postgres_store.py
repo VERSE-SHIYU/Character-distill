@@ -133,6 +133,18 @@ async def _build_fresh_sqlite(db_path: str) -> None:
     await SQLiteStore(db_path)._ensure_initialized()
 
 
+async def _build_restarted_sqlite(db_path: str) -> None:
+    """建库之后**用新实例再 init 一次** —— 「重启过的库」，生产实际运行的那个状态。
+
+    与 `_build_fresh_sqlite` 只差一次 `_ensure_initialized`（每次都要新 store 实例，
+    因为 `_initialized` 会短路第二次）。第二遍会让 018 **重新** `ADD COLUMN`
+    api_key/base_url/model —— 执行器只按「列在不在」判断，没有「已应用」账本。
+    所以这是唯一能看见 users 列集漂移的状态：缺陷 23 的锁只比 fresh，从没看过它。
+    """
+    await SQLiteStore(db_path)._ensure_initialized()
+    await SQLiteStore(db_path)._ensure_initialized()
+
+
 def _sqlite_columns(db_path: str) -> dict[str, set[str]]:
     """读一个**已建好**的 SQLite 库的 {表: {列}}。
 
@@ -1026,6 +1038,35 @@ class TestPgFreshSchemaClosure:
             "修法：把缺的列补到缺的那一侧的迁移里。"
             "**不要在本测试里开豁免** —— 列级的真源是「另一侧真库」，没有文本标尺，"
             "也就没有需要豁免的对象；加豁免清单等于把洞重新打开。")
+
+    @_pg
+    async def test_restarted_sqlite_matches_fresh_pg(self, tmp_path: Path):
+        """**重启过的** SQLite 库也必须与 fresh PG 列集相等 —— 缺陷 26（缺陷 23 的连带发现）。
+
+        上面那条只比 fresh ⟷ fresh，而**生产上跑的是「重启过的库」**。第二次 init 会让
+        018 重新 `ADD COLUMN` api_key/base_url/model，而 users 删列块原先只认
+        password_hash —— 那个列首次启动后再也不会回来，于是残留态永久驻留，同一个库的
+        「全新」与「重启过」成了两个 schema。上面那条绿，是因为**它只比 fresh**：
+        锁的输入状态本身也是判据的一部分，只守理想初态的锁会漏掉生产实际运行的那个状态。
+
+        **变异（实测）**：把 `sqlite_store.py` 的触发条件改回 `if "password_hash" in
+        all_cols` → 本条红（users 多 api_key/base_url/model），而 fresh 那条**仍绿**。
+        """
+        db_path = str(tmp_path / "restarted.db")
+        await _build_restarted_sqlite(db_path)
+        sqlite_cols = _sqlite_columns(db_path)
+        pg_cols = await _pg_columns()
+
+        assert len(sqlite_cols) >= 30, f"只读到 {len(sqlite_cols)} 张表 —— 锁在空转"
+
+        drift = _column_drift(sqlite_cols, pg_cols)
+        assert not drift, (
+            "「重启过的」SQLite 库与 fresh PG 漂移了（缺陷 26 那一类）：\n"
+            + "\n".join(f"  - {d}" for d in drift)
+            + "\n\n这类漂移的特征是**第二次 init 才出现** —— 执行器按「列在不在」判断迁移"
+            "是否已应用，于是「迁移加过、后来被有意删掉」的列每轮都会被加回来。"
+            "修法：让删除的**触发条件**与不变量同口径（本仓是 `_USERS_LEGACY_COLUMNS`），"
+            "别用一个「删一次就再也不出现」的列当哨兵。**不要在本测试里开豁免**。")
 
     @_pg
     async def test_unilateral_column_change_goes_red(self, tmp_path: Path):

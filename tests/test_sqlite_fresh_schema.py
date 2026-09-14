@@ -93,15 +93,27 @@ class TestFreshSqliteSchema:
         034_post_enhancements 的 except 连 duplicate column 都不吞、直接 print，于是
         「同库两次 init 无失败输出」只能退到「不含 067 的失败」。034 改确定性执行后
         这层退让不再必要，恢复整库口径。
+
+        **users 列集必须两次相等**（缺陷 26 收口）：本用例名里写着 "adds nothing"，
+        此前却只断言 embedding 两列 + 无失败输出 —— 名字承诺的比断言的多，于是
+        「第二次 init 把 api_key/base_url/model 加回来、驻留成 25 列」这条路一直没被看见。
+        「重启过的库」才是生产实际运行的那个 schema（见 `TestPgFreshSchemaClosure::
+        test_restarted_sqlite_matches_fresh_pg`），所以这条断言是本用例的正文。
         """
         db_path = str(tmp_path / "twice.db")
         out1 = await _init(SQLiteStore(db_path), capsys)
+        cols_after_first = _columns(db_path)
         out2 = await _init(SQLiteStore(db_path), capsys)
         assert "failed" not in out1, f"首次 init 打了失败行:\n{out1}"
         assert "failed" not in out2, f"第二次 init 打了失败行:\n{out2}"
         cols = _columns(db_path)
         for col in EMBEDDING_COLS:
             assert col in cols, f"两次 init 后 users 缺 {col}；实际列={sorted(cols)}"
+        added = sorted(cols - cols_after_first)
+        removed = sorted(cols_after_first - cols)
+        assert cols == cols_after_first, (
+            f"第二次 init 改动了 users 列集 —— 「全新库」与「重启过的库」不是同一个 schema。"
+            f"新加={added} 少了={removed}；两次列集={sorted(cols_after_first)} / {sorted(cols)}")
 
     async def test_fresh_init_prints_no_failure(self, tmp_path, capsys):
         """(d) 兜整类盲区：建库期间 stdout 不得出现任何失败行 —— **两次 init 都算**。

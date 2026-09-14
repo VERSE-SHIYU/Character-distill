@@ -81,6 +81,15 @@ _ADD_COLUMN_RE = re.compile(
     re.IGNORECASE,
 )
 
+# users 表**不得存在**的四列（数据居留）：password_hash / api_key / base_url / model
+# 已迁进 user_secrets（070），敏感字段与用户表物理分离。
+#
+# 判据的单一事实源：删列（`_ensure_initialized` 的重建块）与「还有没有残留」的触发条件
+# 都读这里。**触发条件必须是「四列任一存在」而不是只认 password_hash**（缺陷 26）——
+# 018 每轮会重新加回 api_key/base_url/model，而 password_hash 首次启动后就再也不会回来，
+# 只认它会让「加了但没删」的残留态永久驻留，同一个库的「全新」与「重启过」变成两个 schema。
+_USERS_LEGACY_COLUMNS = ("password_hash", "api_key", "base_url", "model")
+
 
 async def _existing_columns(conn: Any, table: str) -> set[str]:
     cursor = await conn.execute(f"PRAGMA table_info({table})")
@@ -223,18 +232,33 @@ class SQLiteStore(StorageBase):
 
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
-                    # Data residency: remove password_hash/api_key/base_url/model from users
-                    # SQLite table-recreate approach for portability (< 3.35.0 compat)
+                    # Data residency: users 表不得留 `_USERS_LEGACY_COLUMNS` 那四列
+                    # （权威定义与「为什么触发条件不能只认 password_hash」见该常量处）。
                     # `if` 守卫本身就是幂等机制（列已删就整块跳过），所以不需要 except ——
-                    # 重建失败照常上抛，不再被 print 吞成「初始化成功」。
+                    # 删列失败照常上抛，不再被 print 吞成「初始化成功」。
                     cursor = await conn.execute("PRAGMA table_info(users)")
                     all_cols = [row[1] for row in await cursor.fetchall()]
-                    if "password_hash" in all_cols:
+                    present = [c for c in _USERS_LEGACY_COLUMNS if c in all_cols]
+                    if present and sqlite3.sqlite_version_info >= (3, 35):
+                        # 每轮启动都会走一遍（018 照加、这里照删，拉锯是有意保留的：
+                        # 018 不能摘 —— 老库上没这三列时 070 的 `SELECT u.api_key` 直接
+                        # no such column；执行器又没有「已应用」账本）。所以选原生
+                        # DROP COLUMN：O(rows) 但省掉临时表 + INSERT..SELECT + 索引重建，
+                        # 且**不碰**其余列的类型（重建的 col_defs 兜底会把未知列静默重定型
+                        # 成 TEXT，这里没这个副作用）。
+                        for col in present:
+                            await conn.execute(f"ALTER TABLE users DROP COLUMN {col}")
+                        await conn.commit()
+                    elif present:
+                        # SQLite < 3.35 没有 DROP COLUMN，回落到原表重建。代价实测（全表
+                        # 拷贝口径，e2e/scratch/time_users_rebuild.py）：4 行/180KB ≈ 20ms、
+                        # 1000 行/200KB ≈ 2.7s、5000 行/200KB ≈ 18s —— 每轮启动都付一次是
+                        # 这条回落路径**独有**的代价，3.35+ 上不存在。
                         # Build the column list dynamically so that columns added by
                         # later migrations survive the rebuild; col_defs supplies the
                         # type for known ones (unknown ones fall back to TEXT).
                         keep_cols = [c for c in all_cols
-                                     if c not in ("password_hash", "api_key", "base_url", "model")]
+                                     if c not in _USERS_LEGACY_COLUMNS]
                         col_defs = {
                             "id": "TEXT PRIMARY KEY",
                             "username": "TEXT NOT NULL UNIQUE",
