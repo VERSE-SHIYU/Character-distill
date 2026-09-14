@@ -7,8 +7,13 @@
 2. 读写：新消息往返一致；**老消息（列是 NULL / INSERT 里压根没这一列）读回来是 None**，
    不是 `[]`、也不许抛。这两条要分开测 —— 只测新消息的话，「老消息路径」等于没测
    （本仓 §四：跑绿的是哪条路径，要写清楚）。
-3. 接线：`_do_chat` 必须真的把 `engine.last_traces` 编码后传进 `save_message`。
-   删掉那行 → 断言变红（否则就是「接线没被覆盖」）。
+3. 接线：**两个** char 落库点都必须真的把 `engine.last_traces` 编码后传进 `save_message` ——
+   `_do_chat`（非流式）与 `_do_chat_stream`（SSE，主路径）。删掉任一处 → 断言变红
+   （否则就是「接线没被覆盖」）。两个点各一条，因为「覆盖了一个」不等于「覆盖了落库」。
+
+   为什么只锁这两处：`save_message` 的生产调用点共 8 处，char 落库点 4 处 ——
+   另两处（`distill.py` 卡面开场白 / `history.py` 重逢问候）生成于检索之前/之外，
+   不传 evidence 落 NULL 才是对的，由 `test_default_call_sites_are_unchanged` 锁住这条机制。
 
 断言里凡涉及「证据在不在」，都走**接口读回来**（`GET /api/history/{sid}`）而不只看 store ——
 用户看到的就是那一条路。
@@ -374,9 +379,13 @@ class TestPgEvidenceColumn:
 # ── 3. 接线：证据真的从引擎走到了库里 ────────────────────────────────
 
 class _Engine:
-    """够 _do_chat 跑完的最小引擎替身。``last_traces`` 就是被验的那个字段。"""
+    """够 `_do_chat` 与 `_do_chat_stream` 两条路径跑完的**同一个**最小引擎替身。
 
-    def __init__(self, traces):
+    一条定义服务两条路径 —— 真引擎接口一变，两个点的替身一起滞后，不会出现
+    「流式那份替身还是老的」这种各管各的漂移。``last_traces`` 就是被验的那个字段。
+    """
+
+    def __init__(self, traces, stream_pieces=("回", "复")):
         self.history = []
         self.last_traces = traces
         self.last_summary = ""
@@ -384,9 +393,20 @@ class _Engine:
         self._ctx_engine = type("Ctx", (), {"web_search_enabled": False})()
         self.affinity_enabled = True
         self.agent_mode = False
+        self._stream_pieces = list(stream_pieces)
+        self.post_processed: list[tuple[str, str]] = []
 
     def chat(self, *a, **kw):
         return "回复"
+
+    def chat_stream(self, *a, **kw):
+        # 真引擎的 chat_stream 是同步迭代器，调用方用 next() 逐片取（_next_piece）。
+        return iter(self._stream_pieces)
+
+    def post_stream_process(self, user_message, full_reply):
+        # 排在落库之后的收尾钩子；起替身是为了让生成器能真的跑到底（否则打一行
+        # 非致命错误日志，用例就成了「排干到一半」）。
+        self.post_processed.append((user_message, full_reply))
 
     def _should_retract(self, reply):
         return False
@@ -434,6 +454,47 @@ def test_do_chat_without_retrieval_stores_null(monkeypatch):
     storage = _RecordingStorage()
     _wire(monkeypatch, _Engine([]), storage)
     asyncio.run(chat_router_mod._do_chat("s1", "hi", storage=storage, sessions={}, user_id="u1"))
+
+    char = [s for s in storage.saved if s["role"] == "char"]
+    assert char and char[0]["evidence"] is None
+
+
+async def _drive_stream(storage) -> None:
+    """调用 `_do_chat_stream` 并把 SSE 排干 —— 落库发生在生成器体内，不排干就看不到。
+
+    调用与排干在**同一个事件循环**里：`_run_async` 每次新建 loop，跨 loop 用
+    `asyncio.Lock` / `to_thread` 是自找麻烦。排干用的是 `StreamingResponse.body_iterator`
+    （就是 `T.trace_sse_async(_event_generator(), ...)`，OTel 关时零开销透传）。
+    """
+    resp = await chat_router_mod._do_chat_stream(
+        "s1", "hi", storage=storage, sessions={}, user_id="u1",
+    )
+    async for _ in resp.body_iterator:
+        pass
+
+
+def test_do_chat_stream_persists_engine_traces(monkeypatch):
+    """`_do_chat_stream` 也把 engine.last_traces 编码后落库 —— 流式是主路径，不能只覆盖非流式。"""
+    engine = _Engine([make_trace("scene", "hit", text="屋顶上的旧事。")])
+    storage = _RecordingStorage()
+    _wire(monkeypatch, engine, storage)
+    _run_async(_drive_stream(storage))
+
+    char = [s for s in storage.saved if s["role"] == "char"]
+    assert len(char) == 1
+    snap = parse_evidence(char[0]["evidence"])
+    assert snap is not None, "流式 char 消息没带证据 —— 接线断了"
+    assert snap[0]["source"] == "scene"
+    assert snap[0]["items"][0]["text"] == "屋顶上的旧事。"
+    # 排干到底的凭据：收尾钩子在落库之后，它被调到 = 生成器真跑完了
+    assert engine.post_processed == [("hi", "回复")]
+
+
+def test_do_chat_stream_without_retrieval_stores_null(monkeypatch):
+    """流式路径没发生检索时同样落 NULL，不落 '[]' —— 两条路径同一种「无证据」表示。"""
+    storage = _RecordingStorage()
+    _wire(monkeypatch, _Engine([]), storage)
+    _run_async(_drive_stream(storage))
 
     char = [s for s in storage.saved if s["role"] == "char"]
     assert char and char[0]["evidence"] is None
