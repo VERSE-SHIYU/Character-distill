@@ -145,14 +145,21 @@ class FakeMemory:
 
 
 class FakeLLM:
-    """LLM 替身：记录 prompt，返回脚本化文本（空串 = 角色过滤器判定「全不适合」）。"""
+    """LLM 替身：记录 prompt，返回脚本化文本（空串 = 角色过滤器判定「全不适合」）。
 
-    def __init__(self, reply="我听说过莲花坞这个地方。"):
+    ``raise_on_chat`` 非空时改为抛该异常 —— 限流 / 超时 / 网络失败是改写阶段最常发生
+    的失败形态，与「返回空串」是**两条独立分支**，只锁后者会漏掉常态那条。
+    """
+
+    def __init__(self, reply="我听说过莲花坞这个地方。", raise_on_chat: Exception | None = None):
         self._reply = reply
+        self._raise = raise_on_chat
         self.calls: list[str] = []
 
     def chat(self, prompt, messages=None, **kw):
         self.calls.append(prompt)
+        if self._raise is not None:
+            raise self._raise
         return self._reply
 
 

@@ -232,6 +232,18 @@ class TestWebItemsAreRawSnippets:
         assert res.block == "" and res.items and res.status == "hit", \
             f"实得 block={res.block!r} items={len(res.items)} status={res.status}"
 
+    def test_rewrite_failure_keeps_items(self):
+        """改写阶段**抛异常**（限流 / 超时 / 网络）→ 只降级 body，items 必须保留。
+
+        这是改写失败的三条独立分支里最常发生的一条（另两条：返回空串、llm 为 None），
+        且失败形态最隐蔽：DDG 确实检索到了，前端却显示「检索来源 0 条」。
+        """
+        with fake_ddg(DDG_TOPICS):
+            res = build_ctx(llm=FakeLLM(raise_on_chat=RuntimeError("rate limited"))
+                            )._search_web_ex(QUERY)
+        assert len(res.items) == 3, f"改写抛异常时 items 被丢了，实得 {len(res.items)} 条"
+        assert res.block == ""
+
     def test_no_llm_still_yields_items(self):
         with fake_ddg(DDG_TOPICS):
             res = build_ctx(llm=None)._search_web_ex(QUERY)

@@ -446,6 +446,18 @@ config.yaml 现值（现读，非转述）：
 - **变异（实测，sha256 逐字节还原）**：把触发条件改回旧语义（`if "password_hash" in all_cols` 才删四列）→ ②红（`[users] 列 ['api_key','base_url','model'] 只在 SQLite 新库里，真 PG 缺这些列`）、①红（第二次 init 新增 `['api_key','base_url','model']`），而缺陷 23 那条 **fresh ⟷ fresh 的锁仍绿**（1 passed）—— 这条绿正是「只守理想初态」的实证。
 - **测试写法上的一处连带纠正**：`_sqlite_columns` 初版每次读都跑 `_ensure_initialized`，于是变异被「重跑又补回来」当场修复，变异永远红不了（红出来的反而是补列副作用）。拆成 `_build_fresh_sqlite`（建一次）+ `_sqlite_columns`（**只读，绝不重建**）—— 读事实的锁不许带写副作用。缺陷 26 正是这次拆分暴露出来的。
 
+**27. `_retrieve_scenes` 的 `hasattr` 降级分支：注释描述的降级条件从来不是这段代码判的条件** —— 状态：**已修**（分支随 Evidence 2b 重构删除，`2a50c82`，2026-09-14）
+- **形态**：旧代码 `if hasattr(self.rag, "query_with_emotion"): <情感加权检索> else: snippets = self.rag.query(...)`，注释写「优先用情感加权检索；**若集合无 emotion metadata（chunk 模式）则降级**」。但 `hasattr` 判的是**对象**有没有这个方法，与**集合**有没有 emotion metadata 毫无关系 —— 注释描述的降级条件从来不是这段代码判的条件。
+- **该分支不可达**：全仓只有 `core/rag.py` 定义 `query_with_emotion`；无 `__getattr__` 代理、无 rag 包装类；生产 rag 取值只有 `RAGEngine`（`web/app.py` / `indexing_service.py` / `group.py` / `mcp_server/server.py`）或 `None`（`text_manager.py`，纯卡面无检索），而 `None` 在函数首行即被挡掉（`MagicMock` 也走不进去，`hasattr` 恒真）。
+- **误导性**：那句注释至少误导了一轮判断（把「集合无 emotion metadata」当成真实的降级触发条件去推理）。**与缺陷 21 的注释、PG `001_init.sql` 的遗留列同族：文件的陈述与运行期事实不一致。**
+- **删除而非补 loud-fail 分支的裁定（用户，2026-09-14）**：为一个不可达条件加告警分支 = 给死代码挂报警器（YAGNI）。删掉后行为反而更响：将来注入一个缺 `query_with_emotion_ex` 的 duck-typed rag → `AttributeError` → `status="failed"` + 打印；旧路径是**静默**走 `.query()`（返回无 meta 的字符串，零告警）。
+- **删除是 2b 重构的强制后果，未单独立 commit**：Evidence 线硬要求「块字符串必须由 `EvidenceItem` 列表渲染」，而该 else 只返回字符串、构造不出 items —— 留着即构成第二份构造路径。
+
+**28. `test_fails_open_when_llm_is_none` 不 hermetic —— 用例会真发一次外部审核请求** —— 状态：未修（记录，2026-09-14）
+- **形态**：用例传 `llm=None` 期望走 fail-open，但 `core/moderation/auto_review.py` 在 `llm is None` 时回落到 `deps.get_llm()`，而 `web/deps.py` 的 `get_llm()` 在 API 已配置时返回**真** `LLMAdapter` 单例 —— 于是该用例真的打一次外部审核请求。
+- **为什么比偶发红更严重**：**打真实 API 的用例本身就是不可信绿**。结论取决于当时的网络与模型输出：网络失败被那条 `except` 兜成 fail-open → 假绿；模型真回一个 `pass: false` → 假红。实测在整套 948 例里出现过 1 次偶发红，单跑 / 单文件 / 重跑整套均绿 —— 「偶发」正是这条信道不可信的证据。
+- **修法方向（未做）**：注入一个 `achat` 必抛的 stub，或显式断言未发生网络调用，锁住「fail-open 不依赖真 LLM」。同族：凡以 `llm=None` 期望 fallback 的用例都要显式隔离。
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
