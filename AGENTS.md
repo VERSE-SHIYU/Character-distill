@@ -200,16 +200,8 @@ config.yaml 现值（现读，非转述）：
 - 边界锁：`tests/test_auth_param_used.py` 固化这次 AST 扫描 + 白名单，将来新增同类端点自动变红，不必靠人再扫一遍
 - 注：`voice.py` 内既有四处查属主返回 **403**（`get_ref_audio` / `preview_ref_audio` / `upload_ref_audio` / `delete_ref_audio`），与新修的 404 并存，口径待统一 —— **已于 2026-09-12 统一为 404**（缺陷 13）
 
-**10. post / card 评论点赞特性整体缺失（原记为「`list_post_comments` 不标 `liked_by_me`」）** —— 状态：未修（**重记**，2026-09-12 裁定「不做」）
-- **原记账被证伪**：原条目称「同类端点 `text.py` 的 `get_text_comments` 标了 `liked_by_me`、`list_post_comments` 没标，按 `text.py` 的写法对齐即可」。实读后前提不成立 —— 照做只会写死一个恒 `False` 的**假默认值**（本仓明令禁止，见 §四）
-- 证据（2026-09-12 现跑现查）：
-  - **无表**：全仓没有 `post_comment_likes` / 卡评论点赞表；`_likes` 家族只有 `text_comment_likes`（`storage/migrations/031_text_comments.sql` 及 PG 等价物）与 `post_likes`（点赞**帖子**本身，`web/routers/market.py` 的 `like_post` → `toggle_post_like`）
-  - **无路由**：`toggle_post_comment_like` 全仓零命中 —— post 评论根本没有点赞入口
-  - **无原语**：`storage/sqlite_store.py` 的 `get_liked_comment_ids` **硬编码** `text_comment_likes`（PG 侧同），拿 post 评论 id 去查恒返空集
-  - **无消费**：前端 `web/frontend/src/components/common/PostCard.jsx` 渲染 post 评论（头像 / 用户名 / IP 属地 / 时间 / 正文）**没有点赞按钮**，从不读该字段；`post.liked_by_me` 是**帖子**的赞，不是评论的
-- 即：真缺口是**「post / card 评论点赞」这个特性从来不存在**，不是「某端点漏标一个字段」。对齐写法 ≠ 修 bug，是**加功能**（建表 + 双方言 migration + toggle 路由 + `get_liked_post_comment_ids` 原语 + 前端按钮），且要新增一张表
-- 处置裁定（用户，2026-09-12）：**不做，重记缺陷**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量
-- 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
+**10. （已移出缺陷表 → 见下节「三之二、特性缺失 / 立项」条目 A）** —— **非缺陷**：前提证伪、裁定「不做」（2026-09-12）。为保持编号连续、不改后续条号，此处只留占位；条目全文移入三之二。
+- 移出理由：它**不是「有东西坏了」，是「有东西从来没建」** —— 混在缺陷表里让「还有几个真缺陷待修」这个数失真（用户 2026-09-14 裁定）。
 
 **11. 越权读取的根因：storage 读取原语没有身份概念** —— 状态：**已修**（2026-09-11）
 - 形态：`storage/base.py` 的读取原语 `get_text(id)` / `get_session(id)` 签名里没有 user——读取本身不带身份，于是**每个调用点都必须自己记得**补一次属主比对，忘一个漏一个，且漏了没有任何报警
@@ -381,7 +373,7 @@ config.yaml 现值（现读，非转述）：
 - 同族风险（已用锁兜住）：次序表是显式元组，**加文件忘登记不会有任何报警**（079 就是先例），故 `test_migration_dispatch` 有「目录 ↔ 次序表求差集」形态锁
 - **本条目衍生出的第七个同族形态 —— store 层「失败与空结果不可区分」**：SQLite 新库缺 `remote_user_profiles` 表时，`storage/sqlite_store.py` 的 `get_conversations` 把 `OperationalError` 吞成空列表 → 私信收件箱**恒为空、不报错、不 500**，日志里只有一行 print。根因不是「那一处吞错了」，而是 store 层用**同一个返回值**同时表达「查到了，结果是空」与「查询失败了」两种互斥语义。这正是前六个同族形态（线程弃船 / 384 维度 / 截断响应 / `finish_reason` 缺失 / `$contains` 恒不命中 / `admin_tasks` 静默截断）**都因为「只修出问题那处」**才长出第七个的原因，故 `2ab669a` 全量收敛：A 类 176 处（基线 `4a608f9`，sqlite 88 / pg 88）全改，不变量「**store 层的空返回值只表示「无数据」，永不表示「失败」**」定于 `storage/base.py` 的 `StoreError` 单一定义，容忍策略上移到调用方并注明理由。普查全集与 A/B 分类见 `2ab669a` 的 commit message，可 `python tests/perf/store_swallow_census.py --ref 4a608f9` 逐字复算
 
-**22. `async_chat` 的 usage 被丢弃 —— Map 阶段与代词消解的 token 完全没记账** —— 状态：未修（记账，2026-09-12 查缺陷 16 时发现）
+**22. `async_chat` 的 usage 被丢弃 —— Map 阶段与代词消解的 token 完全没记账** —— 状态：**已修**（commit `ac2692f`，2026-09-14）
 - 事实（实测）：`adapters/llm_adapter.py` 的 `async_chat` 返回 `(result, usage)`，且**不写 `self.last_usage`**（该文件 `_async_chat_span` 注释自己写明了）。四个调用点里三个是 `result, _ = await ...`，usage 就地丢弃：
   - `_run_map_concurrent` 的 `_one`（sync MapReduce 的 Map）
   - `distill_incremental_stream` 的 `_one`（SSE MapReduce 的 Map）
@@ -389,7 +381,9 @@ config.yaml 现值（现读，非转述）：
   - 唯一正确记账的是 `_single_reduce_async`（`result, usage = await ...` → `_try_record_usage("distill_reduce", usage)`）
 - 后果比缺陷 16 更大：Map 是 MapReduce 里**最烧 token 的一段**（每片一次调用，片数几十到几百），而它**一条记录都没有**；reduce / 初次 / 重修 / 流式各自都记。于是 `distill_*` 系列 action 的用量被系统性低估，且低估幅度随文本变长而放大
 - **不属缺陷 16 的同源修法**：16 的病灶是「记账出口分散 + 一处漏」，收敛到一个 `_chat_initial` 出口即解决；本条的病灶是**记账出口从未写**，`_chat_initial` 覆盖不到（Map 不走它）。修它要先裁决「N 次并发调用怎么记」——N 条独立记录（写放大）还是一条聚合（需新增聚合态），是**设计决策**不是补漏
-- 未同轮修的理由：铁律 3「新发现只记缺陷表，不当场修」；且本条改动会显著改变用量/计费口径，属**行为变更**，须单独一轮带验收锁
+- **收口（`ac2692f`，2026-09-14）**：**不是只修点名那三处** —— 把下列机制锁的判据对 HEAD 全量跑：**36 个 LLM 调用点、23 个不流向记账出口**，全部接进同一出口（修后同一判据 36 个调用点、**0 个不流向出口**）。粒度按已定裁决「整阶段汇总一条 + 分片数」：`chunk_count` 落 `usage_stats`（SQLite 085 / PG 018 新列），语义 = **本次真调了几次 LLM**，不是文本分片数（续跑命中/重试会让二者不一致，注释里写死）。失败分片按字符估算照记并标 `estimated` —— 只记成功会让成本统计**系统性偏低**，偏低的统计比没有更危险。异步/sync Map、`coref_resolve` 三处汇总放 `finally`（gather 半途炸掉时已完成的分片也是花掉的钱）。**出口不新增**（缺陷 16 刚收敛完出口分散，不并列第二个出口）。
+- **机制锁 `tests/test_usage_accounting_lock.py`**：**存在「调用 LLM 但不流向记账出口」的调用点即红。** 判据全部从事实推出、**不含调用点清单**（藏在守卫与被守对象之间的第二份手工清单本身就是漂移点，与缺陷 21 的豁免名单、缺陷 25 的命名代理同谱系）；出口「全仓恰好一处」且落在 `core/utils.py`，多一处即红（防缺陷 16 复发）。
+- **状态订正（2026-09-14）**：本行在修复后仍标「未修」一日 —— 原因是**只读了这张表的状态行、没核 `git log`**。见 §四「台账状态行不是事实，是上一轮的记录」。
 
 **23. PG 侧无对称形态锁 —— 迁移的「声明」与「真库」之间无闭环** —— 状态：**已修（2026-09-13，`TestPgFreshSchemaClosure`）**
 - **原立项措辞要订正两处**（立项时按「SQLite 独有 66 表」理解，实测不成立）：
@@ -453,10 +447,13 @@ config.yaml 现值（现读，非转述）：
 - **删除而非补 loud-fail 分支的裁定（用户，2026-09-14）**：为一个不可达条件加告警分支 = 给死代码挂报警器（YAGNI）。删掉后行为反而更响：将来注入一个缺 `query_with_emotion_ex` 的 duck-typed rag → `AttributeError` → `status="failed"` + 打印；旧路径是**静默**走 `.query()`（返回无 meta 的字符串，零告警）。
 - **删除是 2b 重构的强制后果，未单独立 commit**：Evidence 线硬要求「块字符串必须由 `EvidenceItem` 列表渲染」，而该 else 只返回字符串、构造不出 items —— 留着即构成第二份构造路径。
 
-**28. `test_fails_open_when_llm_is_none` 不 hermetic —— 用例会真发一次外部审核请求** —— 状态：未修（记录，2026-09-14）
+**28. `test_fails_open_when_llm_is_none` 不 hermetic —— 用例会真发一次外部审核请求** —— 状态：**已修**（2026-09-14）
 - **形态**：用例传 `llm=None` 期望走 fail-open，但 `core/moderation/auto_review.py` 在 `llm is None` 时回落到 `deps.get_llm()`，而 `web/deps.py` 的 `get_llm()` 在 API 已配置时返回**真** `LLMAdapter` 单例 —— 于是该用例真的打一次外部审核请求。
 - **为什么比偶发红更严重**：**打真实 API 的用例本身就是不可信绿**。结论取决于当时的网络与模型输出：网络失败被那条 `except` 兜成 fail-open → 假绿；模型真回一个 `pass: false` → 假红。实测在整套 948 例里出现过 1 次偶发红，单跑 / 单文件 / 重跑整套均绿 —— 「偶发」正是这条信道不可信的证据。
-- **修法方向（未做）**：注入一个 `achat` 必抛的 stub，或显式断言未发生网络调用，锁住「fail-open 不依赖真 LLM」。同族：凡以 `llm=None` 期望 fallback 的用例都要显式隔离。
+- **修法**：把 `deps.get_llm` 换成一个返回 None 的**普通替身函数** —— `patch("deps.get_llm", new=_unavailable_llm)`，**不是 MagicMock**（工厂的形态就是「无参调用」，一个真函数即可完整表达；用 mock 则方法名拼错也不报错，正是缺陷 29 那轮的教训）。并加一条**独立信号** `assert calls == [1]` 钉住「确实走了取全局 LLM 这条路并拿到 None」—— 少了它，用例会退化成「碰巧 `get_llm()` 也返回 None」的假绿（被测分支没走到，§四）。
+- **断网 / 无凭据仍绿**：替身返回 None，`auto_review_card` 在第二个 `if llm is None` 处 fail open，全程零出网。
+- **变异（实测，两刀各自红在有病灶名的那句上）**：① 生产的 fail-open 分支改成 `pass False` → `assert result["pass"] is True` 红（`assert False is True`）；② 摘掉用例里的替身（退回不 patch）→ `assert calls == [1]` 红（`assert [] == [1]`），且捕获 stdout 显示真走到了 `try_record_usage` —— **即真发了一次外部审核请求**。第二刀是**回归锁**：证明「有人把隔离拿掉、用例退回打真 API」会被抓住，否则这次修好的东西下次一次顺手编辑就长回来。脚本 `e2e/scratch/run_defect_28_mutations.py`（gitignored，先验基线 failed=0）。
+- **全仓普查：第二个会真打外部请求的用例 —— 无。** `tests/test_*.py` 里出现真 `LLMAdapter()` 或 `urlopen` 的只有 `test_chat.py` / `test_distill.py` / `test_connection.py` / `test_integration.py` / `test_distill_progress.py` / `test_following_api.py` —— **全部是脚本式**（只有 `main()`、无 `test_*` 函数），pytest 收集不到，不在套件内；`tests/perf/*` 同理（非 `test_` 命名）。`web/routers/market.py:471` 那处真 `LLMAdapter()` 只被**属主**发布路径触达，而 `test_ownership_404.py` 的发布用例一律以**非属主**身份打、在 `get_card_owned` 的 404 处（`market.py:498-501`）即被拦下，到不了审核调用。`test_llm_none_flags_injection` 本就 `patch("deps.get_llm", return_value=None)`，已隔离。
 
 **29. `agent_loop.py` dedup 分支：根因是 `steps` 的语义从未定义，`ok = True` 只是它的症状** —— 状态：**已修**（Evidence 收口，2026-09-14）
 - **最初记的形态**（把症状当成了病）：`if dedup_key in executed:` 分支写 `result_content = ...` 后跟一句 `ok = True`；而 `ok` 的两处读取（`steps.append` 的 `"ok": ok`、`if ok and result_content != EMPTY_RESULT` 的 `retrieved.append`）都在 `else` 分支内、紧随它自己的 `ok = result.ok` 之后 —— 全文件无一处在该分支之外读它，看着就是**死存**。
@@ -481,9 +478,26 @@ config.yaml 现值（现读，非转述）：
 - **将来二选一的判据（可观测性工作开始时定）**：要么把 `ok`/`elapsed_ms` 提成 `agent.execute_tool` span 的 attr（那里已有 `tool` attr）并**删掉三键**，要么明确 `steps` 就是导出给评测脚本的台账、把这句话写进字段注释。判据命令：`git grep -n 'elapsed_ms\|\["ok"\]'`。
 - **为什么现在不删**：与缺陷 29 是两件事（那是**语义**，这是**去留**）。零读者字段的删除不产生行为差异，混进 29 的 commit 会让「哪行因哪个动因改动」说不清。
 
+### 三之二、特性缺失 / 立项（非缺陷）
+
+> 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
+
+**A. post / card 评论点赞特性整体缺失**（原缺陷 10，2026-09-12 重记并移出）
+- **原记账被证伪**：原条目称「同类端点 `text.py` 的 `get_text_comments` 标了 `liked_by_me`、`list_post_comments` 没标，按 `text.py` 的写法对齐即可」。实读后前提不成立 —— 照做只会写死一个恒 `False` 的**假默认值**（本仓明令禁止，见 §四）
+- 证据（2026-09-12 现跑现查）：
+  - **无表**：全仓没有 `post_comment_likes` / 卡评论点赞表；`_likes` 家族只有 `text_comment_likes`（`storage/migrations/031_text_comments.sql` 及 PG 等价物）与 `post_likes`（点赞**帖子**本身，`web/routers/market.py` 的 `like_post` → `toggle_post_like`）
+  - **无路由**：`toggle_post_comment_like` 全仓零命中 —— post 评论根本没有点赞入口
+  - **无原语**：`storage/sqlite_store.py` 的 `get_liked_comment_ids` **硬编码** `text_comment_likes`（PG 侧同），拿 post 评论 id 去查恒返空集
+  - **无消费**：前端 `web/frontend/src/components/common/PostCard.jsx` 渲染 post 评论（头像 / 用户名 / IP 属地 / 时间 / 正文）**没有点赞按钮**，从不读该字段；`post.liked_by_me` 是**帖子**的赞，不是评论的
+- 即：真缺口是**「post / card 评论点赞」这个特性从来不存在**，不是「某端点漏标一个字段」。对齐写法 ≠ 修 bug，是**加功能**（建表 + 双方言 migration + toggle 路由 + `get_liked_post_comment_ids` 原语 + 前端按钮），且要新增一张表
+- 处置裁定（用户，2026-09-12）：**不做**。`list_post_comments` 保持现状 —— 不返回该字段，比返回一个恒 `False` 更有信息量
+- 注：它仍留在第 9 条的扫描名单里（读 user 与否在该端点曾表现为「功能与否」而非「越权与否」），该扫描不受本条影响
+- 立项与否 = **产品决策**，不是待办欠账；将来要做，按「新功能」走完整流程，不挂在缺陷表下
+
 ### 四、验证纪律
 
 - **基线数字现跑现取**（测试通过数、函数签名）：禁止引用上一轮结果或凭记忆。引用代码一律用符号名（函数/常量/测试名），不写行号——行号随改动漂移且无测试报警
+- **台账状态行不是事实，是上一轮的记录** —— 引用「某条未修 / 仍是 X」之前必须核 commit 历史。`git log` / `git show` 是权威；缺陷表、清单、README 的状态行只是**写下的那一刻**的快照，会滞后于实际。案例：缺陷 22 已由 `ac2692f` 修掉，状态行却仍标「未修」，被当作遗留报了出去 —— 漏记的动作只有一个：**只读了状态行，没核 `git log`**。这是上一条的**同源反面**：上一条说「别引用上一轮跑出来的**数字**」，这一条说「**台账本身也是上一轮的结果**」。判据：任何「某条仍未修 / 仍是某形态」的结论，落笔前跑一次 `git log --grep=<关键词>` / `git show <sha>` 核验；核不到、或状态行与历史打架时，**以历史为准并就地订正台账**（订正要在条目里写明「原状态行滞后」及原因，否则下一个人会再踩一次）。**同一动作也适用于本文件的其它清单**（如 §五 工具现状）：清单是索引，不是证据
 - **并发/事务/锁的结论不给「应该如此」，只给「要验什么、怎么验」**。案例：MVCC 下 `WHERE EXISTS` 是快照读、不加锁，挡不住「父行正在被删、还没提交」——必须补 `FOR SHARE`。本仓已成文于 `storage/postgres_store.py` 的 `save_distill_chunk`（含死锁无环分析）
 - **SQLite 全绿不构成并发命题的证据**：SQLite 写是库级序列化，窗口从根上不存在（`storage/sqlite_store.py` 的 `save_distill_chunk` 自述），生产是 PG。同一段逻辑在 sqlite 上验不出 PG 的行锁语义
 - **mock 的形态 ≠ 被测对象的形态**。案例：mock 回 canned JSON，据此误判 map 输出是 JSON——实际是自然语言（prompt 见 `core/distiller.py` 的 `_map_system_prompt` / `_map_user_prompt`；消费侧只判「非空且 ≠『无』」，见 `distill_incremental_stream` 内 `raw_analyses`）。据此设计的 JSON 校验会否掉所有真实 map 结果

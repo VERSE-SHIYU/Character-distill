@@ -99,12 +99,30 @@ class TestAutoReviewCard:
         assert result["reason"] == ""
 
     async def test_fails_open_when_llm_is_none(self):
-        result = await auto_review_card(
-            {"name": "测试"},
-            llm=None,
-        )
+        """llm=None 且全局 ``deps.get_llm()`` 也不可用 → fail open。
+
+        hermetic：把 ``deps.get_llm`` 换成一个返回 None 的普通替身 —— 不是
+        MagicMock（工厂的形态就是「无参调用」，用一个真函数即可完整表达，拼错
+        名字会 NameError 而非静默通过），不碰网络与凭据。
+
+        原用例不做隔离：``deps.get_llm()`` 在 API 已配置时返回**真** LLMAdapter，
+        于是该用例真发一次外部审核请求（缺陷 28）—— 网络失败被那条 except 兜成
+        假绿、模型真回 ``pass: false`` 则假红；结论取决于测试机状态与外部可用性。
+        """
+        calls: list[int] = []
+
+        def _unavailable_llm():
+            calls.append(1)
+            return None
+
+        with patch("deps.get_llm", new=_unavailable_llm):
+            result = await auto_review_card({"name": "测试"}, llm=None)
+
         assert result["pass"] is True
         assert result["reason"] == ""
+        # 独立信号：确实走了「取全局 LLM」这条路并拿到 None。
+        # 少了它，本用例会退化成「碰巧 get_llm() 也返回 None」的假绿。
+        assert calls == [1]
 
     async def test_llm_passed_flattened_text(self):
         mock_llm = AsyncMock()
