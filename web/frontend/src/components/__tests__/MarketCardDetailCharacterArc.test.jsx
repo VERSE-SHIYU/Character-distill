@@ -115,3 +115,24 @@ describe('card-arc-* 样式只落一处', () => {
     expect(read('../../styles/adm-theme.css')).not.toMatch(/card-arc-/)
   })
 })
+
+describe('card-arc-text 长串溢出防护', () => {
+  it('无空格长拉丁串完整落入 card-arc-text（未被截断）', async () => {
+    const LONG = `https://example.com/${'a'.repeat(120)}`
+    setDetail(detail([LONG]))
+    const { container } = render(<MarketCardDetail />)
+    await waitFor(() => expect(container.querySelector('.card-arc-text')).toBeTruthy())
+    // 只证「串完整到达 DOM」——截断（如 s.slice(0, N)）会被这条抓住。
+    // 溢出本身在 jsdom 里测不了，见下一条。
+    expect(container.querySelector('.card-arc-text').textContent).toBe(LONG)
+  })
+
+  it('.card-arc-text 声明 min-width: 0（源级断言，替代测不了的溢出断言）', () => {
+    // jsdom 不做布局：scrollWidth / offsetWidth 恒为 0，写「不溢出」的像素断言是**恒真假绿**，
+    // 正是 §四「对空集/无布局的断言恒真」那类。能红的只有「消除溢出的那条声明确实在」。
+    const css = fs.readFileSync(path.join(__dirname, '../../styles/global.css'), 'utf8')
+    const block = css.match(/\.card-arc-text\s*\{([^}]*)\}/)
+    expect(block).toBeTruthy()
+    expect(block[1]).toMatch(/min-width\s*:\s*0/)
+  })
+})

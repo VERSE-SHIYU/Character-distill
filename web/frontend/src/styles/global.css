@@ -3851,6 +3851,9 @@ label[for] {
 
 .card-arc-item {
   display: flex;
+  /* flex-start 是刻意的：序号钉在首行，不做整块垂直居中 ——
+     某阶段折成多行时，居中会把序号飘到整块中点、与它标注的那一行脱钩。
+     首行行盒 1.55×13px≈20px vs 徽章 18px，数字中心差约 1px，视觉即居中。 */
   align-items: flex-start;
   gap: 8px;
   font-size: 13px;
@@ -3859,6 +3862,14 @@ label[for] {
   padding: 6px 10px;
   background: var(--glass-bg);
   border-radius: 8px;
+}
+
+/* flex 子项默认 min-width:auto —— 不会缩到 min-content 以下。中文 min-content 是 1 个字，
+   换行正常；但无空格长串（URL / 引号内英文原文，小说蒸馏完全可能产出）的 min-content
+   就是整串，于是溢出圆角框而不是断行。同节的 .card-memory-item 是块级元素，没这个暴露面 ——
+   这行补的是本节独有的形态差。jsdom 无布局，溢出本身测不了，故由源级断言守（见测试）。 */
+.card-arc-text {
+  min-width: 0;
 }
 
 .card-arc-index {
