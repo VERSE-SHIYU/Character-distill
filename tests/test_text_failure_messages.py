@@ -233,6 +233,19 @@ def test_l3_empty_docx_is_not_double_wrapped(monkeypatch, capsys):
     assert "解析失败" not in detail, detail
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "缺陷 40：starlette 1.6.0 给 urlencoded 的 `FormParser` 也加了 1MB 逐字段上限"
+        "（1.0.0 只有 `MultiPartParser` 有），它先于本仓的 `max_chars` 触发，上屏成了"
+        "库的 `Field exceeded maximum size of 1024KB.` —— 本仓文案根本没机会出现。"
+        "commit 二 要么下掉 `text` 字段、要么把长度判断前移到框架之前，届时本用例转绿。"
+        "**`strict=True` 是承重的**：它把「什么都没修」和「修好了」变成两个信号 —— "
+        "commit 二 落地后这句 xfail 会当场 XPASS 成红，逼着删掉它，而不是留一个腐烂的"
+        "「永远 xfail」把真实回归一起吞掉。同一条 strict 也让把锁退回旧 starlette 这件事"
+        "当场变红（旧版没有这个上限，用例会通过）。"
+    ),
+)
 def test_l3_oversized_text_screens_table_wording(monkeypatch):
     r = _client(monkeypatch).post(
         "/api/text/upload",

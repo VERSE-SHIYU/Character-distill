@@ -19,10 +19,28 @@ env:
   ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
 
 jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # 本 workflow 的 test 侧有**两条独立的门**，它们回答的是两个不同的问题。
+  # 分开的理由（缺陷 40）：一条红**必须自证是「我变了」还是「世界变了」**。
+  # 从前只有一条，上游发一次版就会让它红，红的样子和「本仓代码写错了」一模一样 ——
+  # 两种成因共用一个信号，等于两种都没有守卫。现在：
+  #
+  #   test（gate）        依赖按 requirements*.txt 锁死 → 命题「本仓有没有回归」。
+  #                       上游发版**动不了它**。它红 = 你写错了。
+  #   upstream-drift      依赖从 requirements*.in 装最新 → 命题「上游有没有动」。
+  #                       continue-on-error，不挡合并，不在 test 的 needs 链上。
+  #                       它红 = 世界变了，本仓大概率无辜。
+  #
+  # 一眼分辨（不需要比对版本号）：**跑红 = gate；跑绿但有个 job 打红叉 = 哨兵。**
+  # 两条 job 失败时各自往日志末尾打一条带 title 的 ::error/::warning 注解，把
+  # 「这条红意味着什么」写在失败输出自己身上，而不是写在注释里。
+  # 两边都上传 pip freeze 产物 —— 下次红时「CI 当时装的是哪一版」是可查的事实。
+  # ══════════════════════════════════════════════════════════════════════════
   test:
+    name: "gate / 本仓回归（依赖按锁）— 红 = 你写错了"
     runs-on: ubuntu-latest
     services:
-      postgres:
+      postgres: &pg_service
         image: postgres:16-alpine
         env:
           POSTGRES_USER: charsim
@@ -41,7 +59,7 @@ jobs:
       # 默认的 fetch-depth: 1 是浅克隆（只有最新一个 commit），历史里的 sha 一律解析不出，
       # 该用例会对每条 code_sha 报「不是 commit」——数据其实是对的。
       # **不要为加速 CI 改回浅克隆**（等于在 CI 里关掉这条锁，而 CI 最该守它）。
-      # 本 job 是唯一跑 pytest 的 job；build job 不跑它，故那里不加。
+      # 跑 pytest 的两个 job（本 job 与 upstream-drift）都要加；build job 不跑它，故那里不加。
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -51,10 +69,16 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      # 装 **锁**（requirements*.txt，全是 ==），不是装 .in 那些下界。
+      # 这一行就是「上游发版动不了这条 job」的全部机制 —— 换成 .in，两条门立刻
+      # 退化成同一条（缺陷 40 复发）。
+      - name: Install dependencies (from the lock)
         run: |
           pip install --no-cache-dir -r requirements.txt
           pip install --no-cache-dir -r requirements-dev.txt
+
+      - name: pip freeze → artifact（这条门当时装的是哪一版）
+        run: python -m pip freeze --all > pip-freeze-gate.txt
 
       - name: Run tests
         env:
@@ -66,6 +90,71 @@ jobs:
           # 这是 tests/conftest.py::pg_required() 唯一认的那个声明，别删。
           REQUIRE_PG_TESTS: "1"
         run: pytest tests/ -v --tb=short
+
+      - name: 红的时候说清楚这条红意味着什么
+        if: failure()
+        run: |
+          echo "::error title=本仓回归（gate 红了）::依赖是按 requirements*.txt 锁装的，上游发版动不了这条 job。所以这条红 = 本仓代码或本仓的锁出了问题。要判断是不是上游动的，看 upstream-drift 那条。"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pip-freeze-gate
+          retention-days: 30
+          if-no-files-found: error
+          path: pip-freeze-gate.txt
+
+  # 哨兵：装最新，允许红，不挡合并。它红了表示上游发了版、行为变了 ——
+  # 这时要做的决定是「升锁跟上去」还是「在上限里钉住它」，不是去读本仓的 diff。
+  upstream-drift:
+    name: "sentinel / 上游漂移（依赖不锁）— 红 = 世界变了，不挡合并"
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres: *pg_service
+    steps:
+      # fetch-depth: 0 —— 与 gate 同一条理由（`test_code_sha_resolves` 要 `git cat-file`
+      # 解析 manifest 里的历史 sha）。**这里漏掉它不会让哨兵变绿、而是让它无差别地红**：
+      # 浅克隆下那条锁报的「不是 commit」与上游漂移长得一样，哨兵立刻退化成噪声源 ——
+      # 正好复犯缺陷 40 要修的那个错（两种成因共用一个信号）。
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # 装 **下界** 而不是锁 —— 这一行就是「这条 job 只对上游敏感、对本仓不敏感」的机制。
+      - name: Install dependencies (latest allowed by the floors)
+        run: |
+          pip install --no-cache-dir -r requirements.in
+          pip install --no-cache-dir -r requirements-dev.in
+
+      - name: pip freeze → artifact（漂移时到底是哪一版动的）
+        run: python -m pip freeze --all > pip-freeze-sentinel.txt
+
+      - name: Run tests
+        env:
+          STORAGE_BACKEND: postgres
+          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
+          JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
+          REQUIRE_PG_TESTS: "1"
+        run: pytest tests/ -v --tb=short
+
+      - name: 红的时候说清楚这条红意味着什么
+        if: failure()
+        run: |
+          echo "::warning title=上游漂移（哨兵红了）::这条 job 装的是 requirements*.in（下界），它红 = 上游某个包发了新版、行为变了。本仓代码大概率没动。拿 pip-freeze-sentinel 和 pip-freeze-gate 两个产物相减，就是「谁动的」。处置：升锁跟上，或在 .in 里给它加上限。"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: pip-freeze-sentinel
+          retention-days: 30
+          if-no-files-found: error
+          path: pip-freeze-sentinel.txt
 
   build:
     needs: test

@@ -1,0 +1,15 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# 人写的约束（下界）。**锁文件是 requirements-dev.txt，由 uv 生成。**
+#
+# 重锁命令（仓库根目录）—— `-c requirements.txt` 是**承重的**：把主锁当天花板，
+# 免得 dev 树把 app 已钉的包解到另一个版本，装出「CI 跑的和线上跑的不是同一套」。
+#   uv pip compile requirements-dev.in -o requirements-dev.txt \
+#     -c requirements.txt --universal --python-version 3.12
+# ═══════════════════════════════════════════════════════════════════════════
+# 仅开发/调试时需要（Gradio 旧入口已废弃）
+gradio>=5.0.0
+pytest
+pytest-asyncio
+# MCP SDK —— mcp_server 协议层测试依赖（test_rag_unusable 走 mcp_server 降级路径）。
+# 生产 app 不 import mcp（core/web/storage/adapters 无引用），故不入 requirements.in
+mcp==1.26.0
