@@ -1,0 +1,12 @@
+-- 019 — messages.evidence：检索来源快照（JSONB）
+--
+-- 与 sqlite 侧 086 是同一件事实。**为什么用 ADD COLUMN 而不写进 001_init.sql 的
+-- CREATE TABLE**：本仓 PG 侧历史上把 messages 的后加列都改在 001（retracted /
+-- reply_to_id / reply_to_preview 都在那里），但改一份**已应用过**的迁移对已建库是
+-- no-op —— 那正是缺陷 21/23 的病灶（「文件里写了」≠「库里有」）。
+-- ADD COLUMN IF NOT EXISTS 是唯一对**新库与已建库走同一条路径**的形态。
+--
+-- JSONB 而非 TEXT：PG 原生类型，写入即验 JSON 合法性（非法 JSON 当场报错，不静默存
+-- 进去），且将来可按需建索引 / 用 -> 查询。sqlite 侧无 JSONB，用 TEXT，合法性由
+-- 唯一的编码出口 `core/schema.py::evidence_to_json` 保证（不靠 DB 类型）。
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS evidence JSONB DEFAULT NULL;

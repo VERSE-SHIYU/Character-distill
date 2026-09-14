@@ -1451,18 +1451,18 @@ class PostgresStore(StorageBase):
 
     async def save_message(self, session_id: str, role: str, content: str, rag_context: str,
                            reply_to_id: int | None = None, reply_to_preview: str = "",
-                           retracted: bool = False) -> dict:
+                           retracted: bool = False, evidence: str | None = None) -> dict:
         """Save one message and touch session updated_at."""
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
                     row = await conn.fetchrow(
                         """
-                        INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7)
-                        RETURNING id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted
+                        INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                        RETURNING id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
                         """,
-                        session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted,
+                        session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence,
                     )
                     await conn.execute(
                         "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = $1",
@@ -1474,12 +1474,16 @@ class PostgresStore(StorageBase):
             raise
 
     async def get_messages(self, session_id: str) -> list[dict]:
-        """List all messages in one session."""
+        """List all messages in one session.
+
+        ``evidence`` 原样返回落库文本（可能为 None）。解成结构是**上层**的事
+        （``web/routers/history.py``）—— 本目录不引 ``core``（依赖方向是 core → storage）。
+        """
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted
+                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
                     FROM messages
                     WHERE session_id = $1
                     ORDER BY id ASC

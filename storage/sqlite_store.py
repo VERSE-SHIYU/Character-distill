@@ -59,7 +59,7 @@ _MIGRATIONS_BEFORE_USER_REBUILD = (
 _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
-    "084_distill_tasks.sql", "085_usage_chunk_count.sql",
+    "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -1782,17 +1782,17 @@ class SQLiteStore(StorageBase):
     async def save_message(
         self, session_id: str, role: str, content: str, rag_context: str,
         reply_to_id: int | None = None, reply_to_preview: str = "",
-        retracted: bool = False,
+        retracted: bool = False, evidence: str | None = None,
     ) -> dict:
         """Save one message and touch session updated_at."""
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted),
+                    (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence),
                 )
                 await conn.execute(
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -1803,7 +1803,7 @@ class SQLiteStore(StorageBase):
 
                 row_cursor = await conn.execute(
                     """
-                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted
+                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
                     FROM messages
                     WHERE id = ?
                     """,
@@ -1816,12 +1816,16 @@ class SQLiteStore(StorageBase):
             raise
 
     async def get_messages(self, session_id: str) -> list[dict]:
-        """List all messages in one session."""
+        """List all messages in one session.
+
+        ``evidence`` 原样返回落库文本（可能为 None）。解成结构是**上层**的事
+        （``web/routers/history.py``）—— 本目录不引 ``core``（依赖方向是 core → storage）。
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     """
-                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted
+                    SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
                     FROM messages
                     WHERE session_id = ?
                     ORDER BY id ASC

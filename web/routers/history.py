@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from core.trash_service import hard_delete, restore, soft_delete
 from core.affinity_service import read_persisted_affinity
 from deps import get_sessions, get_storage
-from core.schema import CharacterCard
+from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -148,6 +148,10 @@ async def get_session_detail(
     except Exception as exc:
         print(f"[history] Get messages failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
+    # 落库的 evidence 是快照 JSON 文本，在此解成结构 —— 这是前端「刷新后仍能看到检索来源」
+    # 的唯一解码出口。老消息该列是 NULL → None（= 没有关联证据），不造 []。
+    for m in messages:
+        m["evidence"] = parse_evidence(m.get("evidence"))
     return {"session": session, "messages": messages}
 
 

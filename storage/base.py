@@ -201,8 +201,16 @@ class StorageBase(ABC):
         self, session_id: str, role: str, content: str, rag_context: str,
         retracted: bool = False,
         reply_to_id: int | None = None, reply_to_preview: str = "",
+        evidence: str | None = None,
     ) -> dict:
-        """Save one message and return the stored record."""
+        """Save one message and return the stored record.
+
+        ``evidence`` 是本条消息关联的检索来源快照 —— 列值即 ``core.schema.
+        evidence_to_json`` 的产出（**唯一编码出口**；storage 只当它是文本列，不认它的
+        结构，也就不引 storage → core 的反向依赖）。带默认值的关键字参数是本路径的开闭
+        手法：老调用点（用户消息 / 摘要 / 群聊）零改动，老消息读回来是 ``None``，
+        语义与加列前一致。
+        """
 
     @abstractmethod
     async def get_messages(self, session_id: str) -> list[dict]:

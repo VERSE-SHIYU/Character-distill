@@ -1,5 +1,6 @@
 """角色卡与相关结构的 Pydantic 模型定义。"""
 
+import json
 from typing import Any, Literal, NamedTuple, TypedDict
 
 from pydantic import BaseModel, model_validator
@@ -209,6 +210,89 @@ class SourceTrace(NamedTuple):
     source: EvidenceKind
     status: SourceStatus
     items: list[EvidenceItem]
+
+
+# ── 持久化投影：SourceTrace ⇄ 落库文本 ──────────────────────────────────
+# 落库形状**不是** SourceTrace 的别称，是另一个形状，理由两条：
+#
+# 1. ``text`` 落库的是**截断预览**，不是原文（全文入库会撑大消息表：一条 scene item
+#    数百到上千字 × 每次检索 × 每条消息）。既然承诺不了原文，就不许长得像原文 ——
+#    复用 ``EvidenceItem`` 会让下游把预览当原文读。故带 ``truncated`` 显式标记
+#    （「不许静默截断」），且**不提供反向重建**：重建出 SourceTrace 等于把预览
+#    重新伪装成检索事实。
+# 2. ``kind`` 不进单条 item —— 父层 ``source`` 已经说了来源，同一事实不留两份
+#    （本仓缺陷 25 的形态：一个字段的描述与另一个字段重复且无人强制一致）。
+#
+# ``meta`` 原样保留：它装着**引用**（scene 的 chunk_id / web 的 url）—— 那是将来按需
+# 回查原文的句柄，而且体量是几个数，不是撑表的原因。
+
+EVIDENCE_SNAPSHOT_CHARS = 300
+
+
+class EvidenceSnapshotItem(TypedDict):
+    """落库的一条来源快照。``text`` 是截断预览，``truncated`` 记它有没有被裁过。"""
+    text: str
+    truncated: bool
+    score: float | None
+    meta: dict[str, Any]
+
+
+class EvidenceSnapshot(TypedDict):
+    """一条 ``SourceTrace`` 的落库形态：``source``/``status``/``items`` 一一对应。"""
+    source: EvidenceKind
+    status: SourceStatus
+    items: list[EvidenceSnapshotItem]
+
+
+def evidence_to_json(traces: list[SourceTrace]) -> str | None:
+    """``SourceTrace`` 列表 → 落库文本。**空 → None**（列留 NULL）。
+
+    不写 ``"[]"``：NULL 与 ``"[]"`` 是两种「无证据」，读回来一个 None 一个 ``[]``，
+    下游就得自己裁决该认哪个。只留 NULL 一种表示，「没证据」就只有一个形状。
+
+    这是**唯一编码出口**：生产方不手拼 dict。手拼 = 同一形状第二份定义，两份必然漂移
+    （本仓缺陷 21 / 25 的教训）。
+    """
+    if not traces:
+        return None
+    snapshots: list[EvidenceSnapshot] = [
+        {
+            "source": t.source,
+            "status": t.status,
+            "items": [
+                {
+                    "text": it.text[:EVIDENCE_SNAPSHOT_CHARS],
+                    "truncated": len(it.text) > EVIDENCE_SNAPSHOT_CHARS,
+                    "score": it.score,
+                    "meta": dict(it.meta),
+                }
+                for it in t.items
+            ],
+        }
+        for t in traces
+    ]
+    return json.dumps(snapshots, ensure_ascii=False)
+
+
+def parse_evidence(raw: Any) -> list[EvidenceSnapshot] | None:
+    """落库文本 → 快照列表。``None`` / 空串 → ``None``（**不造 ``[]``**）。
+
+    **解析失败不抛**：一条坏行不该让整段会话读不出来（老消息与坏行都是「没有证据」这个
+    对外语义，区别只在日志）。但不静默 —— 打一行点名「解析失败」的日志，与「本来就没有」
+    可辨。代价如实记：库里其实有值、接口却是 None，只看接口会误读成「当时没检索」。
+    """
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            print(f"[schema] evidence 解析失败，该条消息按「无证据」返回: {exc}")
+            return None
+    if not isinstance(raw, list):
+        print(f"[schema] evidence 落库值不是 JSON 数组（{type(raw).__name__}），按「无证据」返回")
+        return None
+    return raw
 
 
 # ── 构造入口：键名的唯一出处 ────────────────────────────────────────────

@@ -18,6 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
+from core.schema import evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
 
@@ -350,7 +351,12 @@ async def _do_chat(
         if not hidden:
             user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
             user_msg_id = user_rec["id"]
-        char_rec = await storage.save_message(session_id, "char", resp, rag_ctx[:500], retracted=retracted)
+        # 检索来源快照落库（evidence_to_json 是唯一编码出口）。读的是本轮 chat 刚写下的
+        # engine.last_traces —— 必须在 post_stream_process 之前取，那是另一轮。
+        char_rec = await storage.save_message(
+            session_id, "char", resp, rag_ctx[:500], retracted=retracted,
+            evidence=evidence_to_json(getattr(engine, "last_traces", [])),
+        )
         char_msg_id = char_rec["id"]
         ids_to_add = [user_msg_id, char_msg_id]
 
@@ -492,7 +498,12 @@ async def _do_chat_stream(
                 engine.history[-1]["retracted"] = True
 
             try:
-                char_rec = await storage.save_message(session_id, "char", full_reply, rag_context[:500], retracted=retracted)
+                # 同 _do_chat：证据在本轮流式生成期间写入 engine.last_traces，
+                # 后面的 post_stream_process 是另一轮，取早了/晚了都是错的那一轮。
+                char_rec = await storage.save_message(
+                    session_id, "char", full_reply, rag_context[:500], retracted=retracted,
+                    evidence=evidence_to_json(getattr(engine, "last_traces", [])),
+                )
                 char_msg_id = char_rec["id"]
             except Exception as exc:
                 print(f"[chat] Save assistant message failed (non-fatal): {exc}")

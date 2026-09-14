@@ -1,0 +1,15 @@
+-- 086 — messages.evidence：本条消息关联的检索来源快照（JSON 文本）
+--
+-- 为什么要落库：检索来源（Evidence 线）此前只活在内存里（ChatEngine.last_traces），
+-- 刷新页面即丢 —— 用户看到「检索来源」却无法在刷新后复核。
+--
+-- 存**引用 + 摘要快照**，不是全文：全文（一条 scene item 数百到上千字 × 每次检索 ×
+-- 每条消息）会撑大消息表；meta 里的 chunk_id / url 是将来按需回查原文的句柄。
+-- 形状与序列化只有一个出口：`core/schema.py::evidence_to_json` / `parse_evidence`。
+--
+-- NULL = 本条消息没有关联证据（老消息 / 用户消息 / 摘要）。不写 '[]'：一种「无证据」
+-- 只留一种表示，读回来才不会出现 None 与 [] 两种空。
+--
+-- SQLite 没有 ADD COLUMN IF NOT EXISTS，重复执行靠执行器读 PRAGMA 前置
+-- （`storage/sqlite_store.py::_apply_migration`），故此处是裸 ADD COLUMN。
+ALTER TABLE messages ADD COLUMN evidence TEXT DEFAULT NULL;
