@@ -22,9 +22,11 @@ services:
   postgres:
     image: ${PG_IMAGE_REGISTRY:-docker.io/library}/postgres:16-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      # :? = 缺变量即在解析期失败并点名（不是 `:-` 给默认值）。插值是文件级的，
+      # 此处加守卫即覆盖下面 app 的 DATABASE_URL 与本 service 的 healthcheck —— 不逐处重复。
+      POSTGRES_USER: "${POSTGRES_USER:?缺 POSTGRES_USER：填进 .env（模板见 .env.example）}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?缺 POSTGRES_PASSWORD：填进 .env（模板见 .env.example）}"
+      POSTGRES_DB: "${POSTGRES_DB:?缺 POSTGRES_DB：填进 .env（模板见 .env.example）}"
       LANG: C.UTF-8
     # 小内存调优：限制 shared_buffers 和连接数，避免 PG 自身撑爆内存限制
     command: >
