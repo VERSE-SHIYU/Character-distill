@@ -8,8 +8,13 @@
 本身完全正常。`test_sqlite_ping_raises_when_locked_out_mid_flight` 就是这句话的现场 ——
 连接取得到，语句跑不动。
 
-**变异（B-1/B-2，驱动在 `tests/perf/ping_mutations.py`）**：
+**为什么 SQLite 侧读 `sqlite_master` 而不是 `SELECT 1`**：不带 FROM 的 SELECT 不读文件、
+不取锁、不开读事务，**结构上不可能失败**，于是「取到了连接」与「库答得上话」合一 ——
+探针回到缺陷 41 那个全绿形态。B-1b 就是这条的判别面。
+
+**变异（B-1/B-1b/B-2，驱动在 `tests/perf/ping_mutations.py`）**：
   - B-1 让 SQLite 的 ping 只取连接、不执行语句 → `test_..._locked_out_mid_flight` 红；
+  - B-1b 把语句退回 `SELECT 1` → 同上（Linux 红；Windows 见那条用例的 docstring）；
   - B-2 摘掉 `StorageBase.ping` 上的 `@abstractmethod` → 契约锁那两条红。
 """
 
@@ -112,13 +117,20 @@ async def test_sqlite_ping_raises_when_db_path_is_unusable(tmp_path: Path):
 async def test_sqlite_ping_raises_when_locked_out_mid_flight(tmp_path: Path):
     """**连接取得到、语句跑不了** —— 缺陷 41 那句话的现场。
 
-    另一个连接持 `BEGIN EXCLUSIVE` 时删档模式（rollback journal）下的读也拿不到共享锁，
-    于是 `_connect()` 成功（journal_mode 那句 PRAGMA 本就允许在锁下跳过），而 `SELECT 1`
-    超时抛 `OperationalError: database is locked`。
+    另一个连接持 `BEGIN EXCLUSIVE` 时删档模式（rollback journal）下的读拿不到共享锁，
+    于是 `_connect()` 成功（`journal_mode` 那句 PRAGMA 允许在锁下跳过，日志留一条 warning），
+    而 ping 的那句读语句超时抛 `OperationalError: database is locked`。
 
-    **这条是 B-1 的判别面**：把 ping 改成「只取连接、不执行语句」，上面每一句都还成立、
-    唯独异常不再抛出 —— 它就红了。没有它，「ping 真跑了语句」只是实现细节，没有任何
-    用例在管。
+    **这条是 B-1 与 B-1b 的判别面**：B-1 把 ping 改成「只取连接、不执行语句」、B-1b 把
+    语句退回 `SELECT 1`，两种情况下面每一句都还成立，唯独异常不再抛出。没有它，
+    「ping 真的读到了库」只是实现细节，没有任何用例在管。
+
+    **平台差异（实测，别按经验读这条的绿）**：判别力只在 Linux/sqlite 3.46（生产镜像那套）
+    成立 —— 那边的 `SELECT 1` 不开读事务，锁下照样过。本机 Windows 的 sqlite 3.49 则连
+    `SELECT 1` / `SELECT 1+1` / `PRAGMA schema_version` 都在锁下抛 `database is locked`
+    （同一条连接上只有 `busy_timeout` / `foreign_keys` 这两个锁无关的 PRAGMA 能过），
+    于是**任何**语句都会让这条用例变绿，B-1b 在 Windows 上是假绿。根因是版本差异不是平台：
+    生产跑的就是 Linux 那套，所以以 Linux 的结论为准，Windows 的绿不构成证据。
 
     代价：SQLite 的 busy_timeout 是 5s，两处等待叠加约 15s。这是生产语义的一部分
     （`_connect()` 里写死的），不为跑得快去动它。

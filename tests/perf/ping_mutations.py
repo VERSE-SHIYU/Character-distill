@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""缺陷 41（B 轮）变异矩阵驱动 —— 一组共 9 条（B1/B2/B3/B4/B5/B6/B7/B8/B9）。
+"""缺陷 41（B 轮）变异矩阵驱动 —— 一组共 10 条
+（B-1、B-1b、B-2、B-3、B-4、B-5、B-6、B-7、B-8、B-9）。
 
 **为什么入库。** B 轮四条 commit 的判据引用本脚本跑出来的「哪条红、红在哪句」。
 数字骑在仓外脚本上追不回来（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -89,9 +90,15 @@ B_GROUP = [
     ("B-1  SQLite 的 ping 只取连接、不执行语句",
      PING_LOCK,
      [("repl", SQLITE, [('        async with await self._connect() as conn:\n'
-                         '            await conn.execute("SELECT 1")\n',
+                         '            await conn.execute("SELECT count(*) FROM sqlite_master")\n',
                          '        async with await self._connect() as conn:\n'
                          '            pass\n')])],
+     "RED", "test_sqlite_ping_raises_when_locked_out_mid_flight"),
+
+    ("B-1b  SQLite 的 ping 语句退回 SELECT 1",
+     PING_LOCK,
+     [("repl", SQLITE, [('            await conn.execute("SELECT count(*) FROM sqlite_master")',
+                         '            await conn.execute("SELECT 1")')])],
      "RED", "test_sqlite_ping_raises_when_locked_out_mid_flight"),
 
     ("B-2  摘掉 StorageBase.ping 上的 @abstractmethod",
@@ -151,20 +158,37 @@ B_GROUP = [
 GROUPS = {"B": B_GROUP}
 
 _DOC_STAT = re.compile(r"一组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
-_DOC_GROUP = re.compile(r"([A-Z])(\d+)")
+# 编号形如 B-1 / B-1b —— 后缀小写字母是同一命题的第二形态（B-1b 是 B-1 的近邻变体）。
+_ID_RE = re.compile(r"B-\d+[a-z]?")
+
+
+def _live_ids() -> set[str]:
+    """变异表里现存的编号集合。整表唯一的编号来源，也是下面自检的被比较项。"""
+    out: set[str] = set()
+    for items in GROUPS.values():
+        for item in items:
+            found = _ID_RE.search(item[0])
+            assert found, f"变异条目没有编号：{item[0]!r}"
+            out.add(found.group(0))
+    return out
 
 
 def _count_gate() -> bool:
-    """文档字符串里的条数必须等于分组的现数；匹配不到同样拒跑（自检失效与通过同形）。"""
-    live = {g: len(v) for g, v in GROUPS.items()}
+    """docstring 声明的**编号集合**必须等于变异表的现数；匹配不到同样拒跑。
+
+    比集合而不是比总数：总数对上、编号对不上（漏了 B-1b、多了个不存在的）同样是漂移，
+    而总数相等时那种漂移正好藏得住。自检失效与自检通过长得一样，故匹配不到也拒跑。
+    """
     m = _DOC_STAT.search(__doc__ or "")
+    declared = set(_ID_RE.findall(m.group(2))) if m else None
     stated_total = int(m.group(1)) if m else None
-    stated = {g: int(n) for g, n in _DOC_GROUP.findall(m.group(2))} if m else {}
-    if stated_total == sum(live.values()) and stated == live:
+    live = _live_ids()
+    if declared is not None and stated_total == len(live) and declared == live:
         return True
-    print("\n文档字符串的条数与分组的现数不一致，拒绝跑（自检失效与自检通过长得一样）：\n"
-          f"  文档：共 {stated_total} 条 {stated or '（分组的括号匹配不到）'}\n"
-          f"  现数：共 {sum(live.values())} 条 {live}")
+    print("\ndocstring 的编号与变异表的现数不一致，拒绝跑（自检失效与自检通过长得一样）：\n"
+          f"  文档：共 {stated_total} 条 "
+          f"{sorted(declared) if declared is not None else '（条数/括号匹配不到）'}\n"
+          f"  现数：共 {len(live)} 条 {sorted(live)}")
     return False
 
 

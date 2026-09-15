@@ -368,17 +368,23 @@ class SQLiteStore(StorageBase):
         return _ConnectionContext(conn)
 
     async def ping(self) -> None:
-        """在连接上跑一条语句；语义见 `StorageBase.ping`。
+        """读一次库文件本体；语义见 `StorageBase.ping`。
 
         `_connect()` 会先走 `_ensure_initialized()`，故进程里的第一次 ping 顺带建库文件、
         跑迁移。这是有意的：**就绪包含 schema 就绪**。
 
-        注意 SQLite 的 `_connect()` 本身已写下一串 PRAGMA —— 所以「取到连接」在这里
-        已经比 PG 走得更远。即便如此仍要真跑一条语句：库被排他锁住时 PRAGMA 可能被
-        跳过（见上），语句才是那句「答得上话」。
+        **语句必须读库文件本体**，故读 `sqlite_master`。`SELECT 1` 在这里不算数：它没有
+        FROM，SQLite 不为它开读事务、不取共享锁，也就**结构上不可能失败** —— 实测
+        （Linux / sqlite 3.46，即生产镜像那套）另一连接持 `BEGIN EXCLUSIVE` 时，
+        `_connect()` 与 `SELECT 1` 双双成功。于是「取到了连接」与「库答得上话」在这里
+        又合一了，正是缺陷 41 的形态：探针在所有需要它红的场合都是绿的。
+
+        注意 `_connect()` 本身已写下一串 PRAGMA，那里面只有 `busy_timeout` /
+        `foreign_keys` 是锁无关的；`journal_mode` 遇锁会被跳过（见上），所以它证明不了
+        库答得上话，读语句才是那句「答得上话」。
         """
         async with await self._connect() as conn:
-            await conn.execute("SELECT 1")
+            await conn.execute("SELECT count(*) FROM sqlite_master")
 
     @staticmethod
     def _normalize_value(val):
