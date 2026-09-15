@@ -1,5 +1,11 @@
 # -*- coding: utf-8 -*-
-"""缺陷 41 A 轮变异矩阵驱动 —— 一组共 7 条（A-1、A-2、A-3、A-4、A-5、A-6、A-7）。
+"""缺陷 41 A 轮变异矩阵驱动 —— 一组共 13 条
+（A-1、A-2、A-3、A-4、A-5、A-6、A-7、A-8、A-9、A-10、A-11、A-12、A-13）。
+
+**A-8～A-13 是锁改成封闭语法之后补的**（返工）：前七条打的是**必需成分在不在**，后六条打的是
+**多余成分在不在** —— 两个编排文件同步改同一处，其中四种改法（A-8/A-9/A-10/A-11）曾把
+**开放式**的第一版锁整条绕过（见 `tests/test_pg_healthcheck.py` 的 docstring）。它们全部
+落在同一个文件对（prod + local）上，故每条都写两条 `repl` 动作，各改一份。
 
 **为什么入库。** A 轮的 commit 引用了本脚本跑出来的「哪条红、红在哪句」。数字骑在仓外
 脚本上追不回来（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -61,6 +67,18 @@ _PSQL_LINE = (
 # 不去动整行 —— 整行锚会在「同一行里改两处」时说不清是哪一处生效的。
 _SZ_TAIL = "PGCONNECT_TIMEOUT=3 psql -h postgres -U"
 
+# A-8～A-13 的锚（每个在两个编排文件里各恰好命中一次，故每条变异对两份各下一处同形改动）。
+_PW_PREFIX = '"CMD-SHELL", "PGPASSWORD='          # A-8：在它前面插一个赋值
+_PSQL_H = "psql -h postgres -U"                   # A-9 / A-13：在它附近加东西
+_QUERY_TAIL = "'select 1' > /dev/null\"]"         # A-10 / A-11：在它后面接第二条命令
+_REDIRECT_TAIL = "> /dev/null\"]"                 # A-12：把 stdout 那份重定向也吞掉 stderr
+
+
+def _both(old: str, new: str) -> list[tuple]:
+    """同一处改动同时落在两个编排文件上 —— 一份改一份不改会先红在「多份不一致」那条上，
+    红源就不是本条要打的那句了。"""
+    return [("repl", PROD, [(old, new)]), ("repl", LOCAL, [(old, new)])]
+
 # 每条 = (编号 + 命题, 靶子测试, [(动作, 文件, 载荷)], 期望, 红源标记)
 A_GROUP = [
     ("A-1  prod 改回 pg_isready",
@@ -102,6 +120,38 @@ A_GROUP = [
      [("repl", LOCK, [("    out: dict[str, dict] = {}\n    for path in sorted",
                        "    return {}\n    for path in sorted")])],
      "RED", "解析器瞎了"),
+
+    # ── A-8～A-13：开放式检查看不见的第二类改法 —— 多余成分 ────────────────────
+    # 六条的期望都不是「某个必需成分没了」，而是「多了一个语法外的 token」。
+    ("A-8  两个文件都加 PGHOSTADDR=127.0.0.1",
+     LOCK_PATH,
+     _both(_PW_PREFIX, '"CMD-SHELL", "PGHOSTADDR=127.0.0.1 PGPASSWORD='),
+     "RED", "PGHOSTADDR"),
+
+    ("A-9  两个文件都在 -h postgres 后加 --host=127.0.0.1",
+     LOCK_PATH,
+     _both(_PSQL_H, "psql -h postgres --host=127.0.0.1 -U"),
+     "RED", "--host"),
+
+    ("A-10 两个文件都在末尾加 ; exit 0",
+     LOCK_PATH,
+     _both(_QUERY_TAIL, "'select 1' > /dev/null; exit 0\"]"),
+     "RED", "';'"),
+
+    ("A-11 两个文件都在末尾加 || true",
+     LOCK_PATH,
+     _both(_QUERY_TAIL, "'select 1' > /dev/null || true\"]"),
+     "RED", "'||'"),
+
+    ("A-12 两个文件都把结尾改成 > /dev/null 2>/dev/null",
+     LOCK_PATH,
+     _both(_REDIRECT_TAIL, "> /dev/null 2>/dev/null\"]"),
+     "RED", "'2>'"),
+
+    ("A-13 两个文件都把 -h postgres 写两遍",
+     LOCK_PATH,
+     _both(_PSQL_H, "psql -h postgres -h postgres -U"),
+     "RED", "-h 出现了两次"),
 ]
 
 GROUPS = {"A": A_GROUP}
