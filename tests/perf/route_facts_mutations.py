@@ -492,13 +492,27 @@ I_GROUP = [
      _ORDER_SWAP, [], "OK"),
 ]
 
-# P-*：策略表校验层（缺陷 42 结案 —— L5 与 auth 锁共用的那张「豁免 + 理由」表）。三条都只
+# P-*：策略表校验层（缺陷 42 结案 —— L5 与 auth 锁共用的那张「豁免 + 理由」表）。各条都只
 # 打本层自己的判据行：本层不认识任何路由/字段名，故这几条的靶子只能是它自己的函数体。
+#
+# **原 P-1 退役**（编号保留空位，不复用 —— 复用会让台账里的旧编号指向另一件事）。它的变异
+# 是「`str()` 之后丢掉 strip」，而那段 `str()` 已在结案收口时删掉：新写法下「丢掉 strip」
+# 与 P-5 逐字同形，留着就是同一个变异挂两个编号。它覆盖的失效方向由 P-5 原样接住，
+# P-4 是反方向（把字符串化请回来）。两条各自打一个新分支：P-4 打**类型**那一半，
+# P-5 打**内容**那一半 —— 合成一条时，其中一半坏掉仍会绿。
+_ER_BODY = ('    return {k for k, reason in table.items()\n'
+            '            if not (isinstance(reason, str) and reason.strip())}')
 P_GROUP = [
-    ("P-1 empty_reasons 不 strip（只把空串当空理由）",
+    ("P-4 empty_reasons 退回整串字符串化（缺失值被变成「None」那样的文本）",
      "tests/test_route_policy.py",
-     [("repl", RP, [('    return {k for k, reason in table.items() if not str(reason).strip()}',
-                     '    return {k for k, reason in table.items() if not str(reason)}')])],
+     [("repl", RP, [(_ER_BODY,
+                     '    return {k for k, reason in table.items() if not str(reason).strip()}')])],
+     "RED", "test_empty_reasons_treats_a_missing_reason_as_empty"),
+    ("P-5 empty_reasons 只判类型、不 strip（纯空白理由被当成有内容）",
+     "tests/test_route_policy.py",
+     [("repl", RP, [(_ER_BODY,
+                     '    return {k for k, reason in table.items()\n'
+                     '            if not (isinstance(reason, str) and reason)}')])],
      "RED", "test_empty_reasons_flags_blank_and_whitespace_only_reasons"),
     ("P-2 stale_keys 两个参数方向写反",
      "tests/test_route_policy.py",

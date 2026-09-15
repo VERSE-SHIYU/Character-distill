@@ -6,10 +6,13 @@
 
 覆盖边界：**空表**（不是「表里没有键」，是「表本身为空」）、**全部合规**（三个函数都该
 返回空集 —— 判据不能靠「总是返回点什么」蒙对）、**理由只有空白字符**（`" "` / `"\\t\\n "`
-都是空，只有 strip 之后才算数）、**键为元组**（本仓两张真实表的键都是复合键，平铺的
-字符串键测不出「键本身是元组」这条路径）。
+都是空，只有 strip 之后才算数）、**理由不是字符串**（`None` / `0` 一律算空 ——
+「理由在不在」是结构问题，字符串化之后判长短是代理判据）、**键为元组**（本仓两张真实表
+的键都是复合键，平铺的字符串键测不出「键本身是元组」这条路径）。
 """
 from __future__ import annotations
+
+import pytest
 
 import route_policy
 
@@ -27,6 +30,22 @@ def test_empty_reasons_flags_blank_and_whitespace_only_reasons():
 
 def test_empty_reasons_of_an_empty_table_is_empty():
     assert route_policy.empty_reasons({}) == set()
+
+
+@pytest.mark.parametrize("reason", [None, 0, "", "   ", "\t\n "])
+def test_empty_reasons_treats_a_missing_reason_as_empty(reason):
+    """缺失值**不因为字符化后长得像文本**就蒙混过关（`None` → `"None"`、`0` → `"0"`）。
+
+    逐值参数化而不是一条断言：`None` 与 `""` 走的是同一行代码的两个不同分支
+    （类型判定 / 内容判定），合并成一条时其中一条分支坏了仍会绿。
+    """
+    assert route_policy.empty_reasons({("k",): reason}) == {("k",)}
+
+
+def test_empty_reasons_keeps_a_real_reason():
+    """反向：真的写了理由就不许红 —— 否则「一律判空」也能让上面那条通过。"""
+    assert route_policy.empty_reasons({("k",): "理由"}) == set()
+    assert route_policy.empty_reasons({("k",): "  理由  "}) == set()
 
 
 def test_stale_keys_is_table_minus_observed():

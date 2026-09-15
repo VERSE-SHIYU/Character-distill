@@ -22,8 +22,15 @@ from typing import Hashable, Iterable, Mapping
 
 
 def empty_reasons(table: Mapping[Hashable, str]) -> set:
-    """理由为空、或只有空白字符的键 —— 「写了理由」不等于「理由有内容」。"""
-    return {k for k, reason in table.items() if not str(reason).strip()}
+    """理由为空、只有空白字符、**或根本不是字符串**的键 —— 「写了理由」不等于「理由有内容」。
+
+    先判类型再判内容，不做字符串化。理由是 `None` / `0` 这类非字符串时直接判为空 ——
+    把它们先转成字符串再 strip，缺失值就变成了看似有内容的文本（`None` → `"None"`、
+    `0` → `"0"`），于是「理由在不在」被偷换成「转成字符串之后长不长」：那是代理判据，
+    不是判据本身。理由字段缺失是**结构问题**，不该长得像理由。
+    """
+    return {k for k, reason in table.items()
+            if not (isinstance(reason, str) and reason.strip())}
 
 
 def stale_keys(table: Mapping[Hashable, str], observed: Iterable) -> set:
