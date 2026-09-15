@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 六组共 36 条，逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 六组共 38 条，逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -260,6 +260,16 @@ async def _probe_read(user: Annotated[dict, Depends(get_current_user)]) -> dict:
     return {"user_id": user["id"]}
 '''
 
+# V15 用**另一种等价写法**再打一次同一个命题：V1 走 `Annotated`，这条走普通默认值。
+# 识别半边（`d.call is get_current_user`）在事实层、结案这一步没动它，故两条都该红 ——
+# 一条只为「复核 V1 在新实现下仍成立」而存在的变异，再抄一遍 V1 的载荷是零增量。
+_MEM_UNREAD_PLAIN = '''
+
+@router.get("/__probe_unread_plain")
+async def _probe_unread_plain(user: dict = Depends(get_current_user)) -> dict:
+    return {"ok": True}
+'''
+
 _AUTH_OLD_SHAPE = [
     ('''        injected = route_facts.injected_params(route, get_current_user)
         if not injected:
@@ -396,6 +406,15 @@ V_GROUP = [
      [("repl", VOICE, [('    ref_text: str = Form(""),\n',
                         '    ref_text: str = Form(""),\n    note: str = Form(""),\n')])],
      "RED", "('/api/voice/ref-audio/upload','post','note')"),
+    ("V14 auth 锁 · ALLOWLIST 某条理由改成空串",
+     "tests/test_auth_param_used.py",
+     [("repl", AUTH, [('    ("/api/voice/status", "get"): "全局服务状态",',
+                       '    ("/api/voice/status", "get"): "",')])],
+     "RED", "test_allowlist_is_neither_stale_nor_reasonless"),
+    ("V15 auth 锁 · 另一种注入写法（无 Annotated）注入且未引用 —— 复核识别半边",
+     "tests/test_auth_param_used.py",
+     [("append", MEM, _MEM_UNREAD_PLAIN)],
+     "RED", "新出现「注入 user 却不引用」的端点"),
 ]
 
 # I-*：隔离判据 3 —— 两把锁互不依赖（不是口头保证：移走一把，另一把要照常红同一条）

@@ -13,12 +13,16 @@ text.py:204 / voice.py:189 / voice.py:213 三处都是这个形态，靠人扫 A
     只认那一种写法，且只 glob `web/routers/*.py` —— `web/server.py` 里
     `/api/settings/config` 的 `_user` 因此整条看不见（第 3 步实测坐实）。
   - 「这个参数**被用上了吗**」**仍是 ②层**：数的是有没有出现同名 `Load`。
-    **已知盲区（`route_facts` 没有这个能力，故留在这里并写明 —— 不许假装覆盖）**：
-    注入 user 却只把它塞进日志 / 返回值（`str(user)`、`logger.debug(user)`）而不做归属
-    校验 —— **这条例外迁移前后都绿**。与缺陷 25 同形（签名里有身份参数 ≠ 它被用于归属）。
-    真值层要么是「SQL 谓词里有没有它」（缺陷 25 的解法），要么是运行时探针。
+    **这是本锁的边界，不是遗漏**：`route_facts` 没有这个能力（框架的账本里只有「注入了
+    什么」，「用它做了什么」不在账本里），而「user 是否被用于**归属校验**」的真值在
+    **SQL 谓词**那一层（缺陷 25 的解法）。所以注入 user 却只把它塞进日志 / 返回值
+    （`str(user)`、`logger.debug(user)`）而不做归属校验的写法，本锁看不见 —— 与缺陷 25
+    同形（签名里有身份参数 ≠ 它被用于归属）。要覆盖它，要么下沉到 SQL 谓词层，要么上
+    运行时探针。
 
 豁免名单按 **(path, method)** 键 —— 路由路径是对外契约，文件位置与函数名都可以改。
+表与现场的对账（未登记 / 陈旧 / 空理由）走 `route_policy` —— 与 L5 共用同一层：同一套
+差集与判空在两处各写一遍会各自漂移，而漂移**不报错**（缺陷 42 结案）。
 """
 from __future__ import annotations
 
@@ -27,6 +31,7 @@ import inspect
 import textwrap
 
 import route_facts
+import route_policy
 from routers.auth import get_current_user
 
 # 有意**不引用** user 的端点（纯登录门 / 读全局或公开数据）。键是 `(path, method)`。
@@ -70,16 +75,22 @@ def _unused_user_endpoints() -> dict[tuple[str, str], set[str]]:
 
 
 def test_no_endpoint_injects_user_without_reading_it():
-    unexpected = {k: v for k, v in _unused_user_endpoints().items() if k not in ALLOWLIST}
-    assert not unexpected, (
-        f"新出现「注入 user 却不引用」的端点：{unexpected}。"
+    found = _unused_user_endpoints()
+    unregistered = route_policy.unexpected(found, ALLOWLIST)
+    assert not unregistered, (
+        f"新出现「注入 user 却不引用」的端点："
+        f"{ {k: found[k] for k in sorted(unregistered)} }。"
         "要么用上 user（归属校验 / 按用户过滤），要么加进本文件 ALLOWLIST 并注明为何不需要。")
 
 
-def test_allowlist_has_no_stale_entries():
-    """反过来：名单里的端点若已经用上了 user（或已删除），条目就该删掉，别让名单腐烂。"""
-    stale = set(ALLOWLIST) - set(_unused_user_endpoints())
+def test_allowlist_is_neither_stale_nor_reasonless():
+    """反过来：名单里的端点若已经用上了 user（或已删除），条目就该删掉，别让名单腐烂；
+    理由也不许是空的 —— 「写了理由」不等于「理由有内容」。"""
+    found = _unused_user_endpoints()
+    stale = route_policy.stale_keys(ALLOWLIST, found)
     assert not stale, f"ALLOWLIST 里的条目已不再命中，请删除：{sorted(stale)}"
+    blank = route_policy.empty_reasons(ALLOWLIST)
+    assert not blank, f"ALLOWLIST 里这些键的理由是空的：{sorted(blank)}"
 
 
 def test_scan_is_not_vacuous():
