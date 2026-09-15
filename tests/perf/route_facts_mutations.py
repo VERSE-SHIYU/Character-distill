@@ -292,14 +292,14 @@ def _unused_user_endpoints'''),
 # 名单里另外三条立刻成陈旧条目 —— 那是负控**按设计**工作）。本变异要隔离的是
 # 「判据+覆盖面」这一对，不是负控，故把策略表一并收敛到同一条 op，负控才不掺进来。
 # 仓外旧驱动里这条是绿的，只因迁移前的负控不查陈旧条目。
+#
+# 第 1 条锚随缺陷 42 第 3b 步换过：L5 原先自带一份 `_form_operations()`（读
+# `route_facts._FORM_CONTENT_TYPES` / `_METHODS` 重算），3b 已整段删掉、改调事实层的
+# `route_facts.form_operations()`。**旧覆盖面是硬编码的一条 op**，故退回它的等价形态就是
+# 把那个调用点换成写死的 `{("/api/text/upload", "post")}` —— 命题不变（判据只锁一条 op）。
 _L5_OLD_SHAPE = [
-    ('''    return {
-        (path, method.lower())
-        for path, item in spec.get("paths", {}).items()
-        for method in item
-        if method.lower() in route_facts._METHODS and _has_form_content(item[method])
-    }''',
-     '''    return {("/api/text/upload", "post")}   # 变异：退回「只锁一个 op」'''),
+    ('''                 ((key, _extra_form_fields(*key)) for key in sorted(route_facts.form_operations())) if v}''',
+     '''                 ((key, _extra_form_fields(*key)) for key in sorted({("/api/text/upload", "post")})) if v}'''),
     ('''    fields = set(route_facts.form_fields(path, method))
     return sorted(fields - {_PAYLOAD_FIELD} - _FORM_METADATA.get((path, method), set()))''',
      '''    import ast as _ast
@@ -383,7 +383,9 @@ def snap():
 assert snap()[2] > 0, "枚举是空的 —— 下面的「指纹不变」会恒真（负控失效）"
 
 before = snap()
-L5._form_operations()
+# 跑的是 L5 的扫描入口**本身**（第 3b 步后 L5 不再自备 `_form_operations`，它的覆盖面就
+# 来自事实层）—— 换成直接调 route_facts 会绕开 L5，那样这一步就没在验「L5 跑过之后」。
+L5.test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries()
 after_l5 = snap()
 A._unused_user_endpoints()
 after_auth = snap()

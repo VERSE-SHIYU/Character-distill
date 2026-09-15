@@ -180,8 +180,12 @@ def test_l4_scan_is_not_vacuous():
 # 改读框架自己的账本（`route_facts.form_fields` ⇒ OpenAPI 文档）后，覆盖四条是
 # **能力达到**，不是扩面。
 #
-# 覆盖面由 `route_facts.openapi()` **派生**（谁声明了表单 content 就是谁），不写手工
+# 覆盖面由 `route_facts.form_operations()` 给（谁声明了表单 content 就是谁），不写手工
 # 清单 —— 清单是守卫与被守对象之间的第二份副本，新增一条表单路由不会红、只会假绿。
+# 判定「哪些 content-type 算表单」在事实层只有一份（`_form_media`，`form_operations` 与
+# `form_fields` 共用）：本文件原先自己读 `route_facts._FORM_CONTENT_TYPES` / `_METHODS`
+# 重算了一遍 —— 跨层读私有常量，且同一判定两份实现。两份会各自漂移，而漂移**不报错**，
+# 只让两处对同一条 op 给出不同答案（缺陷 42 第 3b 步收掉）。
 #
 # 降不下去的那一半（AGENTS.md §四③层）：**哪个字段算元数据、哪个字段是唯一正文通道，
 # 是策略不是事实** —— 任何 Form 字段在 starlette 下都同样受 1MB 字节截断，「是不是正文
@@ -203,26 +207,6 @@ _FORM_METADATA = {
 }
 
 
-def _has_form_content(op: dict) -> bool:
-    content = (op.get("requestBody") or {}).get("content") or {}
-    return any(ct in content for ct in route_facts._FORM_CONTENT_TYPES)
-
-
-def _form_operations() -> set[tuple[str, str]]:
-    """全仓声明了表单 content 的 operation。
-
-    从框架文档派生而不是写手工清单：手工清单里不会有新增的那条表单路由，于是它不会红、
-    只会假绿 —— 那正是本文件（及缺陷 42）要消灭的失败形态。
-    """
-    spec = route_facts.openapi()
-    return {
-        (path, method.lower())
-        for path, item in spec.get("paths", {}).items()
-        for method in item
-        if method.lower() in route_facts._METHODS and _has_form_content(item[method])
-    }
-
-
 def _extra_form_fields(path: str, method: str) -> list[str]:
     """该 op 上除正文通道与已声明元数据之外的 Form 字段（`[]` = 合规）。"""
     fields = set(route_facts.form_fields(path, method))
@@ -242,7 +226,7 @@ def test_l5_no_form_op_has_a_payload_channel_besides_file():
     并注明理由。
     """
     offenders = {k: v for k, v in
-                 ((key, _extra_form_fields(*key)) for key in sorted(_form_operations())) if v}
+                 ((key, _extra_form_fields(*key)) for key in sorted(route_facts.form_operations())) if v}
     assert not offenders, (
         f"这些表单 op 上多出了非正文通道的 Form 字段：{offenders}。正文只能走 "
         f"{_PAYLOAD_FIELD!r} —— FormParser 的 1MB 上限（**字节**）会先于本仓的 100 万字"
@@ -257,7 +241,7 @@ def test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries():
     所以数两样：枚举到的表单 op 数，以及「正文通道」这个字段真的存在。反向那条防
     `_FORM_METADATA` 留下已消失的 op / 已改名的路由。
     """
-    ops = _form_operations()
+    ops = route_facts.form_operations()
     assert ops, "一条表单 op 都没枚举到 —— 扫描面失效（spec 生成 / content-type 判据坏了）"
 
     with_payload = {k for k in ops if _PAYLOAD_FIELD in route_facts.form_fields(*k)}
