@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 六组共 38 条，逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 六组共 39 条（F12/R4/X3/V13/I3/P4），逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -52,6 +52,7 @@ import argparse
 import hashlib
 import os
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -613,6 +614,30 @@ def _alias_gate():
     return True
 
 
+_DOC_STAT = re.compile(r"六组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
+_DOC_GROUP = re.compile(r"([A-Z])(\d+)")
+
+
+def _count_gate():
+    """文档字符串里的条数必须等于各组分组的现数。
+
+    手写的计数会漂移：P 组退一条补两条那次，`AGENTS.md` 改成了 39，这里仍是 38，
+    而没有任何东西报错。**匹配不到也拒跑** —— 那等于自检悄悄失效，而「自检失效」与
+    「自检通过」长得一样（§四：两种成因共用一个信号）。拒跑时同时打印文档里写的与
+    分组的现数，让订正是机械的。
+    """
+    live = {g: len(v) for g, v in GROUPS.items()}
+    m = _DOC_STAT.search(__doc__ or "")
+    stated_total = int(m.group(1)) if m else None
+    stated = {g: int(n) for g, n in _DOC_GROUP.findall(m.group(2))} if m else {}
+    if stated_total == sum(live.values()) and stated == live:
+        return True
+    print("\n文档字符串的条数与分组的现数不一致，拒绝跑（自检失效与自检通过长得一样）：\n"
+          f"  文档：共 {stated_total} 条 {stated or '（分组的括号匹配不到）'}\n"
+          f"  现数：共 {sum(live.values())} 条 {live}")
+    return False
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--group", default="FRVXIP",
@@ -621,6 +646,9 @@ def main() -> int:
     ap.add_argument("--with-container", action="store_true",
                     help="追加 F-3：把枚举换成 isinstance(app.routes)，在上锁 fastapi 版本里复跑")
     args = ap.parse_args()
+
+    if not _count_gate():
+        return 2
 
     baseline = {p: p.read_bytes() for p in TARGETS}
 

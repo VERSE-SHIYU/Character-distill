@@ -697,6 +697,11 @@ config.yaml 现值（现读，非转述）：
 - **不是「锁里漏了这个依赖」**：`requirements.txt` 里**有** `onnxruntime==1.30.0`，它正是 `53bed63`（缺陷 40 的「依赖按锁安装」）那一步加进去的；而本机镜像 `character-distill-app:latest` 构建于该 commit **之前**（21 小时前）。故这是**镜像比锁旧**，修法是重建镜像，不是改锁。
 - **非缺陷 42 引入（已核）**：把树退到 `c959553`（本轮全部改动之前）复跑同一文件，**同一条同样红**（1 failed, 21 passed）。
 - 附：镜像里**也没有 pytest**（`python -m pytest` → `No module named pytest`），跑容器腿得临时 `pip install -q pytest pytest-asyncio onnxruntime`。两者同源：镜像只装运行时，而「判据要求容器内复跑」这个用法还要开发依赖。
+- **Windows 形态（2026-09-15 收口时补，同一根因的另一端）**：同一条导入链在**本机**也能踩到 —— 锁里 `pymupdf4llm==1.28.2` → `pymupdf-layout` 1.28.2 → 顶层 `import onnxruntime`。本机 `C:\Windows\System32\onnxruntime.dll` 是**微软随 Windows 装的 ONNX Runtime 1.17.260613**（`FileVersion 1.17.260613-0100.1.os-germanium…`），`System32` 在 DLL 搜索路径里压过 pip 包内的 1.30.0，ABI 不符 → **模块初始化时 access violation**，`pytest tests -q` 整个进程被杀（`exit=139`，无红无绿）。
+  - 证据命令：`.venv/Scripts/python.exe -m pytest tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original -q` → `Windows fatal exception: access violation`，栈底 `onnxruntime/capi/_pybind_state.py:32`。
+  - 与容器那一端的差别只在症状：容器内是**缺包**（`ModuleNotFoundError`，一条用例红），本机是**包在、被 System32 的同名 DLL 抢先**（进程级崩）。两者都源自 `_extract_pdf` 里那句顶层 `import pymupdf4llm` 无人接住。
+- **订正一条旧结论**：此前「本机 Windows 装了 onnxruntime 故不复现」**是错的**。那台环境（harness venv）里 `pymupdf4llm` 是 1.27.2.3，**根本不 import onnxruntime**，所以旧基线 `pytest tests -q` 全绿里那条 L3 是**环境恰好绕开了**，不是「代码没问题」。换到锁里的 1.28.2 立刻崩 —— 与缺陷 42 同形：拿一个与锁不一致的环境跑出的绿当证据，而没有任何东西说它不一致。
+- **本机全量测试的当前做法**：`--deselect tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original`，结果是 `1045 passed, 62 skipped, 1 deselected`。**这不是绿**，是「这条在本机跑不了」—— 上机复跑只能进容器。
 
 **45. 变异驱动的先验基线门红源不可辨：「基线跑不起来」与「基线绿、变异没红」同型** —— 状态：**记账（不修）**（2026-09-15 容器腿实测）
 - 事实：镜像内没有 pytest 时，`_baseline_gate` 对四个锁文件的 pytest 调用全部**拿不到 summary**，却仍**放行**进入变异阶段；逐条变异拿到的同样是空 summary，最终表现为一片 `>> ?` 加一串 `MISMATCH ...：期望 RED 实得 green`。
