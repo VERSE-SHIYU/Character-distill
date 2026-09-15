@@ -134,6 +134,9 @@ async def test_sqlite_ping_raises_when_locked_out_mid_flight(tmp_path: Path):
 
     代价：SQLite 的 busy_timeout 是 5s，两处等待叠加约 15s。这是生产语义的一部分
     （`_connect()` 里写死的），不为跑得快去动它。
+
+    **前提自检**：上面那段平台差异不靠人记得住 —— 用例自己先验一次。判定不成立时
+    `pytest.skip`（写清版本号），不装作绿。
     """
     db = tmp_path / "locked.db"
     store = SQLiteStore(str(db))
@@ -142,6 +145,22 @@ async def test_sqlite_ping_raises_when_locked_out_mid_flight(tmp_path: Path):
     holder = sqlite3.connect(str(db), isolation_level=None)
     try:
         holder.execute("BEGIN EXCLUSIVE")
+
+        # `SELECT 1` 不读任何表，本不该需要读锁。它在同一条排他锁下也抛 locked 时，
+        # 说明本环境的引擎对**任何**语句都判锁 —— 那么 B-1b（把语句退回 `SELECT 1`）
+        # 照样会红，红源却与本用例的命题无关。判据不成立时报「不适用」，
+        # 因为假绿与真绿长得一样，而两者要防的是同一件事。
+        probe = sqlite3.connect(str(db), isolation_level=None, timeout=0)
+        try:
+            probe.execute("SELECT 1")
+        except sqlite3.OperationalError:
+            pytest.skip(
+                f"本环境 sqlite {sqlite3.sqlite_version} 在排他锁下连 `SELECT 1` 都抛 "
+                "database is locked ——「读文件的语句」与「不读文件的语句」在此不可区分，"
+                "判别场景在本环境不成立，B-1b 须在 Linux 验证")
+        finally:
+            probe.close()
+
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             await store.ping()
     finally:

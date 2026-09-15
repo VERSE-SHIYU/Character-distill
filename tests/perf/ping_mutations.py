@@ -17,8 +17,16 @@
   3. **还原逐字节**：收尾核对 sha256。
 
 **用法**
-    python tests/perf/ping_mutations.py                 # 全部 9 条
+    python tests/perf/ping_mutations.py                 # 全部 15 条
     python tests/perf/ping_mutations.py --group B1B2    # 只跑前两条
+
+**B-1 / B-1b 在 Windows 上是「本环境不适用」，不是绿也不是红。** 这两条打的是同一处
+改动（`storage/sqlite_store.py` 的 ping）、由同一条用例判定，而本机 sqlite 3.49.1 对任何
+语句都判锁，`test_sqlite_ping_raises_when_locked_out_mid_flight` 的前提自检因此在变异
+生效前就 `pytest.skip`。驱动把 skip 单列成一档（见 `_MAY_SKIP` / `_outcome`）—— 记成
+green 是假绿（§四：判据在空转），记成 RED 又冤枉了变异。只有登记过的条目可以 skip，
+别的条目 skip 一律记 mismatch，否则锁在悄悄跳过也看不出来。**Linux/sqlite 3.46 上这两条
+才是真正的 RED**，Windows 的结论不构成证据。
 
 十五条覆盖三层：B-1/B-1b/B-2 打存储层契约（`storage/`），B-3/B-4/B-5/B-13 打就绪端点
 （`web/server.py`），B-6～B-12/B-14 打三处探针目标的锁（`Dockerfile` / `deploy.yml` / 锁自己）。
@@ -220,6 +228,25 @@ _DOC_STAT = re.compile(r"一组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
 # 编号形如 B-1 / B-1b —— 后缀小写字母是同一命题的第二形态（B-1b 是 B-1 的近邻变体）。
 _ID_RE = re.compile(r"B-\d+[a-z]?")
 
+# 允许 skip 的条目：判据在本环境前提不成立（见模块 docstring 的 B-1/B-1b 段）。
+# 两条都登记，是因为它们打的是**同一处**改动、由**同一条**用例判定：前提自检在前，
+# 变异还没轮上就被 skip 了。不登记的那一条会记 mismatch，那是这个门存在的意义 ——
+# 别的条目一旦被 skip，说明锁在悄悄跳过，而假绿与真绿长得一样。
+_MAY_SKIP = {"B-1", "B-1b"}
+
+
+def _outcome(summary: str) -> str:
+    """把 pytest 的汇总行判成三档之一：RED / green / 本环境不适用。
+
+    skip 必须与绿分开：`_run` 的汇总里 skip 既不含 failed 也不含 passed-only，
+    原先一律落到 green —— 判据在空转而结论行照印「全部符合预期」。
+    """
+    if "failed" in summary or "error" in summary:
+        return "RED"
+    if "skipped" in summary:
+        return "本环境不适用"
+    return "green"
+
 
 def _live_ids() -> set[str]:
     """变异表里现存的编号集合。整表唯一的编号来源，也是下面自检的被比较项。"""
@@ -287,8 +314,16 @@ def main() -> int:
             marker = item[4] if len(item) > 4 else None
             framework._apply(edits)
             summary, keep = framework._run(target)
-            got = "RED" if ("failed" in summary or "error" in summary) else "green"
+            got = _outcome(summary)
             framework._restore(baseline)
+            if got == "本环境不适用":
+                ident = _ID_RE.search(label).group(0)
+                if ident not in _MAY_SKIP:
+                    mismatches.append(
+                        f"{label}：判据被 skip 了（该编号未登记为「本环境不适用」）")
+                print(f"\n### {label}   期望={expect}  实得={got}（不计红绿）")
+                print("   >>", summary)
+                continue
             if got != expect:
                 mismatches.append(f"{label}：期望 {expect} 实得 {got}")
             if marker and not any(marker in k for k in keep):
