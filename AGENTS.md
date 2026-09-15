@@ -114,7 +114,7 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-15 现跑现数）**：1–43 共 43 条 —— **已修 34**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交）/ **记账 4**（35、36、41、43）/ **记账待补 1**（30）/ **已裁定 1**（31）/ **证伪 1**（37）/ 其余 2 条（3 纵深防御、10 已移出「三之二」）。**待办 = 记账 + 记账待补 = 5**。
+> **全表状态口径（2026-09-15 现跑现数）**：1–46 共 46 条 —— **已修 34**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交）/ **记账 7**（35、36、41、43、44、45、46）/ **记账待补 1**（30）/ **已裁定 1**（31）/ **证伪 1**（37）/ 其余 2 条（3 纵深防御、10 已移出「三之二」）。**待办 = 记账 + 记账待补 = 8**。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组会得到 16 个组，**与头部声明的 6 个桶对不上**，那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
@@ -681,14 +681,35 @@ config.yaml 现值（现读，非转述）：
   - **四条表单 op 的现测结果（2026-09-15 现跑现数）**：4 条 —— `POST /api/text/upload`（`file` + 已登记元数据 title/description/text_type）、`POST /api/voice/asr`（**仅** `file`，理想形态）、`POST /api/voice/ref-audio/upload`（`file` + card_id/ref_text）、`POST /api/voice/upload`（`file` + name）。四条**全部合规**（多出字段集合逐条为空、无陈旧元数据条目、每条都带 `file`）。
 - **共享层的第二块：`tests/route_policy.py`（结案这一步抽出）** —— L5 的 `_FORM_METADATA` 与 auth 锁的 `ALLOWLIST` 是**同一种东西**（「人声明的豁免 + 理由」），而两把锁**各写了一遍**「陈旧条目 / 空理由 / 现场未登记」这三套差集与判空。两份实现会各自漂移，且漂移**不报错** —— 与 3a/3b 收掉的是同一个病（同一判定两份实现），只是换了个住址。本层只放与业务无关的机械操作（`empty_reasons` / `stale_keys` / `unexpected`，表统一是扁平 `dict[Hashable, str]`：键 = 被豁免的东西，值 = 理由），**模块内不出现任何路径、字段名、依赖名** —— 与 `route_facts` 同一条原则（内容归各把锁，机械操作归这一层）。变异组 P 打本层自己的判据行：不 strip / `stale_keys` 参数方向写反 / `unexpected` 恒返回空集。
 - **隔离判据 ① ② ③（已核，不是口头保证）**：① `git diff --stat` 无 `core/` `web/` `storage/` `adapters/` —— **生产代码零改动**；② `tests/route_facts.py` **一字不动** —— 本步是「让两把锁去用它」不是「改它来适配两把锁」；③ 两把锁**互不依赖** —— 移走任一把，另一把照常红**同一条**断言（红源带 marker 比对，不是只看「有没有红」），且两把锁交错调用后本层输出**指纹不变**。**关于共用缓存**：本层唯一的模块级可变状态是那格 spec 缓存 `_cache`，内容只由 app 决定、**无 setter**、显式传 `routes=` 时不写缓存、`enumerate_routes` 每次现算 ⇒ **不存在「一方污染、另一方读到」的通道**；这条由 `test_shared_layer_output_is_a_pure_function_of_the_app` 钉住（钉的是**可观测性质**，不是模块全局的形状 —— 数「有几个 dict」是代理指标）。**第 3b 步的连带对账（两处锚必须跟着改，否则变异脚本自己失效）**：① V7 的第 1 条锚原打在 L5 自备的 `_form_operations()` 函数体上，该函数随 3b 删除后锚会 `count == 0` —— `_apply` 当场 assert，形态是「变异没生效」的假绿；改锚到**调用点**（把 `route_facts.form_operations()` 换成写死的 `{("/api/text/upload", "post")}`，即迁移前那条硬编码 op 的等价形态）。**结案这一步这条锚又搬了一次**：L5 改成按 schema 判之后，旧形态＝「覆盖面写死一条 op」+「按字段名排除」，两半合起来退回才等价，故锚改到 `_observed_non_file_fields()` 的函数体上（见 `_L5_OLD_SHAPE` 上方注释）。② I-3 原先调 `L5._form_operations()`，改为调 **L5 自己的扫描入口**，**不能**直连 `route_facts.form_operations()` —— 直连绕开了 L5，这一步就不再是「L5 跑过之后本层输出有没有变」的检验，而是变成了「事实层自己跑一遍有没有变」。**结案这一步 L5 的入口从一条拆成三条**（主判据 / 策略表 / 负控），I-3 相应地调其中两条走完整条扫描路径。
-- **变异矩阵入库**：`tests/perf/route_facts_mutations.py` —— 六组共 38 条（F/R/X 打事实层自己、V 打两把锁的判据、I 打隔离性、P 打策略表校验层），**不带参数即跑全部组**（`--group` 默认 `FRVXIP`：文档称本脚本为「全矩阵」，默认值必须与这个说法一致，否则「不带参数跑一遍」少跑一组却看不出来）；**X 组的别名路径跨平台** —— 用 `web/../web/server.py`（两个平台都「字符串不同、`samefile` 为真」）而不是翻盘符大小写（后者只在 Windows 成立：Linux 上首字符是 `/`，翻完不变，X-3 退化成 X-4、X-5 失去前提，而结论行照样打印「全部符合预期」），跑 X 组前由 `_alias_gate()` 断言该前提，不成立即拒跑；逐条还原并核对 sha256；**先验基线不绿就拒跑**（两种成因共用一个红时说不清红源）、**锚点非恰一命中即 assert**（锚点漂移会静默变成「变异没生效」的假绿）、`--with-container` 才跑 F-3。**为什么必须入库**：本条的每一条数字原先骑在仓外 `D:/Temp/*.py` 上 —— 追不到，三个月后复现不了（§四「文档引用的数字，其产数脚本与原始产物也要入库」）。**一处如实交代**：迁移前那两条「旧锁在同一变异下绿」的形态**没有留在本脚本里**（旧版锁只存在于迁移那一刻的工作树，抄回仓里当靶子是添加 over 删除）；配方留在一旁（V1 的 `Annotated` 注入变异），配上 `git show <迁移前 sha>:tests/test_auth_param_used.py` 即可复原，**V4/V7 是留在树里的等价形态**（把判据退回旧的 AST 形状，同一变异仍绿）。
+- **变异矩阵入库**：`tests/perf/route_facts_mutations.py` —— 六组共 39 条（F/R/X 打事实层自己、V 打两把锁的判据、I 打隔离性、P 打策略表校验层），**不带参数即跑全部组**（`--group` 默认 `FRVXIP`：文档称本脚本为「全矩阵」，默认值必须与这个说法一致，否则「不带参数跑一遍」少跑一组却看不出来）；**X 组的别名路径跨平台** —— 用 `web/../web/server.py`（两个平台都「字符串不同、`samefile` 为真」）而不是翻盘符大小写（后者只在 Windows 成立：Linux 上首字符是 `/`，翻完不变，X-3 退化成 X-4、X-5 失去前提，而结论行照样打印「全部符合预期」），跑 X 组前由 `_alias_gate()` 断言该前提，不成立即拒跑；逐条还原并核对 sha256；**先验基线不绿就拒跑**（两种成因共用一个红时说不清红源）、**锚点非恰一命中即 assert**（锚点漂移会静默变成「变异没生效」的假绿）、`--with-container` 才跑 F-3。**为什么必须入库**：本条的每一条数字原先骑在仓外 `D:/Temp/*.py` 上 —— 追不到，三个月后复现不了（§四「文档引用的数字，其产数脚本与原始产物也要入库」）。**一处如实交代**：迁移前那两条「旧锁在同一变异下绿」的形态**没有留在本脚本里**（旧版锁只存在于迁移那一刻的工作树，抄回仓里当靶子是添加 over 删除）；配方留在一旁（V1 的 `Annotated` 注入变异），配上 `git show <迁移前 sha>:tests/test_auth_param_used.py` 即可复原，**V4/V7 是留在树里的等价形态**（把判据退回旧的 AST 形状，同一变异仍绿）。
 - **判据命令**：`python tests/perf/route_facts_mutations.py`（全矩阵，末行给结论；`--group V` / `--group I` / `--group P` 单跑）、`python -m pytest tests/test_route_facts.py tests/test_route_policy.py tests/test_auth_param_used.py tests/test_text_failure_messages.py -q`、`git diff --stat`（应只有 `tests/` 下的锁与脚本 + `AGENTS.md`，无 `web/` `core/` `storage/` `adapters/` —— 本缺陷是锁的缺陷，不是业务缺陷）
+- **收口一处：策略层理由判空改为按类型判定（Commit A）** —— `empty_reasons` 原先走「先字符串化再 strip」，于是理由写成 `None` 时被变成 `"None"`、判为**有内容**：把 `/api/voice/ref-audio/upload` 的 `ref_text` 理由改成 `None`，L5 **全绿**。这是本条病灶的第五次显形（判的是「转成字符串之后长不长」，不是「理由在不在」），只是长在了策略层自己身上。现在先判类型再判内容，非 `str` 一律算空；变异 P-4（把字符串化请回来 → `None` 用例红）与 P-5（只判类型、不 strip → 纯空白理由用例红）各打一个新分支。**原 P-1 退役**：它的变异是「`str()` 之后丢掉 strip」，而那段 `str()` 已删，新写法下与 P-5 逐字同形 —— 编号留空位不复用，免得台账里的旧编号改指别的事。
 
 **43. `web/test_spa_fallback.py` 在 `tests/` 之外，pytest 从不收集它** —— 状态：**记账（不修，待裁）**（2026-09-15 缺陷 42 结案时顺带普查发现）
 - 实测：该文件有 5 条 `def test_*`；`pytest.ini` 的 `testpaths = tests` ⇒ `pytest --collect-only` 里它 **0 命中**，全仓无任何 workflow / 脚本引用过它（`grep` 全仓 yml/ini/cfg/toml/sh 零命中）。
 - 形态：该文件自带 `__main__` 运行器（`python web/test_spa_fallback.py` 才是它的既定用法），所以它不是「写坏的测试」，是**放错位置的测试** —— 覆盖的命题（静态资源优先于 catch-all / 中文文件名 / SPA 回退 / `/api/*` 不被回退吃掉 / 路径穿越被挡）全都有价值，只是**没有任何自动化在跑它**。属 §四 那条「一条恒 skip 的锁和没有锁是一回事」的邻居：**不被收集的测试与没有测试是一回事**。
 - 另一处形态（记下以便裁定）：`_setup()` 在**模块级**执行（import 时即往 `_STATIC_DIR` 写测试文件）—— 一旦将来有人 import 它，就会在收集期产生副作用。今天不可达，因为没人 import。
 - 修法（待裁）：把文件移进 `tests/`（需处理 `web/` 的 `sys.path` 与 `_STATIC_DIR` 写入的位置）或加进 `testpaths`；两者都要顺带处理模块级 `_setup()`。**本轮不动**（缺陷 42 的命题是锁的判据，不是测试布局）。
+
+**44. 本地 app 镜像缺 `onnxruntime`，容器内 L3 坏 PDF 用例必红** —— 状态：**记账（不修）**（2026-09-15 缺陷 42 结案跑容器腿时发现）
+- 事实：镜像内 `python -c "import pymupdf4llm"` → `ModuleNotFoundError: No module named 'onnxruntime'`（`pymupdf4llm/ocr/analyze_page.py` 顶层 import）。链路：`core/text_manager.py` 的 `_extract_pdf` 里 `import pymupdf4llm` → 该异常无人接住 → **坏 PDF 上传返回 500 而非 400**，`tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original` 在容器内必红；变异驱动的先验基线门因此拒跑。
+- 证据命令：`docker run --rm -v <repo>:/app -w /app --entrypoint python character-distill-app:latest -c "import pymupdf4llm"`；或容器内 `pytest tests/test_text_failure_messages.py -q` → `assert 500 == 400`，栈底 `ModuleNotFoundError: No module named 'onnxruntime'`。
+- **不是「锁里漏了这个依赖」**：`requirements.txt` 里**有** `onnxruntime==1.30.0`，它正是 `53bed63`（缺陷 40 的「依赖按锁安装」）那一步加进去的；而本机镜像 `character-distill-app:latest` 构建于该 commit **之前**（21 小时前）。故这是**镜像比锁旧**，修法是重建镜像，不是改锁。
+- **非缺陷 42 引入（已核）**：把树退到 `c959553`（本轮全部改动之前）复跑同一文件，**同一条同样红**（1 failed, 21 passed）。
+- 附：镜像里**也没有 pytest**（`python -m pytest` → `No module named pytest`），跑容器腿得临时 `pip install -q pytest pytest-asyncio onnxruntime`。两者同源：镜像只装运行时，而「判据要求容器内复跑」这个用法还要开发依赖。
+
+**45. 变异驱动的先验基线门红源不可辨：「基线跑不起来」与「基线绿、变异没红」同型** —— 状态：**记账（不修）**（2026-09-15 容器腿实测）
+- 事实：镜像内没有 pytest 时，`_baseline_gate` 对四个锁文件的 pytest 调用全部**拿不到 summary**，却仍**放行**进入变异阶段；逐条变异拿到的同样是空 summary，最终表现为一片 `>> ?` 加一串 `MISMATCH ...：期望 RED 实得 green`。
+- 形态：红是响了（**不是**静默假绿），但「基线**跑不起来**」与「基线绿、变异**没红**」两种成因共用同一种红 —— 正是 §四 那条「两种不同成因的失败若共用一个信号，就分不出是哪一种」。基线门存在的唯一理由就是让这两件事分开，它在「跑不起来」这一支上没有生效。
+- 证据命令：镜像内（未补 pytest）`python tests/perf/route_facts_mutations.py --group XF --with-container` → 逐条 `实得=green`、`>> ?`；补装 pytest 后同一命令「全部符合预期」。
+- 修法（待裁）：`_baseline_gate` 要求每个基线目标都解析出 `N passed`，解析不到即判「基线不可用」并**以另一种退出原因**拒跑，与「基线有 failed」分开。
+
+**46. `tests/test_auth_tokens.py::TestLoginRefreshChain` 两条依赖本机 `.env` 的 `JWT_SECRET`，无 `.env` 的环境必红** —— 状态：**记账（不修）**（2026-09-15 缺陷 42 收口时普查环境依赖发现）
+- 事实：`web/routers/auth.py::get_jwt_secret` 在 `JWT_SECRET` 缺失或等于默认值时长直接 `raise RuntimeError`，而 `JWT_SECRET` 只可能来自工作树里那份 **gitignored `.env`** —— 该类的登录 + 刷新两条用例因此**只在这台机器上绿**。
+- 证据命令（现跑现数）：`git archive 53bed63 | tar -x` 得到一棵**不含 `.env`** 的树（`.env` 未被跟踪，仓里只有 `.env.example`），容器内跑该类 → **2 failed**，栈底 `web/routers/auth.py:41 RuntimeError`。
+- **非缺陷 42 引入（已核）**：`53bed63` 早于本轮全部改动，同样红。
+- 形态：**ambient 依赖** —— 用例的通过条件不在仓库里，换一台机器 / 换一个干净检出，结果就变。同一个病还有一面：本机 `pytest tests -q` 全绿**不能**当作「这组用例没问题」的证据，它只证明**这台机器恰好有 `.env`**（与 §四「环境没配好与代码有问题，不能共用一个绿」同源）。
+- 修法（待裁）：`conftest.py` 里为该类注入一个测试用 `JWT_SECRET`（`monkeypatch.setenv`），或把 secret 取值收敛成可注入的依赖。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
