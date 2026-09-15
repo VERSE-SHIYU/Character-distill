@@ -54,7 +54,7 @@ services:
       #      到服务器，抽成共享脚本或共享 compose 文件会改动两区部署流程、并新增挂载依赖。
       #      两份的一致性由 tests/test_pg_healthcheck.py 强制保证。
       # `$$` 是 compose 的转义：容器配置里存下的是**变量名**，展开发生在容器内的 shell
-      # （`docker inspect` 看到的是 `$$POSTGRES_PASSWORD`，不是口令值）。
+      # （`docker inspect` 看到的是 `$POSTGRES_PASSWORD` 这个变量名，不是口令值）。
       # PGCONNECT_TIMEOUT(3s) 必须小于本 healthcheck 的 timeout(5s)，否则探针自己会挂到超时，
       # 「连不上」与「连得慢」又共用一个信号。stderr 不重定向 —— 认证失败的原文进健康日志。
       test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" PGCONNECT_TIMEOUT=3 psql -h postgres -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'select 1' > /dev/null"]
