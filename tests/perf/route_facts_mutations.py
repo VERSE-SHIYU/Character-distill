@@ -26,6 +26,11 @@
 **P** 打策略表校验层 `tests/route_policy.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表）。
 **I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
 
+**跨平台。** X 组的别名路径是 `web/../web/server.py` —— 两个平台都满足「字符串与正路不同、
+`samefile` 为真」。原先翻盘符大小写（`E:` → `e:`）**只在 Windows 成立**：Linux 上首字符是
+`/`，翻完不变，X-3 退化成 X-4、X-5 失去前提，而结论行照样打印「全部符合预期」。现在
+`_alias_gate()` 在跑 X 组前断言这个前提，不成立即**拒跑**（变异自身失效时红绿都不可信）。
+
 **F-3 为什么单独一档。** 「按 `isinstance(APIRoute)` 遍历 `app.routes`」这个错误写法的
 可见性**依赖 fastapi 版本**：本地 0.133.1 下 include 进来的路由是内联的（枚举 228 ==
 文档 228，**不红**），上锁版本 0.141.1 下被包成没有 `.routes` 的对象（枚举 9 vs 文档 228，
@@ -205,11 +210,19 @@ R_GROUP = [
 ]
 
 # X-*：第 1 步收尾 —— 并列身份的文件系统身份判据
+_ALIAS_PLAIN_PATH = ROOT / "web" / "server.py"
+_ALIAS_ODD_PATH = ROOT / "web" / ".." / "web" / "server.py"
+
 _ALIAS_LOAD = '''    mods.append(importlib.import_module("server"))
 
     import importlib.util as _ilu
+    import os
 
     _p = str(_repo / "web" / "server.py")
+    _p_alias = str(_repo / "web" / ".." / "web" / "server.py")
+    assert _p_alias != _p and os.path.samefile(_p_alias, _p), (
+        "别名路径与正路字符串相同、或不是同一份文件 —— X-3/X-5 已经不是「换个名字装同一份"
+        "文件」，结果不可信")
     _alias_path = {path_expr}
     if "srv_alias" not in sys.modules:
         _spec = _ilu.spec_from_file_location("srv_alias", _alias_path)
@@ -225,17 +238,22 @@ _X_ANCHOR_TF = ('        try:\n'
                 '        except OSError:      # 路径不存在（如只剩 .pyc）—— 不是同一份文件\n'
                 '            return False')
 
+# X-3/X-5 的别名路径：`web/../web/server.py` —— **两个平台**都是「字符串不同、指向同一份
+# 文件」。原先翻盘符大小写（`_p[:1].swapcase()`）是**只在 Windows 成立**的写法：Linux 上
+# 首字符是 `/`，翻完还是 `/`，X-3 退化成 X-4、X-5 拿不到它想证明的那个前提（审计实测），
+# 而结果照样打印「符合预期」—— 变异自己失效却没人知道。驱动器另在 `_alias_gate()` 里
+# 断言这个前提成立（不成立就拒跑），模板里也再写一遍（变异体自身要能自证在探）。
 X_GROUP = [
-    ("X-3 经改过盘符大小写的路径以别名 srv_alias 装载同一份 server.py",
+    ("X-3 经 web/../web 别名路径以 srv_alias 装载同一份 server.py",
      "tests/test_route_facts.py",
-     [("repl", RF, [(_X_ANCHOR_RF, _ALIAS_LOAD.format(path_expr='_p[:1].swapcase() + _p[1:]'))])],
+     [("repl", RF, [(_X_ANCHOR_RF, _ALIAS_LOAD.format(path_expr='_p_alias'))])],
      "RED"),
     ("X-4 同上但走原路径字符串（证明「红源是同一份文件」而非「路径长得怪」）",
      "tests/test_route_facts.py",
      [("repl", RF, [(_X_ANCHOR_RF, _ALIAS_LOAD.format(path_expr='_p'))])], "RED"),
     ("X-5 samefile 退回字符串 ==，同时保留 X-3 的别名装载（红源唯一性）",
      "tests/test_route_facts.py",
-     [("repl", RF, [(_X_ANCHOR_RF, _ALIAS_LOAD.format(path_expr='_p[:1].swapcase() + _p[1:]'))]),
+     [("repl", RF, [(_X_ANCHOR_RF, _ALIAS_LOAD.format(path_expr='_p_alias'))]),
       ("repl", TF, [(_X_ANCHOR_TF, '        return path == entry_file')])], "green"),
 ]
 
@@ -557,7 +575,7 @@ def _run_py(code: str) -> tuple[str, list[str]]:
 
 
 def _baseline_gate():
-    """先验基线：三把锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
+    """先验基线：四把锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
     bad = []
     for target in ("tests/test_route_facts.py", "tests/test_route_policy.py",
                    "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
@@ -568,9 +586,26 @@ def _baseline_gate():
     return bad
 
 
+def _alias_gate():
+    """X-3/X-5 的前提：那两个字符串必须**不同**、且指向**同一份文件**。
+
+    不成立就拒跑 —— 变异自身失效时，它的红和绿都不可信（§四）。原实现翻盘符大小写只在
+    Windows 成立，Linux 上首字符是 `/`，翻完不变：X-3 退化成 X-4、X-5 直接失去前提，而
+    结论行照样打印「全部符合预期」。这条断言让那件事变成一次拒跑。
+    """
+    if _ALIAS_ODD_PATH == _ALIAS_PLAIN_PATH or not os.path.samefile(_ALIAS_ODD_PATH, _ALIAS_PLAIN_PATH):
+        print("\nX 组前提不成立，拒绝跑 X 组（红源说不清）：\n"
+              f"  {str(_ALIAS_ODD_PATH)!r}\n  {str(_ALIAS_PLAIN_PATH)!r}\n"
+              "  二者字符串相同、或不是同一份文件 —— X-3/X-5 已不是「换个名字装同一份文件」。")
+        return False
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--group", default="FRVX", help="要跑的组，如 V 或 FRVX（默认全部）")
+    ap.add_argument("--group", default="FRVXIP",
+                    help="要跑的组，如 V 或 FRVXIP（默认全部 —— 文档称本脚本为「全矩阵」，"
+                         "默认值必须与这个说法一致，否则「不带参数跑一遍」少跑一组却看不出来）")
     ap.add_argument("--with-container", action="store_true",
                     help="追加 F-3：把枚举换成 isinstance(app.routes)，在上锁 fastapi 版本里复跑")
     args = ap.parse_args()
@@ -583,6 +618,9 @@ def main() -> int:
         return 2
 
     groups = [g for g in args.group.upper() if g in GROUPS]
+    if "X" in groups and not _alias_gate():
+        return 2
+
     mismatches: list[str] = []
     for name in groups:
         print(f"\n===== {name} 组 =====")
