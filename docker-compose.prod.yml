@@ -42,7 +42,22 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      # 就绪探针必须**真的拿凭据登录一次**，不能用 pg_isready：
+      #   1. `pg_isready` 不验证凭据 —— 官方语义是「不需要正确的用户名 / 口令 / 库名即可取得
+      #      服务器状态」。实测两变量为空时它照样输出 `accepting connections` 且 exit=0，
+      #      即这道门一个半月里没验过一次凭据，也不可能因凭据问题变红（缺陷 41）。
+      #   2. 官方镜像里 **unix socket 与 127.0.0.1 都是 trust 认证**，只有非环回地址才走
+      #      scram 校验口令（实测）。故要走 TCP，且不能拿环回地址当 `-h`。
+      #   3. 于是 `-h` 用**服务名** postgres：与 app 连库走同一条路径、同一套 pg_hba 规则；
+      #      写 localhost / 127.0.0.1 会让探针退化成 trust，又能「永远成功」。
+      #   4. 为什么是两份定义而不是共享一份：部署只 scp docker-compose.prod.yml 这一个文件
+      #      到服务器，抽成共享脚本或共享 compose 文件会改动两区部署流程、并新增挂载依赖。
+      #      两份的一致性由 tests/test_pg_healthcheck.py 强制保证。
+      # `$$` 是 compose 的转义：容器配置里存下的是**变量名**，展开发生在容器内的 shell
+      # （`docker inspect` 看到的是 `$$POSTGRES_PASSWORD`，不是口令值）。
+      # PGCONNECT_TIMEOUT(3s) 必须小于本 healthcheck 的 timeout(5s)，否则探针自己会挂到超时，
+      # 「连不上」与「连得慢」又共用一个信号。stderr 不重定向 —— 认证失败的原文进健康日志。
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" PGCONNECT_TIMEOUT=3 psql -h postgres -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'select 1' > /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 5
