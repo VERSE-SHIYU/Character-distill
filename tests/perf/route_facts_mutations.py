@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 五组共 28 条，逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 六组共 31 条，逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -18,10 +18,12 @@
     python tests/perf/route_facts_mutations.py              # 全部（不含容器档）
     python tests/perf/route_facts_mutations.py --group V    # 只跑第 3 步迁移那组
     python tests/perf/route_facts_mutations.py --group I    # 只跑两把锁的隔离/无耦合那组
+    python tests/perf/route_facts_mutations.py --group P    # 只跑策略表校验层那组
     python tests/perf/route_facts_mutations.py --with-container   # 追加 F-3 容器档
 
-五组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
-隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态）。
+六组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
+隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态），
+**P** 打策略表校验层 `tests/route_policy.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表）。
 **I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
 
 **F-3 为什么单独一档。** 「按 `isinstance(APIRoute)` 遍历 `app.routes`」这个错误写法的
@@ -60,13 +62,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 RF = ROOT / "tests" / "route_facts.py"                      # 事实层本体（F/R/X 的靶子）
 TF = ROOT / "tests" / "test_route_facts.py"                 # 事实层自己的锁
+RP = ROOT / "tests" / "route_policy.py"                     # 策略表校验层（P 组的靶子）
+TP = ROOT / "tests" / "test_route_policy.py"                # 策略表层自己的锁
 AUTH = ROOT / "tests" / "test_auth_param_used.py"           # 第 3 步迁移的两把锁
 L5 = ROOT / "tests" / "test_text_failure_messages.py"
 VOICE = ROOT / "web" / "routers" / "voice.py"               # 只作变异副本，跑完还原
 MEM = ROOT / "web" / "routers" / "memory.py"
 TEXT = ROOT / "web" / "routers" / "text.py"
 
-TARGETS = (RF, TF, AUTH, L5, VOICE, MEM, TEXT)
+TARGETS = (RF, TF, RP, TP, AUTH, L5, VOICE, MEM, TEXT)
 
 
 # ── 变异体 ─────────────────────────────────────────────────────────────────
@@ -410,8 +414,28 @@ I_GROUP = [
      _ORDER_SWAP, [], "OK"),
 ]
 
+# P-*：策略表校验层（缺陷 42 结案 —— L5 与 auth 锁共用的那张「豁免 + 理由」表）。三条都只
+# 打本层自己的判据行：本层不认识任何路由/字段名，故这几条的靶子只能是它自己的函数体。
+P_GROUP = [
+    ("P-1 empty_reasons 不 strip（只把空串当空理由）",
+     "tests/test_route_policy.py",
+     [("repl", RP, [('    return {k for k, reason in table.items() if not str(reason).strip()}',
+                     '    return {k for k, reason in table.items() if not str(reason)}')])],
+     "RED", "test_empty_reasons_flags_blank_and_whitespace_only_reasons"),
+    ("P-2 stale_keys 两个参数方向写反",
+     "tests/test_route_policy.py",
+     [("repl", RP, [('    return set(table) - set(observed)',
+                     '    return set(observed) - set(table)')])],
+     "RED", "test_stale_keys_is_table_minus_observed"),
+    ("P-3 unexpected 恒返回空集",
+     "tests/test_route_policy.py",
+     [("repl", RP, [('    return set(observed) - set(table)',
+                     '    return set()')])],
+     "RED", "test_unexpected_is_observed_minus_table"),
+]
+
 GROUPS = {"F": F_GROUP + F3_GROUP, "R": R_GROUP, "X": X_GROUP, "V": V_GROUP,
-          "I": I_GROUP}
+          "I": I_GROUP, "P": P_GROUP}
 
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
@@ -473,8 +497,8 @@ def _run_py(code: str) -> tuple[str, list[str]]:
 def _baseline_gate():
     """先验基线：三把锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
     bad = []
-    for target in ("tests/test_route_facts.py", "tests/test_auth_param_used.py",
-                   "tests/test_text_failure_messages.py"):
+    for target in ("tests/test_route_facts.py", "tests/test_route_policy.py",
+                   "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
         summary, _ = _run(target)
         print(f"  基线 {target:44s} {summary}")
         if "failed" in summary or "error" in summary:
