@@ -17,7 +17,8 @@
   L4 非空负控：L1 的扫描必须命中 ≥ 16 条 `_MSG[...]` 形态的 raise。防「对空集断言
      恒真」的假绿（§四：凡「所有 X 都满足 P」的断言，先问 X 会不会是空集）。
   L5 表单 op（读框架自己的账本，**不写手工清单**）：全仓每一条声明了表单 content 的
-     operation，正文只能走 `file`，其余 Form 字段只能是元数据（缺陷 40 commit 二）。
+     operation，正文只能走**文件字段**（由 schema 判定，不看字段名），其余 Form 字段只能
+     是元数据（缺陷 40 commit 二；缺陷 42 结案改判据）。
 
 为什么 L1 的别名从 import 语句解析、不写成常量：写常量就是「守卫与被守对象之间的
 第二份手工清单」—— 改别名时锁不会红，只会变成假绿。
@@ -35,6 +36,7 @@ from fastapi.testclient import TestClient
 
 import deps
 import route_facts
+import route_policy
 from core.text_manager import TextManager
 from core.text_failure import TEXT_FAILURE_MESSAGES
 from deps import get_storage
@@ -173,85 +175,111 @@ def test_l4_scan_is_not_vacuous():
 
 # ── L5：表单 op —— 正文不许走 Form 字段（缺陷 40 commit 二）───────────────
 #
-# 命题：**表单 op 上，正文只能走 `file`，其余 Form 字段只能是元数据。** 这条命题本来
-# 就适用于所有表单 op；旧版只锁 `/api/text/upload` 不是命题窄，是旧判据扫不动别的 ——
-# 它扫 AST 找「默认值是不是名叫 Form 的调用」，只认那一种写法，`Annotated[str, Form()]` /
-# `fastapi.Form(...)` / 只有关键字的参数**静默漏过**，且只 glob 一个文件（缺陷 42）。
-# 改读框架自己的账本（`route_facts.form_fields` ⇒ OpenAPI 文档）后，覆盖四条是
-# **能力达到**，不是扩面。
+# 命题：**表单 op 上，正文只能走文件字段，其余 Form 字段只能是元数据。** 这条命题本来
+# 就适用于所有表单 op：starlette 的 `FormParser` 对**任何**文本表单字段都按 1MB **字节**
+# 截断，与本仓哪条路由无关 —— 所以覆盖面按事实取（谁声明了表单 content 就是谁），
+# 不是「恰好锁住那一条」。旧版只锁一条不是命题窄，是旧判据扫不动别的 —— 它扫 AST 找
+# 「默认值是不是名叫 Form 的调用」，只认那一种写法，`Annotated[str, Form()]` /
+# `fastapi.Form(...)` / 只有关键字的参数**静默漏过**，且只 glob 一个文件（缺陷 42 第 3 步）。
 #
-# 覆盖面由 `route_facts.form_operations()` 给（谁声明了表单 content 就是谁），不写手工
-# 清单 —— 清单是守卫与被守对象之间的第二份副本，新增一条表单路由不会红、只会假绿。
-# 判定「哪些 content-type 算表单」在事实层只有一份（`_form_media`，`form_operations` 与
-# `form_fields` 共用）：本文件原先自己读 `route_facts._FORM_CONTENT_TYPES` / `_METHODS`
-# 重算了一遍 —— 跨层读私有常量，且同一判定两份实现。两份会各自漂移，而漂移**不报错**，
-# 只让两处对同一条 op 给出不同答案（缺陷 42 第 3b 步收掉）。
+# 覆盖面由 `route_facts.form_operations()` 给，**文件字段与非文件字段的区分由
+# `route_facts.is_file_field(schema)` 给** —— 都不写手工清单，也不按字段名猜。手工清单是
+# 守卫与被守对象之间的第二份副本：新增一条表单路由不会红、只会假绿；按字段**叫不叫**
+# `file` 排除同理 —— 把 `UploadFile = File(...)` 改成 `str = Form(...)` 之后，正文通道
+# 事实上已经换了，而判据**全绿**，属于**静默绕过**（缺陷 42 结案：这是「按名字判断身份」
+# 的第四次显形，V9/V10 钉住）。判定「哪些 content-type 算表单」在事实层只有一份
+# （`_form_media`，`form_operations` 与 `form_fields` 共用）—— 同一判定两份实现会各自
+# 漂移，而漂移**不报错**，只让两处对同一条 op 给出不同答案（第 3b 步收掉）。
 #
-# 降不下去的那一半（AGENTS.md §四③层）：**哪个字段算元数据、哪个字段是唯一正文通道，
-# 是策略不是事实** —— 任何 Form 字段在 starlette 下都同样受 1MB 字节截断，「是不是正文
-# 通道」是语义判断，没有事实层对应物。这一层的失效方向是**响亮误伤**（签名多一个字段
-# 就红、人来看一眼），不是静默漏过，故不需要绕过型变异。
+# 降不下去的那一半（AGENTS.md §四③层）：**哪些非文件字段算元数据是策略不是事实** ——
+# 「这个字段是不是正文通道」没有事实层对应物（starlette 对所有文本字段一视同仁）。这一层
+# 的失效方向是**响亮误伤**（签名多一个字段就红、人来看一眼），不是静默漏过。
 
-# 正文通道的字段名：表单 op 上唯一被允许承载正文的字段。
-_PAYLOAD_FIELD = "file"
-
-# 每个表单 op 上除正文通道外**允许**出现的字段。策略，不是事实 —— 见上面③层那段。
-_FORM_METADATA = {
-    ("/api/text/upload", "post"): {"title", "description", "text_type"},
-    ("/api/voice/upload", "post"): {"name"},              # 音色名称，落进音色库当标签
-    ("/api/voice/ref-audio/upload", "post"): {"card_id", "ref_text"},
-    # ↑ `ref_text` 是**判断不是事实**：它是参考音频的转写，本仓对它没有长度上限，与
-    #   缺陷 40 的病灶（starlette 1MB **字节** vs 本仓 100 万**字符**，单位不可换算）
-    #   不同类。若将来裁定它算正文通道，删掉这里那个键，该 op 立刻红。
-    ("/api/voice/asr", "post"): set(),                    # 一个 Form 字段都没有 = 理想形态
+# 每个表单 op 上**允许**存在的非文件字段 → 理由。策略表，键是 `(path, method, field)`。
+_FORM_METADATA: dict[tuple[str, str, str], str] = {
+    ("/api/text/upload", "post", "title"): "文本标题，落库当标签",
+    ("/api/text/upload", "post", "description"): "文本描述，落库当标签",
+    ("/api/text/upload", "post", "text_type"): "story/classic 分流开关，不承载正文",
+    ("/api/voice/upload", "post", "name"): "音色名称，落进音色库当标签",
+    ("/api/voice/ref-audio/upload", "post", "card_id"): "卡片主键，参考音频的归属",
+    # `ref_text` 是**判断不是事实**：它是参考音频的转写，本仓对它没有长度上限，与缺陷 40
+    # 的病灶（starlette 1MB **字节** vs 本仓 100 万**字符**，单位不可换算）不同类。
+    ("/api/voice/ref-audio/upload", "post", "ref_text"):
+        "参考音频转写，仅作 TTS prompt_text，不进文本库",
+    # 只有一个文件字段、没有任何非文件字段的那条 op 不出现在本表里：没有需要登记的字段。
 }
 
 
-def _extra_form_fields(path: str, method: str) -> list[str]:
-    """该 op 上除正文通道与已声明元数据之外的 Form 字段（`[]` = 合规）。"""
-    fields = set(route_facts.form_fields(path, method))
-    return sorted(fields - {_PAYLOAD_FIELD} - _FORM_METADATA.get((path, method), set()))
+def _fmt(keys) -> str:
+    """`{('/', 'post', 'x')}` → `('/','post','x')`：紧凑到失败信息里一眼看得见是哪个键。"""
+    return "、".join("(" + ",".join(repr(x) for x in k) + ")" for k in sorted(keys))
 
 
-def test_l5_no_form_op_has_a_payload_channel_besides_file():
-    """全仓每一条表单 op：正文只能走 `file`。
+def _observed_non_file_fields() -> set[tuple[str, str, str]]:
+    """全仓表单 op 上**非文件**字段的全集 —— 现场账，与 `_FORM_METADATA` 对账。"""
+    return {
+        (path, method, name)
+        for path, method in route_facts.form_operations()
+        for name, schema in route_facts.form_fields(path, method).items()
+        if not route_facts.is_file_field(schema)
+    }
 
-    任何多出来的 Form 字段都只能是一条新的、由 starlette `FormParser` 先用 **1MB 字节**
-    截断的无界通道 —— 而本仓正文的上限是 100 万**字**（三字节/字 ≈ 3MB）。两者单位不可
-    换算，所以在框架之前加门只能做到「更早报一个错」，做不到「调用方传不出非法值」（§四）。
-    `/api/text/upload` 的 `text` / `filename` 两个字段正是这样被下掉的。
 
-    新增元数据字段（如 `language = Form("")`）会让一条红 —— 那是**故意的**：签名多一个
+def test_l5_no_form_op_has_a_payload_channel_besides_the_file_field():
+    """主判据：表单 op 上出现的每一个非文件字段，都必须在 `_FORM_METADATA` 里登记过。
+
+    文件字段是**唯一**被允许的正文通道 —— 任何多出来的文本 Form 字段都只能是一条被
+    starlette 先用 **1MB 字节**截断的无界通道，而本仓正文上限是 100 万**字**（三字节/字
+    ≈ 3MB）。两者单位不可换算，所以在框架之前加门只能做到「更早报一个错」，做不到
+    「调用方传不出非法值」（§四）。`/api/text/upload` 的 `text` / `filename` 两个字段
+    正是这样被下掉的。
+
+    新增元数据字段（如 `language = Form("")`）会让这条红 —— 那是**故意的**：签名多一个
     Form 字段，就该有人看一眼它是不是正文通道；确认不是，就把它加进 `_FORM_METADATA`
     并注明理由。
     """
-    offenders = {k: v for k, v in
-                 ((key, _extra_form_fields(*key)) for key in sorted(route_facts.form_operations())) if v}
-    assert not offenders, (
-        f"这些表单 op 上多出了非正文通道的 Form 字段：{offenders}。正文只能走 "
-        f"{_PAYLOAD_FIELD!r} —— FormParser 的 1MB 上限（**字节**）会先于本仓的 100 万字"
-        "（**字符**）触发，上屏成库的英文文案 `Field exceeded maximum size of 1024KB.`"
-        "（缺陷 40）。若新字段确实是元数据，加进本文件 `_FORM_METADATA` 并注明理由。")
+    unregistered = route_policy.unexpected(_observed_non_file_fields(), _FORM_METADATA)
+    assert not unregistered, (
+        f"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件"
+        "字段（`is_file_field` 按 schema 判，不看字段名）—— FormParser 的 1MB 上限"
+        "（**字节**）会先于本仓的 100 万字（**字符**）触发，上屏成库的英文文案"
+        "`Field exceeded maximum size of 1024KB.`（缺陷 40）。若新字段确实是元数据，"
+        "加进本文件 `_FORM_METADATA` 并注明理由。")
 
 
-def test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries():
-    """负控（数扫描命中的东西）＋ 名单不腐烂。两条都不能只靠口头保证。
+def test_l5_metadata_policy_is_neither_stale_nor_reasonless():
+    """名单不腐烂：登记过的字段若已消失（或已改名）条目就该删；理由不许是空的。
 
-    负控塌成空集时「所有表单 op 都只有 file」会**恒真** —— 那是本文件 L4 同款的假绿。
-    所以数两样：枚举到的表单 op 数，以及「正文通道」这个字段真的存在。反向那条防
-    `_FORM_METADATA` 留下已消失的 op / 已改名的路由。
+    与主判据分开写是因为**失效方向不同** —— 主判据红在「现场多了东西」，这条红在
+    「表里错了」。两条混在一起时，失败信息说不清该改哪一边。
+    """
+    observed = _observed_non_file_fields()
+    stale = route_policy.stale_keys(_FORM_METADATA, observed)
+    assert not stale, (
+        "_FORM_METADATA 里的字段已不再出现在任何表单 op 上（路由或字段被删/改名），"
+        f"请删除：{_fmt(stale)}")
+    blank = route_policy.empty_reasons(_FORM_METADATA)
+    assert not blank, (
+        f"_FORM_METADATA 里这些键的理由是空的 —— 写了理由不等于理由有内容：{_fmt(blank)}")
+
+
+def test_l5_scan_is_not_vacuous():
+    """负控（数扫描命中的东西）—— 三条都不能只靠口头保证。
+
+    负控塌成空集时主判据会**恒真**：没有表单 op、没有文件字段、或现场一个非文件字段都
+    数不出来，`unexpected(...)` 都返回空集 —— 那是本文件 L4 同款的假绿（§四）。
     """
     ops = route_facts.form_operations()
     assert ops, "一条表单 op 都没枚举到 —— 扫描面失效（spec 生成 / content-type 判据坏了）"
 
-    with_payload = {k for k in ops if _PAYLOAD_FIELD in route_facts.form_fields(*k)}
-    assert with_payload, (
-        f"没有任何表单 op 带 {_PAYLOAD_FIELD!r} 字段 —— 「正文只能走 file」这条断言"
-        "失去了对象，是假绿")
+    with_file_field = [k for k in ops
+                       if any(route_facts.is_file_field(s)
+                              for s in route_facts.form_fields(*k).values())]
+    assert with_file_field, (
+        "没有任何表单 op 带文件字段 —— 「正文只能走文件字段」这条断言失去了对象，是假绿")
 
-    stale = set(_FORM_METADATA) - ops
-    assert not stale, (
-        f"_FORM_METADATA 里的 op 已不在表单 op 集合里（路由被删或改名），请删除：{sorted(stale)}")
+    assert _observed_non_file_fields(), (
+        "现场一个非文件 Form 字段都数不出来 —— 主判据在对空集断言（假绿）")
 
 
 # ── L3：端到端 —— 上屏是表里那句，线索在日志里 ─────────────────────────────

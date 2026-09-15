@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 六组共 31 条，逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 六组共 36 条，逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -291,45 +291,60 @@ def _old_shape_injected(node):
 def _unused_user_endpoints'''),
 ]
 
-# 注意第 3 条锚为什么把整张 `_FORM_METADATA` 收敛到一条 op：**只退回覆盖面**会先被
-# 负控 `test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries` 红掉（覆盖率一缩，
-# 名单里另外三条立刻成陈旧条目 —— 那是负控**按设计**工作）。本变异要隔离的是
-# 「判据+覆盖面」这一对，不是负控，故把策略表一并收敛到同一条 op，负控才不掺进来。
-# 仓外旧驱动里这条是绿的，只因迁移前的负控不查陈旧条目。
+# 注意第 2 条锚为什么把整张 `_FORM_METADATA` 收敛到一条 op：本变异要隔离的是「判据 +
+# 覆盖面」这一对，不是名单本身。覆盖面一缩，名单里另外几条立刻成陈旧条目 ——
+# `test_l5_metadata_policy_is_neither_stale_nor_reasonless` 会红，而那是**按设计**工作，
+# 不该混进这次变异的红源里。故把策略表一并收敛到同一条 op。
 #
-# 第 1 条锚随缺陷 42 第 3b 步换过：L5 原先自带一份 `_form_operations()`（读
-# `route_facts._FORM_CONTENT_TYPES` / `_METHODS` 重算），3b 已整段删掉、改调事实层的
-# `route_facts.form_operations()`。**旧覆盖面是硬编码的一条 op**，故退回它的等价形态就是
-# 把那个调用点换成写死的 `{("/api/text/upload", "post")}` —— 命题不变（判据只锁一条 op）。
+# 第 1 条锚随缺陷 42 结案换过两次形态：3b 之前 L5 自带一份 `_form_operations()`（读
+# `route_facts._FORM_CONTENT_TYPES` / `_METHODS` 重算），3b 改成调事实层；结案这一步
+# 再把「怎么算合规」从**按名字排除**（`fields - {"file"} - 元数据`）改成**按 schema 判
+# 文件字段**。迁移前的两半旧形态合起来就是：**覆盖面写死一条 op** + **按字段名排除** ——
+# 下面这条锚把两半一次退回，命题（判据只锁一条 op、且看不见改名的正文通道）原样保留。
 _L5_OLD_SHAPE = [
-    ('''                 ((key, _extra_form_fields(*key)) for key in sorted(route_facts.form_operations())) if v}''',
-     '''                 ((key, _extra_form_fields(*key)) for key in sorted({("/api/text/upload", "post")})) if v}'''),
-    ('''    fields = set(route_facts.form_fields(path, method))
-    return sorted(fields - {_PAYLOAD_FIELD} - _FORM_METADATA.get((path, method), set()))''',
-     '''    import ast as _ast
-    tree = _ast.parse((_ROOT / "web" / "routers" / "text.py").read_text(encoding="utf-8"))
-    for node in _ast.walk(tree):
-        if isinstance(node, _ast.AsyncFunctionDef) and node.name == "upload_text":
-            a = node.args
-            bound = a.args[len(a.args) - len(a.defaults):] if a.defaults else []
-            form = {arg.arg for arg, d in zip(bound, a.defaults)
-                    if isinstance(d, _ast.Call) and isinstance(d.func, _ast.Name)
-                    and d.func.id == "Form"}
-            return sorted(form - {_PAYLOAD_FIELD} - _FORM_METADATA.get((path, method), set()))
-    raise AssertionError("变异体：锚点没了")'''),
-    ('''_FORM_METADATA = {
-    ("/api/text/upload", "post"): {"title", "description", "text_type"},
-    ("/api/voice/upload", "post"): {"name"},              # 音色名称，落进音色库当标签
-    ("/api/voice/ref-audio/upload", "post"): {"card_id", "ref_text"},
-    # ↑ `ref_text` 是**判断不是事实**：它是参考音频的转写，本仓对它没有长度上限，与
-    #   缺陷 40 的病灶（starlette 1MB **字节** vs 本仓 100 万**字符**，单位不可换算）
-    #   不同类。若将来裁定它算正文通道，删掉这里那个键，该 op 立刻红。
-    ("/api/voice/asr", "post"): set(),                    # 一个 Form 字段都没有 = 理想形态
+    ('''    return {
+        (path, method, name)
+        for path, method in route_facts.form_operations()
+        for name, schema in route_facts.form_fields(path, method).items()
+        if not route_facts.is_file_field(schema)
+    }''',
+     '''    return {
+        (path, method, name)
+        for path, method in {("/api/text/upload", "post")}
+        for name in route_facts.form_fields(path, method)
+        if name != "file"
+    }'''),
+    ('''_FORM_METADATA: dict[tuple[str, str, str], str] = {
+    ("/api/text/upload", "post", "title"): "文本标题，落库当标签",
+    ("/api/text/upload", "post", "description"): "文本描述，落库当标签",
+    ("/api/text/upload", "post", "text_type"): "story/classic 分流开关，不承载正文",
+    ("/api/voice/upload", "post", "name"): "音色名称，落进音色库当标签",
+    ("/api/voice/ref-audio/upload", "post", "card_id"): "卡片主键，参考音频的归属",
+    # `ref_text` 是**判断不是事实**：它是参考音频的转写，本仓对它没有长度上限，与缺陷 40
+    # 的病灶（starlette 1MB **字节** vs 本仓 100 万**字符**，单位不可换算）不同类。
+    ("/api/voice/ref-audio/upload", "post", "ref_text"):
+        "参考音频转写，仅作 TTS prompt_text，不进文本库",
+    # 只有一个文件字段、没有任何非文件字段的那条 op 不出现在本表里：没有需要登记的字段。
 }''',
-     '''_FORM_METADATA = {
-    ("/api/text/upload", "post"): {"title", "description", "text_type"},
+     '''_FORM_METADATA: dict[tuple[str, str, str], str] = {
+    ("/api/text/upload", "post", "title"): "文本标题，落库当标签",
+    ("/api/text/upload", "post", "description"): "文本描述，落库当标签",
+    ("/api/text/upload", "post", "text_type"): "story/classic 分流开关，不承载正文",
 }'''),
 ]
+
+# V9/V10 是这次结案的核心一对：**先把文件字段改成同名的文本 Form 字段**（判据若按名字
+# 排除就看不见），V10 再把判据**退回**按名字排除、保留 V9 的改法 —— 后者必须绿，红源才
+# 唯一地钉在「判据读 schema」这件事上，而不是「voice.py 被改过」。
+# 锚必须带第 3 行：`file: UploadFile = File(...)` 后跟 `user: dict = Depends(...)` 这条组合
+# 在 voice.py 里出现两次（ref-audio/upload 与 asr 各一处），只锚前两行会「命中 2 次」当场
+# assert —— 那是本脚本按设计拦下的另一种「变异没生效」。
+_VOICE_ASR_FILE = ('    file: UploadFile = File(...),\n'
+                   '    user: dict = Depends(get_current_user),\n'
+                   '    config: dict[str, Any] = Depends(get_config),')
+_VOICE_ASR_FILE_TEXT = ('    file: str = Form(...),\n'
+                        '    user: dict = Depends(get_current_user),\n'
+                        '    config: dict[str, Any] = Depends(get_config),')
 
 V_GROUP = [
     ("V1 新 auth 锁 · Annotated 注入且**未**引用（旧锁的盲区）",
@@ -345,7 +360,7 @@ V_GROUP = [
      "tests/test_text_failure_messages.py",
      [("repl", VOICE, [('    ref_text: str = Form(""),\n',
                         '    ref_text: str = Form(""),\n    text: str = Form(""),\n')])], "RED"),
-    ("V7 L5 锁整块退回迁移前的判据+覆盖面 + V6 变异 —— 红源唯一性",
+    ("V7 L5 锁退回迁移前的判据+覆盖面 + V6 变异 —— 红源唯一性",
      "tests/test_text_failure_messages.py",
      [("repl", L5, _L5_OLD_SHAPE),
       ("repl", VOICE, [('    ref_text: str = Form(""),\n',
@@ -355,6 +370,32 @@ V_GROUP = [
      [("repl", TEXT, [('    text_type: str = Form("story"),\n',
                        '    text_type: str = Form("story"),\n    language: str = Form(""),\n')])],
      "RED"),
+    ("V9 新 L5 判据 · 文件字段改成同名的文本 Form 字段（按名字排除的盲区）",
+     "tests/test_text_failure_messages.py",
+     [("repl", VOICE, [(_VOICE_ASR_FILE, _VOICE_ASR_FILE_TEXT)])],
+     "RED", "('/api/voice/asr','post','file')"),
+    ("V10 判据退回「按名字排除 file」+ 保留 V9 的改法 —— 绿（红源唯一性）",
+     "tests/test_text_failure_messages.py",
+     [("repl", L5, [('        if not route_facts.is_file_field(schema)',
+                     '        if name != "file"')]),
+      ("repl", VOICE, [(_VOICE_ASR_FILE, _VOICE_ASR_FILE_TEXT)])],
+     "green"),
+    ("V11 策略表某条理由改成空串",
+     "tests/test_text_failure_messages.py",
+     [("repl", L5, [('    ("/api/voice/upload", "post", "name"): "音色名称，落进音色库当标签",',
+                     '    ("/api/voice/upload", "post", "name"): "",')])],
+     "RED", "test_l5_metadata_policy_is_neither_stale_nor_reasonless"),
+    ("V12 策略表加一条现场不存在的键",
+     "tests/test_text_failure_messages.py",
+     [("repl", L5, [('    ("/api/voice/ref-audio/upload", "post", "card_id"): "卡片主键，参考音频的归属",',
+                     '    ("/api/voice/ref-audio/upload", "post", "card_id"): "卡片主键，参考音频的归属",\n'
+                     '    ("/api/__nonexistent", "post", "ghost"): "现场不存在的键",')])],
+     "RED", "test_l5_metadata_policy_is_neither_stale_nor_reasonless"),
+    ("V13 表单 op 上新增一个未登记的非文件字段",
+     "tests/test_text_failure_messages.py",
+     [("repl", VOICE, [('    ref_text: str = Form(""),\n',
+                        '    ref_text: str = Form(""),\n    note: str = Form(""),\n')])],
+     "RED", "('/api/voice/ref-audio/upload','post','note')"),
 ]
 
 # I-*：隔离判据 3 —— 两把锁互不依赖（不是口头保证：移走一把，另一把要照常红同一条）
@@ -389,7 +430,9 @@ assert snap()[2] > 0, "枚举是空的 —— 下面的「指纹不变」会恒�
 before = snap()
 # 跑的是 L5 的扫描入口**本身**（第 3b 步后 L5 不再自备 `_form_operations`，它的覆盖面就
 # 来自事实层）—— 换成直接调 route_facts 会绕开 L5，那样这一步就没在验「L5 跑过之后」。
-L5.test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries()
+# 结案这一步 L5 拆成「主判据」+「策略表」+「负控」三条，这里跑其中两条走完整条扫描路径。
+L5.test_l5_no_form_op_has_a_payload_channel_besides_the_file_field()
+L5.test_l5_scan_is_not_vacuous()
 after_l5 = snap()
 A._unused_user_endpoints()
 after_auth = snap()
@@ -405,7 +448,7 @@ I_GROUP = [
      [("hide", AUTH, None),
       ("repl", VOICE, [('    ref_text: str = Form(""),\n',
                         '    ref_text: str = Form(""),\n    text: str = Form(""),\n')])],
-     "RED", "多出了非正文通道的 Form 字段"),
+     "RED", "未登记的非文件 Form 字段"),
     ("I-2 移走 L5 锁文件 · auth 仍按 V1 红同一条",
      "tests/test_auth_param_used.py",
      [("hide", L5, None), ("append", MEM, _MEM_UNREAD)],
