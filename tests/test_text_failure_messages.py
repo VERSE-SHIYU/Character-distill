@@ -16,8 +16,8 @@
      扔掉原文 —— 那是把「泄漏」换成「瞎」）。
   L4 非空负控：L1 的扫描必须命中 ≥ 16 条 `_MSG[...]` 形态的 raise。防「对空集断言
      恒真」的假绿（§四：凡「所有 X 都满足 P」的断言，先问 X 会不会是空集）。
-  L5 端点签名（静态 AST，**扫的是 `web/routers/text.py` 而不是 `text_manager.py`**）：
-     `/api/text/upload` 的 `Form(...)` 字段里不许出现正文通道（缺陷 40 commit 二）。
+  L5 表单 op（读框架自己的账本，**不写手工清单**）：全仓每一条声明了表单 content 的
+     operation，正文只能走 `file`，其余 Form 字段只能是元数据（缺陷 40 commit 二）。
 
 为什么 L1 的别名从 import 语句解析、不写成常量：写常量就是「守卫与被守对象之间的
 第二份手工清单」—— 改别名时锁不会红，只会变成假绿。
@@ -34,6 +34,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import deps
+import route_facts
 from core.text_manager import TextManager
 from core.text_failure import TEXT_FAILURE_MESSAGES
 from deps import get_storage
@@ -170,70 +171,103 @@ def test_l4_scan_is_not_vacuous():
         "扫描范围有盲区（别名没解析对 / 文件被搬 / 写法变了），L1/L2 在假绿")
 
 
-# ── L5：端点签名 —— 正文不许走 Form 字段（缺陷 40 commit 二）───────────────
+# ── L5：表单 op —— 正文不许走 Form 字段（缺陷 40 commit 二）───────────────
+#
+# 命题：**表单 op 上，正文只能走 `file`，其余 Form 字段只能是元数据。** 这条命题本来
+# 就适用于所有表单 op；旧版只锁 `/api/text/upload` 不是命题窄，是旧判据扫不动别的 ——
+# 它扫 AST 找「默认值是不是名叫 Form 的调用」，只认那一种写法，`Annotated[str, Form()]` /
+# `fastapi.Form(...)` / 只有关键字的参数**静默漏过**，且只 glob 一个文件（缺陷 42）。
+# 改读框架自己的账本（`route_facts.form_fields` ⇒ OpenAPI 文档）后，覆盖四条是
+# **能力达到**，不是扩面。
+#
+# 覆盖面由 `route_facts.openapi()` **派生**（谁声明了表单 content 就是谁），不写手工
+# 清单 —— 清单是守卫与被守对象之间的第二份副本，新增一条表单路由不会红、只会假绿。
+#
+# 降不下去的那一半（AGENTS.md §四③层）：**哪个字段算元数据、哪个字段是唯一正文通道，
+# 是策略不是事实** —— 任何 Form 字段在 starlette 下都同样受 1MB 字节截断，「是不是正文
+# 通道」是语义判断，没有事实层对应物。这一层的失效方向是**响亮误伤**（签名多一个字段
+# 就红、人来看一眼），不是静默漏过，故不需要绕过型变异。
 
-_ROUTER_TEXT_PATH = _ROOT / "web" / "routers" / "text.py"
+# 正文通道的字段名：表单 op 上唯一被允许承载正文的字段。
+_PAYLOAD_FIELD = "file"
 
-# 这三个 `Form(...)` 字段是纯元数据，不是正文。见下 L5 的判据说明。
-_METADATA_FORM_FIELDS = frozenset({"title", "description", "text_type"})
+# 每个表单 op 上除正文通道外**允许**出现的字段。策略，不是事实 —— 见上面③层那段。
+_FORM_METADATA = {
+    ("/api/text/upload", "post"): {"title", "description", "text_type"},
+    ("/api/voice/upload", "post"): {"name"},              # 音色名称，落进音色库当标签
+    ("/api/voice/ref-audio/upload", "post"): {"card_id", "ref_text"},
+    # ↑ `ref_text` 是**判断不是事实**：它是参考音频的转写，本仓对它没有长度上限，与
+    #   缺陷 40 的病灶（starlette 1MB **字节** vs 本仓 100 万**字符**，单位不可换算）
+    #   不同类。若将来裁定它算正文通道，删掉这里那个键，该 op 立刻红。
+    ("/api/voice/asr", "post"): set(),                    # 一个 Form 字段都没有 = 理想形态
+}
 
 
-def _upload_route_args() -> tuple[set[str], set[str]]:
-    """`upload_text` 路由的（全部入参名，`Form(...)` 字段名）。
+def _has_form_content(op: dict) -> bool:
+    content = (op.get("requestBody") or {}).get("content") or {}
+    return any(ct in content for ct in route_facts._FORM_CONTENT_TYPES)
 
-    `Form(...)` 字段由**默认值的形状**判定（默认值是一次 `Form(...)` 调用），不读注解 ——
-    注解写 `str` 还是 `str | None` 与「会不会被 starlette `FormParser` 截断」无关。
+
+def _form_operations() -> set[tuple[str, str]]:
+    """全仓声明了表单 content 的 operation。
+
+    从框架文档派生而不是写手工清单：手工清单里不会有新增的那条表单路由，于是它不会红、
+    只会假绿 —— 那正是本文件（及缺陷 42）要消灭的失败形态。
     """
-    tree = ast.parse(_ROUTER_TEXT_PATH.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "upload_text":
-            a = node.args
-            params = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
-            bound = a.args[len(a.args) - len(a.defaults):] if a.defaults else []
-            form = {
-                arg.arg for arg, default in zip(bound, a.defaults)
-                if isinstance(default, ast.Call)
-                and isinstance(default.func, ast.Name) and default.func.id == "Form"
-            }
-            return params, form
-    raise AssertionError("web/routers/text.py 里找不到 upload_text 路由 —— 锁的定位锚点没了")
+    spec = route_facts.openapi()
+    return {
+        (path, method.lower())
+        for path, item in spec.get("paths", {}).items()
+        for method in item
+        if method.lower() in route_facts._METHODS and _has_form_content(item[method])
+    }
 
 
-def test_l5_upload_route_accepts_no_form_text_payload():
-    """`/api/text/upload` 的正文只能走 `file` —— `Form(...)` 字段里不许出现正文通道。
+def _extra_form_fields(path: str, method: str) -> list[str]:
+    """该 op 上除正文通道与已声明元数据之外的 Form 字段（`[]` = 合规）。"""
+    fields = set(route_facts.form_fields(path, method))
+    return sorted(fields - {_PAYLOAD_FIELD} - _FORM_METADATA.get((path, method), set()))
 
-    判据：`Form(...)` 默认值的字段，除三个纯元数据字段外**一个都不许有**。任何第四个
-    `Form` 字段都只能是一条新的、由 starlette `FormParser` 先用 **1MB 字节**截断的无界
-    正文通道 —— 而本仓的上限是 100 万**字**（三字节/字 ≈ 3MB）。两者单位不可换算，
-    所以在框架之前加门只能做到「更早报一个错」，做不到「调用方传不出非法值」（§四）。
-    `text` / `filename` 两个字段正是这样被下掉的。
 
-    **这把锁只管这一个 route 的签名。** 有人在**另一条** route 上重开一个无界文本入参，
-    它抓不到 —— 那要靠 §四 那条判据人自己去问「这条红能告诉我是我变了还是世界变了」。
-    不要以为它覆盖全仓。
+def test_l5_no_form_op_has_a_payload_channel_besides_file():
+    """全仓每一条表单 op：正文只能走 `file`。
 
-    新增元数据字段（如 `language = Form("")`）会让这条红 —— 那是**故意的**：签名多一个
-    `Form` 字段，就该有人看一眼它是不是正文通道。
+    任何多出来的 Form 字段都只能是一条新的、由 starlette `FormParser` 先用 **1MB 字节**
+    截断的无界通道 —— 而本仓正文的上限是 100 万**字**（三字节/字 ≈ 3MB）。两者单位不可
+    换算，所以在框架之前加门只能做到「更早报一个错」，做不到「调用方传不出非法值」（§四）。
+    `/api/text/upload` 的 `text` / `filename` 两个字段正是这样被下掉的。
+
+    新增元数据字段（如 `language = Form("")`）会让一条红 —— 那是**故意的**：签名多一个
+    Form 字段，就该有人看一眼它是不是正文通道；确认不是，就把它加进 `_FORM_METADATA`
+    并注明理由。
     """
-    _, form_fields = _upload_route_args()
-    extra = form_fields - _METADATA_FORM_FIELDS
-    assert not extra, (
-        f"`/api/text/upload` 多出了 Form 字段：{sorted(extra)}。本仓正文只能走 `file` —— "
-        "FormParser 的 1MB 上限（**字节**）会先于本仓的 100 万字（**字符**）触发，"
-        "上屏成库的英文文案 `Field exceeded maximum size of 1024KB.`（缺陷 40）。"
-    )
+    offenders = {k: v for k, v in
+                 ((key, _extra_form_fields(*key)) for key in sorted(_form_operations())) if v}
+    assert not offenders, (
+        f"这些表单 op 上多出了非正文通道的 Form 字段：{offenders}。正文只能走 "
+        f"{_PAYLOAD_FIELD!r} —— FormParser 的 1MB 上限（**字节**）会先于本仓的 100 万字"
+        "（**字符**）触发，上屏成库的英文文案 `Field exceeded maximum size of 1024KB.`"
+        "（缺陷 40）。若新字段确实是元数据，加进本文件 `_FORM_METADATA` 并注明理由。")
 
 
-def test_l5_scan_is_not_vacuous():
-    """负控：扫描必须命中路由的四个已知入参，否则 L5 在假绿（路由改名 / 搬文件 / 换写法）。
+def test_l5_scan_is_not_vacuous_and_policy_has_no_stale_entries():
+    """负控（数扫描命中的东西）＋ 名单不腐烂。两条都不能只靠口头保证。
 
-    与 L4 同一形态 —— 数的是**扫描命中的东西**，不是被断言的性质本身。
+    负控塌成空集时「所有表单 op 都只有 file」会**恒真** —— 那是本文件 L4 同款的假绿。
+    所以数两样：枚举到的表单 op 数，以及「正文通道」这个字段真的存在。反向那条防
+    `_FORM_METADATA` 留下已消失的 op / 已改名的路由。
     """
-    params, _ = _upload_route_args()
-    expected = {"file", "title", "description", "text_type"}
-    assert params >= expected, (
-        f"upload_text 的入参集合里缺 {sorted(expected - params)}（实得 {sorted(params)}）—— "
-        "扫描面可能已失效，L5 在假绿")
+    ops = _form_operations()
+    assert ops, "一条表单 op 都没枚举到 —— 扫描面失效（spec 生成 / content-type 判据坏了）"
+
+    with_payload = {k for k in ops if _PAYLOAD_FIELD in route_facts.form_fields(*k)}
+    assert with_payload, (
+        f"没有任何表单 op 带 {_PAYLOAD_FIELD!r} 字段 —— 「正文只能走 file」这条断言"
+        "失去了对象，是假绿")
+
+    stale = set(_FORM_METADATA) - ops
+    assert not stale, (
+        f"_FORM_METADATA 里的 op 已不在表单 op 集合里（路由被删或改名），请删除：{sorted(stale)}")
 
 
 # ── L3：端到端 —— 上屏是表里那句，线索在日志里 ─────────────────────────────

@@ -222,6 +222,28 @@ def test_fact_layer_describes_the_repo_app_object_under_a_single_identity():
         "得到互不相干的模块对象，`is` 与属性比对静默为假")
 
 
+# ── B1. 本层被多把锁共用 —— 它自己不能是个「谁先跑就决定别人看到什么」的对象 ──
+
+
+def test_shared_layer_output_is_a_pure_function_of_the_app():
+    """本层现在被多把锁 import（缺陷 42 第 3 步把两把锁迁了上来）。
+
+    共用一层就要问：这层有没有「被一方写、另一方读到」的状态。有的话两把锁就通过它
+    **隐式耦合**了，而且耦合不报错 —— 只让某一把锁静默换判据。
+
+    本层的模块级可变状态只有 `_cache` 那一格 spec：没有 setter，显式传 `routes=` 时不写
+    缓存。这条钉的是**可观测性质**（清掉缓存重算 == 缓存值），不是模块全局的**形状**
+    （数一遍「有几个 dict」是代理指标，改个常量就误伤，且挡不住真正的问题）。
+    """
+    cached = openapi()
+    assert openapi() is cached, "缓存没生效 —— 下面「重算相等」就失去对象，是假绿"
+    route_facts._cache.clear()
+    recomputed = openapi()
+    assert recomputed == cached, (
+        "同一 app 重算出的文档与缓存值不同 —— 本层状态被调用方污染了"
+        "（多把锁共用本层，谁先跑就会决定另一把看到什么）")
+
+
 # ── B. 真实 app 对账 ───────────────────────────────────────────────────────
 
 
