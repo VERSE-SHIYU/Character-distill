@@ -1,11 +1,21 @@
 # -*- coding: utf-8 -*-
-"""缺陷 41 A 轮变异矩阵驱动 —— 一组共 13 条
-（A-1、A-2、A-3、A-4、A-5、A-6、A-7、A-8、A-9、A-10、A-11、A-12、A-13）。
+"""缺陷 41 A 轮变异矩阵驱动 —— 一组共 24 条
+（A-1、A-2、A-3、A-4、A-5、A-6、A-7、A-8、A-9、A-10、A-11、A-12、A-13、
+A-14、A-15、A-16、A-17、A-18、A-19、A-20、A-21、A-22、A-23、A-24）。
 
-**A-8～A-13 是锁改成封闭语法之后补的**（返工）：前七条打的是**必需成分在不在**，后六条打的是
-**多余成分在不在** —— 两个编排文件同步改同一处，其中四种改法（A-8/A-9/A-10/A-11）曾把
-**开放式**的第一版锁整条绕过（见 `tests/test_pg_healthcheck.py` 的 docstring）。它们全部
-落在同一个文件对（prod + local）上，故每条都写两条 `repl` 动作，各改一份。
+**三轮的分工。**
+
+* **A-1～A-7（必需成分在不在）**：第一版开放式的锁就该拦住这些，它们钉住的是「探针还是个
+  真探针吗」—— 用没用 `pg_isready`、`-h` 指哪儿、口令在哪儿展开、两份定义一不一致。
+* **A-8～A-13（多余成分在不在）**：返工时补的。两个编排文件同步改同一处，其中四种改法
+  （A-8/A-9/A-10/A-11）曾把**开放式**的第一版锁整条绕过（见 `tests/test_pg_healthcheck.py`
+  的 docstring）。
+* **A-14～A-24（门的另外两部分）**：第二轮审计发现 `disable: true` 也能整条绕过 ——「门」
+  不止那条命令，还有**探针配置**（A-14～A-16、A-19、A-23）与**门的消费者**
+  （A-20～A-22）。A-24 打的是锁自己那个时长解析器的契约。
+
+A-1～A-23 都落在编排文件上（除 A-19 只改 local 外，其余两个文件同步改）；只有 A-24 动锁
+源文件本身。
 
 **为什么入库。** A 轮的 commit 引用了本脚本跑出来的「哪条红、红在哪句」。数字骑在仓外
 脚本上追不回来（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -25,7 +35,7 @@
 期间的编辑会被静默覆盖（这条已记进 AGENTS.md 缺陷 41 的记账）。
 
 **用法**
-    python tests/perf/pg_healthcheck_mutations.py            # 全部 7 条
+    python tests/perf/pg_healthcheck_mutations.py            # 全部 24 条
     python tests/perf/pg_healthcheck_mutations.py --group A  # 同上（本驱动只有 A 组）
 """
 from __future__ import annotations
@@ -73,6 +83,15 @@ _PSQL_H = "psql -h postgres -U"                   # A-9 / A-13：在它附近加
 _QUERY_TAIL = "'select 1' > /dev/null\"]"         # A-10 / A-11：在它后面接第二条命令
 _REDIRECT_TAIL = "> /dev/null\"]"                 # A-12：把 stdout 那份重定向也吞掉 stderr
 
+# A-14～A-23 的锚：healthcheck 映射里的那些行，以及那个消费者块。同样两份各恰一命中。
+_RETRIES_LINE = "      retries: 5\n"              # A-14 / A-15 / A-16：在它前后加键或改值
+_INTERVAL_LINE = "      interval: 10s\n"          # A-19：只改 local 一份
+_TIMEOUT_LINE = "      timeout: 5s\n"             # A-23：写成一个解析不了的值
+_TEST_HEAD = 'test: ["CMD-SHELL", "PGPASSWORD='   # A-17：把首元素换掉
+_TEST_LINE_NEW = '      test: "PGPASSWORD=$$POSTGRES_PASSWORD psql -h postgres"'  # A-18：整条改成字符串
+# A-20 / A-21 / A-22 打的是**消费者**（app 对 postgres 的依赖块），两份文件里形状相同。
+_DEPENDS_ON_BLOCK = "    depends_on:\n      postgres:\n        condition: service_healthy\n"
+
 
 def _both(old: str, new: str) -> list[tuple]:
     """同一处改动同时落在两个编排文件上 —— 一份改一份不改会先红在「多份不一致」那条上，
@@ -117,8 +136,8 @@ A_GROUP = [
 
     ("A-7  锁的 YAML 解析恒返回空",
      LOCK_PATH,
-     [("repl", LOCK, [("    out: dict[str, dict] = {}\n    for path in sorted",
-                       "    return {}\n    for path in sorted")])],
+     [("repl", LOCK, [("    out: dict[str, dict] = {}\n    for path, doc in _compose_docs():",
+                       "    return {}\n    for path, doc in _compose_docs():")])],
      "RED", "解析器瞎了"),
 
     # ── A-8～A-13：开放式检查看不见的第二类改法 —— 多余成分 ────────────────────
@@ -152,6 +171,69 @@ A_GROUP = [
      LOCK_PATH,
      _both(_PSQL_H, "psql -h postgres -h postgres -U"),
      "RED", "-h 出现了两次"),
+
+    # ── A-14～A-19：门的第二部分 —— 探针配置本身 ──────────────────────────────
+    # 命令一字未改，改的是「这道门还开不开、什么时候判」。第一版锁只把命令管住，这些全绿。
+    ("A-14 两个文件的 healthcheck 都加 disable: true",
+     LOCK_PATH,
+     _both(_RETRIES_LINE, _RETRIES_LINE + "      disable: true\n"),
+     "RED", "disable"),
+
+    ("A-15 两个文件的 healthcheck 都加 start_period: 10s",
+     LOCK_PATH,
+     _both(_RETRIES_LINE, _RETRIES_LINE + "      start_period: 10s\n"),
+     "RED", "start_period"),
+
+    ("A-16 两个文件的 retries 都改为 0",
+     LOCK_PATH,
+     _both(_RETRIES_LINE, "      retries: 0\n"),
+     "RED", "正整数"),
+
+    ("A-17 两个文件的 test 首元素都改为 CMD",
+     LOCK_PATH,
+     _both(_TEST_HEAD, _TEST_HEAD.replace('"CMD-SHELL"', '"CMD"')),
+     "RED", "首元素"),
+
+    ("A-18 两个文件的 test 都改成字符串写法",
+     LOCK_PATH,
+     _both(_PSQL_LINE, _TEST_LINE_NEW),
+     "RED", "首元素"),
+
+    ("A-19 只改 local 一份的 interval",
+     LOCK_PATH,
+     [("repl", LOCAL, [(_INTERVAL_LINE, "      interval: 11s\n")])],
+     "RED", "多份不一致"),
+
+    # ── A-20～A-22：门的第三部分 —— 消费者还等不等它 ──────────────────────────
+    # 探针完好无损，改的是「谁在等它」。A-22 连 depends_on 一起删掉，只剩连接串可认。
+    ("A-20 两个文件的 app 都把 depends_on 改成短式列表",
+     LOCK_PATH,
+     _both(_DEPENDS_ON_BLOCK, "    depends_on:\n      - postgres\n"),
+     "RED", "app"),
+
+    ("A-21 两个文件的 app 都把 condition 改成 service_started",
+     LOCK_PATH,
+     _both(_DEPENDS_ON_BLOCK,
+           "    depends_on:\n      postgres:\n        condition: service_started\n"),
+     "RED", "condition"),
+
+    ("A-22 两个文件都删掉 app 的 depends_on（DATABASE_URL 保留）",
+     LOCK_PATH,
+     _both(_DEPENDS_ON_BLOCK, ""),
+     "RED", "app"),
+
+    # ── A-23～A-24：解析器的契约 ──────────────────────────────────────────────
+    ("A-23 两个文件的 timeout 都写成解析不了的值 5x",
+     LOCK_PATH,
+     _both(_TIMEOUT_LINE, "      timeout: 5x\n"),
+     "RED", "5x"),
+
+    ("A-24 锁的 _duration_seconds 解析失败时返回 0",
+     LOCK_PATH,
+     [("repl", LOCK, [("    if seen == 0 or pos != len(text):\n        raise AssertionError(",
+                       "    if seen == 0 or pos != len(text):\n        return 0.0\n"
+                       "    if False:\n        raise AssertionError(")])],
+     "RED", "DID NOT RAISE"),
 ]
 
 GROUPS = {"A": A_GROUP}
