@@ -15,6 +15,12 @@ AST 的形状猜框架语义的 —— 「默认值是不是一个名叫某框�
 换版本数量还会变。所以本层从**模块**枚举（模块级 router 的 ``.routes`` 是稳定的），并用
 OpenAPI 文档作为第二份独立账本对账。
 
+**入口模块的身份只能有一个。** 本层描述的 app 对象只从 ``app()`` 取 —— 全仓在测试
+进程里对装配层的叫法是 ``server``（``web/`` 已在 ``sys.path`` 上）。若这里改叫
+``web.server``，同一个文件会被**执行两次**，得到两个互不相干的模块对象、两个 app：
+两边内容看起来一样，``is`` 与属性比对却静默为假 —— 不报错，只让「是不是同一个对象」
+这类断言失去意义。``tests/test_route_facts.py`` 有专门一条锁钉住这点。
+
 **为什么 ``census_diff`` 只算不断言。** 两份账本「都对得上」这件事本身要被测，而
 「对得上」只有在两份账本独立时才有信息量。此函数是那两块料，断言归调用方。
 
@@ -55,6 +61,14 @@ _MAX_REF_DEPTH = 8
 _cache: dict = {}
 
 
+# ── 入口 ───────────────────────────────────────────────────────────────────
+
+
+def app():
+    """被描述的 app 对象 —— **唯一**取数入口，免得各处自行 import 出第二个身份。"""
+    return importlib.import_module("server").app
+
+
 # ── 模块枚举 ───────────────────────────────────────────────────────────────
 
 
@@ -70,7 +84,7 @@ def _default_modules() -> list:
         importlib.import_module(f"routers.{m.name}")
         for m in sorted(pkgutil.iter_modules(routers_pkg.__path__), key=lambda m: m.name)
     ]
-    mods.append(importlib.import_module("web.server"))
+    mods.append(importlib.import_module("server"))
     return mods
 
 
@@ -105,9 +119,7 @@ def openapi(routes=None) -> dict:
     if routes is not None:
         return _spec_from(routes)
     if "spec" not in _cache:
-        import web.server as server
-
-        _cache["spec"] = _spec_from(server.app.routes)
+        _cache["spec"] = _spec_from(app().routes)
     return _cache["spec"]
 
 

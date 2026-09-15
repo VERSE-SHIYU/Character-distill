@@ -24,6 +24,7 @@ import fastapi
 import pytest
 from fastapi import APIRouter, Depends, FastAPI, File, Form, UploadFile
 
+import route_facts
 from route_facts import (
     _FORM_CONTENT_TYPES,
     _METHODS,
@@ -68,6 +69,11 @@ def _f_attr(epsilon: str = fastapi.Form(...)):
 
 @_forms.post("/optional-file")
 def _f_optional_file(blob: UploadFile | None = File(None), zeta: str = Form(...)):
+    return {}
+
+
+@_forms.post("/required-file")
+def _f_required_file(blob2: UploadFile = File(...), eta: str = Form(...)):
     return {}
 
 
@@ -116,6 +122,8 @@ _SYN_SPEC = openapi(_SYN_APP.routes)
         ("/synth-forms/annotated", {"delta"}, set()),
         ("/synth-forms/attr", {"epsilon"}, set()),
         ("/synth-forms/optional-file", {"blob", "zeta"}, {"blob"}),
+        # 必填文件：schema 是**顶层** contentMediaType（不走 anyOf），与可选文件是两种形态。
+        ("/synth-forms/required-file", {"blob2", "eta"}, {"blob2"}),
     ],
 )
 def test_synth_form_fields_are_exactly_the_declared_ones(path, expected, expected_files):
@@ -159,6 +167,47 @@ def test_form_fields_raises_on_unknown_operation():
     """契约：查不到就 raise。空字典是「这条路由没有表单字段」的合法答案，两者不能混。"""
     with pytest.raises(KeyError):
         form_fields("/synth-does-not-exist", "post", spec=_SYN_SPEC)
+
+
+# ── B0. 入口模块的身份 ─────────────────────────────────────────────────────
+
+
+def test_fact_layer_describes_the_repo_app_object_under_a_single_identity():
+    """事实层描述的 app 必须**就是** ``sys.modules["server"].app``，不是另一个同内容的 app。
+
+    装配层是同一个文件，却可以有**两个模块身份**（``server`` 与 ``web.server``）：同进程
+    内两个名字各加载一次，文件被**执行两次**，得到两个互不相干的模块对象、两个 app。
+    危害不是报错，是**静默错位** —— 两边内容看起来一样，``is`` 与属性比对却为假，于是
+    任何「是不是同一个对象」的判断都失去意义（app 上挂着 lifespan / 中间件 / state，
+    这类比对正是隔离性证据的来源）。
+
+    全仓在测试进程里的叫法是 ``server``（conftest 把 ``web/`` 加进了 ``sys.path``）。
+
+    **先把默认路径走一遍再断言**：事实层里 import 装配层的地方不止 ``app()``（枚举默认
+    模块集也要它），不先跑一遍，「第二个身份」可能还没被加载，断言就会在它出现之前通过
+    —— 那样的锁是纸锁（实测：只改枚举那处、不先跑默认路径，本用例全绿）。
+
+    最后一条按**文件**而不是按名字找并列身份：名字是代理指标，换个别名（``web.server``
+    之外的名字、或第三方 importlib 装载）就抓不到 —— 而这一层存在的理由正是拒绝代理指标。
+    """
+    import server as server_module
+
+    route_facts.openapi()            # 默认路径之一
+    route_facts.enumerate_routes()   # 默认路径之二
+
+    assert route_facts.app() is server_module.app, (
+        "route_facts 描述的 app 不是全仓那一个 —— 装配层被加载了第二个身份")
+    assert "web.server" not in sys.modules, (
+        "server 模块出现了并列身份 'web.server'：同一文件会被执行两次，对象比对静默错位")
+
+    aliases = sorted(
+        name for name, mod in sys.modules.items()
+        if getattr(mod, "__file__", None) is not None
+        and getattr(mod, "__file__", None) == getattr(server_module, "__file__", None)
+    )
+    assert aliases == ["server"], (
+        f"装配层这一份文件有并列的模块身份 {aliases} —— 同一文件被加载多次，"
+        "得到互不相干的模块对象，`is` 与属性比对静默为假")
 
 
 # ── B. 真实 app 对账 ───────────────────────────────────────────────────────
