@@ -42,8 +42,11 @@ USER appuser
 
 EXPOSE 7860
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/api/health')" || exit 1
+# 健康检查：探**就绪**（真查一次库），不是存活
+# 探存活时容器在凭据错、库连不上时照样 healthy —— 探针在所有需要它红的场合都是绿的
+# （缺陷 41）。`--start-period=60s`：第一次 ping 会顺带建池、跑迁移，冷启动比探一次
+# 端口慢得多；没有它，启动期的 refusals 会被算进 retries=3，容器刚起就被判 unhealthy。
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/api/health/ready')" || exit 1
 
 CMD ["python", "-m", "web.server"]

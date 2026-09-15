@@ -199,22 +199,30 @@ jobs:
             export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # Health check (max 60s)
-            echo "Waiting for health check..."
-            HEALTHY=0
-            for i in $(seq 1 12); do
-              sleep 5
-              if curl -sf http://localhost:7860/api/health > /dev/null 2>&1; then
-                echo "SZ health check passed (attempt ${i})"
-                HEALTHY=1
-                break
+            # ── 健康门分两段：先存活、再就绪 ──
+            # 合成一段时，「app 没起来」与「app 起来了但库连不上」共用一个红信号 ——
+            # 而两者的处置不同：前者回滚大概率有用，后者往往是配置层故障，回滚不一定治得了。
+            SZ_gate() {
+              # $1=阶段名 $2=探针路径 $3=失败说明。12×5s，与老门一致。
+              SZ_stage="$1"; SZ_path="$2"; SZ_why="$3"; SZ_ok=0
+              echo "Waiting for ${SZ_stage} check..."
+              for i in $(seq 1 12); do
+                sleep 5
+                if curl -sf "http://localhost:7860${SZ_path}" > /dev/null 2>&1; then
+                  echo "SZ ${SZ_stage} check passed (attempt ${i})"
+                  SZ_ok=1
+                  break
+                fi
+                echo "  ${SZ_stage} attempt ${i}/12 failed..."
+              done
+              if [ "$SZ_ok" -ne 1 ]; then
+                echo "SZ ${SZ_stage} check FAILED: ${SZ_why}"
+                return 1
               fi
-              echo "  Attempt ${i}/12 failed..."
-            done
+              return 0
+            }
 
-            # Rollback on failure
-            if [ "$HEALTHY" -ne 1 ]; then
-              echo "SZ health check FAILED, rolling back..."
+            SZ_rollback() {
               if [ -n "$PREV_SHA" ]; then
                 # Try Aliyun first for rollback, fallback to GHCR
                 docker pull ${ALIYUN_APP%:*}:"${PREV_SHA}" 2>/dev/null || \
@@ -226,6 +234,18 @@ jobs:
                 docker compose -f docker-compose.prod.yml up -d
                 echo "Rolled back to ${PREV_SHA}"
               fi
+            }
+
+            # 第一段：存活。/api/health 不碰库，只说明进程起来了。
+            if ! SZ_gate "liveness" "/api/health" "app 未起来（/api/health 不通），回滚"; then
+              SZ_rollback
+              exit 1
+            fi
+
+            # 第二段：就绪。真查一次库 —— 凭据错、库连不上在这里才第一次可见。
+            if ! SZ_gate "readiness" "/api/health/ready" \
+                 "app 已起来但数据库不可用（凭据或网络）；回滚不一定能修复配置层故障"; then
+              SZ_rollback
               exit 1
             fi
 
@@ -321,20 +341,29 @@ jobs:
             export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            echo "Waiting for health check..."
-            HEALTHY=0
-            for i in $(seq 1 12); do
-              sleep 5
-              if curl -sf http://localhost:7860/api/health > /dev/null 2>&1; then
-                echo "SG health check passed (attempt ${i})"
-                HEALTHY=1
-                break
+            # ── 健康门分两段：先存活、再就绪 ──
+            # 与 SZ 同形，差异只有区域名（与回滚用的源：本区走 GHCR）。
+            SG_gate() {
+              # $1=阶段名 $2=探针路径 $3=失败说明。12×5s，与老门一致。
+              SG_stage="$1"; SG_path="$2"; SG_why="$3"; SG_ok=0
+              echo "Waiting for ${SG_stage} check..."
+              for i in $(seq 1 12); do
+                sleep 5
+                if curl -sf "http://localhost:7860${SG_path}" > /dev/null 2>&1; then
+                  echo "SG ${SG_stage} check passed (attempt ${i})"
+                  SG_ok=1
+                  break
+                fi
+                echo "  ${SG_stage} attempt ${i}/12 failed..."
+              done
+              if [ "$SG_ok" -ne 1 ]; then
+                echo "SG ${SG_stage} check FAILED: ${SG_why}"
+                return 1
               fi
-              echo "  Attempt ${i}/12 failed..."
-            done
+              return 0
+            }
 
-            if [ "$HEALTHY" -ne 1 ]; then
-              echo "SG health check FAILED, rolling back..."
+            SG_rollback() {
               if [ -n "$PREV_SHA" ]; then
                 docker pull ghcr.io/verse-shiyu/character-distill-app:${PREV_SHA}
                 docker pull ghcr.io/verse-shiyu/character-distill-nginx:${PREV_SHA}
@@ -343,6 +372,18 @@ jobs:
                 docker compose -f docker-compose.prod.yml up -d
                 echo "Rolled back to ${PREV_SHA}"
               fi
+            }
+
+            # 第一段：存活。/api/health 不碰库，只说明进程起来了。
+            if ! SG_gate "liveness" "/api/health" "app 未起来（/api/health 不通），回滚"; then
+              SG_rollback
+              exit 1
+            fi
+
+            # 第二段：就绪。真查一次库 —— 凭据错、库连不上在这里才第一次可见。
+            if ! SG_gate "readiness" "/api/health/ready" \
+                 "app 已起来但数据库不可用（凭据或网络）；回滚不一定能修复配置层故障"; then
+              SG_rollback
               exit 1
             fi
 

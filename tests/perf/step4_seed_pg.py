@@ -15,8 +15,8 @@ rig 是全空的 fresh PG（数据目录/凭据/端口全部独立，见 data/ev
     (host.docker.internal:MOCK_PORT)，与容器内 app 同一可达性。
   - 幂等可复跑：已存在的行跳过。
 
-前置：app 容器已 up 且 /api/health 通过（schema 已由 app 迁移）。脚本自身的
-store.create_user 也会触发迁移（幂等），故直接插入前会再确认表存在。
+前置：app 容器已 up 且 /api/health/ready 通过（就绪含 schema 就绪 —— 它真查一次库）。
+脚本自身的 store.create_user 也会触发迁移（幂等），故直接插入前会再确认表存在。
 
 用法：
   python tests/perf/step4_seed_pg.py --sqlite data/character_sim.db \
@@ -170,12 +170,13 @@ async def seed(args) -> None:
     mock_base = args.mock_base or f"http://host.docker.internal:{s4['MOCK_PORT']}/v1"
 
     # app 必须先 up（schema 由 app 迁移）；health 门禁防并发迁移竞态
+    # 探就绪而不是存活：存活不碰库，库连不上时照样 200，门禁等于没开
     import urllib.request
     try:
-        with urllib.request.urlopen(f"{args.app_base}/api/health", timeout=3) as r:
+        with urllib.request.urlopen(f"{args.app_base}/api/health/ready", timeout=3) as r:
             assert r.status == 200, r.status
     except Exception as exc:
-        raise SystemExit(f"app 未就绪（{args.app_base}/api/health 不可达）：{exc}")
+        raise SystemExit(f"app 未就绪（{args.app_base}/api/health/ready 不可达）：{exc}")
 
     # 载入 repo .env（FERNET/JWT 供 api_config 加密与 app 同源）
     from dotenv import load_dotenv

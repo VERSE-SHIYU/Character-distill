@@ -169,7 +169,7 @@ def cmd_up(_args) -> None:
         cwd=ROOT, env=app_env,
         stdout=open(SCRATCH / "app.log", "w", encoding="utf-8"),
         stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    _wait_http(f"http://127.0.0.1:{app_port}/api/health", tries=300, delay=0.2)
+    _wait_http(f"http://127.0.0.1:{app_port}/api/health/ready", tries=300, delay=0.2)
     _print(f"app up http://127.0.0.1:{app_port} (pid {app_proc.pid}) — OTEL on, log {SCRATCH/'app.log'}")
 
     _save({"mock_proc": mock_proc.pid, "app_proc": app_proc.pid,
