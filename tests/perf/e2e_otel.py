@@ -244,11 +244,26 @@ def _sse_events(url: str, token: str, payload: dict, timeout: float = 300) -> li
     return events
 
 
-def _multipart(fields: dict) -> tuple[bytes, str]:
+def _multipart(fields: dict, file: tuple[str, bytes] | None = None) -> tuple[bytes, str]:
+    """`file=(filename, data)` 走独立的 file part —— 正文必须走它，别塞进字段。
+
+    缺陷 40：`/api/text/upload` 的 urlencoded 字段长度上限是 starlette `FormParser`
+    的 1MB（**字节**），本仓的上限是 100 万**字**（≈3MB），前者先触发、上屏成库的英文
+    文案。file part 不受该上限约束（starlette 的检查写在 `if self._current_part.file
+    is None:` 里面），所以正文一律当文件传。
+    """
     boundary = "----e2e" + str(time.time_ns())
     parts = []
     for k, v in fields.items():
         parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n".encode())
+    if file is not None:
+        filename, data = file
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n".encode()
+        )
+        parts.append(data)
+        parts.append(b"\r\n")
     parts.append(f"--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
@@ -314,8 +329,10 @@ def cmd_drive_distill(_args) -> None:
     # 跨线程分片树，合成文本必须 ≥ ~200k 字。
     _print("upload synthetic ~320k prose to cross longctx threshold(150k tok) -> chunked map/reduce")
     content = _synthetic_prose(320_000)
-    ct, ctype = _multipart({"text": content, "title": "e2e 多分片测试文本",
-                            "filename": "e2e_multi.txt", "text_type": "story"})
+    # 正文走 file（缺陷 40）：32 万汉字 ≈ 960KB，是 FormParser 1MB 上限的 92% ——
+    # 从前塞进 `text` 字段时只差 9% 就会撞上限、报出库的英文文案。
+    ct, ctype = _multipart({"title": "e2e 多分片测试文本", "text_type": "story"},
+                           file=("e2e_multi.txt", content.encode("utf-8")))
     code, resp, _ = _req("POST", app_base + "/api/text/upload",
                          headers={"Authorization": "Bearer " + token, "Content-Type": ctype},
                          body=ct, timeout=120)

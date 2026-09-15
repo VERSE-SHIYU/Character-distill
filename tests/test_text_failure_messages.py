@@ -5,7 +5,7 @@
 又要决定用户看到什么话，于是同一个 `except` 同时接住「我们写的用户文案」和「库的异常
 原文」（DOCX 双包：上屏成了 `"DOCX 解析失败: DOCX 文件无有效文本内容"`）。
 
-本文件锁四件事（判据驱动，**不维护点位白名单** —— 判据从 `raise` 实参的形态直接推出）：
+本文件锁五件事（判据驱动，**不维护点位白名单** —— 判据从 `raise` 实参的形态直接推出）：
 
   L1 实参形态（静态 AST）：`text_manager.py` 每条 `raise` 的实参必须是 `_MSG[...]`
      或 `_MSG[...].format(...)` —— 里面不得出现字符串字面量，也不得引用任何 `except`
@@ -16,6 +16,8 @@
      扔掉原文 —— 那是把「泄漏」换成「瞎」）。
   L4 非空负控：L1 的扫描必须命中 ≥ 16 条 `_MSG[...]` 形态的 raise。防「对空集断言
      恒真」的假绿（§四：凡「所有 X 都满足 P」的断言，先问 X 会不会是空集）。
+  L5 端点签名（静态 AST，**扫的是 `web/routers/text.py` 而不是 `text_manager.py`**）：
+     `/api/text/upload` 的 `Form(...)` 字段里不许出现正文通道（缺陷 40 commit 二）。
 
 为什么 L1 的别名从 import 语句解析、不写成常量：写常量就是「守卫与被守对象之间的
 第二份手工清单」—— 改别名时锁不会红，只会变成假绿。
@@ -168,6 +170,72 @@ def test_l4_scan_is_not_vacuous():
         "扫描范围有盲区（别名没解析对 / 文件被搬 / 写法变了），L1/L2 在假绿")
 
 
+# ── L5：端点签名 —— 正文不许走 Form 字段（缺陷 40 commit 二）───────────────
+
+_ROUTER_TEXT_PATH = _ROOT / "web" / "routers" / "text.py"
+
+# 这三个 `Form(...)` 字段是纯元数据，不是正文。见下 L5 的判据说明。
+_METADATA_FORM_FIELDS = frozenset({"title", "description", "text_type"})
+
+
+def _upload_route_args() -> tuple[set[str], set[str]]:
+    """`upload_text` 路由的（全部入参名，`Form(...)` 字段名）。
+
+    `Form(...)` 字段由**默认值的形状**判定（默认值是一次 `Form(...)` 调用），不读注解 ——
+    注解写 `str` 还是 `str | None` 与「会不会被 starlette `FormParser` 截断」无关。
+    """
+    tree = ast.parse(_ROUTER_TEXT_PATH.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "upload_text":
+            a = node.args
+            params = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
+            bound = a.args[len(a.args) - len(a.defaults):] if a.defaults else []
+            form = {
+                arg.arg for arg, default in zip(bound, a.defaults)
+                if isinstance(default, ast.Call)
+                and isinstance(default.func, ast.Name) and default.func.id == "Form"
+            }
+            return params, form
+    raise AssertionError("web/routers/text.py 里找不到 upload_text 路由 —— 锁的定位锚点没了")
+
+
+def test_l5_upload_route_accepts_no_form_text_payload():
+    """`/api/text/upload` 的正文只能走 `file` —— `Form(...)` 字段里不许出现正文通道。
+
+    判据：`Form(...)` 默认值的字段，除三个纯元数据字段外**一个都不许有**。任何第四个
+    `Form` 字段都只能是一条新的、由 starlette `FormParser` 先用 **1MB 字节**截断的无界
+    正文通道 —— 而本仓的上限是 100 万**字**（三字节/字 ≈ 3MB）。两者单位不可换算，
+    所以在框架之前加门只能做到「更早报一个错」，做不到「调用方传不出非法值」（§四）。
+    `text` / `filename` 两个字段正是这样被下掉的。
+
+    **这把锁只管这一个 route 的签名。** 有人在**另一条** route 上重开一个无界文本入参，
+    它抓不到 —— 那要靠 §四 那条判据人自己去问「这条红能告诉我是我变了还是世界变了」。
+    不要以为它覆盖全仓。
+
+    新增元数据字段（如 `language = Form("")`）会让这条红 —— 那是**故意的**：签名多一个
+    `Form` 字段，就该有人看一眼它是不是正文通道。
+    """
+    _, form_fields = _upload_route_args()
+    extra = form_fields - _METADATA_FORM_FIELDS
+    assert not extra, (
+        f"`/api/text/upload` 多出了 Form 字段：{sorted(extra)}。本仓正文只能走 `file` —— "
+        "FormParser 的 1MB 上限（**字节**）会先于本仓的 100 万字（**字符**）触发，"
+        "上屏成库的英文文案 `Field exceeded maximum size of 1024KB.`（缺陷 40）。"
+    )
+
+
+def test_l5_scan_is_not_vacuous():
+    """负控：扫描必须命中路由的四个已知入参，否则 L5 在假绿（路由改名 / 搬文件 / 换写法）。
+
+    与 L4 同一形态 —— 数的是**扫描命中的东西**，不是被断言的性质本身。
+    """
+    params, _ = _upload_route_args()
+    expected = {"file", "title", "description", "text_type"}
+    assert params >= expected, (
+        f"upload_text 的入参集合里缺 {sorted(expected - params)}（实得 {sorted(params)}）—— "
+        "扫描面可能已失效，L5 在假绿")
+
+
 # ── L3：端到端 —— 上屏是表里那句，线索在日志里 ─────────────────────────────
 
 
@@ -233,24 +301,15 @@ def test_l3_empty_docx_is_not_double_wrapped(monkeypatch, capsys):
     assert "解析失败" not in detail, detail
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "缺陷 40：starlette 1.6.0 给 urlencoded 的 `FormParser` 也加了 1MB 逐字段上限"
-        "（1.0.0 只有 `MultiPartParser` 有），它先于本仓的 `max_chars` 触发，上屏成了"
-        "库的 `Field exceeded maximum size of 1024KB.` —— 本仓文案根本没机会出现。"
-        "commit 二 要么下掉 `text` 字段、要么把长度判断前移到框架之前，届时本用例转绿。"
-        "**`strict=True` 是承重的**：它把「什么都没修」和「修好了」变成两个信号 —— "
-        "commit 二 落地后这句 xfail 会当场 XPASS 成红，逼着删掉它，而不是留一个腐烂的"
-        "「永远 xfail」把真实回归一起吞掉。同一条 strict 也让把锁退回旧 starlette 这件事"
-        "当场变红（旧版没有这个上限，用例会通过）。"
-    ),
-)
 def test_l3_oversized_text_screens_table_wording(monkeypatch):
-    r = _client(monkeypatch).post(
-        "/api/text/upload",
-        data={"text": "字" * 1_000_001, "filename": "big.txt", "text_type": "other"},
-    )
+    """超长的**唯一**载体是 `file`（缺陷 40 commit 二 把 urlencoded 的 `text` 字段下掉了）。
+
+    载体从 `data={"text": …}` 换成文件上传**不是**为了绕开 starlette 的 1MB 上限，而是
+    因为那条通道已经不存在了 —— 命题（超长 → 400 + 表里那句）原样保留。带 filename 的
+    part 不受 `max_part_size` 约束（starlette 的检查写在 `if self._current_part.file is None:`
+    里面），所以 100 万零 1 字（≈3MB）能走到本仓自己的 `max_chars`。
+    """
+    r = _upload_file(monkeypatch, "big.txt", ("字" * 1_000_001).encode("utf-8"))
     assert r.status_code == 400, r.text
     assert r.json()["detail"] == TEXT_FAILURE_MESSAGES["too_long"].format(limit_text="100 万")
 

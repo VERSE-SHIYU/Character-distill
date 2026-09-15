@@ -405,7 +405,7 @@ Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
-| `/api/text/upload` | POST | 上传文本（文件或粘贴，含标题/描述/类型元数据） |
+| `/api/text/upload` | POST | 上传文本（**仅文件**，含标题/描述/类型元数据） |
 | `/api/text/list` | GET | 文本列表 |
 | `/api/text/{id}/download-cleaned` | GET | 下载清洗后纯文本 |
 | `/api/text/{id}` | DELETE | 删除文本（级联删除角色卡/会话） |

@@ -113,14 +113,17 @@ async def upload_text(
     request: Request,
     user: dict = Depends(get_current_user),
     file: UploadFile | None = File(None),
-    text: str | None = Form(None),
-    filename: str | None = Form(None),
     title: str = Form(""),
     description: str = Form(""),
     text_type: str = Form("story"),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Accept a multipart file or text form field, parse format, save."""
+    """Accept a multipart file, parse format, save.
+
+    正文只能走 `file`。另有一条 urlencoded 的 `text` 字段（+ 给它起落盘名的 `filename`）
+    已整条下掉 —— 成因与判据见 AGENTS.md 缺陷 40，形态锁见
+    tests/test_text_failure_messages.py::test_l5_upload_route_accepts_no_form_text_payload。
+    """
     user_id = user["id"]
     _client_ip = get_client_ip(request)
     from deps import get_text_manager, get_user_llm
@@ -168,18 +171,8 @@ async def upload_text(
             if temp_path.exists():
                 os.unlink(temp_path)
 
-    elif text:
-        content = text
-        name = filename or "pasted_text.txt"
-        try:
-            result = await text_manager.upload_text(name, content, title, description, text_type, user_id)
-            text_id = result["text_id"]
-            cleaning_stats = {k: result[k] for k in ("original_chars", "cleaned_chars")}
-        except ValueError as exc:
-            # 不迁，理由同上面 upload_text_from_file 那处（A 类：实参由本仓撰写的人话）。
-            raise HTTPException(400, str(exc)) from exc
     else:
-        raise HTTPException(400, "Must provide file or text")
+        raise HTTPException(400, "Must provide file")
 
     # Start background upload task for story/classic (coref resolution with progress)
     upload_task_id = ""
