@@ -694,7 +694,13 @@ config.yaml 现值（现读，非转述）：
 **44. 本地 app 镜像缺 `onnxruntime`，容器内 L3 坏 PDF 用例必红** —— 状态：**记账（不修）**（2026-09-15 缺陷 42 结案跑容器腿时发现）
 - 事实：镜像内 `python -c "import pymupdf4llm"` → `ModuleNotFoundError: No module named 'onnxruntime'`（`pymupdf4llm/ocr/analyze_page.py` 顶层 import）。链路：`core/text_manager.py` 的 `_extract_pdf` 里 `import pymupdf4llm` → 该异常无人接住 → **坏 PDF 上传返回 500 而非 400**，`tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original` 在容器内必红；变异驱动的先验基线门因此拒跑。
 - 证据命令：`docker run --rm -v <repo>:/app -w /app --entrypoint python character-distill-app:latest -c "import pymupdf4llm"`；或容器内 `pytest tests/test_text_failure_messages.py -q` → `assert 500 == 400`，栈底 `ModuleNotFoundError: No module named 'onnxruntime'`。
-- **不是「锁里漏了这个依赖」**：`requirements.txt` 里**有** `onnxruntime==1.30.0`，它正是 `53bed63`（缺陷 40 的「依赖按锁安装」）那一步加进去的；而本机镜像 `character-distill-app:latest` 构建于该 commit **之前**（21 小时前）。故这是**镜像比锁旧**，修法是重建镜像，不是改锁。
+- **根因（2026-09-15 订正，替换原先的「重建镜像」结论）**：不是「镜像比锁旧」，是**镜像构建时主动把 onnxruntime 卸掉**。冲突链三段逐段核过：
+  - `Dockerfile:28` 主动 `pip uninstall -y onnxruntime kubernetes 2>/dev/null || true`，由 `86f8c814`（2026-06-27）引入 —— 比钉锁那一步早 525 个 commit，**重建镜像不会改变它**。
+  - `53bed63`（2026-09-15，缺陷 40 的「依赖按锁安装」）把 `pymupdf4llm` 钉到 `1.28.2`。该版本 `Requires-Dist: pymupdf_layout==1.28.2`，`pymupdf_layout` 的 `Requires-Dist` 里有 `onnxruntime` —— 装得上，随后被上面那句卸掉。
+  - `.venv/Lib/site-packages/pymupdf4llm/ocr/analyze_page.py:5` 是顶层 `import onnxruntime as ort`，`import pymupdf4llm` 即触发。
+  - 核过的命令：`git log -1 -S "pip uninstall -y onnxruntime" -- Dockerfile`（→ `86f8c814`）、`git log -1 -S "pymupdf4llm==1.28.2" -- requirements.txt`（→ `53bed63`）、`cat .venv/Lib/site-packages/pymupdf_layout-*.dist-info/METADATA | grep Requires-Dist`。
+- **修法（三选一，待裁）**：① 去掉 `Dockerfile:28` 里的 `onnxruntime`（先核它当初为何被卸；若为镜像体积，等于拿体积换掉整条 PDF 链）；② 把 `pymupdf4llm` 降到不依赖 onnxruntime 的版本（等于回退缺陷 40 刚钉的锁）；③ 让 `core/text_manager.py:278` 那句 `import pymupdf4llm` 接住 `ImportError` 并兑现对外的 400 —— 只有这条同时兜住容器「缺包」与本机「被 System32 同名 DLL 抢先」两种症状，且不动依赖。
+- **订正声明**：`e828fd3` 与 `7c07f36` 里写的「修法是重建镜像，不是改锁」由本条订正 —— 实测重建无效。
 - **非缺陷 42 引入（已核）**：把树退到 `c959553`（本轮全部改动之前）复跑同一文件，**同一条同样红**（1 failed, 21 passed）。
 - 附：镜像里**也没有 pytest**（`python -m pytest` → `No module named pytest`），跑容器腿得临时 `pip install -q pytest pytest-asyncio onnxruntime`。两者同源：镜像只装运行时，而「判据要求容器内复跑」这个用法还要开发依赖。
 - **Windows 形态（2026-09-15 收口时补，同一根因的另一端）**：同一条导入链在**本机**也能踩到 —— 锁里 `pymupdf4llm==1.28.2` → `pymupdf-layout` 1.28.2 → 顶层 `import onnxruntime`。本机 `C:\Windows\System32\onnxruntime.dll` 是**微软随 Windows 装的 ONNX Runtime 1.17.260613**（`FileVersion 1.17.260613-0100.1.os-germanium…`），`System32` 在 DLL 搜索路径里压过 pip 包内的 1.30.0，ABI 不符 → **模块初始化时 access violation**，`pytest tests -q` 整个进程被杀（`exit=139`，无红无绿）。
