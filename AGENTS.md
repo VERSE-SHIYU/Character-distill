@@ -655,16 +655,30 @@ config.yaml 现值（现读，非转述）：
   - ③ **不建第三条 verdict job**：job 命名 + 注解 + 产物已构成契约。
   - ④ **「断言不是实测」的交代（用户认可，照记）**：`continue-on-error: true` 在 job 级的语义（job 显示红叉、整个 run 结论仍为 success）**本轮没有实测** —— 要实测得往 `main` 推一个故意让哨兵红的提交，代价不划算，故如实写明而不是含糊过去。**同时把依赖关系拆清楚**：commit 一 要的「两条失败可区分」这个命题**不依赖**那次未做的实测 —— 它由三条各自独立成立的机制共同保证：**job 名**（「gate / 本仓回归」vs「sentinel / 上游漂移」）、**失败注解**（`::error` vs `::warning`，各自把「这条红意味着什么」写在失败输出自己身上）、**两份具名产物**（`pip-freeze-gate` / `pip-freeze-sentinel`）。**拆清依赖关系比笼统说「应该没问题」强**：前者说明白了哪一条是承重的、哪一条只是锦上添花。
 
-**41. postgres 的 healthcheck 是一个结构上无法失败的探针 —— `depends_on: service_healthy` 这道门一个半月来没验过凭据，且不可能因凭据问题红** —— 状态：**记账（不修，待裁）**（2026-09-15，修 32 时在同一文件同几行下发现）
+**41. postgres 的 healthcheck 是一个结构上无法失败的探针 —— `depends_on: service_healthy` 这道门一个半月来没验过凭据，且不可能因凭据问题红** —— 状态：**已修**（B 轮 `3da6156` `a3b51d4` `33aba7b` `0619d53` `809a78c` `90167f4` `bc072ea`；A 轮 `c08c8fc` `008874d`，判别力收尾 `e9cbdde`，结案 = 本条目所在提交，2026-09-16）
 - **形态**：`docker-compose.local.yml` 与 `docker-compose.prod.yml` 的 postgres 服务：
   `test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]`。变量为空时 shell 展开成 `pg_isready -U  -d `，`-d` 被当成用户名 —— 日志里于是每 10 秒一行 `FATAL: role "-d" does not exist`，**自 2026-08-17 起持续**（`docker logs character-distill-postgres-1` 首行之后即是）。
 - **门看着在，实际什么都不守**：容器全程 `(healthy)`，而 `app` 的 `depends_on: postgres: condition: service_healthy` 正是靠这个结论放行。也就是说，这道被当作「库就绪」的保证，**一个半月里连一次凭据都没验过**，且没有任何一条路径会让它因凭据问题变红。
 - **为什么 `:?` 修不好它（所以不是 32 的尾巴）**：即便变量补齐、`-U` / `-d` 拿到正确名字，**`pg_isready` 依然不会因凭据错而失败**。官方语义写得很清楚：*"It is not necessary to supply correct user name, password, or database name values to obtain the server status"* —— 它回答的是「服务器在不在应答」，不是「我连得上」。实测：`pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}`（两变量为空）输出 `accepting connections` 且 **exit=0**。
 - **定性：不是配错了，是选错了检查手段。** 用一个**结构上无法失败**的探针当门 —— 与缺陷 32/34 同族（失败被吞成正常），但**不同处**：32 是「缺变量静默降级」，34 是「输出非空即放行」，这一条是「**探针的命题与门的命题不是同一个**」：门的命题是「库可用」，探针的命题是「库在应答」。
 - **可辨性缺口**：唯一的信号是 PG 自己日志里的 FATAL 行，而它**不在**任何被监控的地方；容器状态、`docker compose ps`、`config` 输出一律正常。与 §四「两种不同成因的失败若共用一个信号」同源 —— 这里更极端：**根本没有信号**。
-- **处置方向（记在条目里，不实现）**：把探针换成能因凭据失败而失败的形态，例如 `CMD-SHELL: psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c 'select 1'`（`postgres` 镜像自带 `psql`；认证失败 → 非零退出 → 容器 `unhealthy` → `app` 不放行）。**代价必须一起裁**：这会让「库连不上」从「app 静默起来、请求时才报」变成「app 直接起不来」—— 那是**故意**的（正是本次要的），但它同时意味着**一次认证配置错误会拦下整条启动链**，是否接受要用户定；两个文件同形，须同批。
 - **与本批（32+33）分开的理由（用户裁定）**：本批命题是「缺变量不静默」+「凭据不走命令行」；这条修的是「健康检查不检查凭据」—— **同病不同处**，混进同一 commit 会让「哪行因哪个动因改动」说不清。
-- **判据命令**：`grep -n 'pg_isready' docker-compose.local.yml docker-compose.prod.yml`；复现 `docker logs --tail 20 character-distill-postgres-1`（应持续出现 `FATAL: role "-d" does not exist`）；探针语义自证 `docker exec character-distill-postgres-1 sh -c 'pg_isready -U  -d ; echo exit=$?'`（**输出 exit=0** 即本条成立）
+- **三层修法（各层的判据不是同一件事，故各锁各的）**：
+  - **① pg 凭据探针**（A 轮 `c08c8fc`）：两个编排文件的 postgres healthcheck 改成**逐字相同**的一条 `psql -tAc 'select 1'`，`-h` 用**服务名** `postgres`（与 app 连库同一条路径、同一套 `pg_hba` 规则），口令以 `$$POSTGRES_PASSWORD` 在**容器内**展开（容器配置里存的是变量名，`docker inspect` 看不到值），`PGCONNECT_TIMEOUT=3` 小于该 healthcheck 的 `timeout=5s`（否则「连不上」与「连得慢」又共用一个信号），stderr 不重定向（认证失败原文进健康日志）。**为什么 `-h` 不能用环回**：官方镜像里 unix socket 与 127.0.0.1 都是 `trust`，只有非环回地址才走 scram —— 写成环回会让探针**又能「永远成功」**（实测）。
+  - **② app 就绪端点**（B 轮 `3da6156` + `a3b51d4` + `0619d53`）：`GET /api/health/ready` 真调 `storage.ping()`；`StorageBase.ping()` 是「跑一条读语句」而不是「取到连接」，SQLite 那份读的是 `sqlite_master`（不读文件的语句不构成探测）。
+  - **③ 部署两段门**（B 轮 `33aba7b` + `809a78c`）：两个区域各跑**存活**（`/api/health`，不碰库）→ **就绪**（`/api/health/ready`，真查库）两段；容器镜像的 `HEALTHCHECK` 同走就绪路径。
+  - **各层的锁**：① `tests/test_pg_healthcheck.py`（7 条，**YAML 解析不 grep**，postgres 服务集合由镜像派生 —— 新增编排文件或改名服务自动进覆盖；负控「解析不出任何 postgres 服务」防其余断言空转；「所有此类服务逐字相同」那条兑现「两份定义」这个取舍）② `tests/test_storage_ping.py` + `tests/test_health_ready.py` ③ `tests/test_health_probe_targets.py`。
+  - **各层的实跑证据**：① `tests/perf/credtest_pg_healthcheck.py` —— 独立项目 `-p credtest` + 自有卷，healthcheck **从仓里那份解析读取**（不另抄一份，否则验的是脚本里的命令而不是仓里的命令）；实测三场景 postgres `healthy → unhealthy → healthy`，app 只在第一场景被放行。**场景 3 是本条最完整的一次显形**：换回 `pg_isready`、同一条错口令下 postgres 报 `healthy`、app 被放行，而它自己的 `/api/health/ready` 答 **503** —— 「门说可以，门后面的东西说不行」，门的命题与它要保证的命题不是同一个。② 由同一脚本的场景 1/3 顺带真跑（好凭据 200 / 坏凭据 503）。B 轮当时的证据是临时 docker 实跑，**未入库**（A 轮的 credtest 脚本是唯一入库的实跑产物）。
+  - **变异矩阵**：A 组 `tests/perf/pg_healthcheck_mutations.py`（A-1～A-7，**7 条全 RED 且红在预期那句**：退回 `pg_isready` / `-h` 改环回 / 删 `-h` / 口令改 `${...}` 插值 / 只改一份的 `PGCONNECT_TIMEOUT` / 服务改名而探针不改 / 锁的解析恒返回空）；B 组 `tests/perf/ping_mutations.py`（B-1～B-14，15 条）。两条驱动都**复用** `route_facts_mutations.py` 的 `_apply` / `_restore` / `_run`，不复制实现。
+- **已知取舍（用户认可，照记）**：
+  - **500 与 503 不是同一件事**：`STORAGE_BACKEND` 未声明时 `get_storage()` 在 **Depends 阶段**抛，就绪端点答 **500**；凭据/连通性故障在端点内部被接住，答 **503**。两者共用一个信号的余地是**故意**留的（「配置没给」与「库连不上」要能分开），代价是调用方读状态码时要多认一种。
+  - **一次认证配置错误会拦下整条启动链**：这是本次要的（从前是 app 静默起来、请求时才报），但代价就是**配置层故障会让 app 直接起不来**。
+  - **健康检查命令是两份定义**（prod / local 各一份），由 `tests/test_pg_healthcheck.py` 的「逐字相同」那条强制一致。**不抽共享的原因**：部署只 scp `docker-compose.prod.yml` 这一个文件到服务器，抽成共享脚本或共享 compose 文件会改动两区部署流程并新增挂载依赖 —— 拿「多一层共享」换「少一处重复」，而那层共享正是能悄悄漂移的地方。
+- **记账（不修）**：
+  - **`web/server.py` 启动时连库失败仍为非致命**（有意的设计）：就绪端点与部署门是**事后**发现凭据问题的那一道，进程本身不因库不可用而退出。
+  - **变异驱动还原时会覆盖期间对靶子文件的外部修改**：`_restore` 把 `TARGETS` 里每个文件按开跑那一刻的字节写回。跑矩阵期间编辑靶子文件 = 编辑被静默吞掉。这条写进了 A 组驱动的 docstring，属工具的固有形态（要保留「逐字节还原」这个不变量，就得接受它）。
+- **运维注记**：B、A 两轮**尚未部署**。首次部署时，就绪检查门会**第一次**在生产凭据上做验证 —— 若生产 `.env` 与卷里的口令不一致，app 将**起不来**（那是本条修好之后才可能出现的红，不是新的故障面）。
+- **判据命令**：`grep -rnE '^[[:space:]]*test:.*pg_isready' docker-compose.prod.yml docker-compose.local.yml`（应为 0，出现即在回退 —— **注意锚在 `test:` 字段上**：上面那四条注释里**故意**写着 `pg_isready` 这三个字（那段就是在讲它为什么不能用），只按词 grep 会把这四条解释文字当成回退，而「判据必须能区分机制与被删机制的描述」），`python tests/perf/pg_healthcheck_mutations.py`（A-1～A-7，末行给结论）、`python tests/perf/ping_mutations.py`、`python -m pytest tests/test_pg_healthcheck.py tests/test_storage_ping.py tests/test_health_ready.py tests/test_health_probe_targets.py -q`；**历史现场复现**（已不再成立，留作对照）：`docker logs --tail 20 character-distill-postgres-1` 曾持续出现 `FATAL: role "-d" does not exist`，`docker exec character-distill-postgres-1 sh -c 'pg_isready -U  -d ; echo exit=$?'` 曾输出 `exit=0`。
 
 **42. 判据读的是「看起来像」而不是事实 —— 同一形态四处显形：`Form(...)` 的 AST 形状 / 并列身份按模块名 / 按 `__file__` 字符串 / 正文通道按字段名** —— 状态：**已修**（第 1 步 `7009d77` + `3e2670d` + `2c9fee9`，第 3 步 `fbb9066`，第 3a 步 `efa36a6`，第 3b 步 `c959553`，结案 = 本条目所在提交，2026-09-15）
 - **病灶的通用形态**：判据与被判事实之间**隔着的东西**，就是能骗人的地方。四处实例「隔的东西」各不同、失效方式**逐字一样**：**静默漏过** —— 该红的没红，且没有任何东西报错。已升格为 §四 通用判据（「判据不得建立在『看起来像』之上」），本条是它的立项来源。
