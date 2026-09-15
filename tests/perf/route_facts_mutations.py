@@ -322,8 +322,8 @@ def _unused_user_endpoints'''),
 # `test_l5_metadata_policy_is_neither_stale_nor_reasonless` 会红，而那是**按设计**工作，
 # 不该混进这次变异的红源里。故把策略表一并收敛到同一条 op。
 #
-# 第 1 条锚随缺陷 42 结案换过两次形态：3b 之前 L5 自带一份 `_form_operations()`（读
-# `route_facts._FORM_CONTENT_TYPES` / `_METHODS` 重算），3b 改成调事实层；结案这一步
+# 第 1 条锚随缺陷 42 结案换过两次形态：3b 之前 L5 自带一份 `_form_operations()`（跨层去读
+# 事实层的两个私有常量 `_FORM_CONTENT_TYPES` / `_METHODS` 重算），3b 改成调事实层；结案这一步
 # 再把「怎么算合规」从**按名字排除**（`fields - {"file"} - 元数据`）改成**按 schema 判
 # 文件字段**。迁移前的两半旧形态合起来就是：**覆盖面写死一条 op** + **按字段名排除** ——
 # 下面这条锚把两半一次退回，命题（判据只锁一条 op、且看不见改名的正文通道）原样保留。
