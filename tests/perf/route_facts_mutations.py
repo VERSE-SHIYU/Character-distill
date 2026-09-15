@@ -238,11 +238,9 @@ _X_ANCHOR_TF = ('        try:\n'
                 '        except OSError:      # 路径不存在（如只剩 .pyc）—— 不是同一份文件\n'
                 '            return False')
 
-# X-3/X-5 的别名路径：`web/../web/server.py` —— **两个平台**都是「字符串不同、指向同一份
-# 文件」。原先翻盘符大小写（`_p[:1].swapcase()`）是**只在 Windows 成立**的写法：Linux 上
-# 首字符是 `/`，翻完还是 `/`，X-3 退化成 X-4、X-5 拿不到它想证明的那个前提（审计实测），
-# 而结果照样打印「符合预期」—— 变异自己失效却没人知道。驱动器另在 `_alias_gate()` 里
-# 断言这个前提成立（不成立就拒跑），模板里也再写一遍（变异体自身要能自证在探）。
+# X-3/X-5 的别名路径 `web/../web/server.py`：**两个平台**都满足「字符串不同、指向同一份
+# 文件」。为什么不能改用「翻首字符大小写」那条只在 Windows 成立的写法、以及 `_alias_gate()`
+# 的前置断言，见模块 docstring 的「跨平台」一段。
 X_GROUP = [
     ("X-3 经 web/../web 别名路径以 srv_alias 装载同一份 server.py",
      "tests/test_route_facts.py",
