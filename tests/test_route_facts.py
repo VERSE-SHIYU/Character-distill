@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from typing import Annotated
 
@@ -187,8 +188,12 @@ def test_fact_layer_describes_the_repo_app_object_under_a_single_identity():
     模块集也要它），不先跑一遍，「第二个身份」可能还没被加载，断言就会在它出现之前通过
     —— 那样的锁是纸锁（实测：只改枚举那处、不先跑默认路径，本用例全绿）。
 
-    最后一条按**文件**而不是按名字找并列身份：名字是代理指标，换个别名（``web.server``
-    之外的名字、或第三方 importlib 装载）就抓不到 —— 而这一层存在的理由正是拒绝代理指标。
+    最后一条按**文件身份**找并列身份，而不是按模块名、也不是按 ``__file__`` 字符串相等：
+    名字是代理指标；**字符串相等同样是代理指标** —— 大小写不同的盘符、分隔符差异、符号
+    链接路径都指向同一份文件却比对不等（实测：``spec_from_file_location`` 用改过盘符
+    大小写的路径以别名装载同一份装配层文件，字符串相等为假，本用例当时全绿）。文件身份
+    以**文件系统**为准（``os.path.samefile``）。路径不存在（例如只剩 ``.pyc``）或没有
+    ``__file__`` 的模块跳过 —— 只接 ``OSError``，不写宽 except。
     """
     import server as server_module
 
@@ -200,11 +205,18 @@ def test_fact_layer_describes_the_repo_app_object_under_a_single_identity():
     assert "web.server" not in sys.modules, (
         "server 模块出现了并列身份 'web.server'：同一文件会被执行两次，对象比对静默错位")
 
-    aliases = sorted(
-        name for name, mod in sys.modules.items()
-        if getattr(mod, "__file__", None) is not None
-        and getattr(mod, "__file__", None) == getattr(server_module, "__file__", None)
-    )
+    entry_file = getattr(server_module, "__file__", None)
+
+    def _is_entry_file(mod) -> bool:
+        path = getattr(mod, "__file__", None)
+        if not path or not entry_file:
+            return False
+        try:
+            return os.path.samefile(path, entry_file)
+        except OSError:      # 路径不存在（如只剩 .pyc）—— 不是同一份文件
+            return False
+
+    aliases = sorted(name for name, mod in sys.modules.items() if _is_entry_file(mod))
     assert aliases == ["server"], (
         f"装配层这一份文件有并列的模块身份 {aliases} —— 同一文件被加载多次，"
         "得到互不相干的模块对象，`is` 与属性比对静默为假")
