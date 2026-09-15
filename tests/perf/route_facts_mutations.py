@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 四组共 23 条，逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 五组共 28 条，逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -127,6 +127,32 @@ F_GROUP = [
                      '    return _cache["spec"]',
                      '    return _spec_from(app().routes)')])],
      "RED", "缓存没生效"),
+    # F-10～F-12：第 3a 步 —— 新公开的「表单 op 枚举」。三条都只动 `form_operations`
+    # 自己的判据，不碰 `_form_media`（后者是 form_fields 共用的那把尺，F-5 已打过）。
+    ("F-10 form_operations 只认 multipart（漏 urlencoded 分支）",
+     "tests/test_route_facts.py",
+     [("repl", RF, [('        if method.lower() in _METHODS and _form_media(item[method])',
+                     '        if method.lower() in _METHODS\n'
+                     '        and any(ct in ((item[method].get("requestBody") or {}).get("content") or {})\n'
+                     '                for ct in ("multipart/form-data",))')])],
+     "RED", "test_synth_form_operations_are_exactly_the_declared_routes"),
+    ("F-11 form_operations 恒返回 set()",
+     "tests/test_route_facts.py",
+     [("repl", RF, [('    spec = openapi() if spec is None else spec\n'
+                     '    return {\n'
+                     '        (path, method.lower())\n'
+                     '        for path, item in spec.get("paths", {}).items()\n'
+                     '        for method in item\n'
+                     '        if method.lower() in _METHODS and _form_media(item[method])\n'
+                     '    }',
+                     '    return set()')])],
+     "RED", ("test_synth_form_operations_are_exactly_the_declared_routes",
+             "test_every_form_operation_exposes_its_fields")),
+    ("F-12 form_operations 不看 content-type（把所有 op 都算进去）",
+     "tests/test_route_facts.py",
+     [("repl", RF, [('        if method.lower() in _METHODS and _form_media(item[method])',
+                     '        if method.lower() in _METHODS')])],
+     "RED", "test_synth_form_operations_are_exactly_the_declared_routes"),
 ]
 
 # F-3：容器档 —— 见模块 docstring「F-3 为什么单独一档」
@@ -490,8 +516,12 @@ def main() -> int:
             want = {"RED": "RED", "RED-container": "RED", "OK": "OK"}.get(expect, "green")
             if got != want:
                 mismatches.append(f"{label}：期望 {want} 实得 {got}")
-            if marker and not any(marker in k for k in keep):
-                mismatches.append(f"{label}：红源里没有 {marker!r}（红的不是那条断言）")
+            # marker 可为单个串或一串（一条变异可能同时该红两条断言，如 F-11）——
+            # 全部命中才算符合，缺一即记 mismatch。
+            marks = (marker,) if isinstance(marker, str) else (marker or ())
+            missing = [m for m in marks if not any(m in k for k in keep)]
+            if missing:
+                mismatches.append(f"{label}：红源里没有 {missing!r}（红的不是那条断言）")
             print(f"\n### {label}   期望={want}  实得={got}")
             for k in keep:
                 print("   ", k)

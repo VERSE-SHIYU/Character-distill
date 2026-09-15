@@ -27,11 +27,11 @@ from fastapi import APIRouter, Depends, FastAPI, File, Form, UploadFile
 
 import route_facts
 from route_facts import (
-    _FORM_CONTENT_TYPES,
     _METHODS,
     census_diff,
     enumerate_routes,
     form_fields,
+    form_operations,
     injected_params,
     is_file_field,
     openapi,
@@ -164,6 +164,33 @@ def test_synth_injected_params_across_spellings(path, expected):
     assert injected_params(route, _dep_fn) == expected
 
 
+# 合成 app 里声明了表单 content 的 op —— 期望值写死在这里，与仓库路由变动解耦。
+# `/synth-forms/attr` 是**纯 Form**（走 urlencoded），另外五条带文件字段（走 multipart）；
+# `/synth-deps/*` 四条 GET 没有任何 requestBody，故一条都不该出现在集合里。
+_SYN_FORM_OPS = {
+    ("/synth-forms/positional", "post"),
+    ("/synth-forms/kwonly", "post"),
+    ("/synth-forms/annotated", "post"),
+    ("/synth-forms/attr", "post"),
+    ("/synth-forms/optional-file", "post"),
+    ("/synth-forms/required-file", "post"),
+}
+
+
+def test_synth_form_operations_are_exactly_the_declared_routes():
+    """`form_operations` 必须**恰等于**合成表单路由集合 —— 两个方向一起判。
+
+    少一条 = 判据只认了某个 content-type 分支（urlencoded 那条纯 Form 路由最容易被漏）；
+    多一条 = 判据没在看 content-type（`/synth-deps/*` 那四条 GET 会被卷进来）。两个方向
+    的病灶不同，故失败信息把两侧差集分开点名，而不是只报「不相等」。
+    """
+    ops = form_operations(_SYN_SPEC)
+    assert ops == _SYN_FORM_OPS, (
+        f"合成 app 的表单 op 集合不对：多出 {sorted(ops - _SYN_FORM_OPS)}、"
+        f"少了 {sorted(_SYN_FORM_OPS - ops)} —— 没有任何 requestBody 的路由（如 "
+        "/synth-deps/* 那四条 GET）不该出现在这里")
+
+
 def test_form_fields_raises_on_unknown_operation():
     """契约：查不到就 raise。空字典是「这条路由没有表单字段」的合法答案，两者不能混。"""
     with pytest.raises(KeyError):
@@ -278,22 +305,15 @@ def test_census_is_not_vacuous():
 def test_every_form_operation_exposes_its_fields():
     """对文档里**每一个**声明了表单 content 的 operation，`form_fields` 都必须非空。
 
-    从 spec 派生、不点名任何路径 —— 新增一条表单路由自动纳入，删掉全部表单路由则由
-    末尾的 `checked > 0` 挡住「空集恒真」。
+    集合从 `form_operations` 取，不在本用例里重算 —— 同一逻辑两份实现，改一处另一处
+    静默漂移（这正是本步要消灭的形态）。两条命题分开报：集合非空（空集会让「每个都
+    满足」恒真，是最危险的假绿），以及逐条 op 的字段解析非空。
     """
-    spec = openapi()
-    checked = 0
-    for path, item in spec.get("paths", {}).items():
-        for method in item:
-            if method.lower() not in _METHODS:
-                continue
-            content = (item[method].get("requestBody") or {}).get("content") or {}
-            if not any(ct in content for ct in _FORM_CONTENT_TYPES):
-                continue
-            checked += 1
-            assert form_fields(path, method, spec=spec), (
-                f"{method.upper()} {path} 声明了表单 content 却解析不出字段 —— "
-                "探测器（$ref 解析 / content 分支）失效")
-    assert checked > 0, (
-        "spec 里连一个表单 operation 都没有 —— 要么真的删光了，要么 spec 生成失效，"
-        "两种都该有人看一眼，不该静默通过")
+    ops = form_operations()
+    assert ops, (
+        "spec 里连一个声明了表单 content 的 op 都没有 —— 要么真的删光了，要么 spec "
+        "生成失效，两种都该有人看一眼，不该静默通过")
+    for path, method in sorted(ops):
+        assert form_fields(path, method), (
+            f"{method.upper()} {path} 声明了表单 content 却解析不出字段 —— "
+            "探测器（$ref 解析 / content 分支）失效")

@@ -156,6 +156,31 @@ def _resolve(schema, spec: dict, _depth: int = 0):
     return _resolve(spec["components"]["schemas"][name], spec, _depth + 1)
 
 
+def _form_media(op: dict) -> list[dict]:
+    """该 operation 声明了的表单 media —— multipart 与 urlencoded **两个分支**都认。
+
+    ``form_operations``（哪些 op 有表单）与 ``form_fields``（那些 op 上有什么字段）共用
+    这一份判定：各写一遍的话，将来只改其中一处，两者对同一条 op 的答案就会不一致 ——
+    而这种不一致**不报错**，只让调用方看到另一批 op。
+    """
+    content = (op.get("requestBody") or {}).get("content") or {}
+    return [content[ct] for ct in _FORM_CONTENT_TYPES if ct in content]
+
+
+def form_operations(spec: dict | None = None) -> set[tuple[str, str]]:
+    """该 spec 里声明了表单 content 的 ``{(path, method小写)}``。
+
+    **派生，不写手工清单**：手工清单不会有新增的那条表单路由，于是它不会红、只会假绿。
+    """
+    spec = openapi() if spec is None else spec
+    return {
+        (path, method.lower())
+        for path, item in spec.get("paths", {}).items()
+        for method in item
+        if method.lower() in _METHODS and _form_media(item[method])
+    }
+
+
 def form_fields(path: str, method: str, spec: dict | None = None) -> dict[str, dict]:
     """该 operation 的表单字段 → 字段 schema（已解 ``$ref``）。
 
@@ -166,12 +191,8 @@ def form_fields(path: str, method: str, spec: dict | None = None) -> dict[str, d
     op = spec.get("paths", {}).get(path, {}).get(method.lower())
     if op is None:
         raise KeyError(f"{method.upper()} {path} 不在该 spec 里")
-    content = (op.get("requestBody") or {}).get("content") or {}
     out: dict[str, dict] = {}
-    for ctype in _FORM_CONTENT_TYPES:
-        media = content.get(ctype)
-        if media is None:
-            continue
+    for media in _form_media(op):
         body = _resolve(media.get("schema") or {}, spec)
         for name, sub in (body.get("properties") or {}).items():
             out[name] = _resolve(sub, spec)
