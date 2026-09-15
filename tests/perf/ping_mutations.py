@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""缺陷 41（B 轮）变异矩阵驱动 —— 一组共 10 条
-（B-1、B-1b、B-2、B-3、B-4、B-5、B-6、B-7、B-8、B-9）。
+"""缺陷 41（B 轮）变异矩阵驱动 —— 一组共 15 条
+（B-1、B-1b、B-2、B-3、B-4、B-5、B-6、B-7、B-8、B-9、B-10、B-11、B-12、B-13、B-14）。
 
 **为什么入库。** B 轮四条 commit 的判据引用本脚本跑出来的「哪条红、红在哪句」。
 数字骑在仓外脚本上追不回来（§四：文档引用的数字，其产数脚本与原始产物也要入库）。
@@ -20,8 +20,11 @@
     python tests/perf/ping_mutations.py                 # 全部 9 条
     python tests/perf/ping_mutations.py --group B1B2    # 只跑前两条
 
-九条覆盖三层：B-1/B-2 打存储层契约（`storage/`），B-3/B-4/B-5 打就绪端点（`web/server.py`），
-B-6～B-9 打三处探针目标的锁（`Dockerfile` / `deploy.yml` / 锁自己）。
+十五条覆盖三层：B-1/B-1b/B-2 打存储层契约（`storage/`），B-3/B-4/B-5/B-13 打就绪端点
+（`web/server.py`），B-6～B-12/B-14 打三处探针目标的锁（`Dockerfile` / `deploy.yml` / 锁自己）。
+
+**B-1b 与 B-13 各自与 B-1、B-5 用的是同一处改动**：不是重复，是同一个洞在两个平台上、或
+两把锁上各有一条判别面 —— 哪一把先红、红在哪句，正是要留档的东西。
 """
 from __future__ import annotations
 
@@ -85,6 +88,23 @@ _ORDER_MUTATION = [
     (_SG_BLOCKS, _swapped(_SG_BLOCKS)),
 ]
 
+# B-14 的载荷：插在 deploy-sg 之前的第三个区域，gate 定义齐全但只被调用一次。
+# 缩进对齐真实 job（job 键 2 空格、run 块内容 12 空格），故锁的解析器按同一条规矩看得见它。
+_XX_JOB = (
+    "\n"
+    "  deploy-xx:\n"
+    "    needs: [resolve-digest]\n"
+    "    runs-on: ubuntu-latest\n"
+    "    steps:\n"
+    "      - name: Probe\n"
+    "        run: |\n"
+    "            XX_gate() {\n"
+    '              XX_stage="$1"; XX_path="$2"; XX_why="$3"\n'
+    '              curl -sf --max-time 5 "http://localhost:7860${XX_path}"\n'
+    "            }\n"
+    '            XX_gate "readiness" "/api/health/ready"\n'
+)
+
 # 每条 = (编号 + 命题, 靶子测试, [(动作, 文件, 载荷)], 期望, 红源标记)
 B_GROUP = [
     ("B-1  SQLite 的 ping 只取连接、不执行语句",
@@ -130,7 +150,7 @@ B_GROUP = [
      TARGETS_LOCK,
      [("repl", DOCKERFILE, [("urlopen('http://localhost:7860/api/health/ready')",
                              "urlopen('http://localhost:7860/api/health')")])],
-     "RED", "没探就绪路径"),
+     "RED", "在所有需要它红的场合都是绿的"),
 
     ("B-7  deploy.yml 删掉 SG 的第二段",
      TARGETS_LOCK,
@@ -140,19 +160,58 @@ B_GROUP = [
               SG_rollback
               exit 1
             fi
-''', '''            # （变异：SG 的第二段被删掉）
+''', '''            # （变异：SG 的第二次 gate 调用被删掉）
 ''')])],
-     "RED", "deploy-sg"),
+     "RED", "两段门至少要两次调用"),
 
     ("B-8  deploy.yml 两段顺序颠倒",
      TARGETS_LOCK,
      [("repl", DEPLOY, _ORDER_MUTATION)],
-     "RED", "把两段顺序弄反了"),
+     "RED", "第一段是存活检查，不该依赖库"),
 
     ("B-9  锁自己的解析函数恒返回空",
      TARGETS_LOCK,
      [("repl", LOCK, [("    out: set[str] = set()", "    return set()")])],
      "RED", "解析器瞎了"),
+
+    ("B-10 删掉 SG 存活检查的调用行（注释与文案保留）",
+     TARGETS_LOCK,
+     [("repl", DEPLOY, [('''            # 第一段：存活。/api/health 不碰库，只说明进程起来了。
+            if ! SG_gate "liveness" "/api/health" "app 未起来（/api/health 不通），回滚"; then
+              SG_rollback
+              exit 1
+            fi
+''', '''            # 第一段：存活。/api/health 不碰库，只说明进程起来了。
+            # （变异：SG 的存活检查调用行被删掉，注释与失败文案原样留着）
+''')])],
+     "RED", "两段门至少要两次调用"),
+
+    ("B-11 SG 的存活检查改探就绪路径",
+     TARGETS_LOCK,
+     [("repl", DEPLOY, [('SG_gate "liveness" "/api/health" "app 未起来（/api/health 不通），回滚"',
+                         'SG_gate "liveness" "/api/health/ready" "app 未起来（/api/health 不通），回滚"')])],
+     "RED", "第一段是存活检查，不该依赖库"),
+
+    ("B-12 两个区域的 gate 都把 curl 写成固定路径",
+     TARGETS_LOCK,
+     [("repl", DEPLOY, [
+         ('curl -sf --max-time 5 "http://localhost:7860${SZ_path}"',
+          'curl -sf --max-time 5 "http://localhost:7860/api/health"'),
+         ('curl -sf --max-time 5 "http://localhost:7860${SG_path}"',
+          'curl -sf --max-time 5 "http://localhost:7860/api/health"'),
+     ])],
+     "RED", "写死的路径"),
+
+    ("B-13 就绪端点不调 ping、直接回 ready（本锁红）",
+     TARGETS_LOCK,
+     [("repl", SERVER, [('    try:\n        await storage.ping()\n    except Exception as exc:',
+                         '    try:\n        pass\n    except Exception as exc:')])],
+     "RED", "在所有需要它红的场合都是绿的"),
+
+    ("B-14 新增一个只调用一次 gate 的 deploy-xx",
+     TARGETS_LOCK,
+     [("repl", DEPLOY, [("\n  deploy-sg:", _XX_JOB + "\n  deploy-sg:")])],
+     "RED", "两段门至少要两次调用"),
 ]
 
 GROUPS = {"B": B_GROUP}
