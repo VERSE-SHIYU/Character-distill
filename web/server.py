@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
@@ -71,6 +72,8 @@ from deps import get_config, get_storage, reset_llm_and_dependents, _session_cle
 from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
+
+logger = logging.getLogger(__name__)
 
 _FRONTEND_DIST_DIR = _WEB_DIR / "frontend" / "dist"
 _LEGACY_STATIC_DIR = _WEB_DIR / "static"
@@ -241,7 +244,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import time
 
-PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/announcement/active"}
+PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/", "/api/inter-node/")
 
 # Throttle last_active updates to once per 60s per user
@@ -329,7 +332,30 @@ app.include_router(_announce_router)
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    """只看**存活**：进程起来了、能应答。刻意不碰库。
+
+    与 `/api/health/ready` 的分工不可合并：容器存活与库可用是两件事。合成一条会让
+    「app 没起来」与「app 起来了但库连不上」共用一个红信号 —— 缺陷 41 那个形态，
+    也正是部署脚本要分两段门的原因。
+    """
     return {"status": "ok"}
+
+
+@app.get("/api/health/ready")
+async def health_ready(
+    storage: StorageBase = Depends(get_storage),
+) -> JSONResponse:
+    """就绪：进程在跑 **且** 存储答得上话（真查一次库）。
+
+    响应体只带状态词。异常类型与文本只进日志 —— 那条路径上的异常可能带着 DSN、主机名、
+    库名、用户名，而本路径在 `PUBLIC_PATHS` 里（无 token 可访问），谁都能取。
+    """
+    try:
+        await storage.ping()
+    except Exception as exc:
+        logger.warning("[health] readiness probe failed: %s: %s", type(exc).__name__, exc)
+        return JSONResponse({"status": "unready"}, status_code=503)
+    return JSONResponse({"status": "ready"})
 
 
 @app.get("/api/settings/config")
