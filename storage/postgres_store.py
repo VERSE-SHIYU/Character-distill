@@ -97,6 +97,16 @@ class PostgresStore(StorageBase):
         await self._ensure_initialized()
         return _PoolContext(self._pool)  # type: ignore[arg-type]
 
+    async def ping(self) -> None:
+        """在池上跑一条语句；语义见 `StorageBase.ping`。
+
+        `_connect()` 会先走 `_ensure_initialized()`，故进程里的第一次 ping 顺带建池、
+        跑迁移。这是有意的：**就绪包含 schema 就绪** —— 池建起来了而迁移没跑完的实例，
+        对调用方并不「就绪」。
+        """
+        async with await self._connect() as conn:
+            await conn.fetchval("SELECT 1")
+
     @staticmethod
     def _normalize_value(val):
         """Normalize non-JSON-serializable types to safe equivalents."""

@@ -1,0 +1,149 @@
+"""`StorageBase.ping()` 的契约、两个后端的实现、以及它的判别力（缺陷 41）。
+
+**为什么要有这个探针**：就绪端点在 PG 凭据错的时候必须红。此前的三层探针在那种场合
+全是绿的 —— `pg_isready` 只握手不认证、启动期的库异常被 print 掉、`/api/health` 压根
+不碰库。三者共用一个非红信号，于是「库不可用」与「一切正常」分不出来（§四）。
+
+**为什么 ping 要执行语句而不是只取连接**：池可能交回一条已失效的连接，而 acquire 路径
+本身完全正常。`test_sqlite_ping_raises_when_locked_out_mid_flight` 就是这句话的现场 ——
+连接取得到，语句跑不动。
+
+**变异（B-1/B-2，驱动在 `tests/perf/ping_mutations.py`）**：
+  - B-1 让 SQLite 的 ping 只取连接、不执行语句 → `test_..._locked_out_mid_flight` 红；
+  - B-2 摘掉 `StorageBase.ping` 上的 `@abstractmethod` → 契约锁那两条红。
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from conftest import pg_reachable, pg_required, pg_skip_reason
+
+from storage.base import StorageBase
+from storage.postgres_store import PostgresStore
+from storage.sqlite_store import SQLiteStore
+
+
+def _dsn() -> str:
+    return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
+
+
+_pg = pytest.mark.skipif(
+    os.getenv("SKIP_PG_TESTS") == "1" or (not pg_reachable() and not pg_required()),
+    reason=(
+        "SKIP_PG_TESTS=1 显式关闭了 PostgresStore 用例"
+        if os.getenv("SKIP_PG_TESTS") == "1"
+        else pg_skip_reason("StorageBase.ping 的 PG 用例")
+    ),
+)
+
+
+# ── 契约锁 ────────────────────────────────────────────────────────────────────
+
+def _stub_subclass(*omit: str) -> type:
+    """造一个 StorageBase 子类：除 `omit` 外的抽象方法全部给个空实现。
+
+    `omit` 里没有的名字都会进 `__abstractmethods__`，所以「只漏 ping」这一件事要能被
+    单独表达出来 —— 这正是契约锁的前提。若把整个类写死成一个字符串常量的空子类，
+    它会因为漏掉其它 90 个抽象方法而恒抛 TypeError，锁就瞎了（红的成因不可辨，§四）。
+    """
+    ns: dict = {}
+    for name in sorted(StorageBase.__abstractmethods__ - set(omit)):
+        async def _stub(self, *args, **kwargs):
+            return None
+        _stub.__name__ = name
+        ns[name] = _stub
+    return type("_StubStore", (StorageBase,), ns)
+
+
+def test_storage_base_subclass_without_ping_cannot_be_instantiated():
+    """漏实现 ping 的 StorageBase 子类必须**在实例化时**就炸，而不是运行到才炸。
+
+    这是契约锁：`@abstractmethod` 一旦被摘掉，漏实现就变成静默的 —— 实例照常建出来，
+    直到就绪端点调用它才 AttributeError，而且那时已经没有任何东西拦在部署路径上。
+    """
+    cls = _stub_subclass("ping")
+    with pytest.raises(TypeError) as excinfo:
+        cls()
+    assert "ping" in str(excinfo.value), (
+        f"实例化确实抛了 TypeError，但点名的不是 ping：{excinfo.value}")
+
+
+def test_contract_lock_has_teeth():
+    """负控：把 ping 也实现掉，同一套桩子必须能建出实例。
+
+    没有这一条，上面那条可能只是因为「桩子造得不对、恒抛」而绿 —— 那种绿与契约生效的
+    绿长得一样。
+    """
+    cls = _stub_subclass()
+    assert "ping" not in cls.__abstractmethods__
+    instance = cls()
+    assert isinstance(instance, StorageBase)
+    assert callable(getattr(instance, "ping"))
+
+
+# ── SQLite：真 ping ───────────────────────────────────────────────────────────
+
+async def test_sqlite_ping_succeeds_on_usable_database(tmp_path: Path):
+    """正常库上 ping 静默返回（不返回值、不抛异常）。"""
+    store = SQLiteStore(str(tmp_path / "ok.db"))
+    assert await store.ping() is None
+
+
+async def test_sqlite_ping_raises_when_db_path_is_unusable(tmp_path: Path):
+    """库文件路径不可用时 ping 必须抛异常，不能静默。
+
+    构造：路径的上一层是个普通文件 —— `_ensure_initialized` 建目录就失败。
+    """
+    blocker = tmp_path / "afile"
+    blocker.write_text("not a directory", encoding="utf-8")
+    store = SQLiteStore(str(blocker / "x.db"))
+    with pytest.raises(OSError):
+        await store.ping()
+
+
+async def test_sqlite_ping_raises_when_locked_out_mid_flight(tmp_path: Path):
+    """**连接取得到、语句跑不了** —— 缺陷 41 那句话的现场。
+
+    另一个连接持 `BEGIN EXCLUSIVE` 时删档模式（rollback journal）下的读也拿不到共享锁，
+    于是 `_connect()` 成功（journal_mode 那句 PRAGMA 本就允许在锁下跳过），而 `SELECT 1`
+    超时抛 `OperationalError: database is locked`。
+
+    **这条是 B-1 的判别面**：把 ping 改成「只取连接、不执行语句」，上面每一句都还成立、
+    唯独异常不再抛出 —— 它就红了。没有它，「ping 真跑了语句」只是实现细节，没有任何
+    用例在管。
+
+    代价：SQLite 的 busy_timeout 是 5s，两处等待叠加约 15s。这是生产语义的一部分
+    （`_connect()` 里写死的），不为跑得快去动它。
+    """
+    db = tmp_path / "locked.db"
+    store = SQLiteStore(str(db))
+    await store._ensure_initialized()        # 已初始化 = 生产上那个跑着的 store
+
+    holder = sqlite3.connect(str(db), isolation_level=None)
+    try:
+        holder.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            await store.ping()
+    finally:
+        holder.rollback()
+        holder.close()
+
+
+# ── PG：真 ping ───────────────────────────────────────────────────────────────
+
+@_pg
+async def test_pg_ping_succeeds_on_reachable_database():
+    """真 PG 上 ping 静默返回；顺带证明它带起了池与迁移（就绪含 schema 就绪）。"""
+    store = PostgresStore(_dsn())
+    try:
+        assert await store.ping() is None
+    finally:
+        await store.close()

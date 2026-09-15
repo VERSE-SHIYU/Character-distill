@@ -60,6 +60,19 @@ class StorageBase(ABC):
     """Defines storage methods for texts, cards, sessions and messages."""
 
     @abstractmethod
+    async def ping(self) -> None:
+        """证明「后端此刻答得上话」，否则抛异常。成功即静默返回。
+
+        语义：取一条连接**并在它上面执行一条语句**。连接失败、认证失败、语句失败
+        一律原样上抛 —— 就绪要的是「库真的答复了」，不是「没抛错」。
+
+        **为什么不能只取连接**（缺陷 41）：池可能交回一条已失效的连接（服务端重启过、
+        socket 半开、凭据已轮换），而「取到了」这条路径本身完全正常。于是
+        「拿到一条连接」与「库答得上话」是两个命题，只有后者是就绪 —— 探针取前者时，
+        它在所有需要它红的场合都是绿的，与 `pg_isready` 只看端口同型。
+        """
+
+    @abstractmethod
     async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save text content and return the stored record."""
 

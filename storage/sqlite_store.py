@@ -367,6 +367,19 @@ class SQLiteStore(StorageBase):
             logger.warning("[SQLiteStore] journal_mode=WAL skipped under lock: %s", exc)
         return _ConnectionContext(conn)
 
+    async def ping(self) -> None:
+        """在连接上跑一条语句；语义见 `StorageBase.ping`。
+
+        `_connect()` 会先走 `_ensure_initialized()`，故进程里的第一次 ping 顺带建库文件、
+        跑迁移。这是有意的：**就绪包含 schema 就绪**。
+
+        注意 SQLite 的 `_connect()` 本身已写下一串 PRAGMA —— 所以「取到连接」在这里
+        已经比 PG 走得更远。即便如此仍要真跑一条语句：库被排他锁住时 PRAGMA 可能被
+        跳过（见上），语句才是那句「答得上话」。
+        """
+        async with await self._connect() as conn:
+            await conn.execute("SELECT 1")
+
     @staticmethod
     def _normalize_value(val):
         """Normalize non-JSON-serializable types to safe equivalents."""
