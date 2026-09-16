@@ -154,6 +154,24 @@ def test_effective_model_is_cached_per_file(tmp_path):
     assert first is second
 
 
+# ── 承重前提的真跑：本机 compose 够不够格 ──────────────────────────────────────
+
+def test_real_compose_satisfies_both_preconditions():
+    """真跑一遍：本机 compose 两条承重前提（P-a / P-b）都满足。
+
+    **为什么在这条文件里。** 它是唯一一条真跑 compose 的前提用例，故归**默认要 compose**
+    的这条文件管（模块级 `pytestmark`），而不是塞进 `test_compose_capability.py` ——
+    那份文件的其余用例把 `_compose` 整个换成假的，它们在**没有 docker 的机器上也必须跑**，
+    两条环境需求正好相反。逐条挂 mark 是把「默认要 compose」这个 fail-safe 默认换成
+    一张靠人记得维护的表；这里由文件本身承担。
+
+    CI 上它是「钉住的那个 compose 版本确实满足前提」的直接证据 —— 没有它，`build.yml`
+    里那句 `REQUIRE_COMPOSE_TESTS: "1"` 就只是注释里的一个数字。
+    """
+    compose_model.capability_defect.cache_clear()
+    assert compose_model.capability_defect() is None
+
+
 # ── 事实层自己的边界：不许认识本仓 ────────────────────────────────────────────
 
 def test_fact_layer_names_no_repo_specifics():

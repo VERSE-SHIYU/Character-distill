@@ -1,11 +1,16 @@
 """事实层的**承重前提**（P-a / P-b）自己那把锁。
 
-**为什么单独一个文件。** 这些用例**不挂 `COMPOSE_ENV`** —— 它们把 `_compose` 整个换成假的，
-没有 docker 也要真跑（这正是本次修法的重点：前提不能只在「装了 compose 的机器」上被验）。
-而 `test_compose_model.py` 有一条**模块级** `pytestmark = COMPOSE_ENV.skipif(...)`，它盖住
-文件里每一条用例（实测：放进类里也逃不掉）。留在那个文件里，这几条要么被一起 skip 掉、
-要么得把模块级 mark 拆成逐条手工清单 —— 后者把「默认要 compose」这个 fail-safe 默认换成
-一张靠人记得维护的表。故按环境需求分文件：那个文件默认要 compose，这个文件默认不要。
+**本文件默认禁止真跑 compose** —— 真跑用例一律放进 `test_compose_model.py`。
+这里每条用例都把 `_compose` 换成假的，故本文件**没有 docker 也要能跑**（这正是本次修法
+的重点：前提不能只在「装了 compose 的机器」上被验）。默认那条「直接炸」的假实现由 autouse
+fixture 装上，不靠用例自己记得换 —— 忘了换的用例会去调真的 docker，于是「本机装了什么」
+悄悄影响了本该是纯逻辑的判断。
+
+**为什么单独一个文件。** 而 `test_compose_model.py` 有一条**模块级** `pytestmark`
+（环境声明 mark），它盖住文件里每一条用例（实测：放进类里也逃不掉）。
+留在那个文件里，这几条要么被一起 skip 掉、要么得把模块级 mark 拆成逐条手工清单 ——
+后者把「默认要 compose」这个 fail-safe 默认换成一张靠人记得维护的表。故按环境需求分文件：
+那个文件默认要 compose，这个文件默认不要，真跑那条归前者管。
 """
 from __future__ import annotations
 
@@ -14,16 +19,23 @@ from pathlib import Path
 import pytest
 
 import compose_model
-from compose_model import COMPOSE_ENV, ComposeFactError, effective_model, sentinel_values
+from compose_model import ComposeFactError, effective_model, sentinel_values
 
 _FAKE_VERSION = "Docker Compose version v9.9.9 (假探针)\n"
 
 
 @pytest.fixture(autouse=True)
-def _fresh_capability():
-    """每条用例前清缓存 —— 探针结果是进程级缓存的，不清就串味（假探针的结论会被下一条读到）。"""
+def _no_real_compose(monkeypatch):
+    """**本文件的用例不得真跑 compose**；顺带清缓存。
+
+    探针结果是进程级缓存的，不清就串味（假探针的结论会被下一条读到）。
+    """
+    def forbidden(args, **kwargs):
+        raise AssertionError("本文件的用例不得真跑 compose")
+
     compose_model.capability_defect.cache_clear()
     compose_model._effective_model.cache_clear()
+    monkeypatch.setattr(compose_model, "_compose", forbidden)
     yield
     compose_model.capability_defect.cache_clear()
     compose_model._effective_model.cache_clear()
@@ -211,13 +223,4 @@ def test_clean_probe_passes_and_reports_no_defect(monkeypatch):
     没有这条，上面的负控全可以在「永远返回一个原因」的实现下通过 —— 那样本层就恒不可用了。
     """
     _install_probe(monkeypatch, control=_ok, missing=_ok, leaking=_ok)
-    assert compose_model.capability_defect() is None
-
-
-# ── 真跑：CI 上钉的那个版本确实满足前提 ────────────────────────────────────────
-
-@COMPOSE_ENV.skipif("承重前提的真跑用例")
-def test_real_compose_satisfies_both_preconditions():
-    """真跑一遍：本机 compose 两条前提都满足（CI 上这是「钉住的版本够格」的直接证据）。"""
-    compose_model.capability_defect.cache_clear()
     assert compose_model.capability_defect() is None
