@@ -269,10 +269,24 @@ class TextManager:
 
     @staticmethod
     def _extract_pdf(file_path: str) -> str:
-        """Extract text from a digital (text-layer) PDF, returning Markdown.
+        """Extract the text layer of a PDF (digitally generated, not scanned).
 
-        Guards against oversized PDFs (page count) and skips image/vector
-        processing to keep memory bounded. Does NOT OCR scanned PDFs.
+        Reads `page.get_text()` and nothing else — no OCR, no layout model, no
+        inference runtime. The production image ships **no** onnxruntime, and
+        this path must never need one: the Markdown-conversion front-end this
+        used to call pulled onnxruntime in at **package import** time, so a file
+        that could not even be opened still paid for it — and once the image
+        dropped that runtime, every PDF upload failed (缺陷 44 names the library
+        and the chain; the import must not come back, see
+        `test_l6_no_parser_runtime_in_source`).
+
+        Output is plain text, **not Markdown**: no `#` headings are emitted.
+        The frontend's chapter detector then falls through to its
+        "line consisting of 1–4 digits" rule, and page numbers match it — see
+        docs/evidence/pagenum-chapter-rules.json.
+
+        Guards against oversized PDFs (page count) and never rasterises a page,
+        so memory stays bounded. Does NOT OCR scanned PDFs.
         """
         import pymupdf
 
@@ -292,26 +306,16 @@ class TextManager:
                     _MSG["pdf_page_limit"].format(page_count=page_count, max_pages=MAX_PDF_PAGES)
                 )
             try:
-                # 位置即判据：`pymupdf4llm` 在**包 import 期**无条件拉进 onnxruntime（40MB
-                # 推理运行时），而本函数明确不做 OCR（见 docstring）。它必须排在
-                # `pymupdf.open()` 与页数校验都通过之后 —— 打不开的文件不该先付这份代价。
-                # 测试锁 L6 盯这一行（test_text_failure_messages.py）。
-                import pymupdf4llm
-                md_text = pymupdf4llm.to_markdown(
-                    doc,
-                    ignore_images=True,
-                    ignore_graphics=True,
-                    show_progress=False,
-                )
+                pdf_text = "".join(page.get_text() for page in doc)
             except Exception as e:
-                print(f"[TextManager] PDF to_markdown failed: {e!r}")
+                print(f"[TextManager] PDF get_text failed: {e!r}")
                 raise ValueError(_MSG["pdf_parse_failed"]) from e
         finally:
             doc.close()
 
-        if not md_text or not md_text.strip():
+        if not pdf_text or not pdf_text.strip():
             raise ValueError(_MSG["pdf_no_text"])
-        return md_text
+        return pdf_text
 
     @staticmethod
     def _extract_docx(file_path: str) -> str:

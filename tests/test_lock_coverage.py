@@ -149,8 +149,10 @@ def test_only_locally_constructed_raises_are_discriminators(tmp_path):
     变异都撞不到，收进来就是**假缺口**（实测：`test_health_probe_targets.py:133`、
     `test_health_ready.py:48` 的 `raise self._exc`，两条都在 `if self._exc is not None:`
     之下，不是纯抛错包装的体，所以它们原先各占 D 的一席）。
-    `test_text_failure_messages.py:477` 的 `raise _ParserRuntimeTouched(fullname)` 是**就地
-    构造**，收窄后留在 D —— 它不是假缺口，只是本机不可达（环境性，另账）。
+    这里原本还有第三条实测数据：`test_text_failure_messages.py` 里 import 钩子那条
+    `raise _ParserRuntimeTouched(fullname)` —— **就地构造**，收窄后留在 D，不是假缺口，
+    只是本机不可达（环境性，另账）。**C 落地时整条钩子被删了**：解析器运行时已不在仓里，
+    「没触达」成了对空集的断言（假绿），钩子换成静态守卫，那条 `raise` 随之消失。
     """
     p = tmp_path / "synth_transplant.py"
     p.write_text(_SYNTH_TRANSPLANT, encoding="utf-8")

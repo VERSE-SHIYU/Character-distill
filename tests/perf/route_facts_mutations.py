@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 七组共 41 条（F12/R4/X3/V13/I3/P4/T2），逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 七组共 43 条（F12/R4/X3/V13/I3/P4/T4），逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -25,8 +25,8 @@
 隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态），
 **P** 打豁免表校验层 `tests/policy_table.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表），
 **T** 打 `core/text_manager.py` 里解析库的 import **位置**（L6；靶子只指到那一条判据，
-理由见 T 组注释）。**I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；
-收尾核对会点名残留。
+理由见 T 组注释 —— T-1 在 C 落地时换过形态，那条注释里记着换的是什么）。
+**I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
 
 **跨平台。** X 组的别名路径是 `web/../web/server.py` —— 两个平台都满足「字符串与正路不同、
 `samefile` 为真」。原先翻盘符大小写（`E:` → `e:`）**只在 Windows 成立**：Linux 上首字符是
@@ -535,26 +535,33 @@ P_GROUP = [
      "RED", "test_unexpected_is_observed_minus_table"),
 ]
 
-# T-*：解析库的 import 位置（L6 —— 「校验失败的路径不得触达解析器」）。两条各打 L6 的一条
-# 判据：把 import 挪回**函数顶部**打 ②（无守卫的第二条），挪到**模块顶层**打 ①。
+# T-*：解析库的 import 位置（L6 —— 「校验失败的路径不得触达解析器」）。三条各打 L6 的一条
+# 判据：往函数体里插**第二条**解析库 import 打 ②，挪到**模块顶层**打 ①，把 `pymupdf4llm`
+# 这一行放回源码打入口面的静态守卫。
 #
-# **靶子只指到那一条判据（`::test_...` nodeid），不跑整文件** —— T-1 的变异体在本机是
-# 「import pymupdf4llm 又回到失败点之前」，于是**整文件跑**的那些用例会真的去 import
-# onnxruntime，进程在 import 期被打死（缺陷 44 / §五 环境账），拿到的是「跑不出来」而不是
-# 判据红。那是本机环境，不是判据的性质：判据要证明的只是「这一行被挪走它会红、并点名谁」。
-# 容器里（装了 onnxruntime）整文件跑还会多红 tripwire 与 L3 两条 —— 那半边留在这里记着，
-# 本机跑不出来就如实不声称。
+# **T-1 的形态在 C 落地时换过一次，如实记着**：老 T-1 是「把 `import pymupdf4llm` 从
+# `try:` 里挪回 `_extract_pdf` 函数顶部」（两个 repl：顶部加一条、原地删一条）。C 把那条
+# `pymupdf4llm` 整个删了，锚点不复存在 —— 那个变异体现在**崩在 `assert hits == 1` 上**
+# （不是变红：锚点找不到，变异就没发生）。改点后的对象是「**插入**第二条解析库 import」，
+# 形状从「挪回」变成「新插一条」，**不是同一件事** —— 将来对账时别把这两条读成同一条。
+# 老 T-1 想守的那个对象（`pymupdf4llm` 回到源码里）没丢，改由 T-3 打静态守卫。
+#
+# **靶子只指到那一条判据（`::test_...` nodeid），不跑整文件** —— 变异体里的 `import
+# pymupdf4llm` 是真代码：整文件跑会真的 import onnxruntime，进程在 import 期被打死
+# （缺陷 44 / §五 环境账），拿到的是「跑不出来」而不是判据红。那是本机环境，不是判据的
+# 性质：判据要证明的只是「这一行插进去它会红、并点名谁」。T-1/T-3 的插入点都在**函数体
+# 里**（不执行就不 import），所以本机能跑出红来；放到模块顶层就会变成 RUNAWAY。
 T_GROUP = [
-    ("T-1 `import pymupdf4llm` 挪回 `_extract_pdf` 函数顶部（L6 ② 该红）",
+    ("T-1 第二条解析库 import（`from docx import Document`）插进 `_extract_pdf` 失败点"
+     "之前（L6 ② 该红；对象从「把 pymupdf4llm 挪回去」换成「插入第二条」，形状变了）",
      "tests/test_text_failure_messages.py::"
      "test_l6_no_second_third_party_import_before_a_failure_point",
      [("repl", TM, [
          ('        import pymupdf\n\n        MAX_PDF_PAGES = 2000',
-          '        import pymupdf\n        import pymupdf4llm\n\n        MAX_PDF_PAGES = 2000'),
-         ('                import pymupdf4llm\n                md_text =',
-          '                md_text ='),
+          '        import pymupdf\n        from docx import Document\n\n'
+          '        MAX_PDF_PAGES = 2000'),
      ])],
-     "RED", "import pymupdf4llm"),
+     "RED", "import docx"),
 
     ("T-2 `from docx import Document` 挪到模块顶层（L6 ① 该红）",
      "tests/test_text_failure_messages.py::test_l6_no_third_party_import_at_module_level",
@@ -566,6 +573,31 @@ T_GROUP = [
           'from storage.base import StorageBase, new_review_id\nfrom docx import Document'),
      ])],
      "RED", "模块顶层出现了第三方 import"),
+
+    ("T-3 `import pymupdf4llm` 回到 `_extract_pdf` 里（L6 入口面的静态守卫该红）",
+     "tests/test_text_failure_messages.py::test_l6_no_parser_runtime_in_source",
+     [("repl", TM, [
+         ('        import pymupdf\n\n        MAX_PDF_PAGES = 2000',
+          '        import pymupdf\n        import pymupdf4llm\n\n'
+          '        MAX_PDF_PAGES = 2000'),
+     ])],
+     "RED", "又出现了 `pymupdf4llm`"),
+
+    ("T-4 三条函数级解析库 import 全提到模块顶层（负控该红：函数体里一个都认不出来 ——"
+     "判据面塌了；① 在同一次改动下也会红，但本靶子只跑负控那一个 nodeid，不声称）",
+     "tests/test_text_failure_messages.py::test_l6_scan_is_not_vacuous",
+     [("repl", TM, [
+         ('        import pymupdf\n\n        MAX_PDF_PAGES = 2000',
+          '\n        MAX_PDF_PAGES = 2000'),
+         ('        import aiofiles\n\n        for enc in', '\n        for enc in'),
+         ('        """Extract text from DOCX, joining paragraphs."""\n'
+          '        from docx import Document\n\n        try:',
+          '        """Extract text from DOCX, joining paragraphs."""\n\n        try:'),
+         ('from storage.base import StorageBase, new_review_id',
+          'from storage.base import StorageBase, new_review_id\n'
+          'import aiofiles\nimport pymupdf\nfrom docx import Document'),
+     ])],
+     "RED", "没有从**任何函数体里**认出第三方 import"),
 ]
 
 GROUPS = {"F": F_GROUP + F3_GROUP, "R": R_GROUP, "X": X_GROUP, "V": V_GROUP,

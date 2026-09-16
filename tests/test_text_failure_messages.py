@@ -35,7 +35,6 @@ import importlib.metadata
 import os
 import pathlib
 import re
-import sys
 import tempfile
 
 import pytest
@@ -295,12 +294,19 @@ def test_l5_scan_is_not_vacuous():
 # 命题：**一个已经能失败的函数里，重解析器的 import 不得排在失败点之前。** 判据落在
 # **位置**（行号先后），不落在「多重算重」上 —— 于是不需要定义什么叫「重依赖」，也就
 # 不需要任何名单。这条命题有生产后果：本仓没有一处 import onnxruntime，是 `pymupdf4llm`
-# 在**包 import 期**无条件拉进来的（实测链，钩子取在 DLL 加载之前：
-# `pymupdf4llm/helpers/utils.py:6` → `ocr/analyze_page.py:5  import onnxruntime as ort`），
-# 而 `_extract_pdf` 的 docstring 自己写着 "Does NOT OCR scanned PDFs" —— **依赖的能力我们
-# 明确不用，成本却全付了**：一个打不开的文件，在 `pymupdf.open()` 抛错之前就先付了 40MB
-# 推理运行时的加载代价（本机表现为进程级 access violation，try/except 拦不住 —— 那不是
-# 「错误」是「进程没了」）。
+# 在**包 import 期**无条件拉进来的（实测链：
+# `pymupdf4llm/helpers/utils.py:6` → `ocr/analyze_page.py:5  import onnxruntime as ort`
+# → `__init__.py:52` 那句「Always attempt to use Layout by default」再拉 `pymupdf.layout`，
+# 连 1.27 系也躲不过），而 `_extract_pdf` 的 docstring 自己写着 "Does NOT OCR scanned
+# PDFs" —— **依赖的能力我们明确不用，成本却全付了**。
+#
+# **C 之后（2026-09-16）这里没有实例了，命题仍在。** 那条 `pymupdf4llm` 整个被删掉
+# （纯 `page.get_text()` 提取），于是「唯一的违例」消失：①② 今天都在对**没有违例**的
+# 语料做断言。这不是把规则退役的理由 —— 退役等于因为「暂时没有违例」拆掉规则，把偶然
+# 当成必然；将来谁给 PDF 加第二个重解析库（哪怕只是「先试 pdfplumber，失败再退回」），
+# 它立刻又有齿。代价是覆盖：今天没有一条真变异能红这两条，它们进 `_red_lines.json`
+# 的未覆盖名单（见 tests/perf/route_facts_red_lines.json 与 AGENTS.md 的覆盖账）。
+# **入口面那条**另有静态守卫（下面 `test_l6_no_parser_runtime_in_source`）—— 那条有齿。
 #
 # 两条判据，失效方向不同，分开写（理由同 L5 那两条）：
 #   ① 模块顶层不得有第三方 import —— 顶层 import 无条件执行，「校验」还没机会发生。
@@ -310,9 +316,8 @@ def test_l5_scan_is_not_vacuous():
 # `_read_text_file` 的 `aiofiles`、`_extract_pdf` 的 `pymupdf`、`_extract_docx` 的 `docx`
 # 都必须先于该函数的第一次校验，因为在它们之前**没有更早的失败点可比**。要求「零条」会让
 # 这三条判别器在任何合法写法下都红不了 —— 那是**死判据**，不是判据（本仓不设豁免名单的
-# 道理见 tests/lock_coverage.py）。这条锁真正管的是「第二条及以后」：`_extract_pdf` 里那条
-# `pymupdf4llm` 正是唯一一条被管住的。它的失效方向是**响亮误伤**（某函数真需要两件工具
-# 才能开始校验就红，人来看一眼），不是静默漏过。
+# 道理见 tests/lock_coverage.py）。这条锁真正管的是「第二条及以后」。它的失效方向是
+# **响亮误伤**（某函数真需要两件工具才能开始校验就红，人来看一眼），不是静默漏过。
 #
 # 「哪些算第三方解析库」从事实推出，不写名单：`requirements.txt` 列出的分发包，经
 # `importlib.metadata.packages_distributions()` 映射到顶层模块名，与该文件里实际出现的
@@ -403,8 +408,9 @@ def test_l6_no_third_party_import_at_module_level():
     assert not bad, (
         "text_manager.py 模块顶层出现了第三方 import：" + "、".join(
             f"{name}（第 {line} 行）" for name, line in bad)
-        + "。顶层 import 在**任何**校验之前执行 —— 解析库必须挪进用到它的那个函数，"
-          "且排在那个函数的失败点之后（缺陷 41 · ④）。")
+        + "。顶层 import 在**任何**校验之前执行 —— 解析库必须挪进用到它的那个函数"
+          "（缺陷 41 · ④）。挪进去之后它是否还要排在失败点之后，交给下面 ② 判："
+          "该函数**第一条**可以早于失败点（不然它没法失败），第二条及以后不行。")
 
 
 def test_l6_no_second_third_party_import_before_a_failure_point():
@@ -420,74 +426,63 @@ def test_l6_no_second_third_party_import_before_a_failure_point():
     assert not bad, (
         "这些第三方 import 排在各自函数的失败点之前、且不是该函数的第一件工具："
         + "；".join(bad)
-        + "。把它们挪到校验之后（`_extract_pdf` 里 `pymupdf4llm` 的样子），"
-          "或说明为什么它必须在失败点之前。")
+        + "。把它们挪到校验之后，或说明为什么它必须在失败点之前"
+          "（该函数**第一件工具**不受本条管 —— 例如 `_extract_pdf` 顶部那句 "
+          "`import pymupdf`，在它之前没有更早的失败点可比）。")
 
 
 def test_l6_scan_is_not_vacuous():
-    """负控：判据面塌了（requirements 读不到 / 映射断 / import 扫描瞎）上面两条就恒真。
+    """负控：判据面塌了（requirements 读不到 / 映射断 / 扫描不下钻）上面两条就恒真。
 
-    真正要守的是**「位置」这条判断有对象**：必须存在「排在失败点之后」的第三方 import
-    —— 那正是被修好的那个（`pymupdf4llm`）。它要是又挪回函数顶部，这里当场变空集。
+    判的是**扫描器有没有工作**，不是「今天恰好有违例」。原判据要求「存在排在失败点
+    **之后**的第三方 import」—— 那是拿「有实例」当成「扫描正常」：C 把 `pymupdf4llm`
+    整条路径删掉之后，这一类实例在本仓一个都不剩，判据当场变红，而扫描一点没坏
+    （AGENTS.md 的 C 条目）。改成直接数**函数体里**认出来的
+    第三方 import：`_per_function()` 只收函数体内的语句（模块顶层的不算），数得出来
+    就说明扫描确实下钻进了函数体、且「包名→分发包」的映射还在。
     """
     third = [name for _, sites, _ in _per_function() for name, _ in sites]
     assert third, (
-        "一个第三方模块都没认出来 —— 「哪些算解析库」的推导断了（requirements 读不到 / "
-        "packages_distributions 映射空），L6 两条都在对空集断言（假绿）")
-
-    after = [name for _, sites, guard in _per_function()
-             for name, line in sites if guard is not None and line > guard]
-    assert after, (
-        "没有任何第三方 import 排在失败点**之后** —— 「位置」这条判断失去了对象，"
-        "② 在假绿（解析器又被搬回函数顶部了？）")
+        "没有从**任何函数体里**认出第三方 import（顶层 import 不算 —— 这条数的是下钻"
+        "结果）—— 「哪些算解析库」的推导断了（requirements 读不到 / "
+        "packages_distributions 映射空），或扫描面塌了，L6 ①② 都在对空集断言（假绿）")
 
 
-# ── L6 的运行时面：钩子断言「没触达」，不是「本机没崩」───────────────────────
+# ── L6 的入口面（静态）+ 运行期面 ────────────────────────────────────────
+#
+# 这里原先还有一条 **import 钩子**判据：`sys.meta_path` 上挂一个 tripwire，非法 PDF
+# 上传时若有谁 import `onnxruntime` 就记一笔。C 之后解析器运行时整个不在仓里了 ——
+# 钩子只能对空集断言，而「对空集断言」是假绿（它红了也只会红在「本机恰好能 import」，
+# 与本仓代码无关）。删掉钩子，换成**静态**守卫：盯的是源码里那一行本身。
+#
+# 命题没变，只是量它的东西跟着对象换了形状：那个 100% 失败的线上功能（缺陷 44），
+# 回来时仍然是靠一行 `import pymupdf4llm` 回来的。
 
 
-class _ParserRuntimeTouched(BaseException):
-    """**不是** `Exception` 的子类。
+def test_l6_no_parser_runtime_in_source():
+    """静态守卫：`text_manager.py` 的源码里不得出现 `pymupdf4llm`（缺陷 44 的入口）。
 
-    被判定代码里有宽 `except Exception`（`_extract_pdf` 里 `to_markdown` 那圈会抓走
-    Exception 再包成 `pdf_parse_failed`，`pymupdf.open` 那圈包成 `pdf_open_failed`）——
-    若钩子抛的是 Exception 子类，它会被抓走再包一层，于是**钩子响了而判据仍然是绿的**。
+    读源码文本，不 import 任何东西 —— 本机 import 它必崩（DLL 抢加载，缺陷 50），
+    拿「本机崩没崩」当判据就又回到「两种成因共用一个信号」。
+
+    **这是字面检查，连注释里提到那个名字都会红** —— 故意的：那个库的回流形态就是
+    「谁又写了 import 它」，而写 import 之前总得先打这个名字（缺陷 44 的账在
+    AGENTS.md，名字不在生产源码里重复）。要解释「为什么删」，用「Markdown 转换前端」
+    这样的说法就行 —— `_extract_pdf` 的 docstring 正是这么写的。
     """
+    assert "pymupdf4llm" not in _TM_SRC, (
+        "`core/text_manager.py` 里又出现了 `pymupdf4llm` —— 它在**包 import 期**无条件"
+        "拉进 onnxruntime，而生产镜像里没有 onnxruntime（缺陷 44：PDF 上传 100% 失败，"
+        "2026-06-29 起；缺陷 50 是本机同一条链的另一种表现）。这一行回来，那个缺陷就回来。")
 
 
-def test_l6_bad_pdf_does_not_touch_the_parser_runtime(monkeypatch):
-    """不变量：**校验失败的路径不得触达解析器** —— 用 import 钩子断言「没触达」。
+def test_l6_bad_pdf_is_rejected_with_the_open_failure_message(monkeypatch):
+    """运行期面：非法 PDF 报的是表里那句 `pdf_open_failed`，且是 400。
 
-    **不许拿「本机不崩了」当证据**：那在装了能跑的 onnxruntime 的机器上恒真（容器里
-    1068 passed 正是这形状），是假绿。钩子只认「这次 import 有没有发生」，与机器无关。
-
-    前提先断言：本进程此前没加载过 `pymupdf4llm` / `onnxruntime` —— 已加载的话
-    `sys.modules` 会短路，`meta_path` 根本不被问到，这条就只能证明「早就加载过」，
-    对「本次有没有触达」无从判定。
+    （原先这条同时还挂 onnxruntime 的 import 钩子；钩子已删，理由见上面那段的注释 ——
+    留下的两条是真判据：失败路径**变了**它们才红。）
     """
-    assert "pymupdf4llm" not in sys.modules and "onnxruntime" not in sys.modules, (
-        "跑这条判据之前进程里已经加载了解析器运行时（pymupdf4llm / onnxruntime）——"
-        "`sys.modules` 会短路、钩子不会被问到，本条无从判定：先查是谁提前拉了它")
-
-    touched: list[str] = []
-
-    class _Tripwire:
-        def find_spec(self, fullname, path=None, target=None):
-            if fullname.split(".")[0] == "onnxruntime":
-                touched.append(fullname)
-                raise _ParserRuntimeTouched(fullname)
-            return None
-
-    wire = _Tripwire()
-    sys.meta_path.insert(0, wire)
-    try:
-        r = _upload_file(monkeypatch, "bad.pdf", b"not a pdf at all")
-    finally:
-        sys.meta_path.remove(wire)
-
-    assert not touched, (
-        f"非法 PDF 的失败路径触达了 {touched} —— 校验失败不该付出加载 40MB 解析器的代价"
-        "（`pymupdf4llm` 在包 import 期无条件拉进 onnxruntime）。把那条 import 挪到"
-        "`pymupdf.open()` 与页数校验之后（L6）。")
+    r = _upload_file(monkeypatch, "bad.pdf", b"not a pdf at all")
     assert r.status_code == 400, r.text
     assert r.json()["detail"] == TEXT_FAILURE_MESSAGES["pdf_open_failed"]
 
