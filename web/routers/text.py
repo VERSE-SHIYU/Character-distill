@@ -168,8 +168,18 @@ async def upload_text(
                 # 契约锁：tests/test_security_authz.py::TestErrorSanitization::test_10_value_error_400。
                 raise HTTPException(400, str(exc)) from exc
         finally:
-            if temp_path.exists():
-                os.unlink(temp_path)
+            # 清理**不许顶掉响应**：坏 PDF 的失败路径上，句柄由 pymupdf `Document.__init__`
+            # 开出的 `fz_stream` 持有，只在那个异常对象被回收时才释放（上游失败分支既不
+            # close、也不赋 `self.this` —— AGENTS.md 缺陷 47），于是 Windows 上这一次
+            # unlink 会撞上 WinError 32；下一个事件循环迭代自愈、不累积（Linux 同形但允许
+            # 删已打开的文件，无后果 —— 缺陷 48）。原先这行裸着，于是这个 cleanup 异常
+            # 把本该抛出的 HTTPException(400) 顶成了 500、上屏文案也丢了。
+            try:
+                if temp_path.exists():
+                    os.unlink(temp_path)
+            except OSError as exc:
+                print(f"[upload] 临时文件清理失败（不顶掉响应）：{temp_path} —— {exc!r}"
+                      "；已知上游行为见 AGENTS.md 缺陷 47/48")
 
     else:
         raise HTTPException(400, "Must provide file")

@@ -7,9 +7,20 @@ G-14、G-15、G-16、G-17、G-18、G-19、G-20、G-21、G-22、G-23）。
 两处**代理**判据，三条实测变异（Y-1 `extends` 继承连接串、Y-2 `PGHOST: postgres`、
 Y-3 `@postgres/db`）全部绿着从它底下穿过去。G 轮打的锁一律问
 `tests/compose_model.py`（`docker compose config --no-env-resolution --format json`），
-判的是 compose **真正执行的那份模型**。A 轮的 24 条里，凡是「探针/配置/消费者长什么样」
-的命题都按新锁的判据重写成 G 条目；A-7/A-24 那两条打「锁自己解析器」的也重写成
-G-21/G-22（改打事实层）。
+判的是 compose **真正执行的那份模型**。A 轮 24 条的**实测**去向（逐条对过，不是「都重写了」）：
+
+  - **11 条有新对应**：A-1/2/4/5/6/8/11/14/19/20/21 → G-1/2/5/9/23/3/4/6/9/10/11
+    （A-5 与 A-19 都落在 G-9 上：同是「只改一份」这一类，payload 不同）。
+  - **5 条换了承载体**：**A-7**（锁的 YAML 解析器已不存在，改由 G-21/G-22 打事实层）、
+    **A-10**（`;` 与 `||` 同在 `_SECOND_COMMAND_OPS`，而 G-4 只注入了 `||`）、
+    **A-22**（同一断言 `_assert_consumer_waits`，由 G-12～G-16 的「连接串在、无依赖」承担）、
+    **A-23/A-24**（`_duration_seconds` 的契约改由 `tests/test_pg_gate.py:495` 的内建断言
+    承担 —— 它直接把 `5x` 当输入并要求抛错，不再需要变异）。
+  - **8 条判据还在、但没有任何 G 撞它**：A-3/9/12/13/15/16/17/18。这是「变异红 ≠ 判别器
+    起作用」的**第四种形态**（判别器还在，只是再没人撞它），靠手工对表才发现 ——
+    判别器总数远多于变异数时，手工对表既查不全也留不下守卫。要消灭它的不是再补 8 条变异，
+    而是 `tests/test_lock_coverage.py`（覆盖闭合元锁）：判别器集合与非空转变异红到的行的
+    集合必须相等。**这条元锁建起来时，本文件必然红一次** —— 那就是它有效的证据。
 
 **每条对应哪条不变量**（不变量编号见 `tests/test_pg_gate.py` 的 docstring）：
   - **I1 探针命令封闭**：G-1～G-5、G-23 —— 整条 shell 必须**恰好**是那个形状。
@@ -46,7 +57,7 @@ G-7 用 YAML 合并键 `<<` 从顶层锚点注入 `disable: true`（原始 YAML 
   1. **docker 前置门**：没有可用的 `docker compose` 时**拒跑**。本矩阵的每条判据都落在
      compose 的有效模型上 —— 求不出模型时「红」「绿」都无从谈起，而一个什么都跑不出来的
      矩阵看起来和全绿一模一样。故拒跑并明确打印，**不记为通过**。
-  2. **先验基线**：两把锁（策略锁 + 事实层锁）全绿才开跑。基线不绿时「变异后红」说不清红源。
+  2. **先验基线**：两把锁（策略锁 + 事实层锁）既不红、也跑得起来才开跑。基线红或跑不起来时「变异后红」说不清红源（判据没执行 ≠ 通过，见 `lock_coverage.outcome`）。
   3. **锚点恰一命中**：由 `_apply` 断言，0 命中或 2 命中当场拒跑 —— 锚点漂移会静默变成
      「变异没生效」，那是最危险的假绿。
   4. **还原逐字节**：收尾核 sha256；G-20 新建的文件单独清掉并点名残留。
@@ -78,7 +89,10 @@ sys.path.insert(0, str(PERF_DIR))
 sys.path.insert(0, str(ROOT / "tests"))
 
 import compose_model  # noqa: E402  —— 只为 docker 前置门探一次可用性
+import lock_coverage  # noqa: E402  —— 帧解析与产物写入的唯一一份实现（与另两个驱动共用）
 import route_facts_mutations as framework  # noqa: E402  —— 执行框架的唯一一份实现
+
+ARTIFACT = ROOT / "tests" / "perf" / "pg_gate_red_lines.json"
 
 PROD = ROOT / "docker-compose.prod.yml"
 LOCAL = ROOT / "docker-compose.local.yml"
@@ -362,16 +376,16 @@ def _docker_gate() -> bool:
 
 
 def _baseline_gate() -> list[str]:
-    """先验基线：两把锁全绿才开跑 —— 否则「变异后红」说不清红源。
+    """先验基线：两把锁既不红、也跑得起来才开跑 —— 否则「变异后红」说不清红源。
 
     事实层那把锁也要绿：G-21/G-22 的红源落在它身上，它自己先红的话，那两条的「红」就
     分不清是变异造成的还是本来就红。
     """
     bad = []
     for target in (LOCK_PATH, FACT_LOCK_PATH):
-        summary, _ = framework._run(target)
+        summary, _, _, _ = framework._run(target)
         print(f"  基线 {target:38s} {summary}")
-        if "failed" in summary or "error" in summary:
+        if not lock_coverage.baseline_ok(summary):
             bad.append(target)
     return bad
 
@@ -402,6 +416,8 @@ def main() -> int:
         return 2
 
     mismatches: list[str] = []
+    domain = lock_coverage.domain_of(GROUPS)
+    hits: dict[str, list[str]] = {}
     wanted = [x.strip() for x in args.group.upper().split(",") if x.strip()]
     for name in [g for g in wanted if g in GROUPS]:
         print(f"\n===== {name} 组 =====")
@@ -409,12 +425,20 @@ def main() -> int:
             label, target, edits, expect = item[:4]
             marker = item[4] if len(item) > 4 else None
             framework._apply(edits)
-            summary, keep = framework._run(target)
-            got = "RED" if ("failed" in summary or "error" in summary) else "green"
+            summary, keep, lines, problems = framework._run(target)
+            got = lock_coverage.outcome(summary)
             _restore_all(baseline)
-            if got != expect:
+            if problems:
+                mismatches.append(f"{label}：{'；'.join(problems)}")
+            dom = set(domain)
+            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in dom)
+            if got == lock_coverage.RUNAWAY:
+                mismatches.append(
+                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证"
+                    "（既不是绿也不是红；修好 import/runtime 再跑）")
+            elif got != expect:
                 mismatches.append(f"{label}：期望 {expect} 实得 {got}")
-            if marker and not any(marker in k for k in keep):
+            if marker and got != lock_coverage.RUNAWAY and not any(marker in k for k in keep):
                 mismatches.append(f"{label}：红源里没有 {marker!r}（红的不是那条断言）")
             print(f"\n### {label}   期望={expect}  实得={got}")
             for k in keep:
@@ -437,8 +461,12 @@ def main() -> int:
     if mismatches:
         for m in mismatches:
             print("  MISMATCH", m)
+        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
         return 1
-    print("  全部符合预期。")
+    lock_coverage.write_artifact(ARTIFACT, "tests/perf/pg_gate_mutations.py",
+                                 domain, hits, [])
+    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
+    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
     return 0
 
 

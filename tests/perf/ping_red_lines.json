@@ -1,0 +1,64 @@
+{
+  "driver": "tests/perf/ping_mutations.py",
+  "domain": [
+    "tests/test_health_probe_targets.py",
+    "tests/test_health_ready.py",
+    "tests/test_storage_ping.py"
+  ],
+  "mutations": {
+    "B-2  摘掉 StorageBase.ping 上的 @abstractmethod": [
+      "tests/test_storage_ping.py:75"
+    ],
+    "B-3  就绪端点从 PUBLIC_PATHS 里摘掉": [
+      "tests/test_health_ready.py:103",
+      "tests/test_health_ready.py:122",
+      "tests/test_health_ready.py:133",
+      "tests/test_health_ready.py:95"
+    ],
+    "B-4  503 响应体带上 str(exc)": [
+      "tests/test_health_ready.py:104",
+      "tests/test_health_ready.py:112"
+    ],
+    "B-5  就绪端点不调 ping、直接回 ready": [
+      "tests/test_health_ready.py:103",
+      "tests/test_health_ready.py:133"
+    ],
+    "B-6  Dockerfile 的 HEALTHCHECK 换回存活路径": [
+      "tests/test_health_probe_targets.py:214"
+    ],
+    "B-7  deploy.yml 删掉 SG 的第二段": [
+      "tests/test_health_probe_targets.py:224",
+      "tests/test_health_probe_targets.py:237",
+      "tests/test_health_probe_targets.py:245"
+    ],
+    "B-8  deploy.yml 两段顺序颠倒": [
+      "tests/test_health_probe_targets.py:224",
+      "tests/test_health_probe_targets.py:234"
+    ],
+    "B-9  锁自己的解析函数恒返回空": [
+      "tests/test_health_probe_targets.py:171"
+    ],
+    "B-10 删掉 SG 存活检查的调用行（注释与文案保留）": [
+      "tests/test_health_probe_targets.py:234",
+      "tests/test_health_probe_targets.py:245"
+    ],
+    "B-11 SG 的存活检查改探就绪路径": [
+      "tests/test_health_probe_targets.py:234"
+    ],
+    "B-12 两个区域的 gate 都把 curl 写成固定路径": [
+      "tests/test_health_probe_targets.py:200"
+    ],
+    "B-13 就绪端点不调 ping、直接回 ready（本锁红）": [
+      "tests/test_health_probe_targets.py:214",
+      "tests/test_health_probe_targets.py:224"
+    ],
+    "B-14 新增一个只调用一次 gate 的 deploy-xx": [
+      "tests/test_health_probe_targets.py:234",
+      "tests/test_health_probe_targets.py:245"
+    ]
+  },
+  "skipped": [
+    "B-1  SQLite 的 ping 只取连接、不执行语句",
+    "B-1b  SQLite 的 ping 语句退回 SELECT 1"
+  ]
+}

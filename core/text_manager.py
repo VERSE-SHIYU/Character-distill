@@ -275,7 +275,6 @@ class TextManager:
         processing to keep memory bounded. Does NOT OCR scanned PDFs.
         """
         import pymupdf
-        import pymupdf4llm
 
         MAX_PDF_PAGES = 2000
 
@@ -293,6 +292,11 @@ class TextManager:
                     _MSG["pdf_page_limit"].format(page_count=page_count, max_pages=MAX_PDF_PAGES)
                 )
             try:
+                # 位置即判据：`pymupdf4llm` 在**包 import 期**无条件拉进 onnxruntime（40MB
+                # 推理运行时），而本函数明确不做 OCR（见 docstring）。它必须排在
+                # `pymupdf.open()` 与页数校验都通过之后 —— 打不开的文件不该先付这份代价。
+                # 测试锁 L6 盯这一行（test_text_failure_messages.py）。
+                import pymupdf4llm
                 md_text = pymupdf4llm.to_markdown(
                     doc,
                     ignore_images=True,

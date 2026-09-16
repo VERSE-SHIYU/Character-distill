@@ -12,9 +12,16 @@
 （与缺陷 42 三处收口同一个病）。
 
 **不变量（与 `route_facts_mutations.py` 同一套）**
-  1. **先验基线**：三把新锁全绿才开跑。基线不绿时「变异后红」说不清红源。
+  1. **先验基线**：三把新锁既不红、也跑得起来才开跑。基线红或跑不起来时「变异后红」说不清
+     红源（判据没执行 ≠ 通过，见 `lock_coverage.outcome`）；skip 不算坏。
   2. **锚点恰一命中**：由 `_apply` 断言，0 命中或 2 命中当场拒跑。
   3. **还原逐字节**：收尾核对 sha256。
+
+**跑完写产物**：`tests/perf/ping_red_lines.json`（覆盖域 + 每条变异红在**变异前**坐标系的哪一行）。
+本驱动原先不写产物 —— 于是它是一把**没有被元锁覆盖的锁**：`test_lock_coverage.py` 判「驱动 ↔
+产物」对不上（`ping_mutations.py` 有驱动没产物），缺口在那里响过一次，而修法只有一种：把产物补上，
+让它进覆盖域。产物里的 `skipped` 只收登记过的「本环境不适用」条目，那些条目从 `mutations` 里摘掉 ——
+一条判别器都没撞到的条目留在里面会被记成「空转变异」，而它在**这台机器上**红绿空转都无从谈起。
 
 **用法**
     python tests/perf/ping_mutations.py                 # 全部 15 条
@@ -23,7 +30,7 @@
 **B-1 / B-1b 在 Windows 上是「本环境不适用」，不是绿也不是红。** 这两条打的是同一处
 改动（`storage/sqlite_store.py` 的 ping）、由同一条用例判定，而本机 sqlite 3.49.1 对任何
 语句都判锁，`test_sqlite_ping_raises_when_locked_out_mid_flight` 的前提自检因此在变异
-生效前就 `pytest.skip`。驱动把 skip 单列成一档（见 `_MAY_SKIP` / `_outcome`）—— 记成
+生效前就 `pytest.skip`。驱动把 skip 单列成一档（见 `_MAY_SKIP` / `lock_coverage.outcome`）—— 记成
 green 是假绿（§四：判据在空转），记成 RED 又冤枉了变异。只有登记过的条目可以 skip，
 别的条目 skip 一律记 mismatch，否则锁在悄悄跳过也看不出来。**Linux/sqlite 3.46 上这两条
 才是真正的 RED**，Windows 的结论不构成证据。
@@ -52,7 +59,9 @@ for _s in (sys.stdout, sys.stderr):
 PERF_DIR = pathlib.Path(__file__).resolve().parent
 ROOT = PERF_DIR.parents[1]
 sys.path.insert(0, str(PERF_DIR))
+sys.path.insert(0, str(ROOT / "tests"))
 
+import lock_coverage  # noqa: E402  —— 判档与产物写入的唯一一份实现（三个驱动共用）
 import route_facts_mutations as framework  # noqa: E402  —— 执行框架的唯一一份实现
 
 SQLITE = ROOT / "storage" / "sqlite_store.py"
@@ -63,6 +72,7 @@ DEPLOY = ROOT / ".github" / "workflows" / "deploy.yml"
 LOCK = ROOT / "tests" / "test_health_probe_targets.py"
 
 TARGETS = (SQLITE, BASE, SERVER, DOCKERFILE, DEPLOY, LOCK)
+ARTIFACT = PERF_DIR / "ping_red_lines.json"
 
 PING_LOCK = "tests/test_storage_ping.py"
 READY_LOCK = "tests/test_health_ready.py"
@@ -234,18 +244,8 @@ _ID_RE = re.compile(r"B-\d+[a-z]?")
 # 别的条目一旦被 skip，说明锁在悄悄跳过，而假绿与真绿长得一样。
 _MAY_SKIP = {"B-1", "B-1b"}
 
-
-def _outcome(summary: str) -> str:
-    """把 pytest 的汇总行判成三档之一：RED / green / 本环境不适用。
-
-    skip 必须与绿分开：`_run` 的汇总里 skip 既不含 failed 也不含 passed-only，
-    原先一律落到 green —— 判据在空转而结论行照印「全部符合预期」。
-    """
-    if "failed" in summary or "error" in summary:
-        return "RED"
-    if "skipped" in summary:
-        return "本环境不适用"
-    return "green"
+# 汇总行的判档（RED / green / 本环境不适用 / 跑不出来）由 lock_coverage.outcome 一处实现 ——
+# 三个驱动共用同一份，免得各自漂移（本文件原先自己抄了一份三档版，缺「跑不出来」）。
 
 
 def _live_ids() -> set[str]:
@@ -279,12 +279,16 @@ def _count_gate() -> bool:
 
 
 def _baseline_gate() -> list[str]:
-    """先验基线：三把新锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
+    """先验基线：三把新锁既不红、也跑得起来才开跑 —— 否则「变异后红」说不清红源。
+
+    skip 不算坏（见 `lock_coverage.baseline_ok`）：`test_storage_ping.py` 基线上就有两条
+    前提 skip（B-1/B-1b 的锁版 sqlite）。
+    """
     bad = []
     for target in (PING_LOCK, READY_LOCK, TARGETS_LOCK):
-        summary, _ = framework._run(target)
+        summary, _, _, _ = framework._run(target)
         print(f"  基线 {target:38s} {summary}")
-        if "failed" in summary or "error" in summary:
+        if not lock_coverage.baseline_ok(summary):
             bad.append(target)
     return bad
 
@@ -306,6 +310,9 @@ def main() -> int:
         return 2
 
     mismatches: list[str] = []
+    domain = lock_coverage.domain_of(GROUPS)
+    hits: dict[str, list[str]] = {}
+    skipped: list[str] = []
     wanted = [x.strip() for x in args.group.upper().split(",") if x.strip()]
     for name in [g for g in wanted if g in GROUPS]:
         print(f"\n===== {name} 组 =====")
@@ -313,14 +320,31 @@ def main() -> int:
             label, target, edits, expect = item[:4]
             marker = item[4] if len(item) > 4 else None
             framework._apply(edits)
-            summary, keep = framework._run(target)
-            got = _outcome(summary)
+            summary, keep, lines, problems = framework._run(target)
+            got = lock_coverage.outcome(summary)
             framework._restore(baseline)
+            # 只留落在覆盖域里的行：本驱动的靶子就是那个锁文件，别处（stdlib / 被测模块）的帧不算。
+            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
+            if problems:
+                mismatches.append(f"{label}：{'；'.join(problems)}")
+            if got == lock_coverage.RUNAWAY:
+                # 跑不起来与绿必须分开：判据根本没执行时，「绿」是把没跑当成通过。
+                mismatches.append(
+                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证")
+                print(f"\n### {label}   期望={expect}  实得={got}（不计红绿）")
+                for k in keep:
+                    print("   ", k)
+                print("   >>", summary)
+                continue
             if got == "本环境不适用":
                 ident = _ID_RE.search(label).group(0)
                 if ident not in _MAY_SKIP:
                     mismatches.append(
                         f"{label}：判据被 skip 了（该编号未登记为「本环境不适用」）")
+                # 走了 skip 的条目从覆盖域里摘出去：它一条判别器都没撞到，留着会被元锁
+                # 记成「空转变异」—— 而它红/绿/空转在这台机器上根本无从谈起（见模块 docstring）。
+                hits.pop(label, None)
+                skipped.append(label)
                 print(f"\n### {label}   期望={expect}  实得={got}（不计红绿）")
                 print("   >>", summary)
                 continue
@@ -345,8 +369,12 @@ def main() -> int:
     if mismatches:
         for m in mismatches:
             print("  MISMATCH", m)
+        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
         return 1
-    print("  全部符合预期。")
+    lock_coverage.write_artifact(ARTIFACT, "tests/perf/ping_mutations.py",
+                                 domain, hits, skipped)
+    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
+    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
     return 0
 
 

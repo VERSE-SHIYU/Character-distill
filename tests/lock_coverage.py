@@ -1,0 +1,330 @@
+# -*- coding: utf-8 -*-
+"""通用机械校验层：**一个锁文件里「会导致失败的分支」↔「变异实际红在哪一行」的覆盖闭合**。
+
+**与领域无关。** 本模块不认识 compose、不认识 pg、不认识路由器，也不认识任何具体服务名 ——
+输入永远是一份路径。使用方是本仓的策略锁与它们的变异驱动，`tests/test_lock_coverage.py`
+是它自己的锁。
+
+**判别器的可判定定义**（四类 AST 节点，每个一条，行号取节点自身 `lineno`）：
+  (a) `ast.Assert` —— 每条一次。`assert x, msg` 算一条（msg 只是文案）。
+  (b) `ast.Raise` —— **仅当它不位于「纯抛错包装」体内**时算一条。
+  (c) 对「纯抛错包装」的调用 —— **每个调用点**算一条，行号 = 调用所在行。
+  (d) `pytest.raises(...)` —— **`with ...:` 形式取 `ast.With` 的行号**，裸调用形式取该调用
+      的行号。预期没抛时它自己红（`Failed: DID NOT RAISE`）。
+
+**(d) 是实测补的，不是想当然。** 它原先不在定义里，于是「`pytest.raises` 该抛而没抛」这一类
+分支在两边都不存在 —— 收了它才会发现某些判别器**从没被任何变异撞过**（缺的是判别器，不是
+变异）。行号取 `ast.With` 而非其中的调用，也是实测定的：多行写法
+
+    with pytest.raises(          # ← pytest 红在这一行
+        ComposeFactError
+    ):
+
+里调用在下一行，按调用取会与 `with` 差一行，凭空多出一条不存在的判别器；故 `context_expr`
+那个调用**不再单独计数**（键仍是行号，同行的裸调用形式不受影响）。
+
+**「纯抛错包装」= 递归定义的不动点**：函数体（剥掉 docstring 与 `pass` 后）恰好一条语句，
+且该语句是 `raise X(...)`，或是对另一个纯抛错包装的调用。
+
+**这个划法不是风格选择，是被运行侧倒逼出来的唯一解。** pytest 的 `--tb=line` 给的是
+**最深帧** —— 包装函数内部那条 `raise`。若把那条 `raise` 也算成判别器，则所有经由包装的
+分支会**塌成同一条**（实测：`fail()` 里的 `raise` 让 pg_isready 分支与环回分支都打印
+`test_pg_gate.py:281`）；若反过来只数 `raise`、不算调用点，则这些分支**一条都不存在**
+（没有任何一条 `raise` 写在自己的分支上）。(b)/(c) 互补，为的是与 `--tb=long` 的帧对齐。
+
+**两套坐标系，必须先对齐。** 判别器集合从**变异前**的文件算出来，红行号却来自**变异后**那次
+运行 —— 只要变异往靶子文件里插了一行，插点之后所有判别器的行号就整体平移。直接把两套行号
+求交，会同时造出两种假象：真被撞到的判别器记成「没人撞」，而那条变异记成「空转」（它红在
+一个不是判别器的行号上）。实测 G-17/G-19 就是这样各差 1 行 —— 豁免表在 183 行，被撞的断言在
+564 行，表里插一行，断言就跑到 565 去。对齐用 `realign_hits()`：按判别器在文件里的**出现次序**
+对齐（插/删行不改变次序，只改变行号）；次序对不上就报出来，那时两套坐标不可比、红源说不清。
+
+**不设豁免名单。** 在任何合法变异下都红不了的判别器 = **死判据**，正确的处置是**删掉它**，
+不是登记豁免。登记豁免就是把 `_NOT_APPLIED` 那一类手工清单再抄一份（AGENTS.md §四 ③层：
+「中间那一层由人维护」），而这条锁的全部价值恰恰在于「集合相等，没有第三种状态」。第一次
+遇到「这个判别器的变异不好写」时若开了豁免的口子，这条锁当场退化成它自己要防的那种东西。
+
+**递归的终止是判据自身推出的，不是人为规定的。** 覆盖域取自**变异驱动自己的事实字段**
+（驱动表里每条变异的靶子文件，由 `domain_of()` 从驱动数据推出，不另立清单）。今天没有任何
+驱动把 `test_lock_coverage.py` 列为靶子，所以元锁**天生不在域内** —— 这不是豁免，是跟着
+驱动事实走的；将来谁真给元锁写了驱动，它自动进域，元锁就得给自己配变异。没有「永远免除」
+的口子。
+"""
+from __future__ import annotations
+
+import ast
+import json
+import pathlib
+import re
+from collections.abc import Iterable, Mapping, Sequence
+
+ARTIFACT_SUFFIX = "_red_lines.json"
+
+# `--tb=long` 的两处「位置」写法，**两种都要收**：
+#   帧头     `路径:行号:` 后只有空白 —— `pytest` 只给**中间**帧，最深帧没有帧头；
+#   结尾行   `路径:行号: AssertionError` —— 那是**最深帧**的位置，正是「句内 assert」与
+#            「包装内部的 raise」唯一的出处。
+# 只收帧头会漏掉后者（实测：24 条变异里 9 条记成空，因为它们红在句内 assert 上）。
+# 收全之后由 `gaps()` 与判别器集合求交 —— 包装内部那条 `raise`（如 `fail` 里的 281）不在
+# 判别器集合里，交集自动把它滤掉。
+_FRAME = re.compile(r"^(?P<path>.+?):(?P<line>\d+):\s*$")
+_TAIL = re.compile(r"^(?P<path>.+?):(?P<line>\d+): (?P<exc>[A-Za-z_][\w.]*)$")
+
+
+def _strip_decorative(body: Sequence[ast.stmt]) -> list[ast.stmt]:
+    """剥掉 docstring 与 `pass`，剩下的是「这篇函数的实际内容」。"""
+    out = []
+    for i, s in enumerate(body):
+        if i == 0 and isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant) \
+                and isinstance(s.value.value, str):
+            continue
+        if isinstance(s, ast.Pass):
+            continue
+        out.append(s)
+    return out
+
+
+def _callee_name(node: ast.expr) -> str | None:
+    if isinstance(node, ast.Call):
+        return getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+    return None
+
+
+def _pure_raisers(tree: ast.AST) -> set[str]:
+    """递归定义的不动点：体恰好一条语句 = `raise`，或 = 对另一个纯抛错包装的调用。"""
+    shape: dict[str, object] = {}
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = _strip_decorative(fn.body)
+        if len(body) != 1:
+            continue
+        stmt = body[0]
+        if isinstance(stmt, ast.Raise):
+            shape[fn.name] = True                     # True = 直接 raise
+        elif isinstance(stmt, ast.Expr) and _callee_name(stmt.value):
+            shape[fn.name] = _callee_name(stmt.value)  # 名字 = 转手调用的那个包装
+
+    pure: set[str] = set()
+    changed = True
+    while changed:                                    # 不动点：链尾先成立，再往回传
+        changed = False
+        for name, target in shape.items():
+            if name in pure:
+                continue
+            if target is True or target in pure:
+                pure.add(name)
+                changed = True
+    return pure
+
+
+def _is_raises_call(node: ast.AST) -> bool:
+    """`pytest.raises(...)`（也认 `from pytest import raises` 后的裸名）。"""
+    return isinstance(node, ast.Call) and _callee_name(node) == "raises"
+
+
+def _discriminators_from_src(src: str) -> dict[int, str]:
+    tree = ast.parse(src)
+    pure = _pure_raisers(tree)
+
+    parents: dict[ast.AST, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def inside_pure_raiser(node: ast.AST) -> bool:
+        cur = parents.get(node)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)) and cur.name in pure:
+                return True
+            cur = parents.get(cur)
+        return False
+
+    # `with pytest.raises(...)` 里那个 context_expr 调用不单独计数 —— 判别器是那条 `with`
+    # 语句（pytest 红的也是它那一行）。多行写法里二者行号不同，两边都收会凭空多一条。
+    context_exprs = {id(it.context_expr) for n in ast.walk(tree)
+                     if isinstance(n, ast.With) for it in n.items}
+
+    out: dict[int, str] = {}
+    for node in ast.walk(tree):
+        is_raises_with = (isinstance(node, ast.With)
+                          and any(_is_raises_call(it.context_expr) for it in node.items))
+        is_raises_call = _is_raises_call(node) and id(node) not in context_exprs
+        is_disc = (
+            isinstance(node, ast.Assert)
+            or isinstance(node, ast.Raise)
+            or (isinstance(node, ast.Call) and _callee_name(node) in pure)
+            or is_raises_with
+            or is_raises_call
+        )
+        if not is_disc or inside_pure_raiser(node):
+            continue
+        if is_raises_with:
+            seg = _line_of(src, node)
+        else:
+            seg = ast.get_source_segment(src, node) or ""
+        out[node.lineno] = " ".join(seg.split())[:110]
+    return out
+
+
+def _line_of(src: str, node: ast.AST) -> str:
+    """节点起始那一行的源码。用于 `with` 这类**整块**跨多行的语句。"""
+    lines = src.splitlines()
+    return lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else ""
+
+
+def discriminators(path: str | pathlib.Path) -> dict[int, str]:
+    """锁文件里所有「会导致失败的分支」：行号 → 该分支源码的一行摘要。"""
+    return _discriminators_from_src(pathlib.Path(path).read_text(encoding="utf-8"))
+
+
+def realign_hits(pristine: Mapping[str, str], mutated: Mapping[str, str],
+                 hits: Iterable[str]) -> tuple[set[str], list[str]]:
+    """把红行号从「变异后坐标系」搬回「变异前坐标系」。
+
+    `pristine` / `mutated` 以仓内相对 posix 路径为键，值是那一次的源文本；只有两边都给得出
+    的 .py 才参与搬移（没被变异动过的文件坐标系本来相同，原样透传）。
+
+    返 `(搬移后的位置, 两套坐标不可比的文件说明)`。**不可比不是错误、是拒绝条件** ——
+    变异增删了那个文件自己的判别器时，按次序对齐就已经是错的，必须让调用方拒跑而不是硬搬。
+    但只在**真有红源落进那个文件**时才算数：改动别处的文件、而红源一条都不指向它，两套坐标
+    一样用（实测 G-22 改 `compose_model.py` 就删掉了它自己的一条判别器，而红源全在靶子上）。
+
+    行号落在「变异后没有任何判别器」的位置上就丢弃：包装内部那条 `raise`、中间帧都在这一类，
+    `gaps()` 本来也会把它们与判别器集合求交滤掉，这里少走一步而已。
+    """
+    pairs: dict[str, tuple[list[int], list[int]]] = {}
+    incomparable: dict[str, str] = {}
+    for rel, mut_src in mutated.items():
+        pri_src = pristine.get(rel)
+        if pri_src is None:
+            continue
+        before, after = _discriminators_from_src(pri_src), _discriminators_from_src(mut_src)
+        b, a = sorted(before.items()), sorted(after.items())
+        if [s for _, s in b] != [s for _, s in a]:
+            incomparable[rel] = (
+                f"{rel}：变异改变了它的判别器序列（{len(b)} 条 → {len(a)} 条），"
+                "红行号搬不回变异前的坐标系")
+            continue
+        pairs[rel] = ([n for n, _ in b], [n for n, _ in a])
+
+    out: set[str] = set()
+    problems: list[str] = []
+    for loc in hits:
+        rel, _, n = loc.rpartition(":")
+        if rel not in mutated:            # 没被变异动过 → 两套坐标系本来相同
+            out.add(loc)
+            continue
+        why = incomparable.get(rel)
+        if why is not None:               # 动过却对不上 → 无坐标可搬，且要让人拒跑
+            if why not in problems:
+                problems.append(why)
+            continue
+        before, after = pairs[rel]
+        if n.isdigit() and int(n) in after:
+            out.add(f"{rel}:{before[after.index(int(n))]}")
+    return out, problems
+
+
+def red_lines(output: str, root: str | pathlib.Path) -> set[str]:
+    """从 pytest `--tb=long` 的输出里取所有「位置」，归一成仓内相对 posix 的 `文件:行号`。
+
+    退到 `文件:行号` 不需要更细的粒度：判别器的定义粒度就是「一行」，两边同一把尺子即可。
+    返回值是**原始帧位置**（含中间帧），与判别器集合求交由 `gaps()` 一次做完 ——
+    交集放在一处，免得调用方各自记得滤。
+    """
+    base = pathlib.Path(root).resolve()
+    out: set[str] = set()
+    for ln in output.splitlines():
+        m = _FRAME.match(ln) or _TAIL.match(ln)
+        if not m:
+            continue
+        try:
+            rel = pathlib.Path(m.group("path")).resolve().relative_to(base)
+        except (ValueError, OSError):
+            continue
+        out.add(f"{rel.as_posix()}:{m.group('line')}")
+    return out
+
+
+def gaps(domain: Iterable[str], hits: Mapping[str, Iterable[str]],
+         root: str | pathlib.Path) -> tuple[list[str], list[str]]:
+    """覆盖闭合的两个缺口。
+
+    返回 `(未被任何变异撞到的判别器, 一条判别器都没撞到的变异)`。两者都空 ⇔
+    判别器集合 == 「变异实际撞到的判别器」集合。
+
+    `hits` 收的是**原始帧位置**，这里与判别器集合求交一次：包装内部那条 `raise`、以及
+    「测试函数 → 辅助函数」这类中间帧都不是判别器，交集把它们滤掉。
+    """
+    d: set[str] = set()
+    for f in domain:
+        d |= {f"{f}:{n}" for n in discriminators(pathlib.Path(root) / f)}
+
+    e: set[str] = set()
+    vacuous: list[str] = []
+    for label, lines in hits.items():
+        got = set(lines) & d
+        if not got:
+            vacuous.append(label)
+        e |= got
+
+    return sorted(d - e), sorted(vacuous)
+
+
+def domain_of(groups: Mapping[str, Sequence[tuple]]) -> list[str]:
+    """覆盖域 = 驱动表里每条变异的靶子文件中的 `.py`（驱动自己的事实字段）。"""
+    targets = {item[1] for g in groups.values() for item in g}
+    return sorted(t for t in targets if isinstance(t, str) and t.endswith(".py"))
+
+
+def write_artifact(path: str | pathlib.Path, driver_rel: str, domain: Sequence[str],
+                   hits: Mapping[str, Sequence[str]], skipped: Sequence[str]) -> None:
+    pathlib.Path(path).write_text(
+        json.dumps({"driver": driver_rel, "domain": list(domain),
+                    "mutations": {k: sorted(v) for k, v in hits.items()},
+                    "skipped": list(skipped)},
+                   ensure_ascii=False, indent=2, sort_keys=False) + "\n",
+        encoding="utf-8")
+
+
+# ── pytest 汇总行 → 判档（三个变异驱动共用一份实现）────────────────────────────
+
+GREEN = "green"
+RED = "RED"
+SKIP = "本环境不适用"
+RUNAWAY = "跑不出来"
+
+
+def outcome(summary: str) -> str:
+    """把一次子进程 pytest 的汇总行判成四档之一：`GREEN` / `RED` / `SKIP` / `RUNAWAY`。
+
+    **四档不是四选一的风格问题，缺哪一档都会把「没发生的事情」记成「发生了」。**
+
+    - `RUNAWAY`：拿不到汇总行 —— 子进程崩了、或 import 期就死。原先一律落到 `GREEN`，
+      于是「跑不起来」与「全部通过」共用一个信号：实测 `test_text_failure_messages.py`
+      在本机 Windows 上 import 到 onnxruntime 即 access violation（退出码 0xC0000005），
+      那个靶子上**每一条**变异都「绿」，而结论行照印「全部符合预期」。
+    - `SKIP`：汇总行含 skipped，既不含 failed 也不含 passed-only。记成 `GREEN` 同样是
+      「判据在空转」—— 判据根本没执行，绿的是空集。
+    - `RED`：`error` 与 `failed` 同归。两者之间没有中间态。
+
+    本函数只认字面，不认因果：它区分的是「跑没跑」，不是「为什么红」。
+    """
+    if summary == RUNAWAY:
+        return RUNAWAY
+    if "failed" in summary or "error" in summary:
+        return RED
+    if "skipped" in summary:
+        return SKIP
+    return GREEN
+
+
+def baseline_ok(summary: str) -> bool:
+    """先验基线可用的条件：既不红、也没跑不起来。
+
+    **`SKIP` 在基线里不算坏**：那是本环境前提不成立（实测 `test_storage_ping.py` 基线就是
+    「4 passed, 2 skipped」—— B-1/B-1b 的锁版 sqlite 前提），基线与变异两次都会 skip，
+    红源照样说得清。红与跑不起来才是「说不清红源」。
+    """
+    return outcome(summary) in (GREEN, SKIP)

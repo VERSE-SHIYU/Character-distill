@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 六组共 39 条（F12/R4/X3/V13/I3/P4），逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 七组共 41 条（F12/R4/X3/V13/I3/P4/T2），逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -21,10 +21,12 @@
     python tests/perf/route_facts_mutations.py --group P    # 只跑策略表校验层那组
     python tests/perf/route_facts_mutations.py --with-container   # 追加 F-3 容器档
 
-六组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
+七组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
 隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态），
-**P** 打豁免表校验层 `tests/policy_table.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表）。
-**I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
+**P** 打豁免表校验层 `tests/policy_table.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表），
+**T** 打 `core/text_manager.py` 里解析库的 import **位置**（L6；靶子只指到那一条判据，
+理由见 T 组注释）。**I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；
+收尾核对会点名残留。
 
 **跨平台。** X 组的别名路径是 `web/../web/server.py` —— 两个平台都满足「字符串与正路不同、
 `samefile` 为真」。原先翻盘符大小写（`E:` → `e:`）**只在 Windows 成立**：Linux 上首字符是
@@ -43,8 +45,8 @@
 test_auth_param_used.py` 即可复原当时那次绿；V4/V7 是留在树里的**等价形态** —— 把新锁的
 判据退回旧的 AST 形状，同一变异仍然绿，证明「旧判据看不见这种写法」。
 
-本脚本不改生产代码：变异只落在测试与 `web/routers/*.py` 的**变异副本**上，
-每条跑完立刻还原。
+本脚本不改生产代码：变异只落在测试、`web/routers/*.py` 与 `core/text_manager.py` 上，
+每条跑完立刻按字节还原、收尾核 sha256。
 """
 from __future__ import annotations
 
@@ -75,8 +77,14 @@ L5 = ROOT / "tests" / "test_text_failure_messages.py"
 VOICE = ROOT / "web" / "routers" / "voice.py"               # 只作变异副本，跑完还原
 MEM = ROOT / "web" / "routers" / "memory.py"
 TEXT = ROOT / "web" / "routers" / "text.py"
+TM = ROOT / "core" / "text_manager.py"                      # T 组的靶子（解析库的 import 位置）
 
-TARGETS = (RF, TF, RP, TP, AUTH, L5, VOICE, MEM, TEXT)
+TARGETS = (RF, TF, RP, TP, AUTH, L5, VOICE, MEM, TEXT, TM)
+
+sys.path.insert(0, str(ROOT / "tests"))
+import lock_coverage  # noqa: E402  —— 帧解析与产物写入的唯一一份实现
+
+ARTIFACT = pathlib.Path(__file__).resolve().parent / "route_facts_red_lines.json"
 
 
 # ── 变异体 ─────────────────────────────────────────────────────────────────
@@ -527,8 +535,41 @@ P_GROUP = [
      "RED", "test_unexpected_is_observed_minus_table"),
 ]
 
+# T-*：解析库的 import 位置（L6 —— 「校验失败的路径不得触达解析器」）。两条各打 L6 的一条
+# 判据：把 import 挪回**函数顶部**打 ②（无守卫的第二条），挪到**模块顶层**打 ①。
+#
+# **靶子只指到那一条判据（`::test_...` nodeid），不跑整文件** —— T-1 的变异体在本机是
+# 「import pymupdf4llm 又回到失败点之前」，于是**整文件跑**的那些用例会真的去 import
+# onnxruntime，进程在 import 期被打死（缺陷 44 / §五 环境账），拿到的是「跑不出来」而不是
+# 判据红。那是本机环境，不是判据的性质：判据要证明的只是「这一行被挪走它会红、并点名谁」。
+# 容器里（装了 onnxruntime）整文件跑还会多红 tripwire 与 L3 两条 —— 那半边留在这里记着，
+# 本机跑不出来就如实不声称。
+T_GROUP = [
+    ("T-1 `import pymupdf4llm` 挪回 `_extract_pdf` 函数顶部（L6 ② 该红）",
+     "tests/test_text_failure_messages.py::"
+     "test_l6_no_second_third_party_import_before_a_failure_point",
+     [("repl", TM, [
+         ('        import pymupdf\n\n        MAX_PDF_PAGES = 2000',
+          '        import pymupdf\n        import pymupdf4llm\n\n        MAX_PDF_PAGES = 2000'),
+         ('                import pymupdf4llm\n                md_text =',
+          '                md_text ='),
+     ])],
+     "RED", "import pymupdf4llm"),
+
+    ("T-2 `from docx import Document` 挪到模块顶层（L6 ① 该红）",
+     "tests/test_text_failure_messages.py::test_l6_no_third_party_import_at_module_level",
+     [("repl", TM, [
+         ('        """Extract text from DOCX, joining paragraphs."""\n'
+          '        from docx import Document\n\n        try:',
+          '        """Extract text from DOCX, joining paragraphs."""\n\n        try:'),
+         ('from storage.base import StorageBase, new_review_id',
+          'from storage.base import StorageBase, new_review_id\nfrom docx import Document'),
+     ])],
+     "RED", "模块顶层出现了第三方 import"),
+]
+
 GROUPS = {"F": F_GROUP + F3_GROUP, "R": R_GROUP, "X": X_GROUP, "V": V_GROUP,
-          "I": I_GROUP, "P": P_GROUP}
+          "I": I_GROUP, "P": P_GROUP, "T": T_GROUP}
 
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
@@ -538,8 +579,17 @@ def _hidden(path: pathlib.Path) -> pathlib.Path:
     return path.with_name(path.name + ".hidden")
 
 
+# 本次变异动过的 .py：仓内相对 posix 路径 → **变异前**的源文本。`_run` 用它把红行号搬回
+# 变异前的坐标系（见 `lock_coverage.realign_hits`）。`hide` 不记 —— 移走的文件运行时一条
+# 判别器都不剩，红不可能落在里面。
+_TOUCHED: dict[str, str] = {}
+
+
 def _apply(edits):
     for kind, path, payload in edits:
+        if kind != "hide" and path.suffix == ".py":
+            _TOUCHED.setdefault(path.resolve().relative_to(ROOT).as_posix(),
+                                path.read_text(encoding="utf-8"))
         if kind == "append":
             path.write_text(path.read_text(encoding="utf-8") + payload, encoding="utf-8")
         elif kind == "write":
@@ -563,19 +613,48 @@ def _restore(baseline):
         if hid.exists():
             hid.unlink()
         p.write_bytes(b)
+    _TOUCHED.clear()
 
 
-def _run(target: str) -> tuple[str, list[str]]:
+def _run(target: str) -> tuple[str, list[str], set[str], list[str]]:
+    """跑一条靶子，回（结论行, 红源摘要, 红在**变异前**坐标系的哪一行, 搬移不动的说明）。
+
+    第一个返回值是汇总行，**不是判档** —— 判档由 `lock_coverage.outcome` 一处做。拿不到汇总行
+    时回 `lock_coverage.RUNAWAY` 并把退出码与尾部输出塞进红源摘要：跑不起来与全绿必须分开，
+    否则「判据根本没执行」会一路读成「符合预期」（实测本机 7 条变异全是这样假绿的）。
+
+    第三个返回值必须用 `--tb=long`：`--tb=line` 给的是**最深帧**，经由抛错包装的分支会全部
+    塌成包装里那条 `raise`（实测同一个锁文件的 24 个调用点在 `--tb=line` 下都打印同一行），
+    覆盖闭合就无从谈起。`--tb=long` 的帧头是 `路径:行号:`，由 `lock_coverage.red_lines` 解析。
+
+    **这个解析漂移时是响的，不是哑的**：pytest 若改了帧格式，解析得空集 → 覆盖闭合当场红。
+
+    解析出来的行号是**变异后**那次运行的行号，而判别器集合算在**变异前**的文件上。变异只要往
+    靶子文件里插/删一行，插点之后的判别器行号就整体平移（实测 G-17/G-19 各差 1 行）——
+    故这里搬回变异前的坐标系再交出去，搬不动就报出来。
+    """
     r = subprocess.run(
-        [sys.executable, "-m", "pytest", target, "-q", "-p", "no:cacheprovider", "--tb=line"],
+        [sys.executable, "-m", "pytest", target, "-q", "-p", "no:cacheprovider", "--tb=long"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(ROOT),
         env={**os.environ, "PYTHONIOENCODING": "utf-8"})
     out = r.stdout + r.stderr
     keep = [ln.strip()[:300] for ln in out.splitlines()
             if ln.strip().startswith(("FAILED", "ERROR")) or "AssertionError" in ln]
     summary = next((ln.strip() for ln in out.splitlines()
-                    if ("passed" in ln or "failed" in ln or "error" in ln) and " in " in ln), "?")
-    return summary, keep
+                    if ("passed" in ln or "failed" in ln or "error" in ln) and " in " in ln), None)
+    if summary is None:
+        # 拿不到汇总行 = 这一跑里 pytest 没能把判据跑完（子进程崩了、import 期就死）。
+        # 记成 green 就是「两种成因共用一个信号」：跑不起来与全部通过长得一样。
+        keep.append(f"[退出码 {r.returncode}] 拿不到汇总行 —— 这条判据根本没跑起来")
+        keep += [ln.strip()[:300] for ln in out.splitlines() if ln.strip()][-2:]
+        summary = lock_coverage.RUNAWAY
+    raw = lock_coverage.red_lines(out, ROOT)
+    mutated = {rel: (ROOT / rel).read_text(encoding="utf-8")
+               for rel in _TOUCHED if (ROOT / rel).exists()}
+    lines, problems = lock_coverage.realign_hits(_TOUCHED, mutated, raw)
+    if lines != raw:
+        print(f"   [坐标] 变异后的红行号 → 变异前的行号：{sorted(raw)} → {sorted(lines)}")
+    return summary, keep, lines, problems
 
 
 def _run_py(code: str) -> tuple[str, list[str]]:
@@ -592,9 +671,9 @@ def _baseline_gate():
     bad = []
     for target in ("tests/test_route_facts.py", "tests/test_policy_table.py",
                    "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
-        summary, _ = _run(target)
+        summary, _, _, _ = _run(target)
         print(f"  基线 {target:44s} {summary}")
-        if "failed" in summary or "error" in summary:
+        if not lock_coverage.baseline_ok(summary):
             bad.append(target)
     return bad
 
@@ -614,7 +693,7 @@ def _alias_gate():
     return True
 
 
-_DOC_STAT = re.compile(r"六组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
+_DOC_STAT = re.compile(r"七组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
 _DOC_GROUP = re.compile(r"([A-Z])(\d+)")
 
 
@@ -640,8 +719,8 @@ def _count_gate():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--group", default="FRVXIP",
-                    help="要跑的组，如 V 或 FRVXIP（默认全部 —— 文档称本脚本为「全矩阵」，"
+    ap.add_argument("--group", default="FRVXIPT",
+                    help="要跑的组，如 V 或 FRVXIPT（默认全部 —— 文档称本脚本为「全矩阵」，"
                          "默认值必须与这个说法一致，否则「不带参数跑一遍」少跑一组却看不出来）")
     ap.add_argument("--with-container", action="store_true",
                     help="追加 F-3：把枚举换成 isinstance(app.routes)，在上锁 fastapi 版本里复跑")
@@ -662,12 +741,16 @@ def main() -> int:
         return 2
 
     mismatches: list[str] = []
+    domain = lock_coverage.domain_of(GROUPS)
+    hits: dict[str, list[str]] = {}
+    skipped: list[str] = []
     for name in groups:
         print(f"\n===== {name} 组 =====")
         for item in GROUPS[name]:
             label, target, edits, expect = item[:4]
             marker = item[4] if len(item) > 4 else None
             if expect == "RED-container" and not args.with_container:
+                skipped.append(label)
                 print(f"\n### {label}\n    （跳过：红不红是框架版本的函数，本地跑不出红。"
                       "用 --with-container 在上锁版本里复跑）")
                 continue
@@ -675,17 +758,27 @@ def main() -> int:
             if target == _ORDER_SWAP:
                 summary, keep = _run_py(_ORDER_SWAP_CODE)
                 got = "OK" if summary == "OK" else "FAIL"
+                lines: set[str] = set()
             else:
-                summary, keep = _run(target)
-                got = "RED" if ("failed" in summary or "error" in summary) else "green"
+                summary, keep, lines, problems = _run(target)
+                got = lock_coverage.outcome(summary)
+                if problems:
+                    mismatches.append(f"{label}：{'；'.join(problems)}")
             _restore(baseline)
+            # 只留落在覆盖域里的行：本驱动的靶子文件就是域，别处（stdlib / 宿主脚本）的帧不算。
+            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
             want = {"RED": "RED", "RED-container": "RED", "OK": "OK"}.get(expect, "green")
-            if got != want:
+            if got == lock_coverage.RUNAWAY:
+                # 不记绿也不记红：这一跑里判据根本没执行，红源与覆盖都无从谈起。
+                mismatches.append(
+                    f"{label}：{lock_coverage.RUNAWAY} —— 判据没跑起来，这条变异无法验证"
+                    "（既不是绿也不是红；修好 import/runtime 再跑）")
+            elif got != want:
                 mismatches.append(f"{label}：期望 {want} 实得 {got}")
             # marker 可为单个串或一串（一条变异可能同时该红两条断言，如 F-11）——
-            # 全部命中才算符合，缺一即记 mismatch。
+            # 全部命中才算符合，缺一即记 mismatch。跑不起来时红源本来就不存在，跳过。
             marks = (marker,) if isinstance(marker, str) else (marker or ())
-            missing = [m for m in marks if not any(m in k for k in keep)]
+            missing = [m for m in marks if not any(m in k for k in keep)] if got != lock_coverage.RUNAWAY else []
             if missing:
                 mismatches.append(f"{label}：红源里没有 {missing!r}（红的不是那条断言）")
             print(f"\n### {label}   期望={want}  实得={got}")
@@ -707,8 +800,12 @@ def main() -> int:
     if mismatches:
         for m in mismatches:
             print("  MISMATCH", m)
+        print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
         return 1
-    print("  全部符合预期。")
+    lock_coverage.write_artifact(ARTIFACT, "tests/perf/route_facts_mutations.py",
+                                 domain, hits, skipped)
+    print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
+    print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
     return 0
 
 

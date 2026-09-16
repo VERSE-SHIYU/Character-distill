@@ -1,0 +1,131 @@
+{
+  "driver": "tests/perf/route_facts_mutations.py",
+  "domain": [
+    "tests/test_auth_param_used.py",
+    "tests/test_policy_table.py",
+    "tests/test_route_facts.py",
+    "tests/test_text_failure_messages.py"
+  ],
+  "mutations": {
+    "F-1 enumerate_routes 丢掉入口模块": [
+      "tests/test_route_facts.py:280",
+      "tests/test_route_facts.py:300"
+    ],
+    "F-2 openapi 默认 routes 换成空表": [
+      "tests/test_route_facts.py:282",
+      "tests/test_route_facts.py:299",
+      "tests/test_route_facts.py:313"
+    ],
+    "F-4 form_fields 不解 $ref": [
+      "tests/test_route_facts.py:133",
+      "tests/test_route_facts.py:317"
+    ],
+    "F-5 form_fields 砍掉 urlencoded 分支": [
+      "tests/test_route_facts.py:133",
+      "tests/test_route_facts.py:188"
+    ],
+    "F-6 is_file_field 不看 anyOf": [
+      "tests/test_route_facts.py:134"
+    ],
+    "F-7 injected_params 按参数名匹配（不按依赖对象）": [
+      "tests/test_route_facts.py:164"
+    ],
+    "F-8 injected_params 退回 AST 扫 Depends（按写法猜）": [
+      "tests/test_route_facts.py:164"
+    ],
+    "F-9 openapi 不再缓存（新守卫的负控必须亮）": [
+      "tests/test_route_facts.py:266"
+    ],
+    "F-10 form_operations 只认 multipart（漏 urlencoded 分支）": [
+      "tests/test_route_facts.py:188"
+    ],
+    "F-11 form_operations 恒返回 set()": [
+      "tests/test_route_facts.py:188",
+      "tests/test_route_facts.py:313"
+    ],
+    "F-12 form_operations 不看 content-type（把所有 op 都算进去）": [
+      "tests/test_route_facts.py:188",
+      "tests/test_route_facts.py:317"
+    ],
+    "R-1a app() 退回 web.server": [
+      "tests/test_route_facts.py:230"
+    ],
+    "R-1b 枚举默认模块退回 web.server": [
+      "tests/test_route_facts.py:232"
+    ],
+    "R-2 is_file_field 只认 anyOf 内部（漏必填文件的顶层形态）": [
+      "tests/test_route_facts.py:134"
+    ],
+    "R-3 is_file_field 不看 anyOf（与 F-6 同源，重跑核一致性）": [
+      "tests/test_route_facts.py:134"
+    ],
+    "V1 新 auth 锁 · Annotated 注入且**未**引用（旧锁的盲区）": [
+      "tests/test_auth_param_used.py:80"
+    ],
+    "V2 新 auth 锁 · 反向验收：Annotated 注入**且**引用（防「锁收紧到误伤」）": [],
+    "V4 新 auth 锁退回旧 AST 形状判据 + V1 变异 —— 红源唯一性": [],
+    "V6 新 L5 锁 · 同一变异 —— 覆盖面 1 条 → 4 条": [
+      "tests/test_text_failure_messages.py:250"
+    ],
+    "V7 L5 锁退回迁移前的判据+覆盖面 + V6 变异 —— 红源唯一性": [],
+    "V8 新 L5 锁 · text op 多一个 Form 字段 —— 原覆盖面等价性": [
+      "tests/test_text_failure_messages.py:250"
+    ],
+    "V9 新 L5 判据 · 文件字段改成同名的文本 Form 字段（按名字排除的盲区）": [
+      "tests/test_text_failure_messages.py:250"
+    ],
+    "V10 判据退回「按名字排除 file」+ 保留 V9 的改法 —— 绿（红源唯一性）": [],
+    "V11 策略表某条理由改成空串": [
+      "tests/test_text_failure_messages.py:270"
+    ],
+    "V12 策略表加一条现场不存在的键": [
+      "tests/test_text_failure_messages.py:266"
+    ],
+    "V13 表单 op 上新增一个未登记的非文件字段": [
+      "tests/test_text_failure_messages.py:250"
+    ],
+    "V14 auth 锁 · ALLOWLIST 某条理由改成空串": [
+      "tests/test_auth_param_used.py:93"
+    ],
+    "V15 auth 锁 · 另一种注入写法（无 Annotated）注入且未引用 —— 复核识别半边": [
+      "tests/test_auth_param_used.py:80"
+    ],
+    "X-3 经 web/../web 别名路径以 srv_alias 装载同一份 server.py": [
+      "tests/test_route_facts.py:247"
+    ],
+    "X-4 同上但走原路径字符串（证明「红源是同一份文件」而非「路径长得怪」）": [
+      "tests/test_route_facts.py:247"
+    ],
+    "X-5 samefile 退回字符串 ==，同时保留 X-3 的别名装载（红源唯一性）": [],
+    "I-1 移走 auth 锁文件 · L5 仍按 V6 红同一条（不依赖另一把锁）": [
+      "tests/test_text_failure_messages.py:250"
+    ],
+    "I-2 移走 L5 锁文件 · auth 仍按 V1 红同一条": [
+      "tests/test_auth_param_used.py:80"
+    ],
+    "I-3 两把锁按序交错调用 · 本层输出指纹不变（无共用缓存污染）": [],
+    "P-4 empty_reasons 退回整串字符串化（缺失值被变成「None」那样的文本）": [
+      "tests/test_policy_table.py:42"
+    ],
+    "P-5 empty_reasons 只判类型、不 strip（纯空白理由被当成有内容）": [
+      "tests/test_policy_table.py:28",
+      "tests/test_policy_table.py:42"
+    ],
+    "P-2 stale_keys 两个参数方向写反": [
+      "tests/test_policy_table.py:54",
+      "tests/test_policy_table.py:61"
+    ],
+    "P-3 unexpected 恒返回空集": [
+      "tests/test_policy_table.py:67"
+    ],
+    "T-1 `import pymupdf4llm` 挪回 `_extract_pdf` 函数顶部（L6 ② 该红）": [
+      "tests/test_text_failure_messages.py:420"
+    ],
+    "T-2 `from docx import Document` 挪到模块顶层（L6 ① 该红）": [
+      "tests/test_text_failure_messages.py:403"
+    ]
+  },
+  "skipped": [
+    "F-3 enumerate_routes 改成按 isinstance 遍历 app().routes（版本相关）"
+  ]
+}
