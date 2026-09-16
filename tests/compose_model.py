@@ -15,6 +15,19 @@ compose **工具自己**的默认自动加载名（见 `autoload_files_present`�
   - `--no-env-resolution`：不加它，compose 会去解析服务声明的 `env_file: .env` —— 干净检出
     （新克隆 / CI）上它是 exit=1（文件不存在），而在开发机上它把**真实凭据**原样灌进模型。
     加了它：不读 service env_file、不吐秘密，插值照常发生。
+
+    **这句话是两条「行为」性质，不是「加了这个 flag 就有」** —— 逐版本实测（2026-09-16，
+    命令形状与本层一致）：
+
+    | 前提 | v2.38.2 | v2.40.3 | v5.0.0 | v5.5.1 |
+    |---|---|---|---|---|
+    | P-a：`env_file` 指向不存在的文件时仍 exit 0 | ✗ | ✗ | ✓ | ✓ |
+    | P-b：`env_file` 存在时其值**不进**模型输出 | ✗ | ✗ | ✓ | ✓ |
+
+    v2.x 上这两个 flag **都在**，但上面两条性质**不成立** —— 所以「flag 在不在」不是这条
+    前提的判据（缺陷 51：**测 flag 存在 ≠ 测行为**；本层原先正是拿 flag 存在当代理）。
+    两条性质由 `capability_defect()` 在**运行时**真跑一遍合成探针来强制：本层两个入口
+    （`effective_model` / `sentinel_values`）探针不过就**不给模型**，CI 另钉 compose 版本。
   - `--env-file <占位>`：占位环境写进临时目录，绝不读写仓内 `.env`。值用可识别的哨兵
     （见 `sentinel_values`），策略层据此分辨「宿主机 `${VAR}` 的插值结果」与「容器内 shell
     的 `$VAR`」—— 两者长得像，行为完全不同。
@@ -26,6 +39,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import secrets
 import subprocess
 import tempfile
 from pathlib import Path
@@ -70,23 +84,24 @@ def autoload_files_present() -> tuple[Path, ...]:
     return tuple(sorted(p for p in _REPO.glob("*") if p.name in _AUTOLOAD_NAMES))
 
 
-def cli_available() -> bool:
-    """本机有没有可用的 `docker compose`（真跑一次，不是查 PATH、不是查文件存在）。"""
-    try:
-        r = subprocess.run(["docker", "compose", "version"], capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return r.returncode == 0
+def cli_capable() -> bool:
+    """本机有没有**满足承重前提**的 `docker compose`（真跑探针，不是查版本号、不是查 PATH）。"""
+    return capability_defect() is None
 
 
 COMPOSE_ENV = requirement(
     "COMPOSE",
-    cli_available,
+    cli_capable,
     dependency="docker compose",
     short="docker compose",
-    why_unavailable="本机没有可用的 `docker compose` 命令（探针真跑了一次 `compose version`）",
-    local_hint="没装 docker compose 时",
-    enable_hint="装 docker（含 compose v2 插件）",
+    why_unavailable=(
+        "本机的 `docker compose` 不满足事实层的两条承重前提（P-a：service 的 `env_file` 指向"
+        "不存在的文件时必须 exit 0；P-b：`env_file` 的值不得进模型输出）—— 实测 v2.38.2 与 "
+        "v2.40.3 两条都不满足，v5.0.0 起满足；本机具体撞在哪一条，见 capability_defect() "
+        "的返回值"),
+    local_hint="装的 compose 太旧（v2.x）时",
+    enable_hint=("升到 compose v5.0.0 或更新（v2.x 上 `--no-env-resolution` 这个 flag 是有的，"
+                 "但它要保证的那两条**行为**不成立）"),
 )
 
 
@@ -110,6 +125,92 @@ def _compose(args: list[str]) -> str:
             f"`{' '.join(cmd)}` 退出码 {r.returncode}；"
             f"stderr：{(r.stderr or r.stdout).strip()}")
     return r.stdout
+
+
+# ── 承重前提：`--no-env-resolution` 那两条行为，每次真跑一遍 ────────────────────
+#
+# 探针用的合成编排文件与哨兵都在临时目录里，**绝不读写仓内任何 env 文件**。
+# 哨兵值每个进程现生成，只用来判「它有没有出现在输出里」，不落盘、不进消息。
+
+_PROBE_FILE = "_capability_probe.yml"
+_PROBE_SECRET_KEY = "PROBE_SECRET"
+_PROBE_ABSENT = "absent.env"
+_PROBE_PRESENT = "present.env"
+
+# 三种成因各说各的话（不得共用一句）：无 CLI / P-a / P-b。
+_NO_CLI_REASON = "没有可用的 `docker compose`"
+_P_A_REASON = (
+    "不满足前提 P-a（service 的 `env_file` 指向不存在的文件时必须 exit 0）"
+)
+_P_B_REASON = (
+    "不满足前提 P-b：`env_file` 的值出现在了模型输出里（**秘密会进模型输出**）"
+)
+
+
+@functools.lru_cache(maxsize=1)
+def capability_defect() -> str | None:
+    """本机 compose 缺哪条承重前提；两条都满足返回 `None`。进程内只探一次。
+
+    **为什么必须是真跑。** 原先这两条前提以散文形式写在模块 docstring 里，只在 compose
+    v2.38.2 上「实测」过一次 —— 而那次测的是**两个 flag 在不在**，不是这两条**行为**。
+    v2.x 两个 flag 都在、两条行为都不成立，于是 CI（ubuntu-latest 自带 v2）上事实层静默
+    失效，表现还被 stat 报错掩盖（缺陷 51）。前提写在散文里就没人守；写成一个每次都跑的
+    事实才有守卫 —— 这与本模块「问 docker 而不是自己解析 YAML」是同一条道理。
+
+    探针：合成编排文件里一个服务，`env_file` 列两条 —— 一条指向**不存在**的文件、一条指向
+    **存在**的文件（内容是现生成的哨兵）。然后按与 `_effective_model` **同一形状**的命令
+    跑一次。退出非零 = P-a 不成立；输出里出现哨兵 = P-b 不成立。
+
+    **P-b 的消息里绝不带哨兵值，也不带输出原文** —— 那正是要防的东西。
+    """
+    try:
+        version_output = _compose(["version"]).strip()
+    except ComposeFactError as e:
+        return f"{_NO_CLI_REASON}：{e}"
+
+    probe_dir = _tmp_env_dir() / "capability"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(16)
+    (probe_dir / _PROBE_PRESENT).write_text(
+        f"{_PROBE_SECRET_KEY}={token}\n", encoding="utf-8")
+    placeholder = probe_dir / "placeholder.env"
+    placeholder.write_text("", encoding="utf-8")
+    synth = probe_dir / _PROBE_FILE
+    synth.write_text(
+        # 服务名与镜像名是本探针自己的，与本仓编排文件无关。
+        "services:\n"
+        "  probe:\n"
+        "    image: scratch\n"
+        "    env_file:\n"
+        f"      - {_PROBE_ABSENT}\n"
+        f"      - {_PROBE_PRESENT}\n",
+        encoding="utf-8")
+
+    args = ["-f", str(synth), "--env-file", str(placeholder),
+            "config", "--no-env-resolution", "--format", "json"]
+    try:
+        output = _compose(args)
+    except ComposeFactError as e:
+        # 非零退出 —— 但若 stderr 里带了哨兵，那仍是 P-b（它已经泄漏了），不是 P-a。
+        text = str(e)
+        if token in text:
+            return f"{_P_B_REASON}；`docker compose version` 输出：{version_output}"
+        return (f"{_P_A_REASON}；`docker compose version` 输出：{version_output}；{text}")
+    if token in output:
+        return f"{_P_B_REASON}；`docker compose version` 输出：{version_output}"
+    return None
+
+
+def _require_capability() -> None:
+    """入口守卫：前提不成立就抛，**不给模型**。
+
+    放在 `effective_model` / `sentinel_values` 里而不是 `_compose` 里 —— 探针自己也走
+    `_compose`，放那儿会自己递归自己。
+    """
+    defect = capability_defect()
+    if defect is not None:
+        raise ComposeFactError(
+            f"本机的 compose 不满足事实层的承重前提，读到的东西不能当事实用：{defect}")
 
 
 @functools.lru_cache(maxsize=None)
@@ -156,6 +257,7 @@ def effective_model(path) -> dict:
     拿不到就抛 `ComposeFactError`，异常里带命令与 stderr —— **不返回 `{}`**：调用方拿到空
     字典只会把「没读到」当成「没问题」，那正是缺陷 21 的静默放行。
     """
+    _require_capability()
     return _effective_model(str(Path(path).resolve()))
 
 
@@ -165,6 +267,7 @@ def sentinel_values(paths=None) -> frozenset[str]:
     策略层拿它做一件事：一段文本里出现哨兵，就说明那是**宿主机** `${VAR}` 的插值结果，
     而不是容器内 shell 要展开的 `$VAR`（缺陷 41 的 G-5 那条）。
     """
+    _require_capability()
     files = project_files() if paths is None else paths
     return frozenset(
         f"{_SENTINEL_PREFIX}{n}" for p in files for n in _variable_names(str(Path(p).resolve()))

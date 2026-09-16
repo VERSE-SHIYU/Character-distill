@@ -359,19 +359,23 @@ def _count_gate() -> bool:
 
 
 def _docker_gate() -> bool:
-    """没有可用的 `docker compose` 时拒跑。
+    """没有**满足承重前提**的 `docker compose` 时拒跑。
 
     本矩阵的每条判据都落在 compose 的**有效模型**上（`compose_model.effective_model`
     真去跑一次 `docker compose config`）。求不出模型时，每条变异都是「跑不出来」而不是
     「红」—— 而一个什么都跑不出来的矩阵，打印出来和全绿长得一样。故这里拒跑，**不记为
     通过**（§四：两种成因共用一个信号 = 两种都没有守卫）。
+
+    判据与事实层是**同一个函数**（`cli_capable`，即 `capability_defect() is None`）——
+    各写一份的话，两处对「本机行不行」给出不同答案，而漂移不报错。原因**原样打印**：
+    「compose 装得不对」与「本机确实没装」是两个不同的处置（缺陷 51）。
     """
-    if compose_model.cli_available():
+    if compose_model.cli_capable():
         return True
-    print("\n本环境无法运行此矩阵：本机没有可用的 `docker compose`"
-          "（探针真跑了一次 `compose version`）。\n"
+    print("\n本环境无法运行此矩阵：本机的 `docker compose` 不满足事实层的承重前提。\n"
+          f"  原因（compose_model.capability_defect()）：{compose_model.capability_defect()}\n"
           "  每条变异判的都是 compose 的有效模型；求不出模型时「红」与「绿」都无从谈起。\n"
-          "  **不记为通过** —— 装好 docker（含 compose v2 插件）后重跑。")
+          "  **不记为通过** —— 装好 docker、并把 compose 升到 v5.0.0 或更新后重跑。")
     return False
 
 
