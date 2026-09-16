@@ -691,6 +691,7 @@ config.yaml 现值（现读，非转述）：
   - **一次认证配置错误会拦下整条启动链**：这是本次要的（从前是 app 静默起来、请求时才报），但代价就是**配置层故障会让 app 直接起不来**。
   - **健康检查命令是两份定义**（prod / local 各一份），由 `tests/test_pg_gate.py` 的「整个 healthcheck 映射逐字相同」那条强制一致。**不抽共享的原因**：部署只 scp `docker-compose.prod.yml` 这一个文件到服务器，抽成共享脚本或共享 compose 文件会改动两区部署流程并新增挂载依赖 —— 拿「多一层共享」换「少一处重复」，而那层共享正是能悄悄漂移的地方。**两份定义读的仍是同一个「有效模型」**：锁比的是 `json.dumps(healthcheck)` 而不是文件文本，故 `<<` / `extends` 写出来的漂移一样接得住。
 - **记账（不修）**：
+  - **本机全量的绿/红都不可信（§四旧账，非本条范围）**：Windows 单进程跑不完整套 —— 半途 `onnxruntime` 访问违例（`tests/test_ownership_404.py` 的注里早写着成因：chroma → fastembed → onnxruntime），**06ecabb 同样崩、崩在同一处**；临时容器（`python:3.12-slim`）全量的 17 条失败**全部是它没装 git**（`git cat-file` 一类拿不到），装上 git 后同一文件 `1 failed, 40 passed` 与 Windows 逐字相同、整仓 `1068 passed / 82 skipped / 0 failed`。故本条的验收证据一律取自**受控对比**（06ecabb vs HEAD、同一环境），不取本机全量的绝对绿。
   - **`web/server.py` 启动时连库失败仍为非致命**（有意的设计）：就绪端点与部署门是**事后**发现凭据问题的那一道，进程本身不因库不可用而退出。
   - **变异驱动还原时会覆盖期间对靶子文件的外部修改**：`_restore` 把 `TARGETS` 里每个文件按开跑那一刻的字节写回。跑矩阵期间编辑靶子文件 = 编辑被静默吞掉。这条写进了三个驱动的 docstring，属工具的固有形态（要保留「逐字节还原」这个不变量，就得接受它）。
   - **两处编排文件的注释仍指着旧锁名**（C 轮 Commit 4 把锁改名 `tests/test_pg_gate.py`，但这两个文件本轮**必须零 diff**，故注释没动）：`docker-compose.prod.yml:55` 与 `docker-compose.local.yml:46` 各有一句「两份的一致性由 tests/test_pg_healthcheck.py 强制保证」。**路径已不存在**，属 §四「注释也是某一刻的记录」。**不搭车修**：改了就不是零 diff，本轮的验收判据（`git diff 06ecabb..HEAD -- docker-compose*.yml` 必须为空）当场失效。要修的话单独一次改动、只动这两行注释。
