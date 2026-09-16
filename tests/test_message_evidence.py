@@ -35,7 +35,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import routers.chat as chat_router_mod
-from conftest import pg_reachable, pg_required, pg_skip_reason
+from conftest import PG_ENV
 from storage.postgres_store import PostgresStore
 
 from core.schema import (
@@ -289,14 +289,9 @@ def test_parse_failure_is_visible_not_silent(capsys):
 
 # ── 2c. PG 侧：已建库重跑迁移（缺陷 21/23/26 的教训）──────────────────
 
-_PG_SKIP_REASON = pg_skip_reason("messages.evidence 的 PG 落库")
-_pg = pytest.mark.skipif(
-    os.getenv("SKIP_PG_TESTS") == "1" or (not pg_reachable() and not pg_required()),
-    reason=(
-        "SKIP_PG_TESTS=1 显式关闭了 messages.evidence 的 PG 落库用例"
-        if os.getenv("SKIP_PG_TESTS") == "1"
-        else _PG_SKIP_REASON
-    ),
+_pg = PG_ENV.skipif(
+    "messages.evidence 的 PG 落库",
+    disabled_label="messages.evidence 的 PG 落库用例",
 )
 
 

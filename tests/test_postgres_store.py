@@ -31,7 +31,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from conftest import pg_reachable, pg_required, pg_skip_reason
+from conftest import PG_ENV, pg_reachable, pg_required
 
 from storage.postgres_store import PostgresStore
 from storage.sqlite_store import SQLiteStore
@@ -57,15 +57,7 @@ def _dsn() -> str:
 # 需要真 PG 的用例统一挂这个 mark（含可见原因）。挂在**类**上而非模块级 `pytestmark`：
 # `TestPgFreshSchemaClosure.test_lock_has_teeth` 是纯提取器负控、根本不需要 PG，模块级
 # mark 会连它一起 skip —— 把一条本地跑得动的锁用不相干的理由关掉，正是要消灭的静默通道。
-_PG_SKIP_REASON = pg_skip_reason("PostgresStore 用例")
-_pg = pytest.mark.skipif(
-    os.getenv("SKIP_PG_TESTS") == "1" or (not pg_reachable() and not pg_required()),
-    reason=(
-        "SKIP_PG_TESTS=1 显式关闭了 PostgresStore 用例"
-        if os.getenv("SKIP_PG_TESTS") == "1"
-        else _PG_SKIP_REASON
-    ),
-)
+_pg = PG_ENV.skipif("PostgresStore 用例")
 
 
 async def _pg_tables() -> set[str]:

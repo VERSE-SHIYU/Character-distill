@@ -29,7 +29,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from conftest import pg_reachable, pg_required, pg_skip_reason
+from conftest import PG_ENV
 
 from storage.base import StorageBase
 from storage.postgres_store import PostgresStore
@@ -40,13 +40,10 @@ def _dsn() -> str:
     return os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/charsim_test")
 
 
-_pg = pytest.mark.skipif(
-    os.getenv("SKIP_PG_TESTS") == "1" or (not pg_reachable() and not pg_required()),
-    reason=(
-        "SKIP_PG_TESTS=1 显式关闭了 PostgresStore 用例"
-        if os.getenv("SKIP_PG_TESTS") == "1"
-        else pg_skip_reason("StorageBase.ping 的 PG 用例")
-    ),
+_pg = PG_ENV.skipif(
+    "StorageBase.ping 的 PG 用例",
+    # 原文如此（复制粘贴残留 PostgresStore）：本轮是纯重构，逐字保留，单独修。
+    disabled_label="PostgresStore 用例",
 )
 
 
