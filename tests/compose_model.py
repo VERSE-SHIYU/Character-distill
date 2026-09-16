@@ -131,14 +131,26 @@ def _compose(args: list[str]) -> str:
 #
 # 探针用的合成编排文件与哨兵都在临时目录里，**绝不读写仓内任何 env 文件**。
 # 哨兵值每个进程现生成，只用来判「它有没有出现在输出里」，不落盘、不进消息。
+#
+# **一次探针只测一条性质。** 三条探针各用**各自独立**的合成文件：
+#   C（对照） 服务没有 env_file          —— 只问「这条命令形状在本机跑得通吗」
+#   P-a        env_file 只列一条不存在的  —— 只问「缺文件时会不会非零退出」
+#   P-b        env_file 只列一条存在的    —— 只问「值会不会进模型输出」
+# 合成一次跑、两条性质一起判**曾经是个洞**（缺陷 51 审计 F1）：v2 在缺文件那一步先炸，
+# 于是永远只报得出 P-a —— 而**那台机器恰恰也是会泄漏的**，泄漏被前一条遮住了。
 
-_PROBE_FILE = "_capability_probe.yml"
+_PROBE_CONTROL = "_capability_control.yml"
+_PROBE_MISSING = "_capability_missing.yml"
+_PROBE_LEAKING = "_capability_leaking.yml"
 _PROBE_SECRET_KEY = "PROBE_SECRET"
 _PROBE_ABSENT = "absent.env"
 _PROBE_PRESENT = "present.env"
 
-# 三种成因各说各的话（不得共用一句）：无 CLI / P-a / P-b。
+# 四种成因各说各的话（互不包含）：无 CLI / 探针本身不成立 / P-a / P-b。
 _NO_CLI_REASON = "没有可用的 `docker compose`"
+_PROBE_BROKEN_REASON = (
+    "合成探针本身跑不出结论（对照运行就不成立），本机 compose 能不能用无从判断"
+)
 _P_A_REASON = (
     "不满足前提 P-a（service 的 `env_file` 指向不存在的文件时必须 exit 0）"
 )
@@ -147,21 +159,42 @@ _P_B_REASON = (
 )
 
 
+def _probe_args(synth: Path, placeholder: Path) -> list[str]:
+    """探针命令 —— 与 `_effective_model` **同一形状**，只有 `-f` 指向的文件不同。"""
+    return ["-f", str(synth), "--env-file", str(placeholder),
+            "config", "--no-env-resolution", "--format", "json"]
+
+
+def _write_probe(probe_dir: Path, name: str, env_file: tuple[str, ...]) -> Path:
+    """写一份合成编排文件。服务名与镜像名是本探针自己的，与本仓编排文件无关。"""
+    lines = ["services:", "  probe:", "    image: scratch"]
+    if env_file:
+        lines.append("    env_file:")
+        lines += [f"      - {f}" for f in env_file]
+    path = probe_dir / name
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 @functools.lru_cache(maxsize=1)
 def capability_defect() -> str | None:
     """本机 compose 缺哪条承重前提；两条都满足返回 `None`。进程内只探一次。
 
     **为什么必须是真跑。** 原先这两条前提以散文形式写在模块 docstring 里，只在 compose
     v2.38.2 上「实测」过一次 —— 而那次测的是**两个 flag 在不在**，不是这两条**行为**。
-    v2.x 两个 flag 都在、两条行为都不成立，于是 CI（ubuntu-latest 自带 v2）上事实层静默
-    失效，表现还被 stat 报错掩盖（缺陷 51）。前提写在散文里就没人守；写成一个每次都跑的
-    事实才有守卫 —— 这与本模块「问 docker 而不是自己解析 YAML」是同一条道理。
+    v2.x 两个 flag 都在、两条行为都不成立，于是那条声明一直是空头支票（缺陷 51）。
+    前提写在散文里就没人守；写成一个每次都跑的事实才有守卫 —— 这与本模块「问 docker
+    而不是自己解析 YAML」是同一条道理。
 
-    探针：合成编排文件里一个服务，`env_file` 列两条 —— 一条指向**不存在**的文件、一条指向
-    **存在**的文件（内容是现生成的哨兵）。然后按与 `_effective_model` **同一形状**的命令
-    跑一次。退出非零 = P-a 不成立；输出里出现哨兵 = P-b 不成立。
+    三条探针各测一条性质（见上面那段注释）。**顺序是承重的**：C 先跑，它不过说明探针
+    自己不成立，后面两条的结论一律不可信，故直接返回、不再往下判 —— 否则「合成文件写错」
+    会被读成「P-a 不成立」（缺陷 51 审计 F2：非零退出**不等于** P-a）。
 
-    **P-b 的消息里绝不带哨兵值，也不带输出原文** —— 那正是要防的东西。
+    **P-a 与 P-b 都判完再返回**：两条都不成立时消息里**同时**带上两条原因。中途早退
+    就是 F1 那个洞 —— v2 上只会看到 P-a，而它同时也在泄漏。
+
+    **消息里绝不出现哨兵值，也不出现探针输出的原文**（P-a 与对照运行的 stderr 里不可能
+    有哨兵 —— 那两条探针根本不引用带哨兵的那份文件 —— 故可以附上）。
     """
     try:
         version_output = _compose(["version"]).strip()
@@ -170,34 +203,48 @@ def capability_defect() -> str | None:
 
     probe_dir = _tmp_env_dir() / "capability"
     probe_dir.mkdir(parents=True, exist_ok=True)
+    placeholder = probe_dir / "placeholder.env"
+    placeholder.write_text("", encoding="utf-8")
     token = secrets.token_hex(16)
     (probe_dir / _PROBE_PRESENT).write_text(
         f"{_PROBE_SECRET_KEY}={token}\n", encoding="utf-8")
-    placeholder = probe_dir / "placeholder.env"
-    placeholder.write_text("", encoding="utf-8")
-    synth = probe_dir / _PROBE_FILE
-    synth.write_text(
-        # 服务名与镜像名是本探针自己的，与本仓编排文件无关。
-        "services:\n"
-        "  probe:\n"
-        "    image: scratch\n"
-        "    env_file:\n"
-        f"      - {_PROBE_ABSENT}\n"
-        f"      - {_PROBE_PRESENT}\n",
-        encoding="utf-8")
 
-    args = ["-f", str(synth), "--env-file", str(placeholder),
-            "config", "--no-env-resolution", "--format", "json"]
+    # ── 对照 C：服务没有 env_file。只问命令形状跑不跑得通。 ──
+    control = _write_probe(probe_dir, _PROBE_CONTROL, ())
     try:
-        output = _compose(args)
+        _compose(_probe_args(control, placeholder))
     except ComposeFactError as e:
-        # 非零退出 —— 但若 stderr 里带了哨兵，那仍是 P-b（它已经泄漏了），不是 P-a。
+        return (f"{_PROBE_BROKEN_REASON}；`docker compose version` 输出：{version_output}；"
+                f"对照运行的 {e}")
+
+    reasons: list[str] = []
+
+    # ── P-a：env_file 只列一条不存在的文件。 ──
+    missing = _write_probe(probe_dir, _PROBE_MISSING, (_PROBE_ABSENT,))
+    try:
+        _compose(_probe_args(missing, placeholder))
+    except ComposeFactError as e:
+        reasons.append(f"{_P_A_REASON}；{e}")
+
+    # ── P-b：env_file 只列一条存在的文件（内容是现生成的哨兵）。 ──
+    leaking = _write_probe(probe_dir, _PROBE_LEAKING, (_PROBE_PRESENT,))
+    try:
+        output = _compose(_probe_args(leaking, placeholder))
+    except ComposeFactError as e:
+        # 非零退出。C 已经证过命令形状可用，故这里失败**必定另有原因**：若那段文本里
+        # 带了哨兵，那是它已经泄漏了（仍判 P-b）；没带就说不清是什么，不猜成 P-a。
         text = str(e)
         if token in text:
-            return f"{_P_B_REASON}；`docker compose version` 输出：{version_output}"
-        return (f"{_P_A_REASON}；`docker compose version` 输出：{version_output}；{text}")
-    if token in output:
-        return f"{_P_B_REASON}；`docker compose version` 输出：{version_output}"
+            reasons.append(_P_B_REASON)
+        else:
+            return (f"{_PROBE_BROKEN_REASON}；`docker compose version` 输出：{version_output}；"
+                    f"P-b 探针的 {text}")
+    else:
+        if token in output:
+            reasons.append(_P_B_REASON)
+
+    if reasons:
+        return "；".join([f"`docker compose version` 输出：{version_output}", *reasons])
     return None
 
 
