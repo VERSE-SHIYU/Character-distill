@@ -170,20 +170,15 @@ multidict==6.8.0
     #   yarl
 mutagen==1.48.1
     # via -r requirements.in
-networkx==3.6.1
-    # via pymupdf-layout
 numpy==2.5.3
     # via
     #   chromadb
     #   onnxruntime
-    #   pymupdf-layout
     #   qdrant-client
 oauthlib==3.3.1
     # via requests-oauthlib
 onnxruntime==1.30.0
-    # via
-    #   chromadb
-    #   pymupdf-layout
+    # via chromadb
 openai==3.13.0
     # via
     #   -r requirements.in
@@ -243,9 +238,7 @@ protobuf==6.33.6
     #   opentelemetry-proto
     #   qdrant-client
 psutil==7.2.2
-    # via
-    #   -r requirements.in
-    #   pymupdf4llm
+    # via -r requirements.in
 pwdlib==0.3.1
     # via -r requirements.in
 pybase64==1.5.0
@@ -272,12 +265,6 @@ pygments==2.21.0
 pyjwt==2.14.0
     # via -r requirements.in
 pymupdf==1.28.2
-    # via
-    #   pymupdf-layout
-    #   pymupdf4llm
-pymupdf-layout==1.28.2
-    # via pymupdf4llm
-pymupdf4llm==1.28.2
     # via -r requirements.in
 pypika==0.51.1
     # via chromadb
@@ -304,7 +291,6 @@ pyyaml==6.0.3
     #   chromadb
     #   huggingface-hub
     #   kubernetes
-    #   pymupdf-layout
     #   uvicorn
 qdrant-client==1.19.0
     # via mem0ai
@@ -346,9 +332,7 @@ sqlalchemy==2.0.52
 starlette==1.6.0
     # via fastapi
 tabulate==0.10.0
-    # via
-    #   edge-tts
-    #   pymupdf4llm
+    # via edge-tts
 tenacity==9.1.4
     # via chromadb
 tokenizers==0.23.2
