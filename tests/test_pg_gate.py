@@ -71,6 +71,14 @@ import pytest
 import compose_model
 import policy_table
 
+# 本文件里要真跑一次 `docker compose config` 才拿得到有效模型的那几条，各挂这个 mark：
+# 本机没有 docker compose 时**显式 skip**（与本仓其余环境需求同一条规矩），CI 用
+# `REQUIRE_COMPOSE_TESTS=1` 拒绝跳过。
+#
+# 剩下的三条（隐式加载文件的检查、时长解析器的契约、豁免理由非空）不碰 compose，
+# 故不挂 —— 没有 docker 的环境里它们照样真跑，判据多一条是一条。
+_COMPOSE = compose_model.COMPOSE_ENV.skipif("门的锁")
+
 # 断链的运算符：后面接的是**第二条命令**，或一个把输出（含 stderr）吞掉的重定向。
 _SECOND_COMMAND_OPS = (";", "||", "&&", "|", "&")
 
@@ -439,6 +447,7 @@ def _assert_consumer_waits(service: dict, where: str, db: str, how: str) -> None
 
 # ── 负控 ──────────────────────────────────────────────────────────────────────
 
+@_COMPOSE
 def test_lock_is_not_vacuous():
     """解析出的东西必须非空，否则下面每条 `for ... in ...` 都恒真 —— 判据失效与判据通过
     长得一样，故把「解析器瞎了」单独变成一次红。"""
@@ -472,6 +481,7 @@ def test_no_compose_file_is_picked_up_implicitly():
 
 # ── I1 + I2：整个 healthcheck 映射 + 那条命令的形态 ───────────────────────────
 
+@_COMPOSE
 def test_healthcheck_mapping_and_command_are_closed():
     """键恰好四个（`disable` 一律点名），命令行恰好是那个形状。"""
     for path in compose_model.project_files():
@@ -498,6 +508,7 @@ def test_duration_parser_has_no_fallback_value():
 
 # ── I3：两份定义的一致性 ──────────────────────────────────────────────────────
 
+@_COMPOSE
 def test_every_db_healthcheck_is_verbatim_identical():
     """所有此类服务的**整个 healthcheck 映射**必须逐字相同。
 
@@ -519,6 +530,7 @@ def test_every_db_healthcheck_is_verbatim_identical():
 
 # ── I4(a)：消费者必须等门 ─────────────────────────────────────────────────────
 
+@_COMPOSE
 def test_every_consumer_waits_for_a_healthy_probe():
     """每个硬消费者都得用 `condition: service_healthy` 等这道门。"""
     for path in compose_model.project_files():
@@ -531,6 +543,7 @@ def test_every_consumer_waits_for_a_healthy_probe():
 
 # ── I4(b–e)：豁免表与现场对账 ─────────────────────────────────────────────────
 
+@_COMPOSE
 def test_every_service_is_accounted_for():
     """闭包：每个服务要么是库本身、要么有硬证据连库、要么登记在豁免表里。
 
@@ -544,6 +557,7 @@ def test_every_service_is_accounted_for():
         "`_NOT_A_DB_CONSUMER` 并写清凭什么断定它不连库")
 
 
+@_COMPOSE
 def test_exemption_table_has_no_stale_entries():
     """表里有、现场却已经不出现的条目 —— 陈旧条目会掩盖同一位置新长出来的漏网。"""
     stale = sorted(policy_table.stale_keys(_NOT_A_DB_CONSUMER, _needs_registration_all()))
@@ -558,6 +572,7 @@ def test_exemption_table_reasons_are_not_blank():
     assert blank == [], f"豁免表里这些条目没写理由（或理由不是字符串）：{blank}"
 
 
+@_COMPOSE
 def test_exemption_table_does_not_exempt_a_real_consumer():
     """同一个服务不能既被豁免、又有连库的硬证据 —— 两处判据给出相反答案时必须有一次红。"""
     both = sorted(set(_NOT_A_DB_CONSUMER) & _hard_consumer_pairs())
