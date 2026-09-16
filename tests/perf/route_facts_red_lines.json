@@ -119,7 +119,7 @@
       "tests/test_text_failure_messages.py:408"
     ],
     "T-3 `import pymupdf4llm` 回到 `_extract_pdf` 里（L6 入口面的静态守卫该红）": [
-      "tests/test_text_failure_messages.py:473"
+      "tests/test_text_failure_messages.py:482"
     ],
     "T-4 三条函数级解析库 import 全提到模块顶层（负控该红：函数体里一个都认不出来 ——判据面塌了；① 在同一次改动下也会红，但本靶子只跑负控那一个 nodeid，不声称）": [
       "tests/test_text_failure_messages.py:445"

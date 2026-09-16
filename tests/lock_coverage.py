@@ -50,10 +50,20 @@ targets.py:133` 与 `tests/test_health_ready.py:48` 的 `raise self._exc`（**�
 564 行，表里插一行，断言就跑到 565 去。对齐用 `realign_hits()`：按判别器在文件里的**出现次序**
 对齐（插/删行不改变次序，只改变行号）；次序对不上就报出来，那时两套坐标不可比、红源说不清。
 
-**不设豁免名单。** 在任何合法变异下都红不了的判别器 = **死判据**，正确的处置是**删掉它**，
-不是登记豁免。登记豁免就是把 `_NOT_APPLIED` 那一类手工清单再抄一份（AGENTS.md §四 ③层：
-「中间那一层由人维护」），而这条锁的全部价值恰恰在于「集合相等，没有第三种状态」。第一次
-遇到「这个判别器的变异不好写」时若开了豁免的口子，这条锁当场退化成它自己要防的那种东西。
+**从「不设名单」改到「已知缺口名单（只许减少）」—— 命题变了，理由要如实记。** 本模块原先
+写的是「不设豁免名单」：任何合法变异下都红不了的判别器 = 死判据，处置只有删掉它。那条规矩
+**没有错，只是不完整** —— 它没有回答「今天就已经有一批撞不到的判别器时怎么办」。实测的
+答案是：全矩阵跑完仍有 84 条（26 / 19 / 39），而**一直红的锁等于没有锁** —— 生产上 PDF 已坏
+73 天，锁天天红，没有任何人看得出来。于是命题从「全覆盖」换成「**只许减少**」，名单在
+`tests/lock_coverage_gaps.py`，双向对账由 `tests/test_lock_coverage.py` 用 `policy_table`
+的两个差集函数做（见 AGENTS.md 缺陷 41 的收口段）：
+
+  - ① 现场未覆盖 ⊆ 名单 —— 新增缺口不在名单里就红；
+  - ② 名单 ⊆ 现场未覆盖 —— 补上了却没删名单也红。
+
+原先那条规矩要防的东西**没有丢**：它现在由方向 ① 承担（新长出来的判别器不许被豁免），
+而方向 ② 额外堵住「名单只增不减」。名单每条写清**要撞到它得构造什么**，否则清名单的人
+不知道该补哪条变异。
 
 **递归的终止是判据自身推出的，不是人为规定的。** 覆盖域取自**变异驱动自己的事实字段**
 （驱动表里每条变异的靶子文件，由 `domain_of()` 从驱动数据推出，不另立清单）。今天没有任何
@@ -304,6 +314,52 @@ def domain_of(groups: Mapping[str, Sequence[tuple]]) -> list[str]:
     """覆盖域 = 驱动表里每条变异的靶子文件中的 `.py`（驱动自己的事实字段）。"""
     targets = {item[1] for g in groups.values() for item in g}
     return sorted(t for t in targets if isinstance(t, str) and t.endswith(".py"))
+
+
+# ── 已知缺口名单（「只许减少」）───────────────────────────────────────────────
+#
+# **为什么名单的键不是 `文件:行号`。** 行号是**坐标**，不是身份：任何一次无关的插入/删除
+# 都会让同一份名单整体平移。本仓实测过两次：`test_text_failure_messages.py` 只改了一段
+# docstring（`224fd68`），L6 入口面那条静态守卫的 `assert` 就从 473 滑到 482，于是 T-3
+# 的红源当场落到一个不再是判别器的行号上 —— 那条变异被记成**空转**，同时 482 凭空多出
+# 一条「新缺口」。这不是理论上的担心，是名单式落地前最后一次实测踩到的。
+#
+# 判别器的**身份是它的源码文本**。`nth` 只在同一文件里出现**同文本**判别器时才起作用
+# （实测：`assert r.status_code == 400, r.text` 在一份文件里出现 4 次、
+# `assert await store.ping() is None` 出现 2 次）—— 按行号次序取第几处，插行不改变次序。
+
+def _located(location: str) -> tuple[str, int]:
+    """`"文件:行号"` → `(文件, 行号)`。"""
+    rel, _, n = location.rpartition(":")
+    return rel, int(n)
+
+
+def gap_keys(uncovered: Iterable[str], root: str | pathlib.Path) -> dict[str, tuple[str, str, int]]:
+    """未覆盖判别器的**稳定身份**：`文件:行号` → `(文件, 判别器源码, 同文本第几处)`。
+
+    输入是 `gaps()` 的第一项，输出可放进名单作键。返的是**映射**（不是集合）—— 名单报红时
+    要能指回行号，而键里故意没有行号（行号会平移）；映射就是这条回路。
+
+    按**行号数值**排序取 `nth`，不按 `"文件:行号"` 的字典序 —— 后者在行号跨过 99→100 时
+    会把两处同文本判别器的次序对调（字符串里 `"9" > "100"`），同一份名单在两个内容相同的
+    树上会算出两种键。
+
+    名单的**双向对账**不在这里：直接用 `policy_table.unexpected(现场, 名单)` 与
+    `policy_table.stale_keys(名单, 现场)` —— 与本仓另外两张表（`_FORM_METADATA`、
+    `ALLOWLIST`）同一套调用，三处不各写一遍。
+    """
+    root = pathlib.Path(root)
+    cache: dict[str, dict[int, str]] = {}
+    counts: dict[tuple[str, str], int] = {}
+    out: dict[str, tuple[str, str, int]] = {}
+    for rel, lineno in sorted((_located(loc) for loc in uncovered)):
+        if rel not in cache:
+            cache[rel] = discriminators(root / rel)
+        snippet = cache[rel][lineno]
+        nth = counts.get((rel, snippet), 0)
+        counts[(rel, snippet)] = nth + 1
+        out[f"{rel}:{lineno}"] = (rel, snippet, nth)
+    return out
 
 
 def write_artifact(path: str | pathlib.Path, driver_rel: str, domain: Sequence[str],

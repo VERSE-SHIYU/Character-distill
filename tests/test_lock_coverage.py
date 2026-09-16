@@ -16,8 +16,9 @@
 **递归在这里停：** 本文件自己也是锁，但它**不在覆盖域里** —— 域取自各变异驱动的事实字段
 （驱动表里每条变异的靶子文件）。今天没有驱动把 `test_lock_coverage.py` 列为靶子，所以它
 天生不在域内。这不是豁免：将来谁真给元锁写了驱动，它自动进域。判据自身推出终止，不是
-人为规定。本文件的有效性由下面三条合成输入用例承担（**不设豁免名单**的道理见
-`lock_coverage` 的模块 docstring）。
+人为规定。本文件自己的判据由下面那批**合成输入**用例承担（元锁写不了「撞自己的变异」：
+给它写驱动就会把本文件的全部 assert 拉进覆盖域，一夜之间多出几十条缺口 —— 那不是守卫，
+是洪水）。名单与「只许减少」的来由见 `lock_coverage` 的模块 docstring。
 """
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ import pathlib
 import pytest
 
 import lock_coverage
+import lock_coverage_gaps
+import policy_table
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PERF = ROOT / "tests" / "perf"
@@ -64,6 +67,12 @@ def test_every_mutation_driver_has_an_artifact_and_vice_versa():
 
 @pytest.mark.parametrize("artifact", _artifacts(), ids=lambda p: p.stem)
 def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
+    """判别器集合与「变异实际红到的行」集合**相等** —— 除开名单上登记的已知缺口。
+
+    命题在名单式落地时从「全覆盖」换成「**只许减少**」：84 条今天是撞不到的，锁天天红，
+    而一直红的锁等于没有锁。换成两个方向后，它今天就能成立，且原先那条规矩（新长出来的
+    判别器不许被豁免）由方向 ① 原样继承。
+    """
     data = json.loads(artifact.read_text(encoding="utf-8"))
     domain, hits = data["domain"], data["mutations"]
     controls = set(data.get("controls", ()))
@@ -73,17 +82,62 @@ def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
         f"{data['driver']}：mutations / controls / skipped 三类不互斥")
     uncovered, vacuous = lock_coverage.gaps(domain, hits, ROOT)
 
-    assert uncovered == [], (
-        f"{data['driver']} 覆盖不到这些判别器（判别器还在、但没有任何变异撞它 —— "
-        "「变异红 ≠ 判别器起作用」的第四种形态，不会有人发现）：\n" +
-        "\n".join(f"  {lock_coverage.discriminators(ROOT / loc.rsplit(':', 1)[0])[int(loc.rsplit(':', 1)[1])]}"
-                  f"    [{loc}]" for loc in uncovered) +
-        "\n处置只有两种：补一条撞它的变异，或**删掉这条判别器**"
-        "（在任何合法变异下都红不了 = 死判据）。本锁不设豁免名单。")
-
     assert vacuous == [], (
         f"{data['driver']} 里这些变异一条判别器都没撞到（空转变异 —— 它红了，"
         f"但红的不是任何一条判据，红源说不清）：{vacuous}")
+
+    allow = lock_coverage_gaps.ALLOWED_GAPS.get(data["driver"], {})
+    # 映射的**键**才是行号（用于把红源指回现场），判别器的身份是那个元组（里面没有行号）。
+    identity = lock_coverage.gap_keys(uncovered, ROOT)     # 文件:行号 → 稳定身份
+    actual = set(identity.values())
+
+    # ① 现场未覆盖 ⊄ 名单 —— 长出了一条没人登记过的缺口。这一条是「不设豁免名单」那条
+    # 老规矩的继承：**新长出来的判别器不许被豁免**，名单是账，不是许可证。
+    new = policy_table.unexpected(actual, allow)
+    assert not new, (
+        f"{data['driver']} 长出了名单上没有的缺口（判别器还在、但没有任何变异撞它 —— "
+        "「变异红 ≠ 判别器起作用」的第四种形态，不会有人发现）：\n" +
+        "\n".join(f"  {loc}  {identity[loc][1]}"
+                  f"    [同文本第 {identity[loc][2] + 1} 处]" for loc in sorted(uncovered)
+                  if identity[loc] in new) +
+        "\n处置只有两种：补一条撞它的变异，或**删掉这条判别器**"
+        "（在任何合法变异下都红不了 = 死判据）。要留着，就往 "
+        "tests/lock_coverage_gaps.py 登记，并写清「要撞到它得构造什么」。")
+
+    # ② 名单 ⊄ 现场未覆盖 —— 名单里的条目已经不是缺口了。**这一条才是关键**：它逼着
+    # 「补上就同步删」，否则名单会退化成只增不减的手工清单（本轮踩过两次的形态）。
+    stale = policy_table.stale_keys(allow, actual)
+    assert not stale, (
+        f"{data['driver']} 的名单里有**已不再是缺口**的条目"
+        "（判别器被撞到了 / 被删了 / 文本改了 —— 后两种会让这里与方向 ① 同时红）：\n" +
+        "\n".join(f"  {rel}  {snip!r}    [同文本第 {nth + 1} 处]"
+                  for rel, snip, nth in sorted(stale)) +
+        "\n从 tests/lock_coverage_gaps.py 删掉这几行 —— 名单只许减少。")
+
+    assert not policy_table.empty_reasons(allow), (
+        f"{data['driver']} 的名单里有空理由条目：{sorted(policy_table.empty_reasons(allow))}")
+    assert not lock_coverage_gaps.placeholder_reasons(allow), (
+        f"{data['driver']} 的名单里有占位语理由（又短、又用的是占位词 —— 写清「要撞到它得"
+        f"构造什么」，否则清名单的人不知道该补哪条变异）："
+        f"{sorted(lock_coverage_gaps.placeholder_reasons(allow))}")
+
+
+def test_the_gap_list_names_only_real_drivers():
+    """名单的**驱动段**必须都是真驱动 —— 驱动改名/删除后留下的孤儿段，否则没人看得见。
+
+    与方向 ② 同一个病，只是在上一层：方向 ② 防「判别器补上了却留着名单条目」，这一条防
+    「驱动没了却留着整段名单」。孤儿段不会被参数化跑到（那个驱动不在了，`_artifacts()`
+    里没有它的产物行），所以它既不红也不绿 —— 正是「只增不减」要防的那副面孔。
+
+    比的是产物里的 `driver` 字段（**路径形态**，如 `tests/perf/ping_mutations.py`），
+    因为名单就是按它分段的 —— 拿 `Path.stem` 去比会两边永远不等、这条判据恒红（上面
+    「驱动 ↔ 产物」那条锁踩过同一个坑）。
+    """
+    drivers = {json.loads(p.read_text(encoding="utf-8"))["driver"] for p in _artifacts()}
+    ghosts = lock_coverage_gaps.unknown_drivers(lock_coverage_gaps.ALLOWED_GAPS, drivers)
+    assert not ghosts, (
+        f"tests/lock_coverage_gaps.py 里这些驱动段没有对应的驱动（改名后的残留？）："
+        f"{sorted(ghosts)} —— 删掉整段，或把驱动名改回来")
 
 
 # ── 元锁自身的正控与负控：合成输入，不碰仓内 ──────────────────────────────────
@@ -255,6 +309,101 @@ def test_a_mutation_that_changes_the_discriminator_sequence_is_refused():
         {"synth_lock.py": _SYNTH}, {"synth_lock.py": mutated}, {"synth_lock.py:12"})
     assert len(problems) == 1 and "判别器序列" in problems[0]
     assert lines == set()
+
+
+_SYNTH_GAPS = '''\
+def check(x):
+    if x < 0:
+        raise ValueError("neg")
+    assert x > 0
+    assert x > 0
+'''
+
+
+def test_gap_keys_survive_a_line_shift(tmp_path):
+    """名单的键是判别器的**文本**，不是行号 —— 头部插一行，键必须一模一样。
+
+    **这不是假想的顾虑，是落地前实测踩到的。** `test_text_failure_messages.py` 只改了一段
+    docstring（`224fd68`），L6 入口面那条静态守卫的 assert 就从 473 滑到 482。按行号做键
+    的话，T-3 的红源当场落到一个不再是判别器的行号上：那条变异被记成**空转**，同时 482
+    凭空多出一条「新缺口」。文本做键，同一份名单在内容相同的树上只有一个答案。
+    """
+    p = tmp_path / "synth_gaps.py"
+    p.write_text(_SYNTH_GAPS, encoding="utf-8")
+    before = lock_coverage.gap_keys(
+        [f"synth_gaps.py:{n}" for n in sorted(lock_coverage.discriminators(p))], tmp_path)
+
+    p.write_text("# 头部插一行\n" + _SYNTH_GAPS, encoding="utf-8")
+    after = lock_coverage.gap_keys(
+        [f"synth_gaps.py:{n}" for n in sorted(lock_coverage.discriminators(p))], tmp_path)
+    assert set(before.values()) == set(after.values())
+
+
+def test_gap_keys_disambiguate_identical_snippets_by_line_order(tmp_path):
+    """同一文件里出现**同文本**判别器时，用行号次序区分 —— 这份合成文件里有两处 `assert x > 0`。
+
+    实仓里就有：`assert r.status_code == 400, r.text` 在一份文件里出现 4 次、
+    `assert await store.ping() is None` 出现 2 次。只按文本做键会让后一处无处安放。
+    """
+    p = tmp_path / "synth_gaps.py"
+    p.write_text(_SYNTH_GAPS, encoding="utf-8")
+    keys = lock_coverage.gap_keys(["synth_gaps.py:4", "synth_gaps.py:5"], tmp_path)
+    assert keys == {
+        "synth_gaps.py:4": ("synth_gaps.py", "assert x > 0", 0),
+        "synth_gaps.py:5": ("synth_gaps.py", "assert x > 0", 1),
+    }
+
+
+def test_both_directions_of_the_gap_list_are_controlled(tmp_path):
+    """双向各一负控 + 全对上的正控 —— 三个方向都要控，只控一侧会让「恒空」永远绿。
+
+    ① 现场有、名单没有 → 点名那条**新缺口**（名单是账，不是许可证）；
+    ② 名单有、现场没有 → 点名那条**陈旧条目**（逼着「补上就同步删」）。
+    """
+    p = tmp_path / "synth_gaps.py"
+    p.write_text(_SYNTH_GAPS, encoding="utf-8")
+    identity = lock_coverage.gap_keys(["synth_gaps.py:4", "synth_gaps.py:5"], tmp_path)
+    actual = set(identity.values())
+    first, second = identity["synth_gaps.py:4"], identity["synth_gaps.py:5"]
+
+    assert policy_table.unexpected(actual, {first: "理由"}) == {second}
+    assert policy_table.stale_keys({first: "理由", second: "理由"}, {first}) == {second}
+
+    both = {first: "理由一", second: "理由二"}
+    assert policy_table.unexpected(actual, both) == set()
+    assert policy_table.stale_keys(both, actual) == set()
+
+
+def test_placeholder_reasons_and_unknown_drivers_are_named():
+    """名单自身的两条机械判据各一正一负：占位语理由、孤儿驱动段。
+
+    `placeholder_reasons` 是**③层字符串代理**（0 层要问的「清名单的人能否据此知道该补
+    什么」机器判不了），可接受之处在失效方向是**红不是绿**：理由里写了这些词就当场红，
+    逼人看一眼。它**不是**这条要求的全部守卫 —— 写得含糊但不含这些词的（如「不好写」）
+    照样混得过去。孤儿驱动段则是方向 ② 在上一层的同一个病：驱动没了，整段名单也没人看。
+
+    第三条正控是**实测踩出来的**：代理光看「出现占位词」会红在**正确的理由**上 ——
+    真名单里有一条理由写「文案里的占位符要真的被填」，「占位符」是 Python 格式化占位符
+    这个领域词，却被判成占位语。这种红比漏判更坏（逼人改写正确句子去迎合代理），
+    所以加了长度下限（真理由最长的一批，最短也有 25 字），这条正控把它钉住。
+    """
+    good = {("f.py", "assert x > 0", 0): "要撞它得让 f.py 的 x 恒为正 —— 改那条判断即可"}
+    assert lock_coverage_gaps.placeholder_reasons(good) == set()
+    assert lock_coverage_gaps.placeholder_reasons(
+        {("f.py", "assert x > 0", 0): "待补"}) == {("f.py", "assert x > 0", 0)}
+    # 回归：长理由里出现领域词「占位符」，曾把一条正确理由判红
+    assert lock_coverage_gaps.placeholder_reasons(
+        {("f.py", "assert x > 0", 0):
+         "文案里的占位符要真的被填上，不是原样上屏 —— 要撞它得跳过 .format()"}) == set()
+    # 短到没有信息量的占位语，换哪个词都红
+    for junk in ("以后再补", "暂时待定", "TBD", "占位"):
+        assert lock_coverage_gaps.placeholder_reasons(
+            {("f.py", "assert x > 0", 0): junk}) == {("f.py", "assert x > 0", 0)}
+
+    real = {"d_mutations.py", "e_mutations.py"}
+    assert lock_coverage_gaps.unknown_drivers({"d_mutations.py": {}}, real) == set()
+    assert lock_coverage_gaps.unknown_drivers({"gone_mutations.py": {}}, real) == {
+        "gone_mutations.py"}
 
 
 def test_full_coverage_is_silent(tmp_path):
