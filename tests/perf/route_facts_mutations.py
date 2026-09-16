@@ -23,7 +23,7 @@
 
 六组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
 隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态），
-**P** 打策略表校验层 `tests/route_policy.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表）。
+**P** 打豁免表校验层 `tests/policy_table.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表）。
 **I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
 
 **跨平台。** X 组的别名路径是 `web/../web/server.py` —— 两个平台都满足「字符串与正路不同、
@@ -68,8 +68,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 RF = ROOT / "tests" / "route_facts.py"                      # 事实层本体（F/R/X 的靶子）
 TF = ROOT / "tests" / "test_route_facts.py"                 # 事实层自己的锁
-RP = ROOT / "tests" / "route_policy.py"                     # 策略表校验层（P 组的靶子）
-TP = ROOT / "tests" / "test_route_policy.py"                # 策略表层自己的锁
+RP = ROOT / "tests" / "policy_table.py"                     # 豁免表校验层（P 组的靶子）
+TP = ROOT / "tests" / "test_policy_table.py"                # 豁免表层自己的锁
 AUTH = ROOT / "tests" / "test_auth_param_used.py"           # 第 3 步迁移的两把锁
 L5 = ROOT / "tests" / "test_text_failure_messages.py"
 VOICE = ROOT / "web" / "routers" / "voice.py"               # 只作变异副本，跑完还原
@@ -493,7 +493,7 @@ I_GROUP = [
      _ORDER_SWAP, [], "OK"),
 ]
 
-# P-*：策略表校验层（缺陷 42 结案 —— L5 与 auth 锁共用的那张「豁免 + 理由」表）。各条都只
+# P-*：豁免表校验层（缺陷 42 结案 —— L5 与 auth 锁共用的那张「豁免 + 理由」表）。各条都只
 # 打本层自己的判据行：本层不认识任何路由/字段名，故这几条的靶子只能是它自己的函数体。
 #
 # **原 P-1 退役**（编号保留空位，不复用 —— 复用会让台账里的旧编号指向另一件事）。它的变异
@@ -505,23 +505,23 @@ _ER_BODY = ('    return {k for k, reason in table.items()\n'
             '            if not (isinstance(reason, str) and reason.strip())}')
 P_GROUP = [
     ("P-4 empty_reasons 退回整串字符串化（缺失值被变成「None」那样的文本）",
-     "tests/test_route_policy.py",
+     "tests/test_policy_table.py",
      [("repl", RP, [(_ER_BODY,
                      '    return {k for k, reason in table.items() if not str(reason).strip()}')])],
      "RED", "test_empty_reasons_treats_a_missing_reason_as_empty"),
     ("P-5 empty_reasons 只判类型、不 strip（纯空白理由被当成有内容）",
-     "tests/test_route_policy.py",
+     "tests/test_policy_table.py",
      [("repl", RP, [(_ER_BODY,
                      '    return {k for k, reason in table.items()\n'
                      '            if not (isinstance(reason, str) and reason)}')])],
      "RED", "test_empty_reasons_flags_blank_and_whitespace_only_reasons"),
     ("P-2 stale_keys 两个参数方向写反",
-     "tests/test_route_policy.py",
+     "tests/test_policy_table.py",
      [("repl", RP, [('    return set(table) - set(observed)',
                      '    return set(observed) - set(table)')])],
      "RED", "test_stale_keys_is_table_minus_observed"),
     ("P-3 unexpected 恒返回空集",
-     "tests/test_route_policy.py",
+     "tests/test_policy_table.py",
      [("repl", RP, [('    return set(observed) - set(table)',
                      '    return set()')])],
      "RED", "test_unexpected_is_observed_minus_table"),
@@ -590,7 +590,7 @@ def _run_py(code: str) -> tuple[str, list[str]]:
 def _baseline_gate():
     """先验基线：四把锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
     bad = []
-    for target in ("tests/test_route_facts.py", "tests/test_route_policy.py",
+    for target in ("tests/test_route_facts.py", "tests/test_policy_table.py",
                    "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
         summary, _ = _run(target)
         print(f"  基线 {target:44s} {summary}")

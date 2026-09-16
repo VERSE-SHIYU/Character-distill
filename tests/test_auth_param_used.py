@@ -21,7 +21,7 @@ text.py:204 / voice.py:189 / voice.py:213 三处都是这个形态，靠人扫 A
     运行时探针。
 
 豁免名单按 **(path, method)** 键 —— 路由路径是对外契约，文件位置与函数名都可以改。
-表与现场的对账（未登记 / 陈旧 / 空理由）走 `route_policy` —— 与 L5 共用同一层：同一套
+表与现场的对账（未登记 / 陈旧 / 空理由）走 `policy_table` —— 与 L5 共用同一层：同一套
 差集与判空在两处各写一遍会各自漂移，而漂移**不报错**（缺陷 42 结案）。
 """
 from __future__ import annotations
@@ -30,8 +30,8 @@ import ast
 import inspect
 import textwrap
 
+import policy_table
 import route_facts
-import route_policy
 from routers.auth import get_current_user
 
 # 有意**不引用** user 的端点（纯登录门 / 读全局或公开数据）。键是 `(path, method)`。
@@ -76,7 +76,7 @@ def _unused_user_endpoints() -> dict[tuple[str, str], set[str]]:
 
 def test_no_endpoint_injects_user_without_reading_it():
     found = _unused_user_endpoints()
-    unregistered = route_policy.unexpected(found, ALLOWLIST)
+    unregistered = policy_table.unexpected(found, ALLOWLIST)
     assert not unregistered, (
         f"新出现「注入 user 却不引用」的端点："
         f"{ {k: found[k] for k in sorted(unregistered)} }。"
@@ -87,9 +87,9 @@ def test_allowlist_is_neither_stale_nor_reasonless():
     """反过来：名单里的端点若已经用上了 user（或已删除），条目就该删掉，别让名单腐烂；
     理由也不许是空的 —— 「写了理由」不等于「理由有内容」。"""
     found = _unused_user_endpoints()
-    stale = route_policy.stale_keys(ALLOWLIST, found)
+    stale = policy_table.stale_keys(ALLOWLIST, found)
     assert not stale, f"ALLOWLIST 里的条目已不再命中，请删除：{sorted(stale)}"
-    blank = route_policy.empty_reasons(ALLOWLIST)
+    blank = policy_table.empty_reasons(ALLOWLIST)
     assert not blank, f"ALLOWLIST 里这些键的理由是空的：{sorted(blank)}"
 
 

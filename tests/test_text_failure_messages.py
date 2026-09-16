@@ -35,8 +35,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import deps
+import policy_table
 import route_facts
-import route_policy
 from core.text_manager import TextManager
 from core.text_failure import TEXT_FAILURE_MESSAGES
 from deps import get_storage
@@ -238,7 +238,7 @@ def test_l5_no_form_op_has_a_payload_channel_besides_the_file_field():
     Form 字段，就该有人看一眼它是不是正文通道；确认不是，就把它加进 `_FORM_METADATA`
     并注明理由。
     """
-    unregistered = route_policy.unexpected(_observed_non_file_fields(), _FORM_METADATA)
+    unregistered = policy_table.unexpected(_observed_non_file_fields(), _FORM_METADATA)
     assert not unregistered, (
         f"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件"
         "字段（`is_file_field` 按 schema 判，不看字段名）—— FormParser 的 1MB 上限"
@@ -254,11 +254,11 @@ def test_l5_metadata_policy_is_neither_stale_nor_reasonless():
     「表里错了」。两条混在一起时，失败信息说不清该改哪一边。
     """
     observed = _observed_non_file_fields()
-    stale = route_policy.stale_keys(_FORM_METADATA, observed)
+    stale = policy_table.stale_keys(_FORM_METADATA, observed)
     assert not stale, (
         "_FORM_METADATA 里的字段已不再出现在任何表单 op 上（路由或字段被删/改名），"
         f"请删除：{_fmt(stale)}")
-    blank = route_policy.empty_reasons(_FORM_METADATA)
+    blank = policy_table.empty_reasons(_FORM_METADATA)
     assert not blank, (
         f"_FORM_METADATA 里这些键的理由是空的 —— 写了理由不等于理由有内容：{_fmt(blank)}")
 
