@@ -89,6 +89,12 @@ jobs:
           # 而不是静默跳过。本地不设它 → 没 PG 时显式 skip 并给出原因。
           # 这是 tests/conftest.py::pg_required() 唯一认的那个声明，别删。
           REQUIRE_PG_TESTS: "1"
+          # 同理声明「本环境保证有 docker compose」。门的锁判的是 compose 的**有效模型**
+          # （tests/compose_model.py 真跑一次 `docker compose config`）—— 没有 CLI 时那批
+          # 用例是**显式 skip** 而不是红，本地那样可以，CI 不行：CI 最该真跑门锁。
+          # ubuntu-latest 自带 docker 与 compose v2 插件（实测 2.38.2，`config
+          # --no-env-resolution` 与 `--variables` 都在），这条声明必须真。别删。
+          REQUIRE_COMPOSE_TESTS: "1"
         run: pytest tests/ -v --tb=short
 
       - name: 红的时候说清楚这条红意味着什么
@@ -141,6 +147,9 @@ jobs:
           DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
           JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
           REQUIRE_PG_TESTS: "1"
+          # 与 gate 同一条理由：哨兵也要真跑门锁，不允许靠「没有 docker」静默跳过 ——
+          # 那样哨兵会漏掉一整类上游漂移（compose 自身的行为变化），而它正是为此存在的。
+          REQUIRE_COMPOSE_TESTS: "1"
         run: pytest tests/ -v --tb=short
 
       - name: 红的时候说清楚这条红意味着什么
