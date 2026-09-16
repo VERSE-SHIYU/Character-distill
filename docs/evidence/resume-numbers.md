@@ -7,7 +7,7 @@
 > 数字的**口径**（聚合方式、样本数、字段名对照）认清单的 `notes` 与 `docs/evidence/` 下的
 > 叙述档 —— 本表是索引，不是第二份真源。
 
-## 一、可写（`verified`，8 条）
+## 一、可写（`verified`，9 条）
 
 | 数字 / 结论 | 证据 | 一句话复现口径 | 派生量（算出来的，产物里没有直接字段）|
 |---|---|---|---|
@@ -16,6 +16,7 @@
 | 断点续跑：mock 截断下 6 片各 52 字节全部落库且第二道门放行；二次续跑 map=0（分片未重算） | `ev:incomplete-v5` | `python -m pytest tests/test_distill_resume.py -q` （脚本 `tests/test_distill_resume.py`（**只佐证**，非产出脚本）） | —（直接测） |
 | 属主不存在（A 组）与仍拒绝（B 组）共 42 条用例，按命中 status 分为 32 / 3 / 7；各自命中的 raise 站点与 status（本机有 key） | `ev:ownership-reachability` | `PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability python -m pytest tests/test_ownership_404.py -q -p raise_probe` （脚本 `tests/perf/raise_probe.py`） | **32** = records 中 status == 404 的条数（A 组：属主不存在）；**3** = records 中 status == 403 的条数（B 组：仍拒绝）；**7** = records 中 nodeid 属 TestMessageParity 的条数（文案一致性） |
 | 同上，PROBE_NO_KEY 置位模拟无 key 机器；两档站点表逐行相同，用例数均 42 passed | `ev:ownership-reachability-nokey` | `PROBE_NO_KEY=1 PYTHONPATH=".;tests/perf" PROBE_EVIDENCE_ID=ownership-reachability-nokey python -m pytest tests/test_ownership_404.py -q -p …` （脚本 `tests/perf/raise_probe.py`） | —（直接测） |
+| 带页码、无章节词的 PDF 在纯文本提取路径下被按页码切章：独占一行的页码 5 处 → 章 5 个，标题即页码；对照含 markdown 标题的文本走标题规则 | `ev:pagenum-chapter-rules` | `PROBE_EVIDENCE_ID=pagenum-chapter-rules python tests/perf/pagenum_chapter_probe.py` （脚本 `tests/perf/pagenum_chapter_probe.py`） | —（直接测） |
 | 顶到 8192 时 3 条里 2 条 content_chars=0、reasoning_content 12441/12413、finish_reason=length —— 思考与正文共享 max_tokens 预算 | `ev:thinking-capfield` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-capfield python tests/perf/capfield_probe.py` （脚本 `tests/perf/capfield_probe.py`） | **2** = records 中 content_chars == 0 的条数 |
 | 修复后 map 自然输出 out_tokens p50 1245、max 2097、撞 8192 探针上限 0/14、空正文 0/14（n=14） | `ev:thinking-maplen-after` | `PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-after python tests/perf/map_len_probe.py` （脚本 `tests/perf/map_len_probe.py`） | **1245** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（≠ 产物分档字段 summary[].out_tokens_p50 的下中位）；**0** = records 中 clipped_by_probe_cap 为 true 的条数（同为 0 的还有 out_chars == 0） |
 | 修复前 map 自然输出 out_tokens p50 8191、max 8192、撞 8192 探针上限 7/14、空正文 3/14（n=14） | `ev:thinking-maplen-before` | `git checkout f2dfd23^ -- adapters/llm_adapter.py && PROBE_DB=data/character_sim.db PROBE_EVIDENCE_ID=thinking-maplen-before python tests/pe…` （脚本 `tests/perf/map_len_probe.py`） | **7** = records 中 clipped_by_probe_cap 为 true 的条数；**3** = records 中 out_chars == 0 的条数；**8191** = 14 条 records[].out_tokens 合并后 nearest-rank 上中位（断言里 records[3].out_tokens 恰为同一个数，但这里的口径是合并中位） |
@@ -29,7 +30,7 @@
 | 运行配置的两个值：`distill.chunk_size = 5000`、`distill.longctx_threshold = 150000`（≈25 万字符，与 `_estimate_tokens = int(len*0.6)` 同口径）；二者的来源 `config.ya… | `ev:config-yaml-values` | 运行期实测：环境还在，但产物没有入库 —— 按 `notes` 里的扫描方法自行重做。扫描方法：直接读运行环境的 `config.yaml`（本机现值 `chunk_size: 5000` / `longctx_threshold: 150000`）；`git ls-files config.yaml` **零命中**。即这两个数字引用的是一个**未入库、且随环… |
 | graphify 知识图谱快照（2026-08-15，构建 commit eb72a3bd）的统计组：语料 369 文件/~65 万词、节点 4686、边 9606、社区 434（展示 227）、语义标注 94% EXTRACTED · 6% INFERRED（603 边，平均… | `ev:graphify-snapshot-2026-08-15` | 当时结论、现已不可复现：环境或快照已不存在 —— 不得当现状引用。为什么现在复现不了（三件事写全）：① 数字产生于 2026-08-15，当时工作树为 commit eb72a3bd，图谱产物 graphify-out/graph.json **从未入库**（`.gitignore:253` 覆盖），引用它等于没有出处；② 环境已变 —— 此… |
 
-## 三、出处索引（全部 12 条）
+## 三、出处索引（全部 13 条）
 
 | id | status | 产物 | 脚本 | 脚本角色 | 产出 commit | 测量日 |
 |---|---|---|---|---|---|---|
@@ -42,6 +43,7 @@
 | `incomplete-v5` | `verified` | docs/evidence/incomplete-v5.json | tests/test_distill_resume.py | corroborating | `unknown(scratch)` | 2026-09-10 |
 | `ownership-reachability` | `verified` | docs/evidence/ownership-reachability.json | tests/perf/raise_probe.py | producer | `5bacc48` | 2026-09-12 |
 | `ownership-reachability-nokey` | `verified` | docs/evidence/ownership-reachability-nokey.json | tests/perf/raise_probe.py | producer | `5bacc48` | 2026-09-12 |
+| `pagenum-chapter-rules` | `verified` | docs/evidence/pagenum-chapter-rules.json | tests/perf/pagenum_chapter_probe.py | producer | `becef3e` | 2026-09-16 |
 | `thinking-capfield` | `verified` | docs/evidence/thinking-capfield.json | tests/perf/capfield_probe.py | producer | `5ba7b9e` | 2026-09-10 |
 | `thinking-maplen-after` | `verified` | docs/evidence/thinking-maplen-after.json | tests/perf/map_len_probe.py | producer | `bc19511` | 2026-09-10 |
 | `thinking-maplen-before` | `verified` | docs/evidence/thinking-maplen-before.json | tests/perf/map_len_probe.py | producer | `bc19511` | 2026-09-10 |

@@ -1,0 +1,101 @@
+{
+  "probe": "pagenum_chapter_probe",
+  "pymupdf": "1.28.2",
+  "detect_source": "web/frontend/src/components/BookReader.jsx",
+  "cases": [
+    {
+      "name": "footer_1digit",
+      "pages": 5,
+      "chars": 6310,
+      "digit_only_lines": 5,
+      "rule_hits": [
+        0,
+        0,
+        0,
+        5
+      ],
+      "chapters": 5,
+      "titles": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ]
+    },
+    {
+      "name": "footer_2digit",
+      "pages": 5,
+      "chars": 6315,
+      "digit_only_lines": 5,
+      "rule_hits": [
+        0,
+        0,
+        0,
+        5
+      ],
+      "chapters": 5,
+      "titles": [
+        "01",
+        "02",
+        "03",
+        "04",
+        "05"
+      ]
+    },
+    {
+      "name": "header_1digit",
+      "pages": 5,
+      "chars": 6310,
+      "digit_only_lines": 5,
+      "rule_hits": [
+        0,
+        0,
+        0,
+        5
+      ],
+      "chapters": 5,
+      "titles": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ]
+    },
+    {
+      "name": "with_font_heading",
+      "pages": 5,
+      "chars": 6390,
+      "digit_only_lines": 5,
+      "rule_hits": [
+        0,
+        0,
+        0,
+        5
+      ],
+      "chapters": 5,
+      "titles": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5"
+      ]
+    }
+  ],
+  "control": {
+    "name": "control_markdown",
+    "rule_hits": [
+      2,
+      0,
+      0,
+      0
+    ],
+    "chapters": 2,
+    "titles": [
+      "Chapter Alpha",
+      "Chapter Beta"
+    ]
+  }
+}

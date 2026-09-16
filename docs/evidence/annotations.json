@@ -206,6 +206,33 @@
     "non_repo_paths": [],
     "notes": "用于证明断言不依赖测试机凭据：无 key 模拟下仍须全绿且命中同一批站点。「两档站点表逐行相同」靠本条目与 `ev:ownership-reachability` 的 `records` 对照，不重复声明。"
   },
+  "pagenum-chapter-rules": {
+    "assertions": [
+      {
+        "path": "cases[0].digit_only_lines",
+        "value": 5
+      },
+      {
+        "path": "cases[0].chapters",
+        "value": 5
+      },
+      {
+        "path": "cases[0].rule_hits[3]",
+        "value": 5
+      },
+      {
+        "path": "cases[0].rule_hits[0]",
+        "value": 0
+      },
+      {
+        "path": "control.chapters",
+        "value": 2
+      }
+    ],
+    "derived": [],
+    "non_repo_paths": [],
+    "notes": "口径：四级规则优先取「命中数 >= 2」的第一条，rule_hits 是四条规则各自的匹配处数（0 基）。实测 footer/header、补零与否三种页码形态一致（规则 2/3 零命中、规则 4 命中 5 处），对照含 markdown 标题的文本走规则 1 —— 说明这套跑法认得出另一种情形，不是恒真。实测到哪为止：本探针证的是「纯文本提取路径下落到哪条规则」。**「相对 pymupdf4llm 是不是回归」本探针证不了** —— 那需要 import pymupdf4llm，而它在 import 期就 import pymupdf.layout 并激活 ONNX 版面模型，本机 import 即崩。读源码得到的半边（不是实测）：IdentifyHeaders 只把**大于正文字号**的字号映射成 「#」，故无更大字号的 PDF 它一个 # 也不发 → 这类 PDF 在 pymupdf4llm 下同样落到规则 4，这一半不是回归；有更大字号的标题时它会发 # 走规则 1，纯文本路径不会 → 这一半是回归。with_font_heading 那一档（22pt 标题 + 页码）就是后者，其 rule_hits[0] 为 0 是实测的。"
+  },
   "thinking-capfield": {
     "assertions": [
       {

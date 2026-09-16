@@ -73,6 +73,9 @@ _ALLOWED_BY_ID: dict[str, frozenset[str]] = {
     # raise_probe（pytest 插件）—— 每条属主用例实际命中的 raise 站点
     "ownership-reachability": frozenset({"no_key_mode", "records"}),
     "ownership-reachability-nokey": frozenset({"no_key_mode", "records"}),
+    # pagenum_chapter_probe —— 纯文本提取路径下，带页码的 PDF 落到前端第几条章节规则
+    "pagenum-chapter-rules": frozenset(
+        {"probe", "pymupdf", "detect_source", "cases", "control"}),
     # 断点行删除路径残留 + 续跑可达性（双 store，确定性，无 LLM）
     "distill-orphan-matrix": frozenset({"probe", "stores"}),
     "distill-resume-reachability": frozenset({"probe", "stores"}),

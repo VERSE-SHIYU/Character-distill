@@ -121,6 +121,19 @@
     "redacted_fields": []
   },
   {
+    "id": "pagenum-chapter-rules",
+    "claim": "带页码、无章节词的 PDF 在纯文本提取路径下被按页码切章：独占一行的页码 5 处 → 章 5 个，标题即页码；对照含 markdown 标题的文本走标题规则",
+    "status": "verified",
+    "artifact": "docs/evidence/pagenum-chapter-rules.json",
+    "script": "tests/perf/pagenum_chapter_probe.py",
+    "script_role": "producer",
+    "reproduce": "PROBE_EVIDENCE_ID=pagenum-chapter-rules python tests/perf/pagenum_chapter_probe.py",
+    "env": "PyMuPDF 1.28.2（与生产镜像同版）；node 跑 web/frontend/src/components/BookReader.jsx 的 detectChapters（切片源码 eval，非重写规则）；PDF 由占位散文生成，页脚/页眉页码，正文 11pt",
+    "measured_at": "2026-09-16",
+    "code_sha": "becef3e",
+    "redacted_fields": []
+  },
+  {
     "id": "thinking-capfield",
     "claim": "顶到 8192 时 3 条里 2 条 content_chars=0、reasoning_content 12441/12413、finish_reason=length —— 思考与正文共享 max_tokens 预算",
     "status": "verified",
