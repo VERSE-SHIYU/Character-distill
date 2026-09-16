@@ -80,6 +80,29 @@ jobs:
       - name: pip freeze → artifact（这条门当时装的是哪一版）
         run: python -m pip freeze --all > pip-freeze-gate.txt
 
+      # compose 的**锁** —— 与上面 requirements*.txt 完全同一个理由：事实层（tests/compose_model.py）
+      # 的两条承重前提 P-a/P-b 在 compose v2.x 上**不成立**（v2.x 两个 flag 都在，但行为不成立），
+      # 而 ubuntu-latest 自带的恰恰是 v2。不钉住，这条 job 就会在**事实层静默失效**的状态下判绿
+      # —— 缺陷 51 正是这样在 CI 上藏了一整轮。实测 v5.0.0 起两条都满足，这里钉 v5.5.1。
+      #
+      # 用户级 cli-plugin（$HOME/.docker/cli-plugins）在 Docker CLI 的搜索序里**先于** runner
+      # 自带的系统插件（/usr/libexec/docker/cli-plugins），所以装到用户级就能盖住它。
+      # 最后那句断言是**承重的**，不是装饰：不核它，「钉在 v5.5.1」就只是注释里的一个数字，
+      # 装歪了（比如覆盖没生效、仍是 v2）照样一片绿。
+      - name: Pin docker compose v5.5.1（事实层承重前提的最低版本）
+        run: |
+          set -euo pipefail
+          VERSION=v5.5.1
+          EXPECTED_SHA256=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576
+          curl -fsSL -o /tmp/docker-compose \
+            "https://github.com/docker/compose/releases/download/${VERSION}/docker-compose-linux-x86_64"
+          echo "${EXPECTED_SHA256}  /tmp/docker-compose" | sha256sum -c -
+          mkdir -p "$HOME/.docker/cli-plugins"
+          install -m 0755 /tmp/docker-compose "$HOME/.docker/cli-plugins/docker-compose"
+          docker compose version
+          docker compose version | grep -qE '\bv5\.5\.1\b' || {
+            echo "::error title=compose 版本没钉住::期望 v5.5.1，实得「$(docker compose version 2>&1 | head -1)」"; exit 1; }
+
       - name: Run tests
         env:
           STORAGE_BACKEND: postgres
@@ -92,8 +115,13 @@ jobs:
           # 同理声明「本环境保证有 docker compose」。门的锁判的是 compose 的**有效模型**
           # （tests/compose_model.py 真跑一次 `docker compose config`）—— 没有 CLI 时那批
           # 用例是**显式 skip** 而不是红，本地那样可以，CI 不行：CI 最该真跑门锁。
-          # ubuntu-latest 自带 docker 与 compose v2 插件（实测 2.38.2，`config
-          # --no-env-resolution` 与 `--variables` 都在），这条声明必须真。别删。
+          #
+          # **这条声明的前置是上面那步「Pin docker compose v5.5.1」。** 原先这里写的是
+          # 「ubuntu-latest 自带 compose v2（实测 2.38.2，两个 flag 都在）」—— 那次「实测」
+          # 测的是 **flag 存不存在**，不是事实层要的两条**行为**：v2.x 上 flag 都在，而
+          # P-a（`env_file` 缺文件仍 exit 0）与 P-b（`env_file` 的值不进模型输出）**都不成立**。
+          # 于是 CI 一直在「事实层已静默失效」的状态下判绿（缺陷 51）。判据是行为，故
+          # 上面钉版本 + 断言版本号，这里才敢声明。
           REQUIRE_COMPOSE_TESTS: "1"
         run: pytest tests/ -v --tb=short
 
@@ -140,6 +168,26 @@ jobs:
 
       - name: pip freeze → artifact（漂移时到底是哪一版动的）
         run: python -m pip freeze --all > pip-freeze-sentinel.txt
+
+      # compose 的**下界**（与上面 requirements*.in 同理）：装最新 release，不锁。
+      # 它红了、而 gate 那条绿，就说明**是 compose 自己变了**（P-a/P-b 两条行为之一被改掉
+      # 或最低版本线发生位移），不是本仓写错了。tag 取自 releases/latest 的跳转，
+      # 完整性取自同一个 release 自带的 `.sha256` —— 不硬编码版本号，否则哨兵就成了另一把锁。
+      - name: Latest docker compose（哨兵：compose 自己的上游漂移）
+        run: |
+          set -euo pipefail
+          TAG=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            https://github.com/docker/compose/releases/latest | sed -E 's#.*/tag/##')
+          echo "docker compose latest tag: ${TAG}"
+          BASE="https://github.com/docker/compose/releases/download/${TAG}"
+          curl -fsSL -o /tmp/docker-compose "${BASE}/docker-compose-linux-x86_64"
+          curl -fsSL -o /tmp/docker-compose.sha256 "${BASE}/docker-compose-linux-x86_64.sha256"
+          # 资产自带的校验文件写的是发布名，比对前先改成本地文件名
+          sed -E 's#\*?docker-compose-linux-x86_64$#docker-compose#' /tmp/docker-compose.sha256 \
+            | ( cd /tmp && sha256sum -c - )
+          mkdir -p "$HOME/.docker/cli-plugins"
+          install -m 0755 /tmp/docker-compose "$HOME/.docker/cli-plugins/docker-compose"
+          docker compose version
 
       - name: Run tests
         env:
