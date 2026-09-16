@@ -57,6 +57,7 @@
       "tests/test_health_probe_targets.py:245"
     ]
   },
+  "controls": [],
   "skipped": [
     "B-1  SQLite 的 ping 只取连接、不执行语句",
     "B-1b  SQLite 的 ping 语句退回 SELECT 1"

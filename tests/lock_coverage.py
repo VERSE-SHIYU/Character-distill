@@ -7,10 +7,21 @@
 
 **判别器的可判定定义**（四类 AST 节点，每个一条，行号取节点自身 `lineno`）：
   (a) `ast.Assert` —— 每条一次。`assert x, msg` 算一条（msg 只是文案）。
-  (b) `ast.Raise` —— **仅当它不位于「纯抛错包装」体内**时算一条。
+  (b) `ast.Raise` —— **仅当它不位于「纯抛错包装」体内**、**且是就地构造或点名异常的**
+      （`raise X(...)` / `raise X`）时算一条。`raise self._exc`（转抛**存起来的**异常）与裸
+      `raise`（转抛当前异常）**不算** —— 见下面「(b) 为什么不收转抛」。
   (c) 对「纯抛错包装」的调用 —— **每个调用点**算一条，行号 = 调用所在行。
   (d) `pytest.raises(...)` —— **`with ...:` 形式取 `ast.With` 的行号**，裸调用形式取该调用
       的行号。预期没抛时它自己红（`Failed: DID NOT RAISE`）。
+
+**(b) 为什么不收转抛 —— 定义过宽会造出「假缺口」。** 实测三处：`tests/test_health_probe_
+targets.py:133` 与 `tests/test_health_ready.py:48` 的 `raise self._exc`（**测试替身的失败
+注入**：`_exc` 为 None 时静默成功，是替身的机制）与 `tests/test_text_failure_messages.py:477`
+的 import 钩子里的 `raise ...`（钩子的**动作**）。三处都不是「判断被守对象」的分支，任何
+合法变异都撞不到它们 —— 按旧定义（每一条 `ast.Raise`）它们进 D 而不进 E，于是元锁把**机制**
+记成**缺口**。**删代码不是处置**（删了替身与钩子就不工作），收窄定义才是：**「就地构造或
+点名一个异常」与「把一个外来异常转抛出去」是两种东西**，只有前者是判断。这与本轮另立的
+那条互为镜像：**定义不全 → 假空转 + 假覆盖；定义过宽 → 假缺口。**
 
 **(d) 是实测补的，不是想当然。** 它原先不在定义里，于是「`pytest.raises` 该抛而没抛」这一类
 分支在两边都不存在 —— 收了它才会发现某些判别器**从没被任何变异撞过**（缺的是判别器，不是
@@ -28,8 +39,8 @@
 
 **这个划法不是风格选择，是被运行侧倒逼出来的唯一解。** pytest 的 `--tb=line` 给的是
 **最深帧** —— 包装函数内部那条 `raise`。若把那条 `raise` 也算成判别器，则所有经由包装的
-分支会**塌成同一条**（实测：`fail()` 里的 `raise` 让 pg_isready 分支与环回分支都打印
-`test_pg_gate.py:281`）；若反过来只数 `raise`、不算调用点，则这些分支**一条都不存在**
+分支会**塌成同一条**（实测：`_closed_keys` 里的 `raise` 让 G-6 与 G-7 两条变异都打印
+`test_pg_gate.py:234`）；若反过来只数 `raise`、不算调用点，则这些分支**一条都不存在**
 （没有任何一条 `raise` 写在自己的分支上）。(b)/(c) 互补，为的是与 `--tb=long` 的帧对齐。
 
 **两套坐标系，必须先对齐。** 判别器集合从**变异前**的文件算出来，红行号却来自**变异后**那次
@@ -101,7 +112,11 @@ def _pure_raisers(tree: ast.AST) -> set[str]:
             continue
         stmt = body[0]
         if isinstance(stmt, ast.Raise):
-            shape[fn.name] = True                     # True = 直接 raise
+            # 体是 `raise X(...)` / `raise X` 才算包装 —— 与判别器那条**同一把尺子**：
+            # 体是裸 `raise` / `raise self._exc` 的函数是转手，不是包装（今天是空集，但
+            # 定义不一致会让下一个读 docstring 的人按另一把尺子判）。
+            if _is_constructed(stmt):
+                shape[fn.name] = True                 # True = 直接 raise
         elif isinstance(stmt, ast.Expr) and _callee_name(stmt.value):
             shape[fn.name] = _callee_name(stmt.value)  # 名字 = 转手调用的那个包装
 
@@ -121,6 +136,19 @@ def _pure_raisers(tree: ast.AST) -> set[str]:
 def _is_raises_call(node: ast.AST) -> bool:
     """`pytest.raises(...)`（也认 `from pytest import raises` 后的裸名）。"""
     return isinstance(node, ast.Call) and _callee_name(node) == "raises"
+
+
+def _is_constructed(node: ast.Raise) -> bool:
+    """`raise X(...)` / `raise X` —— 就地构造或点名一个异常；那是「判断被守对象」。
+
+    `raise self._exc`（转抛**存起来的**异常，如测试替身的失败注入）与裸 `raise`（转抛当前
+    异常）不是判断，是本模块 docstring (b) 里说的「机制」。收进来会造出假缺口：没有任何
+    合法变异能撞到它们 —— 它们不是被守对象的分支，是让替身/钩子得以工作的动作。
+    """
+    exc = node.exc
+    if exc is None:
+        return False
+    return isinstance(exc, (ast.Call, ast.Name))
 
 
 def _discriminators_from_src(src: str) -> dict[int, str]:
@@ -152,7 +180,7 @@ def _discriminators_from_src(src: str) -> dict[int, str]:
         is_raises_call = _is_raises_call(node) and id(node) not in context_exprs
         is_disc = (
             isinstance(node, ast.Assert)
-            or isinstance(node, ast.Raise)
+            or (isinstance(node, ast.Raise) and _is_constructed(node))
             or (isinstance(node, ast.Call) and _callee_name(node) in pure)
             or is_raises_with
             or is_raises_call
@@ -279,11 +307,20 @@ def domain_of(groups: Mapping[str, Sequence[tuple]]) -> list[str]:
 
 
 def write_artifact(path: str | pathlib.Path, driver_rel: str, domain: Sequence[str],
-                   hits: Mapping[str, Sequence[str]], skipped: Sequence[str]) -> None:
+                   hits: Mapping[str, Sequence[str]], skipped: Sequence[str],
+                   controls: Sequence[str] = ()) -> None:
+    """`mutations` 只收**该红**的变异（值 = 它红在哪几行）；`controls` 收**该绿**的。
+
+    **`controls` 不是分类标签，是把「反证」从「空转」里摘出来的唯一办法。** 一条
+    「期望绿」的变异（如 X-5：把 samefile 退回字符串 `==`、同时保留 X-3 的别名装载，
+    该变异下判据**仍然通过**，这才证明 X-3 的红源是 samefile 那条判断本身）红源天生为空。
+    与 `mutations` 混放，它会被 `gaps()` 记成「空转变异（红了但没撞到判据）」——
+    而「反证」与「空转」共用一个信号，正是本模块反复防的那副面孔。
+    """
     pathlib.Path(path).write_text(
         json.dumps({"driver": driver_rel, "domain": list(domain),
                     "mutations": {k: sorted(v) for k, v in hits.items()},
-                    "skipped": list(skipped)},
+                    "controls": list(controls), "skipped": list(skipped)},
                    ensure_ascii=False, indent=2, sort_keys=False) + "\n",
         encoding="utf-8")
 

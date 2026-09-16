@@ -743,6 +743,7 @@ def main() -> int:
     mismatches: list[str] = []
     domain = lock_coverage.domain_of(GROUPS)
     hits: dict[str, list[str]] = {}
+    controls: list[str] = []
     skipped: list[str] = []
     for name in groups:
         print(f"\n===== {name} 组 =====")
@@ -765,9 +766,18 @@ def main() -> int:
                 if problems:
                     mismatches.append(f"{label}：{'；'.join(problems)}")
             _restore(baseline)
-            # 只留落在覆盖域里的行：本驱动的靶子文件就是域，别处（stdlib / 宿主脚本）的帧不算。
-            hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
+            # **期望红的进 `hits`，期望绿/OK（红源天生为空）的进 `controls`。** 一条
+            # 「期望绿」的变异（X-5 / V2 / V4 / V7 / V10 / I-3）证的是「判据退回去，同一条
+            # 变异就红了」—— 它红源为空**正是它要证的事**。混进 hits 会被元锁记成「空转变异
+            # （红了但没撞到判据）」：反证与空转共用一个信号，又一次同型（见
+            # lock_coverage.write_artifact）。
             want = {"RED": "RED", "RED-container": "RED", "OK": "OK"}.get(expect, "green")
+            if want == "RED":
+                # 只留落在覆盖域里的行：本驱动的靶子文件就是域，别处（stdlib / 宿主脚本）
+                # 的帧不算。
+                hits[label] = sorted(l for l in lines if l.rsplit(":", 1)[0] in set(domain))
+            else:
+                controls.append(label)
             if got == lock_coverage.RUNAWAY:
                 # 不记绿也不记红：这一跑里判据根本没执行，红源与覆盖都无从谈起。
                 mismatches.append(
@@ -803,7 +813,7 @@ def main() -> int:
         print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
         return 1
     lock_coverage.write_artifact(ARTIFACT, "tests/perf/route_facts_mutations.py",
-                                 domain, hits, skipped)
+                                 domain, hits, skipped, controls)
     print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
     print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
     return 0

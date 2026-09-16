@@ -66,6 +66,11 @@ def test_every_mutation_driver_has_an_artifact_and_vice_versa():
 def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
     data = json.loads(artifact.read_text(encoding="utf-8"))
     domain, hits = data["domain"], data["mutations"]
+    controls = set(data.get("controls", ()))
+    # 三类必须互斥：一条变异只能属于「该红」「该绿」「本环境跳过」之一。重叠就是驱动把
+    # 它同时记进了两处 —— 那会让同一个信号被读成两种东西（「反证」↔「空转」的同一个病）。
+    assert not (controls & set(hits)) and not (controls & set(data["skipped"])), (
+        f"{data['driver']}：mutations / controls / skipped 三类不互斥")
     uncovered, vacuous = lock_coverage.gaps(domain, hits, ROOT)
 
     assert uncovered == [], (
@@ -109,6 +114,47 @@ def test_pure_raiser_bodies_are_not_discriminators(tmp_path):
     p = tmp_path / "synth_lock.py"
     p.write_text(_SYNTH, encoding="utf-8")
     assert sorted(lock_coverage.discriminators(p)) == [11, 13, 14]
+
+
+_SYNTH_TRANSPLANT = '''\
+class Pinger:
+    async def ping(self):
+        if self._exc is not None:
+            raise self._exc
+
+
+def reraiser():
+    try:
+        pass
+    except Exception:
+        raise
+
+
+def check(x):
+    if x < 0:
+        raise ValueError("neg")
+    if x < 1:
+        raise NegError
+
+
+class NegError(Exception):
+    pass
+'''
+
+
+def test_only_locally_constructed_raises_are_discriminators(tmp_path):
+    """负控：`raise self._exc`（转抛存起来的异常）与裸 `raise` **不算**判别器。
+
+    两者都不是「判断被守对象」的分支，而是让测试替身/钩子得以工作的**动作** —— 任何合法
+    变异都撞不到，收进来就是**假缺口**（实测：`test_health_probe_targets.py:133`、
+    `test_health_ready.py:48` 的 `raise self._exc`，两条都在 `if self._exc is not None:`
+    之下，不是纯抛错包装的体，所以它们原先各占 D 的一席）。
+    `test_text_failure_messages.py:477` 的 `raise _ParserRuntimeTouched(fullname)` 是**就地
+    构造**，收窄后留在 D —— 它不是假缺口，只是本机不可达（环境性，另账）。
+    """
+    p = tmp_path / "synth_transplant.py"
+    p.write_text(_SYNTH_TRANSPLANT, encoding="utf-8")
+    assert sorted(lock_coverage.discriminators(p)) == [16, 18]
 
 
 def test_uncovered_discriminator_is_named(tmp_path):
