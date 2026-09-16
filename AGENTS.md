@@ -699,12 +699,17 @@ config.yaml 现值（现读，非转述）：
   - **覆盖闭合元锁首跑：169 条判别器只撞到 63 条（缺口 106），另有 6 条「空转」是假的**（2026-09-16，`tests/lock_coverage.py` + `tests/test_lock_coverage.py` 第一次跑全三个驱动；`③ ping 补产物` 让 `ping_mutations.py` 也写产物之后）。逐驱动：`pg_gate` |D|=64 / |E|=23（缺 41）、`ping` |D|=35 / |E|=14（缺 21）、`route_facts` |D|=70 / |E|=26（缺 44、空转 6）。**这个读数是本条最要紧的产物**：缺口是锁自己报出来的，不是人手工对表对出来的（C 轮那次手工只对了包装类 24 个调用点，`assert` 与 `raise` 两类从没对过）。缺口按类处置不同：
     - **① 补变异（约 101 条）** —— 绝大多数，按变异落点分四组：**打编排文件形态的非法 healthcheck**（`test_pg_gate.py` 的 `_assert_closed_grammar` / `_assert_healthcheck_config` / `_assert_consumer_waits` 共约 29 条分支，每条 = 一种具体的非法形状，机械可写 —— A 轮审计手工找到的那四种绕过只是其中四个）；**打事实层与锁自身实现**（`test_compose_model.py` 11、`test_policy_table.py` 8、`test_route_facts.py` 4）；**打 `core/text_manager.py` 与消息表**（`test_text_failure_messages.py` 的 L1/L2/L3 那批）；**打 `web/` `storage/` 生产代码**（`test_storage_ping.py` / `test_health_ready.py` / `test_health_probe_targets.py`）。**成本要如实看**：判据数随锁文件里的断言数（169）走，不随被守的行为数走 —— 补完是一百多条新变异、每轮矩阵的时长按分钟到小时计。
     - **② 定义**过宽**造成的假缺口（2 条，不是死判据）** —— **已收窄**：`tests/test_health_probe_targets.py:133` 与 `tests/test_health_ready.py:48` 的 `raise self._exc`。两条都不是判据，是**测试替身**的失败注入（`if self._exc is not None:` 之下，所以也不是纯抛错包装的体，原先各占 D 的一席）；而判别器定义 (b) 原先收的是**每一条 `ast.Raise`**，把机制当成了判别器。**不能按「死判据就删掉」处置**（删了替身就不工作了），正解是**收窄定义**：只收**就地构造或点名异常**的 raise（`raise X(...)` / `raise X`），不收**转抛外来异常**的（`raise self._exc` / 裸 `raise`）。`_pure_raisers` 里那把尺子**同一处一起换掉**（体是裸 raise / 转抛的函数不算包装）—— 两处不一致的话，下一个按 docstring 判断的人会用另一把尺子。**实测收窄后：`ping` |D|=35 → 33（正好是这两条），合计 169 → 167。**
-    - **③ 本环境必然留下的缺口（3 条）**：`tests/test_storage_ping.py:161`（撞它的 B-1/B-1b 在本机被 `pytest.skip`）、`:175`（PG 用例，本机无 PG）、`tests/test_text_failure_messages.py:477`（import 钩子那条 `raise _ParserRuntimeTouched(fullname)` —— 它是**就地构造**的，收窄后留在 D，只是本机 import onnxruntime 必崩、钩子根本走不到；**原先误记进 ②**，它跟替身那两条不同：替身是机制、它只是不可达）。**产物是在本机写的**，于是这三条会**永久**留在入库的那份产物里 —— 元锁读的是**产物**、不是当场重算，故在 Linux 上重跑也一样。要让覆盖闭合在 CI 成立，产物必须由 **CI 上那次真跑**生成并核对。
+    - **③ 本环境必然留下的缺口（3 条 →（方案 C 后）2 条）**：`tests/test_storage_ping.py:161`（撞它的 B-1/B-1b 在本机被 `pytest.skip`）、`:175`（PG 用例，本机无 PG）、`tests/test_text_failure_messages.py:477`（import 钩子那条 `raise _ParserRuntimeTouched(fullname)` —— 它是**就地构造**的，收窄后留在 D，只是本机 import onnxruntime 必崩、钩子根本走不到；**原先误记进 ②**，它跟替身那两条不同：替身是机制、它只是不可达）。**产物是在本机写的**，于是这三条会**永久**留在入库的那份产物里 —— 元锁读的是**产物**、不是当场重算，故在 Linux 上重跑也一样。要让覆盖闭合在 CI 成立，产物必须由 **CI 上那次真跑**生成并核对。
+      - **2026-09-16 方案 C 落地：第三条整条消失（3 → 2）。** 那条 `raise` 所在的 import 钩子随 `pymupdf4llm` 一起被删（解析器运行时已不在仓里，「没触达」成了对**空集**的断言 = 假绿），换成入口面静态守卫 `test_l6_no_parser_runtime_in_source`。**故它是被删掉的判据，不是被撞到的判据** —— 两条剩余缺口（`test_storage_ping.py` 的两条环境性 skip）与本条无关，仍在。
   - **重写：探针判据从「一条判据一段控制流」改成「形状写在段表里」（2026-09-16）** —— `_assert_closed_grammar` 原本是 16 条判据 = 16 段控制流 = 16 个抛错点，而它真正要防的失效只有**一类**（「这条命令不是那个形状」），那 16 个只是它的 16 种表现。现在逐 token 比对由 `_scan` 一处做完（`_GRAMMAR` 五段：前缀赋值 5 条反例 / 命令体 2 / psql 参数 6 / 查询参数 2 / 结尾重定向 3），**合法定义与它的反例挂在同一段上**（共 18 条），抛错只剩 `_reject` 一处。实测（现跑现数）：`_assert_closed_grammar` |D| **23 → 7**（7 条全是 `_reject` 调用点，493/499/506/512/516/520/523），整文件 |D| **48 → 32**（正好少这 16 条，无连带）；**被删的 16 条原先一条都没被变异撞到**（`pg_gate` 未覆盖 41 → 25，恰好 -16）—— 即它们此前是**无人撞的死判据**，而这正是要消灭的形状。
     - **代价 ①（如实记）：形状没有消失，只是搬了家。** 净 gain 是「**16 条一次性跑过的证据 → 18 条挂在表上、由 `test_closed_grammar_rejects_every_listed_shape` 每次都跑的证据**」，**不是**「少写了 17 条」。换来的是元锁的规模不再随「写了多少种判法」膨胀：15 个语法形状 + 1 个 sink 搬进数据后，|D| 回到失效种类数。
     - **代价 ②：删掉表里的一行 = 那条反例跟着消失，而没有任何东西会响。** 唯一的警报是 `_MIN_VIOLATIONS = 18`（照 `_MIN_TABLE_RAISES = 16` 的先例；下界值 = 重写当刻实测的反例条数，不是拍的）。**表里加一条反例就要把它跟着往上调** —— 不调的话新加的那条日后被删掉照样无声。
     - **代价 ③：现行实现的报错在指错方向 —— 重写顺带修了，证据留档。** 旧实现在两条反例上报的是**真凶之外**的 token：`-tAc 'select 2'` 报 `'-tAc'`、`> /dev/stderr` 报 `'>'`（逐段判、先撞到哪条报哪条）；段表逐 token 比对后报的是真正不符的那一个（`'select 2'` / `'/dev/stderr'`）。§四「**失败信息自解释**」那条纪律在这里有了实证：重写不只降了 |D|，还修了报错质量。16 个原始拒绝点复跑**全部仍红**，且每条都点名真正的违规 token。
     - **重写后的复核（23 条 G 现跑现数，`tests/perf/pg_gate_red_lines.json`）**：`pg_gate` 未覆盖 41 → **25**、空转 0；`route_facts` 未覆盖 44（不变）、**空转 6 → 0**、controls 0 → **6**（② 生效）；`ping` 未覆盖 19（不变）。合计未覆盖 **104 → 88**。**两条硬约束逐条核过**：① 那 7 条策略/sink 行**各由一条变异独占**（493←G-5、499←G-1、506←G-4、512←G-3、516←G-8、520←G-2、523←G-23）；② 「无专属红源的变异」**改前改后是同一批 11 条**（G-6/7/10/11/12/13/14/15/16/17/21，逐条同名 —— 由 `540a202` 的 HEAD 工作树对照得出，不是推断），**即共享红源是改前就有的形态、不是本次引入**；被多条共享的行 13 → 12。
+    - **方案 C 落地后的复核（2026-09-16 晚，全套矩阵现跑现数）**：`pg_gate` |D|=49 / |E|=23 / 未覆盖 **26**；`ping` |D|=33 / |E|=14 / 未覆盖 **19**；`route_facts` |D|=**67** / |E|=28 / 未覆盖 **39**。**合计 |D|=149、|E|=65、未覆盖 84、空转 0**（26+19+39）。
+      - **88 / 89 / 84 这条漂移要如实记，否则下一次对不上账**：**88** 是上一条复核当下写的**快照**（848 行曾引用它并说「属缺陷 41 的 88 条缺口」）；**89** 是 C 之前的一次现测（|D|=152）—— 与它同期，CI 上的 `test_lock_coverage` 恰好红 3 条，对得上；**84** 是 C 落地后的现测值（|D|=149）。88 与 89 之间没有「谁对谁错」，是 |D| 中途变过（L6 收窄定义那一批改动）而缺口数没跟着重算 —— §四「台账状态行不是事实」的又一例。
+      - **C 让缺口净减 5（`route_facts` 44 → 39，合计 89 → 84）**。两个方向同时发生，别只记净数：**减**——旧 L6 的实例（`pymupdf4llm` 的 import 钩子）整条删除，它原本在未覆盖名单里（③ 那格）；**增**——L6 改判据面时新增的入口面静态守卫（T-3）与新的非空负控（T-4）各由一条新变异撞到，把此前无人撞的行变成本次有红源的实例。
+      - **判据数 |D| 149 这个口径下，「缺口」的绝对值不说明工作量** —— 缺口随锁文件里的断言数走，不随被守的行为数走（§三 缺陷 41 已有同款声明）。这条数字的用处只有一个：**它是锁自己报出来的，不是人手工对表对出来的。**
   - **元锁自身两处错，一处已修（同一次首跑照出）**：① `test_every_mutation_driver_has_an_artifact_and_vice_versa` 拿 `Path.stem` 去 `removesuffix("_red_lines.json")` —— `stem` 早剥掉了 `.json`，**永远删不掉**，两个集合恒不相等、这条锁**恒红**（已修：两边各去**自己的**尾巴。修前 `4 failed`、修后 `3 failed`，剩下三条都是真缺口不是工具坏）。② **产物没有「期望绿」的位置**：`route_facts` 的 6 条「红源唯一性」条目（V2/V4/V7/V10/X-5/I-3）本来就**该是绿的**（它们证的恰恰是「把判据退回去，同一条变异就红了」），却因为红源为空被元锁记成**空转变异**。产物格式要能标出这一类，否则「反证」与「空转」又共用一个信号。
   - **后果（推之前必须知道）**：`build.yml` 的 `build` job 是 `needs: test` —— 元锁红 ⇒ `test` job 红 ⇒ **镜像不构建、不发布**。故这三个红不能当「先记着」推上去。
 
@@ -736,8 +741,19 @@ config.yaml 现值（现读，非转述）：
 - 另一处形态（记下以便裁定）：`_setup()` 在**模块级**执行（import 时即往 `_STATIC_DIR` 写测试文件）—— 一旦将来有人 import 它，就会在收集期产生副作用。今天不可达，因为没人 import。
 - 修法（待裁）：把文件移进 `tests/`（需处理 `web/` 的 `sys.path` 与 `_STATIC_DIR` 写入的位置）或加进 `testpaths`；两者都要顺带处理模块级 `_setup()`。**本轮不动**（缺陷 42 的命题是锁的判据，不是测试布局）。
 
-**44. 本地 app 镜像缺 `onnxruntime`，容器内 L3 坏 PDF 用例必红** —— 状态：**记账（不修）**（2026-09-15 缺陷 42 结案跑容器腿时发现）
-- 事实：镜像内 `python -c "import pymupdf4llm"` → `ModuleNotFoundError: No module named 'onnxruntime'`（`pymupdf4llm/ocr/analyze_page.py` 顶层 import）。链路：`core/text_manager.py` 的 `_extract_pdf` 里 `import pymupdf4llm` → 该异常无人接住 → **坏 PDF 上传返回 500 而非 400**，`tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original` 在容器内必红；变异驱动的先验基线门因此拒跑。
+**44. 镜像里没有 `onnxruntime`，而 PDF 解析在「包 import 期」就拉它 ⇒ 生产上「每一份」PDF 上传都失败** —— 状态：**已修**（2026-09-16，方案 C）
+- **原标题（保留以便对上旧账）**：`44. 本地 app 镜像缺 onnxruntime，容器内 L3 坏 PDF 用例必红` —— 原状态**记账（不修）**（2026-09-15 缺陷 42 结案跑容器腿时发现）。**原标题把生产故障写成了测试问题**，射程订正见下一条。
+- **射程订正（2026-09-16，本条最要紧的结论）**：不是「L3 那条用例必红」，是**生产功能故障**。`_extract_pdf` 里那句 `import pymupdf4llm` 在**包 import 期无条件**拉进 `onnxruntime`（链见下），镜像里那份又被 `Dockerfile:28` 主动卸掉 ⇒ **合法 PDF、非法 PDF、任何上传**都先撞上 `ModuleNotFoundError`，且**无人接住** → 500。**射程 = 全部生产、两个区**：`build.yml` 只从 `context: .` 建**一个** `character-distill-app` 镜像（同一个 Dockerfile，推 ghcr + 阿里云镜像站），两区的 `docker-compose.prod.yml` 拉的是同一个 `character-distill-app:${APP_IMAGE_TAG}` ⇒ 同一份镜像、同一条链，没有「SZ 好 SG 坏」这种可能。旧条目把它记成「本地镜像 / 测试腿」的问题，是把**观察到的第一个症状**当成了射程。
+- **起于 2026-06-29，不是 06-27**：`86f8c814`（06-27）只是**卸掉 onnxruntime** 的那一步，它自己不成故障（那时没人拉它）；链要闭合得等上游把 `pymupdf4llm` 发到会拉 `pymupdf_layout` 的版本。**PyPI 实测**：`pymupdf4llm 1.28.0` 上传 `2026-06-29T09:05:11Z`（前一个 `1.27.2.3` 是 `2026-04-24`，它**不 import onnxruntime** —— 这正是本条末尾「旧结论为何错」那一格的由来）。而当时 `requirements.txt` 还是**不带钉的下界**（`pymupdf4llm>=0.0.10`；钉版本是 09-15 的 `53bed63`）⇒ **06-29 之后构建的每一个镜像**都解析到 1.28.x、都带着这条链。**06-27～06-29 之间是「卸了个用不上的包」，06-29 起才是故障。**
+- **修法（用户裁定：方案 C，2026-09-16）**：`_extract_pdf` 从 `pymupdf4llm.to_markdown()` 换成 `pymupdf` 的文本层 `page.get_text()` —— **不再经过任何解析前端，链就不存在了**。方案 ①（去掉 `Dockerfile:28` 的卸载）与 ②（把 `pymupdf4llm` 降版本）都**不采**：① 等于拿镜像体积换一条我们**明确不用**的能力（`_extract_pdf` 的 docstring 自己写着 Does NOT OCR scanned PDFs），② 等于回退缺陷 40 刚钉的锁。**也不采**「接住 `ImportError` 兑现 400」那一条 —— 那是让一条已经坏的路由学会好好报错，不恢复能力。
+- **隔离**：只动 `core/text_manager.py::_extract_pdf` 的**函数体与 docstring**；DOCX / TXT / `upload_text_from_file` 零改动；签名与 `_MSG` 逐字不变；不碰 `ALLOWED_EXTENSIONS` / 路由 / Dockerfile。依赖侧（`pymupdf4llm` → `pymupdf`）单独一次提交。
+- **验收：V1 是本次唯一的真证据（容器内现跑）**。本机 `.venv` 仍装着 `pymupdf4llm`，本机的绿**证明不了**「镜像里没有它也能跑」。容器内挂当前源码跑真的 `_extract_pdf`：
+  - 合法 PDF（3 页）→ 取到 66 字符、内容正确；**同一份 PDF** 走镜像**自带**的旧代码 → `ModuleNotFoundError: No module named 'onnxruntime'`（**反证**：C 修的是真实故障，不是推测出来的故障）
+  - 非法字节 → `pdf_open_failed`（库原文含服务器路径，只进日志，缺陷 39 的行为保住）；空白文本层 → `pdf_no_text`；2001 页 → `pdf_page_limit`（带实际页数）
+- **代价（唯一一条，实测，不是推断）**：输出是**纯文本不是 Markdown**，不再产 `#` 标题 ⇒ 前端 `detectChapters` 落到「独占一行的 1–4 位数字」那条规则，**页码会被切成章节**。实测入库：`ev:pagenum-chapter-rules`（`tests/perf/pagenum_chapter_probe.py` + `docs/evidence/pagenum-chapter-rules.json`，`58be15d`）。**不写成「影响很小」**：带页码、且没有中文章节词与 `Chapter N` 的 PDF 会多出一批以页码为界的假章节 —— 这是 C 引入的**真回归**，只是比「整条路由 100% 失败」小。
+- **残余状态（照记，别让人以为 onnxruntime 这件事清了）**：C 之后 `onnxruntime==1.30.0` **仍在 `requirements.txt` 里**（经 `chromadb` 进来），`Dockerfile:28` 也**仍然**卸它。两者都没动，也**不该**在这次动 —— C 拆的只是「文本解析」这条链，chromadb 那条链是另一件事（本机实测 `chromadb` 在**没有 onnxruntime 的镜像里** import 正常，故它不是本故障的一部分）。**换句话说：镜像里仍然没有 onnxruntime，只是现在没有任何生产路径需要它了。**
+- **修完仍不能发布（推之前必须知道）**：`build.yml` 的 `build` job 是 `needs: test`，而元锁 `tests/test_lock_coverage.py` 仍有 **3 条红**（缺陷 41 的覆盖缺口，本轮按裁定不动）⇒ `test` job 红 ⇒ **镜像不构建、不发布**。C 的代码已就位，发布路径另议（记账见缺陷 52）。
+- 事实（原样保留）：镜像内 `python -c "import pymupdf4llm"` → `ModuleNotFoundError: No module named 'onnxruntime'`（`pymupdf4llm/ocr/analyze_page.py` 顶层 import）。链路：`core/text_manager.py` 的 `_extract_pdf` 里 `import pymupdf4llm` → 该异常无人接住 → **坏 PDF 上传返回 500 而非 400**，`tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original` 在容器内必红；变异驱动的先验基线门因此拒跑。
 - 证据命令：`docker run --rm -v <repo>:/app -w /app --entrypoint python character-distill-app:latest -c "import pymupdf4llm"`；或容器内 `pytest tests/test_text_failure_messages.py -q` → `assert 500 == 400`，栈底 `ModuleNotFoundError: No module named 'onnxruntime'`。
 - **根因（2026-09-15 订正，替换原先的「重建镜像」结论）**：不是「镜像比锁旧」，是**镜像构建时主动把 onnxruntime 卸掉**。冲突链三段逐段核过：
   - `Dockerfile:28` 主动 `pip uninstall -y onnxruntime kubernetes 2>/dev/null || true`，由 `86f8c814`（2026-06-27）引入 —— 比钉锁那一步早 525 个 commit，**重建镜像不会改变它**。
@@ -754,6 +770,7 @@ config.yaml 现值（现读，非转述）：
 - **订正一条旧结论**：此前「本机 Windows 装了 onnxruntime 故不复现」**是错的**。那台环境（harness venv）里 `pymupdf4llm` 是 1.27.2.3，**根本不 import onnxruntime**，所以旧基线 `pytest tests -q` 全绿里那条 L3 是**环境恰好绕开了**，不是「代码没问题」。换到锁里的 1.28.2 立刻崩 —— 与缺陷 42 同形：拿一个与锁不一致的环境跑出的绿当证据，而没有任何东西说它不一致。
 - **本机全量测试的当前做法**：`--deselect tests/test_text_failure_messages.py::test_l3_bad_pdf_screens_table_wording_and_logs_the_original`，结果是 `1045 passed, 62 skipped, 1 deselected`。**这不是绿**，是「这条在本机跑不了」—— 上机复跑只能进容器。
 - **2026-09-16 更新（缺陷 41 · ④ 动了 import 的位置，见缺陷 49）**：`_extract_pdf` 那句 `import pymupdf4llm` 已从**函数入口**挪到 `pymupdf.open()` 与页数校验**都通过之后**。于是**坏 PDF** 的路径不再 import 它，容器内「缺包 → 500」与**本机「被 System32 抢先 → 整个进程崩」**两条都**在坏 PDF 用例上**消掉了（本机 `test_text_failure_messages.py` 由「import 期即杀进程」变为可跑，27 passed）。**合法 PDF 那条没消**（本机仍崩 —— 缺陷 50），且**容器侧未在本机验证**。
+  - **订正（2026-09-16 晚，方案 C 落地）：这一步是「报错改善」，不是「修好」—— 两者当时被记成了同一件事。** 挪 import 的位置只让**坏** PDF 不再付出加载代价；**合法** PDF 照旧在 import 期拉起 onnxruntime，容器侧照旧缺包、本机照旧崩。**这一步没有恢复任何能力**：改前改后，「上传一份能解析的 PDF」在两个环境里都是坏的（容器 500 / 本机 access violation）。真正的修好是**方案 C**（缺陷 44）—— 把 `pymupdf4llm` 整个从这条路上拿掉。**判据（写给下一次）：一次修复要回答「哪一个**能力**从坏变好了」，答不出来的（「这条用例不再红了」「报错文案对了」）都不是修好，是报错改善。** 本条的 ③ 负控与入口面静态守卫在 C 落地时改判据面（实例没了、命题仍在），见缺陷 41 · ④。
 
 **45. 变异驱动的先验基线门红源不可辨：「基线跑不起来」与「基线绿、变异没红」同型** —— 状态：**记账（不修）**（2026-09-15 容器腿实测）
 - 事实：镜像内没有 pytest 时，`_baseline_gate` 对四个锁文件的 pytest 调用全部**拿不到 summary**，却仍**放行**进入变异阶段；逐条变异拿到的同样是空 summary，最终表现为一片 `>> ?` 加一串 `MISMATCH ...：期望 RED 实得 green`。
@@ -783,21 +800,32 @@ config.yaml 现值（现读，非转述）：
 - **不加 `gc.collect()`**：靠 GC 释放句柄是不确定的，不是机制。
 - 射程：**Windows 上失败一次、下一个 loop 迭代自愈、不累积**；Linux 同形但无后果 —— **这不是线上故障**。
 
-**49. 校验失败的路径也要付出加载 40MB 解析运行时的代价 —— 「校验 ↔ 重依赖」没断** —— 状态：**已修**（2026-09-16 缺陷 41 · ④）
-- 事实：`core/text_manager.py::_extract_pdf` 原先在**函数入口**就 `import pymupdf4llm`，而该包在**包 import 期无条件**拉进 `onnxruntime`（`pymupdf4llm/ocr/analyze_page.py:5`；本仓**没有一处** import onnxruntime，是它拉进来的）。全仓 40MB 的推理运行时被拉起，而本函数的 docstring 自己写着 **「Does NOT OCR scanned PDFs」** —— **依赖的能力我们明确不用，成本却全付了**。后果是生产性的：**任何**（含非 PDF / 打不开的）上传都要先付这份加载代价。
+**49. 校验失败的路径也要付出加载 45.2MB 解析运行时的代价 —— 「校验 ↔ 重依赖」没断** —— 状态：**已修**（2026-09-16 缺陷 41 · ④；标题原写 40MB，是估算，实测值见正文）
+- 事实：`core/text_manager.py::_extract_pdf` 原先在**函数入口**就 `import pymupdf4llm`，而该包在**包 import 期无条件**拉进 `onnxruntime`（`pymupdf4llm/ocr/analyze_page.py:5`；本仓**没有一处** import onnxruntime，是它拉进来的）。全仓 **45.2 MB** 的推理运行时被拉起（实测：`du -sk .venv/Lib/site-packages/onnxruntime` = 45.2 MB，`onnxruntime 1.30.0`；本条原先写的「40MB」是估算，不是量出来的），而本函数的 docstring 自己写着 **「Does NOT OCR scanned PDFs」** —— **依赖的能力我们明确不用，成本却全付了**。后果是生产性的：**任何**（含非 PDF / 打不开的）上传都要先付这份加载代价。
 - **定性**：不是「文案 ↔ 解析层」没断，是**「校验 ↔ 重依赖」没断** —— 真架构缺陷，有生产后果。
 - 不变量（**判据落在位置，不落在重量** —— 不需要定义什么叫「重依赖」）：**校验失败的路径不得触达解析器**。可判定为**行序**：① 模块顶层零第三方 import；② 每个函数里「无守卫的第三方 import」（无守卫 = 行号在该函数第一条 `raise` 之前）至多一条 —— 第一条是该函数**自己的工具**，否则判据本身成死判据。失效方向是**响亮误伤**（多一条就红、红的信息点名哪一行），不是静默漏过。
 - 「哪些算解析库」**从事实推出**（`requirements.txt` 的分发包名 ∩ `importlib.metadata.packages_distributions()` 反查顶层模块名），**不是名单**：实测 134 个分发包，`aiofiles` / `pymupdf` / `pymupdf4llm` / `docx` / `onnxruntime` / `chromadb` 全部解析为真。
 - 锁 = `tests/test_text_failure_messages.py` 的 **L6**（三条：① 顶层、② 每个函数的无守卫 import、③ 负控「判据面不塌」）；修法 = `import pymupdf4llm` 挪进 `pymupdf.open()` 与页数校验**都通过之后**的内层 `try`。变异 **T-1**（挪回函数顶部）/ **T-2**（挪到模块顶层）各自点名该 import 与行号。
+- **C 落地后 L6 的构成（命题不变、实例没了，故改的是判据面）**：
+  - **① 不动。** 命题仍成立，只是今天没有实例。
+  - **② 不动（判据本身），但它的失效方向要认清：** 剩下的那条「无守卫 import」现在是 `_extract_pdf` 里的 `import pymupdf`，它**就是该函数的第一件工具**，按 ② 的定义免责 —— 即 **② 今天在任何合法写法下都红不了**，撞它的是 T-1（插第二条 import）、T-2（挪到模块顶层）两条变异。判据留着是因为**命题还在**：将来有人给 PDF 加第二个重解析库时它立刻有齿。**退役等于因为「暂时没有违例」而拆掉规则，那是把偶然当成必然。**
+  - **③ 负控换判据面（旧判据作废）**：原判据是「必须存在排在失败点**之后**的第三方 import」—— 全仓唯一那条就是 `import pymupdf4llm`，C 拿掉它之后该判据**恒红**（它在报告「我的命题失去对象了」，不是 bug）。换成「**扫描确实下钻进了函数体**」：判的是**扫描器有没有工作**，不是「今天恰好有违例」。**这个换法比原来更准** —— 原判据把「有违例」当成「扫描正常」，两件事本来就不同。**代价**：新判据在被撞之前是「死判据」，故补了变异 **T-4**（把三条函数级解析库 import 全提到模块顶层 → 函数体里一个都认不出来 → 负控红）给它一个撞得红的对象。
+  - **入口面新增静态守卫**：`test_l6_no_parser_runtime_in_source` 断言 `"pymupdf4llm" not in text_manager.py 源码` —— 这条同时守住**「生产缺陷不得靠一次 import 回来」**，是净增保护。**代价（如实记）**：它是**字面子串**检查，故生产 docstring 里**不能出现这个库名**（写了就自红）；库名与整条链留在本条与缺陷 44 的台账里，不在生产代码里。撞它的是 **T-3**。
+  - **T-1 的形态换过一次，如实记**：老 T-1 是「把 `import pymupdf4llm` 挪回函数顶部」，C 把 `pymupdf4llm` 整包删了之后**锚点不复存在**，那个变异体现在崩在 `assert hits == 1` 上（**锚点失效是崩，不是变红** —— 崩得响亮，不是静默假绿）。老 T-1 想守的对象（`pymupdf4llm` 回到源码里）**没丢**，改由 **T-3** 打静态守卫；**T-1 的对象从「挪回 pymupdf4llm」换成「插入第二条解析库 import」—— 形状变了，不是同一件事。**
 - **验收（写死的这条）**：非法 PDF 走 `pdf_open_failed` 且**不触达 onnxruntime** —— 用 `sys.meta_path` 的 **import 钩子**断言「没触达」，**不许用「本机不崩了」当证据**（那在装了 onnxruntime 的机器上恒真，是假绿）。钩子抛的是 **`BaseException` 子类**：抛 `Exception` 子类会被被测代码的宽 `except Exception` 抓走再包一层，于是**钩子响了而判据仍然是绿的**。
 - **残余接受（照记，别让人以为 PDF 上传修好了）**：真·有效 PDF 的解析路径**本机仍会崩** —— 本修复只消掉「测失败文案要拉起推理运行时」，**不修机器**。
 - **对缺陷 44 的后果（未在本机验证）**：import 挪到校验之后，容器内「缺 onnxruntime → 坏 PDF 返回 500」那条应当随之消失（坏 PDF 在 `pymupdf.open()` 就 400）。**本机无法验证**（Windows 那条拒绝装 pytest 的容器腿要另跑）。
 
-**50. 本机 `import onnxruntime` 一律崩 ⇒ 本地 PDF 上传在生产代码路径上就是坏的** —— 状态：**记账（不修）**（2026-09-16 缺陷 41 · ④ 收口时发现，**spec 外**）
+**50. 本机 `import onnxruntime` 一律崩 ⇒ 本地 PDF 上传在生产代码路径上就是坏的** —— 状态：**环境事实仍在，生产后果已消**（2026-09-16 缺陷 41 · ④ 收口时发现，**spec 外**；同日方案 C 落地，后果消失，见末条）
 - 事实：本机锁版 `onnxruntime 1.30.0` 被 `C:\Windows\System32\onnxruntime.dll`（微软随系统装的 1.17.260613）抢先加载，ABI 不符 → **模块初始化时 access violation**。这条链在 `_extract_pdf` 里，是**生产代码路径**，所以本机**上传一份合法 PDF 也是坏的**。
 - **射程写清：只影响本机开发，不影响生产。** 容器是 Linux（无此 System32 DLL），实测 `1068 passed / 82 skipped / 0 failed`。这不是测试问题，是**生产功能在开发机上不可用**。
 - **原生层根因未查明** —— 照写「未查明」：已核的是「DLL 同名抢先 + ABI 不符」这一层，为什么 `System32` 那份能压过 pip 包内那份、以及为何换 `1.26.0` 就不崩，**没有查明**，不装懂。
 - 与缺陷 44 的关系：44 记的是**容器**那一端（缺包 → 500），本条目记的是**本机开发**那一端（包在但被抢先 → 崩）。同一条 import 链的两个方向，修法不通用。
+- **2026-09-16 晚（方案 C 落地后）：上面的「生产代码路径」那半句不再成立 —— 环境事实没变，是那条路不再碰它了。** 实测两条，都在本机 `.venv`：
+  - `.venv/Scripts/python.exe -c "import onnxruntime"` → **仍然 `Segmentation fault`，exit=139**（System32 抢先那条链一字未动，这是**环境事实**，不是本仓能修的）
+  - 但 `.venv/Scripts/python.exe` 里调真的 `TextManager._extract_pdf` 解析一份合法 PDF → **exit=0，取到 51 字符、内容正确**（C 之前这里是 access violation 整个进程被杀）
+  - 即：本机**开发**这一端的 PDF 链修好了，不是因为 onnxruntime 修好了，而是因为 `pymupdf4llm` 从路上拿掉了。**这条订正同时说明缺陷 44 的「不是测试问题，是生产功能在开发机上不可用」这句话当时对、现在过期** —— 两句话的射程都写在各自条目里。
+  - 附：本机跑全量的 `--deselect`（缺陷 44 那条）**从 C 起不必再挂**（`tests/test_text_failure_messages.py` 28 passed，含原先要 deselect 的 L3）。
 
 **51. compose 事实层的两条承重前提只在 v5 上成立，却以散文形式存在 —— 那条「实测」测的是 flag 不是行为** —— 状态：**已修**（2026-09-16）
 - 现象（CI run `35075782258`，`0cb193f`）：11 条红 = `test_pg_gate` 7 + `test_compose_model::test_fact_layer_names_no_repo_specifics` 1 + `test_lock_coverage` 3。**前 8 条的 stderr 是同一句**：`env file /home/runner/work/Character-distill/Character-distill/.env not found: stat …: no such file or directory` —— 报的是「你少了个文件」，而真凶是「本机 compose 不满足前置条件」。
@@ -829,7 +857,7 @@ PROBE_IMAGE         false
 ```
 
   `--variables` 的输出是一张**名字表**（NAME / REQUIRED / DEFAULT / ALTERNATE），值根本不进这条路径；`env_file` 缺文件时它也 exit 0。**故它既不承载 P-a、也不承载 P-b，不必进探针** —— 这条边界是实测的，不是推断的。**反面证据一并留着**（同一个文件、两个版本，走 `--format json` 那条形状）：v2.38.2 上占位值被原样印进模型（`"PROBE_SECRET": "deadbeefcafe0123"`，exit 0），v5.5.1 上印不出来 —— 探针测的正是**有性质的那条形状**，不是「随便跑一条 compose 命令」。
-- **验收（现跑现数）**：改前 `35075782258` 的 11 条红 → 改后 `35080483581` 的 `gate` job **恰好 3 failed**（全是 `test_lock_coverage` 那 3 条，属缺陷 41 的 88 条缺口，本条不动），`1175 passed`；新增的 6 条用例（T1–T5 + 一条「无 CLI 是第三种成因」）**全 PASSED**，含真跑那条 T5。`Pin docker compose v5.5.1` 那步在 CI 上如实打印 `/tmp/docker-compose: OK` 与 `Docker Compose version v5.5.1`。v2.38.2 + `REQUIRE_COMPOSE_TESTS=1` 的对照里，同一批红的报文**以 P-a 原因开头**，`env file … not found` 降级成附在后面的证据。
+- **验收（现跑现数）**：改前 `35075782258` 的 11 条红 → 改后 `35080483581` 的 `gate` job **恰好 3 failed**（全是 `test_lock_coverage` 那 3 条，属缺陷 41 的覆盖缺口，本条不动 —— **那里当时写的「88 条」是快照，现测 84，见缺陷 41 末尾的漂移说明**），`1175 passed`；新增的 6 条用例（T1–T5 + 一条「无 CLI 是第三种成因」）**全 PASSED**，含真跑那条 T5。`Pin docker compose v5.5.1` 那步在 CI 上如实打印 `/tmp/docker-compose: OK` 与 `Docker Compose version v5.5.1`。v2.38.2 + `REQUIRE_COMPOSE_TESTS=1` 的对照里，同一批红的报文**以 P-a 原因开头**，`env file … not found` 降级成附在后面的证据。
 - **（本轮追加修复后，用例数与落点都变了：`test_compose_capability.py` 7 条 —— T1/T2/T2b/T6 + 无 CLI + 哨兵入口 + 正控，T5 移回 `test_compose_model.py`；本轮的闸门数字见下面「审计追加」末条。）**
 - **同族判据（写给下一次）：**「实测」必须写明**测的是哪条性质**；**测 flag 存在 ≠ 测行为**。本条的引子就是一句没写性质的「实测 2.38.2」—— 它核的是 flag，读的人当成了行为，于是前提整整一轮没人守。同族：缺陷 40（依赖只有下界 → 上游发版能让本仓用例红，红的样子与本仓写错逐字相同）。
 
@@ -840,6 +868,19 @@ PROBE_IMAGE         false
   - **F4 两处注释说的与事实相反。** `build.yml` 原文两处写「事实层静默失效的状态下判绿」—— 事实是那轮 CI **红了**（运行 `35075782258` 实测 `11 failed, 1161 passed`），红的是**症状**：每条报 `env file …/.env not found`，看日志的人会去查「干净检出上为什么没有 `.env`」，而不是「本机 compose 够不够格」。**红得指错地方比静默判绿轻，但同样不是守卫** —— 两种成因（本机环境不对 / 本仓写错）共用同一个信号，而缺陷 40 修的正是这个形态。`compose_model.py` 模块 docstring 里那句无条件的「加了它：不读 service env_file、不吐秘密」也改成了带前提的说法（「**在满足 P-a/P-b 的 compose 上**如此」）。本条台账同步订正（686 / 688 两处旧说法）。
   - **同族判据（补一句给下一次）：一次探针只测一条性质；多条性质合在一起测，先失败的那条会遮住后面的。** F1 与 F2 是同一句话的两个方向：合并判 → 后面的被遮住；只看退出码 → 前面的被误认。**判据要能逐条点出「这条探针在测哪一条性质」**，点不出来的探针就不是一条判据。
   - **本轮闸门数字（现跑现数）**：变异 7 条（M1/M2/M3/M4/M5 + 新增 M7「恢复成合并探针」/ M8「删掉对照 C」）**全 RED，且红在预期的那条用例**。四组矩阵 —— 无 docker `3 failed, 38 passed, 20 skipped`（跳过的是要 compose 的用例，T5 `SKIPPED`）；v2.38.2 未设 REQUIRE `3 failed, 38 passed, 20 skipped`（同上）；v2.38.2 + `REQUIRE_COMPOSE_TESTS=1` `20 failed, 41 passed`（拒绝跳过、真跑并红 = `test_compose_model` 10 + `test_pg_gate` 7 + `test_lock_coverage` 3，**含 T5**）；v5.5.1 + `REQUIRE_COMPOSE_TESTS=1` `3 failed, 58 passed`（**只剩元锁那 3 条红**，T5 在 `test_compose_model.py` 里 `PASSED`）。各版本由 shim 把 `docker compose` 转发到对应 standalone 二进制，驱动脚本在仓外（一次性）。
+
+**52. 一条 100% 失败的生产路由，在本仓「没有任何一条守卫」碰得到它 —— 全部 PDF 判据都长在「坏输入」那一侧** —— 状态：**记账（不修，处置方向不实现）**（2026-09-16 方案 C 收口时发现，**spec 外**）
+- **事实（现跑现数）**：全仓测试里出现的 PDF 字节只有**一处** —— `b"not a pdf at all"`（`tests/test_text_failure_messages.py:485` 与 `:525`，两条都判 400 + 文案）。**没有任何一条测试解析过一份合法 PDF**；全仓第一份「真造出来的合法 PDF」出现在 `tests/perf/pagenum_chapter_probe.py`（方案 C 为**量这次回归**才写的探针，`58be15d`），而它是探针不是用例，`pytest` 不收集。
+- **后果的量级要写清**：这条路由从 2026-06-29 起**每一份上传都失败**，持续约 2.5 个月，而期间 CI 是**绿的** —— `1068 passed / 82 skipped / 0 failed`、缺陷 41 的 13 条 L 锁、外加一整套变异矩阵，**没有一条碰到它**。
+- **为什么碰不到（这是本条真正的形态，不是「忘了写一条用例」）**：已有的 PDF 判据判的是**校验失败的路径**（坏输入 → 400 / 文案 / 日志），而坏输入的路径**在拉起解析器之前就 return 了** —— 锁的眼睛长在失败路径上。同一件事的另一面正好解释了缺陷 41 · ④ 为什么能让 L3 变绿而生产照样坏：**把 import 挪到校验之后，等于让锁看得见的那条路更早地避开了解析器**，锁于是更绿，而能力一点没回来。**「失败路径判得越细」与「成功路径有没有人守」是两件事，前者不会顺带覆盖后者。**
+- **它与缺陷 41 的关系是互补不是重复**：41 管的是「守卫与被守对象之间隔着几层」，本条管的是**守卫长在哪一侧** —— 判据全在「该拒绝的拒绝了」，没有一条在「该接受的接受了」。**失败路径的判据再多，也不构成成功路径的守卫。**
+- **处置方向（留档，本轮不实现）**：一条「合法 PDF 解析出预期文本」的守门用例 —— 用例内用 `pymupdf` 现造最小合法 PDF（`new_page()` + `insert_text()`，无需入库二进制夹具；V1 的容器验收脚本就是这个形状），断言 `_extract_pdf` 返回该文本。**不实现的原因**：本轮是生产故障修复，判断这条属于「测试覆盖债」，按用户裁定与缺陷 41 的缺口分开走。
+
+**53. `requirements.in` 的注释说了一件**从没发生过**的事 —— 声称的那个 CI 步骤不存在** —— 状态：**记账（不修）**（2026-09-16 方案 C 重锁时发现，与白名单那次同族）
+- **事实（grep 现跑）**：`requirements.in:9` 写着「不要手改 requirements.txt：… 且 CI 会红（build.yml 的 **"Verify installed versions match the lock"** 步骤当场核对）」。`grep -i "verify\|installed version\|match the lock" .github/workflows/build.yml` → **零命中**。真实情况是：gate job 按锁装（`pip install -r requirements.txt`）后跑一句 `python -m pip freeze --all > pip-freeze-gate.txt` **上传成 artifact** —— 那是**留证**，不是**核对**；全仓没有任何一步比对「装到的版本」与「锁里的版本」。
+- **第二半（同一处注释的另一条，也是本轮撞上的）**：注释给的重锁配方是**不带约束**的那条 —— 照它逐字执行，本次会混进 **11 个包**的上游漂移（openai / sqlalchemy / urllib3 / yarl / resend / qdrant-client / posthog / propcache / filelock / pyproject-hooks，以及因 `pymupdf4llm` 消失而掉出的 networkx）。**配方本身会产出不可 review 的 diff**，而这正是本次要避免的（用户裁定：重锁用 `--constraint` 求最小 diff）。
+- **族**：「文本说了一件没发生的事」—— 与缺陷 51（「实测 2.38.2」测的是 flag 不是行为）同族，也与 §四 第三案例（`.claude/settings.local.json` 里那条凭据前缀**从未生效过**）同族。**判据相同**：以「它是否真的成立」为准，不以「有那么一份文本」为准。
+- **处置方向（留档，本轮不实现）**：① 删掉 CI 那句，或改成「CI 按锁装 + `pip freeze` 留证」的事实描述；② 把重锁配方写成**本轮实测可行**的形状（`uv pip compile requirements.in -o requirements.txt --universal --python-version 3.12 --constraint <上一把锁>`，并写明 `--constraint` 会往注解里写约束文件路径、生成后要去掉 —— 见缺陷 44 那次提交的记录）。**不搭车改的理由**：本轮 `requirements.in` 必须**只动一行**（`pymupdf4llm>=0.0.10` → `pymupdf>=1.28.2`），改注释就不是最小 diff，本轮「只删两个包 + 提升一个包」这个可核对的验收口径当场失效。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
