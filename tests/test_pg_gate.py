@@ -65,6 +65,7 @@ from __future__ import annotations
 import json
 import re
 import shlex
+from typing import NamedTuple
 
 import pytest
 
@@ -75,29 +76,27 @@ import policy_table
 # 本机没有 docker compose 时**显式 skip**（与本仓其余环境需求同一条规矩），CI 用
 # `REQUIRE_COMPOSE_TESTS=1` 拒绝跳过。
 #
-# 剩下的三条（隐式加载文件的检查、时长解析器的契约、豁免理由非空）不碰 compose，
-# 故不挂 —— 没有 docker 的环境里它们照样真跑，判据多一条是一条。
+# 剩下的四条（隐式加载文件的检查、时长解析器的契约、豁免理由非空、段表反例全被拒）
+# 不碰 compose，故不挂 —— 没有 docker 的环境里它们照样真跑，判据多一条是一条。
 _COMPOSE = compose_model.COMPOSE_ENV.skipif("门的锁")
 
-# 断链的运算符：后面接的是**第二条命令**，或一个把输出（含 stderr）吞掉的重定向。
+# 断链的运算符：后面接的是**第二条命令**。
+#
+# 它**不进下面的段表**，因为 `;` 与 `||` 本身都是**合法 shell token** —— 段表判的是
+# 「token 像不像那个形状」，这一条判的是「命令有没有在此处结束」。是唯一一条段表表达
+# 不了的形状判据，故单独一条策略。
 _SECOND_COMMAND_OPS = (";", "||", "&&", "|", "&")
 
-_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=")
 # 有效模型里看到的仍是 `$$NAME`（`$$` 收成一个 `$` 发生在容器内的 shell），
-# 也就是「展开发生在容器内」这一层合法的形态是两个 `$`。
-_VAR_REF_RE = re.compile(r"^\$\$[A-Za-z_][A-Za-z0-9_]*$")
-_INT_RE = re.compile(r"^\d+$")
+# 也就是「展开发生在容器内」这一层合法的形态是两个 `$`。段表按**正则字符串**收它们
+# （`re:` 前缀），故这里是字符串而不是编译过的 pattern。
+_VAR_REF = r"^\$\$[A-Za-z_][A-Za-z0-9_]*$"
+_INT = r"^\d+$"
 # compose 的时长写法：一个或多个 `<数字><单位>` 段落，`10s` / `1m30s` / `500ms` 都合法。
 _DURATION_SEG_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
 
 _LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
 _MS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
-
-# psql 只允许这三组参数。判据是「token 在不在白名单里」，不是「它看起来像不像 host」——
-#   `--host=` / `--hostaddr` / `-p` 全是白名单外的 token，一律点名。
-_PSQL_FLAGS = ("-h", "-U", "-d")
-
-_REQUIRED_ASSIGN = {"PGPASSWORD", "PGCONNECT_TIMEOUT"}
 
 # 判据 1+2：healthcheck 映射的键集合**恰好**是这四个。
 _HEALTHCHECK_KEYS = {"test", "interval", "timeout", "retries"}
@@ -264,120 +263,265 @@ def _duration_seconds(value: object) -> float:
 
 
 def _tokens(cmd: str) -> list[str]:
-    """切成 shell 词。`punctuation_chars=True` 让 `;` / `||` / `2>` 各自成 token ——
-    默认的 `shlex.split` 会把 `> /dev/null;` 粘成一个词，报错时就点不出那个 `;`。"""
+    """切成 shell 词。`punctuation_chars=True` 让 `;` / `||` / `>` 各自成 token ——
+    默认的 `shlex.split` 会把 `> /dev/null;` 粘成一个词，报错时就点不出那个 `;`。
+
+    **`2>` 切出来是 `2` 与 `>` 两个 token**（实测：`['…','-tAc','select 1','2','>','/dev/null']`）。
+    这里原先写的是「`2>` 自成 token」，照着那句推会得出「`t == '2'` 永不匹配 ⇒ 那个判据是死的」
+    这个**错的**结论 —— 实测推翻了它（守卫照常触发）。怀疑不等于事实。"""
     return list(shlex.shlex(cmd, posix=True, punctuation_chars=True))
+
+
+# ── 那条命令的闭语法：形状写在**数据**里，判据只有一处 ────────────────────────
+# **为什么形状要搬进数据。** 旧写法是一条判据一段控制流：16 个拒绝点 = 16 个抛错点，
+# 于是判别器数由「写了多少种判法」决定（实测这一个 helper 独占 23 条判别器），而真正要
+# 防的失效只有**一类** ——「这条命令不是那个形状」，那 16 个只是它的 16 种表现。形状搬进
+# 下表之后，逐 token 的比对由 `_scan` 一处做完，**抛错只有一处**，|D| 回到失效种类数。
+#
+# **代价如实记。** 形状没有消失，只是搬了家：16 条原来一次性跑过的证据，现在挂在每一段
+# 的 `violations` 上，由 `test_closed_grammar_rejects_every_listed_shape` **每次都跑**。
+# 净 gain 是「从一次性证据变成每次都跑的证据」，**不是**「少写了 17 条」。反过来说，
+# 删掉表里的一行 = 那条反例也跟着消失而**没有任何东西会响** —— 唯一的警报是下面那个
+# `_MIN_VIOLATIONS` 下界。
+#
+# **反例挂在段上，不另立一张表。** 合法定义与它的反例同一处：删一行，两者一起消失，
+# 不留半截。分两张表就是又一个漂移点（本轮已踩过两次手工清单）。
+
+_GOOD_CMD = ("PGPASSWORD=\"$$POSTGRES_PASSWORD\" PGCONNECT_TIMEOUT=3 psql -h postgres "
+             "-U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\" -tAc 'select 1' > /dev/null")
+
+# 反例总数的下界 —— **这次重写唯一新增的保护**（照 `_MIN_TABLE_RAISES = 16` 的先例）。
+# 下界值 = 重写当刻实测的反例条数，不是拍的。表里每加一条反例就要把它往上调；不调的话
+# 新加的那条日后被删掉照样无声，而这正是上面说的「删一行什么都不会响」。
+_MIN_VIOLATIONS = 18
+
+
+class _Seg(NamedTuple):
+    """闭语法里的**一个位置**。
+
+    词法（`accept`）与语义（`allowed` / `names` / `values`）分两处判，因为两种「不符」要
+    报出不同的东西：词法不符报**这个 token 是什么**（`mysql` 不是命令体），语义不符报
+    **它为什么在这里不行**（`-h` 出现了两次）。
+
+    `accept` 逐字面量比，`re:` 前缀按正则比。
+    `names` 非空的段，token 形如 `名字=值`，`values` 按**名字**给值正则；否则每个 token
+    后面跟 `arity` 个值 token，`values` 按 **token** 给值正则。
+    `must` = 这一段必须各出现恰好一次的那些 token（顺带保证下一段读得到它们）。
+    `violations` 收 `(锚点, 换成什么, 期望 kind)`，锚点必须在 `_GOOD_CMD` 里**恰好**出现一次。
+
+    词法/语义/`must` 三处都判 **token 本身**，不判「位置对不对」：反正整条命令必须恰好是
+    这个形状，位置错了必然在别处多出或少了 token。
+    """
+    name: str
+    accept: tuple[str, ...]
+    why: str
+    repeats: bool = False
+    arity: int = 0
+    allowed: tuple[str, ...] = ()
+    names: tuple[str, ...] = ()
+    must: tuple[str, ...] = ()
+    values: tuple[tuple[str, str], ...] = ()
+    violations: tuple[tuple[str, str, str], ...] = ()
+
+
+_KIND_REASON = {
+    "unexpected": "多出语法外的 token",
+    "missing": "少了必需的片段",
+    "duplicate": "出现了两次",
+    "bad_value": "值不合法",
+}
+
+# 命令结尾之后：不是一段语法，只是「这里本该结束了」。放在表尾，报错时点名它。
+_TAIL = _Seg(name="命令结尾之后", accept=(),
+             why="命令到此为止，后面不允许任何 token")
+
+_GRAMMAR: tuple[_Seg, ...] = (
+    _Seg(
+        name="前缀（环境变量赋值）",
+        accept=(r"re:^[A-Za-z_][A-Za-z0-9_]*=",),
+        why="前缀只允许 PGPASSWORD 与 PGCONNECT_TIMEOUT 这两条 —— 多一条赋值就是多一种"
+            "改法（`PGHOSTADDR=127.0.0.1` 会把探针指到环回，口令又不用验了）",
+        repeats=True,
+        names=("PGPASSWORD", "PGCONNECT_TIMEOUT"),
+        must=("PGPASSWORD", "PGCONNECT_TIMEOUT"),
+        values=(("PGPASSWORD", _VAR_REF), ("PGCONNECT_TIMEOUT", _INT)),
+        violations=(
+            ("PGCONNECT_TIMEOUT=3 psql", "PGHOSTADDR=127.0.0.1 PGCONNECT_TIMEOUT=3 psql",
+             "unexpected"),
+            ("PGCONNECT_TIMEOUT=3 ", "", "missing"),
+            ("PGCONNECT_TIMEOUT=3", 'PGPASSWORD="$$X" PGCONNECT_TIMEOUT=3', "duplicate"),
+            ('PGPASSWORD="$$POSTGRES_PASSWORD"', "PGPASSWORD=plain", "bad_value"),
+            ("PGCONNECT_TIMEOUT=3", "PGCONNECT_TIMEOUT=abc", "bad_value"),
+        )),
+    _Seg(
+        name="命令体",
+        accept=("psql",),
+        why="命令体只能是 psql —— 只有真发一条查询到服务端才会走认证",
+        must=("psql",),
+        violations=(
+            ("psql", "mysql", "unexpected"),
+            (" psql -h postgres -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""
+             " -tAc 'select 1' > /dev/null", "", "missing"),
+        )),
+    _Seg(
+        name="psql 参数",
+        accept=(r"re:^-(?!tAc$)[A-Za-z]",),
+        why="psql 只允许 -h / -U / -d 三组参数各恰好一次 —— 多一组 `-p` 这类选项就是把"
+            "探针指到别处去",
+        repeats=True,
+        arity=1,
+        allowed=("-h", "-U", "-d"),
+        must=("-h", "-U", "-d"),
+        values=(("-U", _VAR_REF), ("-d", _VAR_REF)),
+        violations=(
+            ("-h postgres", "-h postgres -p 5432", "unexpected"),
+            ('-U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc \'select 1\' > /dev/null',
+             '-U "$$POSTGRES_USER" -d', "missing"),
+            ("-h postgres ", "-h postgres -h postgres ", "duplicate"),
+            ("-h postgres ", "", "missing"),
+            ('-U "$$POSTGRES_USER" ', "", "missing"),
+            ('"$$POSTGRES_USER"', "plain", "bad_value"),
+        )),
+    _Seg(
+        name="查询参数",
+        accept=(r"re:^-tAc$",),
+        why="查询参数只能是 `-tAc 'select 1'` —— 换一条永远成功的语句就等于把这道门"
+            "变回装饰",
+        arity=1,
+        must=("-tAc",),
+        values=(("-tAc", r"^select 1$"),),
+        violations=(
+            ("select 1", "select 2", "bad_value"),
+            ("-tAc 'select 1' > /dev/null", "-tAc", "missing"),
+        )),
+    _Seg(
+        name="结尾重定向",
+        accept=(">",),
+        arity=1,
+        must=(">",),
+        values=((">", r"^/dev/null$"),),
+        why="结尾只能是 `> /dev/null` —— 换一个目标（如 `/dev/stderr`）会把认证失败的"
+            "原文弄进健康日志，红就失去诊断价值；`2>` 更直接：stderr 根本进不去",
+        violations=(
+            ("> /dev/null", "2> /dev/null", "unexpected"),
+            ("> /dev/null", "> /dev/stderr", "bad_value"),
+            ("> /dev/null", "> /dev/null extra", "unexpected"),
+        )),
+)
+
+
+def _matches(token: str, accept: tuple[str, ...]) -> bool:
+    return any(re.match(p[3:], token) if p.startswith("re:") else token == p for p in accept)
+
+
+def _break(seg: _Seg, token: str, kind: str, note: str = "") -> str:
+    """一处不符的**说法** —— 拼它不发异常，故它不产生判别器。"""
+    return f"在「{seg.name}」这一处：{_KIND_REASON[kind]} {token!r}{note}。{seg.why}"
+
+
+def _scan(toks: list[str]) -> tuple[dict[str, str], str | None]:
+    """按 `_GRAMMAR` 逐段走一遍，**返回**第一处不符（`None` = 合法），不抛。
+
+    返回而不是抛，是这次重写的全部要点：边走边抛的话每个拒绝点都要写一条 `raise`，
+    |D| 就等于「写了多少种判法」，而那正是覆盖闭合元锁按定义要消灭的东西。
+
+    顺带修掉旧实现的报错方向：逐 token 之比之后，报的是**真正不符的那一个** —— 实测旧
+    实现在 `-tAc 'select 2'` 上报 `'-tAc'`、在 `> /dev/stderr` 上报 `'>'`，两条都在指
+    别处，红的人得自己再猜一遍。
+    """
+    parse: dict[str, str] = {}
+    i = 0
+    for seg in _GRAMMAR:
+        seen: list[str] = []
+        while i < len(toks) and _matches(toks[i], seg.accept):
+            tok = toks[i]
+            if seg.names:
+                key, _, val = tok.partition("=")
+                if key not in seg.names:
+                    return parse, _break(seg, tok, "unexpected")
+            else:
+                key, val = tok, ""
+                if seg.allowed and tok not in seg.allowed:
+                    return parse, _break(seg, tok, "unexpected")
+            if key in seen:
+                return parse, _break(seg, key, "duplicate")
+            seen.append(key)
+            i += 1
+            for _ in range(seg.arity):
+                if i >= len(toks):
+                    return parse, _break(seg, key, "missing", " 后面没有值")
+                val = toks[i]
+                i += 1
+            rule = dict(seg.values).get(key)
+            if rule is not None and not re.match(rule, val):
+                return parse, _break(seg, val, "bad_value")
+            parse[key] = val
+            if not seg.repeats:
+                break
+        if not seen and i < len(toks):
+            want = "、".join(seg.must or seg.accept)
+            return parse, _break(seg, toks[i], "unexpected", f"（这一段要的是 {want}）")
+        absent = [k for k in seg.must if k not in seen]
+        if absent:
+            return parse, _break(seg, absent[0], "missing")
+    if i < len(toks):
+        return parse, _break(_TAIL, toks[i], "unexpected")
+    return parse, None
+
+
+def _reject(msg: str) -> None:
+    """**整条命令的抛错点只有这一处。** 判别器按 `lock_coverage` 的 (b)/(c) 两类算，
+    「调用点」就是判别器 —— 把抛错收到一处，|D| 才与「有多少种判法」脱钩。"""
+    raise AssertionError(msg)
 
 
 # ── 判据 1 + 2：探针命令 + 探针配置 ───────────────────────────────────────────
 
 def _assert_closed_grammar(cmd: str, where: str, db: str, timeout: float,
                            sentinels=frozenset()) -> None:
-    """整条命令必须**恰好**是模块 docstring 里那个形状；否则点名第一个语法外的 token。"""
+    """整条命令必须**恰好**是 `_GOOD_CMD` 那个形状（段表见上），且指到 `db` 上。
+
+    除了形状，这里还有四条**策略**判据（宿主插值 / pg_isready / 断链 / 超时关系 / 环回 /
+    键名不一致）。它们不进段表，因为判的不是「形状对不对」而是「这个形状的命令被指到了
+    哪里」—— `-h 127.0.0.1` 每个 token 都合法，非法的是它的**值**（与 `db` 比才看得出来）。
+    """
     toks = _tokens(cmd)
-    pos = 0
-
-    def fail(msg: str) -> None:
-        raise AssertionError(f"{where} {msg}")
-
-    def bad(token: str, why: str) -> None:
-        fail(f"的 healthcheck 多出语法外的 token {token!r}：{why}")
 
     # 宿主机的 `${...}` 插值：模型里它已经变成哨兵值。先于语法判据报，说清是哪一种改法。
     hit = next((s for s in sorted(sentinels) if s in cmd), None)
     if hit is not None:
-        fail(f"的 healthcheck 里出现了宿主机插值的结果 {hit!r}：写 `${{...}}` 是**宿主机展开**，"
-             "值会固化进容器配置（`docker inspect` 就能读到）；要容器内展开必须写 `$$`")
+        _reject(f"{where} 的 healthcheck 里出现了宿主机插值的结果 {hit!r}：写 `${{...}}` 是"
+                "**宿主机展开**，值会固化进容器配置（`docker inspect` 就能读到）；要容器内"
+                "展开必须写 `$$`")
 
-    # 最熟悉的那种回退先给一句人话（下面的语法也拦得住它：token 不是 psql）。
+    # 最熟悉的那种回退先给一句人话（段表也拦得住它：token 不是 psql）。
     if any("pg_isready" in t for t in toks):
-        fail("的 healthcheck 用 pg_isready：它不验证凭据，凭据错时照样 exit 0，"
-             "这道门会退化成装饰")
+        _reject(f"{where} 的 healthcheck 用 pg_isready：它不验证凭据，凭据错时照样 exit 0，"
+                "这道门会退化成装饰")
 
-    # 断链：运算符与「第二条命令」。放在位置游走之前，为的是把 token 本身点出来。
-    for i, t in enumerate(toks):
+    # 断链的运算符：放在段表之前，为的是把 token 本身点出来。`; exit 0` / `|| true` 后面
+    # 只要还有 token，段表也会判它「结尾之后多出 token」，但那句话说不出「恒 exit 0」。
+    for t in toks:
         if t in _SECOND_COMMAND_OPS:
-            bad(t, "只允许这一条命令；它后面接的第二条命令（`; exit 0` / `|| true` 一类）"
-                   "会让探针恒成功，凭据再错也照样绿")
-        if t == "2" and i + 1 < len(toks) and toks[i + 1] == ">":
-            bad("2>", "标准错误被重定向掉了 —— 认证失败的原文进不了健康日志，"
-                      "红就失去了诊断价值")
+            _reject(f"{where} 的 healthcheck 多出语法外的 token {t!r}：只允许这一条命令；"
+                    "它后面接的第二条命令（`; exit 0` / `|| true` 一类）会让探针恒成功，"
+                    "凭据再错也照样绿")
 
-    # ① 前缀：环境变量赋值，变量名集合恰好是 {PGPASSWORD, PGCONNECT_TIMEOUT}
-    assigns: dict[str, str] = {}
-    while pos < len(toks) and _ASSIGN_RE.match(toks[pos]):
-        var, _, value = toks[pos].partition("=")
-        if var in assigns:
-            bad(toks[pos], f"{var} 出现了两次；只允许 PGPASSWORD 与 PGCONNECT_TIMEOUT 各一次")
-        assigns[var] = value
-        pos += 1
-    extra = [t for t in toks[:pos] if t.split("=", 1)[0] not in _REQUIRED_ASSIGN]
-    if extra:
-        bad(extra[0], "前缀只允许 PGPASSWORD 与 PGCONNECT_TIMEOUT —— 多一个赋值就是多一条"
-                      "改法（`PGHOSTADDR=127.0.0.1` 会把探针指到环回，口令又不用验了）")
-    missing = sorted(_REQUIRED_ASSIGN - set(assigns))
-    if missing:
-        fail(f"的 healthcheck 少了变量赋值 {missing}：{cmd!r}")
+    parse, bad = _scan(toks)
+    if bad is not None:
+        _reject(f"{where} 的探针命令不是那个闭形状：{bad} 允许的形状是 {_GOOD_CMD!r}")
 
-    if not _VAR_REF_RE.match(assigns["PGPASSWORD"]):
-        fail(f"的 healthcheck 里 PGPASSWORD 的值 {assigns['PGPASSWORD']!r} 不是容器内展开的"
-             "变量引用")
-    if not _INT_RE.match(assigns["PGCONNECT_TIMEOUT"]):
-        fail(f"的 healthcheck 里 PGCONNECT_TIMEOUT 的值 {assigns['PGCONNECT_TIMEOUT']!r} "
-             "不是整数")
-    connect = int(assigns["PGCONNECT_TIMEOUT"])
+    connect = int(parse["PGCONNECT_TIMEOUT"])
     if connect >= timeout:
-        fail(f"的 PGCONNECT_TIMEOUT={connect} 不小于 healthcheck timeout={timeout} —— "
-             "连接超时会被 Docker 的探针超时顶掉，「连不上」与「探针挂住」又共用一个信号")
-
-    # ② 命令体：psql
-    if pos >= len(toks):
-        fail(f"的 healthcheck 到结尾都没有 psql：{cmd!r}")
-    if toks[pos] != "psql":
-        bad(toks[pos], "命令体只能是 psql —— 只有真发一条查询到服务端才会走认证")
-    pos += 1
-
-    # ③ 参数：-h / -U / -d 各恰好一次，别的一律不允许（含 --host= / --hostaddr 等长短形式）
-    pairs: dict[str, str] = {}
-    while pos < len(toks) and toks[pos].startswith("-") and toks[pos] != "-tAc":
-        flag = toks[pos]
-        if flag not in _PSQL_FLAGS:
-            bad(flag, "psql 只允许 -h / -U / -d 三组参数；任何别的选项（含 `--host=` / "
-                      "`--hostaddr` / `-p` 这些长短与 `=` 形式）都是把探针指到别处去的改法")
-        if pos + 1 >= len(toks):
-            fail(f"的 healthcheck 里 {flag} 后面没有值：{cmd!r}")
-        if flag in pairs:
-            bad(flag, f"{flag} 出现了两次；三类参数各恰好一次")
-        pairs[flag] = toks[pos + 1]
-        pos += 2
-
-    if "-h" not in pairs:
-        fail("的 healthcheck 省略了 -h：默认走 unix socket，那是 trust 认证，"
-             "口令根本没被验过")
-    if pairs["-h"] in _LOOPBACK:
-        fail(f"的 healthcheck 拿环回地址 {pairs['-h']!r} 当 -h：官方镜像里环回走 trust "
-             "认证，探针又会「永远成功」")
-    if pairs["-h"] != db:
-        fail(f"的 healthcheck 探的是 {pairs['-h']!r}，而本服务的键名是 {db!r} —— "
-             "两者不一致时，改服务名或改探针任一都会让这条锁指向别处")
-    for flag, what in (("-U", "用户名"), ("-d", "库名")):
-        if flag not in pairs:
-            fail(f"的 healthcheck 少了 {flag}（{what}）：{cmd!r}")
-        if not _VAR_REF_RE.match(pairs[flag]):
-            fail(f"的 healthcheck 里 {flag} 的值 {pairs[flag]!r} 不是容器内展开的变量引用")
-
-    # ④ 查询参数只允许 -tAc 'select 1'
-    if toks[pos:pos + 2] != ["-tAc", "select 1"]:
-        bad(toks[pos] if pos < len(toks) else "<命令到此结束>",
-            "查询参数只能是 -tAc 'select 1'；换一条永远成功的语句就等于把这道门变回装饰")
-
-    # ⑤ 结尾只允许 > /dev/null（不吞 stderr —— 见上面的 2> 那条）
-    end = pos + 2
-    if toks[end:end + 2] != [">", "/dev/null"]:
-        bad(toks[end] if end < len(toks) else "<命令到此结束>",
-            "结尾只能是 > /dev/null")
-    if end + 2 != len(toks):
-        bad(toks[end + 2], "命令到此为止，后面不允许任何 token")
+        _reject(f"{where} 的 PGCONNECT_TIMEOUT={connect} 不小于 healthcheck timeout={timeout}"
+                " —— 连接超时会被 Docker 的探针超时顶掉，「连不上」与「探针挂住」又共用一个"
+                "信号")
+    if parse["-h"] in _LOOPBACK:
+        _reject(f"{where} 的 healthcheck 拿环回地址 {parse['-h']!r} 当 -h：官方镜像里环回走 "
+                "trust 认证，探针又会「永远成功」")
+    if parse["-h"] != db:
+        _reject(f"{where} 的 healthcheck 探的是 {parse['-h']!r}，而本服务的键名是 {db!r} —— "
+                "两者不一致时，改服务名或改探针任一都会让这条锁指向别处")
 
 
 def _assert_healthcheck_config(hc: object, where: str, db: str, sentinels) -> None:
@@ -504,6 +648,41 @@ def test_duration_parser_has_no_fallback_value():
     for bad in ("5x", "", "s", "10", "1m30"):
         with pytest.raises(AssertionError):
             _duration_seconds(bad)
+
+
+def test_closed_grammar_rejects_every_listed_shape():
+    """段表里每一段挂着的反例都必须被拒 —— 段表是**数据**，这条是让那份数据每次都跑的那条。
+
+    **它自己不产生判别器，这是刻意的。** 报红一律走 `pytest.fail`：`assert`、
+    `pytest.raises`、以及自己写的 `raise` 三类都会被 `lock_coverage` 记成判别器，而
+    本条的靶子是**段表里的行** —— 用了那三类，判别器数就变成「表里有多少行」，
+    正好是这次重写要消灭的那个形状（元锁的规模必须由「要防多少种失效」决定）。
+
+    两个方向都判：反例必须被拒（否则表里的行是纸），且必须**以它声明的那种失效**被拒
+    （否则行还在、话已经说错了 —— 实测旧实现就有两条报错指错方向）。下界那条守的是
+    「删一行什么都不会响」。
+    """
+    rows = [(seg, v) for seg in _GRAMMAR for v in seg.violations]
+    if len(rows) < _MIN_VIOLATIONS:
+        pytest.fail(f"段表里的反例只剩 {len(rows)} 条，少于下限 {_MIN_VIOLATIONS}：删掉一段、"
+                    "或删掉某段的 violations，合法定义与它的反例会一起消失，而这是**唯一**"
+                    "会响的地方。表里加了新反例就要把 `_MIN_VIOLATIONS` 跟着往上调。")
+    for seg, (anchor, repl, kind) in rows:
+        if _GOOD_CMD.count(anchor) != 1:
+            pytest.fail(f"{seg.name} 段的反例锚点在 _GOOD_CMD 里命中 "
+                        f"{_GOOD_CMD.count(anchor)} 次（应恰 1）：{anchor!r}")
+        bad_cmd = _GOOD_CMD.replace(anchor, repl)
+        if bad_cmd == _GOOD_CMD:
+            pytest.fail(f"{seg.name} 段的反例没有改变命令：{anchor!r} -> {repl!r}")
+        try:
+            _assert_closed_grammar(bad_cmd, "合成", "postgres", 10.0)
+        except AssertionError as e:
+            if _KIND_REASON[kind] not in str(e):
+                pytest.fail(f"{seg.name} 段的反例 {anchor!r} -> {repl!r} 被判成了别的失效"
+                            f"（期望「{_KIND_REASON[kind]}」）：{e}")
+            continue
+        pytest.fail(f"{seg.name} 段的反例 {anchor!r} -> {repl!r} 没被拒"
+                    f"（期望「{_KIND_REASON[kind]}」）")
 
 
 # ── I3：两份定义的一致性 ──────────────────────────────────────────────────────

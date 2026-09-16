@@ -6,95 +6,93 @@
   ],
   "mutations": {
     "G-1  两个文件的探针都改回 pg_isready": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:294",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:499",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-2  两个文件的 -h 都改为环回 127.0.0.1": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:358",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:520",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-3  两个文件的前缀都加 PGHOSTADDR=127.0.0.1": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:284",
-      "tests/test_pg_gate.py:316",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:512",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-4  两个文件的末尾都加 `|| true`": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:284",
-      "tests/test_pg_gate.py:300",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:506",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-5  两个文件的口令都改成宿主机插值 ${POSTGRES_PASSWORD}": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:289",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:493",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-6  两个文件的 healthcheck 都加 disable: true": [
-      "tests/test_pg_gate.py:235",
-      "tests/test_pg_gate.py:390",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:234",
+      "tests/test_pg_gate.py:534",
+      "tests/test_pg_gate.py:635"
     ],
     "G-7  两个文件都用合并键 `<<` 从顶层锚点注入 disable: true（原始 YAML 里只有 `<<`）": [
-      "tests/test_pg_gate.py:235",
-      "tests/test_pg_gate.py:390",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:234",
+      "tests/test_pg_gate.py:534",
+      "tests/test_pg_gate.py:635"
     ],
     "G-8  两个文件的 timeout 都写成 2s（小于 PGCONNECT_TIMEOUT=3）": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:330",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:516",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:635"
     ],
     "G-9  只改 local 一份的 interval（两份定义漂移）": [
-      "tests/test_pg_gate.py:526"
+      "tests/test_pg_gate.py:705"
     ],
     "G-10 两个文件的 app 都把 depends_on 改成短式列表": [
-      "tests/test_pg_gate.py:442",
-      "tests/test_pg_gate.py:540"
+      "tests/test_pg_gate.py:586",
+      "tests/test_pg_gate.py:719"
     ],
     "G-11 两个文件的 app 都把 condition 改成 service_started": [
-      "tests/test_pg_gate.py:442",
-      "tests/test_pg_gate.py:540"
+      "tests/test_pg_gate.py:586",
+      "tests/test_pg_gate.py:719"
     ],
     "G-12 prod 新增 worker：连接串主机段写 `@postgres/db`（斜杠），无依赖": [
-      "tests/test_pg_gate.py:432",
-      "tests/test_pg_gate.py:540"
+      "tests/test_pg_gate.py:576",
+      "tests/test_pg_gate.py:719"
     ],
     "G-13 prod 新增 worker：`PGHOST: postgres`（值恰好等于服务名），无依赖": [
-      "tests/test_pg_gate.py:432",
-      "tests/test_pg_gate.py:540"
+      "tests/test_pg_gate.py:576",
+      "tests/test_pg_gate.py:719"
     ],
     "G-14 prod 新增 worker：只有 env_file，无任何连库证据、无依赖": [
-      "tests/test_pg_gate.py:554"
+      "tests/test_pg_gate.py:733"
     ],
     "G-15 prod 新增 worker：无任何配置": [
-      "tests/test_pg_gate.py:554"
+      "tests/test_pg_gate.py:733"
     ],
     "G-16 prod 新增 worker：`extends` 继承 app 的连接串，`!reset` 覆盖掉 depends_on": [
-      "tests/test_pg_gate.py:432",
-      "tests/test_pg_gate.py:540"
+      "tests/test_pg_gate.py:576",
+      "tests/test_pg_gate.py:719"
     ],
     "G-17 豁免表加一条现场不存在的服务（陈旧条目）": [
-      "tests/test_pg_gate.py:564"
+      "tests/test_pg_gate.py:743"
     ],
     "G-18 豁免表某条理由改成空串": [
-      "tests/test_pg_gate.py:572"
+      "tests/test_pg_gate.py:751"
     ],
     "G-19 真正的消费者 app 也塞进豁免表（两处判据自相矛盾）": [
-      "tests/test_pg_gate.py:564",
-      "tests/test_pg_gate.py:579"
+      "tests/test_pg_gate.py:743",
+      "tests/test_pg_gate.py:758"
     ],
     "G-20 仓库根目录新建空的 docker-compose.override.yml（会被隐式加载）": [
-      "tests/test_pg_gate.py:460",
-      "tests/test_pg_gate.py:476"
+      "tests/test_pg_gate.py:604",
+      "tests/test_pg_gate.py:620"
     ],
     "G-21 effective_model 求值失败时返回 {}（静默放行）": [
       "tests/test_compose_model.py:125",
@@ -108,12 +106,13 @@
       "tests/test_compose_model.py:77"
     ],
     "G-23 只改 local 的服务键名 postgres→db（探针仍写 -h postgres）": [
-      "tests/test_pg_gate.py:281",
-      "tests/test_pg_gate.py:361",
-      "tests/test_pg_gate.py:418",
-      "tests/test_pg_gate.py:465",
-      "tests/test_pg_gate.py:491"
+      "tests/test_pg_gate.py:475",
+      "tests/test_pg_gate.py:523",
+      "tests/test_pg_gate.py:562",
+      "tests/test_pg_gate.py:609",
+      "tests/test_pg_gate.py:635"
     ]
   },
+  "controls": [],
   "skipped": []
 }
