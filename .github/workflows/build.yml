@@ -82,8 +82,14 @@ jobs:
 
       # compose 的**锁** —— 与上面 requirements*.txt 完全同一个理由：事实层（tests/compose_model.py）
       # 的两条承重前提 P-a/P-b 在 compose v2.x 上**不成立**（v2.x 两个 flag 都在，但行为不成立），
-      # 而 ubuntu-latest 自带的恰恰是 v2。不钉住，这条 job 就会在**事实层静默失效**的状态下判绿
-      # —— 缺陷 51 正是这样在 CI 上藏了一整轮。实测 v5.0.0 起两条都满足，这里钉 v5.5.1。
+      # 而 ubuntu-latest 自带的恰恰是 v2。
+      #
+      # **订正（审计 F4）**：这里原先写「不钉住就会在事实层静默失效的状态下判绿」，与事实相反。
+      # 事实是那条 job **红了** —— 运行 `35075782258`（HEAD `0cb193f`）实测 `11 failed`，而每条红
+      # 报的是**症状**不是**成因**：stderr 是 `env file .../Character-distill/.env not found`。
+      # 看日志的人会去查「干净检出上为什么没有 .env」，而不是去查「本机 compose 够不够格」。
+      # 红得指错地方比静默判绿轻，但同样是没守卫：两种成因（本机环境不对 / 本仓写错）共用
+      # 了同一个信号。实测 v5.0.0 起两条行为都满足，这里钉 v5.5.1。
       #
       # 用户级 cli-plugin（$HOME/.docker/cli-plugins）在 Docker CLI 的搜索序里**先于** runner
       # 自带的系统插件（/usr/libexec/docker/cli-plugins），所以装到用户级就能盖住它。
@@ -120,8 +126,9 @@ jobs:
           # 「ubuntu-latest 自带 compose v2（实测 2.38.2，两个 flag 都在）」—— 那次「实测」
           # 测的是 **flag 存不存在**，不是事实层要的两条**行为**：v2.x 上 flag 都在，而
           # P-a（`env_file` 缺文件仍 exit 0）与 P-b（`env_file` 的值不进模型输出）**都不成立**。
-          # 于是 CI 一直在「事实层已静默失效」的状态下判绿（缺陷 51）。判据是行为，故
-          # 上面钉版本 + 断言版本号，这里才敢声明。
+          # 订正（审计 F4）：由此原先说「CI 一直在事实层静默失效的状态下判绿」是错的 ——
+          # 那轮 CI **红了**（运行 `35075782258` 实测 `11 failed`），红得指错地方：报的是症状
+          # `.env not found`，不是成因。判据是行为，故上面钉版本 + 断言版本号，这里才敢声明。
           REQUIRE_COMPOSE_TESTS: "1"
         run: pytest tests/ -v --tb=short
 
