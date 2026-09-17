@@ -114,7 +114,7 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-17 现跑现数）**：1–54 共 54 条 —— **已修 46**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交）/ **记账 3**（35、36、47）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 1**（31）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 3**。
+> **全表状态口径（2026-09-17 现跑现数）**：1–58 共 58 条 —— **已修 47**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交）/ **记账 6**（35、36、47、56、57、58）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 1**（31）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 6**。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -968,6 +968,54 @@ PROBE_IMAGE         false
 - **元锁自己的新判据由合成输入承担**（它不在覆盖域里，给元锁写驱动 = 把本文件全部 assert 拉进域，那不是守卫是洪水）：整段前移 20 行后身份不变、`decode_recorded` 翻回**新**行号、未知身份单独报出来 —— 一条用例三件事一起控，任一处塌陷就红。全量 1133 passed / 64 skipped / 0 failed（改前 1132，增量正是这条）。
 - **仍未解决的（如实留着，不在本条射程）**：产物仍靠**人手跑驱动**刷新（② 那条的成本没变），所以「判别器文本变了而没人重跑」这件事今天只能靠**本元锁在 CI 里红**来发现 —— 红得住，但发现得晚（推到 CI 才知道）。这一格与本条修的是两件事：本条消除的是「无关改动让产物脱钩」，那一格是「产物本身需要重跑而没人跑」。
 - **同源普查（本轮补，防「改点名的那处、同源的记账」）**：全仓 JSON 产物里的 `文件:行号` 现跑现数 —— `docs/evidence/*.json` 与 `tests/perf/*.json` 共 14 份，**只有两份带坐标**：`ownership-reachability.json` 与其 `PROBE_NO_KEY=1` 孪生（各 49 处，形如 `web/routers/card.py:38:get_card_avatar`）。**它们不是同源未修项，理由是判据键不是行号**：`tests/perf/check_reachability.py` 比的是 `site` 里的**函数名**（`EXPECTED[用例短名] == (期望函数名, 期望状态码)`），行号只是随行的上下文，陈旧不改变任何判定；且它没有变异矩阵、没有缺口名单、没有与树对账的锁，故也没有本条那种「闭合被坐标骗了」的机理。**只记不修**（三个 `*_red_lines.json` 已是 0 处坐标）。
+
+**55. `_create_session` 按位置传参 → 用户的 embedding key 落进 `user_role`（凭据进 prompt + 明文落库）** —— 状态：**已修（`f69dfad`，2026-09-17）**（评审代号 G；实跑确认 2026-09-17）
+- **缺陷本体**：`web/routers/history.py` 调 `text_manager._create_session` 时按**位置**传 8 个实参，而签名是 `(text, card, all_characters=None, rag=None, card_id="", user_id="", user_role="", embedding_key="", embedding_region="")` —— 第 7 位是 `user_role`，于是 `user_role := emb_key`、`embedding_key := emb_region`、`embedding_region := ""`（静默降级为默认值）。
+- **为什么五处只有一处翻车 —— 这是修法落在签名上、不落在调用点上的理由**：签名有 7 个可位置传的可选参数，**全是 str**，错位不报错。五个调用点里 `core/text_manager.py:522`、`:584`、`web/routers/chat.py:187`、`web/routers/distill.py:1416` 四处**恰好停在第 6 个参数**（`user_id`）为止。`distill.py:1416` 是最清楚的证据：**6 个位置 + 1 个关键字**，位置到 `user_id` 为止刚好没错位、多传一个就错。**「今天对」是边界巧合，不是设计** —— 调用点会增加、会重排，所以判据只能写在签名上。
+- **后果链（实跑确认，非推断）**：`user_role` 进 `ChatEngine` → 进 prompt（`chat_engine.py:793`、`:1373`）→ `_compute_initial_affinity` 是**纯本地函数、不调 LLM**，其 `reason` 由 f-string 直接插 `{user}` → 赋给 `_affinity_reason` → `chat_engine.py:701` 的 `_evaluate_affinity` **无条件**调 `_save_affinity_state()` → `affinity_state.reason` 落库。**确定性成立**，不靠 LLM 回显。
+- **实跑证据（`D:/Temp/g_verify.py`，仓外一次性脚本）**：夹具走真路由（真 `history_router` / `chat_router`、真 `TextManager`、真 `SQLiteStore` + 临时库），只 stub `get_user_llm`（假 LLM，不发网络）/ `get_storage` / `IndexingService.get_rag_for_session → None`；**key 用假的 `sk-TESTKEY-…`，真凭据全程不碰**。
+  - A（绕开路由，逐字复刻 `history.py:251` 的位置实参）→ `engine.user_role = 'sk-TESTKEY-…'`、`_affinity_reason = '测试角色 不认识sk-TESTKEY-…，态度谨慎'`；关键字对照组 `user_role='读者'`，key 不出现。
+  - B `POST /api/history/{sid}/resume` → 200，`engine.user_role` = 假 key，**0 条 LLM prompt**（resume 自身不调 LLM）；此后库里仍干净 —— 因为 `history.py:315` 是在 `load_affinity`（`:310`）**之后**才设 `engine._storage`，`_save_affinity_state` 空转。
+  - C 再发一条 `POST /api/chat/send` → 200 → `sessions.affinity_state` 的 `reason` 含明文 key、`affinity_initialized=1`，**整个 DB 文件字节里含明文 key**（而 `users.embedding_key` 那一列是 Fernet 密文）；3 条 LLM prompt 里 **2 条含 key**（一条「你正在和「sk-TESTKEY-…」对话」，一条「对话者身份：sk-TESTKEY-…」）。落库那条 reason 是在评估失败之后留下的（`EVAL FAILED … no JSON object found`）—— 正是那句无条件保存把它落了盘。
+- **射程（实测划出的边界，不是推测）**：**只在该 session 存的 `user_role` 为空/falsy 时触发**。第二组用 `user_role="朋友"` 重跑：resume 后 `user_role='朋友'`、reason 用真角色重算、**0/3 条 prompt 含 key**、库里无 key —— 因为 `history.py:299-300` 会用 DB 里的 `user_role` 覆盖回去（那个兜底本身另立第 57 条）。**而 `user_role` 为空恰恰是默认态**（`/start_session` 建成的会话、更早的会话都可能没写角色），故射程不小。
+- **这条路径存在多久**：`git blame` 于修复前 → 第 258/259 行那两个多余的实参是 `db8d1de8`（2026-06-24，换成阿里云 text-embedding-v4 那笔）加进来的；在此之前实参个数正好是 6、与签名前 6 位对齐。即错位窗口 ＝ **2026-06-24 → 2026-09-17（约 85 天）**。
+- **生产落地排查（2026-09-17，只读，两台）**：在 app 容器内跑扫描（脚本 `D:/Temp/g_leak_scan.py`）。判据**不用 key 前缀猜** —— 把每个 `users.embedding_key` 在内存里解密，检查其明文（及去 `sk-` 前缀后的片段）是否出现在 `sessions.affinity_state` **与 `sessions.affinity_reason`** 里。**SZ 0 命中 / SG 0 命中**（SZ：10 用户 / 2 个配了 embedding_key / 4 条非空列会话；SG：11 / 2 / 13）。**扫描口径本身是判据的一部分**：key 不出容器、不打印、不落文件，命中只报 session_id —— 将来再做同类扫描照这个口径。
+- **但 0 命中不是强证据（写下防误读）**：它是「**没踩上**」，不是「**踩不上**」。样本小 —— 两台各只有 2 个用户配了 key、非空列会话 4 / 13 条。**降级为「未遂」是基于运气，不是基于防护**：不清理、不轮换，但结论是「没发生」，不是「这条路安全」。
+- **修法（根除，不是改一行）**：`core/text_manager.py` 的 7 个可选参数全部移到 `*` 之后（keyword-only），五处调用点逐个改关键字。**新来的人按位置传就直接报错，不需要知道这段历史** —— 机制而非记忆点。`_create_session` 的行为逻辑一行未动。
+- **五处调用点全集**：`core/text_manager.py:522`、`core/text_manager.py:584`、`web/routers/chat.py:187`、`web/routers/distill.py:1416`、`web/routers/history.py:251`。`tests/` 里的同名符号都是测试自己的局部 helper 或 `_StubTextManager` 方法（签名 `*_a, **_kw`），不是本函数的调用点，不受影响。
+- **锁与变异（`tests/test_create_session_kwonly_lock.py`，3 条）**：① 签名里第 3 个及以后的参数 kind 只能是 `KEYWORD_ONLY`；② 位置越界调用必 `TypeError`；③ 正控 —— 关键字绑定按名字对号（钉住 `user_role` 收角色、`embedding_key` 收凭据，正是当年串位的那两格）。**变异实测**：删掉签名里的 `*` 分隔符 ⇒ ①②**双双变红**（`FAILED … test_optional_params_are_keyword_only` / `… test_positional_optional_arg_raises_typeerror`），③ 保持绿；逐字节还原后三条全绿。全量 **1144 passed / 64 skipped / 0 failed**。
+- **隔离（机械核）**：生产代码只动 `core/text_manager.py` + 三个 router，`git diff --stat` = 26 insertions / 13 deletions；`chat_engine` / `affinity_service` 一行未动。
+- **顺带发现（只记不改）**：`embedding_key` / `embedding_region` 在 `_create_session` **函数体里从未被使用** —— 死参数。它们存在的唯一效果是给位置传参多留两格错位空间（当年 `history.py` 正是多传了这两个）。删掉能进一步缩小表面，但那超出本条批准的范围，故只记。
+
+**56. 「哪些列该加密」在本仓没有守卫 —— 该加密的加了，泄漏的那份是明文** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 的同一事件）
+- **事实**：`users.embedding_key` 落库前过 Fernet（`storage/sqlite_store.py:2755`、`storage/postgres_store.py:2341`），而它泄漏出去的那一份落在 `sessions.affinity_state` —— 一个 **明文 TEXT 列**（`storage/migrations_pg/015_affinity_state.sql`；SQLite 侧同）。
+- **不是「忘了加密某一列」，是「没有任何东西规定哪些列该加密」**：加密与否只在每个写入口手写一次 `_get_fernet().encrypt(...)`，既没有敏感列的名单，也没有「新增敏感列必须登记」的判据。**今天是 `affinity_state` 撞上，明天可能是别的列。**
+- **与 55 的关系**：同一次事件的两个面 —— 55 是**值走错了格子**，56 是**正确的值落在没有保护的格子里**。只修 55 不会让 56 消失（下次凭据从别的路径进别的列，同样没人拦）。
+- **处置方向（留档，本轮不实现）**：该做的是「敏感列名单 + 写入路径的守卫」，**不是给 `affinity_state` 单独加一次加密** —— 后者只是补一个点，正是本条要避免的形态。真做的成本要先量（有哪些列、多少个写入口），不预估，本轮不启动。
+
+**57. `history.py:299-300` / `chat.py:205-206` 的 `user_role` 兜底：靠它才没漏，但没人知道它为什么存在** —— 状态：**记账（不修）**（2026-09-17）
+- **它承担什么**：会话重建走 `_create_session` 时 `user_role` 归一为空串，这两处**从 DB 行把它覆盖回来**（`if db_session.get("user_role"): engine.user_role = db_session["user_role"]`）。缺陷 55 的射程边界（「有角色的会话不漏」）**正是由它划出来的** —— 实测 `user_role="朋友"` 的会话 0 泄漏。
+- **为什么必须记账**：它长得像一句可有可无的冗余赋值，实际是**当前唯一挡在凭据泄漏前的东西**。这类「没人知道为什么存在的兜底」将来会被顺手删掉；删掉它，55 的射程当场从「空角色会话」扩到「所有会话」。**写明它现在承担什么，就是为了让它不至于变成那种没人敢动、也没人知道为什么在的代码。**
+- **处置**：不修、不动。55 修完后它是否仍必要是**另一个问题** —— 它现在还兼着「重建后角色不丢」的正常职责，不只是安全兜底，所以「55 已修 → 可以删它」是错的推论。
+
+**58. 顺带查：还有哪些「多参数按位置传」的高风险函数** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 同批普查）
+- **判据（用户给的）**：可位置传的可选参数 ≥3 个，**且**有 ≥2 个调用点按位置传（位置实参数 > 必填形参数数）。
+- **扫法**：`D:/Temp/positional_risk_scan.py`（仓外一次性脚本，AST，**按函数名匹配调用点**）。名字匹配是**启发式，会跨文件误配同名函数** —— 所以下面每条都**逐条核过定义与调用点是不是同一个函数**，核不上的（`list_cards`、`send_message`、`_req`、`app_api`、`_ScriptedCollection.query` 等）已剔除；`e2e/scratch`、`data/eval_scratch` 的一次性脚本也不入表。初扫 20 条候选 → 核后 **8 条**。
+- **已核的全集（生产代码）**：
+
+  | 函数 | 可位置传的可选参数 | 按位置传的调用点 | 现状 |
+  |---|---|---|---|
+  | `_do_chat`（`web/routers/chat.py:265`） | 10 | 2（`chat.py:607` 传满 10 个；`chat.py:733` 传 8 个 + 4 个关键字） | 对 |
+  | `save_text`（`storage/base.py:89` + 两个实现） | 5（两个实现另有 2 个尾部私有参数） | 2（`core/text_manager.py:247`、`:367`，各传 8 个位置实参） | 对 |
+  | `save_message`（`storage/sqlite_store.py:1801`、`storage/postgres_store.py:1462`） | 4 | 2（`chat.py:343`、`:452`，各传 6 个） | 对，**但 `base` 的声明顺序与两个实现不一致**（见下） |
+  | `Distiller.distill_incremental_stream`（`core/distiller.py:1445`） | 4 | 2（`distill.py:412`、`:1114`） | 对 |
+  | `try_record_usage`（`core/utils.py:52`） | 3 | 11 处，各多传 1 个 | 对 |
+  | `IndexingService.get_rag_for_session`（`core/indexing_service.py:63`） | 3 | 2（`chat.py:183`、`history.py:246`，各传 5 个） | 对 |
+  | `IndexingService.schedule_scene_index`（`core/indexing_service.py:88`） | 3 | 3 处，各多传 1 个（`embedding_*` 走关键字） | 对 |
+  | `save_group_message`（两个实现） | 3 | 5（`web/routers/group.py`） | 对 |
+
+- **头号发现（新，与 55 同族 —— 一份会误导人的签名）**：`StorageBase.save_message`（`storage/base.py:226`）声明的是 `(…, rag_context, retracted=False, reply_to_id=None, reply_to_preview="", evidence=None)`，而两个实现（`storage/sqlite_store.py:1801`、`storage/postgres_store.py:1462`）都是 `(…, rag_context, reply_to_id=None, reply_to_preview="", retracted=False, evidence=None)` —— **第 5/6 位互换**。今天没有调用点受影响（调用点走的是具体实现，两个实现彼此一致，所以是「两份声明不一致」而不是「两种行为」）；**但将来照 base 写第三个实现，`chat.py:343`/`:452` 那两处 6 个位置实参会静默错位**（`reply_to_id` 落进 `retracted`）。这正是 55 的形态在另一处待着。
+- **不修的理由**：本批的批准范围是「55 的签名 + 五个调用点」。这 8 条今天**全部正确**，改它们是 8 处重组而不是修 bug；而「要不要全面禁止多参数按位置传」是个跨全仓的取舍（像 `_do_chat` 那种 10 个可选参数的签名，改 keyword-only 会让两个调用点各长十几行），要单独裁定。**边界如实写明：这张表是「今天核过的事实」，不是判据** —— 它靠人重跑脚本维持，代码一变就滞后（同 §四「报数字前现跑现数」的处境）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
