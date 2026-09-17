@@ -45,11 +45,6 @@ IMPLS = (SQLiteStore, PostgresStore)
 # 的互换、`create_user` 的中间插入）。**是契约不完整，不是契约漂移**，会响不会哑，
 # 故本轮记册不修（见 AGENTS.md 条目 58 重核段）。
 PRE_EXISTING_GAPS = {
-    "create_user": (
-        "两个实现在第 5 位插入了 email，base 没有这一格 —— 照 base 按位置传 4 个实参的"
-        "调用者（tests/perf/ 那两处正是这个写法）会把 home_region 的值送进 email。"
-        "**正在修**：三处签名加 keyword-only 并逐格对齐，修完即出册。"
-    ),
     "save_text": (
         "base 少声明 content_resolved / coref_resolved 两个尾部参数（两个实现都有）。"
         "纯尾部追加，前缀逐格相同，无静默错位风险 —— 补齐 base 声明即可出册。"

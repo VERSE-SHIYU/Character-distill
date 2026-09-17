@@ -50,7 +50,7 @@ async def one_store(kind: str) -> list[dict]:
         store = SQLiteStore(str(Path("data") / f"resume_reach_{uuid.uuid4().hex}.db"))
 
     uid = f"u_{uuid.uuid4().hex[:8]}"
-    await store.create_user(uid, uid, "x", f"{uid}@t.local")
+    await store.create_user(uid, uid, "x", email=f"{uid}@t.local")
 
     print(f"=== store={kind} ===", flush=True)
     print(f"  {'删卡时任务状态':<20} {'续跑发现能命中该行?':<20} 断点片是否可复用", flush=True)

@@ -257,8 +257,20 @@ class StorageBase(ABC):
         """Export one session in json or txt format."""
 
     @abstractmethod
-    async def create_user(self, id: str, username: str, password_hash: str, home_region: str = "") -> dict:
-        """Create a new user."""
+    async def create_user(
+        self, id: str, username: str, password_hash: str,
+        *,
+        email: str = "", home_region: str = "",
+    ) -> dict:
+        """Create a new user.
+
+        ``email`` / ``home_region`` 是 keyword-only：两者都是 str 且相邻，按位置传
+        错位不会报错 —— ``home_region`` 的值会静默落进 ``email``。本条约束的由来是
+        原先本声明没有 ``email`` 这一格，而两个实现在第 5 位插入了它；**已经有人在
+        按位置传那一格**（``tests/perf/`` 两处 ``create_user(uid, uid, "x", "...@t.local")``
+        —— 按实现是 ``email``，按本声明是 ``home_region``）。锁在
+        ``tests/test_storage_contract_shape.py``。
+        """
 
     @abstractmethod
     async def get_user_by_username(self, username: str) -> dict | None:

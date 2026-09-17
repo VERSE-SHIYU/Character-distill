@@ -311,7 +311,9 @@ async def register(
     user_id = uuid.uuid4().hex[:16]
     password_hash = password_hasher.hash(req.password)
     node_region = os.getenv("NODE_REGION", "cn-shenzhen")
-    user = await storage.create_user(user_id, username, password_hash, email, node_region)
+    user = await storage.create_user(
+        user_id, username, password_hash, email=email, home_region=node_region,
+    )
     if inv:
         await storage.use_invite_code(inv, user["id"])
 

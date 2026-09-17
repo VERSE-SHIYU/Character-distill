@@ -69,7 +69,7 @@ async def one_store(kind: str) -> list[dict]:
         store = SQLiteStore(str(Path("data") / f"orphan_matrix_{uuid.uuid4().hex}.db"))
 
     uid = f"u_{uuid.uuid4().hex[:8]}"
-    await store.create_user(uid, uid, "x", f"{uid}@t.local")
+    await store.create_user(uid, uid, "x", email=f"{uid}@t.local")
 
     rows: list[dict] = []
 

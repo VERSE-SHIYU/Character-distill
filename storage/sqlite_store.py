@@ -2310,7 +2310,8 @@ class SQLiteStore(StorageBase):
             lines.append(f"[{msg['role']}] {msg['content']}")
         return "\n".join(lines)
 
-    async def create_user(self, id: str, username: str, password_hash: str, email: str = "", home_region: str = "") -> dict:
+    async def create_user(self, id: str, username: str, password_hash: str, *,
+                          email: str = "", home_region: str = "") -> dict:
         """Create a new user. Raises on duplicate username."""
         try:
             async with await self._connect() as conn:
