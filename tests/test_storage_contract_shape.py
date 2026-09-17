@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""锁：`StorageBase` 的每个抽象方法，在**两个实现里形参表必须逐格相同**。
+"""锁：`StorageBase` 的每个抽象方法，在**每个实现里形参表必须逐格相同**。
 
 **它防的是什么。** 抽象基类是契约 —— 但契约漂移不会报错。2026-09 核出两处：
 
@@ -34,10 +34,24 @@ import inspect
 import pytest
 
 from storage.base import StorageBase
-from storage.postgres_store import PostgresStore
-from storage.sqlite_store import SQLiteStore
+from storage.postgres_store import PostgresStore  # noqa: F401 —— 导入即为把它登记进 __subclasses__
+from storage.sqlite_store import SQLiteStore  # noqa: F401 —— 同上
 
-IMPLS = (SQLiteStore, PostgresStore)
+
+def _impls() -> list[type]:
+    """实现类 —— 从 `StorageBase.__subclasses__()` 现算，**不维护名单**。
+
+    名单是第二份手工副本，新增一个实现时它不会自己变，锁会**静默漏过**（§四
+    「守卫与被守对象之间若隔着第二份手工维护的清单，清单就是新的漂移点」）。
+    代价写清：将来若有人让测试替身也继承 `StorageBase`，它会一并被检查 ——
+    那是**响亮误伤**（红并点名），不是静默漏过，可接受。
+    """
+    subs = list(StorageBase.__subclasses__())
+    assert subs, (
+        "`StorageBase` 一个实现类都没找到 —— 空集会让下面「所有 X 都满足 P」"
+        "形式的断言恒真（§四：先问 X 会不会是空集）。多半是导入没生效。"
+    )
+    return subs
 
 # 建立本判据时**已经存在**的契约缺口。判据：(a) 建立时刻就已存在，(b) 补上后被强制出册。
 # `save_text` 的 base 少声明两个尾部参数，两个实现多出来 —— **纯尾部追加**，
@@ -96,7 +110,7 @@ def test_the_gap_registry_holds_only_real_gaps():
 def test_impl_signature_matches_base(name: str):
     """锁本体：抽象方法与每个实现的形参表逐格相同。"""
     base = _shape(getattr(StorageBase, name))
-    for cls in IMPLS:
+    for cls in _impls():
         node = getattr(cls, name, None)
         assert node is not None, (
             f"`{cls.__name__}` 没有实现 `StorageBase.{name}`。"
@@ -115,7 +129,7 @@ def test_impl_signature_matches_base(name: str):
 
 def test_implementations_leave_nothing_abstract():
     """两个实现都不许再留抽象方法 —— 否则上面那条会以为「实现了」而放过。"""
-    for cls in IMPLS:
+    for cls in _impls():
         assert not cls.__abstractmethods__, (
             f"`{cls.__name__}` 仍是抽象的：{sorted(cls.__abstractmethods__)}"
         )
