@@ -1800,6 +1800,7 @@ class SQLiteStore(StorageBase):
 
     async def save_message(
         self, session_id: str, role: str, content: str, rag_context: str,
+        *,
         reply_to_id: int | None = None, reply_to_preview: str = "",
         retracted: bool = False, evidence: str | None = None,
     ) -> dict:

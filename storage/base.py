@@ -225,8 +225,9 @@ class StorageBase(ABC):
     @abstractmethod
     async def save_message(
         self, session_id: str, role: str, content: str, rag_context: str,
-        retracted: bool = False,
+        *,
         reply_to_id: int | None = None, reply_to_preview: str = "",
+        retracted: bool = False,
         evidence: str | None = None,
     ) -> dict:
         """Save one message and return the stored record.
@@ -236,6 +237,11 @@ class StorageBase(ABC):
         结构，也就不引 storage → core 的反向依赖）。带默认值的关键字参数是本路径的开闭
         手法：老调用点（用户消息 / 摘要 / 群聊）零改动，老消息读回来是 ``None``，
         语义与加列前一致。
+
+        ``*`` 之后全 keyword-only：这四个可选参数类型相近（一个 bool、一对 int/str、
+        一个 JSON 文本），按位置传错位不会报错，只会静默把值装进邻近的参数。本条约束
+        的由来是原先本声明的顺序与两个实现不同 —— 照本声明写第三个实现，调用点上两个
+        位置实参就会静默互换。锁在 ``tests/test_storage_contract_shape.py``。
         """
 
     @abstractmethod

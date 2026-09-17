@@ -340,7 +340,10 @@ async def _do_chat(
     char_msg_id = None
     try:
         if not hidden:
-            user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
+            user_rec = await storage.save_message(
+                session_id, "user", msg, "",
+                reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
+            )
             user_msg_id = user_rec["id"]
         # 检索来源快照落库（evidence_to_json 是唯一编码出口）。读的是本轮 chat 刚写下的
         # engine.last_traces —— 必须在 post_stream_process 之前取，那是另一轮。
@@ -449,7 +452,10 @@ async def _do_chat_stream(
         char_msg_id: int | None = None
         try:
             if not hidden:
-                user_rec = await storage.save_message(session_id, "user", msg, "", reply_to_id, reply_to_preview)
+                user_rec = await storage.save_message(
+                    session_id, "user", msg, "",
+                    reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
+                )
                 user_msg_id = user_rec["id"]
         except Exception as exc:
             print(f"[chat] Save user message failed (non-fatal): {exc}")
