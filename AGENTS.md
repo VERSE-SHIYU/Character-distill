@@ -998,24 +998,40 @@ PROBE_IMAGE         false
 - **为什么必须记账**：它长得像一句可有可无的冗余赋值，实际是**当前唯一挡在凭据泄漏前的东西**。这类「没人知道为什么存在的兜底」将来会被顺手删掉；删掉它，55 的射程当场从「空角色会话」扩到「所有会话」。**写明它现在承担什么，就是为了让它不至于变成那种没人敢动、也没人知道为什么在的代码。**
 - **处置**：不修、不动。55 修完后它是否仍必要是**另一个问题** —— 它现在还兼着「重建后角色不丢」的正常职责，不只是安全兜底，所以「55 已修 → 可以删它」是错的推论。
 
-**58. 顺带查：还有哪些「多参数按位置传」的高风险函数** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 同批普查）
+**58. 顺带查：还有哪些「多参数按位置传」的高风险函数** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 同批普查；同日重核，其中的 `save_message` / `create_user` 两处**已修**，见「重核」段）
 - **判据（用户给的）**：可位置传的可选参数 ≥3 个，**且**有 ≥2 个调用点按位置传（位置实参数 > 必填形参数数）。
 - **扫法**：`D:/Temp/positional_risk_scan.py`（仓外一次性脚本，AST，**按函数名匹配调用点**）。名字匹配是**启发式，会跨文件误配同名函数** —— 所以下面每条都**逐条核过定义与调用点是不是同一个函数**，核不上的（`list_cards`、`send_message`、`_req`、`app_api`、`_ScriptedCollection.query` 等）已剔除；`e2e/scratch`、`data/eval_scratch` 的一次性脚本也不入表。初扫 20 条候选 → 核后 **8 条**。
 - **已核的全集（生产代码）**：
 
   | 函数 | 可位置传的可选参数 | 按位置传的调用点 | 现状 |
   |---|---|---|---|
-  | `_do_chat`（`web/routers/chat.py:265`） | 10 | 2（`chat.py:607` 传满 10 个；`chat.py:733` 传 8 个 + 4 个关键字） | 对 |
-  | `save_text`（`storage/base.py:89` + 两个实现） | 5（两个实现另有 2 个尾部私有参数） | 2（`core/text_manager.py:247`、`:367`，各传 8 个位置实参） | 对 |
-  | `save_message`（`storage/sqlite_store.py:1801`、`storage/postgres_store.py:1462`） | 4 | 2（`chat.py:343`、`:452`，各传 6 个） | 对，**但 `base` 的声明顺序与两个实现不一致**（见下） |
-  | `Distiller.distill_incremental_stream`（`core/distiller.py:1445`） | 4 | 2（`distill.py:412`、`:1114`） | 对 |
-  | `try_record_usage`（`core/utils.py:52`） | 3 | 11 处，各多传 1 个 | 对 |
-  | `IndexingService.get_rag_for_session`（`core/indexing_service.py:63`） | 3 | 2（`chat.py:183`、`history.py:246`，各传 5 个） | 对 |
-  | `IndexingService.schedule_scene_index`（`core/indexing_service.py:88`） | 3 | 3 处，各多传 1 个（`embedding_*` 走关键字） | 对 |
-  | `save_group_message`（两个实现） | 3 | 5（`web/routers/group.py`） | 对 |
+  | `_do_chat`（`web/routers/chat.py`） | 10 | 2（一处传满 10 个；一处传 8 个 + 4 个关键字） | 对 |
+  | `save_text`（`storage/base.py` + 两个实现） | 5（两个实现另有 2 个尾部参数） | 2（`core/text_manager.py` 两处，各传 8 个位置实参） | 对（契约不完整，见「重核」段） |
+  | `save_message`（`storage/base.py` + 两个实现） | 4 | 2（`chat.py` 两处，各传 6 个） | **已修**（`882d094`；原是 `base` 声明顺序与两个实现不一致，见下） |
+  | `Distiller.distill_incremental_stream`（`core/distiller.py`） | 4 | 2（`web/routers/distill.py` 两处） | 对 |
+  | `try_record_usage`（`core/utils.py`） | 3 | 11 处，各多传 1 个 | 对 |
+  | `IndexingService.get_rag_for_session`（`core/indexing_service.py`） | 3 | 2（`chat.py`、`history.py` 各一处，各传 5 个） | 对 |
+  | `IndexingService.schedule_scene_index`（`core/indexing_service.py`） | 3 | 3 处，各多传 1 个（`embedding_*` 走关键字） | 对 |
+  | `save_group_message`（两个实现，base 无声明） | 3 | 5（`web/routers/group.py`） | 对 |
 
-- **头号发现（新，与 55 同族 —— 一份会误导人的签名）**：`StorageBase.save_message`（`storage/base.py:226`）声明的是 `(…, rag_context, retracted=False, reply_to_id=None, reply_to_preview="", evidence=None)`，而两个实现（`storage/sqlite_store.py:1801`、`storage/postgres_store.py:1462`）都是 `(…, rag_context, reply_to_id=None, reply_to_preview="", retracted=False, evidence=None)` —— **第 5/6 位互换**。今天没有调用点受影响（调用点走的是具体实现，两个实现彼此一致，所以是「两份声明不一致」而不是「两种行为」）；**但将来照 base 写第三个实现，`chat.py:343`/`:452` 那两处 6 个位置实参会静默错位**（`reply_to_id` 落进 `retracted`）。这正是 55 的形态在另一处待着。
-- **不修的理由**：本批的批准范围是「55 的签名 + 五个调用点」。这 8 条今天**全部正确**，改它们是 8 处重组而不是修 bug；而「要不要全面禁止多参数按位置传」是个跨全仓的取舍（像 `_do_chat` 那种 10 个可选参数的签名，改 keyword-only 会让两个调用点各长十几行），要单独裁定。**边界如实写明：这张表是「今天核过的事实」，不是判据** —— 它靠人重跑脚本维持，代码一变就滞后（同 §四「报数字前现跑现数」的处境）。
+  > 表内一律用符号名不用行号（§四：行号随改动漂移且无测试报警）。本批的改动**当场把上一版抄下的行号全部打死**，故一并改写 —— 这正是那条规矩要防的形态。
+
+- **头号发现（新，与 55 同族 —— 一份会误导人的签名）**：`StorageBase.save_message` 声明的是 `(…, rag_context, retracted=False, reply_to_id=None, reply_to_preview="", evidence=None)`，而两个实现都是 `(…, rag_context, reply_to_id=None, reply_to_preview="", retracted=False, evidence=None)` —— **第 5/6 位互换**。今天没有调用点受影响（调用点走的是具体实现，两个实现彼此一致，所以是「两份声明不一致」而不是「两种行为」）；**但将来照 base 写第三个实现，`chat.py` 那两处 6 个位置实参会静默错位**（`reply_to_id` 落进 `retracted`）。这正是 55 的形态在另一处待着。
+- **不修的理由**：本批的批准范围是「55 的签名 + 五个调用点」。这 8 条今天**全部正确**，改它们是 8 处重组而不是修 bug；而「要不要全面禁止多参数按位置传」是个跨全仓的取舍（像 `_do_chat` 那种 10 个可选参数的签名，改 keyword-only 会让两个调用点各长十几行），要单独裁定。**边界如实写明：这张表是「今天核过的事实」，不是判据** —— 它靠人重跑脚本维持，代码一变就滞后（同 §四「报数字前现跑现数」的处境）。**注意这 8 行的「对」与「重核」段修掉的两处不是同一件事**：8 行说的是「按位置传这件事本身今天没出事」，重核修的是「base 声明与实现不一致」（`save_message` / `create_user`）—— 后者是**会静默的契约缺陷**，与前者的「今天正确」并存不矛盾。
+
+- **重核（2026-09-17，本批动手前）—— 范围从「这 8 行」放开到 `StorageBase` 全部 91 个 `@abstractmethod`。** 判据从事实推出（抽象方法集取 `StorageBase.__abstractmethods__`，`ABCMeta` 现算，**不维护函数名单**），逐个比 base 与两个实现的形参表。结果：**不一致的只有 3 个函数**（「只在部分实现里存在」= 0，「两个实现都没有」= 0）。重核要找的是两类**今天看起来是对的**的形态 —— 「base 与实现不一致」与「死参数留出错位空间」，它们比单纯的「多参数按位置传」危险：
+
+  | 函数 | 形态 | 今天会静默吗 | 处置 |
+  |---|---|---|---|
+  | `save_message` | 第 5/6 位互换 | 会（触发条件未到） | **已修** `882d094` |
+  | `create_user` | 实现第 5 位插入 `email`，base 没有这一格 | **会**（已有人在传那一格） | **已修** `baf9719` |
+  | `save_text` | base 少声明 2 个尾部参数 | 不会（尾部 → TypeError） | 记表不修（锁内 `strict xfail` 入册） |
+
+- **`create_user` 比 `save_message` 更近一步 —— 这一族不是理论风险。** `save_message` 还停在「**如果有**第三个实现」，`create_user` **已经有人在按位置传那一格**：`tests/perf/distill_resume_reachability.py:53` 与 `tests/perf/distill_orphan_matrix.py:72` 都是 `create_user(uid, uid, "x", f"{uid}@t.local")` —— 按实现是 `email`，按 base 是 `home_region`。**今天对，是实现赢了，不是写法对**；两个脚本虽在 `tests/perf/` 但是真调用点，一并改了关键字。
+- **这一族有了真判据：** `tests/test_storage_contract_shape.py` —— 抽象方法集取 `__abstractmethods__`（不维护名单），逐格比 `(名字, 种类, 有无默认值, 默认值)`。选「形参表逐格相同」而不是「可选参数 keyword-only」：**后者只防调用点错位，防不了契约漂移**；前者两者一起管住（种类里已含 `KEYWORD_ONLY`）。变异已验：顺序漂移 → 红并点名到第几格；撤掉 `*` → 红并点名种类差异。**本表「靠人重跑」的边界因此收窄一格** —— 表本身仍要人重跑，但「base 与实现有没有漂移」已由锁日常看着。
+- **`save_text` 为何不搭车（是判据，不是省事）**：它是**纯尾部追加**，前缀逐格相同 —— base 派调用点能到的位置**没有一个**改变含义（不像 `save_message` 的互换、`create_user` 的中间插入）。**是契约不完整，不是契约漂移，会响不会哑**；且补齐 base 声明要连带处置两处 8 位置传参，是独立一件事。锁里以 `strict xfail` 入册（`PRE_EXISTING_GAPS`），**补上后 XPASS 变红、逼人出册** —— 该机制在 `create_user` 上已生效一次（`baf9719` 同时删掉它的册条）。
+- **`_create_session` 的第三个死参数 `text`（第 1 位必填）** —— 与 55 那两个死参数同函数、同形态，但**必填参数不会被静默错填**（少传即 `TypeError`），且删它要动 4 个调用点。**记表不修**。§四 已记「死参数为错位留出空间 —— 先问这个参数有没有人用，再问怎么传」。
+- **死参数普查的边界（不冒充通用判据）**：全仓 189 处「形参在函数体里零引用」，**绝大多数是 FastAPI 注入的 `request` / 依赖参数与 `__aexit__` 这类协议参数**，且**抽象方法的参数必然零引用**（体只有 docstring）—— 上一版没排除这类，把 `StorageBase.save_text` / `save_message` 全判成死参数。可判定的组合是**三者同时**：零引用 **+** 可位置传 **+** 与相邻参数名字/类型相近。故普查只作**改签名时的自查**，未做成锁（同 §四「『全仓写死的实测数字』这件事做不出通用判据」的处境）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
