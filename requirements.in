@@ -3,10 +3,33 @@
 # 本文件只管「至少要多新」，不管「这次装到了哪一版」—— 后者是锁文件的职责。
 #
 # 改完本文件必须重锁（仓库根目录）：
-#   uv pip compile requirements.in -o requirements.txt --universal --python-version 3.12
+#   uv pip compile requirements.in -o requirements.txt --universal --python-version 3.12 \
+#     --constraint requirements.txt
 #
-# 不要手改 requirements.txt：它是产物，手改会被下次重锁冲掉，且 CI 会红
-# （build.yml 的 "Verify installed versions match the lock" 步骤当场核对）。
+# **`--constraint requirements.txt` 是承重的，不是顺手加的。** 去掉它，uv 就从零解析，
+# 顺带把与本次改动无关的包一并上移到当下最新。实测（2026-09-17）同一条命令去掉它：
+# 131 个包里 **10 个**当场变版（openai 3.13.0→3.14.1、sqlalchemy 2.0.52→2.0.54、
+# urllib3 2.7.0→2.8.0、yarl 1.24.5→1.25.1、filelock 3.32.6→3.32.7、posthog、
+# propcache、pyproject-hooks、qdrant-client、resend），而本文件一个字都没改。
+# 带上它则 131 个包一个不动。即：**该动版本的是改本文件这个动作，不是重锁这个动作。**
+# 约束文件与产物同一路径是安全的：uv 先读约束再写产物，实测 0 变化。
+#
+# 代价：uv 会把约束文件本身记进每一条 `# via` 注解，重锁后要清一遍。实测：原始输出
+# 631 行、提交的锁 408 行，差的那 223 行**没有一条是 pin**，全是注解形状（131 条
+# `-c requirements.txt` 边，加 92 个多边块折成单行省下的行）：
+#   - `# via` 块里以 `-c ` 开头的边整条删掉；
+#   - 删完只剩一条边的块，折回 uv 的 `    # via X` 单行写法；一条边都不剩的整块删掉。
+# 清理后应与**上一把锁逐字节相同** —— 这是验收口径：出现差异就说明动了不该动的版本。
+# 另外 uv 会在锁第一行记下自己跑的命令，所以重锁后那行会变成 `--constraint requirements.txt`
+# （自指，正常）。
+#
+# 不要手改 requirements.txt。**理由不是「会被下次重锁冲掉」** —— 恰恰相反：上面那条命令
+# 以旧锁为约束，手改的那一版会被**保留**（实测：把 pyproject-hooks 从 1.2.0 手改成 1.1.0，
+# 重锁后仍是 1.1.0）。CI 也没有任何一步拿实际装出来的版本去核锁：build.yml 只有
+# "Install dependencies (from the lock)" 负责按锁装，加一步 `pip freeze → artifact`
+# 把快照传上去**留证**（出事时查「CI 当时装的是哪一版」），没有核对。所以手改会生效、
+# 且不留痕：锁里那一版凭空在那里，本文件解释不了它的来由，下一个人无从判断它是不是有意为之。
+# 要移版本，改本文件，然后重锁。
 # ═══════════════════════════════════════════════════════════════════════════
 openai>=1.30.0
 pydantic>=2.0
