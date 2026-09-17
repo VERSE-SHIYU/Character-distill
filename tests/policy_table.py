@@ -6,6 +6,9 @@
 **使用方**（各自的表属于各自的策略，本层不认识表里的任何键）：
   - ``tests/test_text_failure_messages.py`` —— ``_FORM_METADATA``（哪些非正文 Form 字段可以存在）；
   - ``tests/test_auth_param_used.py`` —— ``ALLOWLIST``（哪些端点注入了身份参数却有意不引用）；
+  - ``tests/test_collection_surface_lock.py`` —— ``_OUT_OF_SURFACE``（哪些测试**有意**留在
+    pytest 收集面之外）；键是仓库相对路径（字符串），与前两张的复合键形态不同 ——
+    本层认的是「扁平映射」，键是不是元组与它无关；
   - ``tests/test_policy_table.py`` —— 本层自己的锁（合成表）。
 
 **为什么需要这一层。** 那两张表要回答的是同一组问题 —— 「表里有没有现场已经不出现的陈旧
