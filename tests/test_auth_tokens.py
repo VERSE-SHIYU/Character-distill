@@ -23,7 +23,7 @@ from storage.sqlite_store import SQLiteStore
 import limiter as _lim_  # noqa: E402  (web/limiter.py)
 _lim_.limiter.limit = lambda *a, **kw: lambda f: f
 
-from routers.auth import router as auth_router  # noqa: E402
+from routers.auth import get_jwt_secret, router as auth_router  # noqa: E402
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -123,3 +123,37 @@ class TestLoginRefreshChain:
         )
         assert rt2 != rt, "refresh must rotate the token"
         assert len(rt2) > 20, f"refreshed token too short"
+
+
+# ── 注入点（缺陷 46）───────────────────────────────────────────────────────────
+
+
+def test_secret_is_injected_not_read_from_environment(store):
+    """`get_jwt_secret` 是**注入点**：覆盖之后，签发与验签两侧都必须用它。
+
+    覆盖值刻意**不等于** `conftest.py` 注入的那个环境值。于是任何一侧（`login` 签发 /
+    `get_current_user` 验签）只要回去读环境，`/me` 就会拿另一个 secret 验签而 401。
+    这条红 = 「secret 不再从依赖来」，失败信息里直接写清该看哪儿。
+    """
+    injected = "injected-" + uuid.uuid4().hex + "-0123456789abcdef"
+    _app = FastAPI()
+    _app.include_router(auth_router)
+    _app.dependency_overrides[get_storage] = lambda: store
+    _app.dependency_overrides[get_jwt_secret] = lambda: injected
+    c = TestClient(_app)
+
+    uid = f"tester_{uuid.uuid4().hex[:8]}"
+    pwd = "Pass1234"
+    _run(_create_user(store, uid, pwd))
+
+    login = c.post("/api/auth/login", json={"username": uid, "password": pwd})
+    assert login.status_code == 200, login.text
+    me = c.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+    )
+    assert me.status_code == 200, (
+        f"/me 验签失败 —— secret 没有从 `Depends(get_jwt_secret)` 来"
+        f"（签发侧或验签侧回去读了环境）：{me.text}"
+    )
+    assert me.json()["username"] == uid

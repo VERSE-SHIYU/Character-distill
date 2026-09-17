@@ -14,6 +14,34 @@ sys.path.insert(0, str(_ROOT / "web"))   # web 模块（deps/routers/...）
 # 测试默认用 SQLite；若外部已显式设 postgres 则尊重（避免覆盖 PG 测试）
 os.environ.setdefault("STORAGE_BACKEND", "sqlite")
 
+# 测试用的固定 JWT_SECRET。与上面 STORAGE_BACKEND 同一个理由：这个值由**仓库**提供，
+# 不能由「这台机器恰好有没有 .env」决定。
+#
+# 缺陷 46：没有它时，`tests/test_auth_tokens.py` 的登录/刷新两条会去读工作树里那份
+# gitignored `.env` —— 干净检出（或换台机器）上必红，栈底 `routers/auth.py:41
+# RuntimeError`。而「本机全绿」这时也不能当证据：它只证明这台机器恰好有 .env。
+TEST_JWT_SECRET = "test-only-jwt-secret-not-for-production-use-0123456789abcdef"
+
+
+@pytest.fixture(autouse=True)
+def _jwt_secret_for_tests(monkeypatch):
+    """整个测试会话固定一个 JWT_SECRET：任何用例的通过条件都不再是本机的 `.env`。
+
+    用 autouse，**不是**让用例各自声明 —— 那漏一次就滑回 ambient 依赖（缺陷 46 的形态
+    本身就是「没人注意到这个值从哪来」）。autouse 让「新来的人完全不知道这件事，写新
+    用例也不会出错」成立。
+
+    `load_dotenv` 用的是 setdefault 语义（不覆盖已存在的变量），所以这里设的值对 `.env`
+    里的旧值稳赢。CI 的 job 级注入（build.yml 的 gate / upstream-drift 都设了 JWT_SECRET）
+    与本条是同一个机制，测试进程内以本条为准 —— 于是 CI 与本地跑的是同一个值，
+    不会出现「CI 绿、本地红」这种由环境造成的分歧。
+
+    生产路径照旧从环境读 —— 取值点收敛在 `routers.auth.get_jwt_secret` 这一个函数上，
+    它同时是 FastAPI 注入点（`Depends(get_jwt_secret)`），测试可用
+    `app.dependency_overrides` 覆盖成别的值，见 `test_auth_tokens.py`。
+    """
+    monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
+
 
 class EnvironmentRequirement:
     """一条「本用例需要某个外部环境」的声明，把三件事绑在同一处：

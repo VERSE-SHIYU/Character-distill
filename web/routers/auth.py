@@ -36,6 +36,14 @@ _DEFAULT_INSECURE_JWT_SECRET = "character-distill-dev-secret-key-change-in-prod"
 
 
 def get_jwt_secret() -> str:
+    """JWT 签名/验签的 secret —— **唯一取值点，同时也是 FastAPI 的注入点**。
+
+    「是注入点」这件事是承重的（缺陷 46）：端点和依赖都用 `Depends(get_jwt_secret)`
+    拿它，测试才能用 `app.dependency_overrides[get_jwt_secret]` **显式**给值。不这样
+    收敛，用例的通过条件就变成「这台机器恰好有没有 .env」—— 换台干净检出结果就变，
+    而且签名里看不出「这里需要一个 secret」，下一个写用例的人照样隐式读 .env。
+    校验语义不变：未设置 / 等于已知默认值 / 短于 32 字符，一律拒绝。
+    """
     secret = os.getenv("JWT_SECRET")
     if not secret or secret == _DEFAULT_INSECURE_JWT_SECRET:
         raise RuntimeError(
@@ -162,12 +170,13 @@ class TokenResponse(BaseModel):
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
+    secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid."""
     if credentials is None:
         raise HTTPException(401, "请先登录")
     try:
-        payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, secret, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         raise HTTPException(401, "Token 已过期")
     except jwt.InvalidTokenError:
@@ -187,12 +196,13 @@ async def get_current_user(
 async def get_optional_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
+    secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
     """Like get_current_user but returns empty dict for unauthenticated requests."""
     if credentials is None:
         return {}
     try:
-        payload = jwt.decode(credentials.credentials, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, secret, algorithms=[JWT_ALGORITHM])
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
         return {}
     user_id = payload.get("sub")
@@ -243,7 +253,12 @@ async def send_code(
 
 @router.post("/register")
 @limiter.limit("3/hour")
-async def register(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
+async def register(
+    request: Request,
+    req: AuthRequest,
+    storage: StorageBase = Depends(get_storage),
+    secret: str = Depends(get_jwt_secret),
+) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
     if not USERNAME_RE.match(username):
@@ -320,7 +335,7 @@ async def register(request: Request, req: AuthRequest, storage: StorageBase = De
         await storage.set_user_admin(user["id"], True)
         user["is_admin"] = True
 
-    access_token = _create_access_token(user["id"], user["username"])
+    access_token = _create_access_token(user["id"], user["username"], secret)
     refresh_token, _ = await _create_refresh_token(user["id"], storage)
     return {
         "access_token": access_token,
@@ -356,7 +371,12 @@ async def reset_password(
 
 @router.post("/login")
 @limiter.limit("10/minute")
-async def login(request: Request, req: AuthRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
+async def login(
+    request: Request,
+    req: AuthRequest,
+    storage: StorageBase = Depends(get_storage),
+    secret: str = Depends(get_jwt_secret),
+) -> dict[str, Any]:
     """Login with username + password, return JWT + refresh token."""
     user = await storage.get_user_by_username(req.username.strip())
     if user is None:
@@ -368,7 +388,7 @@ async def login(request: Request, req: AuthRequest, storage: StorageBase = Depen
     if user.get("is_disabled"):
         raise HTTPException(403, "账号已被禁用")
 
-    access_token = _create_access_token(user["id"], user["username"])
+    access_token = _create_access_token(user["id"], user["username"], secret)
     refresh_token, _ = await _create_refresh_token(user["id"], storage)
     await _touch_last_login(storage, user["id"])
     return {
@@ -380,7 +400,11 @@ async def login(request: Request, req: AuthRequest, storage: StorageBase = Depen
 
 
 @router.post("/refresh")
-async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storage)) -> dict[str, Any]:
+async def refresh(
+    req: RefreshRequest,
+    storage: StorageBase = Depends(get_storage),
+    secret: str = Depends(get_jwt_secret),
+) -> dict[str, Any]:
     """Exchange a refresh token for a new access_token + new refresh_token (rotation)."""
     token_hash = _hash_token(req.refresh_token)
     record = await storage.get_refresh_token(token_hash)
@@ -397,7 +421,7 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
                     # Grace window: issue a new pair, chain replaced_by forward
                     user = await storage.get_user_by_id(record["user_id"])
                     if user and not user.get("is_disabled"):
-                        access_token = _create_access_token(user["id"], user["username"])
+                        access_token = _create_access_token(user["id"], user["username"], secret)
                         new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
                         # Chain forward: update already-used row's replaced_by
                         await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
@@ -422,7 +446,7 @@ async def refresh(req: RefreshRequest, storage: StorageBase = Depends(get_storag
     if user.get("is_disabled"):
         raise HTTPException(403, "账号已被禁用")
 
-    access_token = _create_access_token(user["id"], user["username"])
+    access_token = _create_access_token(user["id"], user["username"], secret)
     new_refresh_token, new_token_hash = await _create_refresh_token(user["id"], storage)
     # Chain: mark old token as used, pointing to the new token
     await storage.mark_refresh_token_used(token_hash, replaced_by=new_token_hash)
@@ -755,7 +779,7 @@ async def _touch_last_login(storage: StorageBase, user_id: str) -> None:
         logger.warning("Update last_login failed (non-fatal) for %s: %s", user_id, exc)
 
 
-def _create_access_token(user_id: str, username: str) -> str:
+def _create_access_token(user_id: str, username: str, secret: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
     payload = {
         "sub": user_id,
@@ -763,7 +787,7 @@ def _create_access_token(user_id: str, username: str) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, secret, algorithm=JWT_ALGORITHM)
 
 
 async def _create_refresh_token(user_id: str, storage: StorageBase, replaced_by: str = "") -> tuple[str, str]:
