@@ -800,7 +800,7 @@ config.yaml 现值（现读，非转述）：
 - **2026-09-16 更新（缺陷 41 · ④ 动了 import 的位置，见缺陷 49）**：`_extract_pdf` 那句 `import pymupdf4llm` 已从**函数入口**挪到 `pymupdf.open()` 与页数校验**都通过之后**。于是**坏 PDF** 的路径不再 import 它，容器内「缺包 → 500」与**本机「被 System32 抢先 → 整个进程崩」**两条都**在坏 PDF 用例上**消掉了（本机 `test_text_failure_messages.py` 由「import 期即杀进程」变为可跑，27 passed）。**合法 PDF 那条没消**（本机仍崩 —— 缺陷 50），且**容器侧未在本机验证**。
   - **订正（2026-09-16 晚，方案 C 落地）：这一步是「报错改善」，不是「修好」—— 两者当时被记成了同一件事。** 挪 import 的位置只让**坏** PDF 不再付出加载代价；**合法** PDF 照旧在 import 期拉起 onnxruntime，容器侧照旧缺包、本机照旧崩。**这一步没有恢复任何能力**：改前改后，「上传一份能解析的 PDF」在两个环境里都是坏的（容器 500 / 本机 access violation）。真正的修好是**方案 C**（缺陷 44）—— 把 `pymupdf4llm` 整个从这条路上拿掉。**判据（写给下一次）：一次修复要回答「哪一个**能力**从坏变好了」，答不出来的（「这条用例不再红了」「报错文案对了」）都不是修好，是报错改善。** 本条的 ③ 负控与入口面静态守卫在 C 落地时改判据面（实例没了、命题仍在），见缺陷 41 · ④。
 
-**45. 变异驱动的先验基线门红源不可辨：「基线跑不起来」与「基线绿、变异没红」同型** —— 状态：**记账（不修）**（2026-09-15 容器腿实测）
+**45. 变异驱动的先验基线门红源不可辨：「基线跑不起来」与「基线绿、变异没红」同型** —— 状态：**已修（`d1d36de`，2026-09-17）**（2026-09-15 容器腿实测，原裁定「记账（不修）」，改判修复）
 - 事实：镜像内没有 pytest 时，`_baseline_gate` 对四个锁文件的 pytest 调用全部**拿不到 summary**，却仍**放行**进入变异阶段；逐条变异拿到的同样是空 summary，最终表现为一片 `>> ?` 加一串 `MISMATCH ...：期望 RED 实得 green`。
 - 形态：红是响了（**不是**静默假绿），但「基线**跑不起来**」与「基线绿、变异**没红**」两种成因共用同一种红 —— 正是 §四 那条「两种不同成因的失败若共用一个信号，就分不出是哪一种」。基线门存在的唯一理由就是让这两件事分开，它在「跑不起来」这一支上没有生效。
 - 证据命令：镜像内（未补 pytest）`python tests/perf/route_facts_mutations.py --group XF --with-container` → 逐条 `实得=green`、`>> ?`；补装 pytest 后同一命令「全部符合预期」。
@@ -809,6 +809,11 @@ config.yaml 现值（现读，非转述）：
 - **改了什么（机制面）**：判定、文案、退出码三样都收进 `lock_coverage.py` 的单一出口，没有各驱动一份（同一判定两份实现正是本仓反复栽的跟头）。`baseline_verdict(summary) -> str` 回**成因**（不可用回 `BASELINE_UNUSABLE` / `BASELINE_RED`，可用回 `""`）；`baseline_ok` 收成它的布尔投影，「可用吗」只剩一个实现；`refuse_on_baseline({靶子: 成因}) -> int` 按成因分组点名靶子、给下一步动作（先修环境 vs 先修基线），退出码 `3` / `2` 分档。**skip 仍算可用**这一侧没被写坏：`test_storage_ping.py` 基线本身就是「4 passed, 2 skipped」，判成不可用会让那个驱动**永远**开不了跑。两种成因同时出现按「不可用」退 —— 环境没修好之前，另一支的结论本来也拿不到。
 - **判据与验证**：「新来的人不知此事也不会写错」的落点是 `lock_coverage.baseline_verdict` 的签名与返回值 —— 想拒跑就得回答「哪一种」，没有能省掉的第三个选项。变异/控两条补在 `tests/test_lock_coverage.py`：① `baseline_verdict` 四个可用汇总行（含 skip）→ `""`、三个红汇总行 → `BASELINE_RED`、`RUNAWAY` → `BASELINE_UNUSABLE`，且两常量不相等；② `refuse_on_baseline` 三种组合（只红 → 2 含「先修基线」；只不可用 → 3 含「先修环境」且**不含**「先修基线」；两者并存 → 3 且两靶子都点名）。失败信息点成因与靶子，不自解释的那侧（「只不可用」还断言反面文案不出现）也控了。
 - 生产代码零改动（`git diff --stat` 只有 `tests/` 下五个文件）。全量 1132 passed / 64 skipped / 0 failed（改前 1130，增量正好这两条）。
+- **退出码 `3` / `2` 拆分的下游普查（2026-09-17，现跑现数）**：拆之前 `2` 是「拒跑」的唯一码，拆之后 `2` 只剩「基线红」、`3` 归「跑不起来」—— 故须核有没有人按 `== 2` 认过这个码。命令与结果：
+  - `grep -rn -e '-eq 2' -e '== 2' -e 'exit 2' -e '-ne 2' -e 'returncode == 2' .github/ scripts/` → **0 命中**（CI 只有两条 workflow，皆不调这三个驱动）。
+  - 全仓（排除 `.venv`）搜 `-eq 2|-ne 2|exit 2|returncode == 2|returncode != 2|status == 2` → **1 命中**，`tests/perf/step4_seed_pg.py:177 assert r.status == 200`，是 HTTP 状态码，与退出码无关。
+  - 三个驱动的名字（`ping_mutations` / `pg_gate_mutations` / `route_facts_mutations`）在 `.github/`、`scripts/` 里各 **0 命中** —— 它们只被人工直接调用（调用方式写在各自 `main()` 的注释里），没有任何自动化入口读它们的退出码。
+  - **结论：无下游依赖，无需同步改。** `lock_coverage.EXIT_BASELINE_RED = 2` 与其余前置门（条数门 / docker 门 / 别名门）同为 `2` 是**刻意对齐**（都表示「拒绝开跑」），不是被谁依赖的契约；要改的是「成因可辨」，故只有不可用那一支分到 `3`。
 
 **46. `tests/test_auth_tokens.py::TestLoginRefreshChain` 两条依赖本机 `.env` 的 `JWT_SECRET`，无 `.env` 的环境必红** —— 状态：**已修（`170d49a`，2026-09-17）**（2026-09-15 缺陷 42 收口时普查环境依赖发现）
 - 事实：`web/routers/auth.py::get_jwt_secret` 在 `JWT_SECRET` 缺失或等于默认值时长直接 `raise RuntimeError`，而 `JWT_SECRET` 只可能来自工作树里那份 **gitignored `.env`** —— 该类的登录 + 刷新两条用例因此**只在这台机器上绿**。
