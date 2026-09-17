@@ -38,9 +38,18 @@
 | 8 | 蒸馏后台线程（`web/routers/distill.py`） | 整条蒸馏链 | **是** | 是（`/start`） | 继承，无需声明 |
 | 9 | 上传解析线程（`web/routers/text.py`） | 解析 + 落库 | **否**（纯 DB；其 `client_ip` 形参已是死参数） | 是 | 无需声明 |
 
-`ctx_submit` 4 处：`Distiller.coref_resolve`（**到得出站**，父为请求）、
-`AgentToolkit.execute` 与 `ContextEngine.build_ex` ×2（检索 / embed，不经 adapter）
-—— 均继承或无需声明。
+`ctx_submit` **4 行 / 3 处**（`ContextEngine.build_ex` 一个 `with` 里两次派生，占两行）：
+
+| 位置 | 派生体内的实际路径 | 到得出站？ |
+|---|---|---|
+| `ContextEngine.build_ex` ×2 行 | `_retrieve_scenes_ex` → `_scene_items`（RAG）/ `_retrieve_memories_ex` → `_memory_items`（mem0 `search`，embedding） | 否 |
+| `AgentToolkit.execute` | `web_search` 工具 → `_call_web_search` → `_search_web_ex` → `_web_items` 的**第二步「角色过滤器」`self._llm.chat(...)`** | **是** |
+| `Distiller.coref_resolve` | `lambda: asyncio.run(_resolve_all())` → `self._llm.async_chat` | **是** |
+
+⚠ **v2 订正**：本模块首版把 `AgentToolkit.execute` 一律写作「检索 / embed，不经 adapter」，
+**是错的** —— agent 的 `web_search` 工具链上挂着一次真实出站（角色过滤器）。v1 spec 更早
+还把 `ctx_submit` 整个漏掉（只写了 `ctx_thread` 8 处）。教训正是 §四那条：**「不经 adapter」
+是跨函数追链的结论，不是从派生点旁边那句注释能读出来的**。
 
 `create_task` 各处：`Distiller` ×3（出站）、`group_session` ×2 与 `web/routers/group.py`
 ×2（`_run_group_affinity` → `evaluation_pipeline` 的 `ctx.llm.chat`，出站）、
