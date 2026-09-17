@@ -43,13 +43,11 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
 _distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
-_summary_threshold: int = _config.get("llm", {}).get("summary_threshold", 50)
 
 # {session_id: {"engine": ChatEngine, "card": CharacterCard}}
 # Transitional: kept until chat_engine migrates to storage-backed history
 _sessions: dict[str, dict[str, Any]] = {}
 
-_text_manager: TextManager | None = None
 _indexing_service: IndexingService | None = None
 
 _memory_config: dict[str, Any] = _config.get("memory", {})
@@ -239,29 +237,38 @@ async def _session_cleanup_loop() -> None:
             print(f"[session_cleanup] evicted={evicted} remaining={len(sessions)}")
 
 
+def _make_indexing_service() -> IndexingService:
+    """构造（不是「取得」）一个 IndexingService —— 生命周期由调用方定。"""
+    return IndexingService(get_storage(), _rag_config)
+
+
 def get_indexing_service() -> IndexingService | None:
     """Return the IndexingService singleton."""
     global _indexing_service
     if _indexing_service is None:
-        _indexing_service = IndexingService(get_storage(), _rag_config)
+        _indexing_service = _make_indexing_service()
     return _indexing_service
 
 
+def _assemble_text_manager(distiller: Distiller, llm: LLMAdapter) -> TextManager:
+    """唯一的 TextManager 装配出口。
+
+    `distiller` / `llm` 必须由调用方传实例 —— 本函数不取单例、不缓存：per-user
+    路径每次都要新实例（`/run_stream` 往 distiller 上写请求级身份，共享即跨请求
+    错归，见缺陷 37）。
+    """
+    return TextManager(get_storage(), distiller, llm, get_sessions(),
+                       indexing_service=get_indexing_service())
+
+
 def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:
-    """Return the TextManager singleton (lazy-init), or a per-user instance if llm is given."""
-    indexing_svc = get_indexing_service()
-    if llm is not None:
-        return TextManager(get_storage(), Distiller(llm), llm, _rag_config, _sessions, _summary_threshold,
-                           indexing_service=indexing_svc)
-    global _text_manager
-    if _text_manager is None:
-        distiller = get_distiller()
-        fallback = get_llm()
-        if distiller is None or fallback is None:
-            return None
-        _text_manager = TextManager(get_storage(), distiller, fallback, _rag_config, _sessions, _summary_threshold,
-                                    indexing_service=indexing_svc)
-    return _text_manager
+    """Return a per-user TextManager instance, or None if llm is None.
+
+    没有单例路径：`llm is None ⟺ get_llm() is None`，取单例那条分支走不到（缺陷 37）。
+    """
+    if llm is None:
+        return None
+    return _assemble_text_manager(get_distiller(llm), llm)
 
 
 def get_config() -> dict[str, Any]:
@@ -290,18 +297,15 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
 
 
 def reset_llm_and_dependents() -> None:
-    """Hot-reload: recreate LLM, Distiller, TextManager, IndexingService, and MemoryManager."""
-    global _llm, _distiller, _text_manager, _indexing_service
-    global _summary_threshold, _config, _rag_config, _memory_config, _memory_manager
+    """Hot-reload: recreate LLM, Distiller, IndexingService, and MemoryManager."""
+    global _llm, _distiller, _indexing_service
+    global _config, _rag_config, _memory_config, _memory_manager
     _llm = LLMAdapter()
     _distiller = Distiller(_llm)
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
     _rag_config = _config["rag"]
-    _summary_threshold = _config.get("llm", {}).get("summary_threshold", 50)
-    _indexing_service = IndexingService(get_storage(), _rag_config)
-    _text_manager = TextManager(get_storage(), _distiller, _llm, _rag_config, _sessions, _summary_threshold,
-                                indexing_service=_indexing_service)
+    _indexing_service = _make_indexing_service()
     _memory_config = _config.get("memory", {})
     _memory_manager = MemoryManager(_memory_config)
 

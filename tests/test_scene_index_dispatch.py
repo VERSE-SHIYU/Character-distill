@@ -202,8 +202,8 @@ def test_textmanager_is_only_assembled_in_deps():
     """`web/` 下拼 `TextManager` 的地方只许是 `deps.py`。
 
     真值层是【装配时有没有漏掉真正的依赖】——`indexing_service` 是唯一一个漏了会
-    **静默**的（`/start` 落下的卡从此不调度场景预索引）；本判据读的是【构造点的位置】
-    ——**②层代理，盲区记在下一段**。
+    **静默**的（`/start` 落下的卡从此不调度场景预索引）；本判据读的是【构造点的位置
+    与数量】——**②层代理，盲区记在下一段**。
 
     由来：`_save_card` 就地拼的那个漏传 `indexing_service`，于是 `/start` 落下的卡
     从不调度场景预索引，只靠 `/start_session` 的补偿。**静默不索引**：没有日志、没有红。
@@ -219,7 +219,16 @@ def test_textmanager_is_only_assembled_in_deps():
         "多半是判据本身失效了。"
     )
     deps = _REPO / "web" / "deps.py"
-    outside = [(str(p.relative_to(_REPO)).replace("\\", "/"), ln) for p, ln in sites if p != deps]
+
+    def _fmt(s: list[tuple[Path, int]]) -> list[tuple[str, int]]:
+        return [(str(p.relative_to(_REPO)).replace("\\", "/"), ln) for p, ln in s]
+
+    assert len(sites) == 1, (
+        f"`web/` 下的 `TextManager(...)` 构造点应恰好一处，实得 {len(sites)} 处：{_fmt(sites)}。\n"
+        "第二处就是第二份手抄的装配 —— 它会静默漏掉某个依赖（`_save_card` 那次漏的是"
+        " `indexing_service`）。装配只有一处：`deps._assemble_text_manager`。"
+    )
+    outside = _fmt([(p, ln) for p, ln in sites if p != deps])
     assert not outside, (
         f"这些地方在自己拼 `TextManager`：{outside}。\n"
         "唯一的装配出口是 `deps.get_text_manager()` —— 它带齐 `indexing_service` 等全部依赖。\n"

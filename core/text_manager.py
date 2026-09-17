@@ -34,9 +34,8 @@ class TextManager:
         storage: StorageBase,
         distiller: Distiller,
         llm: LLMAdapter,
-        rag_config: dict[str, Any],
         sessions: dict[str, dict[str, Any]],
-        summary_threshold: int = 50,
+        *,
         indexing_service=None,
     ) -> None:
         self._storage = storage
@@ -45,9 +44,7 @@ class TextManager:
         )
         self._distiller = distiller
         self._llm = llm
-        self._rag_config = rag_config
         self._sessions = sessions
-        self._summary_threshold = summary_threshold
         self._indexing_service = indexing_service
 
     # ── Prompt-injection field guard (2.1/2.6) ─────────────
