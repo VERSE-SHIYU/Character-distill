@@ -41,7 +41,6 @@ except Exception as exc:
 _storage: StorageBase | None = None
 _main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
-_distiller: Distiller | None = None
 _rag_config: dict[str, Any] = _config["rag"]
 
 # {session_id: {"engine": ChatEngine, "card": CharacterCard}}
@@ -178,16 +177,13 @@ def get_llm() -> LLMAdapter | None:
 
 
 def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
-    """Return the Distiller singleton (lazy-init), or a per-user instance if llm is given."""
-    if llm is not None:
-        return Distiller(llm)
-    global _distiller
-    if _distiller is None:
-        fallback = get_llm()
-        if fallback is None:
-            return None
-        _distiller = Distiller(fallback)
-    return _distiller
+    """Return a new Distiller bound to *llm*, or None if llm is None.
+
+    没有单例路径：`llm is None ⟺ get_llm() is None`，取单例那条分支走不到（缺陷 37）。
+    """
+    if llm is None:
+        return None
+    return Distiller(llm)
 
 
 def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[str, Any]:
@@ -297,11 +293,10 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
 
 
 def reset_llm_and_dependents() -> None:
-    """Hot-reload: recreate LLM, Distiller, IndexingService, and MemoryManager."""
-    global _llm, _distiller, _indexing_service
+    """Hot-reload: recreate LLM, IndexingService, and MemoryManager."""
+    global _llm, _indexing_service
     global _config, _rag_config, _memory_config, _memory_manager
     _llm = LLMAdapter()
-    _distiller = Distiller(_llm)
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
     _rag_config = _config["rag"]
