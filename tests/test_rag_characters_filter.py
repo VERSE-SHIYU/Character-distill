@@ -24,6 +24,8 @@ _repo = Path(__file__).resolve().parent.parent
 if str(_repo) not in sys.path:
     sys.path.insert(0, str(_repo))
 
+from chromadb.errors import NotFoundError  # noqa: E402
+
 from core.rag import (  # noqa: E402
     CHARACTERS_NONE_TAG,
     CHARACTER_FILTER_MULTIPLIER,
@@ -161,7 +163,8 @@ def test_no_collection_returns_empty_hits():
 # ── 写入格式单点：rag 与 scene_indexer 不得各写一份 ──
 
 class _CapturingCollection:
-    def __init__(self):
+    def __init__(self, metadata=None):
+        self.metadata = dict(metadata or {})
         self.metas = None
 
     def add(self, documents=None, ids=None, metadatas=None):
@@ -169,13 +172,21 @@ class _CapturingCollection:
 
 
 class _CapturingClient:
+    """chroma Client 替身。形状照真件：`get_collection` 不存在即 `NotFoundError`、
+    `create_collection` 收 `metadata` —— 假件形状与真件不一致，测的就不是生产形态。
+    """
+
     def __init__(self):
         self.col = _CapturingCollection()
+
+    def get_collection(self, name=None, embedding_function=None):
+        raise NotFoundError(f"Collection {name} does not exist")
 
     def delete_collection(self, name=None):
         raise RuntimeError("no such collection")
 
-    def create_collection(self, name=None, embedding_function=None):
+    def create_collection(self, name=None, embedding_function=None, metadata=None):
+        self.col = _CapturingCollection(metadata)
         return self.col
 
 

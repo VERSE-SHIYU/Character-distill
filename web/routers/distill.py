@@ -528,23 +528,17 @@ def _run_distill_task(
         # Step 4: persist via the main event loop (run_coroutine_threadsafe)
         # so the asyncpg pool stays on its home loop.
         async def _save_card():
-            from deps import get_config, get_rag_config, get_sessions
-            from core.text_manager import TextManager
+            from deps import get_llm, get_text_manager
 
-            store = get_storage()
+            # 走统一出口。原先本处就地拼 TextManager、漏传 indexing_service ——
+            # 这是全仓唯一一处不经 deps 的构造，于是 `/start` 落下的卡从不调度
+            # 场景预索引，只靠打开卡片时的 `/start_session` 补偿，而那条补偿
+            # 依赖「`list_cards` 不投影 `session_id`」这个巧合。
             llm_for_save = per_user_llm
             if llm_for_save is None:
-                from deps import get_llm
                 llm_for_save = get_llm()
 
-            tm = TextManager(
-                store,
-                get_distiller(llm=llm_for_save),
-                llm_for_save,
-                get_rag_config(),
-                get_sessions(),
-                get_config().get("llm", {}).get("summary_threshold", 50),
-            )
+            tm = get_text_manager(llm=llm_for_save)
             _ek = (api_config or {}).get("embedding_key", "")
             _er = (api_config or {}).get("embedding_region", "")
             result = await tm.save_distilled_card(

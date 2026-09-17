@@ -5,10 +5,11 @@
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
-from core.rag import RAGEngine, characters_tag
+from core.rag import CollectionUnusableError, RAGEngine, characters_tag
 
 # 简单情感关键词映射（可扩充）
 _EMOTION_KEYWORDS: dict[str, list[str]] = {
@@ -28,6 +29,15 @@ def _detect_emotion(text: str) -> str:
     return "平静"
 
 
+# 集合 metadata 里存场景幂等键的那个键名（含它的集合即「本正文已建好」）。
+_FINGERPRINT_KEY = "content_fingerprint"
+
+
+def _content_fingerprint(text: str) -> str:
+    """幂等键 —— 场景是正文的纯函数，故指纹只取正文。"""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 class SceneIndexer:
     """将原文按场景切分，存入 RAGEngine 的 ChromaDB，携带情感 metadata。"""
 
@@ -45,17 +55,36 @@ class SceneIndexer:
         character_name: str,
         collection_name: str | None = None,
     ) -> int:
-        """切分场景并写入 RAG，返回场景数量。
+        """切分场景并写入 RAG，返回场景数量。**幂等**：正文没变即复用已建好的集合。
 
         注意：此方法会替换 rag.collection 引用，将检索从 chunk 模式
         升级为 scene 模式。这是设计意图——蒸馏完成后，对话阶段应使用
         场景级检索以获得更好的上下文连贯性。
+
+        幂等的由来：本方法有**两处**调度者（蒸馏落卡、打开卡片时的
+        `/start_session`），两者之间隔着人操作时间（分钟到天），
+        `IndexingService` 那层 `_scene_index_in_flight` 去重只管并发窗口，
+        挡不住第二次。而重建要付两笔代价：一次全量 embedding，以及
+        `delete_collection` 先于 `create_collection` 的那段空窗 —— 正在读这个
+        集合的会话在空窗里查询恒空。故先按正文指纹复用；正文变了
+        （重解析、`DISTILL_USE_COREF` 开关换了）才重建。
         """
         scenes = self._split_scenes(text)
         if not scenes:
             return 0
 
         name = collection_name or f"scenes_{character_name}"
+        fingerprint = _content_fingerprint(text)
+
+        try:
+            if rag.load_existing(name):
+                if (rag.collection.metadata or {}).get(_FINGERPRINT_KEY) == fingerprint:
+                    return rag.collection.count()
+        except CollectionUnusableError:
+            # 维度与当前 embedder 不符（换过 embedding 配置）：旧集合查询恒失败，
+            # 不是「已建好」，落到下面按当前 embedder 重建。
+            pass
+
         try:
             rag._client.delete_collection(name=name)
         except Exception:
@@ -64,6 +93,7 @@ class SceneIndexer:
         collection = rag._client.create_collection(
             name=name,
             embedding_function=rag._embedding_function,
+            metadata={_FINGERPRINT_KEY: fingerprint},
         )
 
         ids, docs, metas = [], [], []
