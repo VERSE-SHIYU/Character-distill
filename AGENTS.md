@@ -467,12 +467,20 @@ config.yaml 现值（现读，非转述）：
 - **变异（实测，四条各自红在有病灶名的那句上）**：dedup 回填文案改一字 → `assert 0 == 1`（计数）；dedup 分支补一条 `steps.append` → `assert 5 == 4`；`steps` 改成按轮记（两刀：摘掉执行处 append、挪到 `tc` 循环外）→ `assert 2 > 2`；`EMPTY_RESULT` 改一字 → 字节基线两条红（`scene_empty: tool 消息变了`）。脚本 `e2e/scratch/run_defect_29_mutations.py`（gitignored，先验基线 failed=0）。
 - **顺带修掉一处同源恒真**：`_EMPTY` 原先写作 `_EMPTY = EMPTY_RESULT`（**从生产 import**），于是「冻结字节基线」与生产值同源、改 `EMPTY_RESULT` 两边一起变 —— 正是 §四「等式类断言先问两边是不是同一个来源」的形态。改为字面量 `"未找到相关内容"`；上一条变异（M23）即证明它有牙。
 
-**30. 群聊路径的「不渲染证据」只由前端兜底覆盖，后端无专门用例** —— 状态：**记账待补**（Evidence commit 5 自查，2026-09-14）
+**30. 群聊路径的「不渲染证据」只由前端兜底覆盖，后端无专门用例** —— 状态：**已修（`885735c`，2026-09-17）**（Evidence commit 5 自查，2026-09-14）
 - **形态**：证据的**写入**只有 `web/routers/chat.py` 两个调用点（`_do_chat` / `_do_chat_stream`），**读取**只有 `web/routers/history.py` 的 GET 与 resume。群聊走的是另一套原语（`storage.save_group_message` / `get_group_messages`，签名里根本没有 evidence 参数）与另一条历史出口 —— 即群聊的**写侧恒不产证据、读侧恒不带证据**，两条都成立。
 - **薄在哪**：这两条「成立」**没有任何后端用例守着**。把 `save_group_message` 将来改成能带证据、或群聊历史出口将来接上 `parse_evidence`，都不会有锁变红；「群聊不渲染」这个结论目前只由前端 `EvidenceRail` 的「evidence 缺失 → 返回 null」那一行覆盖。
-- **为什么不现在补**：起群聊要一整套新测试基建（群聊会话夹具 + 群聊路由器依赖），成本远超收益。
-- **待补（将来有群聊夹具时）**：后端各一条 —— ① 群聊写侧调用点不带 evidence（形态锁，同 `test_default_call_sites_are_unchanged`）；② 群聊历史出口读回的条目里没有 evidence 键。判据命令：`git grep -n 'save_group_message\|get_group_messages'`。
+- **原「为什么不现在补」的前提不成立（订正）**：原文写「起群聊要一整套新测试基建（群聊会话夹具 + 群聊路由器依赖），成本远超收益」——**那套基建早就有了**，`tests/test_group_affinity_list_api.py` 里就有 `store` / `user_id` / `client`（群聊路由器 + 两处 `dependency_overrides`）与 `_create_group(store, user_id, card_ids)`。本轮把夹具照搬到证据线那个文件里，没有新建任何框架、没有新文件。这条记账搁了两轮，代价就是「不知道基建已存在」。
+- **已修（`885735c`）**：`tests/test_message_evidence.py` 新增 `TestGroupPathIsNotOnTheEvidenceLine`（文件是证据线的既有家族，两处新增都附在它末尾；`SQLiteStore` / `PostgresStore` / `FastAPI` / `TestClient` / `get_storage` / `get_current_user` 全部复用文件里已有的 import，只多引一个 `inspect` 与 `group_router`）：
+  - ① **写侧形态锁**：`inspect.signature` 逐类断言 `save_group_message` 签名里没有 `evidence` 参数（同 `test_default_call_sites_are_unchanged` 的形态锁思路 —— 加参数必须在**改断言**时被意识到，而不是红了之后「顺手补上」）。
+  - ② **读侧走接口**：`GET /api/group/{gid}/history` 返回的条目里没有 `evidence` 键。走接口而不是只看 store —— 出口才是前端拿到的东西。
+- **变异验证（实测两臂，production 码还原后逐字节核过）**：臂 1 给 `SQLiteStore.save_group_message` 加 `evidence: str | None = None` → 用例 ① 红，失败信息点名 `SQLiteStore.save_group_message 多了 evidence 参数`（另一条绿，两臂互不牵连，证明是两条独立判据而不是一条测两遍）；臂 2 在 `group.py` 的 `/history` 出口加 `for _m in messages: _m["evidence"] = None` → 用例 ② 红，失败信息把**实际键集**整份打出来（`['content', 'created_at', 'evidence', 'group_id', 'id', 'reactions', 'reply_to_id', 'reply_to_preview', 'role', 'speaker', 'speaker_card_id']`），一眼看出多的是哪个。臂 2 用的是「加键但值恒 None」这种**最容易被当成无害**的形态 —— 它照样被抓，因为判据锁的是**键在不在**，不是值。
+- **顺带修掉同文件一处过度声明**：`test_default_call_sites_are_unchanged` 的 docstring 原写「不传 evidence 的老调用点（用户消息 / 摘要 / **群聊**）」，而函数体只测了 `save_message(sid, "user", ...)` 一条 —— 群聊连 `save_message` 都不走。docstring 改为只留「用户消息 / 摘要」并指向本条的类。**这正是本缺陷的形态本身**（声称有覆盖、实际没有）在同一文件里的第二次显形。
 - **跨层覆盖不算单点全包**：前端那行只保证「拿到不带 evidence 的条目时不崩」，不保证「后端不会开始产证据」—— 后者才是这条缺口的实质。
+- **判据命令**：`git grep -n 'save_group_message\|get_group_messages'`（列两侧原语的全部引用点，与上面两条断言对齐）。
+- **同源路径普查（全量，不是只测点名那处）**：`web/routers/group.py` 里 `save_group_message` 的**生产调用点 5 处**（:510 :514 两处系统消息、:574 用户消息、:596 :609 角色回复）与 `get_group_messages` 的 **4 处**（:173 重建会话、:500 :561 组装上下文、:708 历史出口）——**没有一处单独断言**，也**不需要**：签名里没有这个参数，5 处调用点就一个都传不进去。这是「形态锁 > 逐点断言」的地方：逐点写 5 条会在第 6 个调用点出现时漏掉，签名锁在参数出现的那一行就红。两个 store 各一处定义，`PostgresStore` 那条不在本机跑（无 PG），但 `inspect.signature` 是纯静态的，在 collect 期就成立 —— 不需要 PG 也守着。
+- **不确定项（如实记）**：PG store 的那条断言在本机被 collect 并执行（`inspect.signature(PostgresStore.save_group_message)` 不建连接），所以不挂 `PG_ENV.skipif`；本轮全量实跑为 `1125 passed, 64 skipped`（改前基线 1123），增量正好是这两条。
+- **全程生产代码零改动**：两臂变异都已还原，`git diff --stat` 仅 `tests/test_message_evidence.py`（75 insertions, 1 deletion）。
 
 **31. `steps` 的三键（`args` / `ok` / `elapsed_ms`）全仓零读者 —— 表态：保留，定位为执行台账** —— 状态：**已裁定·保留（不删，定位为执行台账）**（Evidence 收口 2026-09-14；2026-09-15 从「记账」移出）
 - **事实（普查，不是印象）**：读 `steps` 的只有 `s["tool"]`（`scripts/run_agent_eval.py` 取名字集合判「触发是否命中 expected」）与 `len(steps)`（同文件判 chitchat `== 0`；测试里计数）。**`args` / `ok` / `elapsed_ms` 三键零读者**。`elapsed_ms` 在别处也没有同义记录：`ToolResult.elapsed_ms` 只在 `tools.py` 的 print 里用；OTel 的 `agent.execute_tool` span 自带 duration，但 **`OTEL_ENABLED` 关时装饰器原样返回、根本没有 span**。
