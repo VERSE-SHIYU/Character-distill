@@ -912,12 +912,37 @@ PROBE_IMAGE         false
   - **同族判据（补一句给下一次）：一次探针只测一条性质；多条性质合在一起测，先失败的那条会遮住后面的。** F1 与 F2 是同一句话的两个方向：合并判 → 后面的被遮住；只看退出码 → 前面的被误认。**判据要能逐条点出「这条探针在测哪一条性质」**，点不出来的探针就不是一条判据。
   - **本轮闸门数字（现跑现数）**：变异 7 条（M1/M2/M3/M4/M5 + 新增 M7「恢复成合并探针」/ M8「删掉对照 C」）**全 RED，且红在预期的那条用例**。四组矩阵 —— 无 docker `3 failed, 38 passed, 20 skipped`（跳过的是要 compose 的用例，T5 `SKIPPED`）；v2.38.2 未设 REQUIRE `3 failed, 38 passed, 20 skipped`（同上）；v2.38.2 + `REQUIRE_COMPOSE_TESTS=1` `20 failed, 41 passed`（拒绝跳过、真跑并红 = `test_compose_model` 10 + `test_pg_gate` 7 + `test_lock_coverage` 3，**含 T5**）；v5.5.1 + `REQUIRE_COMPOSE_TESTS=1` `3 failed, 58 passed`（**只剩元锁那 3 条红**，T5 在 `test_compose_model.py` 里 `PASSED`）。各版本由 shim 把 `docker compose` 转发到对应 standalone 二进制，驱动脚本在仓外（一次性）。
 
-**52. 一条 100% 失败的生产路由，在本仓「没有任何一条守卫」碰得到它 —— 全部 PDF 判据都长在「坏输入」那一侧** —— 状态：**记账（不修，处置方向不实现）**（2026-09-16 方案 C 收口时发现，**spec 外**）
+**52. 一条 100% 失败的生产路由，在本仓「没有任何一条守卫」碰得到它 —— 全部 PDF 判据都长在「坏输入」那一侧** —— 状态：**已修（`62bd744`，2026-09-17；原裁定「记账（不修，处置方向不实现）」，改判修复）**（2026-09-16 方案 C 收口时发现，**spec 外**）
 - **事实（现跑现数）**：全仓测试里出现的 PDF 字节只有**一处** —— `b"not a pdf at all"`（`tests/test_text_failure_messages.py:485` 与 `:525`，两条都判 400 + 文案）。**没有任何一条测试解析过一份合法 PDF**；全仓第一份「真造出来的合法 PDF」出现在 `tests/perf/pagenum_chapter_probe.py`（方案 C 为**量这次回归**才写的探针，`58be15d`），而它是探针不是用例，`pytest` 不收集。
 - **后果的量级要写清**：这条路由从 2026-06-29 起**每一份上传都失败**，持续约 2.5 个月，而期间 CI 是**绿的** —— `1068 passed / 82 skipped / 0 failed`、缺陷 41 的 13 条 L 锁、外加一整套变异矩阵，**没有一条碰到它**。
 - **为什么碰不到（这是本条真正的形态，不是「忘了写一条用例」）**：已有的 PDF 判据判的是**校验失败的路径**（坏输入 → 400 / 文案 / 日志），而坏输入的路径**在拉起解析器之前就 return 了** —— 锁的眼睛长在失败路径上。同一件事的另一面正好解释了缺陷 41 · ④ 为什么能让 L3 变绿而生产照样坏：**把 import 挪到校验之后，等于让锁看得见的那条路更早地避开了解析器**，锁于是更绿，而能力一点没回来。**「失败路径判得越细」与「成功路径有没有人守」是两件事，前者不会顺带覆盖后者。**
 - **它与缺陷 41 的关系是互补不是重复**：41 管的是「守卫与被守对象之间隔着几层」，本条管的是**守卫长在哪一侧** —— 判据全在「该拒绝的拒绝了」，没有一条在「该接受的接受了」。**失败路径的判据再多，也不构成成功路径的守卫。**
-- **处置方向（留档，本轮不实现）**：一条「合法 PDF 解析出预期文本」的守门用例 —— 用例内用 `pymupdf` 现造最小合法 PDF（`new_page()` + `insert_text()`，无需入库二进制夹具；V1 的容器验收脚本就是这个形状），断言 `_extract_pdf` 返回该文本。**不实现的原因**：本轮是生产故障修复，判断这条属于「测试覆盖债」，按用户裁定与缺陷 41 的缺口分开走。
+- **原裁定（留档）**：处置方向是「一条『合法 PDF 解析出预期文本』的守门用例」，**不实现的原因**是「本轮是生产故障修复，这条属于测试覆盖债，与缺陷 41 的缺口分开走」。**改判（2026-09-17，用户裁定）**：这半条不是覆盖债 —— 缺陷 41 修的是「守卫与被守对象隔着几层」，本条修的是**守卫长在哪一侧**，41 收口了本条也照样在（事后复核：41 的 13 条 L 锁 + 全套矩阵，没有一条碰得到成功路径）。
+- **改判后落地（`62bd744`）**：`tests/test_text_failure_messages.py` 新增 **L7** 两例（该文件原先自述「锁六件事」，全是失败侧，现为七件）。① 合法 PDF：用例内用 `pymupdf` 现造最小合法 PDF（一页一行，`fontname="china-s"` —— 内置中文字体**编在 pymupdf 二进制里**，不依赖可选的 `pymupdf-fonts` 包；无需入库二进制夹具），断言 `_extract_pdf` 返回的就是它里面的字；② 同源路径同批：合法 DOCX（两段）断言 `_extract_docx` 返回两段以空行相接。两条的失败信息**自带成因与下一步**（取到空串 = `page.get_text()` 那条路断了，就是缺陷 44 的形态；取到异常 = 不要在本机拿「崩没崩」当判据，那是缺陷 50）。
+- **范围普查（命令与结果，2026-09-17 现跑现数）**：
+  - `grep -rn --include="*.py" -E "def _extract_[a-z_]+" core/ web/ storage/ adapters/` → 全仓 **7 个** `_extract_*`。
+  - 再对每个名字 `grep -rl "\b<名>\b" tests/` 看判据落在哪一侧：
+
+    | 函数 | 位置 | 引用它的测试 | 判据在哪一侧 |
+    |---|---|---|---|
+    | `_extract_pdf` | `core/text_manager.py:271` | `test_text_failure_messages.py`（+ 探针/驱动） | **只坏输入** → 本轮补 |
+    | `_extract_docx` | `core/text_manager.py:321` | `test_text_failure_messages.py` | **只失败结局** → 本轮补 |
+    | `_extract_catchwords` | `core/chat_engine.py:1187` | `test_catchwords.py`（11 处，真文本 → 关键词） | 正向已有 |
+    | `_extract_json` | `core/distiller.py:353` | `test_distiller_utils.py`（9 例，含 `'{"a": 1}'` 原样返回） | 正向已有 |
+    | `_extract_content` | `adapters/llm_adapter.py:420` | 三个文件；`test_llm_adapter_finish_reason.py::test_stop_returns_content` 断言 `chat(...) == "完整"` | 正向已有 |
+    | `_extract_quote_text` | `core/text_manager.py:112`（嵌在 `_parse_wechat_json` 内，调用点 `_parse_content` 的 `.json` 分支） | **无** | 两侧都没有 → 只记不修 |
+    | `_extract_audio_from_video` | `web/routers/voice.py:99` | **无** | 两侧都没有（且要 ffmpeg）→ 只记不修 |
+
+  - 「判据只长在坏输入一侧」的共 **2 个**，都在 `core/text_manager.py`，本轮同批补完；末两个是**另一条**（「一个会解析用户文件的生产函数两侧都没有判据」），**只记不修**，挂在这里等人立项 —— 它们不是「判据在坏输入侧」，别混进来。
+- **变异验证（`D:/Temp/l7_mutation_verify.py`，仓外一次性脚本，每臂一个进程）**：三臂各改**被测函数自己的返回值/异常**，跑完逐字节还原（`git diff` 收尾为空）：
+  - A `_extract_pdf` 的 `return pdf_text` → `return ""` ⇒ **红**，红源 `tests/test_text_failure_messages.py:617`，首行 `AssertionError: 合法 PDF 解析不出它自己的字。取到 ''（原文本 '阿朱抬起头，看着窗外的雨。'）——`。
+  - B 同一行 → `raise ValueError(_MSG["pdf_parse_failed"])` ⇒ **红**，红源 `ValueError: PDF 解析失败，请确认文件完整后重试`，栈底指到 `_extract_pdf`。
+  - C `_extract_docx` 的 `return "\n\n".join(paragraphs)` → `return ""` ⇒ **红**，红源 `:640`，`AssertionError: 合法 DOCX 解析不出它自己的段落。取到 '' —— 期望两段以空行相接。`
+  - N **负控**：改一个与本命题无关的常量（`MAX_PDF_PAGES` 2000→1999）⇒ 两条**仍绿**。没有这一臂，「红」可能来自任意扰动而不是来自这条判据。
+- **同一形态进矩阵当 S 组（为什么不是登记缺口）**：新判据加进覆盖域（`tests/test_text_failure_messages.py` 本就在 route_facts 域里）后，元锁当场按设计红，点名这两条「长出来了、名单里没有的缺口」，并给三条出路：补一条撞得到的变异 / 删判据 / 去 `lock_coverage_gaps.py` 登记。**登记被否掉的理由是判据 ② 本身**：登记条目对将来清名单的人说的话等于「以后记得补这条变异」，那是**换了个记忆点**，不算机制。故新立 **S 组**（`tests/perf/route_facts_mutations.py`）两条 ——S-1 打 `_extract_pdf` 回空串、S-2 打 `_extract_docx` 回空串，各指到 L7 那一条判据、各带红源 marker。形态取「解析成功之后回**空串**」而不是抛异常：空串正是缺陷 44 表面上最像的样子 —— 上传不报错、只是什么都没拿到，那种坏法日志里没有栈。**S 与 T 互补不是重复**：T 问「失败路径摸没摸到解析器」，S 问「摸到了以后拿到了什么」。
+- **读数（现跑现数，与台账 717 行同口径）**：`pg_gate` |D|=49 / |E|=23 / 未覆盖 26；`ping` |D|=33 / |E|=14 / 未覆盖 19；`route_facts` |D|=**69** / |E|=**30** / 未覆盖 **39**（S 组加了 2 条判别器，**两条都被撞到**，故未覆盖**不变**）。合计 |D|=**151**、|E|=**67**、未覆盖 **84**、空转 0、unknown 0。元锁 `tests/test_lock_coverage.py` 25 passed。全量 **1135 passed / 64 skipped / 0 failed**（改前 1133，增量正好 L7 两条）。
+- **顺带修的自检漂移点**：`route_facts_mutations._count_gate` 的文档统计正则原先把组数写死成「七组共 N 条」，加 S 组时它是**匹配不到**（报「分组的括号匹配不到」）而不是报「组数对不上」—— 拒跑拒了，但把看红的人引向括号。改成「共 N 组 M 条」，组数与条数都从 `GROUPS` 现算，加组时该说的是「文档说 7 组、现数 8 组」。
+- **边界（写明，别当全覆盖）**：L7 两条锁的是**解析函数那一段**；路由那一段（`.pdf` → `_extract_pdf` → 落库）今天只有**负向**用例覆盖到「进得去解析器」，「解析成功之后落库」仍无判据。S 组同理只撞解析函数的返回值。另：夹具里的中文靠 pymupdf **内置**字体（`Font("china-s")` 取到 `Droid Sans Fallback Regular`，磁盘上无对应字体文件），不依赖可选包；若哪天它变回需要 `pymupdf-fonts`，L7 会红在造夹具那一步而不是解析那一步 —— 那条信息足够定位，故不为它单设判据。
 
 **53. `requirements.in` 的注释说了一件**从没发生过**的事 —— 声称的那个 CI 步骤不存在** —— 状态：**已修（`bbbfa5e`，2026-09-17）**（2026-09-16 方案 C 重锁时发现，与白名单那次同族；当时记「记账（不修）」的理由见下面末条）
 - **事实（grep 现跑）**：`requirements.in:9` 写着「不要手改 requirements.txt：… 且 CI 会红（build.yml 的 **"Verify installed versions match the lock"** 步骤当场核对）」。`grep -i "verify\|installed version\|match the lock" .github/workflows/build.yml` → **零命中**。真实情况是：gate job 按锁装（`pip install -r requirements.txt`）后跑一句 `python -m pip freeze --all > pip-freeze-gate.txt` **上传成 artifact** —— 那是**留证**，不是**核对**；全仓没有任何一步比对「装到的版本」与「锁里的版本」。
