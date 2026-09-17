@@ -6,111 +6,205 @@
   ],
   "mutations": {
     "G-1  两个文件的探针都改回 pg_isready": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:499",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 healthcheck 用 pg_isready：它不验证凭据，凭据错时照样 exit 0，\" \"这道门会退化成装饰\")",
+        0
+      ]
     ],
     "G-2  两个文件的 -h 都改为环回 127.0.0.1": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:520",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 healthcheck 拿环回地址 {parse['-h']!r} 当 -h：官方镜像里环回走 \" \"trust 认证，探针又会「永远成功」\")",
+        0
+      ]
     ],
     "G-3  两个文件的前缀都加 PGHOSTADDR=127.0.0.1": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:512",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的探针命令不是那个闭形状：{bad} 允许的形状是 {_GOOD_CMD!r}\")",
+        0
+      ]
     ],
     "G-4  两个文件的末尾都加 `|| true`": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:506",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 healthcheck 多出语法外的 token {t!r}：只允许这一条命令；\" \"它后面接的第二条命令（`; exit 0` / `|| true` 一类）会让探针恒成功，\" ",
+        0
+      ]
     ],
     "G-5  两个文件的口令都改成宿主机插值 ${POSTGRES_PASSWORD}": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:493",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 healthcheck 里出现了宿主机插值的结果 {hit!r}：写 `${{...}}` 是\" \"**宿主机展开**，值会固化进容器配置（`docker inspect` 就能读",
+        0
+      ]
     ],
     "G-6  两个文件的 healthcheck 都加 disable: true": [
-      "tests/test_pg_gate.py:234",
-      "tests/test_pg_gate.py:534",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 多出键 {extra}：只允许 {sorted(allowed)} —— 多出来的键不会被忽略，\" \"而是被点名。`disable: true` 一类能悄悄",
+        0
+      ]
     ],
     "G-7  两个文件都用合并键 `<<` 从顶层锚点注入 disable: true（原始 YAML 里只有 `<<`）": [
-      "tests/test_pg_gate.py:234",
-      "tests/test_pg_gate.py:534",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 多出键 {extra}：只允许 {sorted(allowed)} —— 多出来的键不会被忽略，\" \"而是被点名。`disable: true` 一类能悄悄",
+        0
+      ]
     ],
     "G-8  两个文件的 timeout 都写成 2s（小于 PGCONNECT_TIMEOUT=3）": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:516",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 PGCONNECT_TIMEOUT={connect} 不小于 healthcheck timeout={timeout}\" \" —— 连接超时会被 Docker 的探针超时顶掉，",
+        0
+      ]
     ],
     "G-9  只改 local 一份的 interval（两份定义漂移）": [
-      "tests/test_pg_gate.py:705"
+      [
+        "tests/test_pg_gate.py",
+        "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
+        0
+      ]
     ],
     "G-10 两个文件的 app 都把 depends_on 改成短式列表": [
-      "tests/test_pg_gate.py:586",
-      "tests/test_pg_gate.py:719"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 对 {db!r} 的 condition={cond!r}，不是 'service_healthy' —— \" \"service_started 只等容器起",
+        0
+      ]
     ],
     "G-11 两个文件的 app 都把 condition 改成 service_started": [
-      "tests/test_pg_gate.py:586",
-      "tests/test_pg_gate.py:719"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 对 {db!r} 的 condition={cond!r}，不是 'service_healthy' —— \" \"service_started 只等容器起",
+        0
+      ]
     ],
     "G-12 prod 新增 worker：连接串主机段写 `@postgres/db`（斜杠），无依赖": [
-      "tests/test_pg_gate.py:576",
-      "tests/test_pg_gate.py:719"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 的 depends_on 里没有 {db!r}：{tail}，却不声明等待 —— 依赖必须写成 \" f\"`{db}: {{condition: servic",
+        0
+      ]
     ],
     "G-13 prod 新增 worker：`PGHOST: postgres`（值恰好等于服务名），无依赖": [
-      "tests/test_pg_gate.py:576",
-      "tests/test_pg_gate.py:719"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 的 depends_on 里没有 {db!r}：{tail}，却不声明等待 —— 依赖必须写成 \" f\"`{db}: {{condition: servic",
+        0
+      ]
     ],
     "G-14 prod 新增 worker：只有 env_file，无任何连库证据、无依赖": [
-      "tests/test_pg_gate.py:733"
+      [
+        "tests/test_pg_gate.py",
+        "assert extra == [], ( f\"这些服务既不是库、也没有任何连库的硬证据，却不在豁免表里：{extra}。\" \"要么它其实连库（那就补 `depends_on: {condition: service_h",
+        0
+      ]
     ],
     "G-15 prod 新增 worker：无任何配置": [
-      "tests/test_pg_gate.py:733"
+      [
+        "tests/test_pg_gate.py",
+        "assert extra == [], ( f\"这些服务既不是库、也没有任何连库的硬证据，却不在豁免表里：{extra}。\" \"要么它其实连库（那就补 `depends_on: {condition: service_h",
+        0
+      ]
     ],
     "G-16 prod 新增 worker：`extends` 继承 app 的连接串，`!reset` 覆盖掉 depends_on": [
-      "tests/test_pg_gate.py:576",
-      "tests/test_pg_gate.py:719"
+      [
+        "tests/test_pg_gate.py",
+        "raise AssertionError( f\"{where} 的 depends_on 里没有 {db!r}：{tail}，却不声明等待 —— 依赖必须写成 \" f\"`{db}: {{condition: servic",
+        0
+      ]
     ],
     "G-17 豁免表加一条现场不存在的服务（陈旧条目）": [
-      "tests/test_pg_gate.py:743"
+      [
+        "tests/test_pg_gate.py",
+        "assert stale == [], ( f\"豁免表里这些条目现场已经不需要了：{stale} —— 服务被删/改名，或者它现在有连库的\" \"硬证据（那它就该等门，不该被豁免）。陈旧条目留着，同一位置的漏网就再没人看得",
+        0
+      ]
     ],
     "G-18 豁免表某条理由改成空串": [
-      "tests/test_pg_gate.py:751"
+      [
+        "tests/test_pg_gate.py",
+        "assert blank == [], f\"豁免表里这些条目没写理由（或理由不是字符串）：{blank}\"",
+        0
+      ]
     ],
     "G-19 真正的消费者 app 也塞进豁免表（两处判据自相矛盾）": [
-      "tests/test_pg_gate.py:743",
-      "tests/test_pg_gate.py:758"
+      [
+        "tests/test_pg_gate.py",
+        "assert stale == [], ( f\"豁免表里这些条目现场已经不需要了：{stale} —— 服务被删/改名，或者它现在有连库的\" \"硬证据（那它就该等门，不该被豁免）。陈旧条目留着，同一位置的漏网就再没人看得",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert both == [], ( f\"这些服务既在豁免表里、又被硬证据认定连库：{both} —— 豁免表说「它不连库」，识别器\" \"说「它连了」，两处判据相反。删掉豁免条目：它该等门\")",
+        0
+      ]
     ],
     "G-20 仓库根目录新建空的 docker-compose.override.yml（会被隐式加载）": [
-      "tests/test_pg_gate.py:604",
-      "tests/test_pg_gate.py:620"
+      [
+        "tests/test_pg_gate.py",
+        "assert dbs, (f\"{path.name} 里解析不出任何「镜像为 postgres」的服务 —— \" \"该文件的判据在空转\")",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert present == [], ( f\"仓库根目录出现了会被 compose 自动加载的文件 {present}：部署与本地栈一律带 `-f`，\" \"但任何人手敲一次不带 `-f` 的 `docker com",
+        0
+      ]
     ],
     "G-21 effective_model 求值失败时返回 {}（静默放行）": [
-      "tests/test_compose_model.py:125",
-      "tests/test_compose_model.py:142"
+      [
+        "tests/test_compose_model.py",
+        "with pytest.raises(ComposeFactError) as excinfo:",
+        0
+      ],
+      [
+        "tests/test_compose_model.py",
+        "with pytest.raises(ComposeFactError) as excinfo:",
+        1
+      ]
     ],
     "G-22 effective_model 退回读原始 YAML（两处代理里的第一处）": [
-      "tests/test_compose_model.py:103",
-      "tests/test_compose_model.py:125",
-      "tests/test_compose_model.py:142",
-      "tests/test_compose_model.py:43",
-      "tests/test_compose_model.py:77"
+      [
+        "tests/test_compose_model.py",
+        "assert effective_model(p)[\"services\"][\"a\"][\"depends_on\"] == { \"b\": {\"condition\": \"service_started\", \"required\"",
+        0
+      ],
+      [
+        "tests/test_compose_model.py",
+        "assert effective_model(p)[\"services\"][\"child\"][\"environment\"] == { \"FROM_PARENT\": \"1\", \"OWN\": \"2\"}",
+        0
+      ],
+      [
+        "tests/test_compose_model.py",
+        "assert effective_model(p)[\"services\"][\"a\"][\"environment\"][\"X\"] == \"sentinel_SYNTH_VAR\"",
+        0
+      ],
+      [
+        "tests/test_compose_model.py",
+        "with pytest.raises(ComposeFactError) as excinfo:",
+        0
+      ],
+      [
+        "tests/test_compose_model.py",
+        "with pytest.raises(ComposeFactError) as excinfo:",
+        1
+      ]
     ],
     "G-23 只改 local 的服务键名 postgres→db（探针仍写 -h postgres）": [
-      "tests/test_pg_gate.py:475",
-      "tests/test_pg_gate.py:523",
-      "tests/test_pg_gate.py:562",
-      "tests/test_pg_gate.py:609",
-      "tests/test_pg_gate.py:635"
+      [
+        "tests/test_pg_gate.py",
+        "_reject(f\"{where} 的 healthcheck 探的是 {parse['-h']!r}，而本服务的键名是 {db!r} —— \" \"两者不一致时，改服务名或改探针任一都会让这条锁指向别处\")",
+        0
+      ],
+      [
+        "tests/test_pg_gate.py",
+        "assert any(how != _HARD_BY_DEP for how in hard.values()), ( f\"{path.name}:{db} 的硬消费者全靠 depends_on 认出来 —— 连接串识别",
+        0
+      ]
     ]
   },
   "controls": [],

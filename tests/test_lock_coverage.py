@@ -67,19 +67,36 @@ def test_every_mutation_driver_has_an_artifact_and_vice_versa():
 
 @pytest.mark.parametrize("artifact", _artifacts(), ids=lambda p: p.stem)
 def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
-    """判别器集合与「变异实际红到的行」集合**相等** —— 除开名单上登记的已知缺口。
+    """判别器集合与「变异实际撞到的判别器」集合**相等** —— 除开名单上登记的已知缺口。
 
     命题在名单式落地时从「全覆盖」换成「**只许减少**」：84 条今天是撞不到的，锁天天红，
     而一直红的锁等于没有锁。换成两个方向后，它今天就能成立，且原先那条规矩（新长出来的
     判别器不许被豁免）由方向 ① 原样继承。
+
+    **产物里存的是身份，不是行号**（缺陷 54）：行号在这一行当场从当前的树算出来，
+    于是「改一处 docstring 让产物坐标脱钩」这条路不存在了 —— 产物失效的唯一方式只剩
+    「判别器自己的源码文本变了 / 被删了」，而那本来就该重跑矩阵。
     """
     data = json.loads(artifact.read_text(encoding="utf-8"))
-    domain, hits = data["domain"], data["mutations"]
+    domain = data["domain"]
     controls = set(data.get("controls", ()))
     # 三类必须互斥：一条变异只能属于「该红」「该绿」「本环境跳过」之一。重叠就是驱动把
     # 它同时记进了两处 —— 那会让同一个信号被读成两种东西（「反证」↔「空转」的同一个病）。
-    assert not (controls & set(hits)) and not (controls & set(data["skipped"])), (
+    assert not (controls & set(data["mutations"])) and not (controls & set(data["skipped"])), (
         f"{data['driver']}：mutations / controls / skipped 三类不互斥")
+
+    identity = lock_coverage.discriminator_identities(domain, ROOT)   # 文件:行号 → 身份
+    hits, unknown = lock_coverage.decode_recorded(data["mutations"], identity)
+
+    # **必须排在 `gaps()` 之前**：身份对不上当前树时硬翻行号，会同时造出「这条变异空转」
+    # 与「这里多出一条没登记的缺口」两个假象，而真凶是产物该重跑了 —— 两种成因共用信号。
+    assert not unknown, (
+        f"{data['driver']} 的产物里这些判别器身份在当前树里找不到"
+        "（判别器被删了、或它的源码文本改了 —— 产物只在这两种情况下失效，行数变了不算）：\n" +
+        "\n".join(f"  {rel}  {snip!r}    [同文本第 {nth + 1} 处]"
+                  for rel, snip, nth in sorted(unknown)) +
+        f"\n重跑一次驱动刷新产物：`python {data['driver']}`")
+
     uncovered, vacuous = lock_coverage.gaps(domain, hits, ROOT)
 
     assert vacuous == [], (
@@ -87,9 +104,9 @@ def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
         f"但红的不是任何一条判据，红源说不清）：{vacuous}")
 
     allow = lock_coverage_gaps.ALLOWED_GAPS.get(data["driver"], {})
-    # 映射的**键**才是行号（用于把红源指回现场），判别器的身份是那个元组（里面没有行号）。
-    identity = lock_coverage.gap_keys(uncovered, ROOT)     # 文件:行号 → 稳定身份
-    actual = set(identity.values())
+    # 名单的键与这里的身份**同一套**（`discriminator_identities` 用的就是 `gap_keys`），
+    # 且 `nth` 都按**整个域**编号 —— 名单因此不随「同文本的另一处被覆盖了」而改号。
+    actual = {identity[loc] for loc in uncovered}
 
     # ① 现场未覆盖 ⊄ 名单 —— 长出了一条没人登记过的缺口。这一条是「不设豁免名单」那条
     # 老规矩的继承：**新长出来的判别器不许被豁免**，名单是账，不是许可证。
@@ -352,6 +369,40 @@ def test_gap_keys_disambiguate_identical_snippets_by_line_order(tmp_path):
         "synth_gaps.py:4": ("synth_gaps.py", "assert x > 0", 0),
         "synth_gaps.py:5": ("synth_gaps.py", "assert x > 0", 1),
     }
+
+
+def test_recorded_identities_are_recomputed_never_stored(tmp_path):
+    """产物存身份、行号当场算：整段前移 20 行，产物一个字节都不用改（缺陷 54）。
+
+    三件事一起控：① 域内**全局**编号 —— 两处同文本拿到 0 / 1，不因「只传了这条变异撞到的
+    那几行」而塌成同一个身份（那正是逐条变异各算一遍会犯的错）；② 行号平移后身份不变，
+    故 `decode_recorded` 翻回来的是**新的**行号 —— 旧产物存坐标时，插行后翻回来的是个
+    陈旧行号，这才是那条「红在错的地方」的病根；③ 身份在当前树里找不到时**单独**报出来，
+    不混进「空转变异」—— 两种成因共用一个信号正是本条要防的那副面孔。
+    """
+    p = tmp_path / "synth_gaps.py"
+    p.write_text(_SYNTH_GAPS, encoding="utf-8")
+    identity = lock_coverage.discriminator_identities(["synth_gaps.py"], tmp_path)
+    assert identity == {
+        "synth_gaps.py:3": ("synth_gaps.py", 'raise ValueError("neg")', 0),
+        "synth_gaps.py:4": ("synth_gaps.py", "assert x > 0", 0),
+        "synth_gaps.py:5": ("synth_gaps.py", "assert x > 0", 1),
+    }
+    recorded = {"M-1": [list(identity["synth_gaps.py:4"])]}
+    assert lock_coverage.decode_recorded(recorded, identity) == (
+        {"M-1": ["synth_gaps.py:4"]}, set())
+
+    p.write_text("# 头部插一行\n" * 20 + _SYNTH_GAPS, encoding="utf-8")
+    moved = lock_coverage.discriminator_identities(["synth_gaps.py"], tmp_path)
+    assert set(moved.values()) == set(identity.values())     # 身份不受行数影响
+    assert sorted(moved) != sorted(identity)                 # 行号确实整体平移了
+    assert lock_coverage.decode_recorded(recorded, moved) == (
+        {"M-1": ["synth_gaps.py:24"]}, set())                # 身份 → **新**坐标
+
+    # 判别器被删 / 文本改了 → 身份的语料对不上，单独报（不是「空转」，也不是「新缺口」）
+    assert lock_coverage.decode_recorded(
+        {"M-1": [["synth_gaps.py", "assert x > 999", 0]]}, moved) == (
+        {"M-1": []}, {("synth_gaps.py", "assert x > 999", 0)})
 
 
 def test_both_directions_of_the_gap_list_are_controlled(tmp_path):

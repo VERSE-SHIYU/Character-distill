@@ -7,54 +7,150 @@
   ],
   "mutations": {
     "B-2  摘掉 StorageBase.ping 上的 @abstractmethod": [
-      "tests/test_storage_ping.py:75"
+      [
+        "tests/test_storage_ping.py",
+        "with pytest.raises(TypeError) as excinfo:",
+        0
+      ]
     ],
     "B-3  就绪端点从 PUBLIC_PATHS 里摘掉": [
-      "tests/test_health_ready.py:103",
-      "tests/test_health_ready.py:122",
-      "tests/test_health_ready.py:133",
-      "tests/test_health_ready.py:95"
+      [
+        "tests/test_health_ready.py",
+        "assert resp.status_code == 200",
+        0
+      ],
+      [
+        "tests/test_health_ready.py",
+        "assert resp.status_code == 503",
+        0
+      ],
+      [
+        "tests/test_health_ready.py",
+        "assert resp.status_code in (200, 503), f\"公开路径被认证中间件拦下了：{resp.status_code}\"",
+        0
+      ],
+      [
+        "tests/test_health_ready.py",
+        "assert (ok.status_code, bad.status_code) == (200, 503)",
+        0
+      ]
     ],
     "B-4  503 响应体带上 str(exc)": [
-      "tests/test_health_ready.py:104",
-      "tests/test_health_ready.py:112"
+      [
+        "tests/test_health_ready.py",
+        "assert resp.json() == {\"status\": \"unready\"}",
+        0
+      ],
+      [
+        "tests/test_health_ready.py",
+        "assert not leaked, f\"就绪端点的响应体里漏出了这些串：{leaked}\\n原文：{body}\"",
+        0
+      ]
     ],
     "B-5  就绪端点不调 ping、直接回 ready": [
-      "tests/test_health_ready.py:103",
-      "tests/test_health_ready.py:133"
+      [
+        "tests/test_health_ready.py",
+        "assert resp.status_code == 503",
+        0
+      ],
+      [
+        "tests/test_health_ready.py",
+        "assert (ok.status_code, bad.status_code) == (200, 503)",
+        0
+      ]
     ],
     "B-6  Dockerfile 的 HEALTHCHECK 换回存活路径": [
-      "tests/test_health_probe_targets.py:214"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 != 2, ( f\"Dockerfile 的 HEALTHCHECK 探 {path!r}，库坏时返回 {code} —— \" \"容器会照样 healthy，这条探针在所有需要它红的",
+        0
+      ]
     ],
     "B-7  deploy.yml 删掉 SG 的第二段": [
-      "tests/test_health_probe_targets.py:224",
-      "tests/test_health_probe_targets.py:237",
-      "tests/test_health_probe_targets.py:245"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 != 2, ( f\"{name} 的最后一次 gate 调用探 {last!r}，库坏时返回 {code} —— \" \"这个区域在库不可用时不会红\")",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert first != last, ( f\"{name} 的两次 gate 调用探的是同一条路径 {first!r} —— \" \"「app 没起来」与「app 起来了但库连不上」又共用一个信号了\")",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert len(info[\"targets\"]) >= 2, ( f\"{name} 只调用了 {len(info['targets'])} 次 gate（{info['targets']}）—— \" \"两段门至少要",
+        0
+      ]
     ],
     "B-8  deploy.yml 两段顺序颠倒": [
-      "tests/test_health_probe_targets.py:224",
-      "tests/test_health_probe_targets.py:234"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 != 2, ( f\"{name} 的最后一次 gate 调用探 {last!r}，库坏时返回 {code} —— \" \"这个区域在库不可用时不会红\")",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 == 2, ( f\"{name} 的第一次 gate 调用探 {first!r}，库坏时返回 {code} —— \" \"第一段是存活检查，不该依赖库\")",
+        0
+      ]
     ],
     "B-9  锁自己的解析函数恒返回空": [
-      "tests/test_health_probe_targets.py:171"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert docker, \"Dockerfile 里解析不出任何健康检查目标 —— 解析器瞎了，下面的锁在空转\"",
+        0
+      ]
     ],
     "B-10 删掉 SG 存活检查的调用行（注释与文案保留）": [
-      "tests/test_health_probe_targets.py:234",
-      "tests/test_health_probe_targets.py:245"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 == 2, ( f\"{name} 的第一次 gate 调用探 {first!r}，库坏时返回 {code} —— \" \"第一段是存活检查，不该依赖库\")",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert len(info[\"targets\"]) >= 2, ( f\"{name} 只调用了 {len(info['targets'])} 次 gate（{info['targets']}）—— \" \"两段门至少要",
+        0
+      ]
     ],
     "B-11 SG 的存活检查改探就绪路径": [
-      "tests/test_health_probe_targets.py:234"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 == 2, ( f\"{name} 的第一次 gate 调用探 {first!r}，库坏时返回 {code} —— \" \"第一段是存活检查，不该依赖库\")",
+        0
+      ]
     ],
     "B-12 两个区域的 gate 都把 curl 写成固定路径": [
-      "tests/test_health_probe_targets.py:200"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert not info[\"literals\"], ( f\"{name} 的 gate 函数体里出现了写死的路径 {info['literals']} —— \" \"探针目标这时由函数体决定，调用行失去了意义\")",
+        0
+      ]
     ],
     "B-13 就绪端点不调 ping、直接回 ready（本锁红）": [
-      "tests/test_health_probe_targets.py:214",
-      "tests/test_health_probe_targets.py:224"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 != 2, ( f\"Dockerfile 的 HEALTHCHECK 探 {path!r}，库坏时返回 {code} —— \" \"容器会照样 healthy，这条探针在所有需要它红的",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 != 2, ( f\"{name} 的最后一次 gate 调用探 {last!r}，库坏时返回 {code} —— \" \"这个区域在库不可用时不会红\")",
+        0
+      ]
     ],
     "B-14 新增一个只调用一次 gate 的 deploy-xx": [
-      "tests/test_health_probe_targets.py:234",
-      "tests/test_health_probe_targets.py:245"
+      [
+        "tests/test_health_probe_targets.py",
+        "assert code // 100 == 2, ( f\"{name} 的第一次 gate 调用探 {first!r}，库坏时返回 {code} —— \" \"第一段是存活检查，不该依赖库\")",
+        0
+      ],
+      [
+        "tests/test_health_probe_targets.py",
+        "assert len(info[\"targets\"]) >= 2, ( f\"{name} 只调用了 {len(info['targets'])} 次 gate（{info['targets']}）—— \" \"两段门至少要",
+        0
+      ]
     ]
   },
   "controls": [],

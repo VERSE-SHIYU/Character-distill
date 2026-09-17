@@ -850,7 +850,7 @@ def main() -> int:
         print("  矩阵有 mismatch —— 产物**不写**（写下去等于把没核对过的红源入库）。")
         return 1
     lock_coverage.write_artifact(ARTIFACT, "tests/perf/route_facts_mutations.py",
-                                 domain, hits, skipped, controls)
+                                 domain, hits, skipped, controls, root=ROOT)
     print(f"  全部符合预期。产物已写：{ARTIFACT.relative_to(ROOT).as_posix()}")
     print("  （覆盖闭合由 tests/test_lock_coverage.py 核：判别器集合 == 被撞集合）")
     return 0

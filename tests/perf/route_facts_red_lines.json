@@ -8,121 +8,301 @@
   ],
   "mutations": {
     "F-1 enumerate_routes 丢掉入口模块": [
-      "tests/test_route_facts.py:280",
-      "tests/test_route_facts.py:300"
+      [
+        "tests/test_route_facts.py",
+        "assert not only_declared, ( f\"OpenAPI 文档里有、模块枚举里没有的 operation（枚举侧有盲区）：{sorted(only_declared)}\")",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert len(enumerated) == len(ops), ( f\"枚举到 {len(enumerated)} 条、文档声明 {len(ops)} 条 —— 数量不等时\" \"「差集为空」不可能同时成立，说明比",
+        0
+      ]
     ],
     "F-2 openapi 默认 routes 换成空表": [
-      "tests/test_route_facts.py:282",
-      "tests/test_route_facts.py:299",
-      "tests/test_route_facts.py:313"
+      [
+        "tests/test_route_facts.py",
+        "assert not only_enumerated, ( f\"模块枚举里有、OpenAPI 文档里没有的 operation（枚举侧多了不该有的）：{sorted(only_enumerated)}\")",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert len(ops) > 0, \"OpenAPI 文档里一个 operation 都没有 —— spec 生成失效\"",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert ops, ( \"spec 里连一个声明了表单 content 的 op 都没有 —— 要么真的删光了，要么 spec \" \"生成失效，两种都该有人看一眼，不该静默通过\")",
+        0
+      ]
     ],
     "F-4 form_fields 不解 $ref": [
-      "tests/test_route_facts.py:133",
-      "tests/test_route_facts.py:317"
+      [
+        "tests/test_route_facts.py",
+        "assert set(fields) == expected, f\"{path} 的字段集合不对：{sorted(fields)}\"",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert form_fields(path, method), ( f\"{method.upper()} {path} 声明了表单 content 却解析不出字段 —— \" \"探测器（$ref 解析 / conten",
+        0
+      ]
     ],
     "F-5 form_fields 砍掉 urlencoded 分支": [
-      "tests/test_route_facts.py:133",
-      "tests/test_route_facts.py:188"
+      [
+        "tests/test_route_facts.py",
+        "assert set(fields) == expected, f\"{path} 的字段集合不对：{sorted(fields)}\"",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert ops == _SYN_FORM_OPS, ( f\"合成 app 的表单 op 集合不对：多出 {sorted(ops - _SYN_FORM_OPS)}、\" f\"少了 {sorted(_SYN_FORM_",
+        0
+      ]
     ],
     "F-6 is_file_field 不看 anyOf": [
-      "tests/test_route_facts.py:134"
+      [
+        "tests/test_route_facts.py",
+        "assert {n for n, s in fields.items() if is_file_field(s)} == expected_files",
+        0
+      ]
     ],
     "F-7 injected_params 按参数名匹配（不按依赖对象）": [
-      "tests/test_route_facts.py:164"
+      [
+        "tests/test_route_facts.py",
+        "assert injected_params(route, _dep_fn) == expected",
+        0
+      ]
     ],
     "F-8 injected_params 退回 AST 扫 Depends（按写法猜）": [
-      "tests/test_route_facts.py:164"
+      [
+        "tests/test_route_facts.py",
+        "assert injected_params(route, _dep_fn) == expected",
+        0
+      ]
     ],
     "F-9 openapi 不再缓存（新守卫的负控必须亮）": [
-      "tests/test_route_facts.py:266"
+      [
+        "tests/test_route_facts.py",
+        "assert openapi() is cached, \"缓存没生效 —— 下面「重算相等」就失去对象，是假绿\"",
+        0
+      ]
     ],
     "F-10 form_operations 只认 multipart（漏 urlencoded 分支）": [
-      "tests/test_route_facts.py:188"
+      [
+        "tests/test_route_facts.py",
+        "assert ops == _SYN_FORM_OPS, ( f\"合成 app 的表单 op 集合不对：多出 {sorted(ops - _SYN_FORM_OPS)}、\" f\"少了 {sorted(_SYN_FORM_",
+        0
+      ]
     ],
     "F-11 form_operations 恒返回 set()": [
-      "tests/test_route_facts.py:188",
-      "tests/test_route_facts.py:313"
+      [
+        "tests/test_route_facts.py",
+        "assert ops == _SYN_FORM_OPS, ( f\"合成 app 的表单 op 集合不对：多出 {sorted(ops - _SYN_FORM_OPS)}、\" f\"少了 {sorted(_SYN_FORM_",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert ops, ( \"spec 里连一个声明了表单 content 的 op 都没有 —— 要么真的删光了，要么 spec \" \"生成失效，两种都该有人看一眼，不该静默通过\")",
+        0
+      ]
     ],
     "F-12 form_operations 不看 content-type（把所有 op 都算进去）": [
-      "tests/test_route_facts.py:188",
-      "tests/test_route_facts.py:317"
+      [
+        "tests/test_route_facts.py",
+        "assert ops == _SYN_FORM_OPS, ( f\"合成 app 的表单 op 集合不对：多出 {sorted(ops - _SYN_FORM_OPS)}、\" f\"少了 {sorted(_SYN_FORM_",
+        0
+      ],
+      [
+        "tests/test_route_facts.py",
+        "assert form_fields(path, method), ( f\"{method.upper()} {path} 声明了表单 content 却解析不出字段 —— \" \"探测器（$ref 解析 / conten",
+        0
+      ]
     ],
     "R-1a app() 退回 web.server": [
-      "tests/test_route_facts.py:230"
+      [
+        "tests/test_route_facts.py",
+        "assert route_facts.app() is server_module.app, ( \"route_facts 描述的 app 不是全仓那一个 —— 装配层被加载了第二个身份\")",
+        0
+      ]
     ],
     "R-1b 枚举默认模块退回 web.server": [
-      "tests/test_route_facts.py:232"
+      [
+        "tests/test_route_facts.py",
+        "assert \"web.server\" not in sys.modules, ( \"server 模块出现了并列身份 'web.server'：同一文件会被执行两次，对象比对静默错位\")",
+        0
+      ]
     ],
     "R-2 is_file_field 只认 anyOf 内部（漏必填文件的顶层形态）": [
-      "tests/test_route_facts.py:134"
+      [
+        "tests/test_route_facts.py",
+        "assert {n for n, s in fields.items() if is_file_field(s)} == expected_files",
+        0
+      ]
     ],
     "R-3 is_file_field 不看 anyOf（与 F-6 同源，重跑核一致性）": [
-      "tests/test_route_facts.py:134"
+      [
+        "tests/test_route_facts.py",
+        "assert {n for n, s in fields.items() if is_file_field(s)} == expected_files",
+        0
+      ]
     ],
     "V1 新 auth 锁 · Annotated 注入且**未**引用（旧锁的盲区）": [
-      "tests/test_auth_param_used.py:80"
+      [
+        "tests/test_auth_param_used.py",
+        "assert not unregistered, ( f\"新出现「注入 user 却不引用」的端点：\" f\"{ {k: found[k] for k in sorted(unregistered)} }。\" \"要么用上 ",
+        0
+      ]
     ],
     "V6 新 L5 锁 · 同一变异 —— 覆盖面 1 条 → 4 条": [
-      "tests/test_text_failure_messages.py:249"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not unregistered, ( f\"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件\" \"字段（`is_file_field` 按 s",
+        0
+      ]
     ],
     "V8 新 L5 锁 · text op 多一个 Form 字段 —— 原覆盖面等价性": [
-      "tests/test_text_failure_messages.py:249"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not unregistered, ( f\"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件\" \"字段（`is_file_field` 按 s",
+        0
+      ]
     ],
     "V9 新 L5 判据 · 文件字段改成同名的文本 Form 字段（按名字排除的盲区）": [
-      "tests/test_text_failure_messages.py:249"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not unregistered, ( f\"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件\" \"字段（`is_file_field` 按 s",
+        0
+      ]
     ],
     "V11 策略表某条理由改成空串": [
-      "tests/test_text_failure_messages.py:269"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not blank, ( f\"_FORM_METADATA 里这些键的理由是空的 —— 写了理由不等于理由有内容：{_fmt(blank)}\")",
+        0
+      ]
     ],
     "V12 策略表加一条现场不存在的键": [
-      "tests/test_text_failure_messages.py:265"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not stale, ( \"_FORM_METADATA 里的字段已不再出现在任何表单 op 上（路由或字段被删/改名），\" f\"请删除：{_fmt(stale)}\")",
+        0
+      ]
     ],
     "V13 表单 op 上新增一个未登记的非文件字段": [
-      "tests/test_text_failure_messages.py:249"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not unregistered, ( f\"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件\" \"字段（`is_file_field` 按 s",
+        0
+      ]
     ],
     "V14 auth 锁 · ALLOWLIST 某条理由改成空串": [
-      "tests/test_auth_param_used.py:93"
+      [
+        "tests/test_auth_param_used.py",
+        "assert not blank, f\"ALLOWLIST 里这些键的理由是空的：{sorted(blank)}\"",
+        0
+      ]
     ],
     "V15 auth 锁 · 另一种注入写法（无 Annotated）注入且未引用 —— 复核识别半边": [
-      "tests/test_auth_param_used.py:80"
+      [
+        "tests/test_auth_param_used.py",
+        "assert not unregistered, ( f\"新出现「注入 user 却不引用」的端点：\" f\"{ {k: found[k] for k in sorted(unregistered)} }。\" \"要么用上 ",
+        0
+      ]
     ],
     "X-3 经 web/../web 别名路径以 srv_alias 装载同一份 server.py": [
-      "tests/test_route_facts.py:247"
+      [
+        "tests/test_route_facts.py",
+        "assert aliases == [\"server\"], ( f\"装配层这一份文件有并列的模块身份 {aliases} —— 同一文件被加载多次，\" \"得到互不相干的模块对象，`is` 与属性比对静默为假\")",
+        0
+      ]
     ],
     "X-4 同上但走原路径字符串（证明「红源是同一份文件」而非「路径长得怪」）": [
-      "tests/test_route_facts.py:247"
+      [
+        "tests/test_route_facts.py",
+        "assert aliases == [\"server\"], ( f\"装配层这一份文件有并列的模块身份 {aliases} —— 同一文件被加载多次，\" \"得到互不相干的模块对象，`is` 与属性比对静默为假\")",
+        0
+      ]
     ],
     "I-1 移走 auth 锁文件 · L5 仍按 V6 红同一条（不依赖另一把锁）": [
-      "tests/test_text_failure_messages.py:249"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not unregistered, ( f\"这些表单 op 上出现了未登记的非文件 Form 字段：{_fmt(unregistered)}。正文只能走文件\" \"字段（`is_file_field` 按 s",
+        0
+      ]
     ],
     "I-2 移走 L5 锁文件 · auth 仍按 V1 红同一条": [
-      "tests/test_auth_param_used.py:80"
+      [
+        "tests/test_auth_param_used.py",
+        "assert not unregistered, ( f\"新出现「注入 user 却不引用」的端点：\" f\"{ {k: found[k] for k in sorted(unregistered)} }。\" \"要么用上 ",
+        0
+      ]
     ],
     "P-4 empty_reasons 退回整串字符串化（缺失值被变成「None」那样的文本）": [
-      "tests/test_policy_table.py:42"
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.empty_reasons({(\"k\",): reason}) == {(\"k\",)}",
+        0
+      ]
     ],
     "P-5 empty_reasons 只判类型、不 strip（纯空白理由被当成有内容）": [
-      "tests/test_policy_table.py:28",
-      "tests/test_policy_table.py:42"
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.empty_reasons(table) == {(\"empty\", 2), (\"spaces\", 3), (\"tab\", 4)}",
+        0
+      ],
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.empty_reasons({(\"k\",): reason}) == {(\"k\",)}",
+        0
+      ]
     ],
     "P-2 stale_keys 两个参数方向写反": [
-      "tests/test_policy_table.py:54",
-      "tests/test_policy_table.py:61"
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.stale_keys(table, observed) == {(\"gone\", \"post\")}",
+        0
+      ],
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.stale_keys(table, observed) == {(\"a\",)}",
+        0
+      ]
     ],
     "P-3 unexpected 恒返回空集": [
-      "tests/test_policy_table.py:67"
+      [
+        "tests/test_policy_table.py",
+        "assert policy_table.unexpected(observed, table) == {(\"new\", \"post\")}",
+        0
+      ]
     ],
     "T-1 第二条解析库 import（`from docx import Document`）插进 `_extract_pdf` 失败点之前（L6 ② 该红；对象从「把 pymupdf4llm 挪回去」换成「插入第二条」，形状变了）": [
-      "tests/test_text_failure_messages.py:426"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not bad, ( \"这些第三方 import 排在各自函数的失败点之前、且不是该函数的第一件工具：\" + \"；\".join(bad) + \"。把它们挪到校验之后，或说明为什么它必须在失败点之前\" \"（该",
+        0
+      ]
     ],
     "T-2 `from docx import Document` 挪到模块顶层（L6 ① 该红）": [
-      "tests/test_text_failure_messages.py:408"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert not bad, ( \"text_manager.py 模块顶层出现了第三方 import：\" + \"、\".join( f\"{name}（第 {line} 行）\" for name, line in bad",
+        0
+      ]
     ],
     "T-3 `import pymupdf4llm` 回到 `_extract_pdf` 里（L6 入口面的静态守卫该红）": [
-      "tests/test_text_failure_messages.py:482"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert \"pymupdf4llm\" not in _TM_SRC, ( \"`core/text_manager.py` 里又出现了 `pymupdf4llm` —— 它在**包 import 期**无条件\" \"拉进",
+        0
+      ]
     ],
     "T-4 三条函数级解析库 import 全提到模块顶层（负控该红：函数体里一个都认不出来 ——判据面塌了；① 在同一次改动下也会红，但本靶子只跑负控那一个 nodeid，不声称）": [
-      "tests/test_text_failure_messages.py:445"
+      [
+        "tests/test_text_failure_messages.py",
+        "assert third, ( \"没有从**任何函数体里**认出第三方 import（顶层 import 不算 —— 这条数的是下钻\" \"结果）—— 「哪些算解析库」的推导断了（requirements 读不到 / \" ",
+        0
+      ]
     ]
   },
   "controls": [

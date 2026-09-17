@@ -335,14 +335,19 @@ def _located(location: str) -> tuple[str, int]:
 
 
 def gap_keys(uncovered: Iterable[str], root: str | pathlib.Path) -> dict[str, tuple[str, str, int]]:
-    """未覆盖判别器的**稳定身份**：`文件:行号` → `(文件, 判别器源码, 同文本第几处)`。
+    """判别器的**稳定身份**：`文件:行号` → `(文件, 判别器源码, 同文本第几处)`。
 
-    输入是 `gaps()` 的第一项，输出可放进名单作键。返的是**映射**（不是集合）—— 名单报红时
-    要能指回行号，而键里故意没有行号（行号会平移）；映射就是这条回路。
+    返的是**映射**（不是集合）—— 报红时要能指回行号，而键里故意没有行号（行号会平移）；
+    映射就是这条回路。值可直接放进名单作键（`lock_coverage_gaps.ALLOWED_GAPS`）。
 
     按**行号数值**排序取 `nth`，不按 `"文件:行号"` 的字典序 —— 后者在行号跨过 99→100 时
     会把两处同文本判别器的次序对调（字符串里 `"9" > "100"`），同一份名单在两个内容相同的
     树上会算出两种键。
+
+    **`nth` 是「在传进来的这一串里第几处」，不是「在文件里第几处」** —— 这两个数只有在
+    「同文本的几处都同进同出」时才相等。故要文件级稳定序号（写进产物的那种）必须一次传
+    全 `discriminator_identities()` 那个范围，不能逐条变异各算一遍：逐条算时每条的第一个
+    命中都拿到 `nth=0`，同文本的两处会塌成同一个身份。
 
     名单的**双向对账**不在这里：直接用 `policy_table.unexpected(现场, 名单)` 与
     `policy_table.stale_keys(名单, 现场)` —— 与本仓另外两张表（`_FORM_METADATA`、
@@ -362,20 +367,79 @@ def gap_keys(uncovered: Iterable[str], root: str | pathlib.Path) -> dict[str, tu
     return out
 
 
+def discriminator_identities(domain: Iterable[str],
+                            root: str | pathlib.Path) -> dict[str, tuple[str, str, int]]:
+    """覆盖域里**每一条**判别器的身份：`文件:行号` → `(文件, 判别器源码, 同文本第几处)`。
+
+    与 `gap_keys()` 同一套身份（本函数就是它对「整个域」的一次调用），反过来说：
+    身份这套东西只有一份实现。范围比 `gap_keys()` 惯常那次大 —— 是**全部**判别器而不是
+    「未覆盖的那些」，因为两侧都要用它：写产物的一侧把红行号翻成身份存下去，
+    读产物的一侧（`tests/test_lock_coverage.py`）当场重算同一张表，再把身份翻回行号。
+
+    **行号是「算出来的」，从不是「存下来的」** —— 这就是缺陷 54 的修法。原先产物存坐标，
+    于是改任何一处行数（哪怕只动一段 docstring）都让产物与树脱钩：红是响了，但报的是
+    「这条变异空转 / 这里有条没登记的缺口」，真凶却是产物里的坐标过期了。存身份之后，
+    「行数变了」这条路不存在了；产物唯一会失效的方式是**判别器自己的源码文本变了**，
+    而那本来就该重跑矩阵（它变的正是「被撞的是哪条判据」）。
+    """
+    root = pathlib.Path(root)
+    located: list[str] = []
+    for rel in domain:
+        located.extend(f"{rel}:{n}" for n in sorted(discriminators(root / rel)))
+    return gap_keys(located, root)
+
+
+def decode_recorded(recorded: Mapping[str, Sequence[Sequence]],
+                    identity: Mapping[str, tuple[str, str, int]]
+                    ) -> tuple[dict[str, list[str]], set[tuple[str, str, int]]]:
+    """产物里存的身份 → **当场算出来**的行号（`write_artifact` 的逆）。
+
+    返 `(每条变异撞到的行号, 在当前树里找不到的身份)`。第二项非空不并发前一项 ——
+    调用方要**先判它**再往下走：那份产物的身份已经不对应当前的树，此时把剩下的身份硬翻成
+    行号，会同时造出「这条变异空转」与「这里多出一条没登记的缺口」两个假象，
+    而真凶是「产物该重跑了」。两种成因共用一个信号正是本模块反复防的那副面孔。
+    """
+    by_identity = {ident: loc for loc, ident in identity.items()}
+    hits: dict[str, list[str]] = {}
+    unknown: set[tuple[str, str, int]] = set()
+    for label, ids in recorded.items():
+        locs: list[str] = []
+        for item in ids:
+            ident = tuple(item)
+            loc = by_identity.get(ident)
+            if loc is None:
+                unknown.add(ident)
+            else:
+                locs.append(loc)
+        hits[label] = locs
+    return hits, unknown
+
+
 def write_artifact(path: str | pathlib.Path, driver_rel: str, domain: Sequence[str],
                    hits: Mapping[str, Sequence[str]], skipped: Sequence[str],
-                   controls: Sequence[str] = ()) -> None:
-    """`mutations` 只收**该红**的变异（值 = 它红在哪几行）；`controls` 收**该绿**的。
+                   controls: Sequence[str] = (), *, root: str | pathlib.Path) -> None:
+    """`mutations` 只收**该红**的变异（值 = 它撞到哪几条判别器）；`controls` 收**该绿**的。
+
+    **值存的是判别器的身份（源码文本 + 同文本第几处），不是「红在哪一行」** —— 缺陷 54。
+    入参 `hits` 仍是那次真跑取回、已搬回变异前坐标系的 `文件:行号`；身份在这里翻一次，
+    翻不过去的（中间帧、包装内部那条 `raise`、靶子之外的帧）就丢掉 —— `gaps()` 读产物时
+    本来也会与判别器集合求一次交，只是那一步现在提前到了写入侧。行号从此不落盘。
 
     **`controls` 不是分类标签，是把「反证」从「空转」里摘出来的唯一办法。** 一条
     「期望绿」的变异（如 X-5：把 samefile 退回字符串 `==`、同时保留 X-3 的别名装载，
     该变异下判据**仍然通过**，这才证明 X-3 的红源是 samefile 那条判断本身）红源天生为空。
     与 `mutations` 混放，它会被 `gaps()` 记成「空转变异（红了但没撞到判据）」——
     而「反证」与「空转」共用一个信号，正是本模块反复防的那副面孔。
+
+    `root` 是关键字参数（没有默认值）：三个驱动都必须显式回答「身份是在哪棵树上算的」，
+    而它同时也是读的一侧重算身份用的根。忘了传会当场 `TypeError`，不会静默算成别处的树。
     """
+    identity = discriminator_identities(domain, root)
+    mutations = {label: [list(ident) for loc, ident in identity.items() if loc in set(lines)]
+                 for label, lines in hits.items()}
     pathlib.Path(path).write_text(
         json.dumps({"driver": driver_rel, "domain": list(domain),
-                    "mutations": {k: sorted(v) for k, v in hits.items()},
+                    "mutations": mutations,
                     "controls": list(controls), "skipped": list(skipped)},
                    ensure_ascii=False, indent=2, sort_keys=False) + "\n",
         encoding="utf-8")
