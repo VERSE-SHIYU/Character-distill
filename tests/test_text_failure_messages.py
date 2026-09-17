@@ -5,7 +5,7 @@
 又要决定用户看到什么话，于是同一个 `except` 同时接住「我们写的用户文案」和「库的异常
 原文」（DOCX 双包：上屏成了 `"DOCX 解析失败: DOCX 文件无有效文本内容"`）。
 
-本文件锁六件事（判据驱动，**不维护点位白名单** —— 判据从 `raise` 实参的形态、import 的
+本文件锁七件事（判据驱动，**不维护点位白名单** —— 判据从 `raise` 实参的形态、import 的
 **位置**直接推出）：
 
   L1 实参形态（静态 AST）：`text_manager.py` 每条 `raise` 的实参必须是 `_MSG[...]`
@@ -24,6 +24,8 @@
   L6 **import 的位置**：校验失败的路径不得触达解析器 —— 模块顶层不得有第三方 import；
      每个函数里「无守卫」的第三方 import 至多一条（无守卫 = 早于该函数首条 `raise`）。
      哪些算第三方从 `requirements.txt` ∩ 该文件实际 import 推出（缺陷 41 · ④）。
+  L7 **正向**：合法 PDF / 合法 DOCX 解析出**它自己的字**（缺陷 52）。L1–L6 判的全是
+     「该拒绝的拒绝了」—— 失败路径判得再细也不是成功路径的守卫。
 
 为什么 L1 的别名从 import 语句解析、不写成常量：写常量就是「守卫与被守对象之间的
 第二份手工清单」—— 改别名时锁不会红，只会变成假绿。
@@ -572,6 +574,73 @@ def test_l3_oversized_text_screens_table_wording(monkeypatch):
     r = _upload_file(monkeypatch, "big.txt", ("字" * 1_000_001).encode("utf-8"))
     assert r.status_code == 400, r.text
     assert r.json()["detail"] == TEXT_FAILURE_MESSAGES["too_long"].format(limit_text="100 万")
+
+
+# ── L7：正向 —— 合法输入必须解析出它自己的字 ────────────────────────────────
+#
+# 缺陷 52：本文件的 PDF / DOCX 判据**全在失败那一侧**（坏 PDF → 400 + 表里那句；
+# 空 DOCX → 本仓那句），于是「该接受的接受了没有」从来没有被问过。生产上传路由
+# 因此可以 100% 失败 2.5 个月而 CI 全绿 —— 把 import 从函数入口往下挪能让失败路径
+# 更绿，能力却一点没回来。**失败路径的判据再多也不构成成功路径的守卫**，故另立两侧。
+
+
+def _minimal_pdf(text: str) -> bytes:
+    """现造一份最小合法 PDF（一页一行）。不引入二进制夹具。
+
+    `china-s` 是 pymupdf **编进二进制**的内置中文字体（`Font("china-s")` 取到的是
+    「Droid Sans Fallback Regular」，磁盘上没有对应的字体文件），故不依赖
+    `pymupdf-fonts` 那个可选包。用中文而不是 ASCII：生产里的语料是中文，
+    而这份夹具是**唯一**一份会被解析的合法 PDF。
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 100), text, fontsize=12, fontname="china-s")
+    blob = doc.tobytes()
+    doc.close()
+    return blob
+
+
+def test_l7_a_valid_pdf_parses_to_its_own_text(tmp_path):
+    """正向守门：合法 PDF 走 `_extract_pdf` 出来的就是它里面的字。
+
+    **边界的写明（别拿这条当全覆盖）**：它锁的是解析函数这一段。路由那一段
+    （`.pdf` → `_extract_pdf` → 落库）今天由上面 L3 的两条**坏** PDF 用例覆盖到
+    「进得去解析器」，覆盖不到「解析成功之后落库」。
+    """
+    text = "阿朱抬起头，看着窗外的雨。"
+    p = tmp_path / "ok.pdf"
+    p.write_bytes(_minimal_pdf(text))
+
+    got = TextManager._extract_pdf(str(p))
+    assert got.strip() == text, (
+        f"合法 PDF 解析不出它自己的字。取到 {got!r}（原文本 {text!r}）——\n"
+        "若取到的是空串：`page.get_text()` 这条路断了（缺陷 44 的形态：解析前端在\n"
+        "包 import 期拉进 onnxruntime，而生产镜像里没有它，于是每一份上传都失败）；\n"
+        "若这里抛异常：栈底会点名是哪一个库/哪一行 —— 不要在本机拿「崩没崩」当判据\n"
+        "（缺陷 50：System32 里那个同名的 onnxruntime.dll 会抢先加载，整个进程被杀）。")
+
+
+def test_l7_a_valid_docx_parses_to_its_own_paragraphs(tmp_path):
+    """同源路径同批补：`_extract_docx` 原先也只有「空 DOCX → 本仓那句」。
+
+    空 DOCX 用例会走到 `Document(...)` 并把解析跑完，但它的断言仍然是一个**失败**
+    结局 —— 「解析得出来」这件事同样没有被问过。
+    """
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("第一段")
+    doc.add_paragraph("第二段")
+    p = tmp_path / "ok.docx"
+    doc.save(p)
+
+    got = TextManager._extract_docx(str(p))
+    assert got == "第一段\n\n第二段", (
+        f"合法 DOCX 解析不出它自己的段落。取到 {got!r} —— 期望两段以空行相接。\n"
+        "取到空串 = `doc.paragraphs` 那条路断了（`_extract_docx` 会把空结果判成\n"
+        "`docx_empty` 抛出来，所以这里更可能直接抛异常而不是回空串）。")
 
 
 def _string_literals(tree: ast.Module) -> set[str]:

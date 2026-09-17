@@ -303,6 +303,20 @@
         "assert third, ( \"没有从**任何函数体里**认出第三方 import（顶层 import 不算 —— 这条数的是下钻\" \"结果）—— 「哪些算解析库」的推导断了（requirements 读不到 / \" ",
         0
       ]
+    ],
+    "S-1 `_extract_pdf` 解析成功后回空串（`return pdf_text` → `return \"\"`）——L7 正向守门该红": [
+      [
+        "tests/test_text_failure_messages.py",
+        "assert got.strip() == text, ( f\"合法 PDF 解析不出它自己的字。取到 {got!r}（原文本 {text!r}）——\\n\" \"若取到的是空串：`page.get_text()` 这条路断",
+        0
+      ]
+    ],
+    "S-2 `_extract_docx` 解析成功后回空串（同源路径同批补的那条）—— L7 正向守门该红": [
+      [
+        "tests/test_text_failure_messages.py",
+        "assert got == \"第一段\\n\\n第二段\", ( f\"合法 DOCX 解析不出它自己的段落。取到 {got!r} —— 期望两段以空行相接。\\n\" \"取到空串 = `doc.paragraphs` 那条路断了（",
+        0
+      ]
     ]
   },
   "controls": [

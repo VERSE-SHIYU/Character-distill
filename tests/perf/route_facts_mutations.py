@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""缺陷 42 变异矩阵驱动 —— 七组共 43 条（F12/R4/X3/V13/I3/P4/T4），逐条还原并核对 sha256。
+"""缺陷 42 变异矩阵驱动 —— 共 8 组 45 条（F12/R4/X3/V13/I3/P4/T4/S2），逐条还原并核对 sha256。
 
 **为什么入库。** 缺陷 42 的三轮 commit（`7009d77` 事实层 / `3e2670d` 返工 /
 `2c9fee9` 收尾 / 本步两把锁迁移）每一条都引用了本脚本跑出来的「哪条红、红在哪句」。
@@ -21,11 +21,13 @@
     python tests/perf/route_facts_mutations.py --group P    # 只跑策略表校验层那组
     python tests/perf/route_facts_mutations.py --with-container   # 追加 F-3 容器档
 
-七组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
+八组：**F/R/X** 打事实层自己（第 1 步三轮），**V** 打第 3 步迁移，**I** 打两把锁的
 隔离性（移走一把、以及交错调用后本层输出指纹不变 —— 隔离判据 3 的断言形态），
 **P** 打豁免表校验层 `tests/policy_table.py`（L5 与 auth 锁共用的那张「豁免 + 理由」表），
 **T** 打 `core/text_manager.py` 里解析库的 import **位置**（L6；靶子只指到那一条判据，
-理由见 T 组注释 —— T-1 在 C 落地时换过形态，那条注释里记着换的是什么）。
+理由见 T 组注释 —— T-1 在 C 落地时换过形态，那条注释里记着换的是什么），
+**S** 打同一个文件里解析函数的**返回值**（L7 正向守门 —— 缺陷 52；T 打「摸没摸到解析器」，
+S 打「摸到了以后拿到了什么」。二者互补：T 组全绿而成功路径照样可以是坏的）。
 **I 组会临时把一把锁改名成 `.hidden`**，跑完立刻还原；收尾核对会点名残留。
 
 **跨平台。** X 组的别名路径是 `web/../web/server.py` —— 两个平台都满足「字符串与正路不同、
@@ -600,8 +602,27 @@ T_GROUP = [
      "RED", "没有从**任何函数体里**认出第三方 import"),
 ]
 
+# S-*：解析函数的**返回值**（L7 —— 缺陷 52「成功路径没有任何守卫」）。T 组问的是
+# 「失败路径摸没摸到解析器」，S 组问的是「摸到了以后拿到了什么」—— 两条互补，不是重复：
+# T 组全绿时成功路径照样可以是坏的（把 import 往下挪就能让 T 更绿而能力一点不回来，
+# 缺陷 41 · ④ 与 44 都栽在这上面）。形态取「解析成功之后回空串」而不是抛异常：
+# 空串正是**缺陷 44 表面上最像的样子** —— 上传不报错，只是什么都没拿到，那种坏法
+# 在日志里没有栈，只能靠一条正向判据抓住。
+S_GROUP = [
+    ("S-1 `_extract_pdf` 解析成功后回空串（`return pdf_text` → `return \"\"`）——"
+     "L7 正向守门该红",
+     "tests/test_text_failure_messages.py::test_l7_a_valid_pdf_parses_to_its_own_text",
+     [("repl", TM, [("        return pdf_text\n", '        return ""\n')])],
+     "RED", "合法 PDF 解析不出它自己的字"),
+
+    ("S-2 `_extract_docx` 解析成功后回空串（同源路径同批补的那条）—— L7 正向守门该红",
+     "tests/test_text_failure_messages.py::test_l7_a_valid_docx_parses_to_its_own_paragraphs",
+     [("repl", TM, [('        return "\\n\\n".join(paragraphs)\n', '        return ""\n')])],
+     "RED", "合法 DOCX 解析不出它自己的段落"),
+]
+
 GROUPS = {"F": F_GROUP + F3_GROUP, "R": R_GROUP, "X": X_GROUP, "V": V_GROUP,
-          "I": I_GROUP, "P": P_GROUP, "T": T_GROUP}
+          "I": I_GROUP, "P": P_GROUP, "T": T_GROUP, "S": S_GROUP}
 
 
 # ── 执行 ───────────────────────────────────────────────────────────────────
@@ -730,34 +751,41 @@ def _alias_gate():
     return True
 
 
-_DOC_STAT = re.compile(r"七组共\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
+_DOC_STAT = re.compile(r"共\s*(\d+)\s*组\s*(\d+)\s*条\s*[（(]([^）)]*)[)）]")
 _DOC_GROUP = re.compile(r"([A-Z])(\d+)")
 
 
 def _count_gate():
-    """文档字符串里的条数必须等于各组分组的现数。
+    """文档字符串里的**组数与条数**必须等于各组分组的现数。
 
     手写的计数会漂移：P 组退一条补两条那次，`AGENTS.md` 改成了 39，这里仍是 38，
     而没有任何东西报错。**匹配不到也拒跑** —— 那等于自检悄悄失效，而「自检失效」与
     「自检通过」长得一样（§四：两种成因共用一个信号）。拒跑时同时打印文档里写的与
     分组的现数，让订正是机械的。
+
+    **组数也是机器核的（2026-09-17，加 S 组时）**：原先那句写「七组共 N 条」，正则里
+    把「七」写死，于是加组时正则**匹配不到**而不是「组数对不上」—— 拒跑是拒跑了，
+    但原因行说「分组的括号匹配不到」，看的人会去查括号。改成 `共 N 组 M 条`，
+    两个数都从 `GROUPS` 现算，加组时该报的是「文档说 7 组、现数 8 组」。
     """
     live = {g: len(v) for g, v in GROUPS.items()}
     m = _DOC_STAT.search(__doc__ or "")
-    stated_total = int(m.group(1)) if m else None
-    stated = {g: int(n) for g, n in _DOC_GROUP.findall(m.group(2))} if m else {}
-    if stated_total == sum(live.values()) and stated == live:
+    stated_groups = int(m.group(1)) if m else None
+    stated_total = int(m.group(2)) if m else None
+    stated = {g: int(n) for g, n in _DOC_GROUP.findall(m.group(3))} if m else {}
+    if (stated_groups == len(live) and stated_total == sum(live.values())
+            and stated == live):
         return True
-    print("\n文档字符串的条数与分组的现数不一致，拒绝跑（自检失效与自检通过长得一样）：\n"
-          f"  文档：共 {stated_total} 条 {stated or '（分组的括号匹配不到）'}\n"
-          f"  现数：共 {sum(live.values())} 条 {live}")
+    print("\n文档字符串的组数/条数与分组的现数不一致，拒绝跑（自检失效与自检通过长得一样）：\n"
+          f"  文档：共 {stated_groups} 组 {stated_total} 条 {stated or '（分组的括号匹配不到）'}\n"
+          f"  现数：共 {len(live)} 组 {sum(live.values())} 条 {live}")
     return False
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--group", default="FRVXIPT",
-                    help="要跑的组，如 V 或 FRVXIPT（默认全部 —— 文档称本脚本为「全矩阵」，"
+    ap.add_argument("--group", default="FRVXIPTS",
+                    help="要跑的组，如 V 或 FRVXIPTS（默认全部 —— 文档称本脚本为「全矩阵」，"
                          "默认值必须与这个说法一致，否则「不带参数跑一遍」少跑一组却看不出来）")
     ap.add_argument("--with-container", action="store_true",
                     help="追加 F-3：把枚举换成 isinstance(app.routes)，在上锁 fastapi 版本里复跑")
