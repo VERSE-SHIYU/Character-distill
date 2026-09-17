@@ -184,7 +184,9 @@ async def _ensure_session(
         card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
     )
     new_id = await asyncio.to_thread(
-        text_manager._create_session, text_rec["content"], card, all_characters, rag, card_id, user_id,
+        text_manager._create_session, text_rec["content"], card,
+        all_characters=all_characters, rag=rag,
+        card_id=card_id, user_id=user_id,
     )
 
     # Steal engine into the original session_id

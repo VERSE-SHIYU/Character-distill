@@ -519,8 +519,9 @@ class TextManager:
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards, user_id)
             session_id = await asyncio.to_thread(
-                self._create_session, content, card, all_characters, None,
-                card_id, user_id,
+                self._create_session, content, card,
+                all_characters=all_characters, rag=None,
+                card_id=card_id, user_id=user_id,
             )
         except Exception as exc:
             print(f"[TextManager] Create session failed: {exc}")
@@ -581,8 +582,9 @@ class TextManager:
         all_chars = await self._build_all_characters(text_id, existing_cards, user_id)
 
         session_id = await asyncio.to_thread(
-            self._create_session, content, card, all_chars, None,
-            actual_card_id, user_id,
+            self._create_session, content, card,
+            all_characters=all_chars, rag=None,
+            card_id=actual_card_id, user_id=user_id,
         )
         await self._storage.save_session(session_id, actual_card_id, "", "", user_id)
 
@@ -632,6 +634,7 @@ class TextManager:
         self,
         text: str,
         card: CharacterCard,
+        *,
         all_characters: list[dict[str, Any]] | None = None,
         rag: Any = None,
         card_id: str = "",
@@ -640,7 +643,13 @@ class TextManager:
         embedding_key: str = "",
         embedding_region: str = "",
     ) -> str:
-        """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)"""
+        """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
+
+        `*` 之后全 keyword-only：可选参数有 7 个且类型都是 str，按位置传来错位不会报错，
+        只会静默把值装进邻近的参数。曾发生过一次 —— history.py 多传两个实参，
+        `embedding_key` 落进 `user_role`，随 prompt 发给模型方并明文落进
+        `sessions.affinity_state`（缺陷 G）。锁在这里，调用点增加也不会失效。
+        """
         from deps import get_memory_manager
         engine = ChatEngine(
             self._llm, rag, card,

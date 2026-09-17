@@ -1413,7 +1413,9 @@ async def start_session(
             except Exception:
                 pass
             session_id = await asyncio.to_thread(
-                text_manager._create_session, content, card, all_characters, None, req.card_id, user_id,
+                text_manager._create_session, content, card,
+                all_characters=all_characters, rag=None,
+                card_id=req.card_id, user_id=user_id,
                 user_role=req.user_role,
             )
             # Fire-and-forget scene index via isolated service
