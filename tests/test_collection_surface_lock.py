@@ -93,9 +93,14 @@ def _walk(root: pathlib.Path):
 
     与 `tests/test_exception_pickle_lock.py` 等既有普查同一份排除表，只有遍历方式不同：
     那边用 `REPO_ROOT.rglob("*.py")` 再逐条筛（走完全树才筛），这里用 `os.walk` +
-    `dirs[:]` 原地剪枝。**实测差 167 倍**（10.05s → 0.06s，结果同为 321 个文件）——
-    差值全在 `services/gptsovits`（22738 个不入库的 .py）与 `.venv` 上：rglob 会把它们
-    走完再丢掉。本锁一次收集要跑三遍，那 30s 是白付的。
+    `dirs[:]` 原地剪枝 —— **实测快一个数量级以上，结果同**（`2026-09-15 实测 167×；
+    2026-09-17 复测 36×、同日再测 67×` —— 比值随手一测就翻倍，**这类数字不是指标**，
+    别拿它当验收门槛）。「结果同」不是目视：两法产出的路径集合逐元素相等（322 个，
+    差集两向皆空）。差值全在 `services/gptsovits`（22738 个不入库的 .py）与 `.venv` 上：
+    rglob 会把它们走完再丢掉，而本锁一次收集要跑三遍。
+
+    「为什么只改这一把锁、其余仍是 rglob」是**决策**，写在 AGENTS.md 缺陷 43 条目；
+    这里只写**机制**（§四「同一个理由不要落在三个地方」）。
     """
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _PRUNED_DIRS]
