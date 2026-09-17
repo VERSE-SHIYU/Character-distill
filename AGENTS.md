@@ -747,10 +747,25 @@ config.yaml 现值（现读，非转述）：
 - **判据命令**：`python tests/perf/route_facts_mutations.py`（全矩阵，末行给结论；`--group V` / `--group I` / `--group P` 单跑）、`python -m pytest tests/test_route_facts.py tests/test_policy_table.py tests/test_auth_param_used.py tests/test_text_failure_messages.py -q`、`git diff --stat`（应只有 `tests/` 下的锁与脚本 + `AGENTS.md`，无 `web/` `core/` `storage/` `adapters/` —— 本缺陷是锁的缺陷，不是业务缺陷）
 - **收口一处：策略层理由判空改为按类型判定（Commit A）** —— `empty_reasons` 原先走「先字符串化再 strip」，于是理由写成 `None` 时被变成 `"None"`、判为**有内容**：把 `/api/voice/ref-audio/upload` 的 `ref_text` 理由改成 `None`，L5 **全绿**。这是本条病灶的第五次显形（判的是「转成字符串之后长不长」，不是「理由在不在」），只是长在了策略层自己身上。现在先判类型再判内容，非 `str` 一律算空；变异 P-4（把字符串化请回来 → `None` 用例红）与 P-5（只判类型、不 strip → 纯空白理由用例红）各打一个新分支。**原 P-1 退役**：它的变异是「`str()` 之后丢掉 strip」，而那段 `str()` 已删，新写法下与 P-5 逐字同形 —— 编号留空位不复用，免得台账里的旧编号改指别的事。
 
-**43. `web/test_spa_fallback.py` 在 `tests/` 之外，pytest 从不收集它** —— 状态：**记账（不修，待裁）**（2026-09-15 缺陷 42 结案时顺带普查发现）
+**43. `web/test_spa_fallback.py` 在 `tests/` 之外，pytest 从不收集它** —— 状态：**已修（`1060495`，2026-09-17）**（2026-09-15 缺陷 42 结案时顺带普查发现）
 - 实测：该文件有 5 条 `def test_*`；`pytest.ini` 的 `testpaths = tests` ⇒ `pytest --collect-only` 里它 **0 命中**，全仓无任何 workflow / 脚本引用过它（`grep` 全仓 yml/ini/cfg/toml/sh 零命中）。
 - 形态：该文件自带 `__main__` 运行器（`python web/test_spa_fallback.py` 才是它的既定用法），所以它不是「写坏的测试」，是**放错位置的测试** —— 覆盖的命题（静态资源优先于 catch-all / 中文文件名 / SPA 回退 / `/api/*` 不被回退吃掉 / 路径穿越被挡）全都有价值，只是**没有任何自动化在跑它**。属 §四 那条「一条恒 skip 的锁和没有锁是一回事」的邻居：**不被收集的测试与没有测试是一回事**。
-- 另一处形态（记下以便裁定）：`_setup()` 在**模块级**执行（import 时即往 `_STATIC_DIR` 写测试文件）—— 一旦将来有人 import 它，就会在收集期产生副作用。今天不可达，因为没人 import。
+- **用户裁定（2026-09-17）：不移动文件，加判据。** 理由：`_STATIC_DIR` 是 `web/server.py` 的模块级常量，而这个文件 `from server import app, _STATIC_DIR` —— **移文件要干净就得改生产代码**，为整理测试位置改生产代码是本末倒置。判据写在**那一类**上（「有文件长得像测试但不会被跑」），不写在这一个文件上。
+- **判据的落点（`1060495`）**：新增 `tests/test_collection_surface_lock.py` —— 全仓「像个测试」的文件集合必须都在收集面内，差集**两向都查**（现场有而名单没有 → 点名；名单有而现场没有 → 逼删）。机械校验交给既有的 `tests/policy_table.py`（「人声明的豁免表」的单一出口），**没有另造一套**；豁免表 `_OUT_OF_SURFACE` 只有一条（本文件），理由写在表里。
+- **两个事实都从 `pytestconfig` 现读，一个都不写死**：收集面 = `testpaths` 声明的目录树；「像个测试」= 文件名匹配 `python_files` **且**模块体里有匹配 `python_functions` / `python_classes` 的可收集条目（匹配规则照抄 `PyobjMixin._matches_prefix_or_glob_option`：先 `startswith`，含通配符才 `fnmatch` —— `python_functions` 的默认值是 `["test"]` 前缀，**不是** `test*`，拿 fnmatch 套会一个都不匹配）。
+- **两个谓词都承重（四条合成输入各钉一个方向，全部实测出来的真反例）**：
+  - `web/server.py` 里 `async def test_gptsovits_connection` / `test_funasr_connection` 与 `web/routers/auth.py` 的 `test_embedding` 是**路由处理器**，只有函数名对得上 ⇒ 光看函数名会逼人去登记一堆路由；
+  - `scripts/test_distill.py`、`scripts/test_search_api.py`、`tests/test_chat.py` 一类是吃 `sys.argv` / 带 `main()` 的**手工脚本**，只有文件名对得上 ⇒ 光看文件名会凭空造缺口；
+  - `tests/test_admin_tasks_api.py` 一类**整份只有 `class Test*`**（面内共 30+ 份）⇒ 只查模块级函数的普查会漏掉它们 —— **假阴性比假阳性坏，那是真的失守**；
+  - 嵌在别的函数里的 `def test_*` 不可收集 ⇒ 收进普查是凭空造缺口。
+- **遍历方式（与既有普查唯一的偏差，如实记）**：用 `os.walk` + `dirs[:]` **原地剪枝**，而不是「`rglob` 完再逐条筛」（排除表与 `tests/test_exception_pickle_lock.py` 逐字同一份）。**实测差 167 倍**（10.05s → 0.06s，两者结果同为 321 个文件）—— 差值全在 `services/gptsovits`（22738 个不入库的 `.py`）与 `.venv` 上，rglob 会把它们走完再丢掉。本锁一次收集要跑三遍，那 30s 是白付的。既有那几把锁仍是 rglob，**本轮只记不改**（不在本条目射程内）。
+- **变异验证（两臂，全量已还原 —— `git status` 只剩新文件）**：
+  - 臂 ①：造 `web/test_zz_probe.py`（含 `def test_*`、在收集面外）→ 只有「现场有、名单没有」那条红并点名该文件，另外四条不动（证明是一条独立判据）。
+  - 臂 ②：`git mv web/test_spa_fallback.py tests/` → 该方向立刻变绿，而「名单只许减少」那条红并点名要删的行；**把那行删掉后五条全绿** —— 这正是验收里「挪回收集面 → 判据应变绿」的落点。判据不替你宣布「已修」，它只把陈旧的那一行指出来（两向表的既有语义，同 `lock_coverage_gaps` 的「名单只许减少」）。
+- **另补一条自证**：普查必须扫到本文件自己（`test_the_census_finds_the_lock_itself`）—— 否则「整片扫不到」（`testpaths` 读空、prune 表误伤 `tests/`、AST 全解析失败）会让两条判据**恒绿**。自证不靠魔法数字，本文件永远存在、永远叫 `test_*.py`、永远有 `def test_*`。
+- **这条锁看不见的漂移（如实记，不假装覆盖）**：① CI 打的是 `pytest tests/`（显式路径让 `testpaths` 不生效），今天与 `testpaths` 指向同一个目录，将来若改成 `pytest 别的目录/`，本判据看不见；② **逐案**的排除面（`--ignore` / 嵌套 `collect_ignore`）不在判据内 —— 本仓今天一处都没有（`git grep 'collect_ignore'` 零命中），真出现了它会以「文件在目录里却没被跑」的形态绕过。都不提前造机制。
+- **同源普查的另一族（只记不修，本条目射程外）**：`tests/` 下有 **9 份**名字匹配 `python_files` 却在 pytest 下产出 **0 条** 的文件（`test_chat.py` / `test_connection.py` / `test_distill.py` / `test_distill_progress.py` / `test_following_api.py` / `test_integration.py` / `test_migrate_sqlite_to_pg.py` / `test_rag.py` / `smoke_test.py`），`scripts/` 下另有 2 份（`test_distill.py` / `test_search_api.py`）。它们是「带 `main()` + `if __name__ == "__main__"` 的手工脚本」，**被收集但不产出条目** —— 与本体是同一类病的另一个住址（「像个测试却不跑」），但形态与处置都不同（那是命名问题，不是位置问题），按「发现新问题只记不修」留在这里。
+- 另一处形态（记下以便裁定）：`_setup()` 在**模块级**执行（import 时即往 `_STATIC_DIR` 写测试文件）—— 一旦将来有人 import 它，就会在收集期产生副作用。今天不可达，因为没人 import。**这也是不选「把 `web/` 加进 `testpaths`」这条路的理由**：那样收集期就会写进生产的静态目录，收集中途失败时 `_teardown()` 不会跑到，留下 `assets/x.js` 与 `中文.png`。
 - 修法（待裁）：把文件移进 `tests/`（需处理 `web/` 的 `sys.path` 与 `_STATIC_DIR` 写入的位置）或加进 `testpaths`；两者都要顺带处理模块级 `_setup()`。**本轮不动**（缺陷 42 的命题是锁的判据，不是测试布局）。
 
 **44. 镜像里没有 `onnxruntime`，而 PDF 解析在「包 import 期」就拉它 ⇒ 生产上「每一份」PDF 上传都失败** —— 状态：**已修**（2026-09-16，方案 C）
