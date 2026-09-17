@@ -419,5 +419,63 @@ def baseline_ok(summary: str) -> bool:
     **`SKIP` 在基线里不算坏**：那是本环境前提不成立（实测 `test_storage_ping.py` 基线就是
     「4 passed, 2 skipped」—— B-1/B-1b 的锁版 sqlite 前提），基线与变异两次都会 skip，
     红源照样说得清。红与跑不起来才是「说不清红源」。
+
+    「可用吗」这个问题只有一个实现（下面那个），这里只是它的布尔投影 —— 两个独立的判定
+    会各自漂移，而漂移不报错（缺陷 42 第 3b 步收掉的形态）。
     """
-    return outcome(summary) in (GREEN, SKIP)
+    return baseline_verdict(summary) == ""
+
+
+# 基线门的两种拒跑成因（缺陷 45）。**不能共用一个信号**：两者的下一步动作不同。
+BASELINE_RED = "基线不绿"            # 跑起来了、但红 → 修锁
+BASELINE_UNUSABLE = "基线不可用"     # 压根没跑起来（拿不到汇总行）→ 修环境
+
+EXIT_BASELINE_RED = 2         # 与其余前置门（条数门 / docker 门 / 别名门）同为「拒跑」
+EXIT_BASELINE_UNUSABLE = 3    # 这一支原先也是 2，于是脚本侧也分不出是哪一种
+
+
+def baseline_verdict(summary: str) -> str:
+    """先验基线门的判档：可用 → `""`；不可用 → **成因**（`BASELINE_RED` / `BASELINE_UNUSABLE`）。
+
+    **为什么要分成两支。** 基线门存在的唯一理由是让「变异后红」说得清红源，而
+    「基线**跑不起来**」与「基线**绿、变异没红**」是两件完全不同的事，下一步动作也不同：
+    前者要装/修环境（实测：镜像内没 pytest 时四个靶子全落到这里，`_run` 回 `RUNAWAY`），
+    后者要修锁。原先两支共用 `baseline_ok` 的 `False`、同一句「基线不绿…先修基线」、
+    同一个退出码 —— 于是「环境没装好」被报成「基线坏了」，人按报错去查锁，越查越远。
+
+    判据就是题面那句「解析不到 `N passed` 即不可用」：`outcome` 只在拿得到汇总行时才可能
+    回 `GREEN`/`SKIP`/`RED`，拿不到就回 `RUNAWAY`。
+    """
+    verdict = outcome(summary)
+    if verdict in (GREEN, SKIP):
+        return ""
+    return BASELINE_UNUSABLE if verdict == RUNAWAY else BASELINE_RED
+
+
+def refuse_on_baseline(bad: Mapping[str, str]) -> int:
+    """基线门拒跑：按成因分组打印结论，回该成因对应的退出码（三个驱动共用这一份）。
+
+    `bad` 是 `{靶子: 成因}`，由各驱动自己的 `_baseline_gate()` 收集 —— 哪些靶子属于基线
+    是各驱动的策略，怎么判、怎么报是这一层的事（与 `policy_table` 同一条分工）。
+
+    **两种成因同时出现时按「不可用」退**：那时说「先修基线」是错的建议（环境里根本没有
+    能跑的东西），而「先修环境」至少是可执行的那一步。
+    """
+    by_cause: dict[str, list[str]] = {}
+    for target, cause in bad.items():
+        by_cause.setdefault(cause, []).append(target)
+
+    print()
+    for cause in (BASELINE_UNUSABLE, BASELINE_RED):
+        if cause not in by_cause:
+            continue
+        print(f"{cause} —— 拒绝跑变异矩阵（红源说不清）。靶子：")
+        for target in sorted(by_cause[cause]):
+            print(f"  {target}")
+    if BASELINE_UNUSABLE in by_cause:
+        print("这些靶子上 pytest **根本没跑起来**（拿不到汇总行）—— 先修环境，不是修锁。"
+              "容器腿要在镜像里补：`pip install -q pytest pytest-asyncio onnxruntime`。")
+        return EXIT_BASELINE_UNUSABLE
+    print("这些靶子跑起来了、但有真红的判据 —— 先修基线；否则变异后的红与它混在一起，"
+          "分不出是谁红。")
+    return EXIT_BASELINE_RED

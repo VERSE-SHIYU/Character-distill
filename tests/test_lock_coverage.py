@@ -449,3 +449,42 @@ def test_baseline_accepts_skip_but_not_red_or_runaway():
     assert lock_coverage.baseline_ok("4 passed, 2 skipped in 3.3s")
     assert not lock_coverage.baseline_ok("1 failed in 0.4s")
     assert not lock_coverage.baseline_ok(lock_coverage.RUNAWAY)
+
+
+def test_the_two_causes_of_an_unusable_baseline_are_distinct():
+    """「跑不起来」与「跑起来了但红」必须判成**两种**成因（缺陷 45）。
+
+    两者的下一步动作不同：前者修环境（容器腿缺 pytest/onnxruntime）、后者修锁。共用一个
+    信号时，一个人拿着「基线不绿」去翻锁，而真实原因是 pytest 压根没装 —— 拒跑了，但指错方向。
+    """
+    for usable in ("19 passed in 6.6s", "4 passed, 2 skipped in 3.3s"):
+        assert lock_coverage.baseline_verdict(usable) == "", usable
+    for red in ("1 failed in 0.4s", "1 failed, 3 passed in 0.4s", "2 errors in 1.1s"):
+        assert lock_coverage.baseline_verdict(red) == lock_coverage.BASELINE_RED, red
+    assert lock_coverage.baseline_verdict(lock_coverage.RUNAWAY) == lock_coverage.BASELINE_UNUSABLE
+    assert lock_coverage.BASELINE_RED != lock_coverage.BASELINE_UNUSABLE
+
+
+def test_refuse_on_baseline_exits_by_cause(capsys):
+    """拒跑的退出码按成因分档，且文案点名靶子（三种组合都要控）。
+
+    脚本侧原先只有 code 2 一个信号：CI 日志里看得出「拒跑」，看不出该修环境还是修锁。
+    """
+    t1, t2 = "tests/test_a.py", "tests/test_b.py"
+
+    code = lock_coverage.refuse_on_baseline({t1: lock_coverage.BASELINE_RED})
+    out = capsys.readouterr().out
+    assert code == lock_coverage.EXIT_BASELINE_RED
+    assert t1 in out and "先修基线" in out
+
+    code = lock_coverage.refuse_on_baseline({t1: lock_coverage.BASELINE_UNUSABLE})
+    out = capsys.readouterr().out
+    assert code == lock_coverage.EXIT_BASELINE_UNUSABLE
+    assert t1 in out and "先修环境" in out and "先修基线" not in out
+
+    # 两种同时出现：按「不可用」退 —— 环境没修好之前，另一支的结论本来也拿不到。
+    code = lock_coverage.refuse_on_baseline({
+        t1: lock_coverage.BASELINE_RED, t2: lock_coverage.BASELINE_UNUSABLE})
+    out = capsys.readouterr().out
+    assert code == lock_coverage.EXIT_BASELINE_UNUSABLE
+    assert t1 in out and t2 in out

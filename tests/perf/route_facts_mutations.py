@@ -698,15 +698,20 @@ def _run_py(code: str) -> tuple[str, list[str]]:
     return ("OK" if r.returncode == 0 else f"退出码 {r.returncode}"), bad
 
 
-def _baseline_gate():
-    """先验基线：四把锁全绿才开跑 —— 否则「变异后红」说不清红源。"""
-    bad = []
+def _baseline_gate() -> dict[str, str]:
+    """先验基线：四把锁全绿才开跑 —— 否则「变异后红」说不清红源。
+
+    返回 `{靶子: 成因}`，空 dict = 可开跑。**两种成因由 `lock_coverage.baseline_verdict`
+    分开**（缺陷 45）：「跑不起来」与「跑起来了但红」的下一步动作不同，见那里的说明。
+    """
+    bad: dict[str, str] = {}
     for target in ("tests/test_route_facts.py", "tests/test_policy_table.py",
                    "tests/test_auth_param_used.py", "tests/test_text_failure_messages.py"):
         summary, _, _, _ = _run(target)
         print(f"  基线 {target:44s} {summary}")
-        if not lock_coverage.baseline_ok(summary):
-            bad.append(target)
+        cause = lock_coverage.baseline_verdict(summary)
+        if cause:
+            bad[target] = cause
     return bad
 
 
@@ -764,9 +769,9 @@ def main() -> int:
     baseline = {p: p.read_bytes() for p in TARGETS}
 
     print("== 先验基线 ==")
-    if _baseline_gate():
-        print("\n基线不绿 —— 拒绝跑变异矩阵（红源说不清）。先修基线。")
-        return 2
+    bad_baseline = _baseline_gate()
+    if bad_baseline:
+        return lock_coverage.refuse_on_baseline(bad_baseline)
 
     groups = [g for g in args.group.upper() if g in GROUPS]
     if "X" in groups and not _alias_gate():

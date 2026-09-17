@@ -379,18 +379,22 @@ def _docker_gate() -> bool:
     return False
 
 
-def _baseline_gate() -> list[str]:
+def _baseline_gate() -> dict[str, str]:
     """先验基线：两把锁既不红、也跑得起来才开跑 —— 否则「变异后红」说不清红源。
+
+    返回 `{靶子: 成因}`，空 dict = 可开跑。**两种成因由 `lock_coverage.baseline_verdict`
+    分开**（缺陷 45）：「跑不起来」与「跑起来了但红」的下一步动作不同，见那里的说明。
 
     事实层那把锁也要绿：G-21/G-22 的红源落在它身上，它自己先红的话，那两条的「红」就
     分不清是变异造成的还是本来就红。
     """
-    bad = []
+    bad: dict[str, str] = {}
     for target in (LOCK_PATH, FACT_LOCK_PATH):
         summary, _, _, _ = framework._run(target)
         print(f"  基线 {target:38s} {summary}")
-        if not lock_coverage.baseline_ok(summary):
-            bad.append(target)
+        cause = lock_coverage.baseline_verdict(summary)
+        if cause:
+            bad[target] = cause
     return bad
 
 
@@ -415,9 +419,9 @@ def main() -> int:
     baseline = {p: p.read_bytes() for p in TARGETS}
 
     print("== 先验基线 ==")
-    if _baseline_gate():
-        print("\n基线不绿 —— 拒绝跑变异矩阵（红源说不清）。先修基线。")
-        return 2
+    bad_baseline = _baseline_gate()
+    if bad_baseline:
+        return lock_coverage.refuse_on_baseline(bad_baseline)
 
     mismatches: list[str] = []
     domain = lock_coverage.domain_of(GROUPS)

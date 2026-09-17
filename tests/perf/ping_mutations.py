@@ -278,18 +278,22 @@ def _count_gate() -> bool:
     return False
 
 
-def _baseline_gate() -> list[str]:
+def _baseline_gate() -> dict[str, str]:
     """先验基线：三把新锁既不红、也跑得起来才开跑 —— 否则「变异后红」说不清红源。
 
-    skip 不算坏（见 `lock_coverage.baseline_ok`）：`test_storage_ping.py` 基线上就有两条
+    返回 `{靶子: 成因}`，空 dict = 可开跑。**两种成因由 `lock_coverage.baseline_verdict`
+    分开**（缺陷 45）：「跑不起来」与「跑起来了但红」的下一步动作不同，见那里的说明。
+
+    skip 不算坏（`lock_coverage.baseline_ok`）：`test_storage_ping.py` 基线上就有两条
     前提 skip（B-1/B-1b 的锁版 sqlite）。
     """
-    bad = []
+    bad: dict[str, str] = {}
     for target in (PING_LOCK, READY_LOCK, TARGETS_LOCK):
         summary, _, _, _ = framework._run(target)
         print(f"  基线 {target:38s} {summary}")
-        if not lock_coverage.baseline_ok(summary):
-            bad.append(target)
+        cause = lock_coverage.baseline_verdict(summary)
+        if cause:
+            bad[target] = cause
     return bad
 
 
@@ -305,9 +309,9 @@ def main() -> int:
     baseline = {p: p.read_bytes() for p in TARGETS}
 
     print("== 先验基线 ==")
-    if _baseline_gate():
-        print("\n基线不绿 —— 拒绝跑变异矩阵（红源说不清）。先修基线。")
-        return 2
+    bad_baseline = _baseline_gate()
+    if bad_baseline:
+        return lock_coverage.refuse_on_baseline(bad_baseline)
 
     mismatches: list[str] = []
     domain = lock_coverage.domain_of(GROUPS)
