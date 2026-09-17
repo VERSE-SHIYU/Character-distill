@@ -20,11 +20,16 @@
 
 断言里凡涉及「证据在不在」，都走**接口读回来**（`GET /api/history/{sid}`）而不只看 store ——
 用户看到的就是那一条路。
+
+5. 边界：**群聊不在证据线上**。它走的是另一套原语（`save_group_message` /
+   `get_group_messages`）与另一条历史出口，写侧恒不产证据、读侧恒不带证据。这是上面
+   全部断言的**反面**，所以也要有锁 —— 否则将来「顺手给群聊也加上证据」不会有人拦。
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import sqlite3
@@ -48,6 +53,7 @@ from core.schema import (
 )
 from deps import get_sessions, get_storage
 from routers.auth import get_current_user
+from routers.group import router as group_router
 from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
 
@@ -196,7 +202,11 @@ class TestRoundTripThroughTheStore:
         assert parse_evidence(rows[0]["evidence"]) is None
 
     def test_default_call_sites_are_unchanged(self, store, user_id):
-        """开闭：不传 evidence 的老调用点（用户消息 / 摘要 / 群聊）一字不改照样工作。"""
+        """开闭：不传 evidence 的老调用点（用户消息 / 摘要）一字不改照样工作。
+
+        群聊的写侧**不在这条里** —— 它连 `save_message` 都不走，在
+        `TestGroupPathIsNotOnTheEvidenceLine`（本节末尾）。
+        """
         sid = _new_session(store, user_id)
         rec = _run_async(store.save_message(sid, "user", "你好", ""))
         assert rec["id"] and rec["role"] == "user"
@@ -677,3 +687,67 @@ class TestResumeCarriesEvidence:
             m for m in body["messages"] if m["id"] == body["reunion_greeting_id"]
         ][0]
         assert "evidence" in greeting and greeting["evidence"] is None
+
+
+# ── 6. 边界：群聊不在证据线上 ─────────────────────────────────────────
+
+@pytest.fixture
+def group_client(store, user_id):
+    """独立 app（只挂群聊路由），与上面那个 `client` 分开 —— 群聊历史是另一条出口。"""
+    app = FastAPI()
+    app.include_router(group_router)
+    app.dependency_overrides[get_storage] = lambda: store
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": user_id, "username": "testuser", "is_admin": False,
+    }
+    return TestClient(app)
+
+
+def _new_group(store, user_id) -> str:
+    gid = f"grp_{uuid.uuid4().hex}"
+    _run_async(store.create_group_session(
+        gid, "群聊A", [f"card_{uuid.uuid4().hex}"], user_id=user_id))
+    return gid
+
+
+class TestGroupPathIsNotOnTheEvidenceLine:
+    """群聊的**写侧恒不产证据、读侧恒不带证据** —— 两条都要有后端锁。
+
+    在此之前的实际覆盖是零：`save_group_message` 将来多一个 evidence 参数、或群聊历史
+    出口将来接上 `parse_evidence`，不会有任何锁变红。「群聊不渲染证据」这个结论当时只由
+    前端 `EvidenceRail`（拿不到 evidence → 返 null）兜着 —— 那管的是「拿到不带 evidence
+    的条目不崩」，不管「后端不会开始产证据」，**跨层覆盖不等于单点全包**。
+
+    为什么这两条是**对的方向**（而不是「顺手给群聊也加上证据」）：群聊路径不发生检索，
+    `engine.last_traces` 在那条路上不存在，能写进去的只会是凭空造出来的「查过」。
+    """
+
+    def test_write_side_signature_has_no_evidence_parameter(self):
+        """写侧形态锁：两个 store 的 `save_group_message` 签名里都没有 evidence。
+
+        形态锁（同 `test_default_call_sites_are_unchanged`）而不是行为断言：加参数这件事
+        必须在**改这条断言**时被意识到，而不是红了之后「顺手补上」。
+        """
+        for cls in (SQLiteStore, PostgresStore):
+            params = inspect.signature(cls.save_group_message).parameters
+            assert "evidence" not in params, (
+                f"{cls.__name__}.save_group_message 多了 evidence 参数 —— "
+                f"群聊写侧开始产证据，而群聊路径根本不发生检索"
+            )
+
+    def test_history_exit_carries_no_evidence_key(self, group_client, store, user_id):
+        """读侧走**接口**：群聊历史出口返回的条目里没有 evidence 键。
+
+        走接口而不是只看 store —— 出口才是前端拿到的东西，将来在这里接上
+        `parse_evidence` 就把证据灌到群聊界面了。
+        """
+        gid = _new_group(store, user_id)
+        _run_async(store.save_group_message(gid, "张三", "char", "你好"))
+
+        resp = group_client.get(f"/api/group/{gid}/history")
+        assert resp.status_code == 200, resp.text
+        msgs = resp.json()["messages"]
+        assert msgs, "群聊历史为空 —— 本用例的前提不成立（没查到任何消息）"
+        assert all("evidence" not in m for m in msgs), (
+            f"群聊历史出口带上了 evidence 键：{sorted(set().union(*[set(m) for m in msgs]))}"
+        )
