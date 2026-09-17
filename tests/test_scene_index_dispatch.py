@@ -201,8 +201,9 @@ def _textmanager_constructions() -> list[tuple[Path, int]]:
 def test_textmanager_is_only_assembled_in_deps():
     """`web/` 下拼 `TextManager` 的地方只许是 `deps.py`。
 
-    真值层是【这个对象带没带上全部依赖】（`indexing_service` / `_rag_config` /
-    `_summary_threshold`），本判据读的是【构造点的位置】——**②层代理，盲区记在下一段**。
+    真值层是【装配时有没有漏掉真正的依赖】——`indexing_service` 是唯一一个漏了会
+    **静默**的（`/start` 落下的卡从此不调度场景预索引）；本判据读的是【构造点的位置】
+    ——**②层代理，盲区记在下一段**。
 
     由来：`_save_card` 就地拼的那个漏传 `indexing_service`，于是 `/start` 落下的卡
     从不调度场景预索引，只靠 `/start_session` 的补偿。**静默不索引**：没有日志、没有红。
