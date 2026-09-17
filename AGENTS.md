@@ -783,12 +783,18 @@ config.yaml 现值（现读，非转述）：
 - 证据命令：镜像内（未补 pytest）`python tests/perf/route_facts_mutations.py --group XF --with-container` → 逐条 `实得=green`、`>> ?`；补装 pytest 后同一命令「全部符合预期」。
 - 修法（待裁）：`_baseline_gate` 要求每个基线目标都解析出 `N passed`，解析不到即判「基线不可用」并**以另一种退出原因**拒跑，与「基线有 failed」分开。
 
-**46. `tests/test_auth_tokens.py::TestLoginRefreshChain` 两条依赖本机 `.env` 的 `JWT_SECRET`，无 `.env` 的环境必红** —— 状态：**记账（不修）**（2026-09-15 缺陷 42 收口时普查环境依赖发现）
+**46. `tests/test_auth_tokens.py::TestLoginRefreshChain` 两条依赖本机 `.env` 的 `JWT_SECRET`，无 `.env` 的环境必红** —— 状态：**已修（`170d49a`，2026-09-17）**（2026-09-15 缺陷 42 收口时普查环境依赖发现）
 - 事实：`web/routers/auth.py::get_jwt_secret` 在 `JWT_SECRET` 缺失或等于默认值时长直接 `raise RuntimeError`，而 `JWT_SECRET` 只可能来自工作树里那份 **gitignored `.env`** —— 该类的登录 + 刷新两条用例因此**只在这台机器上绿**。
 - 证据命令（现跑现数）：`git archive 53bed63 | tar -x` 得到一棵**不含 `.env`** 的树（`.env` 未被跟踪，仓里只有 `.env.example`），容器内跑该类 → **2 failed**，栈底 `web/routers/auth.py:41 RuntimeError`。
 - **非缺陷 42 引入（已核）**：`53bed63` 早于本轮全部改动，同样红。
 - 形态：**ambient 依赖** —— 用例的通过条件不在仓库里，换一台机器 / 换一个干净检出，结果就变。同一个病还有一面：本机 `pytest tests -q` 全绿**不能**当作「这组用例没问题」的证据，它只证明**这台机器恰好有 `.env`**（与 §四「环境没配好与代码有问题，不能共用一个绿」同源）。
-- 修法（待裁）：`conftest.py` 里为该类注入一个测试用 `JWT_SECRET`（`monkeypatch.setenv`），或把 secret 取值收敛成可注入的依赖。
+- **订正（用户裁定）**：上面「只在这台机器上绿」不准确 —— CI 的两个 job（gate / upstream-drift）都注入了 `JWT_SECRET`（`build.yml:116` / `:203`）。准确说法是**只在有 `.env` 的检出或 CI 里绿；干净 clone 直接跑就是 2 红**。另外范围是**这 2 条**，不是一类（全量普查验过）。
+- **已修（`@@FIX_SHA@@`）—— 两半，各堵一个洞**：
+  - **(a) harness 供值**（`tests/conftest.py`）：autouse fixture 给整个会话设死一个仓库自带的 `TEST_JWT_SECRET`。这一半才是「下一个人写新用例照样读 `.env`」的闭合点 —— 用 autouse 而不是让用例各自声明，因为漏一次就滑回 ambient 依赖，而本缺陷的形态本来就是「没人注意到这个值从哪来」。沿用本文件已有的同一手法（`STORAGE_BACKEND` 用的 `setdefault`：值由仓库给，不由机器恰好有没有 `.env` 决定）。
+  - **(b) 注入点**（`web/routers/auth.py`）：secret 收敛成 `Depends(get_jwt_secret)`，端点与依赖的签名因此**写着**「这里需要一个 secret」。这一半堵的是「签名里看不出来」—— 环境变量的存在性在任何签名里都看不见，只能靠跑一次干净检出发觉。配套一条守卫用例（`test_secret_is_injected_not_read_from_environment`）：用一个**与环境值不同**的 secret 覆盖依赖，走完 login（签发）→ `/me`（验签），任何一侧回去读环境都会 401。
+- **同源路径普查（本轮补）**：`get_jwt_secret()` 全仓**5 个直接调用点**（`git grep -c` 现跑现数：auth.py 4 + server.py 1）都过了一遍 —— 签发侧 `_create_access_token`（被 register / login / refresh 两个分支共 4 处调用）与验签侧 `get_current_user` / `get_optional_user` 已收敛；`validate_jwt_secret()`（启动校验）与 `web/server.py:278`（ASGI 中间件）**仍直接读环境**，但前者职责就是校验环境、后者不是 FastAPI 依赖注不进去，两处都被 (a) 覆盖成确定值，故不再是 ambient 依赖（要单独测中间件那条路径才需要给它注入点）。另：`storage/{sqlite,postgres}_store.py` 也从 `JWT_SECRET` 派生 Fernet key（同名的另一个消费者，不是 auth token 路径），今天无用例走到，但 (a) 一并把它变成确定值。
+- **订正（自己 commit message 里的数）**：`170d49a` 的正文写「`get_jwt_secret()` 是唯一取值点，7 个调用点」—— **7 是错的**，实测是 **5 个直接调用点**（auth.py 4 + server.py 1；其中 4 处是 `_create_access_token` 的调用者数量，与调用点数量不是一回事，当时把两者加在了一起）。口径以本条为准。
+- **实测**：干净 clone 条件（`JWT_SECRET= pytest tests/test_auth_tokens.py`）修复前 **2 failed**（栈底 `auth.py:41 RuntimeError`）、修复后 **3 passed**；`JWT_SECRET= pytest tests/` → **1123 passed, 64 skipped, 0 failed**；守卫的变异验证：把 `get_current_user` 的 decode 改回 `get_jwt_secret()` → **只有新增那条守卫红**（1 failed, 2 passed），还原后 3 passed。
 
 **47. `pymupdf` 的 `Document.__init__` 失败路径不释放 `fz_stream` —— 句柄只在那个异常对象被 GC 回收时才关** —— 状态：**记账（不修；这是上游的账，不是本仓的）**（2026-09-16 缺陷 41 · ④ 收口时逐层实测）
 - 事实（`pymupdf 1.28.2`，`.venv/Lib/site-packages/pymupdf/__init__.py`）：`3012 fz_stream = mupdf.fz_open_file(filename)` → `3013 doc = mupdf.fz_open_document_with_stream_and_dir(...)` 抛 → `3016 raise FileDataError(...) from e`；**`3027 self.this = doc` 是成功路径才到得了的那一行**。`Document` 没有 `__del__`，`close()` 只把 `self.this` 置空 —— 失败路径上它**从没被赋值**，故**从外面关不掉**。
