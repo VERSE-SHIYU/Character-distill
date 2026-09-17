@@ -804,7 +804,11 @@ config.yaml 现值（现读，非转述）：
 - 事实：镜像内没有 pytest 时，`_baseline_gate` 对四个锁文件的 pytest 调用全部**拿不到 summary**，却仍**放行**进入变异阶段；逐条变异拿到的同样是空 summary，最终表现为一片 `>> ?` 加一串 `MISMATCH ...：期望 RED 实得 green`。
 - 形态：红是响了（**不是**静默假绿），但「基线**跑不起来**」与「基线绿、变异**没红**」两种成因共用同一种红 —— 正是 §四 那条「两种不同成因的失败若共用一个信号，就分不出是哪一种」。基线门存在的唯一理由就是让这两件事分开，它在「跑不起来」这一支上没有生效。
 - 证据命令：镜像内（未补 pytest）`python tests/perf/route_facts_mutations.py --group XF --with-container` → 逐条 `实得=green`、`>> ?`；补装 pytest 后同一命令「全部符合预期」。
-- 修法（待裁）：`_baseline_gate` 要求每个基线目标都解析出 `N passed`，解析不到即判「基线不可用」并**以另一种退出原因**拒跑，与「基线有 failed」分开。
+- **修法（已落地，`d1d36de`）**：`_baseline_gate` 要求每个基线目标都解析出 `N passed`，解析不到即判「基线不可用」并**以另一种退出原因**拒跑，与「基线有 failed」分开 —— 与原「待裁」那条同形，落点在 `tests/lock_coverage.py`（三个驱动共用的出口）而不是各驱动一份。
+- **订正前提（2026-09-17，动手前实测）：上面「却仍**放行**进入变异阶段」今天已不成立。** `lock_coverage._run` 拿不到汇总行时回 `RUNAWAY`，而 `baseline_ok(RUNAWAY)` 为假、`_baseline_gate()` 对三个 ping 靶子全部回「坏」——**门是拒跑的**（仓外探针写死四行汇总行复核：`RUNAWAY` → 拒跑）。**门已经生效这一点，本条原先记反了。** 仍然成立、也是本次真正修掉的，是后半句：**成因不可辨** —— 拒跑了，但「跑不起来」与「跑起来了但红」共用一句文案（「基线不绿 …… 先修基线」）与一个退出码 2，于是拿着「基线不绿」去翻锁、而真实原因是 pytest 压根没装，**拒跑但指错方向**。
+- **改了什么（机制面）**：判定、文案、退出码三样都收进 `lock_coverage.py` 的单一出口，没有各驱动一份（同一判定两份实现正是本仓反复栽的跟头）。`baseline_verdict(summary) -> str` 回**成因**（不可用回 `BASELINE_UNUSABLE` / `BASELINE_RED`，可用回 `""`）；`baseline_ok` 收成它的布尔投影，「可用吗」只剩一个实现；`refuse_on_baseline({靶子: 成因}) -> int` 按成因分组点名靶子、给下一步动作（先修环境 vs 先修基线），退出码 `3` / `2` 分档。**skip 仍算可用**这一侧没被写坏：`test_storage_ping.py` 基线本身就是「4 passed, 2 skipped」，判成不可用会让那个驱动**永远**开不了跑。两种成因同时出现按「不可用」退 —— 环境没修好之前，另一支的结论本来也拿不到。
+- **判据与验证**：「新来的人不知此事也不会写错」的落点是 `lock_coverage.baseline_verdict` 的签名与返回值 —— 想拒跑就得回答「哪一种」，没有能省掉的第三个选项。变异/控两条补在 `tests/test_lock_coverage.py`：① `baseline_verdict` 四个可用汇总行（含 skip）→ `""`、三个红汇总行 → `BASELINE_RED`、`RUNAWAY` → `BASELINE_UNUSABLE`，且两常量不相等；② `refuse_on_baseline` 三种组合（只红 → 2 含「先修基线」；只不可用 → 3 含「先修环境」且**不含**「先修基线」；两者并存 → 3 且两靶子都点名）。失败信息点成因与靶子，不自解释的那侧（「只不可用」还断言反面文案不出现）也控了。
+- 生产代码零改动（`git diff --stat` 只有 `tests/` 下五个文件）。全量 1132 passed / 64 skipped / 0 failed（改前 1130，增量正好这两条）。
 
 **46. `tests/test_auth_tokens.py::TestLoginRefreshChain` 两条依赖本机 `.env` 的 `JWT_SECRET`，无 `.env` 的环境必红** —— 状态：**已修（`170d49a`，2026-09-17）**（2026-09-15 缺陷 42 收口时普查环境依赖发现）
 - 事实：`web/routers/auth.py::get_jwt_secret` 在 `JWT_SECRET` 缺失或等于默认值时长直接 `raise RuntimeError`，而 `JWT_SECRET` 只可能来自工作树里那份 **gitignored `.env`** —— 该类的登录 + 刷新两条用例因此**只在这台机器上绿**。
