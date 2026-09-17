@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import subprocess
 
 import pytest
 
@@ -137,6 +138,116 @@ def test_discriminators_and_red_lines_are_the_same_set(artifact: pathlib.Path):
         f"{data['driver']} 的名单里有占位语理由（又短、又用的是占位词 —— 写清「要撞到它得"
         f"构造什么」，否则清名单的人不知道该补哪条变异）："
         f"{sorted(lock_coverage_gaps.placeholder_reasons(allow))}")
+
+
+# ── 名单的**来路**：只许收「建档那一刻就存在」的判别器（新判据不许入名单）──────────
+#
+# **它补的是方向 ① 缺的那一半。** 方向 ①（`unexpected`）逼人**往名单里加** —— 长出一条
+# 没登记的缺口就红；而**没有任何东西拦着加**。于是名单可以悄悄收留一条今天才写的判别器，
+# 而它的用途本该是「给**已有**缺口记账」。只许减少，前提是「只许原来就在里面」——缺了这半，
+# 「只许减少」是句空话。
+#
+# **判据。** 名单里每一条 `(文件, 判别器源码, 同文本第几处)`，必须存在于**名单文件诞生的
+# 那个 commit**的树里。建档 commit **现算**（`git log --diff-filter=A`），不写死 —— 写死
+# 即债，且会在历史被改写/文件被重加时悄悄指错地方。
+#
+# **文本身份的取舍（与缺陷 54 同一个，写在这里别当意外）。** 身份是**判别器的源码文本**，
+# 不是行号 —— 行号在任何一次无关插入后整体平移，本仓实测过两次（见 `lock_coverage` 的
+# 「为什么名单的键不是 `文件:行号`」）。代价就是本次这条判据的**响亮误伤**：建档之后把某个
+# 领域文件的判别器**改写了文本**（重排、改名），老键在旧树里当然还在、新键在旧树里没有 →
+# 红。这不是「新缺口」，是文本身份换不来「跨越一次改写仍相等」这件事。判据分不出这两种成因
+# （这正是取舍本身），所以失败信息把两种成因都写出来让人对一眼，而不是让锁自己猜。
+#
+# 天花板（两处，都明写）：
+#   - 本条**只**问「这条判别器在旧树里存不存在」，**不问**「它当时是不是也未被覆盖」。
+#     后者需要**建档时刻的产物**（`_red_lines.json` 的旧版本），仓里没有；而「当时已覆盖、
+#     现在没覆盖」那一侧本来就归方向 ② 管（名单有、现场没有 → 红）。两侧合起来才闭合。
+#   - 建档 commit 是每次现算的，所以「删掉名单文件再重新加回来」会把基线整体前移 ——
+#     那样新判别器就能搭着新基线入名单。这条路要挡住得给基线留痕（存档/产物），今天不做，
+#     记在这里：真出现时，先补的不是判据，是「基线不可被重设」这件事。
+_GAPS_FILE = "tests/lock_coverage_gaps.py"
+
+
+def _birth_commit(rel: str = _GAPS_FILE) -> str:
+    """名单文件**诞生的那个 commit** —— 现算，不写死。"""
+    out = subprocess.run(["git", "log", "--diff-filter=A", "--format=%H", "--", rel],
+                         cwd=ROOT, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stdout.split()
+    assert out, f"{rel} 在历史里没有「新增」提交 —— 拿不到建档时刻，本条判据无从落地"
+    return out[-1]                  # `git log` 新的在前，诞生在最旧那一头
+
+
+def _identities_at(rels, root) -> set[tuple[str, str, int]]:
+    """某棵树上这些文件里**全部**判别器的身份 —— 与名单同一套（`nth` 按文件编号）。"""
+    return {ident for rel in rels
+            for ident in lock_coverage.discriminator_identities([rel], root).values()}
+
+
+_BIRTH_SRC = '''\
+def check(x):
+    if x < 0:
+        raise ValueError("neg")
+'''
+_ADDED_LATER_SRC = '''
+def added_later(x):
+    assert x > 0
+'''
+
+
+def test_the_gap_list_only_grandfathers_discriminators_from_its_birth(tmp_path):
+    """名单 ⊆ 建档树里的判别器 —— 新长出来的判据不许入名单（见本节头注的天花板与取舍）。"""
+    birth = _birth_commit()
+    rels = sorted({rel for per_driver in lock_coverage_gaps.ALLOWED_GAPS.values()
+                   for (rel, _snip, _nth) in per_driver})
+    for rel in rels:
+        blob = subprocess.run(["git", "show", f"{birth}:{rel}"], cwd=ROOT,
+                              capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        assert blob.returncode == 0, (
+            f"名单点名了 {rel}，但它在建档树（{birth[:7]}）里不存在 —— "
+            "那时这份文件还没写出来，它里面的判别器当然也不可能已存在")
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(blob.stdout, encoding="utf-8")
+
+    observed = _identities_at(rels, tmp_path)
+    listed = {ident for per_driver in lock_coverage_gaps.ALLOWED_GAPS.values()
+              for ident in per_driver}
+    late = policy_table.stale_keys(listed, observed)
+    assert not late, (
+        f"名单里有**建档那一刻不存在**的判别器（建档树 {birth[:7]} 里找不到）"
+        "—— 「只许减少」的前提是「只许原来就在里面」，缺了这半它只是句空话：\n" +
+        "\n".join(f"  {rel}  {snip!r}    [同文本第 {nth + 1} 处]"
+                  for rel, snip, nth in sorted(late)) +
+        "\n两种成因，本条判据分不出（身份是文本，见本节头注），来人对一眼："
+        "\n  (a) 它确实是**建档之后才长出来**的判别器 —— 这正是本条要拦的：**名单是给已有"
+        "缺口用的，不是给新写的判据用的**。唯一出路是**当天给它写一条变异**"
+        "（写不出变异 = 任何合法变异都撞不到它 = 死判据，删掉它）。"
+        "\n  (b) 它建档时就有，只是后来**文本被改写**（重排 / 改名）→ 老键在旧树里对不上。"
+        "那不是新缺口，是文本身份跨不过一次改写（与缺陷 54 同一个取舍）；"
+        "先看产物那条断言是否也已经报「身份在当前树里找不到」，是则按它说的重跑驱动。")
+
+
+def test_the_birth_baseline_separates_old_from_new(tmp_path):
+    """两个方向都控：**建档时就有的**不报，**后来才加的**报 —— 只控一侧会让本条恒绿/恒红。
+
+    合成两棵树（不碰仓内），走的就是判据里那条比较，避免「比较写反了也看不出来」。
+    """
+    old, new = tmp_path / "old", tmp_path / "new"
+    for root, src in ((old, _BIRTH_SRC), (new, _BIRTH_SRC + _ADDED_LATER_SRC)):
+        (root / "d").mkdir(parents=True)
+        (root / "d" / "synth_domain.py").write_text(src, encoding="utf-8")
+    rels = ["d/synth_domain.py"]
+
+    in_birth = sorted(_identities_at(rels, old))
+    after = _identities_at(rels, new)
+    assert in_birth, "合成树里一条判别器都没有 —— 下面两个方向都是在空集上判，等于没控"
+    assert after - set(in_birth), "合成的「后来才加」那条没被算成判别器，判据无从触发"
+
+    # 正控：建档时就在的全部放行
+    assert policy_table.stale_keys(set(in_birth), after) == set()
+    # 负控：只有后来那棵树里才有的，必须被点名
+    assert policy_table.stale_keys(after, set(in_birth)) == after - set(in_birth)
 
 
 def test_the_gap_list_names_only_real_drivers():
