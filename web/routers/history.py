@@ -255,8 +255,6 @@ async def resume_session(
                 rag=rag,
                 card_id=card_rec["id"],
                 user_id=user_id,
-                embedding_key=emb_key,
-                embedding_region=emb_region,
             ),
             timeout=120.0,
         )

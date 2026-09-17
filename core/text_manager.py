@@ -640,15 +640,17 @@ class TextManager:
         card_id: str = "",
         user_id: str = "",
         user_role: str = "",
-        embedding_key: str = "",
-        embedding_region: str = "",
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
 
-        `*` 之后全 keyword-only：可选参数有 7 个且类型都是 str，按位置传来错位不会报错，
-        只会静默把值装进邻近的参数。曾发生过一次 —— history.py 多传两个实参，
-        `embedding_key` 落进 `user_role`，随 prompt 发给模型方并明文落进
+        `*` 之后全 keyword-only：可选参数有 5 个且类型都是 str，按位置传来错位不会报错，
+        只会静默把值装进邻近的参数。曾发生过一次 —— 调用点多传两个实参，用户配置里的
+        嵌入凭据落进了 `user_role`，随 prompt 发给模型方并明文落进
         `sessions.affinity_state`（缺陷 G）。锁在这里，调用点增加也不会失效。
+
+        原先本函数还有「嵌入凭据」与「所在区域」两个参数，函数体里从未引用过 ——
+        它们正是那次错位的落脚点：没有这两格，调用点多出来的两个实参只会得到
+        `TypeError`，不会有地方可落。**先问这个参数有没有人用，再问怎么传。**
         """
         from deps import get_memory_manager
         engine = ChatEngine(
