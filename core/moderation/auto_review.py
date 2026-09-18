@@ -20,26 +20,20 @@ _REVIEW_SYSTEM_PROMPT = (
 )
 
 
-async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None = None,
+async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None,
                            storage: Any = None, user_id: str = "") -> dict[str, Any]:
     """Review a character card for policy violations.
 
     Args:
         card_json: The character card dict (name, personality, background, etc.)
-        llm: Optional LLMAdapter instance. If None, imports the global one from deps.
+        llm: LLMAdapter 实例，**必填**；由调用方注入。传 None 走下面的 fail-open 分支
+            （调用方解析不到 LLM 时的语义），但 core 不再反向 import 解析出口。
         storage/user_id: 记账归属上下文；缺省不记（调用方应传，否则这次审核花费不入账）。
 
     Returns:
         {"pass": bool, "reason": str}
         Fails open — returns {"pass": True, "reason": ""} on any error.
     """
-    if llm is None:
-        try:
-            from deps import get_llm
-            llm = get_llm()
-        except Exception:
-            return {"pass": True, "reason": ""}
-
     if llm is None:
         return {"pass": True, "reason": ""}
 
@@ -76,9 +70,13 @@ _SPLIT_REVIEW_SYSTEM_PROMPT = (
 )
 
 
-async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None = None,
+async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
                             storage: Any = None, user_id: str = "") -> dict[str, Any]:
     """Two-channel publish review: content (fail-open) + injection (fail-to-flag).
+
+    ``llm`` is **required**; 由调用方注入（core 不反向 import 解析出口）。调用方
+    解析不到 LLM 时传 None，走下面的注入通道转人工分支 —— 那条分支是设计的一部分
+    （发布审核宁可转人工，也不能静默放行）。
 
     Returns::
 
@@ -89,13 +87,6 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None = 
     channel must NOT fail open (a silent bypass would void the defense), so any
     failure is surfaced as ``error`` for the caller to route to a human queue.
     """
-    if llm is None:
-        try:
-            from deps import get_llm
-
-            llm = get_llm()
-        except Exception:
-            llm = None
     if llm is None:
         return {
             "content": {"pass": True, "reason": ""},

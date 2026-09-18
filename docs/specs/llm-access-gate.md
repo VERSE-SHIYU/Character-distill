@@ -71,6 +71,27 @@
   40 xfailed, 0 failed, 0 errors**（skip 形态那 64 条里 63 条转为通过）。
   **此后 C2a–C5 每一步的「带 PG 形态」都按这个 DSN 真跑**，不再只记录读数。
 
+### 1.2 C2a 执行期订正
+
+- **L14 的 `wait=False` 回退判据原本判不出来**。C1′ 写的那条只断言「协程跑了」——
+  一个**阻塞**的错回退（把协程跑完才返回）照样绿。这正对上 spec §3 的变异 ③
+  「未注册时 `wait=False` 改成阻塞」，即**变异打不红**。C2a 把它改成记序：
+  用 `await asyncio.sleep(0)` 让出一次，要求 `["RETURNED", "CORO"]` ——
+  丢协程（缺 `CORO`）与阻塞（顺序颠倒）两种错法各被一半判据钉住。
+  订正后变异 ③ 实测红在 `test_l14_unregistered_fallback_semantics`。
+- **同类订正：投递测试的还原不能置 `None`**。C1′ 的 L9/L14 用例在 `finally` 里
+  `set_loop_submitter(None)`；生产 app 一旦跑过 lifespan，`deps.set_main_loop` 就注册了
+  实现，**同一个进程**里后续用例会被这个 `None` 拆掉注册、静默改走回退分支。新增
+  `_SetSubmitter`，按**原值**还原（与 `_SetGuard` 同一个道理）。
+- **被删回落路径的两处测试痕迹**（`tests/test_auto_review.py`）：一条用
+  `patch("deps.get_llm", return_value=None)` 装了**已失效的**替身（惰性，会静默通过），
+  一条断言 `deps.get_llm` 被调用过（正是被删的那条）。前者删掉，后者改成
+  「装一个**一被调用就炸**的哨兵、断言 `calls == []`」—— 证明 core 不再向 web 取 LLM，
+  比原来更硬。
+- **`wait=False` 的异常落点**：`web/deps.py` 的 `_log_loop_error` 先查 `fut.cancelled()` ——
+  已取消的 future 上 `exception()` 会抛 `CancelledError`，会以「回调里又有异常」的形态
+  漏出来。
+
 ## 2. 目标架构
 
 ### 2.1 分层与依赖方向（只允许向下依赖）

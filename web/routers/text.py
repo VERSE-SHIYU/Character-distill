@@ -17,7 +17,8 @@ from urllib.parse import quote
 
 from core.trash_service import hard_delete, restore, soft_delete
 from core import telemetry as T  # OTel context 传播点（ctx_thread）
-from deps import get_storage, run_on_main_loop
+from core.scheduling import submit_to_main_loop
+from deps import get_storage
 from storage.base import StorageBase
 
 from limiter import get_client_ip, limiter
@@ -77,7 +78,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | 
             with _upload_task_lock:
                 _upload_tasks[task_id].update({"status": "done", "progress_pct": 100, "message": "上传完成", "text_id": text_id})
 
-        run_on_main_loop(_do())
+        submit_to_main_loop(_do())
     except Exception as exc:
         print(f"[text] Upload task {task_id} failed: {exc}")
         with _upload_task_lock:

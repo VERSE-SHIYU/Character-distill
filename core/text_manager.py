@@ -37,6 +37,7 @@ class TextManager:
         sessions: dict[str, dict[str, Any]],
         *,
         indexing_service=None,
+        memory_manager,
     ) -> None:
         self._storage = storage
         self._guard_enabled = os.getenv("CARD_GUARD_ENABLED", "").strip().lower() in (
@@ -46,6 +47,7 @@ class TextManager:
         self._llm = llm
         self._sessions = sessions
         self._indexing_service = indexing_service
+        self._memory_manager = memory_manager
 
     # ── Prompt-injection field guard (2.1/2.6) ─────────────
     # Runs on every freshly distilled card before persistence. Flagged leaves
@@ -649,11 +651,10 @@ class TextManager:
         它们正是那次错位的落脚点：没有这两格，调用点多出来的两个实参只会得到
         `TypeError`，不会有地方可落。**先问这个参数有没有人用，再问怎么传。**
         """
-        from deps import get_memory_manager
         engine = ChatEngine(
             self._llm, rag, card,
             all_characters=all_characters,
-            memory_manager=get_memory_manager(),
+            memory_manager=self._memory_manager,
             card_id=card_id,
             user_role=user_role,
         )

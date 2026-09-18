@@ -148,7 +148,7 @@ class TestEvaluationPipeline:
     """EvaluationPipeline 三层隔离回归。"""
 
     def test_full_success(self, monkeypatch):
-        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         """正常流程：CORE 层执行 → side-effect 层执行 → 结果正确。"""
         memory = FakeMemory()
         storage = FakeStorage()
@@ -176,7 +176,7 @@ class TestEvaluationPipeline:
 
     def test_in_character_propagated(self, monkeypatch):
         """in_character 字段从 LLM data → EvalResult → ChatEngine 正确传播。"""
-        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
             '{"affinity":55,"trust":40,"mood":"平静","guard":50,'
             '"inner_voice":"还行","mood_emoji":"😐","importance":6,'
@@ -198,7 +198,7 @@ class TestEvaluationPipeline:
 
     def test_assertion_confidence_propagated(self, monkeypatch):
         """assertion_confidence 字段从 LLM data → EvalResult 正确传播，且与 in_character 正交。"""
-        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
             '{"affinity":60,"trust":35,"mood":"平静","guard":55,'
             '"inner_voice":"嗯","mood_emoji":"😐","importance":4,'
@@ -245,7 +245,7 @@ class TestEvaluationPipeline:
 
     def test_time_event_side_effect_failure_still_applies_core(self, monkeypatch):
         """守门员：时间事件存库爆炸 → CORE 状态仍然落定。"""
-        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm_reply = (
             '{"affinity":72,"trust":55,"mood":"开心","guard":28,'
             '"inner_voice":"不错","mood_emoji":"😊","importance":8,'
@@ -279,7 +279,7 @@ class TestEvaluationPipeline:
     @pytest.mark.asyncio
     async def test_affinity_persist_side_effect_failure_still_applies_core(self, monkeypatch):
         """守门员：好感存库爆炸 → CORE 状态仍然落定。"""
-        monkeypatch.setattr("deps.run_on_main_loop", lambda coro, timeout=600: (coro.close(), None))
+        monkeypatch.setattr("core.scheduling.submit_to_main_loop", lambda coro, timeout=600: (coro.close(), None))
         llm = FakeLLM()
         svc = AffinityService()
         storage = FakeStorage(raise_on_update=True)

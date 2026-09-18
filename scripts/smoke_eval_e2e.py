@@ -15,19 +15,23 @@ from __future__ import annotations
 import json
 import os
 import sys
-import types
 import uuid
 
-# ── Inject fake deps before any project import ──
-# Pipeline._persist_affinity 内部做了 `from deps import run_on_main_loop`。
-# Fake 版本在当前 event loop 中直接 await 协程。
-if "deps" not in sys.modules:
-    _fake_deps = types.ModuleType("deps")
-    _fake_deps.run_on_main_loop = lambda coro, timeout=600: _run_await(coro)
-    sys.modules["deps"] = _fake_deps
+# ── Now safe to import from the project ──
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 
-def _run_await(coro):
+# ── 投递原语：脚本没有主 loop，注册一个「在已有 loop 里同步 await」的实现 ──
+# （以前这里伪造一个 fake `deps` 模块，来顶替当时挂在它上面的投递函数；投递原语
+#  迁到 core.scheduling 后，用它的公开注册口，不再伪造模块。）
+from core.scheduling import set_loop_submitter
+
+
+def _run_await(coro, *, wait: bool = True, timeout: float = 600):
     """在已有 event loop 的线程中同步地 await 一个协程。"""
     import asyncio
     try:
@@ -36,15 +40,10 @@ def _run_await(coro):
         return asyncio.run(coro)
     # 已有 loop → 用 run_coroutine_threadsafe 配合 future
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result(timeout=600)
+    return fut.result(timeout=timeout) if wait else fut
 
 
-# ── Now safe to import from the project ──
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+set_loop_submitter(_run_await)
 
 from adapters.llm_adapter import LLMAdapter
 from core.affinity_service import AffinityService, calc_stage

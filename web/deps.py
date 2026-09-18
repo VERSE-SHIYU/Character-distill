@@ -19,6 +19,7 @@ load_dotenv(_REPO_ROOT / ".env")
 
 import yaml
 from adapters.llm_adapter import LLMAdapter
+from core import scheduling
 from core.distiller import Distiller
 from core.indexing_service import IndexingService
 from core.memory_manager import MemoryManager
@@ -132,9 +133,15 @@ def get_storage() -> StorageBase:
 
 
 def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
-    """Capture the main event loop so background threads can schedule DB work on it."""
+    """Capture the main event loop, and register the submitter that routes DB work to it.
+
+    捕获与注册是同一件事的两半：本模块是**唯一**知道主 loop 的地方，故由它向下
+    注册投递实现（`core.scheduling.set_loop_submitter`）。注册只发生在启动时捕获到
+    loop 之后 —— 那之前没有主 loop 可投，`core.scheduling` 的回退语义接管。
+    """
     global _main_loop
     _main_loop = loop
+    scheduling.set_loop_submitter(_submit_to_main_loop)
 
 
 def get_main_loop() -> asyncio.AbstractEventLoop | None:
@@ -142,26 +149,27 @@ def get_main_loop() -> asyncio.AbstractEventLoop | None:
     return _main_loop
 
 
-def run_on_main_loop(coro, timeout=600):
-    """Submit a coroutine to the main event loop and block until it completes.
+def _submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600):
+    """`core.scheduling` 的注册实现（契约见那个模块）。
 
-    All DB I/O from background threads MUST go through this function so that
-    the asyncpg pool is only ever touched from the main event loop.
-    ``run_coroutine_threadsafe`` schedules the coroutine on the main loop and
-    ``future.result()`` blocks the calling thread until it finishes — keeping
-    the original serial semantics intact.
-
-    Falls back to ``asyncio.run()`` if the main loop reference has not been
-    captured (should never happen in normal operation, but prevents a hard
-    crash if startup order changes).
+    wait=True 时取结果并抛出协程的异常（调用方原本就在等，串行语义不变）；
+    wait=False 时不取结果、不阻塞，异常交给 done-callback 落日志 —— 那正是
+    「记账/审计不该拖住请求」的写法。
     """
-    loop = get_main_loop()
-    if loop is None:
-        import warnings
-        warnings.warn("[deps] Main loop not captured, falling back to asyncio.run()")
-        return asyncio.run(coro)
-    fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result(timeout=timeout)
+    fut = asyncio.run_coroutine_threadsafe(coro, _main_loop)
+    if wait:
+        return fut.result(timeout=timeout)
+    fut.add_done_callback(_log_loop_error)
+    return fut
+
+
+def _log_loop_error(fut: asyncio.Future) -> None:
+    """投递出去的协程没人取结果，异常只能在这里落地 —— 静默吞掉就查不出来了。"""
+    if fut.cancelled():  # 取消不是失败：`exception()` 对已取消的 future 会抛 CancelledError
+        return
+    exc = fut.exception()
+    if exc is not None:
+        print(f"[deps] Submitted coroutine failed (non-fatal): {type(exc).__name__}: {exc}")
 
 
 def get_llm() -> LLMAdapter | None:
@@ -254,7 +262,8 @@ def _assemble_text_manager(distiller: Distiller, llm: LLMAdapter) -> TextManager
     错归，见缺陷 37）。
     """
     return TextManager(get_storage(), distiller, llm, get_sessions(),
-                       indexing_service=get_indexing_service())
+                       indexing_service=get_indexing_service(),
+                       memory_manager=get_memory_manager())
 
 
 def get_text_manager(llm: LLMAdapter | None = None) -> TextManager | None:

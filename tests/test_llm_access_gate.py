@@ -4,8 +4,8 @@
 spec 在库：`docs/specs/llm-access-gate.md`（v5 全量取代 v1–v4）。命题与归属见那张表，
 此处不重抄，只写**本文件自己的边界**。
 
-**除少数「非空守卫」外全部 `xfail(strict=True)`。** 这是 red-first 的形态：判据先落，
-本步（C1′）只写锁、不改生产代码，故这些用例现在**必须都是红的**。strict 让「红→绿」
+**判据先落，未翻转的用例一律 `xfail(strict=True)` 而必须红。** 这是 red-first 的形态：
+每条锁在它所属的那一步（见 spec §3 的表）由红转绿，同时摘掉标记。strict 让「红→绿」
 有声响 —— 某一步把某条做绿了，它立刻以 **XPASS** 报错，逼人把标记摘掉；标记没摘就
 说明这条还没真绿，不会被静默当成通过（§四「豁免即静默放行」的反面）。
 
@@ -53,9 +53,10 @@ _ALLOWED_IP = "8.8.8.8"
 
 
 # ── 新符号一律在用例体内导入 ──────────────────────────────────────────────
-# C2/C3/C4 才建 `web/llm_gate.py` / `web/llm_resolution.py` / `core/scheduling.py`
-# / `core/concurrency.py`；模块级 import 会让整个文件**收集期报错**（十几条一起消失，
-# 看上去像「没写过」），而不是一批可读的红。故走函数内导入。
+# 尚未落地的那几个（`web/llm_gate.py` / `web/llm_resolution.py` / `core/concurrency.py`）
+# 要到各自那一步才建；模块级 import 会让整个文件**收集期报错**（十几条一起消失，看上去
+# 像「没写过」），而不是一批可读的红。故一律走函数内导入 —— 已落地的也照旧，免得后加的
+# 新符号又把收集期打挂。（`core/scheduling.py` 是 C2a 落地的，见 spec §1.1。）
 
 def _mod(name: str):
     import importlib
@@ -147,6 +148,29 @@ def _patch_store(monkeypatch, store) -> None:
         return
     if hasattr(gate, "get_storage"):
         monkeypatch.setattr(gate, "get_storage", lambda: store)
+
+
+class _SetSubmitter:
+    """临时换掉投递实现，退出时按**原值**还原。
+
+    不能置 None 了事：生产 app 的 lifespan 一跑，`deps.set_main_loop` 就注册了实现，
+    而测试在**同一个进程**里接着跑 —— 置 None 会把生产注册拆掉，后面那些依赖
+    「投递回主 loop」的用例会静默改走回退分支（跨 loop 触碰连接池）。
+    与 `_SetGuard` 同一个道理。
+    """
+
+    def __init__(self, fn) -> None:
+        self._s = _mod("core.scheduling")
+        self._fn = fn
+
+    def __enter__(self):
+        self._prev = self._s.get_loop_submitter()
+        self._s.set_loop_submitter(self._fn)
+        return self
+
+    def __exit__(self, *exc):
+        self._s.set_loop_submitter(self._prev)
+        return False
 
 
 # ── L1 / L2：`/start` 的全局兜底，以及兜底实例的同一性 ────────────────────
@@ -658,14 +682,10 @@ def test_l9_blocked_maps_to_403_with_the_reason(monkeypatch):
     store = _AuditStore()
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
-    sched = _mod("core.scheduling")
     sub = _Submitter()
-    sched.set_loop_submitter(sub)
-    try:
+    with _SetSubmitter(sub):
         r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
             "/boom", headers={"X-Real-IP": _BLOCKED_IP})
-    finally:
-        sched.set_loop_submitter(None)
 
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == "境内不支持境外模型", r.text
@@ -679,14 +699,10 @@ def test_l9_audit_is_delivered_once_with_the_caller(monkeypatch):
     store = _AuditStore()
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
-    sched = _mod("core.scheduling")
     sub = _Submitter()
-    sched.set_loop_submitter(sub)
-    try:
+    with _SetSubmitter(sub):
         r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
             "/boom", headers={"X-Real-IP": _BLOCKED_IP})
-    finally:
-        sched.set_loop_submitter(None)
 
     assert r.status_code == 403, r.text
     assert len(store.calls) == 1, f"审计次数不对：{store.calls}"
@@ -701,14 +717,10 @@ def test_l9_audit_failure_keeps_the_403(monkeypatch):
     store = _AuditStore(boom=True)
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
-    sched = _mod("core.scheduling")
     sub = _Submitter()
-    sched.set_loop_submitter(sub)
-    try:
+    with _SetSubmitter(sub):
         r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
             "/boom", headers={"X-Real-IP": _BLOCKED_IP})
-    finally:
-        sched.set_loop_submitter(None)
 
     assert r.status_code == 403, r.text
     assert len(sub.calls) == 1, "判定改了 —— 审计失败不该拦下请求"
@@ -915,13 +927,12 @@ def _scan_prod_imports():
                 yield rel, node.lineno, lines[node.lineno - 1].strip(), src
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2a 翻转：core/adapters 的反向依赖改注入后，扫描面归零")
 def test_l13_core_and_adapters_do_not_import_web():
     """core/ 与 adapters/ 里不得出现指向 web 层（deps/web/routers）的 import。
 
     import 语句本身就是事实，不需要推断 —— 这是「唯一允许向下依赖」那条不变量
-    的可判定形式。函数体内的局部 import 也算：那正是现在这 10 处的形态。
+    的可判定形式。**函数体内的局部 import 也算**：改注入之前，那 10 处反向依赖
+    全是这么写的，只看模块级 import 会整类漏掉。
     """
     hits = [x for x in _scan_prod_imports()]
     assert not hits, (
@@ -931,8 +942,6 @@ def test_l13_core_and_adapters_do_not_import_web():
 
 # ── L14：跨 loop 投递的唯一原语 ───────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2a 翻转：core/scheduling.py 的投递原语落地")
 def test_l14_submit_delegates_when_registered():
     S = _mod("core.scheduling")
     seen: list[tuple] = []
@@ -945,44 +954,47 @@ def test_l14_submit_delegates_when_registered():
     async def _noop():
         return "MINE"
 
-    S.set_loop_submitter(_recorder)
-    try:
+    with _SetSubmitter(_recorder):
         got = S.submit_to_main_loop(_noop(), wait=False)
-    finally:
-        S.set_loop_submitter(None)
 
     assert got == "DELEGATED", f"已注册时没有委托给注册实现（拿到 {got!r}）"
     assert seen and seen[0][1] is False, f"wait 没透传：{seen}"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2a 翻转：未注册时的回退语义（wait=True 阻塞 / wait=False 不阻塞）")
 def test_l14_unregistered_fallback_semantics():
     S = _mod("core.scheduling")
 
     async def _value():
         return "RAN"
 
-    S.set_loop_submitter(None)
-    # wait=True：阻塞取结果，且响亮（发 warning）
-    with pytest.warns(Warning):
-        assert S.submit_to_main_loop(_value()) == "RAN"
+    with _SetSubmitter(None):
+        # wait=True：阻塞取结果，且响亮（发 warning）
+        with pytest.warns(Warning):
+            assert S.submit_to_main_loop(_value()) == "RAN"
 
-    # wait=False：当前线程有运行中的 loop → 不阻塞，但要真的跑起来
-    ran: list[str] = []
+        # wait=False：当前线程有运行中的 loop → 不阻塞，但要真的跑起来
+        order: list[str] = []
 
-    async def _flag():
-        ran.append("RAN")
+        async def _probe():
+            await asyncio.sleep(0)  # 让出一次：只要「返回」发生在协程跑完之前
+            order.append("CORO")
 
-    async def _driver():
-        S.submit_to_main_loop(_flag(), wait=False)
+        async def _driver():
+            task = S.submit_to_main_loop(_probe(), wait=False)
+            order.append("RETURNED")
+            # 拿到什么就 await 什么 —— 回退有两种合法实现（create_task / asyncio.run），
+            # 直接裸调会让「协程根本没排上」也过关。
+            if task is not None:
+                await task
 
-    asyncio.run(_driver())
-    assert ran == ["RAN"], "wait=False 在无注册实现时把协程丢了（既没 create_task 也没 asyncio.run）"
+        asyncio.run(_driver())
+
+    # 两条都要：丢了协程（order 缺 CORO）、或阻塞到跑完才返回（顺序颠倒）都算错。
+    assert order == ["RETURNED", "CORO"], (
+        f"wait=False 的回退语义不对（期望先返回后跑完，实得 {order}）："
+        "要么协程被丢了，要么它其实阻塞了")
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2a 翻转：try_record_usage 的自建 loop 线程改为经原语投递")
 def test_l14_usage_recording_goes_through_the_primitive():
     """`core/utils.py` 的记账出口不许再自建 event loop —— 投递这件事只在一个地方定义。"""
     S = _mod("core.scheduling")
@@ -1001,11 +1013,8 @@ def test_l14_usage_recording_goes_through_the_primitive():
         last_usage = {"prompt_tokens": 1, "completion_tokens": 2}
         _model = "m"
 
-    S.set_loop_submitter(_recorder)
-    try:
+    with _SetSubmitter(_recorder):
         _mod("core.utils").try_record_usage(_Storage(), "u14", _LLM(), action="chat")
-    finally:
-        S.set_loop_submitter(None)
 
     assert seen, "记账没有经投递原语出去（还在自建 loop）"
     assert seen[0][1] is False, f"记账投递必须是 wait=False：{seen}"
@@ -1056,10 +1065,10 @@ def test_l15_concurrency_has_no_opentelemetry():
 def test_l15_carrier_protocol_is_driven_by_the_derive_path():
     """载体协议被驱动 = 一次 `ctx_thread` 里 capture → restore → release 按序发生。
 
-    本步（C1′）只钉可由事实判定的这一半。另一半「OTEL 开启时 telemetry 已注册载体」
-    原本没有观测点（载体注册没有与 `set_call_guard` / `get_call_guard` 配对的读口），
-    **已裁定补配对读口**（`set_context_carrier` / `get_context_carriers`，见 spec §1.1）；
-    C2b 建 `core/concurrency.py` 时把那一半的断言并进本用例。
+    这一半（协议被派生路径按序驱动）可由事实直接判定。另一半「OTEL 开启时 telemetry
+    已注册载体」原本没有观测点（载体注册没有与 `set_call_guard` / `get_call_guard` 配对
+    的读口），**已裁定补配对读口**（`set_context_carrier` / `get_context_carriers`，
+    见 spec §1.1）；C2b 建 `core/concurrency.py` 时把那一半的断言并进本用例。
     """
     C = _mod("core.concurrency")
     log: list[str] = []

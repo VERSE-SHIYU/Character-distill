@@ -189,10 +189,10 @@ class EvaluationPipeline:
         svc = ctx.affinity_service
         if ctx.group_id:
             try:
-                from deps import run_on_main_loop
+                from core.scheduling import submit_to_main_loop
                 import time as _t
                 _t0 = _t.time()
-                run_on_main_loop(
+                submit_to_main_loop(
                     ctx.storage.update_group_affinity(
                         ctx.group_id, ctx.card_id,
                         svc.affinity, svc.trust,
@@ -205,10 +205,10 @@ class EvaluationPipeline:
                 print(f"[EvaluationPipeline] Group affinity save failed (group={ctx.group_id} card={ctx.card_id}): {exc}")
         elif ctx.session_id:
             try:
-                from deps import run_on_main_loop
+                from core.scheduling import submit_to_main_loop
                 import time as _t
                 _t0 = _t.time()
-                run_on_main_loop(
+                submit_to_main_loop(
                     ctx.storage.save_affinity_state(
                         ctx.session_id, svc.to_persist(),
                     ),

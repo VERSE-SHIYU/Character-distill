@@ -31,21 +31,23 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# ── 在项目 import 前注入 fake deps ──
-if "deps" not in sys.modules:
-    _fake = types.ModuleType("deps")
+# ── 投递原语：脚本没有主 loop，注册一个「在已有 loop 里同步 await」的实现 ──
+# （以前这里伪造一个 fake `deps` 模块，来顶替当时挂在它上面的投递函数；投递原语
+#  迁到 core.scheduling 后，正确的做法是用它公开的注册口，不再伪造模块。）
+from core.scheduling import set_loop_submitter
 
-    def _run_await(coro, timeout=600):
-        import asyncio
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-        fut = asyncio.run_coroutine_threadsafe(coro, loop)
-        return fut.result(timeout=timeout)
 
-    _fake.run_on_main_loop = _run_await
-    sys.modules["deps"] = _fake
+def _run_await(coro, *, wait: bool = True, timeout: float = 600):
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return fut.result(timeout=timeout) if wait else fut
+
+
+set_loop_submitter(_run_await)
 
 from adapters.llm_adapter import LLMAdapter
 from core.affinity_service import AffinityService, calc_stage

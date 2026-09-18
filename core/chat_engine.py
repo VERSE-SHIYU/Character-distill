@@ -584,8 +584,8 @@ class ChatEngine:
         if not self._storage or not self._session_id:
             return
         try:
-            from deps import run_on_main_loop
-            run_on_main_loop(
+            from core.scheduling import submit_to_main_loop
+            submit_to_main_loop(
                 self._storage.save_affinity_state(
                     self._session_id, self._affinity_service.to_persist(),
                 ),
@@ -616,9 +616,9 @@ class ChatEngine:
         session_id = self._session_id
         if storage and session_id:
             try:
-                from deps import run_on_main_loop
+                from core.scheduling import submit_to_main_loop
                 import time as _t; _t0 = _t.time()
-                new_reactions = run_on_main_loop(
+                new_reactions = submit_to_main_loop(
                     storage.get_reactions_after_unscoped(session_id, self._last_reaction_id),
                     timeout=10,
                 )
@@ -640,9 +640,9 @@ class ChatEngine:
         departure_notice = ""
         if self._last_user_msg_at is None and self.history and self._storage and self._session_id:
             try:
-                from deps import run_on_main_loop
+                from core.scheduling import submit_to_main_loop
                 # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
-                session_data = run_on_main_loop(
+                session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id), timeout=5,
                 )
                 if session_data:
@@ -1006,10 +1006,10 @@ class ChatEngine:
         is_first_message = len(self.history) == 0
         if not is_first_message and self._storage and self._session_id:
             try:
-                from deps import run_on_main_loop
+                from core.scheduling import submit_to_main_loop
                 import time as _t; _t0 = _t.time()
                 # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
-                session_data = run_on_main_loop(
+                session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id),
                     timeout=5,
                 )
@@ -1346,11 +1346,11 @@ class ChatEngine:
             return ""
 
         try:
-            from deps import run_on_main_loop
+            from core.scheduling import submit_to_main_loop
 
             if session_data is None:
                 # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
-                session_data = run_on_main_loop(
+                session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id),
                     timeout=5,
                 )

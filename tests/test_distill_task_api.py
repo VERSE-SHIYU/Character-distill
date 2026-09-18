@@ -52,7 +52,7 @@ def _clean_tasks():
         D._user_slots.clear()
 
 
-# ── 单元测试（A / A2）：monkeypatch 模块级 get_storage + run_on_main_loop ─────
+# ── 单元测试（A / A2）：monkeypatch 模块级 get_storage + submit_to_main_loop ─────
 
 class _FakeStore:
     """update_distill_task 可控失败；成功时记录快照（bg 进度写走 update-only）。"""
@@ -82,7 +82,7 @@ def _install(monkeypatch, store):
     def _sync_run(coro, timeout=10):
         return asyncio.run(coro)
 
-    monkeypatch.setattr(D, "run_on_main_loop", _sync_run)
+    monkeypatch.setattr(D, "submit_to_main_loop", _sync_run)
 
 
 def _seed_task(task_id, status, pct, db):
@@ -570,14 +570,14 @@ class _CapOnlySemaphore:
 def _install_bg(monkeypatch, store, cap=3):
     """把 /start 的真后台线程装进测试：stub 掉 store/LLM 边界。
 
-    返回 (蒸馏器, 信号量, 线程表)。run_on_main_loop 换成同步 asyncio.run —— bg 线程里
+    返回 (蒸馏器, 信号量, 线程表)。submit_to_main_loop 换成同步 asyncio.run —— bg 线程里
     没有事件循环，落库路径照跑。
     """
     distiller = _ChunkEmittingDistiller()
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
     monkeypatch.setattr(D, "get_storage", lambda: store)
-    monkeypatch.setattr(D, "run_on_main_loop", lambda coro, timeout=10: asyncio.run(coro))
+    monkeypatch.setattr(D, "submit_to_main_loop", lambda coro, timeout=10: asyncio.run(coro))
     sem = _CapOnlySemaphore(cap)
     monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", sem)
 

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import threading
 from typing import Any
 
-from core import telemetry as T  # OTel context 传播点（ctx_thread）
+from core.scheduling import submit_to_main_loop
 
 # 字符→token 的估算系数。**唯一出处**：chat_stream 的兜底与这里必须同源，
 # 各写一份的话改系数必漏一边（缺陷 16「出口分散」的形态）。
@@ -57,7 +55,7 @@ def try_record_usage(
     usage: dict | None = None,
     source: str = "core",
 ) -> None:
-    """Record LLM token usage to storage in a background thread.
+    """Record LLM token usage to storage **without blocking the caller**.
 
     Args:
         storage: Storage backend with ``record_usage`` coroutine.
@@ -66,6 +64,9 @@ def try_record_usage(
         action: Label for the usage record (e.g. ``"chat"``, ``"distill"``).
         usage: Optional usage dict; falls back to ``llm.last_usage``.
         source: Source name for error messages (e.g. ``"ChatEngine"``, ``"Distiller"``).
+
+    投递经 ``core.scheduling.submit_to_main_loop(wait=False)`` —— 唯一的跨 loop 出口。
+    此前这里自建 event loop 起线程写库，等于把「投递」这件事又定义了一遍（缺陷 16 形态）。
     """
     if not storage or not user_id:
         print(f"[{source}] usage not recorded: storage/user_id missing (user={user_id}, action={action})")
@@ -81,15 +82,11 @@ def try_record_usage(
     is_est = bool(usage.get("estimated", False))
     chunk_count = usage.get("chunk_count")
 
-    def _do() -> None:
+    async def _write() -> None:
         try:
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(
-                storage.record_usage(user_id, action, pt, ct, model,
-                                     is_estimated=is_est, chunk_count=chunk_count)
-            )
-            loop.close()
+            await storage.record_usage(user_id, action, pt, ct, model,
+                                       is_estimated=is_est, chunk_count=chunk_count)
         except Exception as exc:
             print(f"[{source}] Record usage failed (non-fatal): {exc}")
 
-    T.ctx_thread(_do, daemon=True).start()  # OTel context 传播点：usage 线程挂到调用方 trace
+    submit_to_main_loop(_write(), wait=False)

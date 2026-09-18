@@ -110,9 +110,9 @@ def _call_leafs(node: ast.AST) -> tuple[set[str], set[str]]:
 def _has_record_usage_call(node: ast.AST) -> bool:
     """node 内（含嵌套闭包）是否出现 `.record_usage(` —— 出口的判据。
 
-    这里**要**下潜：入口出口本身是 `try_record_usage`，它把真正的 DB 写放在嵌套的
-    `_do()` 里交给线程（`T.ctx_thread(_do, ...)`）。不下潜就找不到出口，出口集会
-    变成空的 `_do`，谁都不算记账 —— 全仓 36 个站点集体假红。
+    这里**要**下潜：`core/utils.py` 的出口把真正的 DB 写放在一个嵌套协程里，自己
+    只负责把它交给投递原语（以前是把闭包交给线程，形态不同、道理一样）。不下潜就
+    找不到那个出口，出口集会变成空集，谁都不算记账 —— 全仓站点集体假红。
     """
     return any(
         isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
@@ -290,9 +290,10 @@ class _Index:
     def _reaches(self, node: ast.AST, rel: str, acct: set[int]) -> bool:
         """node 是否流向记账出口。两条路径，都从 node **自身词法体**判定：
           (a) 真调用某个记账函数；
-          (b) 把嵌套的记账函数**当值**交出去（`T.ctx_thread(_do, daemon=True)` ——
-              线程体不会经 Call 节点出现，只看调用会漏；但要求该嵌套函数的**名字在
-              node 自身体里出现过**，否则「定义了却从不使用」的嵌套函数会冒充记账）。
+          (b) 把嵌套的记账函数**当值**交出去（交给线程/投递原语那一类调用 ——
+              被搬走的那一端不会以 `Call` 节点的样子出现，只看调用会漏；但要求该嵌套
+              函数的**名字在 node 自身体里出现过**，否则「定义了却从不使用」的嵌套函数
+              会冒充记账）。
         """
         if self._calls_into(node, rel, acct):
             return True
@@ -310,8 +311,9 @@ class _Index:
         调用方。否则 `chat` 调了 `_should_stay_silent`（它自身记账）就被判成记账，
         摘掉 `chat` 里真正的落账行也不红 —— 上一版的假绿来源之一。
 
-        闭包层数由结构自然决定，不写死数字：`_do`（裸 .record_usage）→
-        `try_record_usage` → `_try_record_usage` / `_record_usage`，再往外只有消费者。
+        闭包层数由结构自然决定，不写死数字：最内层是裸 `.record_usage(` 的那层（现在
+        落在 `core/utils.py` 出口函数的嵌套协程里），往外逐层是包着它的记账函数，
+        再往外只有消费者。
         """
         direct = [(rel, n) for rel, d in self.defs.items()
                   for nodes in d.values() for n in nodes if _has_record_usage_call(n)]

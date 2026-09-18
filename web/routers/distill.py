@@ -16,7 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from deps import get_indexing_service, get_sessions, get_storage, run_on_main_loop
+from core.scheduling import submit_to_main_loop
+from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import user_facing_error
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json
@@ -140,7 +141,7 @@ def _db_status(mem_status: str) -> str:
 
 
 async def _persist_snap(task_id: str, snap: dict[str, Any]) -> None:
-    """落库 + 成功后记账 + 终态清理。main loop 线程执行（由 run_on_main_loop 派发）。
+    """落库 + 成功后记账 + 终态清理。main loop 线程执行（由 submit_to_main_loop 派发）。
 
     记账(_db)放在持久化成功之后：失败时 _db 保持旧值，下一次同状态调用不会被去重吞
     掉，能自动补发。终态成功落库 = bg 线程最后一次写，此后再无 update —— pop 写缓存
@@ -164,14 +165,14 @@ async def _persist_snap(task_id: str, snap: dict[str, Any]) -> None:
 def _dispatch_persist(task_id: str, snap: dict[str, Any]) -> None:
     """bg 线程把一次状态写派发到 main loop 落库。失败打日志（non-fatal），不抛异常。"""
     try:
-        run_on_main_loop(_persist_snap(task_id, snap), timeout=10)
+        submit_to_main_loop(_persist_snap(task_id, snap), timeout=10)
     except Exception as exc:
         # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
         print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
 
 
 def _set_task(task_id: str, updates: dict[str, Any]) -> None:
-    """内存写缓存更新 + DB UPDATE 落库（update-only）。仅 bg 线程调用（内部 run_on_main_loop 派发）。
+    """内存写缓存更新 + DB UPDATE 落库（update-only）。仅 bg 线程调用（内部 submit_to_main_loop 派发）。
 
     去重键 = (粗粒度 status, progress_pct)：analyze/merging 每 chunk 只动
     message/current/total 时不再发 DB；终态或带 card_id/awakening 的收尾更新总落库。
@@ -229,7 +230,7 @@ def _confirm_terminal_persist(task_id: str) -> None:
             "awakening": task.get("awakening", ""),
         }
     try:
-        run_on_main_loop(_persist_snap(task_id, snap), timeout=10)
+        submit_to_main_loop(_persist_snap(task_id, snap), timeout=10)
     except Exception as exc:
         # 区别于普通 non-fatal：这是终态确认的第二次失败，DB 行可能滞留 running 占
         # count_running 槽，只能靠下次 boot reconcile 置 interrupted。
@@ -322,7 +323,7 @@ def _run_distill_task(
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
     All DB I/O is dispatched back to the main event loop via
-    ``run_on_main_loop()``, which uses ``run_coroutine_threadsafe`` so the
+    ``submit_to_main_loop()``, which uses ``run_coroutine_threadsafe`` so the
     asyncpg pool is only ever touched from the loop that created it.
     LLM calls (slow, network-heavy) stay on this background thread.
 
@@ -405,7 +406,7 @@ def _run_distill_task(
             async def _save() -> None:
                 await get_storage().save_distill_chunk(task_id, index, result, fingerprint)
             try:
-                run_on_main_loop(_save(), timeout=10)
+                submit_to_main_loop(_save(), timeout=10)
             except Exception as exc:
                 print(f"[distill] Persist chunk {index} of {task_id} failed (non-fatal): {exc}")
 
@@ -554,7 +555,7 @@ def _run_distill_task(
         })
 
         try:
-            result = run_on_main_loop(_save_card(), timeout=120)
+            result = submit_to_main_loop(_save_card(), timeout=120)
         except FutureTimeoutError:
             _set_task(task_id, {
                 "status": "error",
@@ -571,7 +572,7 @@ def _run_distill_task(
         if awakening:
             try:
                 card.awakening_message = awakening
-                run_on_main_loop(
+                submit_to_main_loop(
                     get_storage().update_card(result["card_id"], card.model_dump()),
                     timeout=30,
                 )
@@ -601,7 +602,7 @@ def _run_distill_task(
             async def _cleanup():
                 store = get_storage()
                 await store.cleanup_empty_cards(text_id, user_id)
-            run_on_main_loop(_cleanup())
+            submit_to_main_loop(_cleanup())
         except Exception as cleanup_err:
             print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
