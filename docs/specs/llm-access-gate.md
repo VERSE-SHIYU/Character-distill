@@ -40,23 +40,36 @@
   （不是 `_publish_pregate`），且 `web/routers/market.py` 中不存在 `_publish_pregate`。
 - **F7 的计数口径**：`ctx_submit` 是 **4 行 / 3 个所属函数**（`ContextEngine.build_ex` 一个
   `with` 里派生两次）。「3 处」是 owner 数，不是行数。
+- **F9 的计数口径订正**：`run_on_main_loop` 的**真实调用点 14 处**（core 7：`chat_engine` 5 +
+  `evaluation_pipeline` 2；web 7：`distill` 6 + `text` 1）。F9 的「web 12 处」是**文本出现次数**，
+  含 `distill.py` 里 2 处 import 与 3 处 docstring 提及 —— 这正是 AGENTS §四「判据 grep
+  要分清注释与调用」那条的又一例。`scripts/` 另有 3 处：2 处是 `_fake.run_on_main_loop = ...`
+  的 shim、1 处注释。**迁移时 script 的 shim 必须跟着改指新名字**，否则它们静默失去拦截
+  （仍会绿，但拦不到东西）。
 - **L12 的现状读数**（生产、入库 .py、去 tests/ 与 scripts/）：
   `check_api_allowed(` 4 处调用、`record_geo_block(` 3 处调用（另有 3 处同名的 storage 方法**定义**，不计）。
 - **L13 的现状读数**：`core/` + `adapters/` 里 10 处 `from deps import`，与 F8 逐条对上。
 - **`web/app.py` 是死代码**：Gradio，docstring 标 `.. deprecated::`，`Dockerfile` /
   `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` 零引用（AGENTS.md 已记）。
   故 L10 的扫描面不含它。
-- **L15 有半条命题没有观测点**：L15 的后半「OTEL 开启时 telemetry 已注册载体」在 v5 里
-  **没有给出可判定的观测点** —— 载体注册不像守卫那样有与 `register_context_carrier`
-  配对的读口（`set_call_guard` / `get_call_guard` 那对）。故锁只钉前半与「协议被派生
-  路径驱动」；缺观测点这件事本身记在这里，不假装它被覆盖。**待裁定**：是补一个读口
-  （如 `set_context_carrier` / `get_context_carriers` 配对），还是接受这半条不设锁。
-- **本机没有可用的 PG 测试形态**：`REQUIRE_PG_TESTS=1` 时 conftest 兜底 DSN
-  （`postgres:postgres@localhost:5432/charsim_test`）被拒；实测本机两个 postgres
-  （`character-distill-postgres-1` 与 `cdload-postgres-1`）都对该默认口令返回
-  `InvalidPasswordError`。`.env` 只有 `POSTGRES_USER/PASSWORD/DB` 而**没有** `DATABASE_URL`，
-  且它们指向在跑的本机 compose 库 —— **不拿它当测试库**（会动 docker 数据）。
-  故「带 PG 形态」在本机只是一次读数记录，不是真跑；此限制对 C1′–C5 每一步都成立。
+- **L15 有半条命题没有观测点** → **裁定：补配对读口**。L15 的后半「OTEL 开启时 telemetry
+  已注册载体」在 v5 里没有可判定的观测点 —— 载体注册不像守卫那样有与
+  `register_context_carrier` 配对的读口（`set_call_guard` / `get_call_guard` 那对）。
+  故 C2b 建 `core/concurrency.py` 时**一并加 `set_context_carrier` / `get_context_carriers`
+  配对**，L15 后半改为可判定（OTEL 开启时 telemetry 注册的载体出现在读口里）。
+  C1′ 的锁只钉了前半与「协议被派生路径驱动」，C2b 补齐。
+- **`auto_review_card` 零生产调用点** → **裁定：保留，`llm` 改必填**。现跑现数：全仓唯一
+  生产出现是它自己的 `def`，其余只在 `tests/test_auto_review.py`。与 `auto_review_split`
+  同一处理（§2.4 的字面），不删。对照：`auto_review_split` 有 1 处生产调用点
+  （`market._publish_preflight`），而 `tests/test_auto_review.py` 有一条 `llm=None` 的用例
+  正断言着将被删掉的回落路径 —— 那条用例的处置属于 C2a 的范围。
+- **PG 形态的落地** → **裁定：在本机 compose PG 上建专用测试库**。`REQUIRE_PG_TESTS=1` 的
+  兜底 DSN（`postgres:postgres@localhost:5432/charsim_test`）被拒，两处本机 postgres 都对
+  该默认口令返回 `InvalidPasswordError`；`.env` 只有 `POSTGRES_USER/PASSWORD/DB`（**没有**
+  `DATABASE_URL`）。故用 `.env` 凭据在本机 compose PG 上建**独立库 `charsim_test`**，
+  只跑它，`charsim`（应用库）不动。真实读数见 C1′ 的补测：**1307 passed, 1 skipped,
+  40 xfailed, 0 failed, 0 errors**（skip 形态那 64 条里 63 条转为通过）。
+  **此后 C2a–C5 每一步的「带 PG 形态」都按这个 DSN 真跑**，不再只记录读数。
 
 ## 2. 目标架构
 

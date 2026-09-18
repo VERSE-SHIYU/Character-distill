@@ -1056,9 +1056,10 @@ def test_l15_concurrency_has_no_opentelemetry():
 def test_l15_carrier_protocol_is_driven_by_the_derive_path():
     """载体协议被驱动 = 一次 `ctx_thread` 里 capture → restore → release 按序发生。
 
-    **已知缺口**：「OTEL 开启时 telemetry 已注册载体」这一半 spec 没给观测点
-    （载体注册没有与 `set_call_guard` / `get_call_guard` 配对的读口），故本锁只钉
-    可由事实判定的部分 —— 协议本身被派生路径驱动。缺口写在 spec §1.1，不假装它被覆盖。
+    本步（C1′）只钉可由事实判定的这一半。另一半「OTEL 开启时 telemetry 已注册载体」
+    原本没有观测点（载体注册没有与 `set_call_guard` / `get_call_guard` 配对的读口），
+    **已裁定补配对读口**（`set_context_carrier` / `get_context_carriers`，见 spec §1.1）；
+    C2b 建 `core/concurrency.py` 时把那一半的断言并进本用例。
     """
     C = _mod("core.concurrency")
     log: list[str] = []
