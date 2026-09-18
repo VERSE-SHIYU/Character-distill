@@ -18,6 +18,7 @@ from core.rag import RAGEngine
 from core.scene_indexer import _detect_emotion
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+from core import concurrency as C  # 派生与上下文传播
 
 
 def _count_tokens(text: str) -> int:
@@ -283,10 +284,10 @@ class ContextEngine:
                 # 的泄漏（区别于 tools.execute 的 fut.result(timeout) 弃船路径）。加了反而
                 # 夹逼慢 embed、把正常检索误杀成空结果，净退化。工具模式的检索由
                 # tools.execute 的 budget scope 管。
-                # OTel context 传播点：submit 不拷贝 contextvar，用 ctx_submit 包装，
+                # context 传播点：submit 不拷贝 contextvar，用 ctx_submit 包装，
                 # 否则 worker 里的检索/embed span 会成孤儿。
-                f_scene = T.ctx_submit(pool, self._retrieve_scenes_ex, user_message)
-                f_memory = T.ctx_submit(
+                f_scene = C.ctx_submit(pool, self._retrieve_scenes_ex, user_message)
+                f_memory = C.ctx_submit(
                     pool, self._retrieve_memories_ex, user_message, current_mood=current_mood
                 )
                 scene = f_scene.result()

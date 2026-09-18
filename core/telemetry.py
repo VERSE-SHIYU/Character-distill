@@ -10,16 +10,20 @@
 gen_ai.* 最终名。GenAI semconv 仍是 Development 态（可能改名）——届时只改 ATTR_RENAME。
 内容合规：完整 prompt/回复绝不进 span 属性。如需捕获只能用事件，且 OTEL_CAPTURE_CONTENT=1
 才生效（默认关）；默认路径无任何用户内容写入。
+
+上下文载体：OTel 上下文跨派生线程的搬运（capture/restore/release）登记在本模块，
+`core/concurrency.py` 只认协议、不认 OTel（spec v5 §2.3）。
 """
 from __future__ import annotations
 
 import functools
 import inspect
 import os
-import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, Iterator
+
+from core.concurrency import register_context_carrier
 
 _ENABLED = os.getenv("OTEL_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 _CAPTURE = os.getenv("OTEL_CAPTURE_CONTENT", "").strip().lower() in ("1", "true", "yes", "on")
@@ -230,8 +234,11 @@ def _start_noncurrent(name: str, op: str | None, wf: str | None) -> Any:
 
     流式生成器可能被 asyncio.to_thread 逐片推进——每次 to_thread 都
     copy_context() 一个新 context，若用 start_as_current_span，span 在 ctx#1 开、
-    ctx#N 关，detach 会因 token 属另一 Context 抛 ValueError（实测）。流式 span 无需
-    作为 current（token 层无子 span），只需正确 parent + usage，故手动 end 即够。
+    ctx#N 关。OTel 的 detach 这时会因 token 属另一 Context 而失败，且**那个失败被它
+    自己吞掉**（只留一条 "Failed to detach context" 日志，不抛给调用方），留下的是
+    没被释放的 context。流式 span 无需作为 current（token 层无子 span），只需正确
+    parent + usage，故手动 end 即够 —— 这个「吞掉后仍不释放」的形态由
+    `tests/test_llm_access_gate.py` 的 L15 载体判据钉住。
     """
     tr = _setup()
     if tr is None:
@@ -309,7 +316,7 @@ def async_spanned(name: str, *, op: str | None = None, wf: str | None = None,
     finalize(sp, self, result, exc)：与 spanned 同签名；result 为协程返回值。
 
     与 spanned 的关键差异：span 用 _start_noncurrent（start_span，不设 current、无 attach/detach），
-    因为协程可能在 asyncio.run 的 task 里执行（ctx_thread 内 asyncio.run 并发 map），
+    因为协程可能在 asyncio.run 的 task 里执行（派生线程内 asyncio.run 并发 map），
     start_as_current_span 的 attach/detach 跨 await/task 边界会重现已修的 detach token 错配。
     LLM 调用是叶子（无子 span），不设 current 安全——parent 从当前 context 继承即可挂到调用方。
     """
@@ -342,49 +349,41 @@ def async_spanned(name: str, *, op: str | None = None, wf: str | None = None,
     return deco
 
 
-def ctx_thread(target: Callable, args: tuple = (), kwargs: dict | None = None,
-               *, daemon: bool = True, name: str | None = None) -> threading.Thread:
-    """裸线程 + OTel context 传播：把当前 OTel Context attach 进子线程再执行。
+class _OtelCarrier:
+    """`core.concurrency` 的载体协议：把当前 OTel Context 搬进派生线程。
 
-    用 opentelemetry.context.attach/detach 而非 contextvars.copy_context().run()——
-    copy_context().run() 在 copy 出的隔离 Context 里 set token，target 结束后 detach
-    会因 token 属另一个 Context 抛 ValueError（实测 Python 3.12）。attach 在同线程原生
-    context 里 set/detach，token 配对正确。OTEL 关时退化为普通 daemon 线程（零开销）。
+    开关关上时三步全 no-op，且**不 import opentelemetry** —— 默认部署就是关的，
+    这条路径上不该出现任何 OTel 的加载。
+
+    与已被取代的旧写法（在子线程的原生 context 里 attach/detach）的差别：现在
+    restore 与 release 都发生在同一个 `ctx.run` 内，故 token 一定配对得上。跑到外面
+    会失败，而那个失败被 OTel 吞掉、只留日志，父上下文就永远挂在拷贝出的 context 里
+    ——`tests/test_llm_access_gate.py` 的 L15 用同一个协议钉住了这一点。
     """
-    if kwargs is None:
-        kwargs = {}
-    if not _ENABLED:
-        return threading.Thread(target=target, args=args, kwargs=kwargs, daemon=daemon, name=name)
-    from opentelemetry.context import attach, detach, get_current
 
-    otel_ctx = get_current()
+    def capture(self):
+        if not _ENABLED:
+            return None
+        from opentelemetry.context import get_current
+        return get_current()
 
-    def _t():
-        token = attach(otel_ctx)
-        try:
-            target(*args, **kwargs)
-        finally:
-            detach(token)
+    def restore(self, state):
+        if state is None:
+            return None
+        from opentelemetry.context import attach
+        return attach(state)
 
-    return threading.Thread(target=_t, daemon=daemon, name=name)
+    def release(self, token):
+        if token is None:
+            return
+        from opentelemetry.context import detach
+        detach(token)
 
 
-def ctx_submit(pool, fn: Callable, *args, **kwargs):
-    """ThreadPoolExecutor.submit + context 传播（实测裸 submit 不拷 contextvar）。"""
-    if not _ENABLED:
-        return pool.submit(fn, *args, **kwargs)
-    from opentelemetry.context import attach, detach, get_current
-
-    otel_ctx = get_current()
-
-    def _job():
-        token = attach(otel_ctx)
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            detach(token)
-
-    return pool.submit(_job)
+# 无条件登记（不是「启用时才登记」）：派生路径只有一条，开关的差异由载体自己表达。
+# 若登记也分两条路，那条「启用时才走」的分支只在上线时才被走到 —— 而那正是最不该
+# 到那时才发现没接上的地方。
+register_context_carrier(_OtelCarrier())
 
 
 async def trace_sse_async(agen, name: str, *, op: str = None, wf: str = None):
@@ -419,6 +418,6 @@ async def trace_sse_async(agen, name: str, *, op: str = None, wf: str = None):
 
 __all__ = [
     "enabled", "capture_enabled", "spans", "reset_spans", "tracer",
-    "span", "spanned", "async_spanned", "ctx_thread", "ctx_submit",
+    "span", "spanned", "async_spanned",
     "trace_sse_async", "set_usage", "set_error", "set_attr", "capture_event", "A",
 ]

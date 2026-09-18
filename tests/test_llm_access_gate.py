@@ -27,6 +27,7 @@ spec 在库：`docs/specs/llm-access-gate.md`（v5 全量取代 v1–v4）。命
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import inspect
 import threading
 import uuid
@@ -65,8 +66,20 @@ def _mod(name: str):
 
 
 def _gate():
-    """`web/llm_gate.py`：上下文、守卫、审计。"""
+    """`web/llm_gate.py`：守卫、审计（C3）。身份上下文**不在这里** —— 见 `_ctx()`。"""
     return _mod("web.llm_gate")
+
+
+def _ctx():
+    """`web/request_context.py`：请求身份上下文（C2b 建，门在 C3 import 它）。
+
+    与 `_gate()` 分开是职责线，不是搬家：`Caller` / `LLM_CALLER` / `system_llm_context`
+    是「谁在调」这个**事实**；`web/llm_gate.py` 的 geo 判定是「许不许调」这个**策略**。
+    spec §2.6 要求门**依赖**本模块、不重复定义 —— 于是本文件读身份一律走这里，
+    读策略一律走 `_gate()`，两个模块的身份对象必须同一个（`web/` 无 `__init__.py`，
+    换个模块名会 import 出**第二个** ContextVar，两边都看不见对方设的值）。
+    """
+    return _mod("web.request_context")
 
 
 def _resolution():
@@ -80,7 +93,7 @@ def _adapter():
 
 def _caller_ip() -> str | None:
     """当前上下文里的调用方 IP —— 读不到上下文返回 None（不伪造默认值）。"""
-    caller = _gate().LLM_CALLER.get(None)
+    caller = _ctx().LLM_CALLER.get(None)
     return getattr(caller, "ip", None)
 
 
@@ -173,6 +186,29 @@ class _SetSubmitter:
         return False
 
 
+class _RegisteredCarrier:
+    """临时登记载体，退出时按**原集合**还原。
+
+    不能 append 了事：`register_context_carrier` 只追加，不还原就会把假载体留在登记表
+    里 —— 本进程后面**每一条**派生路径都会带上它；清空同样不行（telemetry 在导入期
+    登记过 OTel 载体）。与 `_SetGuard` / `_SetSubmitter` 同一个道理。
+    """
+
+    def __init__(self, *carriers) -> None:
+        self._C = _mod("core.concurrency")
+        self._carriers = carriers
+
+    def __enter__(self):
+        self._prev = self._C.get_context_carriers()
+        for carrier in self._carriers:
+            self._C.register_context_carrier(carrier)
+        return self
+
+    def __exit__(self, *exc):
+        self._C.set_context_carriers(self._prev)
+        return False
+
+
 # ── L1 / L2：`/start` 的全局兜底，以及兜底实例的同一性 ────────────────────
 
 @pytest.fixture
@@ -204,9 +240,10 @@ def _seed_text(store, uid, body: str = "角色甲说道：" * 30) -> str:
 def _capture_thread(monkeypatch) -> list[tuple]:
     """把派生原语换成「只记参数、不起线程」—— `/start` 的入参由此取得。
 
-    迁移（§2.3）把 `ctx_thread` 从 telemetry 搬到 concurrency，故两个模块都打；
+    C2b 起只有一个模块 `core.concurrency` 定义派生原语（telemetry 那份已删，不是转发）。
     **要求调用点用属性形式**（`C.ctx_thread(...)` 而非 `from ... import ctx_thread`），
-    否则函数内绑定在 import 期就固化了，这里拦不到。
+    否则函数内绑定在 import 期就固化了，这里拦不到 —— 那处绑定同时是「迁移漏了调用点」
+    的探子：谁还留着 `from core.telemetry import ctx_thread`，这里就拦不到它、用例红。
     """
     captured: list[tuple] = []
 
@@ -214,13 +251,7 @@ def _capture_thread(monkeypatch) -> list[tuple]:
         captured.append((target, args, kwargs or {}))
         return threading.Thread()
 
-    for mod_name in ("core.concurrency", "core.telemetry"):
-        try:
-            mod = _mod(mod_name)
-        except ImportError:
-            continue
-        if hasattr(mod, "ctx_thread"):
-            monkeypatch.setattr(mod, "ctx_thread", _fake_ctx_thread)
+    monkeypatch.setattr(_mod("core.concurrency"), "ctx_thread", _fake_ctx_thread)
     return captured
 
 
@@ -289,18 +320,18 @@ def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeyp
 @pytest.mark.xfail(strict=True,
                    reason="C4 翻转：缓存命中也过 preflight，判据 kind == call_refused")
 def test_l3_cache_hit_still_checks_geo(store, monkeypatch):
-    gate = _gate()
+    ctx = _ctx()
     la = _adapter()
     _fake_geo(monkeypatch)
     uid = f"u_l3_{uuid.uuid4().hex[:8]}"
     asyncio.run(store.update_user_api_config(
         uid, "k", "https://api.other.com", "m"))
 
-    gate.LLM_CALLER.set(gate.Caller(_ALLOWED_IP, uid))
+    ctx.LLM_CALLER.set(ctx.Caller(_ALLOWED_IP, uid))
     first = asyncio.run(deps.get_user_llm(uid, store))       # 入缓存
     assert first is not None
 
-    gate.LLM_CALLER.set(gate.Caller(_BLOCKED_IP, uid))       # 换 IP，缓存仍热
+    ctx.LLM_CALLER.set(ctx.Caller(_BLOCKED_IP, uid))         # 换 IP，缓存仍热
     with pytest.raises(la.LLMCallRefused) as ei:
         asyncio.run(deps.get_user_llm(uid, store))
 
@@ -494,11 +525,12 @@ def test_l6_non_call_set_matches_the_class():
                    reason="C3 翻转：无上下文 → LLMCallerMissing；SYSTEM 内放行")
 def test_l7_missing_context_fails_closed_and_system_passes():
     gate = _gate()
+    ctx = _ctx()
 
     with pytest.raises(gate.LLMCallerMissing):
         gate.geo_call_guard("https://api.deepseek.com")
 
-    with gate.system_llm_context():
+    with ctx.system_llm_context():
         assert gate.geo_call_guard("https://api.deepseek.com") is None
 
     # 同一件事在**出站方法**那一侧也要成立 —— 守卫是注入进适配器的。
@@ -506,7 +538,7 @@ def test_l7_missing_context_fails_closed_and_system_passes():
         adapter = LLMAdapter(api_key="k", base_url="https://api.deepseek.com")
         with pytest.raises(gate.LLMCallerMissing):
             adapter._before_call()
-        with gate.system_llm_context():
+        with ctx.system_llm_context():
             adapter._before_call()      # 不抛即放行
 
 
@@ -602,12 +634,16 @@ def _via_http(kind: str) -> str | None:
     return client.get(path, headers=headers).json()["ip"]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2b 翻转：传播原语收敛为一个，contextvar 处处可见")
 @pytest.mark.parametrize("otel", [False, True], ids=["otel-off", "otel-on"])
 @pytest.mark.parametrize(
     "where", ["endpoint", "stream", "public", "thread", "submit", "nested", "asyncio_run"])
 def test_l8_contextvar_visible_everywhere(where, otel, monkeypatch):
+    """C2b 翻转（原 `xfail(strict=True)`）：传播原语收敛为一个，contextvar 处处可见。
+
+    两维都要「开关无关」：`ctx_thread`/`ctx_submit` 现在的捕获/恢复不经过载体以外
+    任何东西，OTEL 开或关只决定 OTel 那一个载体是不是 no-op —— contextvar 这一半
+    与开关无关（迁移前的 `threading.Thread(…)` 退化路径已不存在）。
+    """
     from core import telemetry as T
 
     monkeypatch.setattr(T, "_ENABLED", otel)
@@ -616,8 +652,8 @@ def test_l8_contextvar_visible_everywhere(where, otel, monkeypatch):
         monkeypatch.setattr(server, "get_storage", lambda: _AuthStore("u_l8"))
         observed = _via_http(where)
     else:
-        gate = _gate()
-        gate.LLM_CALLER.set(gate.Caller(_BLOCKED_IP, "u_l8"))
+        ctx = _ctx()
+        ctx.LLM_CALLER.set(ctx.Caller(_BLOCKED_IP, "u_l8"))
         observed = _spawn(where)
 
     tag = f"{where}（OTEL={'on' if otel else 'off'}）"
@@ -657,6 +693,7 @@ def _audit_app(uid: str) -> FastAPI:
     from starlette.middleware.base import BaseHTTPMiddleware
 
     gate = _gate()
+    ctx = _ctx()
     app = FastAPI()
     server.register_domain_error_handlers(app)
     gate.install_llm_gate(app)
@@ -664,7 +701,7 @@ def _audit_app(uid: str) -> FastAPI:
     class _Who(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             request.state.user = {"id": uid}
-            gate.LLM_CALLER.set(gate.Caller(request.headers.get("X-Real-IP", ""), uid))
+            ctx.LLM_CALLER.set(ctx.Caller(request.headers.get("X-Real-IP", ""), uid))
             return await call_next(request)
 
     app.add_middleware(_Who)
@@ -1025,13 +1062,8 @@ def test_l14_usage_recording_goes_through_the_primitive():
 _OTEL_MODULES = ("opentelemetry",)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2b 翻转：core/concurrency.py 建立后，扫描面才可能非空")
 def test_l15_concurrency_scan_face_is_not_empty():
-    """非空守卫：文件不在/扫不到时，「不含 opentelemetry」会假绿（扫了个空气）。
-
-    它本步就红 —— 与被它守的那条同一步翻转：red-first 里「守卫也红」不矛盾，
-    它红的原因就是被守对象还没建立，正是它要证明的事。"""
+    """非空守卫：文件不在/扫不到时，「不含 opentelemetry」会假绿（扫了个空气）。"""
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent.parent
@@ -1040,8 +1072,6 @@ def test_l15_concurrency_scan_face_is_not_empty():
     assert concurrency.read_text(encoding="utf-8").strip(), "core/concurrency.py 是空文件"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2b 翻转：core/concurrency.py 建立，且不 import opentelemetry")
 def test_l15_concurrency_has_no_opentelemetry():
     import ast
     import pathlib
@@ -1060,15 +1090,31 @@ def test_l15_concurrency_has_no_opentelemetry():
     assert not found, f"core/concurrency.py 里出现了 opentelemetry：{found}"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C2b 翻转：载体协议（capture/restore/release）被派生路径按序驱动")
+def test_l15_registry_read_port_is_populated_and_returns_a_copy():
+    """读口：`get_context_carriers()` 看得见 telemetry 登记的 OTel 载体，且给的是副本。
+
+    两半都要，缺一半都会让本组用例失去意义：
+      - 空表 → 下面「载体被派生路径驱动」的用例只是在自己登记的假载体上打转，
+        生产那个载体接没接上完全没被观测；
+      - 返回本体（不是副本）→ 用例 `clear()` 一下就能把生产载体悄悄关掉，
+        而「关掉后仍绿」会让任何依赖载体的判据失真。
+    """
+    C = _mod("core.concurrency")
+    carriers = C.get_context_carriers()
+    names = [f"{type(c).__module__}.{type(c).__name__}" for c in carriers]
+    assert carriers, "登记表是空的 —— telemetry 没登记载体，读口观测不到任何东西"
+    assert any(type(c).__module__ == "core.telemetry" for c in carriers), (
+        f"telemetry 没登记 OTel 载体，表里只有：{names}")
+
+    carriers.clear()
+    assert C.get_context_carriers(), "get_context_carriers() 返回的不是副本"
+
+
 def test_l15_carrier_protocol_is_driven_by_the_derive_path():
     """载体协议被驱动 = 一次 `ctx_thread` 里 capture → restore → release 按序发生。
 
-    这一半（协议被派生路径按序驱动）可由事实直接判定。另一半「OTEL 开启时 telemetry
-    已注册载体」原本没有观测点（载体注册没有与 `set_call_guard` / `get_call_guard` 配对
-    的读口），**已裁定补配对读口**（`set_context_carrier` / `get_context_carriers`，
-    见 spec §1.1）；C2b 建 `core/concurrency.py` 时把那一半的断言并进本用例。
+    本条走**裸线程**入口；`ctx_submit`（线程池）入口的同一件事、以及「三者同处一个
+    `ctx.run`」的结构判据在下面两条 —— 两个派生入口各钉一次，不互相代替。
     """
     C = _mod("core.concurrency")
     log: list[str] = []
@@ -1085,13 +1131,125 @@ def test_l15_carrier_protocol_is_driven_by_the_derive_path():
         def release(self, token):
             log.append("release")
 
-    C.register_context_carrier(_Carrier())
     box: list = []
-    t = C.ctx_thread(box.append, args=("ran",))
-    t.start()
-    t.join(timeout=5)
+    with _RegisteredCarrier(_Carrier()):
+        t = C.ctx_thread(box.append, args=("ran",))
+        t.start()
+        t.join(timeout=5)
 
     assert box == ["ran"], "派生体没跑"
     assert log[:1] == ["capture"], f"调用方线程没先 capture：{log}"
     assert "restore" in log and "release" in log, f"子线程没按序 restore/release：{log}"
     assert log.index("restore") < log.index("release"), f"顺序反了：{log}"
+
+
+class _StructuralCarrier:
+    """假载体，判据借用**标准库自己的同 Context 约束**：`ContextVar.set` 返回的 token
+    只在产生它的那个 Context 里 `reset` 得掉，换个 Context 就 `ValueError`。
+
+    为什么不能只断言「不抛异常」：那是错的判据，B3 已证 —— OTel 的 `detach` 遇到
+    token 属另一 Context 时把它**吞掉**，只留一条 "Failed to detach context" 日志，
+    调用方什么也看不到。真实后果（父上下文一直挂在拷贝出的 Context 里没释放）因此
+    无声无息。本载体不吞，位置错了就必然把 ValueError 冒到 `fut.result()`。
+
+    三步都记 `(名字:动作, 线程号)`，于是「capture 在调用方线程、restore/release 在
+    跑 fn 的那条线程」以及「release 逆序配对」也是从事实读出来的，不靠注释声明。
+    """
+
+    def __init__(self, name: str, log: list) -> None:
+        self.name = name
+        self._log = log          # 两个载体共用一份：各自的顺序要能互相对照
+        self._var: contextvars.ContextVar[str] = contextvars.ContextVar(f"l15_{name}")
+
+    def _note(self, what: str) -> None:
+        self._log.append((f"{self.name}:{what}", threading.get_ident()))
+
+    def capture(self):
+        self._note("capture")
+        return None
+
+    def restore(self, state):
+        self._note("restore")
+        return self._var.set("attached")
+
+    def release(self, token):
+        self._note("release")
+        self._var.reset(token)      # 不在同一个 Context → ValueError
+
+
+def test_l15_carrier_restore_and_release_share_one_context_run():
+    """**结构判据**：restore 与 release 必须同处一个 `ctx.run`，且逐一逆序配对。
+
+    要打红的变异：把 release 提到 `ctx.run(...)` 之外 —— 「token 属另一个 Context」
+    的失败在 OTel 那里被吞、在假载体这里现形成 ValueError。
+    """
+    C = _mod("core.concurrency")
+    log: list[tuple[str, int]] = []
+    a, b = _StructuralCarrier("a", log), _StructuralCarrier("b", log)
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        with _RegisteredCarrier(a, b):
+            fut = C.ctx_submit(pool, threading.get_ident)
+            worker = fut.result(timeout=5)   # release 逸出 ctx.run → ValueError 从这里冒
+            caller = threading.get_ident()
+    finally:
+        pool.shutdown(wait=True)
+
+    assert worker != caller, "没起线程池工人 —— 下面的线程判据全是空转"
+    assert [n for n, _ in log] == [
+        "a:capture", "b:capture", "a:restore", "b:restore", "b:release", "a:release",
+    ], f"三步的先后 / 配对不对（restore 顺登记序、release 逆序）：{log}"
+    assert [tid for _, tid in log] == [caller, caller, worker, worker, worker, worker], (
+        f"capture 该在调用方线程、restore/release 该在跑 fn 的那条线程：{log}")
+
+
+def test_l15_carrier_release_pairs_on_the_exception_path():
+    """`fn` 抛异常时 release 仍要发生，且仍在**同一个** `ctx.run` 内（try/finally 配对）。
+
+    少了 finally，载体就永远不复位 —— 而这条路径上没人会注意到，直到下次派生撞上
+    残留状态。release 位置错了同样现形：ValueError 会盖过 RuntimeError。
+    """
+    C = _mod("core.concurrency")
+    log: list[tuple[str, int]] = []
+    carrier = _StructuralCarrier("x", log)
+
+    def _boom():
+        raise RuntimeError("派生体自己炸了")
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        with _RegisteredCarrier(carrier):
+            with pytest.raises(RuntimeError, match="派生体自己炸了"):
+                C.ctx_submit(pool, _boom).result(timeout=5)
+    finally:
+        pool.shutdown(wait=True)
+
+    assert [n for n, _ in log] == ["x:capture", "x:restore", "x:release"], (
+        f"异常路径上 release 没配对发生：{log}")
+
+
+def test_l15_otel_context_still_propagates_into_a_derived_thread(monkeypatch):
+    """行为基线（B4/B5）：OTEL 开启时，派生线程里仍看得见调用方 attach 的 OTel Context。
+
+    迁到共用包装器后这一条不许退化 —— 载体**无条件**登记，开关的差异由载体自己表达
+    （`capture` 在关上时返回 None，于是三步全 no-op）。这里用 `opentelemetry.context`
+    直接做观测点：它不依赖 tracer provider，装的只是「当前上下文里挂着什么」。
+    """
+    from core import telemetry as T
+
+    C = _mod("core.concurrency")
+    otel_ctx = _mod("opentelemetry.context")
+    monkeypatch.setattr(T, "_ENABLED", True)
+
+    key = "l15_marker"
+    box: list = []
+
+    token = otel_ctx.attach(otel_ctx.set_value(key, "propagated", otel_ctx.get_current()))
+    try:
+        t = C.ctx_thread(lambda: box.append(otel_ctx.get_value(key)))
+        t.start()
+        t.join(timeout=5)
+    finally:
+        otel_ctx.detach(token)
+
+    assert box == ["propagated"], f"OTEL 开启时上下文没跟过派生线程：{box}"

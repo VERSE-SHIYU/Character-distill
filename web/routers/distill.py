@@ -24,6 +24,7 @@ from core.export import export_tavern_json
 from core.schema import CharacterCard
 from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+from core import concurrency as C  # 派生与上下文传播
 from storage.base import StorageBase
 from limiter import get_client_ip, limiter
 from routers.auth import get_current_user
@@ -890,7 +891,7 @@ async def _distill_start_impl(
                            "message": _queued_msg,
                            "card_id": "", "awakening": "", "_db": ("running", 0)}
 
-    thread = T.ctx_thread(  # OTel context 传播点：蒸馏后台线程挂到发起请求 trace
+    thread = C.ctx_thread(  # context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
               api_config, _client_ip, resume_candidates),

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core import telemetry as T  # OTel context 传播点（ctx_thread）
+from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.utils import try_record_usage
 
 # ── 加权检索常量（两级门控: base = α·rel + β·rec + γ·imp, final = base × (1+λ·emo)）──
@@ -331,7 +331,7 @@ class MemoryManager:
                 import traceback
                 traceback.print_exc()
 
-        T.ctx_thread(_do_add, daemon=True).start()  # OTel context 传播点：记忆入库线程
+        C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
     def get_all(self, card_id: str) -> list[dict[str, Any]]:
         """获取某角色的所有记忆。"""
@@ -420,7 +420,7 @@ class MemoryManager:
                 import traceback
                 traceback.print_exc()
 
-        T.ctx_thread(_do_reflect, daemon=True).start()  # OTel context 传播点：反思线程
+        C.ctx_thread(_do_reflect, daemon=True).start()  # context 传播点：反思线程
 
     def update(self, memory_id: str, text: str) -> bool:
         """更新一条记忆的内容。"""

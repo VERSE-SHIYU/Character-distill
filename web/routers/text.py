@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from urllib.parse import quote
 
 from core.trash_service import hard_delete, restore, soft_delete
-from core import telemetry as T  # OTel context 传播点（ctx_thread）
+from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.scheduling import submit_to_main_loop
 from deps import get_storage
 from storage.base import StorageBase
@@ -189,7 +189,7 @@ async def upload_text(
     upload_task_id = ""
     if text_type in ("story", "classic"):
         upload_task_id = uuid.uuid4().hex[:12]
-        thread = T.ctx_thread(  # OTel context 传播点
+        thread = C.ctx_thread(  # context 传播点
             _run_upload_task,
             args=(upload_task_id, text_id, user_id, _client_ip),
             daemon=True,

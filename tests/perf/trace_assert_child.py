@@ -34,6 +34,7 @@ assert os.getenv("OTEL_ENABLED", "").lower() in ("1", "true", "yes", "on"), "chi
 assert os.getenv("OTEL_EXPORTER", "") == "memory", "child needs OTEL_EXPORTER=memory"
 
 from core import telemetry as T  # noqa: E402
+from core import concurrency as C  # noqa: E402  （C2b：派生原语迁出 telemetry）
 
 PASS, FAIL = [], []
 
@@ -127,10 +128,10 @@ def assert_ctx_boundary() -> None:
             with T.span(name):
                 pass
 
-        th = T.ctx_thread(child, ("thr.child",), daemon=True)
+        th = C.ctx_thread(child, ("thr.child",), daemon=True)
         th.start(); th.join()
         with ThreadPoolExecutor(max_workers=2) as pool:
-            T.ctx_submit(pool, child, "ex.child").result()
+            C.ctx_submit(pool, child, "ex.child").result()
             pool.submit(child, "ex.orphan").result()  # 对照组：裸 submit 不拷 context
     root = [s for s in T.spans() if s.name == "root.boundary"]
     root_id = root[0].context.span_id if root else -1
@@ -328,7 +329,7 @@ def assert_async_boundary(base: str) -> None:
 
     T.reset_spans()
     with T.span(root_name):
-        th = T.ctx_thread(_worker, daemon=True)
+        th = C.ctx_thread(_worker, daemon=True)
         th.start()
         th.join()
 

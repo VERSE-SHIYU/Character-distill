@@ -23,7 +23,8 @@ from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_faci
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
-from core import telemetry as T  # OTel context 传播点（ctx_thread/ctx_submit）
+from core import telemetry as T  # OTel 埋点
+from core import concurrency as C  # 派生与上下文传播
 
 # ── identify_characters TTL cache ───────────────────────────────────────
 IDENTIFY_CACHE_TTL_SECONDS = 600
@@ -826,8 +827,8 @@ class Distiller:
             if loop and loop.is_running():
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    # OTel context 传播点：submit 不拷贝 contextvar → ctx_submit
-                    results = T.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
+                    # context 传播点：submit 不拷贝 contextvar → ctx_submit
+                    results = C.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
             else:
                 results = asyncio.run(_resolve_all())
         finally:
@@ -1328,7 +1329,7 @@ class Distiller:
             except Exception as exc:
                 q.put(("error", str(exc)))
 
-        t = T.ctx_thread(_thread_run, daemon=True)  # OTel context 传播点
+        t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
         t.start()
 
         map_results: list[tuple[int, str]] = []
@@ -1586,7 +1587,7 @@ class Distiller:
                 # 上屏文案必须经 user_facing_error 收敛，str() 会把内部标识带出去。
                 q.put(("error", exc, None, None))
 
-        t = T.ctx_thread(_thread_run, daemon=True)  # OTel context 传播点
+        t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
         t.start()
 
         map_results: list[tuple[int, str]] = []
@@ -1689,7 +1690,7 @@ class Distiller:
                 except Exception as exc:
                     rq.put(("error", exc))   # 同上：下游是上屏，传本体不传 str()
 
-            rt = T.ctx_thread(_reduce_thread, daemon=True)  # OTel context 传播点
+            rt = C.ctx_thread(_reduce_thread, daemon=True)  # context 传播点
             rt.start()
 
             batch_by_index: dict[int, str] = {}

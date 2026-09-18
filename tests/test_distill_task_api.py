@@ -23,7 +23,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from core import telemetry as T
+from core import concurrency as C  # 派生与上下文传播
 from core.distiller import text_fingerprint
 from deps import get_storage
 from routers import distill as D
@@ -384,7 +384,7 @@ class TestCStartRefusesOnDBFailure:
 
         monkeypatch.setattr("deps.get_distiller", lambda llm=None: _StubDistiller())
         started = []
-        monkeypatch.setattr("core.telemetry.ctx_thread",
+        monkeypatch.setattr("core.concurrency.ctx_thread",
                             lambda *a, **k: started.append(a) or threading.Thread())
 
         resp = client.post("/api/distill/start",
@@ -430,7 +430,7 @@ def _capture_start(monkeypatch, store, user_id, tid, *, character="甲", force=F
     monkeypatch.setattr("deps.get_distiller",
                         lambda llm=None: _ResumeDistillerStub(chunk_size))
     captured: list[tuple] = []
-    monkeypatch.setattr("core.telemetry.ctx_thread",
+    monkeypatch.setattr("core.concurrency.ctx_thread",
                         lambda *a, **k: captured.append(k["args"]) or threading.Thread())
 
     client = _build_client(store, user_id)
@@ -582,14 +582,14 @@ def _install_bg(monkeypatch, store, cap=3):
     monkeypatch.setattr(D, "_DISTILL_SEMAPHORE", sem)
 
     threads = []
-    real_ctx_thread = T.ctx_thread
+    real_ctx_thread = C.ctx_thread
 
     def _spy(target, args=(), **kw):
         t = real_ctx_thread(target, args=args, **kw)
         threads.append(t)
         return t
 
-    monkeypatch.setattr("core.telemetry.ctx_thread", _spy)
+    monkeypatch.setattr("core.concurrency.ctx_thread", _spy)
     return distiller, sem, threads
 
 

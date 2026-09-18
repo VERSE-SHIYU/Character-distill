@@ -16,16 +16,28 @@
 
 | 派生方式 | OTEL 关 | OTEL 开 | 依据 |
 |---|---|---|---|
-| `T.ctx_thread` | **不传播** | 传播 | `core/telemetry.py`：关时直接 `threading.Thread(...)` |
-| `T.ctx_submit` | **不传播** | 传播 | 同上，关时直接 `pool.submit(...)` |
+| `C.ctx_thread` | **不传播** | 传播 | `core/telemetry.py`：关时直接 `threading.Thread(...)` |
+| `C.ctx_submit` | **不传播** | 传播 | 同上，关时直接 `pool.submit(...)` |
 | `asyncio.create_task` | 传播 | 传播 | 同 context 建 task（标准库行为） |
 | `asyncio.to_thread` | 传播 | 传播 | 标准库内部 `contextvars.copy_context()`（本机源码确认） |
-| 裸 `loop.run_in_executor` | **不传播** | **不传播** | 只有 `to_thread` 包了 `ctx.run`。`web/server.py` 里 `set_default_executor` 旁那句「`run_in_executor` / `asyncio.to_thread` 自动拷贝 contextvar」**对前者是错的** —— 生产代码零处裸用（只在 `scripts/`），故是注释错、不是缺陷。 |
+| 裸 `loop.run_in_executor` | **不传播** | **不传播** | 只有 `to_thread` 包了 `ctx.run`。`web/server.py` 里 `set_default_executor` 旁那句「`run_in_executor` / `asyncio.to_thread` 自动拷贝 contextvar」**对前者是错的** —— 生产代码零处裸用（只在 `scripts/`），故是注释错、不是缺陷；该注记已按本条订正（spec v5 §2.9）。 |
 
-⇒ 本命题的**唯一断点**是 `T.ctx_thread` / `T.ctx_submit` 在 OTEL 关时的退化路径
+⇒ 本命题的**唯一断点**是 `ctx_thread` / `ctx_submit` 在 OTEL 关时的退化路径
 （生产默认 OTEL 关）。C2 修的就是它。
 
-## 二、9 处 `ctx_thread` 派生点的归属（人工判定）
+**v3 订正（C2b 落地后）**：上表头两行记的是**迁移前**的形态，两个原语已从
+`core/telemetry.py` 迁到 `core/concurrency.py`（故表头改写为 `C.`）。迁移后
+**开关无关**：捕获在调用方线程 `copy_context()`，恢复 / 执行 / 释放三者同处一个
+`ctx.run`，OTEL 开关只决定已登记的载体是不是 no-op —— 于是「OTEL 关 = 不传播」
+这一行自 C2b 起不再成立。L8 钉的正是这件事。
+
+第二张表里第 7 行（`record_usage` 线程）在 C2a 已被删除：那段自建 loop 的线程写库
+改成 `core/scheduling.submit_to_main_loop(..., wait=False)`，不再是派生点。
+
+## 二、`ctx_thread` 派生点的归属（人工判定）
+
+> 下表 **9 行是审计时**的全集。第 7 行已于 C2a 随 `record_usage` 改走
+> `submit_to_main_loop` 而删除，现存 **8 处**（现跑现数见 `main()` 打印的派生点表）。
 
 | # | 位置（符号名） | 线程体 | 到得出站方法？ | 父来自请求？ | 结论 |
 |---|---|---|---|---|---|
@@ -102,7 +114,7 @@ def _tracked_py() -> list[str]:
 
 
 def _dotted(node: ast.AST) -> str:
-    """把 `T.ctx_thread` 还原成点号串；认不出返回空串。"""
+    """把 `C.ctx_thread` 还原成点号串；认不出返回空串。"""
     parts: list[str] = []
     while isinstance(node, ast.Attribute):
         parts.append(node.attr)

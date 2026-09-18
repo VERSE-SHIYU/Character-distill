@@ -38,7 +38,8 @@ from fastapi.staticfiles import StaticFiles
 
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from limiter import limiter
+from limiter import get_client_ip, limiter
+from web.request_context import Caller, LLM_CALLER
 
 from security import SecurityHeadersMiddleware
 
@@ -94,8 +95,12 @@ async def _lifespan(app: FastAPI):
     validate_inter_node_secret()
     install_log_collector()
     loop = asyncio.get_running_loop()
-    # OTel context 传播点注记：set_default_executor 的 run_in_executor / asyncio.to_thread
-    # 自动拷贝 contextvar，不是断点（实测 Python 3.12 保留 context），故无需包装。
+    # context 传播点注记：`asyncio.to_thread` 会拷贝 contextvar（标准库内部走
+    # `contextvars.copy_context()`），裸 `loop.run_in_executor` **不会** —— 后者只把
+    # 裸函数丢进执行器，不碰 context。故「执行器本身不是断点」这句话对前者成立、
+    # 对后者是错的（实测 Python 3.12，读数与依据见 tests/census_llm_call_contexts.py §一）。
+    # 生产代码零处裸用 run_in_executor，故这里是注记订正，不是需要包装的缺陷；
+    # 将来若要在执行器里跑需要上下文的活，走 `asyncio.to_thread` 或 core.concurrency。
     loop.set_default_executor(ThreadPoolExecutor(max_workers=200, thread_name_prefix="chat_pool"))
     from deps import set_main_loop
     set_main_loop(loop)
@@ -262,36 +267,49 @@ def _maybe_update_last_active(user_id: str) -> None:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
+    """鉴权 + **一次**身份上下文的设置。
+
+    形态是刻意的：`call_next` 只有**一个**出口，`LLM_CALLER` 只在那一个出口前设
+    **一次**。早退的 401/403 各自 return 响应（没有下游，不需要上下文）；公开路径
+    与鉴权路径在出口处合流，靠 `user`/`user_id` 的初值区分 —— 于是「两条分支都要
+    设值」不是两份要同步维护的代码，而是同一个出口。
+
+    设在出口**之前**是硬要求：contextvar 只对 `call_next` 之后的下游可见，设在它
+    后面，端点体与流式响应体读到的都是默认值（实测，见 L8）。
+    """
+
     async def dispatch(self, request: Request, call_next):
-        request.state.user = {}  # default, prevents AttributeError on non-API paths
+        user: dict = {}          # 公开路径 / 非 /api/ 路径的身份：空 dict，等同未登录
+        user_id: str | None = None
         path = request.url.path
+
         # Allow public paths through
-        if path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/"):
-            return await call_next(request)
+        if not (path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/")):
+            auth_header = request.headers.get("Authorization", "")
+            scheme, _, token = auth_header.partition(" ")
+            if scheme.lower() != "bearer" or not token:
+                return JSONResponse({"detail": "请先登录"}, status_code=401)
 
-        auth_header = request.headers.get("Authorization", "")
-        scheme, _, token = auth_header.partition(" ")
-        if scheme.lower() != "bearer" or not token:
-            return JSONResponse({"detail": "请先登录"}, status_code=401)
+            try:
+                payload = _jwt_lib.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+            except _jwt_lib.ExpiredSignatureError:
+                return JSONResponse({"detail": "Token 已过期，请重新登录"}, status_code=401)
+            except _jwt_lib.InvalidTokenError:
+                return JSONResponse({"detail": "Token 无效"}, status_code=401)
 
-        try:
-            payload = _jwt_lib.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        except _jwt_lib.ExpiredSignatureError:
-            return JSONResponse({"detail": "Token 已过期，请重新登录"}, status_code=401)
-        except _jwt_lib.InvalidTokenError:
-            return JSONResponse({"detail": "Token 无效"}, status_code=401)
+            user_id = payload.get("sub")
+            if not user_id:
+                return JSONResponse({"detail": "Token 无效"}, status_code=401)
 
-        user_id = payload.get("sub")
-        if not user_id:
-            return JSONResponse({"detail": "Token 无效"}, status_code=401)
+            user = await get_storage().get_user_by_id(user_id)
+            if user is None:
+                return JSONResponse({"detail": "用户不存在"}, status_code=401)
+            if user.get("is_disabled"):
+                return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
+            _maybe_update_last_active(user_id)
 
-        user = await get_storage().get_user_by_id(user_id)
-        if user is None:
-            return JSONResponse({"detail": "用户不存在"}, status_code=401)
-        if user.get("is_disabled"):
-            return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
-        request.state.user = user
-        _maybe_update_last_active(user_id)
+        request.state.user = user  # default {} 防止非 API 路径上 AttributeError
+        LLM_CALLER.set(Caller(ip=get_client_ip(request), user_id=user_id))
         return await call_next(request)
 
 

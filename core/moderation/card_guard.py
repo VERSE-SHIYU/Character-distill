@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 
 from adapters.llm_adapter import LLMAdapter
 from core.utils import try_record_usage
-from core import telemetry as T  # OTel context 传播点（ctx_thread）
+from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 
 _LEAF_CAP = 160  # per-leaf char cap for the judge payload
 
@@ -142,7 +142,7 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0,
                 box["ok"] = False
                 box["err"] = f"{type(exc).__name__}: {exc}"
 
-        th = T.ctx_thread(_run, daemon=True)  # OTel context 传播点
+        th = C.ctx_thread(_run, daemon=True)  # context 传播点
         th.start()
         th.join(timeout)
         if th.is_alive():

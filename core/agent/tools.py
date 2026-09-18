@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
-from core import telemetry as T  # OTel context 传播点（ctx_submit）
+from core import concurrency as C  # 派生与上下文传播（ctx_submit）
 from core.embeddings import embed_deadline  # D2：库内 embed 的 deadline scope
 from core.schema import EvidenceKind, SourceTrace
 
@@ -27,10 +27,13 @@ _EXECUTE_DEADLINE_MARGIN_S = 1.0
 def _run_with_deadline(deadline: float | None, fn, arg):
     """在真正跑 handler 的线程内打开 embed deadline scope 再调 handler。
 
-    ContextVar 不跨裸线程；ctx_submit 只 attach OTel trace context（opentelemetry.
-    context），拷不进 _EMBED_DEADLINE —— scope 必须开在 executor worker（其调用栈深处
-    是 mem0/chroma 的库内 embed）这条线程上，embed 才在同线程读得到截止时刻并被
-    _call_api_bounded 夹逼。deadline=None → embed_deadline 直接 yield，与 D2 前一致。
+    `ctx_submit` 会把调用方的**整个** contextvar 上下文拷进 worker（C2b 起与开关无关，
+    见 core/concurrency.py），_EMBED_DEADLINE 也在其中。仍然必须在 worker 这条线程上
+    重新开 scope：拷过来的是调用方那一刻的值，而这里的 deadline 是本路径按自己的
+    timeout 现算的预算 —— rebind 而非继承，才让这个预算说了算。mem0/chroma 的库内
+    embed 在 worker 同线程读当前值，故 scope 必须开在这条线程上。
+
+    调用点恒传实数（`timeout − margin`，见 execute），故上面那段继承在这里不发生。
     """
     with embed_deadline(deadline):
         return fn(arg)
@@ -185,13 +188,13 @@ class AgentToolkit:
 
         pool = ThreadPoolExecutor(max_workers=1)
         try:
-            # OTel context 传播点：submit 不拷贝 contextvar → 用 ctx_submit，
+            # context 传播点：submit 不拷贝 contextvar → 用 ctx_submit，
             # 让 handler 内检索/embed 子 span 挂到 execute_tool 下而非孤儿。
             # D2：_run_with_deadline 在 worker 内开 embed scope，预算 = timeout − margin，
             # 让库内 embed 在 fut.result(timeout) 弃船前自行收手（见模块注释）。
             budget_s = entry.timeout - _EXECUTE_DEADLINE_MARGIN_S
             deadline = time.monotonic() + budget_s if budget_s > 0 else None
-            fut = T.ctx_submit(pool, _run_with_deadline, deadline, entry.handler, query)
+            fut = C.ctx_submit(pool, _run_with_deadline, deadline, entry.handler, query)
             result = fut.result(timeout=entry.timeout)
         except TimeoutError:
             # 超时是**调用层**事实（弃船），不是检索本体说了什么 —— 故它是 SourceStatus
