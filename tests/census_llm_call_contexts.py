@@ -48,7 +48,7 @@
 | 6 | `card_guard`（`core/moderation/card_guard.py`） | 卡片审查判词 | **是** | 是（`TextManager` 经 `asyncio.to_thread`） | 继承，无需声明 |
 | 7 | `record_usage` 线程（`core/utils.py`） | 落库 | **否**（纯 DB） | 是 | 无需声明 |
 | 8 | 蒸馏后台线程（`web/routers/distill.py`） | 整条蒸馏链 | **是** | 是（`/start`） | 继承，无需声明 |
-| 9 | 上传解析线程（`web/routers/text.py`） | 解析 + 落库 | **否**（纯 DB；其 `client_ip` 形参已是死参数） | 是 | 无需声明 |
+| 9 | 上传解析线程（`web/routers/text.py`） | 解析 + 落库 | **否**（纯 DB） | 是 | 无需声明 |
 
 `ctx_submit` **4 行 / 3 处**（`ContextEngine.build_ex` 一个 `with` 里两次派生，占两行）：
 

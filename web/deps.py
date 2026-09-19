@@ -24,9 +24,9 @@ from core.distiller import Distiller
 from core.indexing_service import IndexingService
 from core.memory_manager import MemoryManager
 from core.text_manager import TextManager
-from fastapi import HTTPException
 from storage import get_store
 from storage.base import StorageBase
+from web.llm_resolution import Source, resolve_llm
 
 _CFG_PATH = _REPO_ROOT / "config.yaml"
 if not _CFG_PATH.exists():
@@ -66,54 +66,54 @@ def clear_user_llm_cache(user_id: str | None = None) -> None:
         _user_llm_cache.pop(user_id, None)
 
 
-async def get_user_llm(user_id: str, storage: StorageBase | None = None, client_ip: str | None = None) -> LLMAdapter | None:
-    """Get or create a per-user LLMAdapter from their saved API config.
+def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
+    """构造（不是「取得」）一个绑定**用户凭据**的实例 —— 生命周期由调用方定。
 
-    Falls back to the global _llm (config.yaml / DEEPSEEK_API_KEY env) if the
-    user has not configured their own API key.
+    只在 `config["api_key"]` 非空时会被调到（`resolve_llm` 那边判过），故这里是
+    唯一可以直接取下标的地方。默认值沿用原实现，不新增策略。
+    """
+    return LLMAdapter(
+        api_key=config["api_key"],
+        base_url=config.get("base_url", "https://api.deepseek.com"),
+        model=config.get("model", "deepseek-v4-pro"),
+    )
 
-    If *client_ip* is provided, a geo-guard check is performed: domestic IPs
-    with non-whitelisted base_url are blocked (raises HTTPException 403).
+
+async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
+    """解析出口：这一次给 *user_id* 用的 LLMAdapter（没配 key 时回落全局）。
+
+    **选谁**是策略，在 `web/llm_resolution.resolve_llm`；本函数只做三件它不做的事：
+    读配置、按来源缓存、返回前过 `preflight()`。
+
+    **只缓存 USER 结果**（§2.8）：回落与不可用都是「**当下**的事实」—— 管理员补上全局
+    key、或用户刚存好自己的配置，下个请求就该生效；缓存住它们会把这件事实冻到进程重启。
+
+    **缓存命中也过 `preflight()`**：调用方把返回的实例挂进长生命周期对象（会话、
+    TextManager），而入站时解析过的实例到出站时可能已经换了 IP。判定放在**每次**返回
+    之前，热缓存这条路才和冷路径同口径（L3）。`LLMCallRefused` **不吞** —— 那是判定，
+    交给统一出口配码。
+
+    **不再收 `client_ip`**（§2.8）：geo 判定在调用点门上做（`web/llm_gate.py`）。
+    两处各判一次就会分叉，而门那一处盖得住会话里那个陈旧实例。
     """
     if storage is None:
         storage = get_storage()
     cached = _user_llm_cache.get(user_id)
     if cached is not None:
+        cached.preflight()
         return cached
 
-    try:
-        config = await storage.get_user_api_config(user_id)
-        if config.get("api_key"):
-            # Geo guard: block domestic IPs from using non-whitelisted APIs
-            if client_ip is not None:
-                from web.geo_guard import check_api_allowed
-                base_url = config.get("base_url", "https://api.deepseek.com")
-                allowed, reason = check_api_allowed(client_ip, base_url)
-                if not allowed:
-                    # 审计写入失败不得改写判定。**这里必须自己吞**：外层 `except Exception`
-                    # 会把非 HTTPException 一律吃掉并回落到全局管理员 key 的 LLM ——
-                    # 若让 store 的 StoreError 冒到外层，被拦截的境内 IP 反而拿到了全局 key。
-                    # 容忍策略必须在 HTTPException 之前就地表达，不能藏回 store。
-                    try:
-                        await storage.record_geo_block(user_id, client_ip, base_url, reason)
-                    except Exception as exc:
-                        print(f"[deps] Record geo block failed (non-fatal): {exc}")
-                    raise HTTPException(403, detail=reason)
-
-            llm = LLMAdapter(
-                api_key=config["api_key"],
-                base_url=config.get("base_url", "https://api.deepseek.com"),
-                model=config.get("model", "deepseek-v4-pro"),
-            )
-            _user_llm_cache[user_id] = llm
-            return llm
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[deps] Failed to create per-user LLM for {user_id}: {exc}")
-
-    # Fallback: global config / admin key
-    return get_llm()
+    config = await storage.get_user_api_config(user_id)
+    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=get_llm)
+    if resolved.source is Source.USER:
+        # 先入缓存再 preflight：被拦是**这一次**的判定，用户实例本身没有变坏 ——
+        # 换个放行的 IP 再来，该命中的还是这条缓存。
+        _user_llm_cache[user_id] = resolved.llm
+    if resolved.reason:
+        print(f"[deps] {resolved.reason} (user_id={user_id})")
+    if resolved.llm is not None:
+        resolved.llm.preflight()
+    return resolved.llm
 
 
 def get_memory_manager() -> MemoryManager | None:
@@ -172,15 +172,28 @@ def _log_loop_error(fut: asyncio.Future) -> None:
         print(f"[deps] Submitted coroutine failed (non-fatal): {type(exc).__name__}: {exc}")
 
 
+def _make_global_llm() -> LLMAdapter | None:
+    """构造**全局兜底**实例（config.yaml / `DEEPSEEK_API_KEY`）；没配 key 时返回 None。
+
+    None 是「没配」这件事的**信号**，不是失败 —— 调用方据它决定 503 还是回落。
+    构造失败**不做负缓存**（每次都重试）：管理员补上 key 之后，下个请求就该能用了。
+    """
+    try:
+        return LLMAdapter()
+    except Exception as exc:
+        print(f"[deps] LLMAdapter init failed (API not configured?): {exc}")
+        return None
+
+
 def get_llm() -> LLMAdapter | None:
-    """Return the LLMAdapter singleton (lazy-init). Returns None if API is not configured."""
+    """Return the LLMAdapter singleton (lazy-init). Returns None if API is not configured.
+
+    构造走唯一工厂 `_make_global_llm`（§2.8）—— `reset_llm_and_dependents` 用的是同一处，
+    两边的「没配就是 None」口径不会分叉。
+    """
     global _llm
     if _llm is None:
-        try:
-            _llm = LLMAdapter()
-        except Exception as exc:
-            print(f"[deps] LLMAdapter init failed (API not configured?): {exc}")
-            return None
+        _llm = _make_global_llm()
     return _llm
 
 
@@ -305,7 +318,7 @@ def reset_llm_and_dependents() -> None:
     """Hot-reload: recreate LLM, IndexingService, and MemoryManager."""
     global _llm, _indexing_service
     global _config, _rag_config, _memory_config, _memory_manager
-    _llm = LLMAdapter()
+    _llm = _make_global_llm()
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
     _rag_config = _config["rag"]

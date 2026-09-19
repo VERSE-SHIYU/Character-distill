@@ -217,16 +217,20 @@ class TestA2Wiring:
             )
         return events
 
+    #: `llm` 只用于过 `_run_distill_task` 的入口断言（§2.10）：本类两条用例在用到它
+    #: 之前就 return / 在 `get_distiller` 处抛错，故不需要真适配器。
+    _LLM = object()
+
     def test_acquire_timeout_calls_confirm(self, monkeypatch):
         """acquire(timeout=300) 超时拿不到 → confirm 兜底终态后 return，不放行、不 release。"""
         events = self._test_events(monkeypatch, acquired=False, distiller_boom=False)
-        D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story")
+        D._run_distill_task("tW1", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW1"]   # 无 release
 
     def test_finally_confirms_before_release(self, monkeypatch):
         """异常路径进 finally：confirm 必须发生在 release 之前。"""
         events = self._test_events(monkeypatch, acquired=True, distiller_boom=True)
-        D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story")
+        D._run_distill_task("tW2", "txt_x", "甲", False, "usr_x", "正文", "story", self._LLM)
         assert events == ["acquire", "confirm:tW2", "release"]
 
 

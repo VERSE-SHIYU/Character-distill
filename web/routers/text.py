@@ -21,7 +21,7 @@ from core.scheduling import submit_to_main_loop
 from deps import get_storage
 from storage.base import StorageBase
 
-from limiter import get_client_ip, limiter
+from limiter import limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
 
@@ -51,7 +51,7 @@ def _check_upload_cancelled(task_id: str) -> bool:
         return _upload_tasks.get(task_id, {}).get("status") == "error"
 
 
-def _run_upload_task(task_id: str, text_id: str, user_id: str, client_ip: str | None = None) -> None:
+def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
     """Background: identify characters + coref resolve, update task progress."""
     try:
         from deps import get_distiller
@@ -126,9 +126,8 @@ async def upload_text(
     tests/test_text_failure_messages.py::test_l5_upload_route_accepts_no_form_text_payload。
     """
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -191,7 +190,7 @@ async def upload_text(
         upload_task_id = uuid.uuid4().hex[:12]
         thread = C.ctx_thread(  # context 传播点
             _run_upload_task,
-            args=(upload_task_id, text_id, user_id, _client_ip),
+            args=(upload_task_id, text_id, user_id),
             daemon=True,
         )
         thread.start()

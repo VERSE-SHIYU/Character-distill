@@ -86,6 +86,17 @@ class _VoiceClient:
         return False
 
 
+class _StubLLM:
+    """全局 LLM 的静态桩 —— 本文件的用例只用得上「它非 None」这一个事实。
+
+    `preflight()` 是必须的那个口：`deps.get_user_llm` **每次**返回前都调它（§2.8），
+    桩上缺这一格会在解析出口就 `AttributeError` 成 500，连 503 那道门都走不到。
+    """
+
+    def preflight(self) -> None:
+        return None
+
+
 @pytest.fixture(autouse=True)
 def _no_ambient_state(monkeypatch):
     """钉死两条 ambient 依赖，让用例结果只取决于被测代码，不取决于测试机。
@@ -104,7 +115,7 @@ def _no_ambient_state(monkeypatch):
     实际用的那份 —— 这个坑实测踩过一次，症状是「patch 了、也绿了，门其实还开着」。
     """
     import deps
-    monkeypatch.setattr(deps, "get_llm", lambda: object())
+    monkeypatch.setattr(deps, "get_llm", _StubLLM)
     monkeypatch.setattr(deps, "get_memory_manager", lambda: _MemMgr())
 
 

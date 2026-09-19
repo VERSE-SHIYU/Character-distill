@@ -26,7 +26,7 @@ from core.utils import try_record_usage
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 from core import concurrency as C  # 派生与上下文传播
 from storage.base import StorageBase
-from limiter import get_client_ip, limiter
+from limiter import limiter
 from routers.auth import get_current_user
 
 
@@ -318,8 +318,9 @@ def _generate_awakening(llm, card: CharacterCard, storage=None, user_id: str = "
 @T.spanned("distill.task", wf="distill")
 def _run_distill_task(
     task_id: str, text_id: str, char_name: str, force: bool, user_id: str,
-    content: str, text_type: str, api_config: dict | None = None,
-    client_ip: str | None = None, resume_candidates: dict[int, dict] | None = None,
+    content: str, text_type: str, llm: LLMAdapter | None,
+    embedding_key: str = "", embedding_region: str = "",
+    resume_candidates: dict[int, dict] | None = None,
 ) -> None:
     """Background thread: run distillation end-to-end, update _tasks[task_id].
 
@@ -328,9 +329,18 @@ def _run_distill_task(
     asyncpg pool is only ever touched from the loop that created it.
     LLM calls (slow, network-heavy) stay on this background thread.
 
+    ``llm`` / ``embedding_*`` 一律由**请求线程**解析后传入（§2.10）：解析只发生在
+    `deps.get_user_llm` 那一个出口（缓存、回落、出站前检查都在它里面），本线程
+    不再读配置、不再自建实例、也没有 `get_llm()` 回落 —— 那三样都是同一份策略的
+    第二处实现，热修一处漏一处的形态。
+
     ``resume_candidates`` = {chunk_index: {"result", "fingerprint"}} from a prior
     interrupted run (see /start); distiller reuses hits and reruns the rest.
     """
+    # 硬门而不是注释：`llm` 为 None 时 `_distill_start_impl` 在那里就 503、根本不起
+    # 线程，所以这条断言在生产的任何路径上都不会触发 —— 它钉的是「谁负责解析」这个
+    # 契约，将来有人把解析搬回线程内会当场在这里现形。
+    assert llm is not None, "后台蒸馏任务必须由请求线程传入已解析的 llm（§2.10）"
     acquired = _DISTILL_SEMAPHORE.acquire(timeout=300)
     if not acquired:
         print(f"[distill] 并发蒸馏达上限，任务超时: {char_name}")
@@ -339,33 +349,12 @@ def _run_distill_task(
         _release_user_slot(user_id)   # 没进 try/finally，按用户槽要在这里放
         return
     try:
-        from adapters.llm_adapter import LLMAdapter
-        from deps import get_distiller, get_text_manager
+        from deps import get_distiller
 
-        per_user_llm = None
-        if api_config and api_config.get("api_key"):
-            try:
-                if client_ip is not None:
-                    from web.geo_guard import check_api_allowed
-                    allowed, _ = check_api_allowed(client_ip, api_config.get("base_url", "https://api.deepseek.com"))
-                    if not allowed:
-                        print(f"[distill] Geo-blocked per-user LLM in bg task for {user_id}")
-                        raise RuntimeError("geo_blocked")
-                from adapters.llm_adapter import LLMAdapter
-                per_user_llm = LLMAdapter(
-                    api_key=api_config["api_key"],
-                    base_url=api_config.get("base_url", "https://api.deepseek.com"),
-                    model=api_config.get("model", "deepseek-v4-pro"),
-                )
-            except Exception as exc:
-                print(f"[distill] Per-user LLM init failed, falling back: {exc}")
-
-        distiller = get_distiller(llm=per_user_llm)
-        text_manager = get_text_manager(llm=per_user_llm)
-
-        if not distiller or not text_manager:
-            _set_task(task_id, {"status": "error", "message": "请先在设置页配置 API Key"})
-            return
+        # `get_distiller(llm) is None ⟺ llm is None`，而上面已断言非 None ⇒ 这里拿到的
+        # 必是真 distiller。原先那条「拿不到就 503」的分支因此不可达，删掉；403/503 的
+        # 判定归请求线程（`_distill_start_impl`），后台只负责跑。
+        distiller = get_distiller(llm=llm)
 
         # Step 1: resolve character name + aliases in ONE LLM call
         name = char_name.strip()
@@ -530,22 +519,16 @@ def _run_distill_task(
         # Step 4: persist via the main event loop (run_coroutine_threadsafe)
         # so the asyncpg pool stays on its home loop.
         async def _save_card():
-            from deps import get_llm, get_text_manager
+            from deps import get_text_manager
 
             # 走统一出口。原先本处就地拼 TextManager、漏传 indexing_service ——
             # 这是全仓唯一一处不经 deps 的构造，于是 `/start` 落下的卡从不调度
             # 场景预索引，只靠打开卡片时的 `/start_session` 补偿，而那条补偿
             # 依赖「`list_cards` 不投影 `session_id`」这个巧合。
-            llm_for_save = per_user_llm
-            if llm_for_save is None:
-                llm_for_save = get_llm()
-
-            tm = get_text_manager(llm=llm_for_save)
-            _ek = (api_config or {}).get("embedding_key", "")
-            _er = (api_config or {}).get("embedding_region", "")
+            tm = get_text_manager(llm=llm)
             result = await tm.save_distilled_card(
                 text_id, card, user_id,
-                embedding_key=_ek, embedding_region=_er,
+                embedding_key=embedding_key, embedding_region=embedding_region,
             )
             return result
 
@@ -567,7 +550,7 @@ def _run_distill_task(
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         # Generate awakening line (non-fatal, outside lock)
-        awakening = _generate_awakening(per_user_llm, card, storage=get_storage(), user_id=user_id)
+        awakening = _generate_awakening(llm, card, storage=get_storage(), user_id=user_id)
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
@@ -654,15 +637,13 @@ async def _resolve_character_name(
 @router.post("/identify")
 async def identify_by_text_id(
     req: IdentifyByIdRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Identify characters from a text stored in the database."""
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -682,15 +663,13 @@ async def identify_by_text_id(
 @router.post("/run")
 async def distill_by_text_id(
     req: DistillByIdRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Distill a character from a stored text, persist card + session."""
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None:
@@ -740,7 +719,6 @@ async def distill_by_text_id(
 @router.post("/start")
 async def distill_start(
     req: DistillTaskRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
@@ -760,7 +738,7 @@ async def distill_start(
             user_id, window_minutes=DISTILL_GHOST_IDLE_MIN)
         if occupied >= DISTILL_MAX_PER_USER:
             raise HTTPException(429, _DISTILL_BUSY_MSG)
-        return await _distill_start_impl(req, request, user, storage)
+        return await _distill_start_impl(req, user, storage)
     except BaseException:
         _release_user_slot(user_id)
         raise
@@ -768,43 +746,26 @@ async def distill_start(
 
 async def _distill_start_impl(
     req: DistillTaskRequest,
-    request: Request,
     user: dict,
     storage: StorageBase,
 ) -> dict[str, Any]:
     """Start distillation as a background task, return task_id immediately."""
-    from deps import get_distiller
+    from deps import get_distiller, get_user_llm
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
 
-    # Resolve per-user LLM config for the background thread
-    api_config = await storage.get_user_api_config(user_id)
-    per_user_llm = None
-    if api_config and api_config.get("api_key"):
-        from web.geo_guard import check_api_allowed
-        base_url = api_config.get("base_url", "https://api.deepseek.com")
-        allowed, reason = check_api_allowed(_client_ip, base_url)
-        if not allowed:
-            # 审计写入失败不得改写判定：本支的语义是「不配 per-user LLM，用全局兜底」，
-            # 不是「整个蒸馏请求失败」。store 现在会对库失败上抛，容忍策略就地写。
-            try:
-                await storage.record_geo_block(user_id, _client_ip, base_url, reason)
-            except Exception as exc:
-                print(f"[distill] Record geo block failed (non-fatal): {exc}")
-        else:
-            from adapters.llm_adapter import LLMAdapter
-            try:
-                per_user_llm = LLMAdapter(
-                    api_key=api_config["api_key"],
-                    base_url=base_url,
-                    model=api_config.get("model", "deepseek-v4-pro"),
-                )
-            except Exception:
-                pass
-
-    distiller = get_distiller(llm=per_user_llm)
+    # 唯一解析出口（§2.10）：per-user 配置、全局回落、缓存、出站前检查全在它里面。
+    # 本处**不再手抄**一遍 —— 原先那份手抄的既不入缓存、也不过 preflight，是同一件事
+    # 的第二处实现，geo 判定也因此在解析层又判了一次（两处各判一次就会分叉）。
+    llm = await get_user_llm(user_id, storage)
+    distiller = get_distiller(llm=llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+
+    # embedding 二元组在这里取**一次**，随线程入参传下去：后台线程不再回头读配置
+    # （它连 storage 都不该碰，那是请求线程的账）。
+    api_config = await storage.get_user_api_config(user_id)
+    embedding_key = (api_config or {}).get("embedding_key", "")
+    embedding_region = (api_config or {}).get("embedding_region", "")
 
     # Read text content in the async endpoint so the background thread
     # doesn't need to call asyncio storage methods (cross-thread safe).
@@ -894,7 +855,7 @@ async def _distill_start_impl(
     thread = C.ctx_thread(  # context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
-              api_config, _client_ip, resume_candidates),
+              llm, embedding_key, embedding_region, resume_candidates),
         daemon=True,
     )
     thread.start()
@@ -1057,9 +1018,8 @@ async def distill_stream(
 ):
     """Stream distillation via SSE — no timeout, frontend renders tokens in real-time."""
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if text_manager is None or distiller is None:
@@ -1201,7 +1161,6 @@ async def distill_stream(
 @router.post("/reindex/{text_id}")
 async def reindex_rag(
     text_id: str,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
@@ -1213,9 +1172,8 @@ async def reindex_rag(
     ``character_name`` filtering works in subsequent chat queries.
     """
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -1277,7 +1235,6 @@ async def update_card(
 @router.get("/cards/by-text/{text_id}")
 async def list_cards(
     text_id: str,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
@@ -1362,7 +1319,6 @@ async def export_card(
 @router.post("/start_session")
 async def start_session(
     req: StartSessionRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
     sessions: dict[str, dict[str, Any]] = Depends(get_sessions),
@@ -1374,9 +1330,8 @@ async def start_session(
     record to SQLite, and returns the card data with ``session_id``.
     """
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
 
     card_rec = await storage.get_card_owned(req.card_id, user_id)
@@ -1516,15 +1471,13 @@ async def start_session(
 @legacy_router.post("/api/identify")
 async def legacy_identify(
     req: IdentifyRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: identify characters from raw text body."""
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     if distiller is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
@@ -1534,15 +1487,13 @@ async def legacy_identify(
 @legacy_router.post("/api/distill")
 async def legacy_distill(
     req: DistillRequest,
-    request: Request,
     user: dict = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Legacy: distill from raw text, auto-save text + persist card."""
     user_id = user["id"]
-    _client_ip = get_client_ip(request)
     from deps import get_distiller, get_text_manager, get_user_llm
-    per_user_llm = await get_user_llm(user_id, storage, client_ip=_client_ip)
+    per_user_llm = await get_user_llm(user_id, storage)
     distiller = get_distiller(llm=per_user_llm)
     text_manager = get_text_manager(llm=per_user_llm)
     if distiller is None or text_manager is None:

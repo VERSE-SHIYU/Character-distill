@@ -270,18 +270,34 @@ def _carries(haystack: tuple, needle: object) -> bool:
     return any(x is needle for x in haystack)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C4 翻转：`/start` 无 key + 全局可用 → 200，且后台拿到全局实例")
 def test_l1_start_falls_back_to_global_instance(store, user_id, monkeypatch):
+    """无 key 的用户走全局兜底，且后台线程拿到的是**同一个**全局实例。
+
+    三条前提都由本用例构造并断言（发请求之前）：用户没 key（全新 uid + 全新临时库）、
+    全局可用（monkeypatch）、**门未注册**。
+
+    第三条为什么也要显式钉：这条锁测的是**解析回落**，门不是它的射程（L4/L9 测门）。
+    而守卫是进程级全局 —— 本文件里 L4/L6/L7/L9/L11 各装各的门，全靠各自 `_snapshot`
+    还原；「轮到本用例时恰好没装」因此是**文件内的执行顺序**给的，不是命题的一部分。
+    钉住它，这条的成败才只取决于被测代码（与 C3 返工给 L4 立的标准同一条）。
+    """
+    la = _adapter()
     fake_global = _poison(LLMAdapter(api_key="k"))
     monkeypatch.setattr(deps, "get_llm", lambda: fake_global)
     captured = _capture_thread(monkeypatch)
     tid = _seed_text(store, user_id)
 
-    r = TestClient(_distill_app(store, user_id)).post(
-        "/api/distill/start",
-        json={"text_id": tid, "character_name": "甲", "force": False},
-    )
+    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+        # ── 前提 ────────────────────────────────────────────────────────
+        assert not asyncio.run(store.get_user_api_config(user_id)).get("api_key"), (
+            "前提破了：这个用户居然有 key —— 本用例要证的是**无 key 才走全局**")
+        assert asyncio.run(deps.get_user_llm(user_id, store)) is fake_global, (
+            "前提破了：解析出口既没拿到用户实例、也没回落到全局实例")
+
+        r = TestClient(_distill_app(store, user_id)).post(
+            "/api/distill/start",
+            json={"text_id": tid, "character_name": "甲", "force": False},
+        )
 
     assert r.status_code == 200, r.text
     assert captured, "没起后台线程"
@@ -289,11 +305,16 @@ def test_l1_start_falls_back_to_global_instance(store, user_id, monkeypatch):
         f"后台线程拿到的不是请求时解析出的全局实例：{captured[0][1]!r}")
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C4 翻转：后台 llm `is` 请求时解析出的实例；签名换成 llm/embedding_*")
 def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeypatch):
+    """后台线程拿到的是**请求线程解析出的那个对象**（`is`），签名里也不再有解析原料。
+
+    前提同上（无 key + 全局可用 + 门未注册），另加一条**同一性见证**：
+    `resolved[-1] is fake_global`。没有它，「线程拿到了 `get_user_llm` 的返回值」可以
+    被 None 满足而仍然通过 —— 而 None 意味着线程拿到的压根不是实例。
+    """
     from routers import distill as D
 
+    la = _adapter()
     fake_global = _poison(LLMAdapter(api_key="k"))
     monkeypatch.setattr(deps, "get_llm", lambda: fake_global)
     captured = _capture_thread(monkeypatch)
@@ -309,13 +330,17 @@ def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeyp
     monkeypatch.setattr(deps, "get_user_llm", _spy)
     tid = _seed_text(store, user_id)
 
-    r = TestClient(_distill_app(store, user_id)).post(
-        "/api/distill/start",
-        json={"text_id": tid, "character_name": "甲", "force": False},
-    )
+    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+        r = TestClient(_distill_app(store, user_id)).post(
+            "/api/distill/start",
+            json={"text_id": tid, "character_name": "甲", "force": False},
+        )
 
     assert r.status_code == 200, r.text
     assert resolved, "`/start` 没有走唯一解析出口 `get_user_llm`"
+    assert resolved[-1] is fake_global, (
+        f"前提破了：解析出口没回落到全局实例（{resolved[-1]!r}）—— "
+        "下面的同一性判定就成了一句恒真话")
     assert captured and _carries(captured[0][1], resolved[-1]), (
         "后台线程拿到的不是请求时解析出的那个实例")
 
@@ -327,25 +352,42 @@ def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeyp
 
 # ── L3：缓存热也拦得住 ────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True,
-                   reason="C4 翻转：缓存命中也过 preflight，判据 kind == call_refused")
 def test_l3_cache_hit_still_checks_geo(store, seed_user, monkeypatch):
+    """缓存热的实例也要过一次门 —— 冷路径那一次 `preflight()` 拦不住第二次。
+
+    三条前提都由本用例构造并断言：
+      1. 用户实例真解析出来了、且确实是**这条配置**的实例（`seed_user` + `base_url` 见证）；
+      2. 它真**入了缓存** —— 没有这条，第二次调用可能走的是冷路径重解析，「缓存命中」
+         四个字就成了一句没有被测过的话（变异 ③ 也就不用指望被打红了）；
+      3. **门由本用例装上**、审计的落点也钉住。守卫与投递器都是进程级全局，别人装过、
+         别人撤过都不该决定这条的成败；审计本身是 L9 的账，这里只要求它别飘到别的
+         store / 别的 loop 上去。
+    """
     ctx = _ctx()
     la = _adapter()
+    gate = _gate()
+    S = _mod("core.scheduling")
     _fake_geo(monkeypatch)
+    _patch_store(monkeypatch, store)
     uid = seed_user(f"u_l3_{uuid.uuid4().hex[:8]}", base_url="https://api.other.com")
 
-    with _set_var(ctx.LLM_CALLER, ctx.Caller(_ALLOWED_IP, uid)):
-        first = asyncio.run(deps.get_user_llm(uid, store))   # 入缓存
-        assert first is not None, (
-            "前提破了：解析出口没拿到用户实例（users 行没建出来？）—— "
-            "这条要证的是缓存热也过 preflight，不是「解析拿到实例」")
-        assert first.base_url == "https://api.other.com", (
-            f"解析拿到的不是这条用户配置里的实例：{first.base_url!r}")
+    with _snapshot(la.get_call_guard, la.set_call_guard, gate.geo_call_guard):
+        with _snapshot(S.get_loop_submitter, S.set_loop_submitter,
+                       lambda coro, **_kw: coro.close()):   # 审计只投不落，不留后台任务
+            with _set_var(ctx.LLM_CALLER, ctx.Caller(_ALLOWED_IP, uid)):
+                first = asyncio.run(deps.get_user_llm(uid, store))   # 入缓存
+                assert first is not None, (
+                    "前提破了：解析出口没拿到用户实例（users 行没建出来？）—— "
+                    "这条要证的是缓存热也过 preflight，不是「解析拿到实例」")
+                assert first.base_url == "https://api.other.com", (
+                    f"解析拿到的不是这条用户配置里的实例：{first.base_url!r}")
+                assert deps._user_llm_cache.get(uid) is first, (
+                    "前提破了：第一次调用没把它放进缓存 —— 那下面测的是冷路径重解析，"
+                    "不是「缓存命中也判」")
 
-    with _set_var(ctx.LLM_CALLER, ctx.Caller(_BLOCKED_IP, uid)):   # 换 IP，缓存仍热
-        with pytest.raises(la.LLMCallRefused) as ei:
-            asyncio.run(deps.get_user_llm(uid, store))
+            with _set_var(ctx.LLM_CALLER, ctx.Caller(_BLOCKED_IP, uid)):   # 换 IP，缓存仍热
+                with pytest.raises(la.LLMCallRefused) as ei:
+                    asyncio.run(deps.get_user_llm(uid, store))
 
     payload = la.llm_error_payload(ei.value) or {}
     assert payload.get("kind") == "call_refused", f"判别键不是 call_refused：{payload}"
@@ -472,9 +514,11 @@ def test_l4_live_session_is_blocked_before_outbound(store, seed_user, monkeypatc
 
 # ── L5：纯策略层四情形 ────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True,
-                   reason="C4 翻转：resolve_llm 四情形表 + 初始化失败的 reason 非空")
 def test_l5_resolve_llm_table():
+    """纯策略层四情形表 —— 没有数据库、没有环境变量、没有 HTTP 也能测完。
+
+    前提全由实参构造：`build_user` 传一个抛错的闭包就把「构造失败」那一格造出来了。
+    """
     R = _resolution()
     sentinel = object()
 
@@ -964,13 +1008,20 @@ def test_l12_scan_face_is_not_empty():
     assert _calls_named("check_api_allowed"), "生产代码里一处 check_api_allowed 都没扫到"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C5 翻转：策略单点收敛到 geo_refusal / emit_geo_block_audit")
 def test_l12_policy_calls_are_single_and_contained():
     """geo 策略只有一个调用点，且落在指定的那个函数里（§2.6）。
 
     「带非空守卫」= 命中的**必须真在**那个容器函数内 —— 容器被改名/搬家、
     或调用点逸出到别处，都红。
+
+    **本条的翻转步提前了**：spec §3 的表把 L12 排在 C5，但剩余的调用点全在 C4 射程内
+    （`deps.get_user_llm` 的解析层 geo 检查、`distill` 的两处手抄解析）。C4 落地后
+    两个计数就都是 1 了，于是本文件「未翻转的必须红」这条先于 spec 的表生效 ——
+    `xfail(strict=True)` 会把「已经绿了还挂着标记」报成 **XPASS 失败**，逼人摘标记。
+    留在 C5 只会让 C4 这一步的门红着，没有别的走法。
+
+    它仍有牙：C4 变异①（把 `/start` 的手抄解析恢复回来）会同时把 `check_api_allowed`
+    与 `record_geo_block` 各推回 2 处 —— 本条随之红，与 L1 同批。
     """
     checks = _calls_named("check_api_allowed")
     audits = _calls_named("record_geo_block")
