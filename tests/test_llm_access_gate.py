@@ -861,14 +861,47 @@ def test_l9_audit_failure_keeps_the_403(monkeypatch):
 
 # ── L10：构造点结构锁（②层） ──────────────────────────────────────────────
 
-def _web_py() -> list[Any]:
-    """`web/` 下待扫的 .py —— `web/app.py` 不在扫描面（Gradio 死代码，AGENTS.md 已记，
-    `Dockerfile` / compose / workflow 零引用）：留着只会让这条锁恒红，而它守的
-    「生产构造点唯一」与那个死文件无关。"""
+#: 非生产顶层目录：`tests/` 是锁自己的家（判据从被测对象现算，不扫自己），
+#: `scripts/` 是运维/调试脚本（spec §2.9：独立进程、不注册守卫）。
+_NON_PROD_TOP = ("tests/", "scripts/")
+
+#: 扫描面里逐条排除的文件 —— 与上面的目录排除同一个理由栏。
+_EXCLUDED_FILES = frozenset({
+    # Gradio 死代码（文件头「边界」已记）：`Dockerfile` / compose / workflow 零引用。
+    # 留着只会让 L10 恒红，而它守的「生产构造点唯一」与那个死文件无关。
+    "web/app.py",
+})
+
+
+def _production_py(*, dirs: tuple[str, ...] = ()) -> list[str]:
+    """生产 .py 的扫描面 —— 全仓**工作区**（相对路径，排序稳定）。L10 / L12 / L13 共用。
+
+    来源 = `git ls-files --cached --others --exclude-standard '*.py'`，两半各管一件事：
+      - `--cached`：索引里已入库的；
+      - `--others --exclude-standard`：**工作区里尚未 `git add`、且不被 .gitignore
+        覆盖的文件**。后一半是本函数存在的理由 —— 只认 `--cached` 时，新写的文件在
+        `git add` 之前对锁是**隐形**的：L12 在 `web/llm_gate.py` 未入库时读数是 3/2
+        （真值 1/1），而当时锁看着是绿的。
+
+    「扫工作区」在这里是「工作区 − .gitignore 声明的产物」，不是 rglob 全盘 —— 后者会把
+    `.venv/`（11 964 个 .py）连同 `services/` 一起当生产代码扫。未跟踪文件的处置因此
+    **不靠本函数的判断**：`--others` 一律纳入，要排除就得写进 `.gitignore`（与全仓其他
+    工具同一份声明），而不是在锁里悄悄跳过一个「git 不认」的文件。
+
+    `dirs` 非空时只留这些顶层目录（L10 只扫 `web/`）。
+    """
     import pathlib
+    import subprocess
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    return [p for p in sorted((root / "web").rglob("*.py")) if p.name != "app.py"]
+    out = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"],
+        cwd=root, capture_output=True, text=True, encoding="utf-8").stdout
+    files = [p for p in out.splitlines()
+             if p and not p.startswith(_NON_PROD_TOP) and p not in _EXCLUDED_FILES]
+    if dirs:
+        files = [p for p in files if p.split("/")[0] in dirs]
+    return sorted(files)
 
 
 def _owners(tree):
@@ -896,24 +929,16 @@ def _owners(tree):
 def _calls_named(name: str, *, dirs: tuple[str, ...] = ()) -> list[tuple[str, int, str]]:
     """全仓（或指定目录）里 `name(...)` 的调用点 → (相对路径, 行号, 所属函数)。
 
-    扫描面 = `git ls-files '*.py'` 去掉 `tests/` 与 `scripts/`（只认生产入库文件，
-    干净克隆与本地跑出的数一致）。**只认调用**，不认定义 —— storage 里那几个
-    同名方法定义因此天然不计入。
+    扫描面走 `_production_py`（L10 / L12 / L13 同一处）。**只认调用**，不认定义 ——
+    storage 里那几个同名方法定义因此天然不计入。
     """
     import ast
     import pathlib
-    import subprocess
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    out = subprocess.run(["git", "ls-files", "*.py"], cwd=root,
-                         capture_output=True, text=True, encoding="utf-8").stdout
-    files = [p for p in out.splitlines()
-             if p and not p.startswith("tests/") and not p.startswith("scripts/")]
-    if dirs:
-        files = [p for p in files if p.split("/")[0] in dirs]
 
     hits: list[tuple[str, int, str]] = []
-    for rel in files:
+    for rel in _production_py(dirs=dirs):
         try:
             tree = ast.parse((root / rel).read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
@@ -931,26 +956,7 @@ def _calls_named(name: str, *, dirs: tuple[str, ...] = ()) -> list[tuple[str, in
 
 def _adapter_sites() -> list[tuple[str, int, str]]:
     """`web/` 下所有 `LLMAdapter(...)` → (相对路径, 行号, 所属函数)。"""
-    import ast
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parent.parent
-    out: list[tuple[str, int, str]] = []
-    for path in _web_py():
-        rel = path.relative_to(root).as_posix()
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
-        owners = _owners(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            f = node.func
-            leaf = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
-            if leaf == "LLMAdapter":
-                out.append((rel, node.lineno, owners.get(node.lineno, "<module>")))
-    return out
+    return _calls_named("LLMAdapter", dirs=("web",))
 
 
 def test_l10_scan_face_is_not_empty():
@@ -958,11 +964,36 @@ def test_l10_scan_face_is_not_empty():
     assert _adapter_sites(), "web/ 下一处 LLMAdapter(...) 都没扫到 —— 扫描面坏了"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C5 翻转：构造点收敛到 `_make_user_llm` / `_make_global_llm` 两处")
+def test_scan_face_sees_untracked_workspace_files():
+    """扫描面必须看得见**尚未 `git add`** 的文件（本步修掉的尖角）。
+
+    做法是往 `web/` 放一个真的未跟踪 .py（用例自带、`finally` 清掉），断言它出现在
+    扫描面里。这条不能靠读 `_production_py` 的实现来代替：`--others` 一旦被删回去，
+    L10 那条主断言**照样绿**（它只数已入库的那两处），锁会静悄悄退回「认索引、不认
+    工作区」—— 而那个形态正是 `web/llm_gate.py` 未入库时读数 3/2 的来源。
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    probe = root / "web" / "_scan_face_probe.py"
+    assert not probe.exists(), f"上一轮没清干净：{probe}"
+    try:
+        probe.write_text("# 扫描面探针：用例结束即删\n", encoding="utf-8")
+        assert "web/_scan_face_probe.py" in _production_py(dirs=("web",)), (
+            "扫描面看不见未跟踪的工作区文件 —— `--others` 掉了？")
+    finally:
+        probe.unlink(missing_ok=True)
+
+
 def test_l10_construction_points_are_confined():
     """`web/` 下 `LLMAdapter(` **恰为 2 处**，且分别落在 `_make_user_llm`
     与 `_make_global_llm` 内（§2.8：仅有的两个构造工厂，先例 `_make_indexing_service`）。
+
+    **打红它的变异**（都只动生产代码，不动本条）：
+      - 任一路由新增 `LLMAdapter(api_key=...)`（如把 `market._publish_preflight`
+        改回去）→ 处数变 3 / 归属变别的函数 → 红；
+      - 在 `web/` 放一个未跟踪的 .py 写 `LLMAdapter(api_key=...)` → 同上，红
+        （这条由 `test_scan_face_sees_untracked_workspace_files` 保底）。
 
     **已知盲区**：别名绕过（`A = LLMAdapter; A(api_key=...)`）—— AST 认不出，
     这条锁看不见，写在这里，不假装它挡住了。
@@ -1045,20 +1076,15 @@ _FORBIDDEN_TOP = ("deps", "web", "routers")
 def _scan_prod_imports():
     """[(rel, lineno, 源码行, 原文)] for 每个指向 web 层的 import。
 
-    扫描面 = `git ls-files '*.py'` 里的 `core/` 与 `adapters/`（干净克隆与本地一致）。
+    扫描面走 `_production_py`（L10 / L12 同一处），限 `core/` 与 `adapters/`。
     **模块级与函数体内的 import 都算** —— 当前这 10 处正是函数体内的局部 import。
     """
     import ast
     import pathlib
-    import subprocess
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    out = subprocess.run(["git", "ls-files", "*.py"], cwd=root,
-                         capture_output=True, text=True, encoding="utf-8").stdout
-    files = [p for p in out.splitlines()
-             if p.startswith(("core/", "adapters/"))]
 
-    for rel in files:
+    for rel in _production_py(dirs=("core", "adapters")):
         src = (root / rel).read_text(encoding="utf-8")
         lines = src.splitlines()
         try:

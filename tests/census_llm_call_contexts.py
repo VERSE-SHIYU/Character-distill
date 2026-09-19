@@ -63,14 +63,44 @@
 还把 `ctx_submit` 整个漏掉（只写了 `ctx_thread` 8 处）。教训正是 §四那条：**「不经 adapter」
 是跨函数追链的结论，不是从派生点旁边那句注释能读出来的**。
 
-`create_task` 各处：`Distiller` ×3（出站）、`group_session` ×2 与 `web/routers/group.py`
-×2（`_run_group_affinity` → `evaluation_pipeline` 的 `ctx.llm.chat`，出站）、
-`indexing_service`（仅 RAG/embed）、`speech/funasr_server.py`（独立服务）、
-`web/server.py` 的 lifespan 两条循环（**均不触达 LLM**）—— 前几类父为请求、天然继承。
+## 三、C5 重跑的读数与全量枚举（2026-09-19）
 
-**归属结论：生产代码里没有「请求之外」的 LLM 入口。** lifespan 循环、boot reconcile
-（`_reconcile_distill_tasks`，纯 DB）、定时任务（全仓无调度器）都不触达 adapter。
-`mcp_server/` 与 `scripts/` 是独立进程、不注册守卫，保持现状。
+**每一类都按上面的方法现算，读数逐类列全**（先前只列了 `ctx_thread` / `ctx_submit`，
+`create_task` 那段停在 C2a 之前的形态 —— 漏了 `core/scheduling.py`，`to_thread` 整个
+没枚举）。总 **64 处**：`to_thread` 36、`create_task` 12、`ctx_thread` 8、`ctx_submit` 4、
+`run_in_executor` 4（全在 `scripts/run_agent_eval.py`）。
+
+`create_task` **12 处**：`Distiller` ×3（出站）、`group_session` ×2 与
+`web/routers/group.py` ×2（`_run_group_affinity` → `evaluation_pipeline` 的
+`ctx.llm.chat`，出站）、`indexing_service`（仅 RAG/embed）、`speech/funasr_server.py`
+（独立服务）、`web/server.py` 的 lifespan 两条循环（`_session_cleanup_loop` /
+`_cross_border_resync_loop`，**均不触达 LLM**）、以及**新增看见的
+`core/scheduling.py:57`**。
+
+`core/scheduling.py:57` 这条要单独说清楚，它**不是新风险、是新视力**：C2a 把
+`record_usage` 那段自建 loop 的线程换成了 `submit_to_main_loop`，于是原先「第 7 行」
+那个派生点消失了 —— 但原语**自身**的 `create_task` 成了一个新的派生点，在 C5 之前
+那份枚举里看不见。它的生产调用点全是 DB 类活（`try_record_usage`、distill 的
+`_persist_snap` / `_save_card` / `_cleanup`、`chat_engine` 的会话与反应落库、
+`evaluation_pipeline` 的报告落库、`llm_gate` 的 geo 封禁审计 `emit_geo_block_audit`），
+**无一条触达 adapter**。
+
+顺带记一条**身份不丢**的机制（不是猜的，标准库行为）：`run_coroutine_threadsafe` 最终
+走 `loop.call_soon_threadsafe`，后者在 `context=None` 时**在调用方线程**
+`copy_context()` —— 投进来的协程带着提交方的 contextvar 跑。故「跨 loop 投递」本身
+不构成断点（真正会断的是 OTEL 关时的 `ctx_thread` / `ctx_submit`，见 §一 与 C2b 订正）。
+
+`to_thread` **36 处**，全部「父为请求」、按标准库语义天然继承：`core/text_manager.py` ×10
+（含 `_guard_card` → `card_guard` 那条 `ctx_thread`）、`web/routers/distill.py` ×8、
+`web/routers/chat.py` ×6（`_do_chat` 主体与流式生成器）、`core/group_session.py` ×2、
+`core/indexing_service.py` ×2（仅 RAG/embed）、`web/routers/history.py` ×2、
+`mcp_server/server.py` ×2（独立进程）、`speech/funasr_server.py` ×2（独立服务）、
+`web/routers/group.py` ×1、`web/routers/market.py` ×1（`at_reply`）。
+
+**归属结论：不变 —— 生产代码里没有「请求之外」的 LLM 入口。** 上面新增看见的
+`core/scheduling.py` 其调用点全为 DB/审计类（逐条列在上面）；lifespan 两条循环、boot
+reconcile（`_reconcile_distill_tasks`，纯 DB）、定时任务（全仓无调度器）依旧都不触达
+adapter。`mcp_server/` 与 `scripts/` 是独立进程、不注册守卫，保持现状。
 故 `system_llm_context()` 在生产**零调用点** —— 它是给「将来出现请求外入口」留的
 唯一正确出口，测试里必须有正控（L7），否则它是一条没人走的死路。
 
@@ -105,9 +135,15 @@ class SpawnSite:
 
 
 def _tracked_py() -> list[str]:
-    """入库的 .py，去掉 tests/ —— 扫描面只由 git 决定，不靠手工排除表。"""
+    """工作区里的 .py，去掉 tests/ —— 与锁（`test_llm_access_gate._production_py`）同一面。
+
+    `--others --exclude-standard` 让**未 `git add`** 的文件也进面：这份读数是「生产代码
+    现在长什么样」的证据，而刚写完还没入库的文件正是生产代码的一部分。只认 `--cached`
+    时它会漏（L12 在 `web/llm_gate.py` 未入库时读数是 3/2，就是这么来的）。排除项由
+    `.gitignore` 声明，不在本模块里手工列 —— 否则扫描面就成了一张要维护的名单。
+    """
     out = subprocess.run(
-        ["git", "ls-files", "*.py"], cwd=_REPO,
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"], cwd=_REPO,
         capture_output=True, text=True, encoding="utf-8", check=True,
     ).stdout
     return [p for p in out.splitlines() if p and not p.startswith("tests/")]
@@ -188,7 +224,7 @@ def outbound_methods() -> list[str]:
 
 def main() -> None:
     sites = spawn_sites()
-    print(f"扫描 {len(_tracked_py())} 个入库 .py（不含 tests/）")
+    print(f"扫描 {len(_tracked_py())} 个工作区 .py（不含 tests/；含未 git add 的）")
     print(f"派生点 {len(sites)} 处\n")
     for s in sites:
         print(f"  {s.path:<34} {s.line:>5}  {s.kind:<16} {s.owner}")
