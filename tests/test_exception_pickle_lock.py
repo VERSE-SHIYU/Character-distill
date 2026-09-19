@@ -43,6 +43,10 @@ _REGISTRY = {
         "adapters.llm_adapter",
         lambda cls: cls("length", "gen_character", "已生成的部分正文"),
     ),
+    ("adapters/llm_adapter.py", "LLMCallRefused"): (
+        "adapters.llm_adapter",
+        lambda cls: cls("境内不支持境外模型", "https://api.other.com"),
+    ),
     ("core/distiller.py", "DistillError"): (
         "core.distiller",
         lambda cls: cls("用户可读消息", "ops 细节"),

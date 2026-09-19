@@ -208,6 +208,46 @@ class ToolsNotSupportedError(RuntimeError):
     """Provider 不支持 tools 参数时抛出，上层据此降级到 legacy 路径。"""
 
 
+# ── 调用点门：守卫钩子 + 拒绝异常（spec §2.5）──────────────────────────
+# 「谁在调」是事实、「许不许调」是策略：本层只定义**钩子契约**（拿 base_url 换一个
+# 拒绝理由），策略由 web 在启动时向下注册实现。未注册 = 不做检查，独立进程
+# （mcp_server / scripts）保持现状，不被迫装配一个门。
+_call_guard: Callable[[str], str | None] | None = None
+
+
+def set_call_guard(fn: Callable[[str], str | None] | None) -> None:
+    """注册出站前守卫。契约：``fn(base_url) -> str | None``，只返回拒绝理由（不抛）。"""
+    global _call_guard
+    _call_guard = fn
+
+
+def get_call_guard() -> Callable[[str], str | None] | None:
+    """与 ``set_call_guard`` 配对的读口（同 ``get_loop_submitter`` 的形状）。"""
+    return _call_guard
+
+
+class LLMCallRefused(RuntimeError):
+    """调用点门拒绝：守卫给出理由 → 出站**之前**抛，请求根本没发出去。
+
+    ``reason`` 是守卫给的、已审的上屏口径（geo 那条就是 geo_guard 的文案），
+    故它同时是 ``user_message``；``base_url`` 留着给审计（哪家的调用被挡了）。
+    """
+
+    def __init__(self, reason: str, base_url: str) -> None:
+        self.reason = reason
+        self.base_url = base_url
+        super().__init__(f"{base_url}: {reason}")
+
+    def __reduce__(self):
+        """跨进程重建（缺陷 18）：``args`` 是格式化后的 message，与
+        ``__init__(reason, base_url)`` 对不上，显式还原两个字段。"""
+        return (self.__class__, (self.reason, self.base_url))
+
+    @property
+    def user_message(self) -> str:
+        return self.reason
+
+
 def _infer_finalize(sp, self, result, exc) -> None:
     """推理 span 收尾：补 model + last_usage（OTEL 关时 sp=None，直接返回）。"""
     if sp is None:
@@ -342,10 +382,19 @@ def llm_error_payload(exc: BaseException) -> dict[str, Any] | None:
 
     调用方（路由层）据此拿 code / finish_reason / 上屏文案，**无需 import 异常类**——
     否则每加一个异常类，core/web 就多一处 isinstance 耦合。本层是这条边界的唯一出口。
+
+    **判别键 `kind`**（配码与审计只认它，不认异常类名）：未完成终态是
+    ``incomplete:<finish_reason>``、调用点门拒绝是 ``call_refused``。同族的两种已知
+    失败因此共用一张表 —— 配码那侧没有「先查 A 表再查 B 表」。原有的 `code` /
+    `finish_reason` 字段保留给既有调用方。
     """
+    if isinstance(exc, LLMCallRefused):
+        return {"code": "call_refused", "error": exc.reason, "kind": "call_refused",
+                "base_url": exc.base_url, "finish_reason": ""}
     if isinstance(exc, IncompleteResponseError):
         return {"code": "incomplete_response", "error": exc.user_message,
-                "finish_reason": exc.finish_reason}
+                "finish_reason": exc.finish_reason,
+                "kind": f"incomplete:{exc.finish_reason}"}
     return None
 
 
@@ -356,7 +405,7 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
     ``tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage``
     禁 core/web/storage 出现该标识）。新增一种 LLM 失败 = 在这里的元组加一个类，
     装配层零改动。"""
-    return (IncompleteResponseError,)
+    return (IncompleteResponseError, LLMCallRefused)
 
 
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
@@ -524,6 +573,32 @@ class LLMAdapter:
     def model(self) -> str:
         return self._model
 
+    @property
+    def base_url(self) -> str:
+        """本实例实际在跟谁说话 —— 守卫从适配器**自身**读这个事实，不从调用方拿。"""
+        return self._base_url
+
+    def _before_call(self) -> None:
+        """出站前的唯一检查点：守卫给理由就抛，没注册守卫就放行。
+
+        所有出站方法都在出站**之前**调它（流式方法在建流之前）。读的是模块级全局，
+        每次现读 —— 测试临时换守卫、生产启动时注册，都不需要重建适配器实例
+        （活会话手里那个陈旧实例因此同样被拦，见 L4）。
+        """
+        guard = _call_guard
+        if guard is None:
+            return
+        reason = guard(self._base_url)
+        if reason:
+            raise LLMCallRefused(reason, self._base_url)
+
+    def preflight(self) -> None:
+        """与 ``_before_call()`` **同一实现**，公开给解析出口（§2.8）用。
+
+        只转调，不重写：两处若各存一份判定，改一处漏一处时两边的放行口径会悄悄分叉。
+        """
+        self._before_call()
+
     def _build_messages(self, system_prompt: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """组装包含系统提示的对话消息列表。"""
         return [{"role": "system", "content": system_prompt}, *messages]
@@ -550,6 +625,7 @@ class LLMAdapter:
     @T.spanned("llm.chat", op="chat", finalize=_infer_finalize)
     def chat(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
         """非流式对话，返回完整文本回复。重试预算=生成轮（3 次非429 / 总墙钟 60s，_RetryBudget）。"""
+        self._before_call()
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         budget = _RetryBudget(attempts=_GEN_ATTEMPTS, deadline_s=_GEN_DEADLINE_S,
@@ -595,6 +671,7 @@ class LLMAdapter:
         "completion_tokens": N}`` or *None*.  Callers are responsible for
         aggregating usage across concurrent calls instead of relying on the
         shared ``last_usage`` attribute.  """
+        self._before_call()   # `achat` 委托到这里，故它不必再调一次
         _c = client or self._async_client
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
@@ -632,6 +709,7 @@ class LLMAdapter:
     @T.spanned("llm.chat_stream", op="chat", finalize=_infer_finalize)
     def chat_stream(self, system_prompt: str, messages: list[dict[str, Any]], max_tokens: int | None = None) -> Generator[str, None, None]:
         """流式对话，按增量产出文本片段。"""
+        self._before_call()   # 建流之前：拒绝时连 create() 都不发
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         prompt_chars = sum(len(m.get("content", "")) for m in payload)
@@ -713,6 +791,7 @@ class LLMAdapter:
         provider 不支持 tools（400 + tool/function 关键词）→ ToolsNotSupportedError，不重试；
         其他 400 → 原样抛出，不重试。
         """
+        self._before_call()
         payload = self._build_messages(system_prompt, messages)
         _mt = max_tokens if max_tokens is not None else self._max_tokens
         budget = _RetryBudget(attempts=_DECISION_ATTEMPTS, deadline_s=_DECISION_DEADLINE_S,

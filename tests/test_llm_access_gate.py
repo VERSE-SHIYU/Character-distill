@@ -135,21 +135,55 @@ def _fake_geo(monkeypatch, blocked: str = _BLOCKED_IP) -> None:
         monkeypatch.setattr(gate, "check_api_allowed", verdict)
 
 
-class _SetGuard:
-    """临时换掉调用点守卫，退出时按**原值**还原（不是置 None —— 生产装配过）。"""
+class _Restored:
+    """临时改一处**进程级**状态，退出时还原 —— 四对「读口 + 写口」共用这一个。
 
-    def __init__(self, fn) -> None:
-        self._la = _adapter()
-        self._fn = fn
+    入场动作由 *enter* 给出，它同时返回撤销动作；载体差异只在这两行里：
+      - **普通全局**（守卫、投递器、载体登记表）：`_snapshot(read, write, value)`
+        —— 读口取快照、写口写入，撤销=把快照写回；
+      - **ContextVar**（`LLM_CALLER`）：`_set_var(var, value)` —— `set` 返回的 token
+        就是撤销句柄。`reset(token)` 连「本来没设过」这个事实一并还原，快照式的
+        「写回 None」做不到。
+
+    **还原，而不是置 None / 清空**：这四处状态没有一处是本用例私有的 —— 生产 app
+    一跑 lifespan 就注册了守卫与投递器（`set_main_loop`），telemetry 导入期就登记了
+    载体。置 None 会把**生产那一份**拆掉：同进程后面依赖投递的用例静默改走跨 loop 的
+    回退分支，直接调适配器出站的用例凭空被门管住、报 `LLMCallerMissing` 而不是自己
+    那条断言。ContextVar 同理 —— 主线程同一个上下文跨用例存活，设了不还原，后面读
+    `LLM_CALLER` 的用例会看到上一条留下的身份：最先中招的是 L7「无上下文 = fail-closed」，
+    它读到别人的 IP，于是红成一副与成因无关的样子（且只在全文件跑时红、单跑绿，最难查）。
+    """
+
+    def __init__(self, enter) -> None:
+        self._enter = enter
 
     def __enter__(self):
-        self._prev = self._la.get_call_guard()
-        self._la.set_call_guard(self._fn)
+        self._undo = self._enter()
         return self
 
     def __exit__(self, *exc):
-        self._la.set_call_guard(self._prev)
+        self._undo()
         return False
+
+
+def _snapshot(read, write, value) -> _Restored:
+    """普通全局的载体：读口 + 写口一对（`get_*` / `set_*` 那对）。"""
+    def _enter():
+        prev = read()
+        write(value)
+        return lambda: write(prev)
+    return _Restored(_enter)
+
+
+def _set_var(var, value) -> _Restored:
+    """ContextVar 的载体：写口是 `var.set`，它返回的 token 就是撤销句柄 —— 不必读快照。
+
+    名字避开 `_token` —— 那个已是本文件的 JWT 编码辅助。
+    """
+    def _enter():
+        token = var.set(value)
+        return lambda: var.reset(token)
+    return _Restored(_enter)
 
 
 def _patch_store(monkeypatch, store) -> None:
@@ -161,52 +195,6 @@ def _patch_store(monkeypatch, store) -> None:
         return
     if hasattr(gate, "get_storage"):
         monkeypatch.setattr(gate, "get_storage", lambda: store)
-
-
-class _SetSubmitter:
-    """临时换掉投递实现，退出时按**原值**还原。
-
-    不能置 None 了事：生产 app 的 lifespan 一跑，`deps.set_main_loop` 就注册了实现，
-    而测试在**同一个进程**里接着跑 —— 置 None 会把生产注册拆掉，后面那些依赖
-    「投递回主 loop」的用例会静默改走回退分支（跨 loop 触碰连接池）。
-    与 `_SetGuard` 同一个道理。
-    """
-
-    def __init__(self, fn) -> None:
-        self._s = _mod("core.scheduling")
-        self._fn = fn
-
-    def __enter__(self):
-        self._prev = self._s.get_loop_submitter()
-        self._s.set_loop_submitter(self._fn)
-        return self
-
-    def __exit__(self, *exc):
-        self._s.set_loop_submitter(self._prev)
-        return False
-
-
-class _RegisteredCarrier:
-    """临时登记载体，退出时按**原集合**还原。
-
-    不能 append 了事：`register_context_carrier` 只追加，不还原就会把假载体留在登记表
-    里 —— 本进程后面**每一条**派生路径都会带上它；清空同样不行（telemetry 在导入期
-    登记过 OTel 载体）。与 `_SetGuard` / `_SetSubmitter` 同一个道理。
-    """
-
-    def __init__(self, *carriers) -> None:
-        self._C = _mod("core.concurrency")
-        self._carriers = carriers
-
-    def __enter__(self):
-        self._prev = self._C.get_context_carriers()
-        for carrier in self._carriers:
-            self._C.register_context_carrier(carrier)
-        return self
-
-    def __exit__(self, *exc):
-        self._C.set_context_carriers(self._prev)
-        return False
 
 
 # ── L1 / L2：`/start` 的全局兜底，以及兜底实例的同一性 ────────────────────
@@ -327,13 +315,13 @@ def test_l3_cache_hit_still_checks_geo(store, monkeypatch):
     asyncio.run(store.update_user_api_config(
         uid, "k", "https://api.other.com", "m"))
 
-    ctx.LLM_CALLER.set(ctx.Caller(_ALLOWED_IP, uid))
-    first = asyncio.run(deps.get_user_llm(uid, store))       # 入缓存
-    assert first is not None
+    with _set_var(ctx.LLM_CALLER, ctx.Caller(_ALLOWED_IP, uid)):
+        first = asyncio.run(deps.get_user_llm(uid, store))   # 入缓存
+        assert first is not None
 
-    ctx.LLM_CALLER.set(ctx.Caller(_BLOCKED_IP, uid))         # 换 IP，缓存仍热
-    with pytest.raises(la.LLMCallRefused) as ei:
-        asyncio.run(deps.get_user_llm(uid, store))
+    with _set_var(ctx.LLM_CALLER, ctx.Caller(_BLOCKED_IP, uid)):   # 换 IP，缓存仍热
+        with pytest.raises(la.LLMCallRefused) as ei:
+            asyncio.run(deps.get_user_llm(uid, store))
 
     payload = la.llm_error_payload(ei.value) or {}
     assert payload.get("kind") == "call_refused", f"判别键不是 call_refused：{payload}"
@@ -383,8 +371,6 @@ def _token(uid: str) -> str:
     return jwt.encode({"sub": uid}, TEST_JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：出站前挡下 → 403（call_refused 配码），且毒客户端未被触碰")
 def test_l4_live_session_is_blocked_before_outbound(store, monkeypatch):
     """F6 的形状：**会话内存里那个实例**也要被拦，光拦解析出口拦不住它。
 
@@ -397,6 +383,7 @@ def test_l4_live_session_is_blocked_before_outbound(store, monkeypatch):
     应用要按 §2.6 装配（`install_llm_gate` + 领域异常出口），否则 `LLMCallRefused`
     会被 `_do_chat` 之外的路径吞成 500 而不是 403。"""
     gate = _gate()
+    la = _adapter()
     uid = f"u_live_{uuid.uuid4().hex[:8]}"
     _fake_geo(monkeypatch)
     asyncio.run(store.update_user_api_config(
@@ -421,11 +408,16 @@ def test_l4_live_session_is_blocked_before_outbound(store, monkeypatch):
         }
         client = TestClient(app, raise_server_exceptions=False)
 
-        r = client.post(
-            "/api/chat/send",
-            json={"session_id": sid, "message": "你好"},
-            headers={"Authorization": f"Bearer {_token(uid)}", "X-Real-IP": _BLOCKED_IP},
-        )
+        # 装配由本用例自己声明（不靠 import 副作用），且**退出时还原** —— 守卫是
+        # 进程级全局，装了不撤，本进程后面每条直接调适配器出站的用例都会凭空被门
+        # 管住。`_snapshot` 的入场快照就承担还原这一半。
+        with _snapshot(la.get_call_guard, la.set_call_guard, None):
+            gate.install_llm_gate(app)
+            r = client.post(
+                "/api/chat/send",
+                json={"session_id": sid, "message": "你好"},
+                headers={"Authorization": f"Bearer {_token(uid)}", "X-Real-IP": _BLOCKED_IP},
+            )
     finally:
         deps.get_sessions().pop(sid, None)
 
@@ -491,12 +483,10 @@ def test_l6_method_set_is_not_empty():
     assert _outbound_names()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：注册常拦守卫后，每个出站方法都抛 LLMCallRefused")
 @pytest.mark.parametrize("name", _outbound_names())
 def test_l6_every_outbound_method_hits_the_guard(name):
     la = _adapter()
-    with _SetGuard(lambda base_url: _REFUSAL):
+    with _snapshot(la.get_call_guard, la.set_call_guard, lambda base_url: _REFUSAL):
         adapter = _poison(LLMAdapter(api_key="k"))
         fn = getattr(adapter, name)
         args = _call_args(fn)
@@ -510,8 +500,6 @@ def test_l6_every_outbound_method_hits_the_guard(name):
         assert _REFUSAL in str(ei.value), "拒绝异常没带上守卫给的理由"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：`base_url` 是 C3 新增的只读属性；本条的命题是「_NON_CALL 不陈旧」")
 def test_l6_non_call_set_matches_the_class():
     """反向校验：`_NON_CALL` 里每个名字都得真在类上 —— 陈旧条目会让「哪些不是出站」
     悄悄失真，而方法集正是靠它算的。另一向（非空集、逐个被拦）由上面两条钉住。"""
@@ -521,11 +509,10 @@ def test_l6_non_call_set_matches_the_class():
 
 # ── L7：无上下文 fail-closed ──────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：无上下文 → LLMCallerMissing；SYSTEM 内放行")
 def test_l7_missing_context_fails_closed_and_system_passes():
     gate = _gate()
     ctx = _ctx()
+    la = _adapter()
 
     with pytest.raises(gate.LLMCallerMissing):
         gate.geo_call_guard("https://api.deepseek.com")
@@ -534,7 +521,7 @@ def test_l7_missing_context_fails_closed_and_system_passes():
         assert gate.geo_call_guard("https://api.deepseek.com") is None
 
     # 同一件事在**出站方法**那一侧也要成立 —— 守卫是注入进适配器的。
-    with _SetGuard(gate.geo_call_guard):
+    with _snapshot(la.get_call_guard, la.set_call_guard, gate.geo_call_guard):
         adapter = LLMAdapter(api_key="k", base_url="https://api.deepseek.com")
         with pytest.raises(gate.LLMCallerMissing):
             adapter._before_call()
@@ -653,8 +640,8 @@ def test_l8_contextvar_visible_everywhere(where, otel, monkeypatch):
         observed = _via_http(where)
     else:
         ctx = _ctx()
-        ctx.LLM_CALLER.set(ctx.Caller(_BLOCKED_IP, "u_l8"))
-        observed = _spawn(where)
+        with _set_var(ctx.LLM_CALLER, ctx.Caller(_BLOCKED_IP, "u_l8")):
+            observed = _spawn(where)
 
     tag = f"{where}（OTEL={'on' if otel else 'off'}）"
     assert observed == _BLOCKED_IP, f"{tag} 看不到 contextvar：{observed!r}"
@@ -692,11 +679,10 @@ class _Submitter:
 def _audit_app(uid: str) -> FastAPI:
     from starlette.middleware.base import BaseHTTPMiddleware
 
-    gate = _gate()
     ctx = _ctx()
     app = FastAPI()
     server.register_domain_error_handlers(app)
-    gate.install_llm_gate(app)
+    # 门的装配由调用方声明并还原（见 `_boom` 里的 `_snapshot(...)` 段），此处不装。
 
     class _Who(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
@@ -708,21 +694,44 @@ def _audit_app(uid: str) -> FastAPI:
 
     @app.get("/boom")
     def boom():
-        raise _adapter().LLMCallRefused("境内不支持境外模型", "https://api.other.com")
+        """真走一次出站：拒绝由**门**产生，审计也由门记。
+
+        就地 `raise LLMCallRefused(...)` 会绕开守卫 —— 那样三条用例里关于审计的两条
+        落在一条生产上不存在的路径上，恒真。适配器客户端是毒对象，所以「门没挡住」
+        会以 AssertionError 现形，而不是悄悄发出去。
+        """
+        llm = _poison(LLMAdapter(api_key="k", base_url="https://api.other.com"))
+        return {"ok": llm.chat("s", [{"role": "user", "content": "hi"}])}
 
     return app
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：拒绝 → 403，且文案就是拒绝理由")
+def _boom(uid: str = "u9"):
+    """按生产函数装门 + 发一次 `/boom`，装完还原（守卫是进程级全局）。
+
+    还原是必须的：本文件是全仓唯一装门的地方，装了不撤，同一进程里后面**每条**
+    直接调适配器出站的用例（适配器单测、路由测试）都会凭空被门管住，报
+    `LLMCallerMissing` 而不是它们自己那条断言 —— 那正是「import 期注册」被根除
+    掉的那个副作用，只是搬到了测试侧。`_snapshot` 的入场快照承担还原。
+    """
+    gate = _gate()
+    la = _adapter()
+    app = _audit_app(uid)
+    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+        gate.install_llm_gate(app)
+        return TestClient(app, raise_server_exceptions=False).get(
+            "/boom", headers={"X-Real-IP": _BLOCKED_IP})
+
+
 def test_l9_blocked_maps_to_403_with_the_reason(monkeypatch):
+    _fake_geo(monkeypatch)
     store = _AuditStore()
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
     sub = _Submitter()
-    with _SetSubmitter(sub):
-        r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
-            "/boom", headers={"X-Real-IP": _BLOCKED_IP})
+    S = _mod("core.scheduling")
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, sub):
+        r = _boom()
 
     assert r.status_code == 403, r.text
     assert r.json()["detail"] == "境内不支持境外模型", r.text
@@ -730,16 +739,14 @@ def test_l9_blocked_maps_to_403_with_the_reason(monkeypatch):
     assert sub.calls[0][1] is False, "审计投递必须是 wait=False（不阻塞请求）"
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：审计投递恰好一次，user 与 ip 取自 Caller")
 def test_l9_audit_is_delivered_once_with_the_caller(monkeypatch):
+    _fake_geo(monkeypatch)
     store = _AuditStore()
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
-    sub = _Submitter()
-    with _SetSubmitter(sub):
-        r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
-            "/boom", headers={"X-Real-IP": _BLOCKED_IP})
+    S = _mod("core.scheduling")
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, _Submitter()):
+        r = _boom()
 
     assert r.status_code == 403, r.text
     assert len(store.calls) == 1, f"审计次数不对：{store.calls}"
@@ -748,16 +755,15 @@ def test_l9_audit_is_delivered_once_with_the_caller(monkeypatch):
     assert base_url == "https://api.other.com" and reason.strip()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：审计抛错仍返回 403（审计失败不改变判定），且不阻塞请求")
 def test_l9_audit_failure_keeps_the_403(monkeypatch):
+    _fake_geo(monkeypatch)
     store = _AuditStore(boom=True)
     _patch_store(monkeypatch, store)
     monkeypatch.setattr(server, "get_storage", lambda: store)
     sub = _Submitter()
-    with _SetSubmitter(sub):
-        r = TestClient(_audit_app("u9"), raise_server_exceptions=False).get(
-            "/boom", headers={"X-Real-IP": _BLOCKED_IP})
+    S = _mod("core.scheduling")
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, sub):
+        r = _boom()
 
     assert r.status_code == 403, r.text
     assert len(sub.calls) == 1, "判定改了 —— 审计失败不该拦下请求"
@@ -883,15 +889,25 @@ def test_l10_construction_points_are_confined():
 
 # ── L11：装配后守卫就是策略层那一个函数 ───────────────────────────────────
 
-@pytest.mark.xfail(strict=True,
-                   reason="C3 翻转：导入生产 app 后 adapter 的守卫 is geo_call_guard")
 def test_l11_app_installs_the_production_guard():
+    """锚点在**启动那一刻**，不在 import 那一刻。
+
+    `import server` 只导入模块，不改变任何进程级策略 —— 装配（守卫、投递器、主 loop）
+    都在 lifespan 里，`with TestClient(app)` 才跑它。用生产 app 本身触发，才证得了
+    「生产经 lifespan 装上了门」；锚在 import 期只会证「模块被导入过」，而那个副作用
+    本身就是本步要根除的东西（它让不启 app 的适配器单测凭空被门管住）。
+    """
     gate = _gate()
     la = _adapter()
     getter = getattr(la, "get_call_guard", None)
     assert getter is not None, "adapters.llm_adapter 没发布与 set_call_guard 配对的读取口"
-    server  # noqa: B018 —— 导入生产装配层；注册发生在 import 期
-    assert getter() is gate.geo_call_guard
+    # 从「未注册」起步：守卫是进程级全局，同会话里别的用例可能已经装过 —— 不清空的话
+    # 这里读到的是**别人留下的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
+    with _snapshot(la.get_call_guard, la.set_call_guard, None):
+        assert getter() is None, "起点不是未注册 —— 前面有用例装过守卫"
+        with TestClient(server.app):
+            assert getter() is gate.geo_call_guard, (
+                "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
 
 
 # ── L12：策略单点（②层） ──────────────────────────────────────────────────
@@ -991,7 +1007,7 @@ def test_l14_submit_delegates_when_registered():
     async def _noop():
         return "MINE"
 
-    with _SetSubmitter(_recorder):
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, _recorder):
         got = S.submit_to_main_loop(_noop(), wait=False)
 
     assert got == "DELEGATED", f"已注册时没有委托给注册实现（拿到 {got!r}）"
@@ -1004,7 +1020,7 @@ def test_l14_unregistered_fallback_semantics():
     async def _value():
         return "RAN"
 
-    with _SetSubmitter(None):
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, None):
         # wait=True：阻塞取结果，且响亮（发 warning）
         with pytest.warns(Warning):
             assert S.submit_to_main_loop(_value()) == "RAN"
@@ -1050,7 +1066,7 @@ def test_l14_usage_recording_goes_through_the_primitive():
         last_usage = {"prompt_tokens": 1, "completion_tokens": 2}
         _model = "m"
 
-    with _SetSubmitter(_recorder):
+    with _snapshot(S.get_loop_submitter, S.set_loop_submitter, _recorder):
         _mod("core.utils").try_record_usage(_Storage(), "u14", _LLM(), action="chat")
 
     assert seen, "记账没有经投递原语出去（还在自建 loop）"
@@ -1132,7 +1148,8 @@ def test_l15_carrier_protocol_is_driven_by_the_derive_path():
             log.append("release")
 
     box: list = []
-    with _RegisteredCarrier(_Carrier()):
+    with _snapshot(C.get_context_carriers, C.set_context_carriers,
+                   [*C.get_context_carriers(), _Carrier()]):
         t = C.ctx_thread(box.append, args=("ran",))
         t.start()
         t.join(timeout=5)
@@ -1188,7 +1205,8 @@ def test_l15_carrier_restore_and_release_share_one_context_run():
     a, b = _StructuralCarrier("a", log), _StructuralCarrier("b", log)
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        with _RegisteredCarrier(a, b):
+        with _snapshot(C.get_context_carriers, C.set_context_carriers,
+                       [*C.get_context_carriers(), a, b]):
             fut = C.ctx_submit(pool, threading.get_ident)
             worker = fut.result(timeout=5)   # release 逸出 ctx.run → ValueError 从这里冒
             caller = threading.get_ident()
@@ -1218,7 +1236,8 @@ def test_l15_carrier_release_pairs_on_the_exception_path():
 
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        with _RegisteredCarrier(carrier):
+        with _snapshot(C.get_context_carriers, C.set_context_carriers,
+                       [*C.get_context_carriers(), carrier]):
             with pytest.raises(RuntimeError, match="派生体自己炸了"):
                 C.ctx_submit(pool, _boom).result(timeout=5)
     finally:

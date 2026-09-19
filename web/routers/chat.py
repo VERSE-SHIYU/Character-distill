@@ -45,7 +45,8 @@ def _stream_error_payload(exc: Exception) -> dict[str, Any]:
 # 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，
 # 用 500 会让用户当 bug 反复重试。
 #
-# `finish_reason` → 状态码那张表已**搬到 web/server.py 的 `_INCOMPLETE_STATUS`**（统一出口）：
+# 「失败种类 → 状态码」那张表已**搬到 web/server.py 的 `_LLM_ERROR_STATUS`**（统一出口，
+# 按判别键 `kind` 查：未完成终态 `incomplete:<finish_reason>`、调用点门拒绝 `call_refused`）：
 # 同一个异常类型下码不同，但「怎么配码」不该散在路由里。此处只放行（见 `_do_chat`），
 # 文案仍走同一份口径链，与 SSE 帧同文案。
 

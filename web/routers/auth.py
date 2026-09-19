@@ -22,7 +22,7 @@ from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_config, get_storage
 from storage.base import StorageBase
 from limiter import limiter
-from web.geo_guard import check_api_allowed
+from web.llm_gate import emit_geo_block_audit, geo_refusal
 from web.legal_versions import CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION
 from web.limiter import get_client_ip
 
@@ -514,16 +514,15 @@ async def update_api_config(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update the current user's API key, base URL, and model."""
-    # Geo guard: block domestic IPs from using non-whitelisted LLM APIs
+    # Geo guard: block domestic IPs from using non-whitelisted LLM APIs.
+    # 判定与审计都走门的两个单点（geo_refusal / emit_geo_block_audit）—— 这里不再
+    # 自带一份策略、也不再设例外，否则保存路径与出站路径会各有一套口径。
     client_ip = get_client_ip(request)
-    allowed, reason = check_api_allowed(client_ip, req.base_url)
-    if not allowed:
-        # 审计写入失败不得改写判定：这里必须仍然回 403。store 现在会对库失败上抛，
-        # 容忍策略写在这里（原先藏在 store 的 `except: print` 里，看不出是策略还是漏改）。
-        try:
-            await storage.record_geo_block(user["id"], client_ip, req.base_url, reason)
-        except Exception as exc:
-            logger.warning("Record geo block failed (non-fatal): %s", exc)
+    reason = geo_refusal(client_ip, req.base_url)
+    if reason:
+        # 审计写入失败不得改写判定：emit_geo_block_audit 自己吞（非致命只记日志），
+        # 故下面必须仍然回 403。
+        emit_geo_block_audit(user["id"], client_ip, req.base_url, reason)
         raise HTTPException(403, detail=reason)
 
     try:

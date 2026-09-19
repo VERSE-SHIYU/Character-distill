@@ -12,6 +12,11 @@ from core.log_collector import (
 )
 
 
+def _ring_handler_count(root: logging.Logger) -> int:
+    """How many ring-buffer handlers are attached to *root*."""
+    return sum(1 for h in root.handlers if isinstance(h, RingBufferHandler))
+
+
 def _make_logger(name: str, handler: RingBufferHandler) -> logging.Logger:
     """Create an isolated logger with the given handler (no root propagation)."""
     log = logging.getLogger(name)
@@ -93,16 +98,20 @@ class TestRingBufferHandler:
         assert len(handler._buffer) == N, f"Expected {N}, got {len(handler._buffer)}"
 
     def test_install_log_collector_idempotent(self):
-        """install_log_collector should not add duplicate handlers."""
+        """install_log_collector should not add duplicate handlers.
+
+        The proposition is **idempotence**: install any number of times, the root logger
+        ends up with exactly one ring-buffer handler. Counting from *count_before + 1*
+        smuggled in an assumption instead — that nothing had installed it yet on entry,
+        which only holds depending on which test ran first. The singleton is
+        module-level, so a same-object re-install leaves the count at 1 either way.
+        """
         root = logging.getLogger()
-        count_before = sum(1 for h in root.handlers if isinstance(h, RingBufferHandler))
         install_log_collector()
-        count_after = sum(1 for h in root.handlers if isinstance(h, RingBufferHandler))
-        assert count_after == count_before + 1
+        assert _ring_handler_count(root) == 1
 
         install_log_collector()
-        count_after2 = sum(1 for h in root.handlers if isinstance(h, RingBufferHandler))
-        assert count_after2 == count_after
+        assert _ring_handler_count(root) == 1
 
         # Cleanup to avoid interfering with pytest capture
         root.handlers[:] = [h for h in root.handlers if not isinstance(h, RingBufferHandler)]

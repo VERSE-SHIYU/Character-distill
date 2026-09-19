@@ -2,9 +2,9 @@
 """非流式 chat 的失败**放行**契约：上游返回不完整响应 ≠ 我们的服务端故障。
 
 原先本文件锁的是「路由自己的 `_http_error_from` 映射」。缺陷 38 收口后那张表**搬到了**
-``web/server.py`` 的统一出口（`_INCOMPLETE_STATUS`）—— 路由层不再知道「哪个 finish_reason
-配哪个码」。所以本文件只剩一件事：**`_do_chat` 必须把 LLM 侧未完成终态原样放行出去**
-（放行了才轮得到统一出口配码；就地吞成 500 就是回到修复前的样子）。
+``web/server.py`` 的统一出口（`_LLM_ERROR_STATUS`，按判别键 `kind` 查）—— 路由层不再知道
+「哪个 finish_reason 配哪个码」。所以本文件只剩一件事：**`_do_chat` 必须把 LLM 侧未完成终态
+原样放行出去**（放行了才轮得到统一出口配码；就地吞成 500 就是回到修复前的样子）。
 
 码本身的契约（400/502/503 + 未登记兜 502）随表搬家 → ``tests/test_domain_exception_exit.py
 ::test_b2_llm_incomplete_maps_by_finish_reason``，此处不重复断言。

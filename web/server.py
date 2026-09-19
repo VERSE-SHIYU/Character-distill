@@ -71,6 +71,7 @@ from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
+from web.llm_gate import install_llm_gate
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
 
@@ -90,6 +91,13 @@ else:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # 门在**启动动作的最前面**：守卫是进程级全局，装配期注册（与 `set_main_loop`
+    # 同一处形态）。放第一位是因为启动过程本身若出现 LLM 调用，门必须在那一刻已成立。
+    #
+    # **不放 import 期**：`import web.server` 改变进程级策略，会让同一进程里任何
+    # 不启 app 的代码（适配器单测、脚本）凭空被门管住 —— 序依赖随之而来（谁先 import
+    # 决定谁被拦）。注册是**装配**这件事的一部分，就写在装配处。
+    install_llm_gate(app)
     validate_fernet_key()
     validate_jwt_secret()
     validate_inter_node_secret()
@@ -172,16 +180,19 @@ from core.distiller import DistillError  # noqa: E402  此处引入，避开文�
 
 _DOMAIN_ERROR_STATUS: dict[type, int] = {DistillError: 400}
 
-# LLM 侧未完成终态：同一异常类下 finish_reason 语义不同，故按 finish_reason 分支。
-# content_filter 是用户可修正的输入问题（400，重试无用）、length 是上游截断（502）、
-# 资源不足可稍后重试（503）、未登记兜 502（上游问题，不按我们的故障）。
-# 这张表原先长在 web/routers/chat.py —— **搬家不是再造**。
-_INCOMPLETE_STATUS: dict[str, int] = {
-    "content_filter": 400,
-    "length": 502,
-    "insufficient_system_resource": 503,
+# LLM 侧已知失败 → 状态码：**一张表**，按 `llm_error_payload` 的判别键 `kind` 查。
+# 未完成终态：同一异常类下 finish_reason 语义不同（content_filter 是用户可修正的输入
+# 问题 400、length 是上游截断 502、资源不足可稍后重试 503）；调用点门拒绝是 403
+# （D1：被 geo 拦截统一 403，不回落全局 key）。未登记兜 502（上游问题，不按我们的故障）。
+# 这张表原先长在 web/routers/chat.py，且只认 finish_reason —— **搬家 + 收拢成一张**，
+# 不是再造第二张让配码变成「先查 A 表再查 B 表」。
+_LLM_ERROR_STATUS: dict[str, int] = {
+    "incomplete:content_filter": 400,
+    "incomplete:length": 502,
+    "incomplete:insufficient_system_resource": 503,
+    "call_refused": 403,
 }
-_INCOMPLETE_STATUS_DEFAULT = 502
+_LLM_ERROR_STATUS_DEFAULT = 502
 
 
 def _domain_error_status(exc: Exception) -> int:
@@ -199,9 +210,20 @@ async def _domain_error_handler(request: Request, exc: Exception) -> JSONRespons
     )
 
 
-async def _llm_error_handler(request: Request, exc: Exception) -> JSONResponse:
+def _llm_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """LLM 侧已知异常的统一出口：**只配码 + 上屏文案**。
+
+    审计**不在出口**：出口不唯一 —— 除了这条统一出口，其余宽 `except` 路径上的拒绝
+    （chat 的兜底、SSE 错误帧、蒸馏的 `user_facing_error`）一条都不经过这里，挂在这
+    等于「有的拒绝记、有的不记」。审计挂在**门**那一侧（`geo_call_guard` 拿到理由就
+    记），那里是每个拒绝都必经之处。
+
+    **同步**是刻意的（`_domain_error_handler` 保持 async 也各有各的理）：本函数一个
+    await 也没有，只组装一个响应 —— 没必要占一个事件循环任务。
+    """
     payload = llm_error_payload(exc) or {}
-    status = _INCOMPLETE_STATUS.get(payload.get("finish_reason", ""), _INCOMPLETE_STATUS_DEFAULT)
+    kind = payload.get("kind", "")
+    status = _LLM_ERROR_STATUS.get(kind, _LLM_ERROR_STATUS_DEFAULT)
     return JSONResponse(status_code=status, content={"detail": user_facing_error(exc)})
 
 
@@ -216,6 +238,7 @@ def register_domain_error_handlers(target_app: FastAPI) -> None:
 
 
 register_domain_error_handlers(app)
+# 调用点门的注册见 `_lifespan` 首行 —— 装配期的事写在装配处，不在 import 期发生。
 
 
 @app.exception_handler(Exception)
