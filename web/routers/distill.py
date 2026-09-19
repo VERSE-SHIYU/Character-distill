@@ -757,9 +757,15 @@ async def _distill_start_impl(
     # 本处**不再手抄**一遍 —— 原先那份手抄的既不入缓存、也不过 preflight，是同一件事
     # 的第二处实现，geo 判定也因此在解析层又判了一次（两处各判一次就会分叉）。
     llm = await get_user_llm(user_id, storage)
-    distiller = get_distiller(llm=llm)
-    if distiller is None:
+
+    # 门判**解析结果**，不判下游派生物。同一不变量（「没有可用 LLM」）如果两处各写一遍，
+    # 就会分叉成两个判据：原先这里判 `get_distiller(llm) is None`，而传给后台线程的又
+    # 是 `llm` 本身 —— 生产里 `get_distiller(None) is None` 让两者恰好等价，于是谁把
+    # `get_distiller` 换掉（测试打桩），门就形同虚设，而线程那边照样断言炸。
+    # 现在只有一条谓词，`distiller` 纯属派生，不可达的分支随之消失。
+    if llm is None:
         raise HTTPException(503, "请先在设置页配置 API Key")
+    distiller = get_distiller(llm=llm)
 
     # embedding 二元组在这里取**一次**，随线程入参传下去：后台线程不再回头读配置
     # （它连 storage 都不该碰，那是请求线程的账）。

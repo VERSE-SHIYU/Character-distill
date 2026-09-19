@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from core import concurrency as C  # 派生与上下文传播
+import deps
 from core.distiller import text_fingerprint
 from deps import get_storage
 from routers import distill as D
@@ -367,6 +368,49 @@ class TestDStatusReadonlyStage:
         assert body["status"] == "running"
 
 
+# ── /start 的解析出口桩：前提由用例自建，不靠环境的全局 key ──────────────────────
+# `/start` 的 503 门判的是**解析结果** `llm is None`（§2.10）。干净环境（无 .env、无
+# config.yaml、不设任何 API key）里 `deps.get_user_llm` 必返 None —— 那条 503 会盖住
+# 本文件真正要测的东西（并发闸 / 续跑门 / 落库失败）。而依赖「本机 .env 恰好有全局
+# key」才走到 200 的绿是假绿：换个环境就是红。故凡驱动 /start 的夹具都先立起这条前提。
+
+
+class _StubUserLLM:
+    """解析出口给出的假实例 —— 本文件的用例只用到「它非 None」这一个事实。"""
+
+
+def _install_user_llm(monkeypatch):
+    """把 `deps.get_user_llm` 钉成「返回一个非 None 实例」，返回那个实例。
+
+    `web/` 没有 `__init__.py`，`import deps` 与 `import web.deps` 是两个模块对象，
+    patch 错一个等于没 patch —— 断言因此落在**模块属性**上。
+
+    真值断言（「调一次确实拿到实例」）由 `_assert_premise_resolves` 在各入口做：驱动
+    协程要 loop，而本函数也被 async 用例调（`asyncio.run` 在运行中的 loop 里会炸）。
+    """
+    import deps
+
+    llm = _StubUserLLM()
+
+    async def _resolve(user_id, storage=None):
+        return llm
+
+    monkeypatch.setattr(deps, "get_user_llm", _resolve)
+    assert deps.get_user_llm is _resolve, "前提破了：`deps.get_user_llm` 没被换成桩"
+    return llm
+
+
+def _assert_premise_resolves(store, llm):
+    """同步入口的前提断言：解析出口**调一次**拿到的就是 `llm`。
+
+    `/start` 的 503 门判的就是这个结果。前提一旦破，报错要点在前提上 —— 否则用例
+    后半段会以一条「请先在设置页配置 API Key」的 503 现形，看起来像业务逻辑错了。
+    """
+    got = asyncio.run(deps.get_user_llm("premise", store))
+    assert got is llm, (
+        "前提破了：解析出口没给出实例 —— /start 会以无 key 503 收场，测的就不是本用例的东西")
+
+
 class _FailingSaveStore(SQLiteStore):
     """仅 create_distill_task 抛错，其余全走真 store（避免手写全量委托）。"""
 
@@ -386,6 +430,7 @@ class TestCStartRefusesOnDBFailure:
             def effective_chunk_size(self, text_type="story"):
                 return 3000
 
+        _assert_premise_resolves(failing, _install_user_llm(monkeypatch))
         monkeypatch.setattr("deps.get_distiller", lambda llm=None: _StubDistiller())
         started = []
         monkeypatch.setattr("core.concurrency.ctx_thread",
@@ -431,6 +476,7 @@ def _capture_start(monkeypatch, store, user_id, tid, *, character="甲", force=F
 
     ctx_thread 打桩：不真起线程，只捕获 args 元组（末位即 resume_candidates）。
     """
+    _assert_premise_resolves(store, _install_user_llm(monkeypatch))
     monkeypatch.setattr("deps.get_distiller",
                         lambda llm=None: _ResumeDistillerStub(chunk_size))
     captured: list[tuple] = []
@@ -574,10 +620,15 @@ class _CapOnlySemaphore:
 def _install_bg(monkeypatch, store, cap=3):
     """把 /start 的真后台线程装进测试：stub 掉 store/LLM 边界。
 
-    返回 (蒸馏器, 信号量, 线程表)。submit_to_main_loop 换成同步 asyncio.run —— bg 线程里
-    没有事件循环，落库路径照跑。
+    返回 (蒸馏器, 信号量, 线程表, 解析出的 llm)。submit_to_main_loop 换成同步
+    asyncio.run —— bg 线程里没有事件循环，落库路径照跑。
+
+    第 4 位交回解析实例是给**前提断言**用的：调用方各自按自己的语境驱动那个出口
+    （sync 用例 `_assert_premise_resolves`，async 用例就地 `await`），本函数在
+    loop 里也跑得，故不在这里驱动协程。
     """
     distiller = _ChunkEmittingDistiller()
+    llm = _install_user_llm(monkeypatch)
     monkeypatch.setattr("deps.get_distiller", lambda llm=None: distiller)
     monkeypatch.setattr("deps.get_text_manager", lambda llm=None: object())
     monkeypatch.setattr(D, "get_storage", lambda: store)
@@ -594,7 +645,7 @@ def _install_bg(monkeypatch, store, cap=3):
         return t
 
     monkeypatch.setattr("core.concurrency.ctx_thread", _spy)
-    return distiller, sem, threads
+    return distiller, sem, threads, llm
 
 
 def _age_row(store, task_id, minutes):
@@ -662,7 +713,10 @@ class TestFPerUserGate:
         """
         tid = f"txt_{uuid.uuid4().hex}"
         await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
-        distiller, _sem, threads = _install_bg(monkeypatch, store)
+        distiller, _sem, threads, llm = _install_bg(monkeypatch, store)
+        # 前提断言用 async 语境自己的驱动方式（`_assert_premise_resolves` 会撞上在跑的 loop）
+        assert await deps.get_user_llm("premise", store) is llm, (
+            "前提破了：解析出口没给出实例 —— /start 会以无 key 503 收场，测的就不是并发闸")
 
         transport = ASGITransport(app=_build_app(store, user_id))
         payload = {"text_id": tid, "character_name": "甲", "force": False}
@@ -687,7 +741,8 @@ class TestFPerUserGate:
         注：这里用假信号量断言「第 4 个确实 acquire 不到」，**没有真等** timeout=300 的
         5 分钟排队 —— 排队本身未被本用例验证。
         """
-        _distiller, sem, threads = _install_bg(monkeypatch, store, cap=3)
+        _distiller, sem, threads, llm = _install_bg(monkeypatch, store, cap=3)
+        _assert_premise_resolves(store, llm)
 
         rows = []
         for i in range(4):
