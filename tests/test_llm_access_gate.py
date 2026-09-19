@@ -209,6 +209,28 @@ def user_id():
     return f"u_gate_{uuid.uuid4().hex[:8]}"
 
 
+@pytest.fixture
+def seed_user(store):
+    """建**真用户行**再写入 API 配置 —— 让 `get_user_api_config` 真读得回来。
+
+    没有 users 行时它返回**全空**配置（`FROM users u LEFT JOIN user_secrets s` 无行），
+    而 `update_user_api_config` 是纯 `UPDATE ... WHERE user_id = ?`：不建行、也不报错，
+    静默什么都不写。于是 `get_user_llm` 落到**全局回落** —— 它非 None 只因为**本机
+    `.env` 恰好有 key**；干净检出与 CI（都不注入 `DEEPSEEK_API_KEY`）上是 None。
+    也就是说「解析层拿到实例」这个前提会退化成环境凑巧，而不是用例构造出来的。
+
+    **不并进 `store` 夹具**：写配置要给用户一条 `api_key`，而 L1/L2 的前提恰恰相反
+    ——「无 key + 全局可用」，靠 `store.get_user_api_config` 读回空配置成立。夹具替
+    每条用例建配置，那两条就从「测全局回落」变成「测用户配置」了。
+    """
+    def _seed(uid: str, *, base_url: str = "https://api.deepseek.com",
+              api_key: str = "k", model: str = "m") -> str:
+        asyncio.run(store.create_user(uid, f"u_{uid}", "hash"))
+        asyncio.run(store.update_user_api_config(uid, api_key, base_url, model))
+        return uid
+    return _seed
+
+
 def _distill_app(store, uid) -> FastAPI:
     app = FastAPI()
     app.include_router(distill_router)
@@ -307,17 +329,19 @@ def test_l2_background_thread_gets_the_resolved_instance(store, user_id, monkeyp
 
 @pytest.mark.xfail(strict=True,
                    reason="C4 翻转：缓存命中也过 preflight，判据 kind == call_refused")
-def test_l3_cache_hit_still_checks_geo(store, monkeypatch):
+def test_l3_cache_hit_still_checks_geo(store, seed_user, monkeypatch):
     ctx = _ctx()
     la = _adapter()
     _fake_geo(monkeypatch)
-    uid = f"u_l3_{uuid.uuid4().hex[:8]}"
-    asyncio.run(store.update_user_api_config(
-        uid, "k", "https://api.other.com", "m"))
+    uid = seed_user(f"u_l3_{uuid.uuid4().hex[:8]}", base_url="https://api.other.com")
 
     with _set_var(ctx.LLM_CALLER, ctx.Caller(_ALLOWED_IP, uid)):
         first = asyncio.run(deps.get_user_llm(uid, store))   # 入缓存
-        assert first is not None
+        assert first is not None, (
+            "前提破了：解析出口没拿到用户实例（users 行没建出来？）—— "
+            "这条要证的是缓存热也过 preflight，不是「解析拿到实例」")
+        assert first.base_url == "https://api.other.com", (
+            f"解析拿到的不是这条用户配置里的实例：{first.base_url!r}")
 
     with _set_var(ctx.LLM_CALLER, ctx.Caller(_BLOCKED_IP, uid)):   # 换 IP，缓存仍热
         with pytest.raises(la.LLMCallRefused) as ei:
@@ -371,7 +395,7 @@ def _token(uid: str) -> str:
     return jwt.encode({"sub": uid}, TEST_JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def test_l4_live_session_is_blocked_before_outbound(store, monkeypatch):
+def test_l4_live_session_is_blocked_before_outbound(store, seed_user, monkeypatch):
     """F6 的形状：**会话内存里那个实例**也要被拦，光拦解析出口拦不住它。
 
     构造上有意让**解析层放行、调用层拦**，否则这条会退化成测「解析时的提前 403」：
@@ -380,14 +404,36 @@ def test_l4_live_session_is_blocked_before_outbound(store, monkeypatch):
       - 会话里那个 `_SessionEngine` 拿着的适配器 `base_url` 是**非白名单**的，
         且客户端已换成毒对象 —— 只有调用点门能拦住它。
 
+    「解析层放行」是**发请求前断言**出来的前提（`seed_user` 建出 users 行，让
+    `get_user_llm` 真读回那条配置），不是环境凑巧：没有 users 行时它落到全局回落，
+    而回落非 None 只因为本机 `.env` 恰好有 key —— 干净检出与 CI 上就是 503。
+    前提破了必须红在前提那两行，不许变成走了别的路的 403 或 503。
+
     应用要按 §2.6 装配（`install_llm_gate` + 领域异常出口），否则 `LLMCallRefused`
     会被 `_do_chat` 之外的路径吞成 500 而不是 403。"""
     gate = _gate()
     la = _adapter()
-    uid = f"u_live_{uuid.uuid4().hex[:8]}"
     _fake_geo(monkeypatch)
-    asyncio.run(store.update_user_api_config(
-        uid, "k", "https://api.deepseek.com", "m"))   # 白名单内：解析层必放行
+    uid = seed_user(f"u_live_{uuid.uuid4().hex[:8]}")   # 白名单内：解析层必放行
+
+    # ── 前提（发请求之前）────────────────────────────────────────────────
+    import web.geo_guard as G
+
+    resolved = asyncio.run(deps.get_user_llm(uid, store))
+    assert resolved is not None, (
+        "前提破了：解析出口没拿到用户实例（users 行没建出来？）—— 请求会在 "
+        "`chat.send` 那道 503 就返回，根本走不到门")
+    # 见证「拿到的是**用户那条**配置，不是全局回落」：没有它，本机恰好有 key 时
+    # 回落也非 None、base_url 也恰是 deepseek，前提破了这条用例仍会绿 —— 构造就还是
+    # 环境凑巧。model 由 `seed_user` 显式给，回落的那个来自 config.yaml，两者不同。
+    assert resolved.model == "m", (
+        f"前提破了：解析出口走的是**全局回落**那条路（model={resolved.model!r}），"
+        "不是这条用户配置 —— 回落只是让 503 放行，证不到调用点门")
+    allowed, why = G.check_api_allowed(_BLOCKED_IP, resolved.base_url)
+    assert allowed, (
+        f"前提破了：用户配置的 base_url {resolved.base_url!r} 在 {_BLOCKED_IP} 下不被放行"
+        f"（{why}）—— 解析层就先 403 了，这条测不到调用点门")
+
     _patch_store(monkeypatch, _AuthStore(uid))
     monkeypatch.setattr(server, "get_storage", lambda: _AuthStore(uid))
 
