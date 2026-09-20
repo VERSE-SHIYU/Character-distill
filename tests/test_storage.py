@@ -1119,6 +1119,39 @@ class TestDetachAndPurgeLeaveNoOrphans:
             f"永久删除留下了孤儿行（keep_cards={keep_cards}）：{after}"
 
 
+class TestForkCardStandalone:
+    """缺陷 78 顺带修好的那条路：fork 一张 public 卡且 `text_id=''`（语义 = 要一张独立卡）。
+
+    前端 `AuthorPage.jsx` 就是这么发的。`''` 不指向任何 texts.id，外键直接拒 —— 改前这条
+    路径恒抛 `FOREIGN KEY constraint failed`，改后 `''` 与 NULL 统一成 NULL。
+    """
+
+    @staticmethod
+    async def _published_card(store, text_id) -> str:
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{"name": "张三"}', user_id="u_src")
+        await store.update_card_visibility(cid, "public")
+        return cid
+
+    async def test_fork_with_empty_text_id_yields_null(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = await self._published_card(store, text_id)
+
+        card = await store.fork_card(cid, uuid.uuid4().hex[:12], "u_forker", "")
+        assert card is not None and card["text_id"] is None, \
+            "'' 该被归一成 NULL；改前这里抛 FOREIGN KEY constraint failed"
+
+    async def test_fork_standalone_twice_dedups(self, store, text_id):
+        """`= NULL` 恒不成立，会让独立卡每次 fork 都新插一张 —— 去重必须 NULL 安全比较。"""
+        await store.save_text(text_id, "src.txt", "source")
+        cid = await self._published_card(store, text_id)
+
+        first = await store.fork_card(cid, uuid.uuid4().hex[:12], "u_forker", "")
+        second = await store.fork_card(cid, uuid.uuid4().hex[:12], "u_forker", "")
+        assert first is not None and second is not None
+        assert first["id"] == second["id"], "同一用户对同一张独立卡的第二次 fork 该复用同一张卡"
+
+
 class TestStandaloneCardListing:
     """Cards with text_id=NULL must still appear in list_standalone_cards."""
 
