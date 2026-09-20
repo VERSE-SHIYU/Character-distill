@@ -1053,6 +1053,23 @@ PROBE_IMAGE         false
 - **与缺陷 19 / 25 同族，但落在写侧**：那两条管的是**读**原语没有身份概念（判据读命名后缀 / 签名参数）；这条是**写**原语 `detach_text_cards` 无身份过滤，且非法窗口开在**鉴权之前** —— 不是判据写错，是**顺序**写错。故 `tests/test_storage_scope_lock.py` 那类锁看不见它（它既不叫 `*_unscoped`，也不在带身份的仓储入口上）。
 - **本次处置（用户，2026-09-20）**：**只立项，先不动** —— 修法待用户审后再定，故不写在此。
 
+**76. 回收站四类实体全灭 —— ENTITY_MAP 按名取数，改名漏改后字符串悬空、静默 500** —— 状态：**已修**（`4ecd58e`…`9ce0cf9` + `cae6c37`，2026-09-20）
+- **现象**：`DELETE /api/text/{id}` 返回 **500** `{"detail":"Storage missing method: get_text"}`；`soft_delete` / `restore` / `hard_delete` 对 **card / session / text / group 四类实体全部不可用**（SQLite 与 PG 同 —— 两个 store 都只剩 `*_unscoped` 名）。回收站整套失效。
+- **根因**：`core/trash_service.py` 的 `ENTITY_MAP` 把 storage 侧方法名**当字符串存**（`get="get_text"` …），再由按名反射解析调用。**名字一旦是数据，改名就与调用点脱钩** —— AST 锁判的是名字**长什么样**（调用 / 属性引用 / 字符串常量三种形态），而这里名字在 dict 里、取数在别处，改名漏改既不报错也不打红，直到运行时才 500。静态检查同理。
+- **时间线（逐 commit 核过，非转述）**：
+  - `fbf4077`（2026-06-26）建 `TrashService`，`ENTITY_MAP` 用当时有效的旧名（`get_text` / `get_session` / `get_card` / `get_group_session`）。
+  - `da0e3b3`（2026-09-11）`get_text` / `get_session` 能力拆分，**同时在 `storage/base.py` 留了过渡别名**（`async def get_text(self, id)` → 转发 `get_text_unscoped`，随继承生效）—— 此时 `trash_service` 尚能解析，**未坏**。
+  - **`f7bd92a`（2026-09-11）删掉过渡别名**（`storage/base.py` −8 行）→ `get_text` / `get_session` 悬空，**text / session 两类失效**。
+  - **`e3cf9e8`（2026-09-13）B1 补完其余读原语的 `*_owned`** → `get_card` / `get_group_session` 消失，**card / group 两类失效**。
+  - 中间 `core/trash_service.py` **一次都没被改过**（`git log -- core/trash_service.py`：`fbf4077` 之后直接跳到 `c881aa5`）。
+  - 2026-09-20 验收清理时撞到：text/session 已坏 **9 天**、card/group **7 天**。
+- **为何 9 天无人发现（两处同时缺位）**：① `core/trash_service.py` 的**派发层零测试覆盖** —— `tests/` 下无一条用例碰 `trash_service`；② 当时唯一的形态锁 `tests/test_storage_scope_lock.py` 的判据是 `isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)`，**只认调用形态**，名字存在 dict 里、在别处按名取数，它一个字也看不见。
+- **修复（两轮共 7 个 commit）**：
+  - 第一轮 `4ecd58e`…`9ce0cf9`：补 `tests/test_trash_service.py`（服务层公开口，四实体 × soft/restore/hard，**先红 44 条**）；scope lock 扩到**三种形态**；新增原语 `core/authz.py::fetch_for_actor` 收敛「属主优先、admin 放行」；补 `get_group_session_unscoped`（base + sqlite + pg）；`ENTITY_MAP` 换显式五槽 + 走原语；三处手写 admin 分支迁到原语（`9ce0cf9`，超出修复范围、单独 commit）。
+  - 第二轮 `cae6c37`：**槽位从方法名字符串改为属性引用**（`lambda s: s.get_x_owned`），按名反射解析删除 —— 名字不再是数据，改名当场 `AttributeError`。字符串形态的扫描**保留作兜底**（挡这类写法再出现）。
+- **残余风险**：`get_group_session_unscoped` 的 **PG 实现从未在真 PG 上执行过**。运行时唯一调用点是 `tests/test_trash_service.py` 里那条自证原语的用例，用的是 `SQLiteStore`；`tests/test_postgres_store.py` 只调 `get_group_session_owned`。本机 PG 用例整体**正式 skip**（无 `DATABASE_URL`）；CI 的 `build.yml` 设了 `REQUIRE_PG_TESTS=1` 会真跑 PG 用例，但**没有任何一条**调到这个新方法。它目前只有**静态**覆盖（方法集镜像锁 + SQL 事实锁扫它的 SQL 文本）。SQL 与 sqlite 侧同形（去掉 `AND user_id`）故风险低，但**如实记为未实跑**。
+- **同族**：缺陷 19（判据读命名后缀）、缺陷 25（签名参数替代不了 WHERE 谓词）、本条（判据读字符串表里的名字）—— 三条问的是同一件事：**判据读的是「名字 / 签名 / 字符串」，还是真事实**。§四「判据不得建立在『看起来像』之上」的第三处显形。
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
