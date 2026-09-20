@@ -30,6 +30,11 @@ SCAN_ROOTS = ("core", "web", "storage", "mcp_server", "adapters", "services", "s
 PRUNE_DIRS = {"__pycache__", "site-packages", "node_modules", "runtime", "Lib", ".venv", "venv", ".git"}
 
 UNSCOPED_ALLOWLIST = {
+    "core/trash_service.py:<module>":
+        "管理员跨属主删除的显式逃生口，非管理员走 *_owned：ENTITY_MAP 里四个 *_unscoped 名字"
+        "（存在 dict 里、按名 getattr 取数，所以是字符串形态）交给 core.authz.fetch_for_actor 裁决；"
+        "soft/hard 传 allow_admin=True，restore 传 False（恢复仅属主，admin 也 404）。"
+        "trash_service 自身无登录语境概念 —— 它拿到的 storage 是 duck-typed，身份由形参 user 带入。",
     "core/chat_engine.py:_evaluate_affinity":
         "引擎读自身 session_id；ChatEngine 无 user 语境（self._user_id 只在 __init__ 初始化，全仓无赋值点）",
     "core/chat_engine.py:_build_time_awareness_block":
