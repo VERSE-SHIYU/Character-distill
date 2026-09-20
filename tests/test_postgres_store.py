@@ -263,6 +263,31 @@ class TestTextCrud:
         got = await store.get_text_unscoped(text_id)
         assert got is None or got.get("deleted_at", "")
 
+    async def test_delete_text_keep_cards_detaches_in_same_tx(self, store, text_id, card_id):
+        """软删 keep_cards=True：断开卡片（text_id→NULL）与软删同事务，卡独立存活。
+
+        与 tests/test_storage.py 的同名用例是同一形状，跑的是 PG 分支 —— PG 的
+        `delete_text` 没有 SQLite 那个「PRAGMA 只在事务外生效」的约束，故事务内先断开
+        再软删，两条写要么都落要么都不落，由 `conn.transaction()` 保证。
+        """
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", json.dumps({"name": "张三"}))
+        assert (await store.get_card_unscoped(card_id))["text_id"] == text_id
+
+        assert await store.delete_text(text_id, keep_cards=True) is True
+        text = await store.get_text_unscoped(text_id)
+        assert text is not None and text["deleted_at"] != "", "文本该进回收站"
+        card = await store.get_card_unscoped(card_id)
+        assert card is not None and card["text_id"] is None, "PG 侧断开应写 NULL"
+
+    async def test_delete_text_default_keeps_card_attached(self, store, text_id, card_id):
+        """不带 keep_cards 时不断开 —— 否则上一条只证明了「总会断开」。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", json.dumps({"name": "张三"}))
+
+        assert await store.delete_text(text_id) is True
+        assert (await store.get_card_unscoped(card_id))["text_id"] == text_id
+
     async def test_get_text_not_found(self, store):
         got = await store.get_text_unscoped("nonexistent")
         assert got is None
