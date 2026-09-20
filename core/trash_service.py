@@ -7,7 +7,7 @@ router handlers don't duplicate the same boilerplate across four modules.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException
 
@@ -15,60 +15,54 @@ from core.authz import fetch_for_actor
 
 logger = logging.getLogger(__name__)
 
-# 每种实体在 storage 上的五个操作，逐一显式列出（**不再只写一个 `get` 再让 getattr 兜底**）。
+# 每种实体在 storage 上的五个操作，逐一显式列出。
 #
 # 取数走 owned/unscoped 两支：属主读 `*_owned`（SQL 里 WHERE user_id=?），管理员跨属主才落
 # `*_unscoped`，由 core.authz.fetch_for_actor 统一裁决。这里不再有 Python 层的属主比较 ——
 # 比较的前提是「已经拿到了那条记录」，而拿到记录本身就该带身份。
 #
-# **五个名字是数据**（存在 dict 里、按名 getattr 取数），所以改 storage 侧方法名时这里不会
-# 报错、测试不跑就没人发现 —— 2026-09-11 的 `f7bd92a` 改名漏改这四处，回收站四个实体全灭
-# 9 天。这正是 `tests/test_storage_scope_lock.py` 按「字符串常量」形态扫 `*_unscoped` 的原因。
-ENTITY_MAP: dict[str, dict[str, str]] = {
+# **槽位是「取 storage 上那个方法」的可调用，不是方法名的字符串**。名字一旦是字符串、再由
+# 反射按名解析，它就成了数据：改 storage 侧方法名时这里不会报错，
+# 静态检查与 AST 锁都看不见，测试不跑就没人发现 —— 2026-09-11 的 `f7bd92a` 改名漏改这四处，
+# 回收站四个实体全灭 9 天。写成属性引用后，改名当场是 AttributeError，不再是运行时的静默
+# 500。`tests/test_storage_scope_lock.py` 的字符串形态仍在扫（兜底，防这类写法再出现）。
+ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
     "card": dict(
-        owned="get_card_owned",
-        unscoped="get_card_unscoped",
-        soft="delete_card",
-        restore="restore_card",
-        hard="purge_card",
+        owned=lambda s: s.get_card_owned,
+        unscoped=lambda s: s.get_card_unscoped,
+        soft=lambda s: s.delete_card,
+        restore=lambda s: s.restore_card,
+        hard=lambda s: s.purge_card,
     ),
     "session": dict(
-        owned="get_session_owned",
-        unscoped="get_session_unscoped",
-        soft="delete_session",
-        restore="restore_session",
-        hard="hard_delete_session",
+        owned=lambda s: s.get_session_owned,
+        unscoped=lambda s: s.get_session_unscoped,
+        soft=lambda s: s.delete_session,
+        restore=lambda s: s.restore_session,
+        hard=lambda s: s.hard_delete_session,
     ),
     "text": dict(
-        owned="get_text_owned",
-        unscoped="get_text_unscoped",
-        soft="delete_text",
-        restore="restore_text",
-        hard="hard_delete_text",
+        owned=lambda s: s.get_text_owned,
+        unscoped=lambda s: s.get_text_unscoped,
+        soft=lambda s: s.delete_text,
+        restore=lambda s: s.restore_text,
+        hard=lambda s: s.hard_delete_text,
     ),
     "group": dict(
-        owned="get_group_session_owned",
-        unscoped="get_group_session_unscoped",
-        soft="delete_group_session",
-        restore="restore_group_session",
-        hard="hard_delete_group_session",
+        owned=lambda s: s.get_group_session_owned,
+        unscoped=lambda s: s.get_group_session_unscoped,
+        soft=lambda s: s.delete_group_session,
+        restore=lambda s: s.restore_group_session,
+        hard=lambda s: s.hard_delete_group_session,
     ),
 }
 
 
-def _get_entity_config(entity_type: str) -> dict[str, str]:
+def _get_entity_config(entity_type: str) -> dict[str, Callable[[Any], Any]]:
     config = ENTITY_MAP.get(entity_type)
     if not config:
         raise HTTPException(500, f"Unknown entity type: {entity_type}")
     return config
-
-
-def _method(storage: Any, name: str):
-    """按名取 storage 方法；取不到即 500（名字悬空是编程错误，不静默降级成「没这条记录」）。"""
-    method = getattr(storage, name, None)
-    if method is None:
-        raise HTTPException(500, f"Storage missing method: {name}")
-    return method
 
 
 async def _fetch(entity_type: str, entity_id: str, user: dict, storage: Any, *,
@@ -79,8 +73,8 @@ async def _fetch(entity_type: str, entity_id: str, user: dict, storage: Any, *,
     """
     config = _get_entity_config(entity_type)
     return await fetch_for_actor(
-        _method(storage, config["owned"]),
-        _method(storage, config["unscoped"]),
+        config["owned"](storage),
+        config["unscoped"](storage),
         entity_id,
         user,
         allow_admin=allow_admin,
@@ -97,7 +91,7 @@ async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any
         raise HTTPException(404, f"{entity_type} not found")
 
     config = _get_entity_config(entity_type)
-    result = await _method(storage, config["soft"])(entity_id)
+    result = await config["soft"](storage)(entity_id)
     # Group storage methods return None (success); others return bool.
     return True if result is None else bool(result)
 
@@ -112,7 +106,7 @@ async def restore(entity_type: str, entity_id: str, user: dict, storage: Any) ->
         raise HTTPException(404, f"{entity_type} not found")
 
     config = _get_entity_config(entity_type)
-    result = await _method(storage, config["restore"])(entity_id)
+    result = await config["restore"](storage)(entity_id)
     return True if result is None else bool(result)
 
 
@@ -137,7 +131,7 @@ async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any
         raise HTTPException(400, "请先移入回收站再永久删除")
 
     config = _get_entity_config(entity_type)
-    method = _method(storage, config["hard"])
+    method = config["hard"](storage)
     if entity_type == "text":
         result = await method(entity_id, keep_cards=keep_cards)
     else:

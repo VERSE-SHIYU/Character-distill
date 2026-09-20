@@ -31,9 +31,11 @@ PRUNE_DIRS = {"__pycache__", "site-packages", "node_modules", "runtime", "Lib", 
 
 UNSCOPED_ALLOWLIST = {
     "core/trash_service.py:<module>":
-        "管理员跨属主删除的显式逃生口，非管理员走 *_owned：ENTITY_MAP 里四个 *_unscoped 名字"
-        "（存在 dict 里、按名 getattr 取数，所以是字符串形态）交给 core.authz.fetch_for_actor 裁决；"
-        "soft/hard 传 allow_admin=True，restore 传 False（恢复仅属主，admin 也 404）。"
+        "管理员跨属主删除的显式逃生口，非管理员走 *_owned：ENTITY_MAP 里四个 *_unscoped 方法"
+        "以属性引用形态（`lambda s: s.get_x_unscoped`）作为值传给 core.authz.fetch_for_actor "
+        "裁决；soft/hard 传 allow_admin=True，restore 传 False（恢复仅属主，admin 也 404）。"
+        "命中点落在 `<module>`：槽位是模块级 dict 里的 lambda，而 lambda 不是 FunctionDef，"
+        "`_enclosing_function` 沿 parents 一路上溯到模块。"
         "trash_service 自身无登录语境概念 —— 它拿到的 storage 是 duck-typed，身份由形参 user 带入。",
     "core/chat_engine.py:_evaluate_affinity":
         "引擎读自身 session_id；ChatEngine 无 user 语境（self._user_id 只在 __init__ 初始化，全仓无赋值点）",
@@ -115,11 +117,12 @@ def _is_unscoped_mention(node, enclosing: str) -> bool:
       2. 属性引用 —— `f(s.get_text_unscoped)`，方法对象被当值传走，未必当场调用；
       3. 字符串常量 —— `getattr(s, "get_text_unscoped")`，名字进了常量池。
 
-    旧判据只认第 1 种，于是 2 与 3 对锁隐形。`core/trash_service.py` 的 ENTITY_MAP 正是把
-    名字当字符串存（**在 dict 里**，不在 getattr 的实参位置）、再用 `getattr(storage, name)`
-    取数，四个名字悬空（`f7bd92a` 改名漏改）而锁全程绿 —— 这就是本次 bug 静默 9 天的直接
-    原因。所以字符串形态必须按**整串**匹配，不能只在 getattr 实参位找（那种只看得到名字
-    写死在调用点里的形态，看不见名字存在表里再按名取数）。
+    旧判据只认第 1 种，于是 2 与 3 对锁隐形。`core/trash_service.py` 的 ENTITY_MAP **曾经**把
+    名字当字符串存（**在 dict 里**，不在反射调用的实参位置）、再按名取数，四个名字悬空
+    （`f7bd92a` 改名漏改）而锁全程绿 —— 这就是本次 bug 静默 9 天的直接原因。该表现已改为
+    属性引用（命中点从「字符串常量」变成第 2 种），但字符串形态的扫描**保留作兜底**：它挡的
+    是这类写法**再出现**，不是那一处旧代码。所以字符串形态必须按**整串**匹配，不能只在反射
+    调用的实参位找（那种只看得到名字写死在调用点里的形态，看不见名字存在表里再按名取数）。
 
     唯一豁免：**自名**。`raise StoreError("get_x_unscoped", exc)` 里的方法名是报错标签，
     指向自己，不是读取别的原语；不排除的话每个 `*_unscoped` 原语都会往名单里塞一条
