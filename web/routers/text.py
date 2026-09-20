@@ -334,6 +334,19 @@ async def get_text_deletion_impact(
     return await storage.get_text_deletion_impact(text_id, user["id"])
 
 
+async def _cancel_text_tasks(record: dict) -> None:
+    """取消本文本的在途上传/蒸馏任务（供 trash_service 的 before_mutation 钩子调用）。
+
+    必须跑在**鉴权之后**：提前到路由开头，等于任何已登录用户拿别人的 text_id 就能掐掉
+    对方的在途任务（缺陷 75）。钩子由 trash_service 在 _fetch 通过后才 await，顺序由
+    那里保证。`import` 留在函数内是为避开 routers.distill 与本模块的循环导入。
+    """
+    from routers.distill import cancel_distill_tasks_by_text_id
+
+    cancel_upload_tasks_by_text_id(record["id"])
+    await cancel_distill_tasks_by_text_id(record["id"])
+
+
 @router.delete("/{text_id}")
 async def delete_text(
     text_id: str,
@@ -347,15 +360,8 @@ async def delete_text(
     keep_cards=True detaches cards from the text so they survive as standalone
     characters; the text goes to trash but cards+sessions remain accessible.
     """
-    # Cancel in-flight background tasks for this text
-    from routers.distill import cancel_distill_tasks_by_text_id
-    cancel_upload_tasks_by_text_id(text_id)
-    await cancel_distill_tasks_by_text_id(text_id)
-
-    if keep_cards:
-        await storage.detach_text_cards(text_id)
-
-    ok = await soft_delete("text", text_id, user, storage)
+    ok = await soft_delete("text", text_id, user, storage,
+                           before_mutation=_cancel_text_tasks, keep_cards=keep_cards)
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}
@@ -408,12 +414,8 @@ async def permanent_delete_text(
     keep_cards=True detaches cards (text_id→NULL) so they and their chat
     sessions survive as standalone characters.
     """
-    # Cancel in-flight background tasks for this text
-    from routers.distill import cancel_distill_tasks_by_text_id
-    cancel_upload_tasks_by_text_id(text_id)
-    await cancel_distill_tasks_by_text_id(text_id)
-
-    ok = await hard_delete("text", text_id, user, storage, keep_cards=keep_cards)
+    ok = await hard_delete("text", text_id, user, storage,
+                           before_mutation=_cancel_text_tasks, keep_cards=keep_cards)
     if not ok:
         raise HTTPException(404, "Text not found")
     return {"ok": True}
