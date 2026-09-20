@@ -7,7 +7,7 @@ router handlers don't duplicate the same boilerplate across four modules.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from fastapi import HTTPException
 
@@ -88,8 +88,15 @@ async def _fetch(entity_type: str, entity_id: str, user: dict, storage: Any, *,
     )
 
 
-async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any) -> bool:
+async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any, *,
+                      before_mutation: Callable[[dict], Awaitable[None]] | None = None,
+                      **op_kwargs: Any) -> bool:
     """Soft-delete an entity (move to trash). 属主或 admin。
+
+    before_mutation runs **after** the caller is authorized but **before** the first
+    storage write —— 给调用方一个挂「鉴权前绝不能跑」的副作用的钩子（缺陷 75：取消在途
+    任务必须在鉴权通过后、存储写之前，晚到删除之后则任务会去写已删的文本）。
+    op_kwargs are forwarded to the storage method unchanged.
 
     Returns True on success, raises HTTPException on failure.
     """
@@ -97,8 +104,11 @@ async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any
     if not record:
         raise HTTPException(404, f"{entity_type} not found")
 
+    if before_mutation is not None:
+        await before_mutation(record)
+
     config = _get_entity_config(entity_type)
-    result = await config["soft"](storage)(entity_id)
+    result = await config["soft"](storage)(entity_id, **op_kwargs)
     # Group storage methods return None (success); others return bool.
     return True if result is None else bool(result)
 
@@ -117,15 +127,17 @@ async def restore(entity_type: str, entity_id: str, user: dict, storage: Any) ->
     return True if result is None else bool(result)
 
 
-async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any, keep_cards: bool = False) -> bool:
+async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any, *,
+                      before_mutation: Callable[[dict], Awaitable[None]] | None = None,
+                      **op_kwargs: Any) -> bool:
     """Permanently delete an entity (irreversible). 属主或 admin。
 
     Validates that the entity exists, the caller may see it, and it has already
     been soft-deleted (deleted_at is set).
 
-    keep_cards is only meaningful for "text" type: when True, cards are
-    detached (text_id→NULL) instead of cascade-deleted, so they and their
-    chat sessions survive the text deletion.
+    before_mutation runs after both checks pass and before the first storage write;
+    see `soft_delete`. op_kwargs (e.g. keep_cards, meaningful for "text") are
+    forwarded to the storage method unchanged —— 这里不再特判实体类型。
 
     Returns True on success, raises HTTPException on failure.
     """
@@ -137,10 +149,9 @@ async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any
     if not record.get("deleted_at"):
         raise HTTPException(400, "请先移入回收站再永久删除")
 
+    if before_mutation is not None:
+        await before_mutation(record)
+
     config = _get_entity_config(entity_type)
-    method = config["hard"](storage)
-    if entity_type == "text":
-        result = await method(entity_id, keep_cards=keep_cards)
-    else:
-        result = await method(entity_id)
+    result = await config["hard"](storage)(entity_id, **op_kwargs)
     return True if result is None else bool(result)
