@@ -27,11 +27,29 @@ _SKIP_WORDS = frozenset({
 })
 
 # Type keywords that signal a real column definition vs a constraint clause.
+# 第 3 组把该列的其余修饰（NOT NULL / DEFAULT … / PRIMARY KEY …）一并截下来 —— 可空性
+# 就在里面。截到行尾即止（这些 .sql 一律一列一行）。
 _COL_TYPE_RE = re.compile(
     r"^\s*(\w+)\s+"
-    r"(INTEGER|TEXT|BOOLEAN|SMALLINT|BIGINT|SERIAL|BIGSERIAL|TIMESTAMP(?:TZ)?|DOUBLE\s+PRECISION|REAL|BLOB)",
+    r"(INTEGER|TEXT|BOOLEAN|SMALLINT|BIGINT|SERIAL|BIGSERIAL|TIMESTAMP(?:TZ)?|DOUBLE\s+PRECISION|REAL|BLOB)"
+    r"([^\n]*)",
     re.IGNORECASE | re.MULTILINE,
 )
+
+_NOT_NULL_RE = re.compile(r"\bNOT\s+NULL\b", re.IGNORECASE)
+
+# 已核实、**不修**的可空性分叉 —— {("表","列"): 理由}。本锁只登记，不改任何一方：
+# 两个迁移文件都是历史文件，改任一侧都会让「全新库」与「已建库」变成两个 schema
+# （缺陷 26 的教训），真正的对齐要靠新迁移，属独立议题。
+#
+# **豁免不是放行**：下面会反向核对每条豁免是否仍然成立，一旦某条不再分叉即报红 ——
+# 免得这份名单比它描述的事实活得久（缺陷 21 / 079 的教训：豁免即永久放行）。
+_NULLABILITY_EXEMPT: dict[tuple[str, str], str] = {
+    ("dm_reactions", "created_at"):
+        "SQLite 069 写 `NOT NULL DEFAULT (datetime('now'))`，PG 004 写 `DEFAULT "
+        "CURRENT_TIMESTAMP`（可空）。两侧都有默认值，写入路径不显式给 NULL，暂无实际分叉；"
+        "已报告，未修（改历史迁移文件会让新库与已建库分叉）。",
+}
 
 # ── helpers ──────────────────────────────────────────────────────
 
@@ -70,30 +88,33 @@ def _extract_create_blocks(sql: str):
             yield tname, sql[start : pos - 1]
 
 
-def _extract_column_names(columns_text: str) -> set[str]:
-    """Return set of column names from a CREATE TABLE body."""
-    names: set[str] = set()
+def _extract_columns(columns_text: str) -> dict[str, bool]:
+    """{列名: 是否显式 NOT NULL}。
+
+    **只认显式声明，不推算**：`PRIMARY KEY` 的隐式非空两方言口径不同（PG 隐式 NOT NULL，
+    SQLite 的 legacy quirk 是允许 NULL），按它推算只会造出假差异。本锁管的是「迁移文件里
+    写的可空性一致」，实际建库的隐式行为由 tests/test_sqlite_fresh_schema.py 那类锁管。
+    """
+    out: dict[str, bool] = {}
     for m in _COL_TYPE_RE.finditer(columns_text):
-        names.add(m.group(1).lower())
-    return names
+        out[m.group(1).lower()] = bool(_NOT_NULL_RE.search(m.group(3)))
+    return out
 
 
-def _extract_schema(sql: str) -> dict[str, set[str]]:
-    """Build {table: {col, ...}} from CREATE TABLE + ALTER TABLE ADD COLUMN."""
-    schema: dict[str, set[str]] = {}
+def _extract_schema(sql: str) -> dict[str, dict[str, bool]]:
+    """Build {table: {col: not_null}} from CREATE TABLE + ALTER TABLE ADD COLUMN."""
+    schema: dict[str, dict[str, bool]] = {}
 
     for tname, col_text in _extract_create_blocks(sql):
-        key = tname.lower()
-        schema[key] = _extract_column_names(col_text)
+        schema[tname.lower()] = _extract_columns(col_text)
 
     alter_pat = re.compile(
-        r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)",
+        r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)([^;\n]*)",
         re.IGNORECASE,
     )
     for m in alter_pat.finditer(_strip_sql_comments(sql)):
-        tname = m.group(1).lower()
-        cname = m.group(2).lower()
-        schema.setdefault(tname, set()).add(cname)
+        not_null = bool(_NOT_NULL_RE.search(m.group(3) or ""))
+        schema.setdefault(m.group(1).lower(), {})[m.group(2).lower()] = not_null
 
     return schema
 
@@ -123,8 +144,8 @@ def test_schema_parity():
         pg_cols = pg_schema[table]
         sqlite_cols = sqlite_schema[table]
 
-        missing_in_sqlite = pg_cols - sqlite_cols
-        missing_in_pg = sqlite_cols - pg_cols
+        missing_in_sqlite = set(pg_cols) - set(sqlite_cols)
+        missing_in_pg = set(sqlite_cols) - set(pg_cols)
 
         if missing_in_sqlite:
             errors.append(
@@ -135,6 +156,37 @@ def test_schema_parity():
             errors.append(
                 f"[{table}] columns in SQLite but missing in PG: "
                 f"{sorted(missing_in_pg)}"
+            )
+
+        # 3) Nullability parity —— 模块 docstring 一直声称校验这一条，但此前只比了列名集合，
+        # 可空性在 `_extract_column_names` 返回 set[str] 的那一刻就被丢掉了，无从比较。
+        # 缺陷 78 的 `cards.text_id`（SQLite NOT NULL / PG 可空）正是从这道缝里漏过去的。
+        for col in sorted(set(pg_cols) & set(sqlite_cols)):
+            if pg_cols[col] == sqlite_cols[col]:
+                continue
+            if (table, col) in _NULLABILITY_EXEMPT:
+                continue
+            pg_decl = "NOT NULL" if pg_cols[col] else "可空"
+            sq_decl = "NOT NULL" if sqlite_cols[col] else "可空"
+            errors.append(
+                f"[{table}.{col}] 可空性不一致：PG {pg_decl} / SQLite {sq_decl}"
+            )
+
+    # 4) 豁免名单不得腐烂：每条豁免都必须仍然对得上一个**真实存在且真的分叉**的列。
+    for (table, col), reason in sorted(_NULLABILITY_EXEMPT.items()):
+        if table not in pg_tables or table not in sqlite_tables:
+            errors.append(
+                f"豁免条目 [{table}.{col}] 指向的表已不在两侧 schema 里，理由（{reason[:20]}…）"
+                "的前提没了 —— 删掉这条豁免"
+            )
+            continue
+        if col not in pg_schema[table] or col not in sqlite_schema[table]:
+            errors.append(
+                f"豁免条目 [{table}.{col}] 指向的列已不在两侧 schema 里 —— 删掉这条豁免"
+            )
+        elif pg_schema[table][col] == sqlite_schema[table][col]:
+            errors.append(
+                f"豁免条目 [{table}.{col}] 已不再分叉（两侧可空性一致）—— 删掉这条豁免"
             )
 
     if errors:
