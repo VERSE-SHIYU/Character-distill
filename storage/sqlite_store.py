@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -148,26 +149,47 @@ async def _repair_text_orphans(conn: Any) -> dict[str, int]:
     return counts
 
 
+@asynccontextmanager
+async def _fk_disabled(conn: Any):
+    """在「外键关闭」的窗口里跑表重建。关与复位都必须发在事务外。
+
+    **为什么必须关外键**（实测结论，见 e2e/scratch/probe_drop_cascade.py 与
+    probe_cards_rebuild.py）：
+
+      - FK 打开时 `DROP TABLE` 会先做一次隐式 DELETE FROM，**级联**清空引用该表的子表。
+        cards 重建会清掉 8 张子表里的 6 张（sessions / card_likes / card_comments /
+        card_versions / card_comment_reports / card_reports）；users 重建会清掉
+        refresh_tokens 与 user_secrets —— 后者存的是加密凭据，属数据丢失。
+      - `PRAGMA defer_foreign_keys = ON` **挡不住它**：defer 推迟的是「约束违例」的
+        检查，而 CASCADE 是 FK **动作**，该发照发。
+      - `PRAGMA foreign_keys = OFF` 在事务内是 no-op（缺陷 75 的实测），所以关之前先
+        commit —— 此处能生效完全是因为初始化跑到这一步时没开着事务
+        （`_apply_migration` 每份都 commit）。
+
+    两处重建**共用此件**，不要再各写一遍：各写一遍就是下一个分叉的种子（users 那条
+    原先只用了 defer，等于没关，真跑会丢数据）。
+    """
+    await conn.commit()  # 让下面那句开关发在事务外，否则它是 no-op
+    await conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        yield
+    except BaseException:
+        # 异常路径上重建语句已开事务，不先回滚的话 finally 里那句复位又是 no-op，
+        # 外键会一直关到连接结束。回滚本身在无事务时是 no-op，安全。
+        await conn.rollback()
+        raise
+    finally:
+        await conn.execute("PRAGMA foreign_keys = ON")
+
+
 async def _rebuild_cards_nullable_text_id(conn: Any) -> dict[str, int]:
     """把 `cards.text_id` 从 NOT NULL 改可空（缺陷 78），并把存量 `''` 与悬空引用归一成 NULL。
 
     **为什么必须重建表**：SQLite 改不了列的可空性，也没有 `ALTER COLUMN`。而 `text_id`
     同时出现在 FK 子句里，连「DROP COLUMN + 重新 ADD」这条捷径都被 SQLite 拒掉。
 
-    **为什么必须 `PRAGMA foreign_keys = OFF`、且必须发在事务外**（两个都是实测结论，
-    见 e2e/scratch/probe_drop_cascade.py 与 probe_cards_rebuild.py）：
-
-      - FK 打开时 `DROP TABLE cards` 会先做一次隐式 DELETE FROM，**级联**清空 8 张引用
-        cards 的子表里的 6 张（sessions / card_likes / card_comments / card_versions /
-        card_comment_reports / card_reports）。实测过的。
-      - `PRAGMA defer_foreign_keys = ON` **挡不住它** —— 它推迟的是「约束违例」的检查，
-        而 CASCADE 是 FK **动作**，该发照发。库里已有的 users 重建块只用了 defer，
-        它能活下来只是因为……它其实不能：users 有两个 CASCADE 子表
-        （refresh_tokens / user_secrets），那条路径只靠 SQLite<3.35 才进得去。
-      - `PRAGMA foreign_keys = OFF` 在事务内是 no-op（缺陷 75 的实测）。这里能生效，
-        完全是因为初始化跑到这一步时没有开着的事务 —— `_apply_migration` 每份都 commit。
-
-    因此本函数把开关夹在事务外，用 `finally` 复位，且**不**依赖调用点的状态。
+    **为什么要把重建夹在 `_fk_disabled` 里**（FK 打开时会级联清空子表、defer 挡不住、
+    开关必须发在事务外）：见该件的 docstring，此处不抄第二份。
     """
     cursor = await conn.execute("PRAGMA table_info(cards)")
     info = await cursor.fetchall()
@@ -185,9 +207,7 @@ async def _rebuild_cards_nullable_text_id(conn: Any) -> dict[str, int]:
         'CASE WHEN "text_id" = \'\' THEN NULL ELSE "text_id" END' if c == "text_id"
         else f'"{c}"' for c in names)
 
-    await conn.commit()  # 确保下面那句 FK 开关发在事务外，否则它是 no-op
-    await conn.execute("PRAGMA foreign_keys = OFF")
-    try:
+    async with _fk_disabled(conn):
         await conn.executescript(f"""
             CREATE TABLE cards_mig (
                 {",\n    ".join(_cards_rebuild_columns(info, fks))}
@@ -200,8 +220,6 @@ async def _rebuild_cards_nullable_text_id(conn: Any) -> dict[str, int]:
             await conn.execute(sql)
         orphans = await _repair_text_orphans(conn)
         await conn.commit()
-    finally:
-        await conn.execute("PRAGMA foreign_keys = ON")
     return orphans
 
 
@@ -418,14 +436,17 @@ class SQLiteStore(StorageBase):
                             f"{c} {col_defs.get(c, 'TEXT DEFAULT \"\"')}"
                             for c in keep_cols
                         )
-                        await conn.executescript(f"""
-                            PRAGMA defer_foreign_keys = ON;
-                            CREATE TABLE users_mig ({create_defs});
-                            INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
-                            DROP TABLE users;
-                            ALTER TABLE users_mig RENAME TO users;
-                        """)
-                        await conn.commit()
+                        # `DROP TABLE users` 会按 CASCADE 清空 refresh_tokens 与
+                        # user_secrets（后者存加密凭据）—— 必须走 _fk_disabled 关掉外键；
+                        # 原先那句 `PRAGMA defer_foreign_keys = ON` 挡不住 FK 动作。
+                        async with _fk_disabled(conn):
+                            await conn.executescript(f"""
+                                CREATE TABLE users_mig ({create_defs});
+                                INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
+                                DROP TABLE users;
+                                ALTER TABLE users_mig RENAME TO users;
+                            """)
+                            await conn.commit()
 
                     # 078 起必须排在 users 表重建之后 —— 重建会丢掉 idx_users_username_lower。
                     # 原先这段额外内联做了一遍 ADD COLUMN/backfill/CREATE INDEX，与 078 文件重复；
