@@ -1045,13 +1045,24 @@ PROBE_IMAGE         false
 - **`_create_session` 的第三个死参数 `text`（第 1 位必填）** —— 与 55 那两个死参数同函数、同形态，但**必填参数不会被静默错填**（少传即 `TypeError`），且删它要动 4 个调用点。**记表不修**。§四 已记「死参数为错位留出空间 —— 先问这个参数有没有人用，再问怎么传」。
 - **死参数普查的边界（不冒充通用判据）**：全仓 189 处「形参在函数体里零引用」，**绝大多数是 FastAPI 注入的 `request` / 依赖参数与 `__aexit__` 这类协议参数**，且**抽象方法的参数必然零引用**（体只有 docstring）—— 上一版没排除这类，把 `StorageBase.save_text` / `save_message` 全判成死参数。可判定的组合是**三者同时**：零引用 **+** 可位置传 **+** 与相邻参数名字/类型相近。故普查只作**改签名时的自查**，未做成锁（同 §四「『全仓写死的实测数字』这件事做不出通用判据」的处境）。
 
-**75. `DELETE /api/text/{text_id}` 的副作用跑在鉴权之前 —— 已登录用户能对**他人**的文本落一次持久写** —— 状态：**已立项（方案待审，先不动）**（2026-09-20 发现并立项）
+**75. `DELETE /api/text/{text_id}` 的副作用跑在鉴权之前 —— 已登录用户能对**他人**的文本落一次持久写** —— 状态：**已修**（`af78195` `2ff7872` `2844d43` `fde2841`，2026-09-20）
 - **事实**：`web/routers/text.py` 的两个删除端点（`delete_text` / `permanent_delete_text`）里，副作用先于授权执行。顺序是 `cancel_upload_tasks_by_text_id` → `routers.distill.cancel_distill_tasks_by_text_id` →（`keep_cards=true` 时）`storage.detach_text_cards` → **最后**才是 `core.trash_service.soft_delete` / `hard_delete`。属主校验只在后两个函数**内部**做，故「非属主 404」发生在副作用全部落定**之后**。
 - **为何是越权写、不是无效操作**：`detach_text_cards` 的 SQL 谓词里**没有 `user_id`** —— SQLite 侧 `UPDATE cards SET text_id = '' WHERE text_id = ?`，PG 侧 `UPDATE cards SET text_id = NULL WHERE text_id = $1`。故 `DELETE /api/text/{他人的 text_id}?keep_cards=true` 会真把对方的卡从文本上摘掉（`text_id` 置空、卡与文本解绑），且 `cancel_*` 会掐掉对方在途的蒸馏/上传任务。
 - **可达性**：`get_current_user` 只保证「已登录」，路由自己不校验属主。故它是**已登录的跨用户写**，不是匿名写，也不是「只错在状态码」那一类。
 - **两处同形态**：`delete_text` 与 `permanent_delete_text` 各一份，`cancel_*` 那两行两份逐字相同 —— 修一处不改另一处**不会报错**（§四「同一个行为被复制多遍」）。
 - **与缺陷 19 / 25 同族，但落在写侧**：那两条管的是**读**原语没有身份概念（判据读命名后缀 / 签名参数）；这条是**写**原语 `detach_text_cards` 无身份过滤，且非法窗口开在**鉴权之前** —— 不是判据写错，是**顺序**写错。故 `tests/test_storage_scope_lock.py` 那类锁看不见它（它既不叫 `*_unscoped`，也不在带身份的仓储入口上）。
-- **本次处置（用户，2026-09-20）**：**只立项，先不动** —— 修法待用户审后再定，故不写在此。
+- **本次处置（用户，2026-09-20）**：先只立项；同日方案审定后按下面四个 commit 修复。
+- **修复（四个 commit，`7a588e4` 之上）**：
+  - `af78195` **先红**：`tests/test_text_delete_side_effects.py` 9 例 —— 非属主两个端点 ×（带/不带 keep_cards）→ 404 且**三样副作用零发生**（卡片 text_id 不变、`_upload_tasks` 仍 parsing、内存 `_tasks` 与 `distill_tasks` 行仍 running）；属主与 admin 正控**三样都发生**（无正控则「什么都不做」也全绿）；未知 id 404 不崩。实测先红 **4 failed / 5 passed**，每条红的断言正落在其红源上。
+  - `2ff7872` **storage**：`UPDATE cards SET text_id` 原先每个 store 写两遍（公有 `detach_text_cards` 与 `hard_delete_text` 内联），收敛成私有 `_detach_text_cards_tx(conn, id)`（不 commit，事务边界归调用方）；`delete_text` 增加 `keep_cards`，True 时在同一事务内**先断开再软删**（异常整体回滚）。SQLite 侧 PRAGMA OFF 必须落在事务开始之前，故顺序保持原样。实测（`e2e/scratch/probe_delete_text_keep_cards.py`）：卡片 `text_id=''`、无 FK 报错、文本 `deleted_at` 非空。
+  - `2844d43` **core**：`soft_delete` / `hard_delete` 增加 `before_mutation` 钩子（在 `_fetch` 与 hard 的 `deleted_at` 校验**之后**、第一条存储写**之前** await）与 `**op_kwargs` 透传；顺带删掉 `hard_delete` 里 `if entity_type == "text"` 的特判 —— core 不必知道哪个实体有 `keep_cards`。`restore` 不加（无副作用）。
+  - `fde2841` **route**：两个端点的副作用收敛成 `_cancel_text_tasks(record)`（内含 `cancel_upload` + `cancel_distill`），经 `before_mutation` 注入；`detach_text_cards` 不再由路由调用（改由 `delete_text(keep_cards=True)` 在事务内做）。步骤 1 的 9 例转绿。
+- **变异验证**：把 `before_mutation` 的调用从 `_fetch` 之后挪到之前 → 恰打红那 4 条非属主用例（正控 5 条不受影响），逐字节还原（sha256 `7e9cca68…b2fb`）。
+- **判据 grep（修后）**：`web/routers/text.py` 的 `detach_text_cards` = **0**；`cancel_*` 的调用只出现在 `_cancel_text_tasks` 内（各 1 处）；`core/trash_service.py` 的 `entity_type == "text"` = **0**；每个 store 的 `UPDATE cards SET text_id` 字面量 = **1**。
+- **全量**：1362 passed / 64 skipped / 1 xfailed = **1427 collected**（基线 1416 + 缺陷 75 用例 9 + `tests/test_storage.py` 新增的 `delete_text` keep_cards 分支 2）。
+- **为何钩子不能挂在路由层「鉴权先跑一次 `fetch_for_actor`」**：那正是本条的形态来源 —— 路由判完属主再自己跑副作用，副作用与删除之间又隔着一次取数，`detach_text_cards` 与软删仍不在同一事务。钩子放在 `_fetch` 之后、存储写之前，顺序由**一个**地方保证，两个端点不会再各写一份。
+- **残余风险**：PG 侧 `delete_text(keep_cards=True)` 的**新分支未在真 PG 上跑过**（本机 PG 用例整体 skip，无 `DATABASE_URL`）。改动与 sqlite 同形（`async with conn.transaction()` + 同一辅助函数，只是 `''`→`NULL`、无 PRAGMA 开关），静态覆盖齐（契约锁比对该签名三处一致），但**如实记为未实跑**。
+- **同族**：与缺陷 76 同源于这次验收；两者都不是判据写错，而是**顺序 / 间接层**写错 —— 76 是名字成了数据，75 是副作用早于授权。
 
 **76. 回收站四类实体全灭 —— ENTITY_MAP 按名取数，改名漏改后字符串悬空、静默 500** —— 状态：**已修**（`4ecd58e`…`9ce0cf9` + `cae6c37`，2026-09-20）
 - **现象**：`DELETE /api/text/{id}` 返回 **500** `{"detail":"Storage missing method: get_text"}`；`soft_delete` / `restore` / `hard_delete` 对 **card / session / text / group 四类实体全部不可用**（SQLite 与 PG 同 —— 两个 store 都只剩 `*_unscoped` 名）。回收站整套失效。
