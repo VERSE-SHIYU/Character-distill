@@ -8,6 +8,10 @@
 调用形态问题：选 `*_owned`（SQL 里 `WHERE user_id=?`）就不可能漏。剩下的 `*_unscoped`
 每一处都必须是有意为之，且理由落在本文件里——否则新增的静默绕过无人察觉。
 
+「碰了 `*_unscoped`」按**三种形态**判（见 `_is_unscoped_mention`）：调用、属性引用、
+字符串常量。只认调用形态会漏掉 `getattr(s, "get_x_unscoped")` 这种按名取数——名字一旦
+悬空（改名漏改），调用点不会报错、锁也不会红，直到运行时 500。
+
 与 `tests/test_auth_param_used.py` 互补：那条查 router 层「注入了 user 有没有真用上」，
 这条查 storage 层「读取有没有绕过身份」。两条都红，才说明两层都锁住了。
 
@@ -91,11 +95,32 @@ UNSCOPED_ALLOWLIST = {
 }
 
 
-def _is_unscoped_call(node) -> bool:
-    """`x.get_text_unscoped(...)` / `self._storage.get_session_unscoped(...)` 这类调用。"""
-    return (isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr.endswith("_unscoped"))
+_RE_UNSCOPED_NAME = re.compile(r"^\w+_unscoped$")
+
+
+def _is_unscoped_mention(node, enclosing: str) -> bool:
+    """碰了 `*_unscoped` 的三种形态，缺一不可：
+
+      1. 调用 —— `x.get_text_unscoped(...)`（`ast.Call.func` 是 Attribute，下面第 2 条已覆盖）；
+      2. 属性引用 —— `f(s.get_text_unscoped)`，方法对象被当值传走，未必当场调用；
+      3. 字符串常量 —— `getattr(s, "get_text_unscoped")`，名字进了常量池。
+
+    旧判据只认第 1 种，于是 2 与 3 对锁隐形。`core/trash_service.py` 的 ENTITY_MAP 正是把
+    名字当字符串存（**在 dict 里**，不在 getattr 的实参位置）、再用 `getattr(storage, name)`
+    取数，四个名字悬空（`f7bd92a` 改名漏改）而锁全程绿 —— 这就是本次 bug 静默 9 天的直接
+    原因。所以字符串形态必须按**整串**匹配，不能只在 getattr 实参位找（那种只看得到名字
+    写死在调用点里的形态，看不见名字存在表里再按名取数）。
+
+    唯一豁免：**自名**。`raise StoreError("get_x_unscoped", exc)` 里的方法名是报错标签，
+    指向自己，不是读取别的原语；不排除的话每个 `*_unscoped` 原语都会往名单里塞一条
+    「这不是读取」的假理由，把「名单里每条都是真理由」这条前提稀释掉。
+    """
+    if isinstance(node, ast.Attribute) and node.attr.endswith("_unscoped"):
+        return True
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+            and _RE_UNSCOPED_NAME.match(node.value):
+        return node.value != enclosing
+    return False
 
 
 def _parents(tree) -> dict:
@@ -139,9 +164,10 @@ def _unscoped_call_sites() -> set[str]:
             tree = _parse(path)
             parents = _parents(tree)
             for node in ast.walk(tree):
-                if not _is_unscoped_call(node):
+                func = _enclosing_function(node, parents)
+                if not _is_unscoped_mention(node, func):
                     continue
-                found.add("tests/*" if rel.startswith("tests/") else f"{rel}:{_enclosing_function(node, parents)}")
+                found.add("tests/*" if rel.startswith("tests/") else f"{rel}:{func}")
     return found
 
 
