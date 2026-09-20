@@ -1031,6 +1031,94 @@ class TestTextHardDeleteKeepCards:
         assert not any(r["op_type"] == "card_delete" and r["target_id"] == cid for r in rows)
 
 
+async def _fk_children_of_texts(conn) -> list[tuple[str, str]]:
+    """**(子表, 子列)** —— 从 schema 现算，不维护名单。
+
+    名单一旦写死就会滞后（缺陷 76：`ENTITY_MAP` 里那四个字符串没人改）。新加一张引用
+    `texts` 的表，这里必须自动覆盖到。
+    """
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    children: list[tuple[str, str]] = []
+    for (table,) in await cur.fetchall():
+        fk = await conn.execute(f"PRAGMA foreign_key_list({table})")
+        for row in await fk.fetchall():
+            if row[2] == "texts":
+                children.append((table, row[3]))
+    return children
+
+
+async def _orphan_counts(store) -> dict[str, int]:
+    """每张 FK 子表里**指向不存在文本**的行数。
+
+    `IS NULL` 是「已断开」（合法，缺陷 78 后唯一的表示）；`''` **不是** —— 它指向一个不
+    存在的 id，正是要消灭的形态。故谓词只排除 NULL。
+    """
+    async with await store._connect() as conn:
+        counts: dict[str, int] = {}
+        for table, col in await _fk_children_of_texts(conn):
+            cur = await conn.execute(
+                f"SELECT COUNT(*) FROM {table} "
+                f"WHERE {col} IS NOT NULL AND {col} NOT IN (SELECT id FROM texts)")
+            counts[f"{table}.{col}"] = (await cur.fetchone())[0]
+        return counts
+
+
+class TestDetachAndPurgeLeaveNoOrphans:
+    """缺陷 78：SQLite 的 `cards.text_id` 曾是 `TEXT NOT NULL`，「已断开」只能用 `''` 表达。
+
+    `''` 不指向任何文本，于是断开只能靠 `PRAGMA foreign_keys = OFF` 绕过；而该 PRAGMA
+    **在事务内是 no-op** —— 关掉就再也开不回来，同一连接随后的 `DELETE FROM texts`
+    级联不触发 → 孤儿行。故这里同时钉住两件事：断开后的表示是 NULL，以及永久删除后
+    每张 FK 子表零孤儿。
+    """
+
+    async def test_detached_card_text_id_is_null(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+
+        assert await store.delete_text(text_id, keep_cards=True) is True
+        assert (await store.get_card_unscoped(cid))["text_id"] is None, \
+            "断开应当是 NULL，不是 ''（'' 指向一个不存在的 id）"
+
+    async def test_detach_text_cards_sets_null(self, store, text_id):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+
+        assert await store.detach_text_cards(text_id) == 1
+        assert (await store.get_card_unscoped(cid))["text_id"] is None
+
+    async def test_detached_card_still_listed_as_standalone(self, store, text_id):
+        """NULL 化的卡必须还能被「独立卡」列表看见 —— 断开不能把卡弄丢。"""
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}', user_id="u_standalone")
+
+        await store.delete_text(text_id, keep_cards=True)
+        ids = {c["id"] for c in await store.list_standalone_cards("u_standalone")}
+        assert cid in ids, "断开后的卡没出现在独立卡列表里"
+
+    @pytest.mark.parametrize("keep_cards", [True, False])
+    async def test_purge_leaves_zero_orphans(self, store, text_id, keep_cards):
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.add_text_comment(text_id, "u_comment", "u", "评论")
+
+        children = await _orphan_counts(store)
+        assert children == {"cards.text_id": 0, "text_comments.text_id": 0}, \
+            f"造数后本就该零孤儿，也不该漏掉任何 FK 子表：{children}"
+
+        assert await store.hard_delete_text(text_id, keep_cards=keep_cards) is True
+        assert await store.get_text_unscoped(text_id) is None
+
+        after = await _orphan_counts(store)
+        assert after == {k: 0 for k in children}, \
+            f"永久删除留下了孤儿行（keep_cards={keep_cards}）：{after}"
+
+
 class TestStandaloneCardListing:
     """Cards with text_id=NULL must still appear in list_standalone_cards."""
 

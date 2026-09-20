@@ -189,11 +189,47 @@ def _column_drift(left: dict[str, set[str]], right: dict[str, set[str]]) -> list
     return problems
 
 
+async def _pg_fk_children_of_texts(conn) -> list[tuple[str, str]]:
+    """PG 侧「以 FK 引用 texts 的 (子表, 子列)」—— 从 `pg_constraint` 现算，不维护名单。"""
+    rows = await conn.fetch(
+        """
+        SELECT c.conrelid::regclass::text AS child, a.attname AS col
+        FROM pg_constraint c
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+        WHERE c.contype = 'f' AND c.confrelid = 'texts'::regclass
+        ORDER BY 1, 2
+        """)
+    return [(r["child"], r["col"]) for r in rows]
+
+
+async def _pg_orphan_counts(conn) -> dict[str, int]:
+    """每张 FK 子表里指向不存在文本的行数（`NULL` 是合法的「已断开」，不算孤儿）。"""
+    counts: dict[str, int] = {}
+    for table, col in await _pg_fk_children_of_texts(conn):
+        n = await conn.fetchval(
+            f'SELECT COUNT(*) FROM "{table}" '
+            f'WHERE "{col}" IS NOT NULL AND "{col}" NOT IN (SELECT id FROM texts)')
+        counts[f"{table}.{col}"] = n
+    return counts
+
+
+def _sqlite_fk_children_of_texts(conn) -> list[tuple[str, str]]:
+    """SQLite 侧同一口径（同步连接）。与 `tests/test_storage.py` 那两个助手同形。"""
+    tables = [r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
+    children: list[tuple[str, str]] = []
+    for t in tables:
+        for row in conn.execute(f'PRAGMA foreign_key_list("{t}")'):
+            if row[2] == "texts":
+                children.append((t, row[3]))
+    return sorted(children)
+
+
 async def _clean_tables(store: PostgresStore) -> None:
     """Truncate all tables for a clean test state."""
     async with await store._connect() as conn:
         tables = [
-            "messages", "sessions", "cards", "texts", "users",
+            "messages", "sessions", "cards", "texts", "text_comments", "users",
             "group_messages", "group_sessions", "direct_messages",
             "user_follows", "distill_chunks", "distill_tasks",
         ]
@@ -287,6 +323,43 @@ class TestTextCrud:
 
         assert await store.delete_text(text_id) is True
         assert (await store.get_card_unscoped(card_id))["text_id"] == text_id
+
+    async def test_hard_delete_keep_cards_leaves_no_orphans(self, store, text_id, card_id,
+                                                            tmp_path):
+        """缺陷 78 的 PG 对照：断开后零孤儿，且 FK 子表集合与 SQLite 侧逐字相同。
+
+        SQLite 曾因 `cards.text_id NOT NULL` 而用 `''` 表示断开、靠关外键绕过（孤儿行
+        由此产生）；PG 一直是 NULL + 真级联。这条把「两侧事实一致」钉在**真 PG** 上，
+        而不是靠「SQL 同形」推断 —— 子表集合也现算，新加一张引用 texts 的表两侧都得跟。
+        """
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "张三", json.dumps({"name": "张三"}))
+        await store.add_text_comment(text_id, "usr_comment", "u", "评论")
+
+        async with await store._connect() as conn:
+            children = await _pg_fk_children_of_texts(conn)
+            before = await _pg_orphan_counts(conn)
+        assert before == {f"{t}.{c}": 0 for t, c in children}, f"造数后本就该零孤儿：{before}"
+        assert children, "没发现任何 FK 子表 —— 下面的断言会以恒真方式通过"
+
+        assert await store.hard_delete_text(text_id, keep_cards=True) is True
+        assert await store.get_text_unscoped(text_id) is None
+
+        async with await store._connect() as conn:
+            after = await _pg_orphan_counts(conn)
+            assert await _pg_fk_children_of_texts(conn) == children, "取数期间子表集合变了"
+        assert after == {k: 0 for k in before}, f"永久删除留下了孤儿行：{after}"
+
+        # 与 SQLite 侧对事实：同一份造数下，两侧认出的 FK 子表必须一致
+        db = str(tmp_path / "parity.db")
+        await _build_fresh_sqlite(db)
+        sq_conn = sqlite3.connect(db)
+        try:
+            sq_children = _sqlite_fk_children_of_texts(sq_conn)
+        finally:
+            sq_conn.close()
+        assert sorted(children) == sorted(sq_children), \
+            f"两侧认出的 texts 子表不一致：PG={children} SQLite={sq_children}"
 
     async def test_get_text_not_found(self, store):
         got = await store.get_text_unscoped("nonexistent")
