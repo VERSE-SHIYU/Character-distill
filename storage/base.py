@@ -112,8 +112,12 @@ class StorageBase(ABC):
         """List all text records."""
 
     @abstractmethod
-    async def delete_text(self, id: str) -> bool:
-        """Delete a text record by ID."""
+    async def delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Soft-delete a text record by ID.
+
+        When keep_cards=True, cards are detached (text_id → NULL) in the same
+        transaction, so they and their chat sessions survive the soft-delete.
+        """
 
     @abstractmethod
     async def detach_text_cards(self, id: str) -> int:

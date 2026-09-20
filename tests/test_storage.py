@@ -980,6 +980,34 @@ class TestTextHardDeleteKeepCards:
         # Text still exists
         assert await store.get_text_unscoped(text_id) is not None
 
+    async def test_delete_text_keep_cards_true_cards_survive(self, store, text_id):
+        """软删的 keep_cards=True：断开卡片与软删同事务，卡与 session 独立存活。"""
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        sid = f"s_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+        await store.save_session(sid, cid, "user", "", user_id="test")
+
+        ok = await store.delete_text(text_id, keep_cards=True)
+        assert ok is True
+        # 文本进了回收站（还在，deleted_at 非空）
+        text = await store.get_text_unscoped(text_id)
+        assert text is not None and text["deleted_at"] != ""
+        # 卡片被断开且存活着
+        card = await store.get_card_unscoped(cid)
+        assert card is not None and card["text_id"] == ''
+        # session 跟着卡存活
+        assert await store.get_session_unscoped(sid) is not None
+
+    async def test_delete_text_default_keeps_card_attached(self, store, text_id):
+        """不带 keep_cards 时不断开 —— 否则上一条只证明了「总会断开」。"""
+        await store.save_text(text_id, "src.txt", "source")
+        cid = f"c_{uuid.uuid4().hex}"
+        await store.save_card(cid, text_id, "张三", '{}')
+
+        assert await store.delete_text(text_id) is True
+        assert (await store.get_card_unscoped(cid))["text_id"] == text_id
+
     async def test_keep_cards_public_cards_get_delete_outbox(self, store, text_id):
         await store.save_text(text_id, "src.txt", "source")
         cid = f"c_{uuid.uuid4().hex}"

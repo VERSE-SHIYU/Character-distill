@@ -290,15 +290,23 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get characters (owned) failed: {exc}")
             raise
 
-    async def delete_text(self, id: str) -> bool:
-        """Soft-delete one text record."""
+    async def delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Soft-delete one text record.
+
+        keep_cards=True: detach cards (text_id→NULL) in the **same transaction**
+        as the soft-delete, so cards+sessions survive and a failure can't leave
+        the cards detached from a text that is still live.
+        """
         try:
             now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "UPDATE texts SET deleted_at = $2 WHERE id = $1 AND (deleted_at IS NULL OR deleted_at = '')",
-                    id, now,
-                )
+                async with conn.transaction():
+                    if keep_cards:
+                        await self._detach_text_cards_tx(conn, id)
+                    tag = await conn.execute(
+                        "UPDATE texts SET deleted_at = $2 WHERE id = $1 AND (deleted_at IS NULL OR deleted_at = '')",
+                        id, now,
+                    )
                 return self._parse_rowcount(tag) > 0
         except Exception as exc:
             print(f"[PostgresStore] Delete text failed: {exc}")
@@ -333,15 +341,23 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Restore text failed: {exc}")
             raise
 
+    async def _detach_text_cards_tx(self, conn, id: str) -> int:
+        """卡脱离文本（text_id→NULL）—— 本 store 里这条 UPDATE 的唯一一处。
+
+        不给 commit：事务边界由调用方定（`delete_text` 要与软删同进同出，
+        `hard_delete_text` 还要接一串清理）。SQLite 侧那句 PRAGMA 开关在这里没有对应物 ——
+        PG 的 FK 约束本来就在事务里正常生效，文本删除由显式 DELETE 语句驱动。
+        """
+        tag = await conn.execute(
+            "UPDATE cards SET text_id = NULL WHERE text_id = $1", id,
+        )
+        return self._parse_rowcount(tag)
+
     async def detach_text_cards(self, id: str) -> int:
         """Detach all cards from a text by setting text_id to NULL."""
         try:
             async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "UPDATE cards SET text_id = NULL WHERE text_id = $1",
-                    id,
-                )
-                return self._parse_rowcount(tag)
+                return await self._detach_text_cards_tx(conn, id)
         except Exception as exc:
             print(f"[PostgresStore] Detach text cards failed: {exc}")
             raise
@@ -357,11 +373,8 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 async with conn.transaction():
                     if keep_cards:
-                        # Detach cards from the text so CASCADE doesn't hit them
-                        await conn.execute(
-                            "UPDATE cards SET text_id = NULL WHERE text_id = $1",
-                            id,
-                        )
+                        # 断开卡片，让 CASCADE 够不着它们（本事务的第一条写）
+                        await self._detach_text_cards_tx(conn, id)
                     else:
                         # Enqueue delete propagation for public cards
                         rows = await conn.fetch(

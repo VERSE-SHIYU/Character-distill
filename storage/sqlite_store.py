@@ -577,11 +577,20 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get characters (owned) failed: {exc}")
             raise
 
-    async def delete_text(self, id: str) -> bool:
-        """Soft-delete one text record."""
+    async def delete_text(self, id: str, keep_cards: bool = False) -> bool:
+        """Soft-delete one text record.
+
+        keep_cards=True: detach cards (text_id→'') in the **same transaction** as
+        the soft-delete, so cards+sessions survive and a failure can't leave the
+        cards detached from a text that is still live.
+        """
         try:
             now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
+                # 断开必须是本连接的第一条写：PRAGMA OFF 只在事务开始前生效，见
+                # `_detach_text_cards_tx`。
+                if keep_cards:
+                    await self._detach_text_cards_tx(conn, id)
                 cursor = await conn.execute(
                     "UPDATE texts SET deleted_at = ? WHERE id = ? AND (deleted_at IS NULL OR deleted_at = '')",
                     (now, id),
@@ -624,19 +633,31 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Restore text failed: {exc}")
             raise
 
+    async def _detach_text_cards_tx(self, conn, id: str) -> int:
+        """卡脱离文本（text_id=''）—— 本 store 里这条 UPDATE 的唯一一处。
+
+        **不 commit**：事务边界由调用方定（`delete_text` 要与软删同进同出，
+        `hard_delete_text` 还要接一串清理）。
+
+        `PRAGMA foreign_keys = OFF` 必须打在本连接**事务开始之前** —— 它在事务内是 no-op
+        （实测：事务外 OFF 读数 1→0，随后开事务再 ON，读数仍是 0）。由此还带出一个事实：
+        下面那句「打开」在事务内**并不生效**，FK 会保持关闭到本连接关闭为止。
+        `_connect()` 每次开新连接、作用域退出即关，故影响面只限本次调用内、该语句之后的写。
+        """
+        # Temporarily disable FK checks: '' won't reference texts.id
+        await conn.execute("PRAGMA foreign_keys = OFF")
+        cursor = await conn.execute(
+            "UPDATE cards SET text_id = '' WHERE text_id = ?",
+            (id,),
+        )
+        await conn.execute("PRAGMA foreign_keys = ON")
+        return cursor.rowcount
+
     async def detach_text_cards(self, id: str) -> int:
         """Detach all cards from a text by setting text_id to ''."""
         try:
             async with await self._connect() as conn:
-                # Temporarily disable FK checks: '' won't reference texts.id
-                await conn.execute("PRAGMA foreign_keys = OFF")
-                cursor = await conn.execute(
-                    "UPDATE cards SET text_id = '' WHERE text_id = ?",
-                    (id,),
-                )
-                await conn.execute("PRAGMA foreign_keys = ON")
-                await conn.commit()
-                return cursor.rowcount
+                return await self._detach_text_cards_tx(conn, id)
         except Exception as exc:
             print(f"[SQLiteStore] Detach text cards failed: {exc}")
             raise
@@ -651,13 +672,8 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 if keep_cards:
-                    # Detach cards from the text so CASCADE doesn't hit them
-                    await conn.execute("PRAGMA foreign_keys = OFF")
-                    await conn.execute(
-                        "UPDATE cards SET text_id = '' WHERE text_id = ?",
-                        (id,),
-                    )
-                    await conn.execute("PRAGMA foreign_keys = ON")
+                    # 断开卡片，让 CASCADE 够不着它们（本连接的第一条写）
+                    await self._detach_text_cards_tx(conn, id)
                 else:
                     # Enqueue delete propagation for public cards
                     cursor = await conn.execute(
