@@ -24,8 +24,15 @@ logger = logging.getLogger(__name__)
 # **槽位是「取 storage 上那个方法」的可调用，不是方法名的字符串**。名字一旦是字符串、再由
 # 反射按名解析，它就成了数据：改 storage 侧方法名时这里不会报错，
 # 静态检查与 AST 锁都看不见，测试不跑就没人发现 —— 2026-09-11 的 `f7bd92a` 改名漏改这四处，
-# 回收站四个实体全灭 9 天。写成属性引用后，改名当场是 AttributeError，不再是运行时的静默
-# 500。`tests/test_storage_scope_lock.py` 的字符串形态仍在扫（兜底，防这类写法再出现）。
+# 回收站四个实体全灭 9 天。写成属性引用后，同一处改名不会再静默悬空 —— 调用该槽即
+# `AttributeError`。
+#
+# **但 AttributeError 只在调用那一刻才发生**：lambda 体要到被调用时才解析属性，`storage`
+# 又是 duck-typed（形参标 `Any`，静态检查看不见），所以导入、定义、乃至把槽取出来都不报错。
+# 真正让改名响的是 `tests/test_trash_service.py` —— 20 个槽它全求值过一遍（`owned` /
+# `unscoped` 是 `core.authz.fetch_for_actor` 的两个实参，每次取数都求值；`soft` / `restore` /
+# `hard` 在各自成功路径上被调用），任一槽改名都会打红对应用例。
+# `tests/test_storage_scope_lock.py` 的字符串形态仍在扫（兜底，防这类写法再出现）。
 ENTITY_MAP: dict[str, dict[str, Callable[[Any], Any]]] = {
     "card": dict(
         owned=lambda s: s.get_card_owned,
