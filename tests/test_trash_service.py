@@ -186,3 +186,18 @@ class TestAdmin:
     def test_soft_delete_foreign_unknown_id_404(self, store, admin, entity):
         code = _status(soft_delete(entity, f"nope_{uuid.uuid4().hex}", admin, store))
         assert code == 404, f"期望 404，实得 {code}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# admin 逃生口的原语本身：group 是四个实体里唯一只有 *_owned 变体的
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_group_session_unscoped_sees_foreign_row(store, owner, intruder):
+    """`get_group_session_unscoped` 必须真的无身份过滤 —— 否则 admin 跨属主删除做不到。
+
+    与 `_owned` 对照：同一个 id，非属主问 `_owned` 得 None，问 `_unscoped` 得行。
+    两边都对才算这个原语成立（只有一半时，要么它白加了、要么它其实是 owned 的马甲）。
+    """
+    gid = _seed(store, "group", owner["id"])
+    assert _run(store.get_group_session_owned(gid, intruder["id"])) is None
+    assert _run(store.get_group_session_unscoped(gid)) is not None

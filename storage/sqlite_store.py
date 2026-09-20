@@ -1883,6 +1883,28 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Create group session failed: {exc}")
             raise
 
+    async def get_group_session_unscoped(self, id: str) -> dict | None:
+        """Get one group session by id, with no ownership filter.
+
+        **仅供管理员逃生口**：`core/authz.fetch_for_actor` 在属主取不到、且调用方
+        `is_admin` 时才落到这里。任何登录用户可达的路径都该用 `get_group_session_owned`。
+        """
+        try:
+            async with await self._connect() as conn:
+                cursor = await conn.execute(
+                    "SELECT id, name, card_ids, user_id, created_at, deleted_at, user_persona_type, user_persona_card_id, user_persona_name, user_persona_desc, user_avatar_data FROM group_sessions WHERE id = ?",
+                    (id,),
+                )
+                row = await cursor.fetchone()
+            if row is None:
+                return None
+            d = self._row_to_dict(row)
+            d["card_ids"] = json.loads(d["card_ids"])
+            return d
+        except Exception as exc:
+            print(f"[SQLiteStore] Get group session (unscoped) failed: {exc}")
+            raise
+
     async def get_group_session_owned(self, id: str, user_id: str) -> dict | None:
         """Get one group session by id, only if the user owns it — None otherwise."""
         try:

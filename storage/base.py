@@ -189,6 +189,18 @@ class StorageBase(ABC):
         """Update session-level user avatar. Returns False if ownership check fails."""
 
     @abstractmethod
+    async def get_group_session_unscoped(self, id: str) -> dict | None:
+        """Get a group session by ID, with no ownership filter.
+
+        **仅供管理员逃生口**：`core/authz.fetch_for_actor` 在属主取不到、且调用方
+        `is_admin` 时才落到这里。任何登录用户可达的路径都该用 `get_group_session_owned`。
+
+        （`get_group_session_owned` 本身未在基类声明 —— 群会话原语整体只落在两个
+        实现里；`_unscoped` 这一支进基类，是为了让「两后端签名必须逐格相同」那条锁
+        管到它。改名/改签名漂移正是 trash_service 那次静默 9 天的成因。）
+        """
+
+    @abstractmethod
     async def update_group_avatar(self, group_id: str, user_id: str, avatar_data: str) -> bool:
         """Update group-level user avatar. Returns False if ownership check fails."""
 
