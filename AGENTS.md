@@ -1061,7 +1061,9 @@ PROBE_IMAGE         false
 - **判据 grep（修后）**：`web/routers/text.py` 的 `detach_text_cards` = **0**；`cancel_*` 的调用只出现在 `_cancel_text_tasks` 内（各 1 处）；`core/trash_service.py` 的 `entity_type == "text"` = **0**；每个 store 的 `UPDATE cards SET text_id` 字面量 = **1**。
 - **全量**：1362 passed / 64 skipped / 1 xfailed = **1427 collected**（基线 1416 + 缺陷 75 用例 9 + `tests/test_storage.py` 新增的 `delete_text` keep_cards 分支 2）。
 - **为何钩子不能挂在路由层「鉴权先跑一次 `fetch_for_actor`」**：那正是本条的形态来源 —— 路由判完属主再自己跑副作用，副作用与删除之间又隔着一次取数，`detach_text_cards` 与软删仍不在同一事务。钩子放在 `_fetch` 之后、存储写之前，顺序由**一个**地方保证，两个端点不会再各写一份。
-- **残余风险**：PG 侧 `delete_text(keep_cards=True)` 的**新分支未在真 PG 上跑过**（本机 PG 用例整体 skip，无 `DATABASE_URL`）。改动与 sqlite 同形（`async with conn.transaction()` + 同一辅助函数，只是 `''`→`NULL`、无 PRAGMA 开关），静态覆盖齐（契约锁比对该签名三处一致），但**如实记为未实跑**。
+- **PG 实跑（一次性容器，`postgres:16-alpine`，环回 + trust，不进生产库）**：新增 `tests/test_postgres_store.py::test_delete_text_keep_cards_detaches_in_same_tx`（断言 `text_id is None`）与 `..._default_keeps_card_attached`（正控），两文件合跑 **57 passed**（原 55 + 2），`-k delete_text` 3 passed。故 PG 分支**不是静态推断，是实跑读数**；本机默认无 `DATABASE_URL` 时这些用例照旧 skip，CI 的 `REQUIRE_PG_TESTS=1` 会真跑。
+- **产品级（活实例 `127.0.0.1:7861`，两个账号 A=`testadmin` / B=`testuser`，全程应用自己的接口）**：B 对 A 的 text 发 `DELETE ?keep_cards=true` 与 `DELETE /permanent?keep_cards=true` → 两个 **404**，A 的卡片 `text_id` 不变、text 仍在；A 自己 keep_cards 软删 → 回收站可见 → `POST restore` → 卡片已断开（`text_id=''`）且独立存活。**注意**：本地这套 compose 的 `STORAGE_BACKEND=sqlite`（虽配了 `DATABASE_URL`），故本条走的是 SQLite store，PG 的凭据是上一条的一次性容器。
+- **残余风险**：无已知功能性残留。若要挑刺：`before_mutation` 的**类型**只是 `Callable[[dict], Awaitable[None]]`，传一个同步函数进去要到 `await` 那一刻才炸（`TypeError`），没有静态拦截 —— 与 `capture` 那类「运行时才响」同形，但调用点只有一处、由 9 条用例覆盖。
 - **同族**：与缺陷 76 同源于这次验收；两者都不是判据写错，而是**顺序 / 间接层**写错 —— 76 是名字成了数据，75 是副作用早于授权。
 
 **76. 回收站四类实体全灭 —— ENTITY_MAP 按名取数，改名漏改后字符串悬空、静默 500** —— 状态：**已修**（`4ecd58e`…`9ce0cf9` + `cae6c37`，2026-09-20）
