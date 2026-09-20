@@ -1045,6 +1045,14 @@ PROBE_IMAGE         false
 - **`_create_session` 的第三个死参数 `text`（第 1 位必填）** —— 与 55 那两个死参数同函数、同形态，但**必填参数不会被静默错填**（少传即 `TypeError`），且删它要动 4 个调用点。**记表不修**。§四 已记「死参数为错位留出空间 —— 先问这个参数有没有人用，再问怎么传」。
 - **死参数普查的边界（不冒充通用判据）**：全仓 189 处「形参在函数体里零引用」，**绝大多数是 FastAPI 注入的 `request` / 依赖参数与 `__aexit__` 这类协议参数**，且**抽象方法的参数必然零引用**（体只有 docstring）—— 上一版没排除这类，把 `StorageBase.save_text` / `save_message` 全判成死参数。可判定的组合是**三者同时**：零引用 **+** 可位置传 **+** 与相邻参数名字/类型相近。故普查只作**改签名时的自查**，未做成锁（同 §四「『全仓写死的实测数字』这件事做不出通用判据」的处境）。
 
+**75. `DELETE /api/text/{text_id}` 的副作用跑在鉴权之前 —— 已登录用户能对**他人**的文本落一次持久写** —— 状态：**已立项（方案待审，先不动）**（2026-09-20 发现并立项）
+- **事实**：`web/routers/text.py` 的两个删除端点（`delete_text` / `permanent_delete_text`）里，副作用先于授权执行。顺序是 `cancel_upload_tasks_by_text_id` → `routers.distill.cancel_distill_tasks_by_text_id` →（`keep_cards=true` 时）`storage.detach_text_cards` → **最后**才是 `core.trash_service.soft_delete` / `hard_delete`。属主校验只在后两个函数**内部**做，故「非属主 404」发生在副作用全部落定**之后**。
+- **为何是越权写、不是无效操作**：`detach_text_cards` 的 SQL 谓词里**没有 `user_id`** —— SQLite 侧 `UPDATE cards SET text_id = '' WHERE text_id = ?`，PG 侧 `UPDATE cards SET text_id = NULL WHERE text_id = $1`。故 `DELETE /api/text/{他人的 text_id}?keep_cards=true` 会真把对方的卡从文本上摘掉（`text_id` 置空、卡与文本解绑），且 `cancel_*` 会掐掉对方在途的蒸馏/上传任务。
+- **可达性**：`get_current_user` 只保证「已登录」，路由自己不校验属主。故它是**已登录的跨用户写**，不是匿名写，也不是「只错在状态码」那一类。
+- **两处同形态**：`delete_text` 与 `permanent_delete_text` 各一份，`cancel_*` 那两行两份逐字相同 —— 修一处不改另一处**不会报错**（§四「同一个行为被复制多遍」）。
+- **与缺陷 19 / 25 同族，但落在写侧**：那两条管的是**读**原语没有身份概念（判据读命名后缀 / 签名参数）；这条是**写**原语 `detach_text_cards` 无身份过滤，且非法窗口开在**鉴权之前** —— 不是判据写错，是**顺序**写错。故 `tests/test_storage_scope_lock.py` 那类锁看不见它（它既不叫 `*_unscoped`，也不在带身份的仓储入口上）。
+- **本次处置（用户，2026-09-20）**：**只立项，先不动** —— 修法待用户审后再定，故不写在此。
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
