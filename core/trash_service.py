@@ -88,6 +88,16 @@ async def _fetch(entity_type: str, entity_id: str, user: dict, storage: Any, *,
     )
 
 
+def _in_trash(record: dict) -> bool:
+    """记录是否已在回收站（`deleted_at` 非空）。
+
+    一个谓词、两处**相反**的用法：`soft_delete` 要求**不在**回收站，`hard_delete` 要求**在**。
+    判定必须落在 `before_mutation` **之前** —— 副作用（取消在途任务、断开卡片）不可逆，
+    穿过了前置条件就会作用在「本来不该发生这次操作」的对象上（缺陷 77）。
+    """
+    return bool(record.get("deleted_at"))
+
+
 async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any, *,
                       before_mutation: Callable[[dict], Awaitable[None]] | None = None,
                       **op_kwargs: Any) -> bool:
@@ -101,7 +111,10 @@ async def soft_delete(entity_type: str, entity_id: str, user: dict, storage: Any
     Returns True on success, raises HTTPException on failure.
     """
     record = await _fetch(entity_type, entity_id, user, storage, allow_admin=True)
-    if not record:
+    # 已在回收站与不存在同判 404 —— 对「软删」这个动作，已删记录就是「没有了」，且与
+    # text / session 经 rowcount 得到 404 的既有行为一致（旧读数 404/200/404/200，
+    # card / group 的空转 200 统一到这里）。
+    if not record or _in_trash(record):
         raise HTTPException(404, f"{entity_type} not found")
 
     if before_mutation is not None:
@@ -146,7 +159,7 @@ async def hard_delete(entity_type: str, entity_id: str, user: dict, storage: Any
         raise HTTPException(404, f"{entity_type} not found")
 
     # Require deleted_at to be set (entity must be in trash first)
-    if not record.get("deleted_at"):
+    if not _in_trash(record):
         raise HTTPException(400, "请先移入回收站再永久删除")
 
     if before_mutation is not None:
