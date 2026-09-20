@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS texts (
 
 CREATE TABLE IF NOT EXISTS cards (
     id TEXT PRIMARY KEY,
-    text_id TEXT NOT NULL,
+    text_id TEXT,
     name TEXT NOT NULL,
     card_json TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

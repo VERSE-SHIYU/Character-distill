@@ -96,6 +96,136 @@ async def _existing_columns(conn: Any, table: str) -> set[str]:
     return {row[1] for row in await cursor.fetchall()}
 
 
+# 以 FK 引用 texts 的子表，以及「指向不存在文本的孤儿行」各自的处置（缺陷 78）。
+# 重建块遍历现算出的 FK 子表，**未登记的即上抛** —— 新增一张引用 texts 的表时，逼人回到
+# 这里选一个处置；选不出就说明那张表的孤儿行语义没人想过，静默跳过会把它留成永久孤儿。
+#
+# 两种处置的差别是有意的，不是随手选的：
+#   cards          → repair：修成 NULL。文本没了，卡片退回「独立卡」正是 keep_cards=True 的
+#                    语义；它是用户内容，按 CASCADE 口径删掉等于凭空销毁。
+#   text_comments  → delete：删掉。文本没了这条评论无处可达（PG 上 CASCADE 早删了），
+#                    留着就是两库读数分叉。
+_TEXT_FK_ORPHAN_TREATMENT: dict[str, str] = {
+    "cards": "repair",
+    "text_comments": "delete",
+}
+
+
+async def _text_fk_children(conn: Any) -> list[tuple[str, str]]:
+    """现算「以 FK 引用 texts」的 (子表, 子列) —— 不维护名单，名单会随迁移腐烂。"""
+    cursor = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+    children: list[tuple[str, str]] = []
+    for (table,) in await cursor.fetchall():
+        fk = await conn.execute(f'PRAGMA foreign_key_list("{table}")')
+        for row in await fk.fetchall():
+            if row[2] == "texts":
+                children.append((table, row[3]))
+    return children
+
+
+async def _repair_text_orphans(conn: Any) -> dict[str, int]:
+    """把各 FK 子表里指向不存在文本的行按 `_TEXT_FK_ORPHAN_TREATMENT` 处置，返回读数。
+
+    只在 cards 重建块里调用 —— 孤儿行是旧形态（text_id NOT NULL + 关外键断开卡片）的
+    遗产，FK 打开的正常路径造不出来（`_detach_text_cards_tx` 改 NULL 之后更是如此）。
+    """
+    counts: dict[str, int] = {}
+    for table, col in await _text_fk_children(conn):
+        treatment = _TEXT_FK_ORPHAN_TREATMENT.get(table)
+        if treatment is None:
+            raise RuntimeError(
+                f"表 {table} 以 FK 引用 texts，但 _TEXT_FK_ORPHAN_TREATMENT 里没有它的处置"
+                "（cards 修成 NULL / text_comments 删掉之外，需要先想清这类孤儿行的语义）")
+        # 不排除 ''：它同样不指向任何文本。重建已把 cards 的 '' 归一成 NULL，此处留着是为了
+        # 让本函数在重建之外也自成判据（'' 是「已断开」的旧写法，正是要清掉的那个值）。
+        where = f'{col} IS NOT NULL AND {col} NOT IN (SELECT id FROM texts)'
+        if treatment == "repair":
+            cursor = await conn.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE {where}')
+        else:
+            cursor = await conn.execute(f'DELETE FROM "{table}" WHERE {where}')
+        counts[f"{table}.{col}"] = cursor.rowcount
+    return counts
+
+
+async def _rebuild_cards_nullable_text_id(conn: Any) -> dict[str, int]:
+    """把 `cards.text_id` 从 NOT NULL 改可空（缺陷 78），并把存量 `''` 与悬空引用归一成 NULL。
+
+    **为什么必须重建表**：SQLite 改不了列的可空性，也没有 `ALTER COLUMN`。而 `text_id`
+    同时出现在 FK 子句里，连「DROP COLUMN + 重新 ADD」这条捷径都被 SQLite 拒掉。
+
+    **为什么必须 `PRAGMA foreign_keys = OFF`、且必须发在事务外**（两个都是实测结论，
+    见 e2e/scratch/probe_drop_cascade.py 与 probe_cards_rebuild.py）：
+
+      - FK 打开时 `DROP TABLE cards` 会先做一次隐式 DELETE FROM，**级联**清空 8 张引用
+        cards 的子表里的 6 张（sessions / card_likes / card_comments / card_versions /
+        card_comment_reports / card_reports）。实测过的。
+      - `PRAGMA defer_foreign_keys = ON` **挡不住它** —— 它推迟的是「约束违例」的检查，
+        而 CASCADE 是 FK **动作**，该发照发。库里已有的 users 重建块只用了 defer，
+        它能活下来只是因为……它其实不能：users 有两个 CASCADE 子表
+        （refresh_tokens / user_secrets），那条路径只靠 SQLite<3.35 才进得去。
+      - `PRAGMA foreign_keys = OFF` 在事务内是 no-op（缺陷 75 的实测）。这里能生效，
+        完全是因为初始化跑到这一步时没有开着的事务 —— `_apply_migration` 每份都 commit。
+
+    因此本函数把开关夹在事务外，用 `finally` 复位，且**不**依赖调用点的状态。
+    """
+    cursor = await conn.execute("PRAGMA table_info(cards)")
+    info = await cursor.fetchall()
+    fk = await conn.execute("PRAGMA foreign_key_list(cards)")
+    fks = await fk.fetchall()
+    idx = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'cards' "
+        "AND sql IS NOT NULL")
+    idx_sql = [row[0] for row in await idx.fetchall()]
+
+    names = [r[1] for r in info]
+    collist = ", ".join(f'"{c}"' for c in names)
+    # '' → NULL 与整表拷贝合成一条语句，省一次 UPDATE
+    select = ", ".join(
+        'CASE WHEN "text_id" = \'\' THEN NULL ELSE "text_id" END' if c == "text_id"
+        else f'"{c}"' for c in names)
+
+    await conn.commit()  # 确保下面那句 FK 开关发在事务外，否则它是 no-op
+    await conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        await conn.executescript(f"""
+            CREATE TABLE cards_mig (
+                {",\n    ".join(_cards_rebuild_columns(info, fks))}
+            );
+            INSERT INTO cards_mig ({collist}) SELECT {select} FROM cards;
+            DROP TABLE cards;
+            ALTER TABLE cards_mig RENAME TO cards;
+        """)
+        for sql in idx_sql:
+            await conn.execute(sql)
+        orphans = await _repair_text_orphans(conn)
+        await conn.commit()
+    finally:
+        await conn.execute("PRAGMA foreign_keys = ON")
+    return orphans
+
+
+def _cards_rebuild_columns(info_rows: Any, fk_rows: Any) -> list[str]:
+    """从 PRAGMA 现算 cards 的列定义与 FK 子句 —— 不维护列清单（会随迁移腐烂）。
+
+    除 `text_id` 的非空位按目标规格强制去掉外，其余逐格复刻 table_info 给的事实。
+    """
+    cols: list[str] = []
+    for _cid, name, ctype, notnull, dflt, pk in info_rows:
+        parts = [f'"{name}"', ctype or "TEXT"]
+        if pk:
+            parts.append("PRIMARY KEY")
+        if notnull and name != "text_id":
+            parts.append("NOT NULL")
+        if dflt is not None:
+            parts.append(f"DEFAULT {dflt}")
+        cols.append(" ".join(parts))
+    for _id, _seq, parent, frm, to, _upd, on_del, _match in fk_rows:
+        cols.append(f'FOREIGN KEY ("{frm}") REFERENCES "{parent}"("{to}") '
+                    f"ON DELETE {on_del}")
+    return cols
+
+
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
@@ -304,6 +434,15 @@ class SQLiteStore(StorageBase):
                         _path = migrations_dir / _name
                         if _path.exists():
                             await _apply_migration(conn, _path)
+
+                    # cards.text_id 改可空（缺陷 78）。001 已按新规格声明，所以**只有旧库**
+                    # 走这块 —— 判据就是「列上还挂着 NOT NULL」，跑过一次即永久跳过。
+                    # 位置在去重 DELETE 之前：那两条 DELETE 依赖 FK 打开时对子表的级联，
+                    # 而重建块临时关过 FK，必须先复位（函数内部 finally 保证）。
+                    cursor = await conn.execute("PRAGMA table_info(cards)")
+                    if any(r[1] == "text_id" and r[3] for r in await cursor.fetchall()):
+                        orphans = await _rebuild_cards_nullable_text_id(conn)
+                        print(f"[SQLiteStore] cards.text_id 改可空完成；孤儿行处置读数：{orphans}")
 
                     # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜
                     # "no such window function" 来兼容老库 —— 换成一次版本判断：能力不足时
