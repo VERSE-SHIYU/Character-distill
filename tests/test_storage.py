@@ -942,7 +942,7 @@ class TestTextHardDeleteKeepCards:
         # Card survives with text_id=NULL
         card = await store.get_card_unscoped(cid)
         assert card is not None
-        assert card["text_id"] == ''
+        assert card["text_id"] is None
         # Session survives
         session = await store.get_session_unscoped(sid)
         assert session is not None
@@ -976,7 +976,7 @@ class TestTextHardDeleteKeepCards:
         assert count == 1
         card = await store.get_card_unscoped(cid)
         assert card is not None
-        assert card["text_id"] == ''
+        assert card["text_id"] is None
         # Text still exists
         assert await store.get_text_unscoped(text_id) is not None
 
@@ -995,7 +995,7 @@ class TestTextHardDeleteKeepCards:
         assert text is not None and text["deleted_at"] != ""
         # 卡片被断开且存活着
         card = await store.get_card_unscoped(cid)
-        assert card is not None and card["text_id"] == ''
+        assert card is not None and card["text_id"] is None
         # session 跟着卡存活
         assert await store.get_session_unscoped(sid) is not None
 
@@ -1151,7 +1151,7 @@ class TestStandaloneCardListing:
         # Card can still be fetched by ID
         card = await store.get_card_unscoped(cid)
         assert card is not None
-        assert card["text_id"] == ''
+        assert card["text_id"] is None
 
         # Session still accessible
         session = await store.get_session_unscoped(sid)

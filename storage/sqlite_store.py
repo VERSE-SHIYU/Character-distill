@@ -719,15 +719,13 @@ class SQLiteStore(StorageBase):
     async def delete_text(self, id: str, keep_cards: bool = False) -> bool:
         """Soft-delete one text record.
 
-        keep_cards=True: detach cards (text_id→'') in the **same transaction** as
+        keep_cards=True: detach cards (text_id→NULL) in the **same transaction** as
         the soft-delete, so cards+sessions survive and a failure can't leave the
         cards detached from a text that is still live.
         """
         try:
             now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
-                # 断开必须是本连接的第一条写：PRAGMA OFF 只在事务开始前生效，见
-                # `_detach_text_cards_tx`。
                 if keep_cards:
                     await self._detach_text_cards_tx(conn, id)
                 cursor = await conn.execute(
@@ -773,27 +771,24 @@ class SQLiteStore(StorageBase):
             raise
 
     async def _detach_text_cards_tx(self, conn, id: str) -> int:
-        """卡脱离文本（text_id=''）—— 本 store 里这条 UPDATE 的唯一一处。
+        """卡脱离文本（text_id→NULL）—— 本 store 里这条 UPDATE 的唯一一处。
 
         **不 commit**：事务边界由调用方定（`delete_text` 要与软删同进同出，
         `hard_delete_text` 还要接一串清理）。
 
-        `PRAGMA foreign_keys = OFF` 必须打在本连接**事务开始之前** —— 它在事务内是 no-op
-        （实测：事务外 OFF 读数 1→0，随后开事务再 ON，读数仍是 0）。由此还带出一个事实：
-        下面那句「打开」在事务内**并不生效**，FK 会保持关闭到本连接关闭为止。
-        `_connect()` 每次开新连接、作用域退出即关，故影响面只限本次调用内、该语句之后的写。
+        旧形态写的是 `''`，那是缺陷 78 的病灶：`''` 不指向任何 texts.id，为让它过外键
+        这里得先关 `PRAGMA foreign_keys`，而那条指令在事务内是 no-op —— 关不掉，同一连接
+        随后的 `DELETE FROM texts` 既不级联也不报错，留下孤儿行。NULL 才是「未关联」的正解：
+        外键本就不检查 NULL，FK 全程保持打开，级联照常。PG 侧一直是 NULL（AGENTS.md 缺陷 78）。
         """
-        # Temporarily disable FK checks: '' won't reference texts.id
-        await conn.execute("PRAGMA foreign_keys = OFF")
         cursor = await conn.execute(
-            "UPDATE cards SET text_id = '' WHERE text_id = ?",
+            "UPDATE cards SET text_id = NULL WHERE text_id = ?",
             (id,),
         )
-        await conn.execute("PRAGMA foreign_keys = ON")
         return cursor.rowcount
 
     async def detach_text_cards(self, id: str) -> int:
-        """Detach all cards from a text by setting text_id to ''."""
+        """Detach all cards from a text by setting text_id to NULL."""
         try:
             async with await self._connect() as conn:
                 return await self._detach_text_cards_tx(conn, id)
@@ -1409,11 +1404,17 @@ class SQLiteStore(StorageBase):
             raise StoreError("fork_card", exc) from exc
 
         try:
-            text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
+            # `''` 与 NULL 都是「不关联文本」，统一成 NULL；传 None 表示沿用原卡的关联。
+            # `''` 留着会**插不进去** —— 它不指向任何 texts.id，FK 直接拒（缺陷 78 的同一根因，
+            # 前端 AuthorPage 送的就是 `text_id: ''`，这条路此前是 500）。
+            text_id = (original.get("text_id") or None) if new_text_id is None \
+                else (new_text_id or None)
             async with await self._connect() as conn:
-                # Check for existing fork to avoid duplicates
+                # Check for existing fork to avoid duplicates.
+                # `IS ?` 而非 `= ?`：text_id 可空，`= NULL` 恒不成立，会让独立卡每次 fork
+                # 都新插一张（去重失效）。
                 cursor = await conn.execute(
-                    "SELECT id FROM cards WHERE forked_from = ? AND user_id = ? AND text_id = ? AND deleted_at IS NULL",
+                    "SELECT id FROM cards WHERE forked_from = ? AND user_id = ? AND text_id IS ? AND deleted_at IS NULL",
                     (card_id, new_user_id, text_id),
                 )
                 existing = await cursor.fetchone()

@@ -965,10 +965,17 @@ class PostgresStore(StorageBase):
             raise StoreError("fork_card", exc) from exc
 
         try:
-            text_id = new_text_id if new_text_id is not None else original.get("text_id", "")
+            # `''` 与 NULL 都是「不关联文本」，统一成 NULL；传 None 表示沿用原卡的关联。
+            # `''` 留着会**插不进去** —— 它不指向任何 texts.id，FK 直接拒（缺陷 78 的同一根因，
+            # 前端 AuthorPage 送的就是 `text_id: ''`，这条路此前是 500）。
+            text_id = (original.get("text_id") or None) if new_text_id is None \
+                else (new_text_id or None)
             async with await self._connect() as conn:
+                # `IS NOT DISTINCT FROM` 而非 `=`：text_id 可空，`= NULL` 恒不成立，会让独立卡
+                # 每次 fork 都新插一张（去重失效）。
                 existing = await conn.fetchrow(
-                    "SELECT id FROM cards WHERE forked_from = $1 AND user_id = $2 AND text_id = $3 AND deleted_at IS NULL",
+                    "SELECT id FROM cards WHERE forked_from = $1 AND user_id = $2 "
+                    "AND text_id IS NOT DISTINCT FROM $3 AND deleted_at IS NULL",
                     card_id, new_user_id, text_id,
                 )
                 if existing:

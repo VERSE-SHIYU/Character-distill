@@ -157,7 +157,7 @@ def _assert_cancelled_and_detached(store, cid, *, distill_row_deleted: bool = Fa
     不可观测** —— 那里只断言行已消失，取消的证据由**内存** `_tasks` 承担（它才是给
     后台线程的停止信号）。硬把 DB 状态也断言成 error 会把一个永远读不到的状态写进用例。
     """
-    assert _card_text_id(store, cid) == "", "卡片没被断开"
+    assert _card_text_id(store, cid) is None, "卡片没被断开（断开 = text_id 置 NULL）"
     assert _upload_status() == "error", "上传任务没被取消"
     assert _distill_status_mem() == "error", "蒸馏任务（内存）没被取消"
     row = _run(store.get_distill_task_unscoped(DISTILL_TASK))
