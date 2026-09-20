@@ -757,3 +757,88 @@ class TestFernetKeyValidation:
         monkeypatch.delenv("FERNET_KEY", raising=False)
         from routers.auth import validate_fernet_key
         validate_fernet_key()  # should not raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 三处手写「admin 跨属主」分支的等价网
+#
+# market.delete_market_card / market.delete_comment / text.get_text_deletion_impact
+# 三处各自手写了同一条「先属主读，落空且 is_admin 才无身份读」，形态不一。它们收敛到
+# core.authz.fetch_for_actor 时**不许改变对外行为** —— 这组用例是那条「不变」的判据：
+# 三个端点 × 三种身份（属主 / 非属主 / admin）的响应码逐格钉死。
+#
+# 它在迁移前就是绿的（描述的是现状），价值靠变异证明：把迁移后的 allow_admin 改成
+# False，admin 那三格必须红；改成恒 True，非属主那三格必须红。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _client_as(store, user_id, *, is_admin):
+    app = _make_app(store, user_id)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": user_id, "username": "testuser", "is_admin": is_admin,
+    }
+    return TestClient(app)
+
+
+def _seed_comment(store, card_id, user_id):
+    return _run_async(store.add_comment(card_id, user_id, "评论者", "评论内容"))["id"]
+
+
+class TestAdminEscapeHatchEquivalence:
+    """属主 200 / 非属主 404 / admin 200 —— 三个端点各三格。"""
+
+    # ── GET /api/text/{id}/deletion-impact ──
+
+    def test_text_deletion_impact_owner(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        r = _client_as(store, user_a, is_admin=False).get(f"/api/text/{tid}/deletion-impact")
+        assert r.status_code == 200, r.text
+
+    def test_text_deletion_impact_non_owner(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        r = _client_as(store, user_b, is_admin=False).get(f"/api/text/{tid}/deletion-impact")
+        assert r.status_code == 404, r.text
+
+    def test_text_deletion_impact_admin(self, store, user_a, user_b):
+        tid = _create_text(store, user_a)
+        r = _client_as(store, user_b, is_admin=True).get(f"/api/text/{tid}/deletion-impact")
+        assert r.status_code == 200, r.text
+
+    # ── DELETE /api/market/{card_id} ──
+
+    def test_market_delete_card_owner(self, store, user_a, user_b):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        r = _client_as(store, user_a, is_admin=False).delete(f"/api/market/{cid}")
+        assert r.status_code == 200, r.text
+
+    def test_market_delete_card_non_owner(self, store, user_a, user_b):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        r = _client_as(store, user_b, is_admin=False).delete(f"/api/market/{cid}")
+        assert r.status_code == 404, r.text
+
+    def test_market_delete_card_admin(self, store, user_a, user_b):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        r = _client_as(store, user_b, is_admin=True).delete(f"/api/market/{cid}")
+        assert r.status_code == 200, r.text
+
+    # ── DELETE /api/market/{card_id}/comments/{comment_id} ──
+
+    def test_market_delete_comment_author(self, store, user_a, user_b):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        comment_id = _seed_comment(store, cid, user_a)
+        r = _client_as(store, user_a, is_admin=False).delete(
+            f"/api/market/{cid}/comments/{comment_id}")
+        assert r.status_code == 200, r.text
+
+    def test_market_delete_comment_non_owner(self, store, user_a, user_b, user_c):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        comment_id = _seed_comment(store, cid, user_a)
+        r = _client_as(store, user_c, is_admin=False).delete(
+            f"/api/market/{cid}/comments/{comment_id}")
+        assert r.status_code == 404, r.text
+
+    def test_market_delete_comment_admin(self, store, user_a, user_b, user_c):
+        cid = _create_card(store, user_a, _create_text(store, user_a))
+        comment_id = _seed_comment(store, cid, user_a)
+        r = _client_as(store, user_c, is_admin=True).delete(
+            f"/api/market/{cid}/comments/{comment_id}")
+        assert r.status_code == 200, r.text

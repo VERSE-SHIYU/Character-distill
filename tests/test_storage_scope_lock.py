@@ -72,7 +72,8 @@ UNSCOPED_ALLOWLIST = {
     "scripts/smoke_eval_e2e.py:_verify_session_affinity":
         "评测脚本：session_id 由脚本自建的临时会话提供，无登录语境",
     "web/routers/text.py:get_text_deletion_impact":
-        "admin 跨属主查看删除影响的显式逃生口：先 get_text_owned，拿不到且 user.is_admin 时才落到这里",
+        "admin 跨属主查看删除影响的显式逃生口：get_text_unscoped 作为值传给 "
+        "core.authz.fetch_for_actor，只有 get_text_owned 落空、allow_admin=True 且 user.is_admin 时才被调用",
     "web/routers/admin.py:admin_review_approve":
         "管理员复核任意用户被 flag 的卡 —— 跨属主就是该职责本身",
     "web/routers/inter_node.py:receive_dm":
@@ -92,9 +93,13 @@ UNSCOPED_ALLOWLIST = {
     "web/routers/market.py:like_card":
         "点赞对象是他人公开卡（market 语义），身份过滤会把公开卡滤没",
     "web/routers/market.py:delete_comment":
-        "管理员跨属主删评论的显式逃生口：非管理员走 get_comment_owned（评论作者∨卡作者）",
+        "管理员跨属主删评论的显式逃生口：get_comment_unscoped 作为值传给 "
+        "core.authz.fetch_for_actor（allow_admin=True），非管理员走 get_comment_owned"
+        "（评论作者∨卡作者）；末尾的幂等复读（删失败后确认是否已被并发删除）无身份语义，"
+        "按 comment_id 读即可",
     "web/routers/market.py:delete_market_card":
-        "管理员跨属主下架的显式逃生口：非管理员走 get_card_owned",
+        "管理员跨属主下架的显式逃生口：get_card_unscoped 作为值传给 "
+        "core.authz.fetch_for_actor（allow_admin=True），非管理员走 get_card_owned",
     "tests/*":
         "测试直接构造/读写资源，没有登录语境，按定义就该用 *_unscoped",
 }

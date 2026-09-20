@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel
 
+from core.authz import fetch_for_actor
 from core.schema import PRESET_TAGS
 from cross_border_sync import forward_card_to_peer
 from deps import get_llm, get_storage
@@ -679,11 +680,9 @@ async def delete_market_card(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a card from market: soft-delete + set visibility private."""
-    # 管理员跨属主删除是显式例外，属主谓词表达不了 → 该分支落 unscoped。
-    if user.get("is_admin"):
-        card = await storage.get_card_unscoped(card_id)
-    else:
-        card = await storage.get_card_owned(card_id, user["id"])
+    # 管理员跨属主删除是显式例外，属主谓词表达不了 → 由 fetch_for_actor 裁决。
+    card = await fetch_for_actor(
+        storage.get_card_owned, storage.get_card_unscoped, card_id, user, allow_admin=True)
     # 非属主与不存在同判 404（admin 仍可）；403 会让人靠状态码枚举出 card_id 存在。
     if not card:
         raise HTTPException(404, "Card not found")
@@ -904,11 +903,9 @@ async def delete_comment(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a comment — card author/comment author/admin can delete, others get 404."""
-    # 属主谓词（评论作者 ∨ 卡作者）在 SQL；管理员例外不在属主谓词内 → 该分支落 unscoped。
-    if user.get("is_admin"):
-        comment = await storage.get_comment_unscoped(comment_id)
-    else:
-        comment = await storage.get_comment_owned(comment_id, user["id"])
+    # 属主谓词（评论作者 ∨ 卡作者）在 SQL；管理员例外不在属主谓词内 → 由 fetch_for_actor 裁决。
+    comment = await fetch_for_actor(
+        storage.get_comment_owned, storage.get_comment_unscoped, comment_id, user, allow_admin=True)
     # 非属主（非评论作者/卡作者/管理员）与不存在同判 404：403 会让人靠状态码枚举出 comment_id 存在。
     if not comment:
         raise HTTPException(404, "评论不存在")

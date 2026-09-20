@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import Response
 from urllib.parse import quote
 
+from core.authz import fetch_for_actor
 from core.trash_service import hard_delete, restore, soft_delete
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.scheduling import submit_to_main_loop
@@ -325,10 +326,9 @@ async def get_text_deletion_impact(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get impact stats before deleting a text (cards, sessions, messages)."""
-    text = await storage.get_text_owned(text_id, user["id"])
-    if not text and user.get("is_admin"):
-        # admin 跨属主查看删除影响：显式逃生口，受 is_admin 保护。
-        text = await storage.get_text_unscoped(text_id)
+    # admin 跨属主查看删除影响：显式逃生口，受 is_admin 保护（由 fetch_for_actor 裁决）。
+    text = await fetch_for_actor(
+        storage.get_text_owned, storage.get_text_unscoped, text_id, user, allow_admin=True)
     if not text:
         raise HTTPException(404, "Text not found")
     return await storage.get_text_deletion_impact(text_id, user["id"])
