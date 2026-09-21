@@ -115,7 +115,7 @@ config.yaml 现值（现读，非转述）：
 ### 三、已知缺陷
 
 > **全表状态口径（2026-09-19 现跑现数）**：1–74 共 74 条 —— **已修 53**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；**本轮新增的 59–63 与 65 已同批修完**，锁在 `tests/test_llm_access_gate.py`）/ **记账 11**（35、36、47、56、57、58、64、66、67、68、69）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 11**。
-> **75–78 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，四条都产生于 2026-09-20）：75 / 76 / 77 / 78 **全为已修**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：四条的状态已写明，重算是个待办而不是事实）。
+> **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -1111,6 +1111,32 @@ PROBE_IMAGE         false
 - **顺带发现（只记不改）**：`users` 的既有重建先例用的是 `defer_foreign_keys` 而非 FK OFF，而 `refresh_tokens.user_id` / `user_secrets.user_id` 是 `ON DELETE CASCADE`（`probe_drop_cascade.py` 的 B 段现算）—— **那块重建一旦真跑会清空这两张表**。触发条件是 SQLite < 3.35（本机 3.49.1，未触发）。与缺陷 78 同族（「用错了关外键的手段」），未纳入本轮。
 - **残余风险**：`_repair_text_orphans` 对**未登记处置的 texts 子表上抛** —— 这是刻意的（逼人回来选处置而不是静默留孤儿），代价如实写明：**将来新增一张 FK 引用 `texts` 的表，旧库启动会直接失败**，直到在 `_TEXT_FK_ORPHAN_TREATMENT` 里登记处置。
 - **全量**：1382 passed / 0 failed / 69 skipped / 1 xfailed = **1452 collected**（基线 1429 collected，在独立 worktree `e6d4c63` 上现跑）—— 逐 id 比对 **+23 / 消失 0**：`test_trash_service.py` +13（缺陷 77）、`test_storage.py` +7（78 的断开/孤儿 5 + fork 2）、`test_postgres_store.py` +3（skip +2 是新增的 PG fork 用例在本机无 `DATABASE_URL` 时正式 skip，passed +2 是 SQLite 侧的两条 fork 用例 —— 故 1380→1382 与 67→69 两处都能对上）。PG 侧在一次性容器 `cd-pg-defect78`（`REQUIRE_PG_TESTS=1`）实跑 **58 passed / 0 skipped**。
+
+**79. 两处表重建各写一遍「关外键」的时序 —— users 那块只用了 `defer_foreign_keys`（等于没关），真跑会按 CASCADE 清空 `refresh_tokens` 与 `user_secrets`** —— 状态：**已修**（`8adecf0`，2026-09-21）
+- **病灶**：`DROP TABLE` 在 FK 打开时会先做一次隐式 `DELETE FROM`，触发 `ON DELETE CASCADE`。78 已为 `cards` 重建实测过这一条，但 **users 的回落重建**（SQLite < 3.35 才进得去）仍用 `PRAGMA defer_foreign_keys = ON` —— 它推迟的是**约束违例检查**，而 CASCADE 是 **FK 动作**，挡不住。
+- **静默丢行臂（实测）**：CASCADE 子表有行、非 CASCADE 子表为空时 —— 造 users + 3 行 `refresh_tokens` + 1 行 `user_secrets`，跑回落重建 → **`refresh_tokens` 3 → 0、`user_secrets` 1 → 0**，且 **init 报成功**。`user_secrets` 存的是加密 API 凭据，**属数据丢失，不是普通记账项**。现场命令：`tests/test_sqlite_rebuild_cascade.py::test_users_rebuild_keeps_cascade_children`（修复前跑即红，报错行 `{'refresh_tokens': 0} != {'refresh_tokens': 3}`）。
+- **启动崩臂（实测）**：真实库形状 —— 活库 `usage_stats.user_id` 是 `NO ACTION` 且有 **502** 行，autocommit 下 `DROP TABLE users` 立即触发违例 → `IntegrityError: FOREIGN KEY constraint failed`，**应用直接起不来**。命令：活库副本 + 把 `sqlite3.sqlite_version_info` 按到 `(3, 34, 0)` 跑 `SQLiteStore._ensure_initialized()`。
+- **落点：两处重建共用 `_fk_disabled`**（`storage/sqlite_store.py`）—— `await conn.commit()`（开关必须发在**事务外**，事务内是 no-op，缺陷 75 实测）→ `PRAGMA foreign_keys = OFF` → `finally` 复位；异常路径先 `rollback()` 再上抛，否则 finally 那句复位同样是 no-op、外键会一直关到连接结束。病因 docstring **只写在这一处**，`_rebuild_cards_nullable_text_id` 与 users 回落分支各留一行指过去。**不是打补丁**：没有在 users 那块再补一行 `PRAGMA`；users 块原来的 `PRAGMA defer_foreign_keys = ON;` 已删。
+- **红源**（`tests/test_sqlite_rebuild_cascade.py`，2 条，各锁一个消费者）：`test_users_rebuild_keeps_cascade_children` 锁 users 回落分支 —— 真建库、插 user + 1 行 `user_secrets` + 3 行 `refresh_tokens`，再用 `monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 0))` **把回落分支逼出来**（本机 SQLite 3.49 走原生 `DROP COLUMN`，不按版本号进不去），断言两表行数不变；`test_cards_rebuild_keeps_cascade_children` 锁 cards 重建（直接调 `_rebuild_cards_nullable_text_id`，本机造不出 `text_id NOT NULL` 的老库），断言 `sessions` 行数不变 —— 这条**修复前后都绿**，它是给共用件第二个消费者留的判别面，保证共用件不退化成「只服务一处」。
+- **变异（驱动 `e2e/scratch/mutate_fk_disabled.py`，本轮现跑）**：① 去掉 `PRAGMA foreign_keys = OFF` → **2 failed**；② 把开关挪进事务内（先 `BEGIN` 再发）→ **2 failed**；两种坏法都把**两条**用例打红 —— 共用件在两个调用点上都吃劲。逐字节还原后 **2 passed**。
+- **真实库副本读数**（只读副本，活库未动）：`refresh_tokens` **926 → 926**、`user_secrets` **4 → 4**、`users` 4、`cards` 23、`sessions` 18 全部不变；重建后 `users` 残留 legacy 列 **0**、`users_mig` 残留 **0**。（副本上需先清掉下述 82 条的残骸，否则卡在 `table users_mig already exists`。）
+- **全量**：SQLite 形态 **1384 passed / 69 skipped / 1 xfailed = 1454 collected**；PG 形态（一次性 `postgres:16-alpine` 起在 127.0.0.1:5455，跑完即删）**1451 passed / 2 skipped / 1 xfailed = 1454 collected**。基线 `e41b6a6` 现跑 `--collect-only` = **1452**（worktree 现测，用后即删），差量 **+2 / 消失 0**（新文件恰 2 条）。
+
+**80. 活库 25 行 `refresh_tokens` 孤儿 —— 用户已删、token 还在** —— 状态：**记账**（不修，2026-09-21）
+- **读数（现跑）**：`PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe e2e/scratch/probe_residue_readings.py` 的 §2 遍历全库每张表的每个 FK 子句，唯一的孤儿类是 `refresh_tokens.user_id → users.id：25 行孤儿`；同库 `users` 4 行、`refresh_tokens` 926 行。§1 另证四个验收 id 在这张表里没有残留。
+- **性质**：鉴权面残留 —— 行还在，指向的用户已经不在了。与本次改动无关，是活库既有状态（`e2e/scratch/probe_residue_readings.py` 只读打开，未写）。
+- **处置方向**：与「删用户」路径放一起核，先判这 25 行是删用户时的漏写还是历史数据的既有形态，再决定清不清。
+
+**81. `cross_border_delete_outbox` 有指向已删 fork 的行，且该表没有任何应用清理入口** —— 状态：**记账**（不修，2026-09-21）
+- **读数（现跑）**：`e2e/scratch/probe_residue_readings.py` §1 → `0c1779b40d15 → [('cross_border_delete_outbox', 1)]`；直读该行 = `(1, 'card_delete', '0c1779b40d15', '', 0, '2026-09-20 03:43:25')`，列名 `id / op_type / target_id / payload / synced / created_at` → **`synced = 0`，即一条仍待同步的删除传播**（不是「已上传后的残留」）。
+- **性质**：**机制缺口，不是单行脏数据** —— 全仓对这张表的应用侧触点只有两个：`get_pending_delete_propagations`（`SELECT ... WHERE synced = 0`）与 `mark_delete_propagated`（`UPDATE ... SET synced = 1`），**没有任何删除路径**（`grep -rn "cross_border_delete_outbox"` 的命中只落在 `storage/*_store.py` 与两份迁移里）。要清只能手写 `DELETE FROM`，而手写 SQL 正好绕过存储层的级联与断开（缺陷 75 / 78 修的就是那两条路）。所以这一行清不掉是结构性的：清掉它，下次删除还会再造一行。
+- **处置方向**：补一个「已上传 / 已过期 outbox 行」的回收入口，让这类清理走应用自己的路径，而不是手写 SQL。
+
+**82. 活库残留一张 `users_mig`（4 行，DDL 无 `nickname` / `username_lower`）—— 数据丢失风险** —— 状态：**记账**（不修，2026-09-21）
+- **读数（现跑）**：活库 `sqlite_master` 里 `users_mig` 存在、**4 行**，id 与 `users` 完全一致（`3996bd7f23a34311` / `f4b7650ba30e446c` / `f46432a6a92e4ae7` / `ebaaac2677c84e3d`）；其 DDL 的列清单**没有 `nickname` / `username_lower`**（而当前 `col_defs` 里有）→ 由 migration **077 之前**的代码版本创建，不是本轮产物。
+- **性质：数据丢失风险，与普通记账项区分开** —— 它是**某次 users 重建中途失败的现场**：成功路径会把 `users_mig` 改名回 `users`，不留残骸。而且它**当前反而挡住了丢数据** —— `CREATE TABLE users_mig` 排在 `DROP TABLE users` **之前**，表已存在就直接报错，`DROP` 那一步根本不执行（78 / 79 说的 CASCADE 清空因此没发生）。这是巧合，不是设计。
+- **它现在会让应用起不来**：在 SQLite < 3.35 上（**真正会进回落分支的环境**，本机 3.49 走原生 `DROP COLUMN`，进不到这一支）报 `table users_mig already exists` → init 失败 → 应用直接起不来。实测：活库副本上按 `(3, 34, 0)` 跑 `_ensure_initialized()` 即复现。
+- **处置方向**：先判它是不是缺陷 79 修复前那次失败的遗骸，是就清掉，并给回落分支补幂等（`DROP TABLE IF EXISTS users_mig`）—— 那属于加锁，不在本轮。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
