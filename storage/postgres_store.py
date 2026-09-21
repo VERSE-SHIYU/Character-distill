@@ -14,7 +14,7 @@ import asyncpg  # type: ignore[import-not-found]
 
 from .base import StorageBase, StoreError
 
-# ── 「X 是草稿 D 的发布副本」的唯一权威定义（缺陷 84）─────────────────────────
+# ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
 #     X.forked_from = D.id AND X.visibility = 'public'
 #     AND X.deleted_at IS NULL AND X.user_id = D.user_id
@@ -27,7 +27,7 @@ from .base import StorageBase, StoreError
 # 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
 # `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次，其余调用处
 # 一律引用本函数 —— 任何一处再手写 `forked_from = ... AND visibility = 'public'`
-# 都是在造第二份判据，正是缺陷 84 的形态。SQLite 侧同形（只差 `?` 占位符）。
+# 都是缺「同一作者」判据的第二份写法。SQLite 侧同形（只差 `?` 占位符）。
 _PUBLISHED_COPY_OF = ("{copy}.forked_from = {draft}.id AND {copy}.visibility = 'public'"
                       " AND {copy}.deleted_at IS NULL AND {copy}.user_id = {draft}.user_id")
 
@@ -686,7 +686,8 @@ class PostgresStore(StorageBase):
 
         三条写都带身份：本卡（`id` + `user_id`）、本卡的发布副本（向下）、本卡本身是发布
         副本时的那张草稿（向上）。上下同步都引用 `_published_copy_of` 这一份关系定义 ——
-        「作者自己的发布副本」与「任意用户的 fork」靠 `user_id = D.user_id` 区分（缺陷 84）。
+        「作者自己的发布副本」与「任意用户的 fork」靠 `user_id = D.user_id` 区分 —— 缺这条
+        同一作者判据时，他人 fork 会被当成发布副本。
         """
         try:
             async with await self._connect() as conn:
@@ -4695,7 +4696,7 @@ class PostgresStore(StorageBase):
     async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
         """发布：已有「调用者自己的发布副本」时原地复用（`_published_copy_of`）。
 
-        他人对同一张卡的公开 fork 不是发布副本，不会被复用（缺陷 84）。
+        他人对同一张卡的公开 fork 不是发布副本，不会被复用 —— 判据是同一作者。
         """
         try:
             async with await self._connect() as conn:
