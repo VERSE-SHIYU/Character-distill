@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import collections.abc as _cabc
 
 import yaml
@@ -23,8 +23,12 @@ from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_faci
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
+from core.request_identity import current_user_id
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
+
+if TYPE_CHECKING:
+    from storage.base import StorageBase
 
 # ── identify_characters TTL cache ───────────────────────────────────────
 IDENTIFY_CACHE_TTL_SECONDS = 600
@@ -228,16 +232,22 @@ class Distiller:
         self,
         llm: LLMAdapter,
         config_path: str | Path | None = None,
+        storage: StorageBase | None = None,
     ) -> None:
         """初始化蒸馏器。
 
         Args:
             llm: 已配置好的大模型适配器。
             config_path: 配置文件路径；默认读取仓库根目录 ``config.yaml``。
+            storage: 记账落库用的存储（依赖，非身份）。生产由唯一装配出口
+                `web/deps.get_distiller` 注入；直接 ``Distiller(llm)`` 的地方记不上账。
+
+        **身份不走构造参数**：user_id 逐请求变化，放在 `core.request_identity`
+        的上下文里（缺陷 35）—— 构造期注入等于每个构造点都要记得写一遍，
+        而漏掉的那次只会留一行日志。
         """
         self._llm = llm
-        self._storage = None
-        self._user_id: str = ""
+        self._storage = storage
         root = Path(__file__).resolve().parent.parent
         cfg_file = Path(config_path) if config_path is not None else root / "config.yaml"
         if config_path is None and not cfg_file.exists():
@@ -264,7 +274,7 @@ class Distiller:
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
         try_record_usage(
             storage=self._storage,
-            user_id=self._user_id,
+            user_id=current_user_id() or "",
             llm=self._llm,
             action=action,
             usage=usage,

@@ -1044,9 +1044,6 @@ async def distill_stream(
     text_type = text_rec.get("text_type", "story")
     char_name = req.character_name.strip()
 
-    distiller._storage = storage
-    distiller._user_id = user_id
-
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False, default=str)}\n\n"
 
