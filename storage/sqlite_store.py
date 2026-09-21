@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # 「他人 fork」由 `forked_from` 承载（`get_card_forks`，另一种关系，不适用本定义）——
 # 此前两者共用 `forked_from` 单列，判据里才必须靠 `X.user_id = D.user_id` 去补区分；
 # 现在这条判据由复合外键 `(published_from, user_id) → cards(id, user_id)` 在库里强制
-# （见 `_rebuild_cards_published_from` 与 migrations_pg/020）。
+# （见 `_rebuild_cards_published_from` 与 migrations_pg/021）。
 #
 # 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
 # `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次、「在架」只在
@@ -105,7 +105,7 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
-    "087_published_from.sql",
+    "088_published_from.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -305,7 +305,7 @@ def _cards_rebuild_columns(
 # 三条删到「有发布副本的草稿」时直接撞复合外键 —— 其中启动去重那条会让**启动失败**。
 # 汇合点放进库里，一处定义覆盖全部路径。
 #
-# 这是**两侧唯一的实现差异**：PG 侧 020 用外键原生动作 `ON DELETE SET NULL
+# 这是**两侧唯一的实现差异**：PG 侧 021 用外键原生动作 `ON DELETE SET NULL
 # (published_from)`，是列级 SET NULL；SQLite 没有这个语法（`SET NULL` 只能作用于
 # 整条外键的每一列），故这一侧由此触发器承担同一件事。语义一致：只置空副本的
 # `published_from`，`user_id` 原样保留，副本存活。
@@ -321,11 +321,11 @@ END
 """
 
 
-# 「一草稿至多一张存活副本」（087 追加的那条部分唯一索引）。
+# 「一草稿至多一张存活副本」（088 追加的那条部分唯一索引）。
 #
 # **为什么迁移文件里写了、这里还要执行一遍**：`_apply_migration` 的判据是「脚本里每个
-# ADD COLUMN 的列都已存在 → 整份跳过」。列正是 087 加的，所以**在列已存在之后建的库**
-# 再跑 087 会整份跳过 —— 连同末尾这条索引一起。只写迁移文件的话，全新库有索引、老库没有，
+# ADD COLUMN 的列都已存在 → 整份跳过」。列正是 088 加的，所以**在列已存在之后建的库**
+# 再跑 088 会整份跳过 —— 连同末尾这条索引一起。只写迁移文件的话，全新库有索引、老库没有，
 # 同一个仓两种库行为不一致；而 publish_card 的 `ON CONFLICT` 依赖它，缺了就当场报
 # `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`。
 # 与上面那条触发器同理：都属于「迁移文件之外无条件兜一句」。
@@ -353,7 +353,7 @@ async def _cards_published_fk_present(conn: Any) -> bool:
 async def _rebuild_cards_published_from(conn: Any) -> None:
     """给 cards 补上 `UNIQUE(id, user_id)` 与复合外键 —— 拆 `forked_from` 的后半件。
 
-    **为什么必须重建表**：SQLite 的 `ALTER TABLE` 能加列（087 就是这么加的）、也能加
+    **为什么必须重建表**：SQLite 的 `ALTER TABLE` 能加列（088 就是这么加的）、也能加
     **单列** REFERENCES，但表级 UNIQUE 与复合外键都加不了。这是本次改动里唯一需要重建
     的部分，故与 `_rebuild_cards_nullable_text_id` 同款手法（`_fk_disabled` 的关外键
     理由见该件 docstring，此处不抄第二份）。
@@ -375,7 +375,7 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
     names = [r[1] for r in info]
     collist = ", ".join(f'"{c}"' for c in names)
     # `id` 已是主键，故 UNIQUE(id, user_id) 恒成立 —— 它不会因存量数据失败，
-    # 存在的全部意义是给复合外键一个可指向的目标（PG 侧 020 同款）。
+    # 存在的全部意义是给复合外键一个可指向的目标（PG 侧 021 同款）。
     # FK 动作是 `NO ACTION` 而非 PG 那条列级 `SET NULL`：SQLite 无列清单语法，
     # 「删草稿→副本解绑」由 `_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER` 承担。
     extra = (

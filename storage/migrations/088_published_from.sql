@@ -1,6 +1,6 @@
--- 087 — cards.published_from：把「草稿 → 作者自己的发布副本」独立成一列
+-- 088 — cards.published_from：把「草稿 → 作者自己的发布副本」独立成一列
 --
--- 背景与 PG 侧 020 是同一件事实（SQLite 侧的详细理由见 storage/postgres_store.py 与
+-- 背景与 PG 侧 021 是同一件事实（SQLite 侧的详细理由见 storage/postgres_store.py 与
 -- sqlite_store.py 顶部的 `_PUBLISHED_COPY_OF` 定义块）：`forked_from` 单列同时承载
 -- 「作者自己的发布副本」与「任意用户的 fork」两种关系，区分它们唯一的判据是
 -- `copy.user_id = draft.user_id`。拆列后本列只表示前者，并由表级复合外键 + UNIQUE

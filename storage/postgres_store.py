@@ -30,7 +30,7 @@ from .base import StorageBase, StoreError
 # 「他人 fork」由 `forked_from` 承载（`get_card_forks`，另一种关系，不适用本定义）——
 # 此前两者共用 `forked_from` 单列，判据里才必须靠 `X.user_id = D.user_id` 去补区分；
 # 现在这条判据由复合外键 `(published_from, user_id) → cards(id, user_id)` 在库里强制
-# （见 migrations_pg/020 与 sqlite_store.py 的 `_rebuild_cards_published_from`）。
+# （见 migrations_pg/021 与 sqlite_store.py 的 `_rebuild_cards_published_from`）。
 #
 # 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
 # `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次、「在架」只在

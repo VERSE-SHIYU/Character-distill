@@ -1423,7 +1423,7 @@ class TestPgAuthorOwnPublishedCopyStillSyncs:
 class TestPgDatabaseRejectsCrossOwnerPublishedFrom:
     """同 SQLite 侧同名类：同一作者由复合外键在库里强制。
 
-    两引擎的落地路径完全不同（SQLite 靠重建表把约束写进 DDL，PG 靠 mig 020 的
+    两引擎的落地路径完全不同（SQLite 靠重建表把约束写进 DDL，PG 靠 mig 021 的
     ALTER TABLE），只验一侧会整条漏掉另一侧。
 
     靶子必须是**没有副本的草稿**（`_pg_draft`）：两条约束都盯着 `published_from`，
