@@ -72,6 +72,7 @@ from cross_border_sync import _cross_border_resync_loop
 from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
 from web.llm_gate import install_llm_gate
+from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
 
@@ -132,6 +133,11 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="Character Simulator API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=_lifespan)
 
 app.state.limiter = limiter
+
+# 演示账号门禁在**任何路由登记之前**装：框架在路由创建时就快照 router.dependencies，
+# 路由登记之后再装是静默 no-op（故不能像 install_llm_gate 那样放 `_lifespan`）。
+# 装配位置与那条硬约束的完整说明见 `web/demo_gate.py`。
+install_demo_gate(app)
 
 
 async def _preload_embedding():
