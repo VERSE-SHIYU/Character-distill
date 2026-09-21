@@ -6,9 +6,11 @@
 原状口径不一致 —— 后两处各自紧跟一条 `_try_record_usage`，而 `distill` 那处
 **根本没有**，短文本路径的初次调用（真实烧掉的 token）一条都不记。
 
-收敛后不变量：**一次 `_chat_accounted` 调用恰记一条 usage**。初次与重修同走这一个
-原语（重修环不再自带记账，否则流式那支与 `_collect_stream` 的本级记账双计）；
-`raise` 那条路不记（非流式支），流式支由 `_collect_stream` 按字符估算补记后再上抛。
+收敛后不变量：**一次 `_chat_accounted` 调用恰记一条 usage，与它结果如何无关** ——
+token 花出去就花出去了。初次与重修同走这一个原语（重修环不再自带记账，否则流式那支
+与 `_collect_stream` 的本级记账双计）。**旧口径是「`raise` 那条路不记」**，本轮改掉：
+非流式的截断支（缺陷 91）与硬失败支（缺陷 92）都拿不到 `last_usage`，各自按字符估算
+补记后再交出去 / 上抛，与流式支 `_collect_stream` 的 except 支同口径。
 
 本文件锁的是**出口发了几次、带什么 action**，不锁 storage 落库链路（`record_usage`
 的线程化落库另有独立测试）。故直接替换 `core.distiller.try_record_usage` 做同步计数 ——
@@ -234,6 +236,33 @@ class TestNonStreamTruncationAccounting:
         assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
         assert payload == estimate_usage_from_chars(
             len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+
+
+class TestNonStreamHardFailureAccounting:
+    def test_hard_failure_records_one_estimated_entry(self, records):
+        """非流式**硬失败**（网络 / content_filter / 资源不足）同样烧了 token → 记一条估算账。
+
+        与截断支、以及流式支 `_collect_stream` 的 except 支**同一口径**：token 已经花出去了
+        （重试墙下正是空烧），只记成功会让统计系统性偏低。旧口径「`raise` 那条路不记」
+        让同一个事实在流式与非流式两侧记出两个数 —— 而这两支本来就是一次调用的两种收法。
+
+        变异：把 `_chat_accounted` 硬失败支那条 `_try_record_usage` 删掉（即本用例加入前的
+        实现）→ `records` 为空，本用例红。
+        """
+        llm = _FakeLLM([])
+        llm.chat = MagicMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError):
+            Distiller(llm, config_path=None)._chat_accounted(
+                SYSTEM, [{"role": "user", "content": USER}], "角色蒸馏", "distill",
+            )
+
+        assert [a for a, _ in records] == ["distill"], records
+        payload = records[0][1]
+        assert payload is not None, "硬失败时拿不到 last_usage，必须按字符估算补记"
+        assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
+        assert payload == estimate_usage_from_chars(len(SYSTEM) + len(USER)), (
+            "硬失败没有产出任何正文，completion 侧按 0 算；prompt 侧照实")
 
 
 # ── 收尾格式化站点：第三次收敛后的独立锁 ─────────────────────────────────────

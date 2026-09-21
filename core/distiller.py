@@ -613,10 +613,13 @@ class Distiller:
         记账不变量（缺陷 16）：三个站点（`distill` / `_distill_longcontext` /
         `distill_incremental` 的收尾格式化）原本各记各的——两处各补一条
         `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用漏记。
-        收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
-        截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记 ——
-        但它**拿不到 `last_usage`**：`chat()` 进本轮就先清空，而 `_extract_content`
-        的抛出点在 usage 回写之前，故只能按字符估算补记（缺陷 91），与流式支同口径。
+        收敛到这里：**一次调用恰记一条 usage，与它结果如何无关** —— token 花出去就
+        花出去了，成功、截断、硬失败三种收尾都是同一次调用。
+
+        截断与硬失败那两路**拿不到 `last_usage`**：`chat()` 进本轮就先清空，而
+        `_extract_content` 的抛出点在 usage 回写之前，故只能按字符估算补记 ——
+        截断支带上已生成的半截正文（缺陷 91），硬失败支 completion 侧为 0（缺陷 92），
+        与流式支 `_collect_stream` 的 except 支同口径。
         """
         _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
         if stream:
@@ -628,6 +631,10 @@ class Distiller:
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is None or info[0] != "length" or not info[1]:
+                # 硬失败照样烧了 token（重试墙下正是空烧）—— 与截断支、流式支同口径：
+                # 先记一条估算账再原样上抛。只记成功会让统计系统性偏低（缺陷 91 同形）。
+                self._try_record_usage(action, estimate_usage_from_chars(
+                    self._prompt_chars(system_prompt, messages)))
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
             reply, truncated = info[1], True

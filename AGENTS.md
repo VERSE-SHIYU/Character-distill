@@ -1238,6 +1238,14 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -n "_prompt_chars" core/distiller.py` —— 应恰三处：定义一处 + 两条截断路各一处。**口径的唯一性靠这条**，不靠数 `estimate_usage_from_chars` 的命中（那个字符串全仓 6 处，另有 map 失败片 `1472` / `1894` 与压缩 `1724`，故它对「两条截断路共用同一口径」没有判别力 —— 本条初稿写的「应恰三处」是**错的**，落笔时按想当然写、没现跑，当场订正）。
 - **顺带**（同一文件内的重复）：造截断异常的 `_Msg` / `_Choice` 三件套原先内联在 `test_truncated_initial_call_is_still_recorded` 体内，新用例要用第二遍 —— 提为模块级 `_truncated_exc(where)`，那条老用例改调它（净删 8 行，断言不变）。
 
+**92. 非流式硬失败一条账都不记 —— 同一个事实在流式/非流式两侧记出两个数** —— 状态：**已修**（2026-09-21，缺陷 91 的下一项）
+- **事实**：`_chat_accounted` 非流式支的硬失败分支（`info is None or info[0] != "length" or not info[1]`）打印一行后直接 `raise`，**记账出口一次都没走到**。而流式支 `_collect_stream` 的 `except` 支在同一个条件下先 `estimate_usage_from_chars(prompt_chars, len(text))` 补记、再 `raise`。于是**同一件事**（这次调用没产出正文，但 token 花了 —— 重试墙下正是空烧）在长输出（走流式）有账、在短输出（走非流式）无账。
+- **为什么它是缺陷而不是设计（找的是可判定的理由，不是「像不像」）**：旧口径只写在对它的描述里 —— `core/distiller.py` 的「``raise`` 那条路不记」与 `tests/test_distill_usage_accounting.py` 模块头的同一句。但**说不出判据**：凭什么叫截断该记、硬失败不该记？两者都是「token 已花、正文没拿到」，都拿不到 `last_usage`（`chat()` 进本轮清空，`_extract_content` 的抛出点在 usage 回写之前）。**理由不改口径就是遗留，不是决策**（§四「理由要升格成判据」）。同一取向本仓早有先例：map 失败分片与档案压缩那两处的注释就写着「失败重试墙下空烧，只记成功 = 统计系统性偏低」。
+- **修法**：硬失败支在 `raise` 之前补记 `estimate_usage_from_chars(self._prompt_chars(system_prompt, messages))` —— completion 侧按 **0** 算（没有产出任何正文，这正是它与截断支传 `len(reply)` 的唯一差别）。两处 docstring 改写成新不变量：**一次调用恰记一条 usage，与它结果如何无关**。
+- **锁**：`tests/test_distill_usage_accounting.py::TestNonStreamHardFailureAccounting::test_hard_failure_records_one_estimated_entry`（断言 `[a for a,_ in records] == ["distill"]`、载荷 `== estimate_usage_from_chars(两侧字符, 0)`、`estimated is True`）。**红源已钉**：用例先写先跑，红在 `assert [] == ['distill']`；改完 17 passed（连同 `test_usage_accounting_lock` / `test_distiller_truncation_selfheal`）。
+- **形状锁不受牵连**：`test_usage_accounting_lock._audit()` 的配平是 `records >= need`，且互斥分支合并计一组 —— `_collect_stream` 早已是同形（try 一支 + except 一支），本条只是让非流式支对齐它，没有改写配平口径。
+- **判据命令**：`git grep -n "estimate_usage_from_chars" core/distiller.py` —— 全文 **6** 处：`_collect_stream` 的 except 支 1 处、`_chat_accounted` 体内**恰 2** 处（硬失败支 + 截断支）、余 3 处是 map 失败分片与档案压缩（与本条无关）。**注意这条判据与缺陷 91 那条不是同一条**：91 要的是「两条截断路**共用同一个口径**」，判据是 `_prompt_chars` 恰三处；本条要的是「两条非流式出口**各自**按字符估算」，才数 `estimate_usage_from_chars`。
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
