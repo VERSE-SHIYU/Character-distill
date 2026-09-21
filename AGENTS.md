@@ -1272,6 +1272,12 @@ PROBE_IMAGE         false
   - **变异结论（如实：没有锁报它）**：把 `_distiller` 单例放回去并接上线（恢复 `get_distiller` 的单例分支 + 让 `reset_llm_and_dependents` 重建它），跑 7 个受影响用例集 —— **没有任何锁变红**。与 M3 同处置：**边界属实**。构造点唯一那把锁管的是 `TextManager` 的**装配处数**，不管 `Distiller` 的**实例化**；收敛后本已无第二个 `Distiller` 装配点，锁的对象消失，故不为此新建锁。**「没有锁报它」是实跑确认的，不是「做不出」** —— 此二者在台账里必须分开写。7 个用例集里的 6 处 `deps.get_distiller` monkeypatch 点也逐个核过：**收敛后仍可 patch**（`test_distill_task_api.py` ×4、`test_domain_exception_exit.py` ×1、`test_security_authz.py` ×1；子集实测 172 passed / 2 skipped）。
   - **缺陷 37 的连带变化**：见缺陷 37 条目的「连带变化（2026-09-18）」段 —— 那条判据命令命中行数 4 → 1，改前/改后逐行对照写在那里。
 
+**D. 两条 census 锁的扫描面要排除 `.claude/worktrees/`**（2026-09-21 立项，**未做**）
+- **事实**：`.claude/worktrees/<name>/` 是 git worktree 的挂载点（`.gitignore:228` 忽略、不入库），每个都带一份完整的仓库副本。`tests/test_collection_surface_lock.py` 的收集面与 `tests/test_exception_pickle_lock.py` 的异常类普查都取「仓库根以下」，于是兄弟 worktree 的 `tests/` 与 `core/` / `adapters/` / `storage/` 进了分母 —— 表现是这两条锁在本机**恒红**，且红的报文长度随活着的 worktree 个数增长（三个 worktree 时 24 条）。现证与反向对照见 §四「测试结论也不许依赖测试机的工作目录布局」。
+- **为什么它不是缺陷而是一件事**：锁的**命题**没错（本仓确实不该有收集面外的测试文件；带自定义状态的异常类确实该全登记），错的是扫描面的分母混进了**别的工作树**。故处置是给扫描面加排除，不是改命题 —— 改了命题就是把真判据也一起放宽。
+- **判据（将来动它时，两个方向都要）**：① 仓库根下有活的 `.claude/worktrees/<any>/` 时，两条锁仍绿；② **反向对照**：在仓库**内**真的新建一个 `tests/test_scratch_shape.py`（收集面外），`test_collection_surface_lock` 必须**红** —— 否则排除写过头，把「收集面」本身也排掉了，得到一条恒绿的假锁（同 §四「永远不红的断言是伪装成防线的空白」）。
+- **为什么现在不做（如实的边界）**：本机看到这两条红时**当场可判定**（路径前缀即判据，见 §四），且 CI 是干净 clone、`.claude/` 根本不在盘上，故它不挡任何交付；而改扫描面要同时照看 `_OUT_OF_SURFACE` 登记表与异常类普查的口径，属于「要配正反两向变异」的结构性改动，不该顺手搭在别的改动里做 —— 那正是本文件反复写的「豁免机制本身会成为新的静默通道」。
+
 ### 三之三、LLM 访问门 + core 反向依赖（C0–C5，2026-09-17 起）
 
 > 规格在库：`docs/specs/llm-access-gate.md`（v5）。分步 C0 → C1 → C1′ → C2a → C2b → C3 → C4 → C5，
@@ -1456,6 +1462,8 @@ PROBE_IMAGE         false
 - **进程级状态：谁改谁还原，且断言者必须自建它断言的前提 —— 两件事都别信「碰巧在」。** 判据：动手改之前问「**这条断言依赖的进程级前提是谁建的？**」—— 答「进来时就在 / 上一条用例留下的」就是依赖 ambient 状态，必须自己建；动过任何进程级状态，退出时必须还原成**入场原值**。两个分界：① **`None` / 空集不等于「还原」** —— 本案四处状态（守卫、投递器、载体登记表、`LLM_CALLER`）没有一处是用例私有的，生产 lifespan 一跑就注册了：置 `None` 是把**生产那一份**拆掉，后续用例轻则静默改走回退分支，重则凭空被门管住、报 `LLMCallerMissing` 而与自己的断言无关；② **ContextVar 与普通全局的还原方式不同** —— `var.set` 返回的 **token** 连「本来没设过」这个事实一并还原，快照式的「写回 `None`」做不到（`tests/test_llm_access_gate.py` 的 `_set_var` / `_snapshot` 两个载体共用 `_Restored` 那一对 `__enter__` / `__exit__`）。**「自建前提」侧的实例**：`tests/test_log_collector.py::test_install_log_collector_idempotent` 原按 `count_before + 1` 断言，偷带的前提是「入场时没人装过」—— 只有看哪条用例先跑才成立；命题本是**幂等**（装几次都恰好一个 handler），改成「装一次断言 == 1、再装一次仍 == 1」，前提就由用例自己建出来了。
 
 - **用例的通过条件不许依赖测试机的凭据 —— 判定标准是「干净克隆 + 无 `.env` + 无 `config.yaml` + 无任何 API key」时全量全绿。** 判据：新增/改动任何用例之后，用**空 key 环境**再跑一遍全量。本仓的构造法是 `DEEPSEEK_API_KEY=`（**空串**，不是 unset）—— `load_dotenv(override=False)` 按**存在性**判断，已存在的空串压过 `.env` 里的值。**这条踩过两次**：L4（活会话那道）与 `TestFPerUserGate` 的初版各自都只在**本机有 key** 时成立，表现是「本机绿、干净克隆红」，而红的样子指向用例自己的断言、与成因无关。与上一条同源：上一条管**同一进程内的相邻用例**，这条管**同一份代码换一台机器**；共同判据是同一句 —— **把「它凭什么会绿」逐条列出来，凡答不出「用例自己建的」就是外部条件。**
+
+- **测试结论也不许依赖测试机的工作目录布局 —— 仓库根下挂着兄弟 worktree 时，两条 census 锁必红，红的信息里的路径前缀就是判据。** 事实：`tests/test_collection_surface_lock.py::test_every_test_shaped_file_is_inside_the_collection_surface` 与 `tests/test_exception_pickle_lock.py::test_census_matches_registry` 的扫描面都是「仓库根以下」（前者 `os.walk`、后者 `REPO_ROOT.rglob`），而 `.claude/worktrees/<name>/` 下每个兄弟 worktree 都带着完整一份仓库副本 —— 于是它们的 `tests/` 与 `core/` / `adapters/` / `storage/` 被算成了本仓「收集面外的测试文件」与「未登记的异常类」。**证据（2026-09-21，`1036c65` + 记账收敛改动，现跑）**：全量 `2 failed, 1413 passed, 69 skipped, 1 xfailed`，两条即此二者；两条**单独重跑仍红**（`2 failed in 43.46s`），命中项**逐条都在 `.claude/worktrees/` 下**（`{avatar-owner, chat-identity, demo-readonly}` × 8 个已知异常类 = 24 条）。**反向对照**（照本节「定性一个环境缺陷前先做反向对照，把可疑变量逐个摘掉」）：同一 commit `git clone` 到仓库**外**（clone 里没有 `.claude/`，`git worktree list` 只有它自己），两条锁所在的**整个文件共 14 passed 全绿** —— 红源由此唯一地钉在「根下有没有兄弟 worktree」这一个变量上。**定性：环境问题，非编号缺陷**（判据命令：看红的信息里点名的路径是否**全部**带 `.claude/worktrees/` 前缀，是即属本条，**别去改代码**）。**根治另立一项（§三之二 D）**，本条只负责让看到这两条红的人不去修一个不存在的缺陷。与上一条同族且互补：那条管**凭据 / `data/` / 单例**这类 ambient 状态，这条管**工作目录的物理布局**；判据是同一句的镜像 —— **把「它凭什么会红」逐条列出来，凡答不出「本仓代码变了」就是外部条件。**
 
 ### 五、验证工具现状
 

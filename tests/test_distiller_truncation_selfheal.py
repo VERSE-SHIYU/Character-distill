@@ -5,7 +5,7 @@
 IncompleteResponseError，半截文本永远到不了 core/distiller.py 的
 _parse_json_with_retry——为截断建的「请精简输出」重修环，主触发路径不可达。
 本文件锁四件事：
-  1. 确定信号接回了环（`_chat_initial` 把半截正文交出去，Attempt 2 走截断专用修复）
+  1. 确定信号接回了环（`_chat_accounted` 把半截正文交出去，Attempt 2 走截断专用修复）
   2. 厂商不回 finish_reason 时，`_looks_truncated` 从文本形状猜的老路径没被取代
   3. 重修上限仍是 3 次尝试，到顶后抛的是「超长被截断」而非「格式异常」
   4. map 阶段（`async_chat` 那条链）不受牵连

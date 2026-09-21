@@ -351,7 +351,7 @@ class IncompleteResponseError(RuntimeError):
 
     ``content`` 挂已生成的部分正文。只作属性、不进 message：message 会经路由层
     截首行上屏（web/routers/distill.py），正文混进去等于把半截角色卡给用户看。
-    截断自愈环靠它把上游确定信号接回重修，见 core/distiller.py 的 _chat_initial。
+    截断自愈环靠它把上游确定信号接回重修，见 core/distiller.py 的 _chat_accounted。
     """
 
     def __init__(self, finish_reason: str, where: str, content: str = "") -> None:

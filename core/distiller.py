@@ -544,9 +544,9 @@ class Distiller:
 
     def _collect_stream(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str,
-        max_tokens: int | None = None,
+        usage_action: str, max_tokens: int | None = None,
     ) -> tuple[str, bool]:
-        """流式收全文 → ``(文本, 上游是否已确定截断)``。
+        """流式收全文 → ``(文本, 上游是否已确定截断)``，**并在本级记账**。
 
         长输出（红楼梦级的名单合并）非流式必然撞墙：生成轮有 45s 单次 / 60s 总墙钟上限，
         流式一旦开始吐字就不再有总时长夹逼（`chat_stream` 的 deadline 只包 ``create()``
@@ -555,10 +555,19 @@ class Distiller:
         截断时流里已有正文仍然交出去：``chat_stream`` 在吐最后一片**之前**校验
         finish_reason（校验不过那片不交付），异常里的 content 是空的，但累积到此刻的
         部分正文还在本函数手里 —— 半截正文是重修的证据，不是要丢掉的东西。这也是本
-        函数与 `_chat_initial` 非流式那支的唯一差别：那支的正文挂在异常上（``info[1]``）。
+        函数与 `_chat_accounted` 非流式那支的唯一差别：那支的正文挂在异常上（``info[1]``）。
+
+        **记账落在发起调用的这一级**（形态锁的判据）：谁消费响应谁把账记进唯一出口
+        （`_try_record_usage`），调用方不必记得补一笔 —— 靠调用方代记是约定不是机制，
+        新增一个调用方漏写就是一段没账的成本。成功时流已耗尽，`last_usage` 立刻读
+        （晚了会被下一次调用覆盖）。截断与其余失败都按字符估算补记：usage chunk 排在
+        finish_reason **之后**，校验不过就不交付，故截断时 `last_usage` 必为 ``None``；
+        而失败调用同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
         """
+        prompt_chars = len(system_prompt) + sum(
+            len(str(m.get("content", ""))) for m in messages
+        )
         parts: list[str] = []
-        truncated = False
         try:
             for piece in self._llm.chat_stream(
                 system_prompt, messages,
@@ -566,37 +575,43 @@ class Distiller:
             ):
                 parts.append(piece)
         except Exception as exc:
+            text = "".join(parts)
             info = incomplete_response_info(exc)
+            self._try_record_usage(
+                usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
+            )
             if info is None or info[0] != "length":
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            truncated = True
-        return "".join(parts), truncated
+            return text, True
+        self._try_record_usage(usage_action)
+        return "".join(parts), False
 
-    def _chat_initial(
+    def _chat_accounted(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
         stream: bool = False, max_tokens: int | None = None,
     ) -> tuple[str, bool]:
-        """初次生成调用 → ``(回复文本, 上游是否已确定截断)``。
+        """调一次 LLM 并把这一笔记进唯一出口 → ``(回复文本, 上游是否已确定截断)``。
+
+        **初次与重修共用**（`_parse_json_with_retry` 的重修环也走这里）：两处只是提示词
+        不同，记账口径不该因轮次再分家。
 
         ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
         `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
         其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
 
-        ``stream=True`` 走 `_collect_stream`（长输出用），记账出口与截断口径完全相同。
+        ``stream=True`` 走 `_collect_stream`（长输出用），截断口径完全相同，记账落在
+        那个原语里（同样是发起调用的那一级）。
 
-        **初次调用的唯一记账出口**（缺陷 16）：三个站点（`distill` /
-        `_distill_longcontext` / `distill_incremental` 的收尾格式化）原本各记各的——
-        两处各补一条 `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用
-        漏记。收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
+        记账不变量（缺陷 16）：三个站点（`distill` / `_distill_longcontext` /
+        `distill_incremental` 的收尾格式化）原本各记各的——两处各补一条
+        `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用漏记。
+        收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
         截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记。
-        重修调用是另一条出口，记在 `_parse_json_with_retry`。
         """
         _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
         if stream:
-            reply, truncated = self._collect_stream(system_prompt, messages, label, _mt)
-            self._try_record_usage(action)
-            return reply, truncated
+            return self._collect_stream(system_prompt, messages, label, action, _mt)
         truncated = False
         try:
             reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
@@ -628,7 +643,7 @@ class Distiller:
                 ``isinstance(data, dict)`` 无法区分"合法 JSON 但结构错误"
                 （例如 LLM 跑题吐出 ``{"status": "..."}``）和真正的角色卡，
                 这里在 json.loads 之后补一道形状检查，三次尝试都生效。
-            upstream_truncated: 上游是否已确定截断（`_chat_initial` 拿到 length
+            upstream_truncated: 上游是否已确定截断（`_chat_accounted` 拿到 length
                 终态时为 True）。确定信号预置 ``truncated``，无需再从文本形状猜；
                 厂商不回 finish_reason 时保持 False，由 `_looks_truncated` 兜底。
             list_item_keys: 目标形态切到**数组**——非空、每项都是含这些字段的 dict。
@@ -687,11 +702,15 @@ class Distiller:
             schema_hint = "，每项必须包含字段：" + "、".join(list_item_keys)
 
         def _repair(system: str, messages: list[dict[str, Any]]) -> tuple[str, bool]:
-            """重修调用 → ``(文本, 上游是否已确定截断)``。通道与初次调用一致。"""
-            _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
-            if stream:
-                return self._collect_stream(system, messages, action_label, _mt)
-            return self._llm.chat(system, messages, max_tokens=_mt), False
+            """重修调用 → ``(文本, 上游是否已确定截断)``。通道与记账都与初次调用同路。
+
+            直接委托 `_chat_accounted`：重修不再自带一份记账（写在本函数里就等于
+            「调用方要记得补账」，流式那支还会与 `_collect_stream` 的本级记账**双计**）。
+            """
+            return self._chat_accounted(
+                system, messages, action_label, action_label,
+                stream=stream, max_tokens=max_tokens,
+            )
 
         attempts = 0
         last_error = None
@@ -758,7 +777,6 @@ class Distiller:
                 try:
                     data = json.loads(self._extract_json(fix_reply.strip()))
                     if _accept(data):
-                        self._try_record_usage(action_label)
                         T.set_current_attr("repair_stage", 2)
                         return data
                     last_error = _detail(data, "fix_reply ")
@@ -795,7 +813,6 @@ class Distiller:
                 try:
                     data = json.loads(self._extract_json(retry_reply.strip()))
                     if _accept(data):
-                        self._try_record_usage(action_label)
                         T.set_current_attr("repair_stage", 3)
                         return data
                     last_error = _detail(data, "retry ")
@@ -985,12 +1002,12 @@ class Distiller:
             )
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": body}]
-        # 走 _chat_initial：它就是「初次调用的唯一记账出口」（缺陷 16），且能把上游
-        # 确定的 length 截断信号带进重修环，而不是让半截 JSON 直接抛。
+        # 走 _chat_accounted：它把账记进唯一出口（缺陷 16），且能把上游确定的 length
+        # 截断信号带进重修环，而不是让半截 JSON 直接抛。
         # stream=True：红楼梦级的名单合并不是非流式那 45s/60s 墙钟能装下的输出。
         # max_tokens 显式抬到 IDENTIFY_MERGE_MAX_TOKENS：CARD_MAX_TOKENS 装不下全书名单，
         # 初次调用与重修都用它（重修上限不够时重修出来还是半截）。
-        reply, upstream_truncated = self._chat_initial(
+        reply, upstream_truncated = self._chat_accounted(
             IDENTIFY_MERGE_PROMPT, messages, "角色识别合并", "distill_identify",
             stream=True, max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
         )
@@ -1212,7 +1229,7 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "角色蒸馏", "distill")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "角色蒸馏", "distill")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1299,7 +1316,7 @@ class Distiller:
         )
 
         user_messages = [{"role": "user", "content": user_content}]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1721,7 +1738,7 @@ class Distiller:
             f"- personality_traits 每条必须附带具体场景证据\n\n"
             f"{profile_draft}"
         }]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "最终格式化", "distill_format")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "最终格式化", "distill_format")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
