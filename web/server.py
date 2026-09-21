@@ -43,8 +43,6 @@ from core.request_context import Caller, LLM_CALLER
 
 from security import SecurityHeadersMiddleware
 
-import jwt as _jwt_lib
-
 from routers.text import router as text_router
 from routers.distill import legacy_router as distill_legacy
 from routers.distill import router as distill_router
@@ -61,8 +59,10 @@ from routers.inter_node import router as inter_node_router
 from routers.memory import router as memory_router
 from routers.auth import get_current_user, router as auth_router
 from routers.auth import (
-    JWT_ALGORITHM,
+    IDENTITY_REJECTIONS,
+    Verdict,
     get_jwt_secret,
+    resolve_identity,
     validate_fernet_key,
     validate_jwt_secret,
 )
@@ -317,25 +317,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not (path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/")):
             auth_header = request.headers.get("Authorization", "")
             scheme, _, token = auth_header.partition(" ")
-            if scheme.lower() != "bearer" or not token:
-                return JSONResponse({"detail": "请先登录"}, status_code=401)
+            verdict, user = await resolve_identity(
+                token if scheme.lower() == "bearer" else None,
+                get_jwt_secret(),
+                get_storage(),
+            )
+            if verdict is not Verdict.OK:
+                status, detail = IDENTITY_REJECTIONS[verdict]
+                return JSONResponse({"detail": detail}, status_code=status)
 
-            try:
-                payload = _jwt_lib.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-            except _jwt_lib.ExpiredSignatureError:
-                return JSONResponse({"detail": "Token 已过期，请重新登录"}, status_code=401)
-            except _jwt_lib.InvalidTokenError:
-                return JSONResponse({"detail": "Token 无效"}, status_code=401)
-
-            user_id = payload.get("sub")
-            if not user_id:
-                return JSONResponse({"detail": "Token 无效"}, status_code=401)
-
-            user = await get_storage().get_user_by_id(user_id)
-            if user is None:
-                return JSONResponse({"detail": "用户不存在"}, status_code=401)
-            if user.get("is_disabled"):
-                return JSONResponse({"detail": "账号已被禁用"}, status_code=403)
+            user_id = user["id"]
             _maybe_update_last_active(user_id)
 
         request.state.user = user  # default {} 防止非 API 路径上 AttributeError

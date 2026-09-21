@@ -1,0 +1,249 @@
+# -*- coding: utf-8 -*-
+"""身份解析收敛的锁：`token → 身份判定` 只有一处实现，三个出口只做形态转换。
+
+**根因不是「重复」而是「漂移」。** 同一段判定写了三份，两份文案已经各走各的：
+过期 —— 中间件「Token 已过期，请重新登录」vs `get_current_user`「Token 已过期」；
+sub 缺失 —— 中间件「Token 无效」vs `get_current_user`「Token 缺少用户标识」。
+所以中心判据是**跨出口一致性**：同一事态在三个出口上必须映射到同一结果。收敛之前，
+「过期」与「sub 缺失」两行红 —— 那两行红本身就是漂移存在的证据，不是用例写错。
+
+**期望表写在本文件里，不 import 生产那张表。** import 过来断言等于让被测对象判自己：
+表改错时测试跟着一起改，什么也锁不住。
+
+**三个出口怎么观测**：中间件只能走真 app（`server.app` + 真 `AuthMiddleware`）——
+它挂在 ASGI 栈上，没有别的入口；`get_current_user` / `get_optional_user` 是普通协程，
+带显式参数直调，不经路由。这样三个出口的观测各自都在真路径上，且互不遮挡
+（走路由调 `get_current_user` 的话，中间件会先返回 401，永远看不到第二个出口）。
+
+**边界**：锁的是「七事态 × 三出口」的**可观测映射**，外加一条静态锁（`jwt.decode`
+调用点全仓唯一）。不锁枚举名、不锁表的数据结构、不锁门禁怎么用这些出口。
+
+Run: pytest tests/test_identity_resolution.py -v
+"""
+from __future__ import annotations
+
+import ast
+import asyncio
+import pathlib
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import jwt
+import pytest
+from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.testclient import TestClient
+from pwdlib import PasswordHash
+
+import deps
+import server
+from routers.auth import (
+    JWT_ALGORITHM,
+    _create_access_token,
+    get_current_user,
+    get_jwt_secret,
+    get_optional_user,
+)
+from storage.sqlite_store import SQLiteStore
+
+_REPO = pathlib.Path(__file__).resolve().parent.parent
+
+#: 非公开的受保护路径：中间件在这里解析凭据，端点自己也 `Depends(get_current_user)`。
+PROTECTED = "/api/history/list"
+
+#: 事态 → 期望的 (状态码, 文案)；`None` = 通过。
+#:
+#: 文案是**统一后的口径**，正是收敛要达成的结果：过期取中间件那一份（它更完整），
+#: sub 缺失取「Token 无效」（与「签名不对」同类，不另立一句）。状态码一律不变。
+EXPECTED: dict[str, tuple[int, str] | None] = {
+    "ok": None,
+    "missing": (401, "请先登录"),
+    "expired": (401, "Token 已过期，请重新登录"),
+    "invalid": (401, "Token 无效"),
+    "no_sub": (401, "Token 无效"),
+    "no_user": (401, "用户不存在"),
+    "disabled": (403, "账号已被禁用"),
+}
+
+#: 七事态 + 两个「非 Bearer 凭据」的变体（它们与 missing 同归一处，见 `_CASE_BUILDERS`）。
+STATES = [
+    "ok", "missing", "missing_non_bearer", "expired",
+    "invalid", "invalid_wrong_secret", "no_sub", "no_user", "disabled",
+]
+
+#: 每个事态应收敛到哪一行期望。变体与它归一的那个事态共用一行 —— 这正是「非 Bearer
+#: 与无凭据是同一事态」这句话的判据（HTTPBearer 在 scheme 不是 Bearer 时返回 None）。
+STATE_ALIAS = {"missing_non_bearer": "missing", "invalid_wrong_secret": "invalid"}
+
+
+def _run(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+#: 账号口令散列只算一次：argon2 每次约 0.35s，逐用例算白烧时间。临时库里的丢弃账号。
+_PW_HASH = PasswordHash.recommended().hash("Pass1234")
+
+
+def _mk_user(store: SQLiteStore, username: str) -> dict:
+    return _run(store.create_user(f"usr_{uuid.uuid4().hex[:16]}", username, _PW_HASH))
+
+
+def _encode(sub: str | None, *, expired: bool = False, secret: str | None = None) -> str:
+    """按需造 token：`sub=None` 造出「签名有效但没有 sub」的那种。"""
+    delta = timedelta(minutes=-1) if expired else timedelta(minutes=30)
+    payload: dict = {"exp": datetime.now(timezone.utc) + delta}
+    if sub is not None:
+        payload["sub"] = sub
+    return jwt.encode(payload, secret or get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _creds(token: str) -> HTTPAuthorizationCredentials:
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+def _case_builders(store: SQLiteStore, user: dict) -> dict[str, tuple[dict, HTTPAuthorizationCredentials | None]]:
+    """事态 → (中间件要发的头, 直调依赖要传的凭据)。两者必须指同一件事。"""
+    good = _create_access_token(user["id"], user["username"], get_jwt_secret())
+    stale = _encode(user["id"], expired=True)
+    alien = _encode(user["id"], secret="x" * 40)
+    return {
+        "ok": (_bearer(good), _creds(good)),
+        "missing": ({}, None),
+        # scheme 不是 Bearer：中间件把它与「没带凭据」归成一处，HTTPBearer 也返回 None。
+        "missing_non_bearer": ({"Authorization": "Basic YWJj"}, None),
+        "expired": (_bearer(stale), _creds(stale)),
+        "invalid": (_bearer("not-a-jwt"), _creds("not-a-jwt")),
+        # 签名有效但密钥不对 —— 与随机串同归 invalid，不是另一类事态。
+        "invalid_wrong_secret": (_bearer(alien), _creds(alien)),
+        "no_sub": (_bearer(_encode(None)), _creds(_encode(None))),
+        "no_user": (_bearer(_encode("usr_no_such_user")), _creds(_encode("usr_no_such_user"))),
+        "disabled": (_bearer(good), _creds(good)),
+    }
+
+
+# ── 夹具 ──────────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def store(tmp_path):
+    return SQLiteStore(str(tmp_path / "identity.db"))
+
+
+@pytest.fixture
+def user(store):
+    return _mk_user(store, "Ident_" + uuid.uuid4().hex[:8])
+
+
+@pytest.fixture
+def client(store, monkeypatch):
+    """真 app：中间件只存在于 ASGI 栈上，另搭一个 app 测不到生产那一份。"""
+    monkeypatch.setattr(deps, "_storage", store)
+    return TestClient(server.app, raise_server_exceptions=False)
+
+
+# ── 1. 七事态 × 三出口 ───────────────────────────────────────────────────────
+
+
+def _call_current_user(credentials, store):
+    """直调 `get_current_user`：返回 (异常 or None, user or None)。"""
+    try:
+        return None, _run(get_current_user(
+            credentials=credentials, storage=store, secret=get_jwt_secret(),
+        ))
+    except HTTPException as exc:
+        return exc, None
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_every_state_maps_identically_across_the_three_exits(state, store, user, client):
+    """同一事态在三个出口上结果一致，且等于统一后的口径。
+
+    中间件与 `get_current_user` 的 (状态码, 文案) 必须逐字相等 —— 这一条就是漂移的
+    反面：收敛前「过期」「sub 缺失」两行红。`get_optional_user` 只关心返回身份。
+    """
+    headers, credentials = _case_builders(store, user)[state]
+    if state == "disabled":
+        _run(store.set_user_disabled(user["id"], True))
+
+    expected = EXPECTED[STATE_ALIAS.get(state, state)]
+
+    r = client.get(PROTECTED, headers=headers)
+    exc, got = _call_current_user(credentials, store)
+    optional = _run(get_optional_user(
+        credentials=credentials, storage=store, secret=get_jwt_secret(),
+    ))
+    where = f"[{state}]"
+
+    if expected is None:
+        assert r.status_code == 200, f"{where} 中间件该放行，实得 {r.status_code} {r.text[:200]}"
+        assert exc is None and got and got["id"] == user["id"], f"{where} get_current_user 该返回身份"
+        assert optional.get("id") == user["id"], f"{where} get_optional_user 该返回身份"
+        return
+
+    assert (r.status_code, r.json().get("detail")) == expected, f"{where} 中间件出口"
+    assert (exc.status_code, exc.detail) == expected, f"{where} get_current_user 出口"
+    assert (r.status_code, r.json().get("detail")) == (exc.status_code, exc.detail), \
+        f"{where} 两个出口漂移了：中间件 {(r.status_code, r.json().get('detail'))} vs 依赖 {(exc.status_code, exc.detail)}"
+    assert optional == {}, f"{where} 非 OK 时 get_optional_user 必须返回空身份，实得 {optional}"
+
+
+# ── 2. 收敛形态：`jwt.decode` 全仓只有一个调用点 ─────────────────────────────
+
+
+def _py_files(*roots: pathlib.Path) -> list[pathlib.Path]:
+    out: list[pathlib.Path] = []
+    for root in roots:
+        out += [p for p in root.rglob("*.py")
+                if ".venv" not in p.parts and "node_modules" not in p.parts]
+    return out
+
+
+def _decode_sites(sources: dict[str, str]) -> list[str]:
+    """AST 现算：`jwt.decode(...)` / `_jwt_lib.decode(...)` 的调用点，返回 `文件:行`。
+
+    判据落在**调用**上而不是 `dict.get`/`.decode("utf-8")` 这类同名方法：只认
+    模块名是 `jwt` / `_jwt_lib` 的那种，避免把字节解码算进来。
+    """
+    hits: list[str] = []
+    for name, src in sources.items():
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "decode" \
+                    and isinstance(func.value, ast.Name) and func.value.id in {"jwt", "_jwt_lib"}:
+                hits.append(f"{name}:{node.lineno}")
+    return sorted(hits)
+
+
+def test_jwt_decode_has_exactly_one_call_site():
+    """验签只写一次 —— 三份各写一份正是漂移的来源。
+
+    只钉「唯一」与「在哪个模块」，不钉行号：行号是噪声。新增调用点前先回答
+    「为什么不能走 `resolve_identity`」。
+    """
+    synthetic = {"<合成>": (
+        "import jwt\n"
+        "jwt.decode(t, s, algorithms=['HS256'])\n"   # 2: 命中
+        "_jwt_lib.decode(t, s)\n"                     # 3: 命中
+        "raw.decode('utf-8')\n"                       # 4: 同名方法，不该命中
+    )}
+    assert _decode_sites(synthetic) == ["<合成>:2", "<合成>:3"], \
+        "扫描器漏掉了合成的调用点，或把字节解码也算进来了 —— 判据面失效"
+
+    sources = {
+        p.relative_to(_REPO).as_posix(): p.read_text(encoding="utf-8")
+        for p in _py_files(_REPO / "web")
+    }
+    assert sources, "扫描面为空"
+    hits = _decode_sites(sources)
+    assert len(hits) == 1, f"验签调用点应只有一处，实得 {hits}"
+    assert hits[0].startswith("web/routers/auth.py:"), \
+        f"验签应收敛在 routers/auth.py 里，实得 {hits[0]}"
