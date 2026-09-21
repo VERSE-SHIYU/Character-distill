@@ -263,6 +263,22 @@ class ResetRequest(BaseModel):
 
 # ---- Shared helpers ----
 
+def _msg_fields(rec: dict | None) -> tuple[Any, str]:
+    """`save_message` 的返回值 → `(msg_id, created_at)`；`None` → `(None, "")`。
+
+    存在的理由是「保存**可能**失败」这件事得在代码里有个地方表达。保存点套在
+    `nonfatal` 里，异常被吞掉之后 `*_rec` 仍是上面给的初值 `None` —— 两个入口的
+    四个取值点（各自 id + created_at）若各自写 `(rec or {}).get(...)`，就把同一个
+    判据抄了四遍，漏一处又是一次 `UnboundLocalError`（缺陷 98）。
+
+    `created_at` 失败时给空串而不是 `None`：对外它是「这一条的时间戳」，没有这条
+    消息时给空串，与 `hidden` 时原本给 `""` 同口径。
+    """
+    if rec is None:
+        return None, ""
+    return rec["id"], rec.get("created_at", "")
+
+
 async def _do_chat(
     session_id: str,
     message: str,
@@ -337,20 +353,26 @@ async def _do_chat(
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
     char_msg_id = None
+    # `*_rec` 与 `*_created_at` 必须有初值：保存失败时 nonfatal 吞掉异常，块内赋值
+    # 整条不执行，下面按「没有这条记录」取值（缺陷 98）。
+    user_rec = None
+    char_rec = None
+    user_created_at = ""
+    char_created_at = ""
     async with nonfatal("chat", "dual-write messages"):
         if not hidden:
             user_rec = await storage.save_message(
                 session_id, "user", msg, "",
                 reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
             )
-            user_msg_id = user_rec["id"]
+            user_msg_id, user_created_at = _msg_fields(user_rec)
         # 检索来源快照落库（evidence_to_json 是唯一编码出口）。读的是本轮 chat 刚写下的
         # engine.last_traces —— 必须在 post_stream_process 之前取，那是另一轮。
         char_rec = await storage.save_message(
             session_id, "char", resp, rag_ctx[:500], retracted=retracted,
             evidence=evidence_to_json(getattr(engine, "last_traces", [])),
         )
-        char_msg_id = char_rec["id"]
+        char_msg_id, char_created_at = _msg_fields(char_rec)
         ids_to_add = [user_msg_id, char_msg_id]
 
         # Save summary if newly generated
@@ -374,8 +396,8 @@ async def _do_chat(
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
-        "user_created_at": user_rec.get("created_at", "") if not hidden else "",
-        "char_created_at": char_rec.get("created_at", ""),
+        "user_created_at": user_created_at,
+        "char_created_at": char_created_at,
         "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
     }
     if engine and engine.last_summary:
@@ -443,13 +465,20 @@ async def _do_chat_stream(
         rag_context = ""
         user_msg_id: int | None = None
         char_msg_id: int | None = None
+        # 与 `_do_chat` 同因（缺陷 98）：保存失败时 nonfatal 吞掉异常，块内赋值整条
+        # 不执行。少了这些初值，末尾 done 帧的取值就是 UnboundLocalError —— 正文已
+        # 整段流给用户，却在收尾时把 done 帧换成 error 帧。
+        user_rec = None
+        char_rec = None
+        user_created_at = ""
+        char_created_at = ""
         async with nonfatal("chat", "save user message"):
             if not hidden:
                 user_rec = await storage.save_message(
                     session_id, "user", msg, "",
                     reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
                 )
-                user_msg_id = user_rec["id"]
+                user_msg_id, user_created_at = _msg_fields(user_rec)
 
         try:
             engine = session["engine"]
@@ -496,7 +525,7 @@ async def _do_chat_stream(
                     session_id, "char", full_reply, rag_context[:500], retracted=retracted,
                     evidence=evidence_to_json(getattr(engine, "last_traces", [])),
                 )
-                char_msg_id = char_rec["id"]
+                char_msg_id, char_created_at = _msg_fields(char_rec)
 
             msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
             if msg_ids:
@@ -520,8 +549,8 @@ async def _do_chat_stream(
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
                 "user_msg_id": user_msg_id,
                 "char_msg_id": char_msg_id,
-                "user_created_at": user_rec.get("created_at", "") if not hidden else "",
-                "char_created_at": char_rec.get("created_at", ""),
+                "user_created_at": user_created_at,
+                "char_created_at": char_created_at,
                 "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
             }
             if engine and engine.last_summary:
