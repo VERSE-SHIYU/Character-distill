@@ -1295,7 +1295,8 @@ PROBE_IMAGE         false
 - **为什么它不是缺陷而是一件事**：锁的**命题**没错（本仓确实不该有收集面外的测试文件；带自定义状态的异常类确实该全登记），错的是扫描面的分母混进了**别的工作树**。故处置是换扫描面，不是改命题 —— 改了命题就是把真判据也一起放宽。
 - **处置（用户裁定，2026-09-21）：扫描面改成问 `git`（`git ls-files --cached --others --exclude-standard '*.py'`）；明令不得加 `.claude/` 等路径排除规则。** 理由：路径黑名单是又一条静默通道 —— 名单漏一格就少扫一片；而「第三方 vendored 代码 / 构建缓存 / 兄弟 worktree / 本地一次性脚本」本来就不是「豁免」，是**不在仓库里**，该由 `.gitignore` 说。排除规则因此只剩一份（`.gitignore`），两条锁里那两份逐字重复的 `_PRUNED_DIRS` 一并删掉。
 - **落点**：新增 `tests/repo_files.py::repo_py(root)`（唯一取法，docstring 写清为什么不是 `os.walk`/`rglob`、以及 `--others` 为什么不能省），两条 census 锁改为调它。取向与 `tests/test_llm_access_gate.py::_production_py` 一致（那边 2026-09-17 已踩过「只认 `--cached` 时新写的文件对锁隐形」：L12 读成 3/2、真值 1/1）。
-- **实测差集（现跑，本次改动前）**：旧面 **1084** 条 vs 新面 **238** 条。旧面独有 846 条，其中非 worktree 的还有 140 条本地产物（`e2e/scratch/**`、`data/eval_scratch/**`、`scripts/{import,export}_shiyu.py` —— 后两个在 `.gitignore:282-283` 被**点名**忽略）。新面 ⊂ 旧面，**新面独有 0 条**。
+- **实测差集（改动前现跑，2026-09-21）**：旧面 **1084** 条 vs 新面 **238** 条。旧面独有 846 条，其中非 worktree 的还有 140 条本地产物（`e2e/scratch/**`、`data/eval_scratch/**`、`scripts/{import,export}_shiyu.py` —— 后两个在 `.gitignore:282-283` 被**点名**忽略）。新面 ⊂ 旧面，**新面独有 0 条**。
+- **这三个数**是那一刻**快照**，别拿去当判据或对表 —— 本条目落进提交时就已变成 240：本改动自己新增了两个 `tests/repo_files*.py`，而新面是「问 `git`」，**未 `git add` 的新文件本来就在面里**（这正是 `--others` 那半在起作用，是特性不是漂移）。**可复跑的判据只有两条**：新面 `git ls-files --cached --others --exclude-standard '*.py' | wc -l`（读数随文件增减走）；旧面得把 `repo_py` 变异回 `os.walk` 再跑锁（见下一条验收②）—— 旧面那个 1084 依赖一份**已删除**的 `_PRUNED_DIRS`，没有等价的单行命令，**所以别引用它当判据**。
 - **验收（两个方向，均已现跑）**：① 仓库根下三个活 worktree 时，两条 census 锁 + 新锁 **16 passed**；② **反向对照**：把 `repo_py` 变异回 `os.walk` → **3 failed** —— 两条 census 锁各自点名 `.claude/worktrees/<各 worktree>/tests/test_*.py`，新加的合成反例锁（`tests/test_repo_files.py`）点名 `junk/hidden.py`；恢复后 16 passed。第二条是关键：合成反例**只在临时小仓库里造一个被 `.gitignore` 覆盖的 `.py`**，故它在干净 clone（CI）上同样可判定 —— 只靠「本机有兄弟 worktree」才红的锁，CI 上恒绿，等于没有。
 
 ### 三之三、LLM 访问门 + core 反向依赖（C0–C5，2026-09-17 起）
