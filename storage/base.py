@@ -166,6 +166,216 @@ class StorageBase(ABC):
     async def update_card(self, card_id: str, card_json: dict) -> dict:
         """Update a card's JSON and return the updated record."""
 
+    # ── Card domain (market / fork / versions) ────────────
+    #
+    # 卡片域契约的其余部分（market / 版本 / fork / 举报 / 精选 / 跨境界）。
+    # 判据是「两个实现都有 ∧ routers 或 core 调用」—— 由本文件声明后，
+    # tests/test_storage_contract_shape.py 的形参表锁自动覆盖它们（判据面现算自
+    # `__abstractmethods__`），不再需要另建一份方法名单。
+
+    # ── Card avatars ──────────────────────────────────────
+
+    @abstractmethod
+    async def save_card_avatar(self, card_id: str, user_id: str, avatar_data: str) -> None:
+        """Save a card's avatar. `user_id` is the caller's identity, not a filter hint."""
+
+    @abstractmethod
+    async def get_card_avatar_owned(self, card_id: str, user_id: str) -> str | None:
+        """Get a card's avatar only if the card belongs to user_id."""
+
+    @abstractmethod
+    async def get_card_avatar_unscoped(self, card_id: str) -> str | None:
+        """Get a card's avatar with no ownership filter.
+
+        无身份读：仅 `fork_card` 深拷贝公开卡时用（原卡已验 public）。
+        """
+
+    # ── Card detail / listings ────────────────────────────
+
+    @abstractmethod
+    async def get_card_detail(self, card_id: str, user_id: str) -> dict | None:
+        """Card detail with author info; works for market and non-market cards."""
+
+    @abstractmethod
+    async def get_market_card_detail(self, card_id: str, user_id: str) -> dict | None:
+        """Market card detail (author info + publish metadata)."""
+
+    @abstractmethod
+    async def get_card_author_id(self, card_id: str) -> str | None:
+        """Return the owner of a card, or None when it does not exist."""
+
+    @abstractmethod
+    async def get_author_cards(self, user_id: str, include_private: bool = False) -> list[dict]:
+        """List a user's cards. Private cards are included only when asked for."""
+
+    @abstractmethod
+    async def list_standalone_cards(self, user_id: str) -> list[dict]:
+        """List a user's cards that are attached to no text."""
+
+    @abstractmethod
+    async def list_deleted_cards(self, user_id: str) -> list[dict]:
+        """List a user's soft-deleted cards (recycle bin)."""
+
+    @abstractmethod
+    async def get_liked_card_ids(self, user_id: str) -> list[str]:
+        """Return the card IDs a user has liked."""
+
+    @abstractmethod
+    async def get_public_cards_by_text_id(self, text_id: str) -> list[dict]:
+        """List the public cards under a text ID (no ownership filter — public face)."""
+
+    # ── Market listings / search ──────────────────────────
+
+    @abstractmethod
+    async def list_public_cards(self, page: int = 1, page_size: int = 20, sort: str = "new", tag: str = "") -> list[dict]:
+        """List public cards for the market (public face, no ownership filter)."""
+
+    @abstractmethod
+    async def list_public_cards_total(self, tag: str = "") -> int:
+        """Count of public cards matching `list_public_cards`'s filters."""
+
+    @abstractmethod
+    async def search_public_cards(self, keyword: str, page: int = 1, page_size: int = 20) -> list[dict]:
+        """Search public cards by keyword (public face)."""
+
+    @abstractmethod
+    async def search_public_cards_total(self, keyword: str) -> int:
+        """Count of public cards matching `search_public_cards`."""
+
+    @abstractmethod
+    async def get_card_forks(self, card_id: str) -> list[dict]:
+        """List users' public forks of a card.
+
+        注意这不是「发布副本」关系：用户 fork 由 `forked_from` 承载，与作者自己的
+        发布副本（`published_from`）是两列两关系。
+        """
+
+    # ── Publish / versions ────────────────────────────────
+
+    @abstractmethod
+    async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
+        """Publish a card to market by creating the author's own published copy.
+
+        The copy is written as a separate public card whose `published_from` points at
+        `card_id`; re-publishing reuses the existing copy in place. Returns the copy's
+        card id, or None on failure. 他人对同一张卡的公开 fork 不是发布副本，不会被复用。
+        """
+
+    @abstractmethod
+    async def update_published_card(self, card_id: str, user_id: str, card_json: str, description: str, tags: str, message: str, old_json: str) -> dict | None:
+        """Update an already-published card, write the next version, return that version."""
+
+    @abstractmethod
+    async def get_card_versions_owned(self, card_id: str, user_id: str) -> list[dict]:
+        """List a card's published versions only if the card belongs to user_id."""
+
+    @abstractmethod
+    async def update_card_version(self, card_id: str, version_id: str, publish_message: str) -> bool:
+        """Update one version's message. Returns False when the version does not exist."""
+
+    @abstractmethod
+    async def delete_card_version(self, card_id: str, version_id: str) -> bool:
+        """Delete one version. Returns False when it does not exist."""
+
+    # ── Fork / visibility / lifecycle ─────────────────────
+
+    @abstractmethod
+    async def fork_card(self, card_id: str, new_id: str, new_user_id: str, new_text_id: str = "") -> dict | None:
+        """Create a user's independent copy of a public card.
+
+        Writes `forked_from` (the fork relation), never `published_from`. Returns the
+        new card, or the existing fork when this user already forked that card+text.
+        """
+
+    @abstractmethod
+    async def update_card_visibility(self, card_id: str, visibility: str) -> bool:
+        """Set a card to 'public' or 'private'. Returns False on an invalid value.
+
+        身份检查在路由层（调用点先取 `get_card_owned`）—— 本原语不做属主过滤。
+        """
+
+    @abstractmethod
+    async def delete_card(self, card_id: str) -> bool:
+        """Soft-delete a card (move to trash). Returns False when it does not exist."""
+
+    @abstractmethod
+    async def restore_card(self, card_id: str) -> bool:
+        """Restore a soft-deleted card."""
+
+    @abstractmethod
+    async def purge_card(self, card_id: str) -> bool:
+        """Permanently delete a card (irreversible).
+
+        删除会连带清掉指向它的发布副本的 `published_from`（由 cards 上的
+        BEFORE DELETE 触发器完成），副本本身存活。
+        """
+
+    @abstractmethod
+    async def takedown_card(self, card_id: str) -> bool:
+        """Admin takedown: hide a public card from the market."""
+
+    @abstractmethod
+    async def takedown_card_and_resolve_reports(self, card_id: str, resolver_id: str) -> bool:
+        """Admin takedown that also resolves the card's pending reports."""
+
+    # ── Card reports ──────────────────────────────────────
+
+    @abstractmethod
+    async def add_card_report(self, card_id: str, reporter_id: str, reason: str) -> bool:
+        """Record a report against a card. Returns False when it is a duplicate."""
+
+    @abstractmethod
+    async def get_card_reports_grouped(self, status: str = "pending") -> list[dict]:
+        """List card reports grouped by card (admin face, no ownership filter)."""
+
+    @abstractmethod
+    async def resolve_all_card_reports(self, card_id: str, resolver_id: str) -> bool:
+        """Resolve every pending report on a card (admin face)."""
+
+    # ── Featured cards ────────────────────────────────────
+
+    @abstractmethod
+    async def add_featured_card(self, card_id: str) -> str | None:
+        """Feature a card on the market home. Returns the new row id, or None."""
+
+    @abstractmethod
+    async def remove_featured_card(self, id: str) -> bool:
+        """Unfeature by featured-row id."""
+
+    @abstractmethod
+    async def get_featured_cards(self) -> list[dict]:
+        """List featured cards in display order (public face)."""
+
+    @abstractmethod
+    async def reorder_featured_cards(self, ids: list[str]) -> None:
+        """Persist a new display order for the given featured-row ids."""
+
+    # ── Admin / cross-border sync / groups ────────────────
+
+    @abstractmethod
+    async def list_all_cards_admin(self) -> list[dict]:
+        """List every card for the admin console (no ownership filter)."""
+
+    @abstractmethod
+    async def mark_card_synced(self, card_id: str) -> None:
+        """Flag a card as already propagated across regions."""
+
+    @abstractmethod
+    async def mark_card_unsynced(self, card_id: str) -> None:
+        """Flag a card as needing cross-region propagation."""
+
+    @abstractmethod
+    async def get_unsynced_cross_border_cards_unscoped(self, limit: int = 100) -> list[dict]:
+        """Cross-border worker path: cards not yet propagated (no identity context)."""
+
+    @abstractmethod
+    async def upsert_remote_card(self, card_id: str, origin_region: str, user_id: str, name: str, card_json: str, avatar_data: str, market_description: str, market_tags: str, origin_created_at: str) -> None:
+        """Upsert a card mirrored in from another region (worker path)."""
+
+    @abstractmethod
+    async def update_group_card_ids(self, id: str, card_ids: list[str]) -> None:
+        """Replace a group session's card membership list."""
+
     @abstractmethod
     async def save_session(
         self, id: str, card_id: str, user_role: str, avatar_data: str, user_id: str = ""
