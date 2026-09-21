@@ -5,7 +5,7 @@
 -- 迁移怎么写。必须在回填**之前**跑：回填会改 `forked_from` 与 `published_from`，
 -- 跑完这些查询就再也回答不了「原样是什么」。
 --
--- 本文件只含追加的 ④⑤；①②③ 已在调研阶段交付。④ 自带 ① 的行集（CTE 重述），
+-- 本文件只含追加的 ④⑤⑥；①②③ 已在调研阶段交付。④ 自带 ① 的行集（CTE 重述），
 -- 故可单独执行，不必依赖 ①②③ 先跑。
 -- ============================================================
 
@@ -51,3 +51,17 @@ SELECT id, text_id, name, visibility, forked_from, deleted_at
   FROM cards
  WHERE user_id IS NULL
  ORDER BY id;
+
+
+-- ⑥ 同一草稿挂多张存活的同属主副本（不看 visibility）。
+--
+-- 为什么值得单独数：旧语义「每发布一次新建一行」会留下同一草稿的多张存活副本。
+-- 唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`
+-- 要求一个 `published_from` 至多一张存活行，故回填遇到这批行必撞索引（实测：两个顺序
+-- 都让 init 失败，炸在不同语句）。规模决定收敛那步（089/022）要不要特判留哪一张。
+-- 注意：这里**不看 visibility** —— 下架 = 撤回发布，副本行仍存活，仍占唯一性。
+SELECT d.id AS draft_id, COUNT(*) AS live_copies,
+       array_agg(c.id || ':' || c.visibility || ':' || c.created_at ORDER BY c.created_at) AS copies
+  FROM cards c JOIN cards d ON d.id = c.forked_from
+ WHERE c.user_id = d.user_id AND c.deleted_at IS NULL
+ GROUP BY d.id HAVING COUNT(*) > 1;
