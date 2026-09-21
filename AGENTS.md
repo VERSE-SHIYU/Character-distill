@@ -1246,6 +1246,18 @@ PROBE_IMAGE         false
 - **形状锁不受牵连**：`test_usage_accounting_lock._audit()` 的配平是 `records >= need`，且互斥分支合并计一组 —— `_collect_stream` 早已是同形（try 一支 + except 一支），本条只是让非流式支对齐它，没有改写配平口径。
 - **判据命令**：`git grep -n "estimate_usage_from_chars" core/distiller.py` —— 全文 **6** 处：`_collect_stream` 的 except 支 1 处、`_chat_accounted` 体内**恰 2** 处（硬失败支 + 截断支）、余 3 处是 map 失败分片与档案压缩（与本条无关）。**注意这条判据与缺陷 91 那条不是同一条**：91 要的是「两条截断路**共用同一个口径**」，判据是 `_prompt_chars` 恰三处；本条要的是「两条非流式出口**各自**按字符估算」，才数 `estimate_usage_from_chars`。
 
+**95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
+- **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
+- **后果**：一条**公开**且依赖树里挂着 `get_optional_user` 的路由（`web/routers/market.py` 的 `GET /api/market/card/{card_id}`、评论列表），在 `JWT_SECRET` 未配置时，一次本该正常的**匿名读**变成 **500**（异常从 `solve_dependencies` → `run_in_threadpool` 抛出）；secret 配好时同一请求是 **404「角色不存在」**（正常走到函数体）。即：**配置缺失把一个公开读变成了 500，而它既不是鉴权失败也不是业务失败**。
+- **与缺陷 46 的关系**：46 收敛了「**显式直接读环境**」的 5 处调用点（auth.py 4 + server.py 1）。本条是同一缺陷的**另一种形态** —— 没有显式调用，是框架按依赖树代劳；46 的判据命令（`git grep` 直接读环境）**看不见它**。所以它既不在 46 的修复面里，也不在 46 的判据覆盖里。
+- **与本线 `1fc61ab` 的关系**：那次只消除了「同一请求内身份判两次」（重复的 `get_user_by_id`），**没动 `Depends(get_jwt_secret)` 的急切求值时机** —— 复用入口 `resolve_request_identity` 收的是 `secret_source` 取值函数，但适配器自身这个 `Depends` 参数仍在进函数体前被求值。本条是那次改动**明确留下的残留**（合并时由用户点名登记）。
+- **证据（现跑现数，2026-09-21）**：产数脚本 `scripts/probe_eager_jwt_secret.py`（已入库），三行对照 ——
+  - `JWT_SECRET` 已配置：`GET /api/market/card/nope` → **404**、`GET /api/market/tags` → **200**、`GET /api/history/list` → **401**
+  - `JWT_SECRET` 未配置：`GET /api/market/card/nope` → **500**、`GET /api/market/tags` → **200**、`GET /api/history/list` → **401**
+  - 读法：`card/nope` 是「公开 + 依赖树里有适配器」→ 唯一随 secret 配置变色的那条；`tags` 无适配器 → 不受影响；`history/list` 受保护 → **中间件在路由前就拦下**（401），secret 根本轮不到读。三条缺一不可：只有第一条会红的话，无法排除「所有公开路由都 500」这种更宽的病灶。
+- **为什么只记不修**：修它要把适配器的 `secret` 从**值**改成**取值函数**（`secret_source`），与 `storage` 一并由解析器统一控制取值时机（有凭据才取 secret、解码成功才取 storage）。那是**接口变更**：牵动四个入口的调用形态与既有 `Depends(get_jwt_secret)` 注入契约（缺陷 46 的测试正是靠 `app.dependency_overrides[get_jwt_secret]` 显式给值）。本轮是合 main 的登记动作，不在范围内。
+- **判据命令**：`.venv/Scripts/python.exe scripts/probe_eager_jwt_secret.py` —— 期望 `== JWT_SECRET unset ==` 段出现 `GET  /api/market/card/nope    -> 500`，而同段 `tags -> 200`、`history/list -> 401`。（本条**没有** `git grep` 型判据：事实是行为差异，不是文本事实 —— 与 91 / 92 那两条靠 `git grep` 数命中不同，别照抄。）
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
