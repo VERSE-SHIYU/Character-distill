@@ -118,6 +118,7 @@ config.yaml 现值（现读，非转述）：
 > **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
 > **缺陷 35 与新增的 83–85 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`，该条标题已改）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**83 / 84 / 85 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：35 与 83–85 的当前状态都写在各条标题上，重算是个待办而不是事实）。
 > **86–88 又是 2026-09-21 新增的条目**（`published_from` 拆列那一案交接时登记的三条越界项，各见下条）：**87 / 88 已在该案内修掉**（`e8906f6` `0ec13ce` `8942c3f` 与 `2c7b815`），**86 仍记账**（改的是「021 未发布、本案不受影响」的口径）。那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：三条的当前状态都写在各条标题上，重算是个待办而不是事实）。
+> **89 / 90 是 2026-09-21 新增的两条，且同批已修**（`published_from` 一案验收判「不通过」时发现的两个问题：索引有两份定义、索引排在回填之前；修在同一 commit `d14fe29`，各见下条）。同一行里 **87 的落点与变异段也已订正** —— 它原文指向的「088 的 CREATE + `_ensure_initialized` 那句」正是 89 拆掉的两份定义。那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：两条的当前状态都写在各条标题上，重算是个待办而不是事实）。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -1204,9 +1205,9 @@ PROBE_IMAGE         false
 - **病灶**：`publish_card`（`storage/postgres_store.py:4696` / `storage/sqlite_store.py:5591`）第一步 `SELECT` 找「调用者自己的发布副本」，查不到才 `INSERT`。两步之间没有事务、也没有约束 —— PG 侧是 asyncpg autocommit，两个并发请求可以都查不到、各插一张。
 - **为什么原有约束拦不住**：`cards_id_user_id_key` 是 `UNIQUE (id, user_id)`，管的是「行不重复」，管不了「同一 `published_from` 只能有一行」；`published_from` 上没有任何唯一约束。
 - **后果**：两张并存后，判据对两行都成立，取哪张取决于查询顺序 —— 头像同步只落到其中一张，另一张逐渐与草稿脱节。
-- **落点：把「至多一张」交给库**，不再靠调用点记得查。部分唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`（088 / 021 各一份；SQLite 侧因 088 会被整份跳过，另在 `_ensure_initialized` 无条件补建一次）+ `publish_card` 合成**一条** `INSERT … ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE … RETURNING id`（更新列清单取自草稿的**同一次读**，`EXCLUDED` 即本行 VALUES）。唯一性不看 `visibility` —— 见 88 的裁定。
+- **落点：把「至多一张」交给库**，不再靠调用点记得查。部分唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`（`090` / `023` 各一份）+ `publish_card` 合成**一条** `INSERT … ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE … RETURNING id`（更新列清单取自草稿的**同一次读**，`EXCLUDED` 即本行 VALUES）。唯一性不看 `visibility` —— 见 88 的裁定。（索引原先与加列同写在 088 / 021、SQLite 侧另在执行器尾部补建一次；两份定义的成因与拆开见 89，编号排到回填之后见 90。）
 - **红源**（`tests/test_published_copy_relation.py::TestUnpublishIsWithdrawingTheRelease` 与 PG 侧同名类，各 3 条）：其中 `test_a_second_live_copy_of_the_same_draft_is_rejected_by_the_database` 越过 store 裸插第二张存活副本，断言必须被数据库拒（判据是 `"UNIQUE"` 出现在异常里，不是随便什么错）。**刻意不走 `publish_card`**：upsert 的 `ON CONFLICT` 推断的目标就是这条索引，索引不在时 publish 自己先报「no unique or exclusion constraint matching the ON CONFLICT specification」，红在 publish 上而非本条要锁的库约束。
-- **变异（实测红，验后已还原，两引擎各跑一遍）**：去掉部分唯一索引（088 的 CREATE + `_ensure_initialized` 那句；PG 侧改 021 并把测试库索引 `DROP` 掉）→ 上述那条红在 `DID NOT RAISE`。**同时另外两条也红**：同一条索引是 `ON CONFLICT` 的推断目标，索引没了 publish 直接报错 —— 实测到的耦合，不是判据不具分辨力。
+- **变异（实测红，验后已还原，两引擎各跑一遍）**：去掉部分唯一索引（删掉 `090` / `023` 的 CREATE 并把测试库索引 `DROP` 掉；当时那句还在 088 与执行器尾部）→ 上述那条红在 `DID NOT RAISE`。**同时另外两条也红**：同一条索引是 `ON CONFLICT` 的推断目标，索引没了 publish 直接报错 —— 实测到的耦合，不是判据不具分辨力。
 - **判据命令**：`git grep -n "ON CONFLICT (published_from)" -- storage/`（两处）、`git grep -n "async def publish_card" -- storage/postgres_store.py storage/sqlite_store.py`（两处，均已是单条 upsert；`base.py` 另有一处抽象声明）
 
 **88. 下架与「是不是发布副本」写进同一个谓词 —— 下架后再发布会并存第二张副本，旧副本仍指向草稿** —— 状态：**已修**（`2c7b815` `e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
@@ -1217,6 +1218,27 @@ PROBE_IMAGE         false
 - **红源**（两引擎各 3 条，同上）：`test_unpublish_leaves_no_published_id_but_keeps_the_row` 锁「下架后 `published_id` 为空（`get_card_owned` + `list_cards` 各一次）、副本行仍在」；`test_republish_reuses_the_row_and_takes_the_drafts_current_values` 锁重发语义 —— id 不变、`card_json` 取草稿当前值、发布字段更新、拨回在架、**点赞保留**（`toggle_like` 挂的）、该草稿存活副本行数 = 1、版本号 `MAX+1` 到 2。
 - **变异（实测红，验后已还原，两引擎各跑一遍）**：把三处 `published_id` 的 `_live_published_copy_of` 换回关系谓词 `_published_copy_of` → 第 1 条红在 `assert '7291dc30492d' is None`（正是要钉的那句）。
 - **判据命令**：`git grep -n "_PUBLISHED_COPY_OF = " -- storage/`（两处定义，两行都不含 `visibility`）、`git grep -c "_live_published_copy_of('" -- storage/`（两个 store 文件各 3 处调用）。**不要**用 `git grep -n "visibility = 'public'"`：那条会命中 market 查询等十余处正常用法，判据不可辨。
+
+**89. 同一份索引 DDL 两个来源 —— `_apply_migration` 的「列都在即整份跳过」静默吞掉尾部语句** —— 状态：**已修**（`d14fe29`，2026-09-21）
+- **形态**：`cards_published_from_live_uniq` 同时定义在 `storage/migrations/088_published_from.sql` 与 `storage/sqlite_store.py` 的 `_CARDS_LIVE_PUBLISHED_UNIQ_INDEX`（由 `_ensure_initialized` 尾部无条件执行）。前者注释自陈「因为会被跳过所以这里再补一句」—— 两处定义是**同一成因的产物**，不是两次疏忽。PG 侧只有 021 一份，无此问题。
+- **成因（实测，`scripts/probe_published_index_sources.py` A 段）**：判据是 `_apply_migration` 的「脚本里每个 ADD COLUMN 的列都已存在 → 整份跳过」（`storage/sqlite_store.py` 的 `_apply_migration`）。088 正是加列那份，列一旦存在（088 跑过之后就是）整份被跳。读数：全新库决策 `APPLY 088` → 索引在；「列已存在」的库决策 `SKIP 088` → 索引**仍在**（来自执行器尾部那句）；把尾部那句钝化 → 索引**没了**（该形态下尾部是唯一来源）；自造 [ADD COLUMN + CREATE INDEX] 同文件，首次 APPLY 建了索引、列已在再跑 → 返回 OK 但索引不在（**静默吞掉**）；只含 CREATE INDEX 的文件连跑两次 = APPLY / APPLY。
+- **同一处那条触发器的成因**（用户要求一并判）：**不同源、不同处置**。它不在任何 `.sql` 里（`git grep -rn TRIGGER storage/migrations storage/migrations_pg` 零命中），唯一来源就是执行器尾部那句；重建表前后各量一次 sqlite_master：索引**在**（`_rebuild_cards_published_from` 按 sqlite_master 重放）、触发器**没了**（不重放）。即它的成因是「重建丢」，必须留在 Python 侧，**不动**。
+- **落点**：索引拆成不含 ADD COLUMN 的独立迁移文件 `090` / `023`，执行器的常量与那句无条件执行一并删除 —— DDL 单一来源。
+- **记账（本线不改执行器，用户指定只报）**：该跳过规则**确有吞语句风险**，且吞的不只是 DDL —— 同一文件里它后面的**任何**语句都会被吞。本线只把 DDL 挪到不受该判据影响的文件，执行器语义原样保留。**遗留风险**：下次有人把必须生效的语句写在含 ADD COLUMN 的文件里，同样会静默不生效。
+- **红源**（`tests/test_migration_dispatch.py::test_live_published_uniq_index_has_one_unskippable_source`）：① 定义文件不含 ADD COLUMN；② 执行器里不再有可执行的 `CREATE UNIQUE INDEX`（注释不算，用 AST 取字符串常量）；③ 索引登记在 088 之后。
+- **变异（实测红，验后已还原）**：① 往 090 塞一句 ADD COLUMN → 红在「出现了 ADD COLUMN」；② 执行器里再写一份索引定义 → 红在「还有 1 处可执行的 CREATE UNIQUE INDEX」；③ 把 090 的登记挪到 088 之前（两条都仍在名单里，只换次序）→ 红在 `assert 9 > 10`。③ 第一版是直接删掉 088 那条登记，红因变成 `ValueError: … is not in list` —— 测的不是顺序断言本身，已改成只换次序重跑。
+- **判据命令**：`git grep -c "CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq" -- storage/`（现给 `090` / `023` 各 1，恰好 2）、`git grep -nE "ALTER[[:space:]]+TABLE[[:space:]]+cards[[:space:]]+ADD[[:space:]]+COLUMN" -- storage/migrations/090_published_from_live_uniq.sql storage/migrations_pg/023_published_from_live_uniq.sql`（应零命中）。**不要**用裸 `ADD COLUMN` 做这条判据：这两份文件的注释里就写着「本文件不含 ADD COLUMN」（解释成因时必然引到这个词），实测会命中注释 —— 判据必须是语句形。
+
+**90. 唯一索引排在回填之前 —— 存量库里回填与建索引互相撞，两种顺序都让 init 失败** —— 状态：**已修**（`d14fe29`，2026-09-21）
+- **形态**：索引原与加列同写在 088，而回填（Step 3，089）必须排在它前面。存量库里同一草稿可能有多张存活副本（缺陷 87 的旧语义：每发布一次新建一行），回填把它们的 `published_from` 都写成同一草稿 id → 撞唯一索引。
+- **实测复现（`scripts/probe_published_index_sources.py` B 段，含两张同草稿存活副本的库）**：
+  - B1 索引先建、再回填 → 建索引 `OK`（`published_from` 全为 NULL，唯一索引不互撞），回填 `IntegrityError: UNIQUE constraint failed: cards.published_from`
+  - B2 回填先、再建索引 → 回填 `OK`，建索引同一个 `IntegrityError`
+  - B3 回填 → 收敛（多余副本软删）→ 建索引 → **三步全 OK，存活副本 1 张**
+- **结论：光换顺序不解决** —— 两种顺序都让 init 失败，只是炸在不同语句；让引脚建得上的是**收敛**。
+- **落点**：顺序排成 加列(`088` / `021`) → 回填并收敛(`089` / `022`，Step 3) → 建唯一索引(`090` / `023`)，SQLite 与 PG 两侧同序。索引因此与加列解耦，顺带解掉 89 的重复来源。
+- **待补**：`089` / `022`（回填并收敛）本身的迁移与库上复现属 Step 3；本条目只锁顺序与文件落点。
+- **判据命令**：`ls storage/migrations | grep published_from`（现给 `088_` `090_`，`089_` 由 Step 3 补）、`ls storage/migrations_pg | grep published_from`（现给 `021_` `023_`，`022_` 由 Step 3 补）
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
