@@ -13,6 +13,7 @@ from typing import Any
 import asyncpg  # type: ignore[import-not-found]
 
 from .base import StorageBase, StoreError
+from .pg_identity_sync import align_identity_sequences
 
 
 class _PoolContext:
@@ -86,6 +87,10 @@ class PostgresStore(StorageBase):
                     for migration_path in sorted(migrations_dir.glob("*.sql")):
                         sql = migration_path.read_text(encoding="utf-8")
                         await conn.execute(sql)
+                    # 迁移只管结构；identity 序列与表数据的对齐是数据侧的事，结构就绪之后
+                    # 单独跑一次。放在这里而不是 `migrations_pg/` 里：对齐要读表里的 max(id)，
+                    # 每张空表的读数都不同，写成迁移文件就成了对存量数据的假设。
+                    await align_identity_sequences(conn)
 
                 self._initialized = True
             except Exception as exc:

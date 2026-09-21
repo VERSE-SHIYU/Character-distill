@@ -21,8 +21,14 @@ import os
 import sqlite3
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import asyncpg
+
+# 直接 `python3 scripts/xxx.py` 跑时 sys.path[0] 是 scripts/，包名 import 会失败。
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from storage.pg_identity_sync import align_identity_sequences  # noqa: E402
 
 # ── 配置 ──────────────────────────────────────────────────────────────────────
 
@@ -510,6 +516,14 @@ async def run_migration(
             totals[k] += result.get(k, 0)
         if result.get("errors", 0):
             failed_tables.append(pg_table)
+
+    # ── 3b. identity 序列对齐 ──
+    # 上面灌数据走的是 OVERRIDING SYSTEM VALUE（显式 id），PG 不会推进 identity 序列 ——
+    # 不对齐的话，之后每条不带 id 的 INSERT 都撞已有主键。失败表也照跑：能进去的行同样
+    # 需要对齐。dry-run 全程不碰库。
+    if not dry_run:
+        moved = await align_identity_sequences(pg)
+        print(f"  identity 序列对齐: {len(moved)} 个被前移")
 
     # ── 4. 汇总 ──
     note = " (dry-run, no data written)" if dry_run else ""
