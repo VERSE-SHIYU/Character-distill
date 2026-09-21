@@ -66,11 +66,12 @@ def _send_via_resend(to_email: str, subject: str, html: str) -> None:
         raise RuntimeError(f"Resend 发送失败: {e}") from e
 
 
-def send_verification_code(to_email: str, code: str, purpose: str = "验证") -> bool:
-    """Send verification code. Raises RuntimeError on failure."""
-    subject = f"CharSim {purpose}验证码: {code}"
-    html = f"<p>你的{purpose}验证码是 <strong>{code}</strong>，5 分钟内有效。请勿泄露。</p>"
+def send_email(to_email: str, subject: str, html: str) -> bool:
+    """Send one HTML email. Raises RuntimeError on failure.
 
+    **唯一发信出口**：Resend 优先、SMTP 回退的选择只写在这里。告警（`core/alerting`）
+    与验证码都调本函数 —— 各写一份「先 Resend 再 SMTP」的话，两条路的可用性判据迟早分叉。
+    """
     if _resend_available:
         _send_via_resend(to_email, subject, html)
     elif all([os.getenv("SMTP_HOST"), os.getenv("SMTP_USER"), os.getenv("SMTP_PASSWORD")]):
@@ -79,3 +80,10 @@ def send_verification_code(to_email: str, code: str, purpose: str = "验证") ->
         raise RuntimeError("邮件服务未配置，请设置 RESEND_API_KEY 或 SMTP_HOST/SMTP_USER/SMTP_PASSWORD")
 
     return True
+
+
+def send_verification_code(to_email: str, code: str, purpose: str = "验证") -> bool:
+    """Send verification code. Raises RuntimeError on failure."""
+    subject = f"CharSim {purpose}验证码: {code}"
+    html = f"<p>你的{purpose}验证码是 <strong>{code}</strong>，5 分钟内有效。请勿泄露。</p>"
+    return send_email(to_email, subject, html)

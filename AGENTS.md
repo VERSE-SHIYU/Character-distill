@@ -1256,6 +1256,7 @@ PROBE_IMAGE         false
   - **机制根因**（2026-09-21）：新增 `storage/pg_identity_sync.py`，启动时与导入脚本末尾对齐全部 identity 序列 —— 让写入**能**成功。这一修不改「失败会怎样」，只去掉「必然失败」这个前提。
   - **可见性**（2026-09-22）：吞异常那一层不再只 print，改为上报后台日志面板。新增唯一构造 `core/nonfatal.nonfatal(source, what)`（异步上下文管理器：吞掉块内异常并以 logging ERROR 上报，`exc_info=True`；`CancelledError` / `KeyboardInterrupt` / `SystemExit` 照常上抛）—— 面板 `RingBufferHandler` 只收 WARNING+ 且只存 `getMessage()`，故异常类型由本构造拼进消息文本。`core/utils.try_record_usage` 的 `_write` 是改点之一。
   - **仍未定的那半**：「账写不进去」要不要进一步升级（对用户报错 / 健康检查置红 / 计数告警）是**产品口径决策** —— 用量算不算必须送达的账，得先定。本轮只解决「无声」。
+  - **2026-09-22 补记：主动告警已上线**（与缺陷 98 同轮做，不在本条的修法内）。新增 `core/alerting.AlertHandler`：ERROR 级日志按 `(logger 名, 异常类型)` 节流后投递到 `ALERT_EMAIL`（同键 1 小时一封，窗口后那封附上被压下的次数），在 `web/server.py` 的 lifespan 里与 `install_log_collector()` 同处挂到 root logger。本条要的其实是**两跳**：`print` → 面板（可见）是缺陷 93 修的那一跳，「面板 → 人」是这一跳 —— 面板得有人打开才看得见，SG 的「数月无人察觉」正卡在后一跳。上面「仍未定的那半」里的「计数告警」至此**机制已具备、口径仍未定**：要不要让用量写库失败真的发信仍是产品决策，现在只是有了通道（`ALERT_EMAIL` 为空时整条不安装，见 `core/alerting.py`）。
 - **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
 **94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口）
@@ -1303,7 +1304,7 @@ PROBE_IMAGE         false
 - **当时的待裁定（已由上面的裁定结项）**：阿里云到底是**必需**还是**可选**？—— 两者都不是单选题：**对 SZ 的部署必需、对 build 的 GHCR 产出可选**。原先的问法把两件事混成一件，所以怎么答都别扭。拆开后即得修法：**产出侧**（`build.yml`）阿里云可选，断链不许带走 GHCR；**部署侧**（`deploy.yml`）阿里云是 SZ 的首选，但用哪个仓库由**实际拉取结果**决定，而不是写死。
 - **判据命令**：`git grep -n "continue-on-error\|name: Login to\|name: Build and push\|name: Push .* to Aliyun CR" .github/workflows/build.yml` —— 逐个数「这一步失败会不会带走后面所有步」。读数（2026-09-22，`5525b46` 之后）：`Login to Aliyun CR` **有**标记（不会带走）、两个 `Push * to Aliyun CR` 有标记（不会）—— **三处口径已一致**。
 
-**98. 保存失败被「non-fatal」吞掉后 `user_rec` / `char_rec` 未绑定，同一函数后面照样解引用它 —— 保存失败被转译成 `UnboundLocalError`** —— 状态：**记账**（不修，2026-09-22；缺陷 94 的同族，登记前已核对 94，不是同一件事）
+**98. 保存失败被「non-fatal」吞掉后 `user_rec` / `char_rec` 未绑定，同一函数后面照样解引用它 —— 保存失败被转译成 `UnboundLocalError`** —— 状态：**已修**（2026-09-22，当日记账当日修）
 - **形态**：`web/routers/chat.py` 两个入口都是「`*_msg_id = None` 有初值，`*_rec`（`save_message` 的返回值）**没有初值**」，保存又都套在「non-fatal」的 `except`（只 print）里 —— **`except` 一吞，那个 `*_rec` 就是未绑定**，而函数后面照样对它 `.get()`。
 - **两处的解引用点与失败形态（现跑）**：
   - `_do_chat`（非流式）：`user_rec` 绑在 `:341`（在 `if not hidden:` 内）、`char_rec` 绑在 `:348`；解引用在 `:380`（`user_rec.get("created_at", "") if not hidden else ""`）与 `:381`（`char_rec.get("created_at", "")`）。这个 dict 构造**不在任何 try 里**，异常直接冒出 `_do_chat` → 路由 `send_message`（`:607` 是裸 `return await _do_chat(...)`，无兜底）→ **500**。
@@ -1312,7 +1313,17 @@ PROBE_IMAGE         false
 - **与缺陷 94 的关系**：同族，但**不是同一件事**，故不并入 94 作补充、另开本条。94 记的是「保存失败的**可见性**在群聊与一对一之间不一致」（吞 vs 摊给用户），判据是「这个保存点的最近一层 except 是 print 还是 yield」；本条记的是「**吞**这个动作让一个名字没被绑定、而代码后面要用它」—— 是 `except` 的**副作用**，不是可见性口径。修法也不同：94 要先定口径，本条只要给 `user_rec` / `char_rec` 一个初值（`None`）并把解引用改成 `(user_rec or {}).get(...)`（或把赋值挪到 try 之外）。
 - **顺带订正 94 的一处读数**：94 把 `_do_chat_stream` 读成「三笔各自 try + print，一对一全部吞」。按本条现跑，`:532` / `:533` 的解引用**在大 try（`:459-549`）之内**，那处失败**不吞** —— 会以 error 帧摊到用户面前。即一对一**流式**这条路也有一处把异常摊给用户，94 的「一对一全部吞」在此不完全成立。
 - **判据命令**：`git grep -n "user_rec\|char_rec" web/routers/chat.py` —— 数「赋值点在不在 try 内 / 解引用点在不在同一个 try 内」。读数（2026-09-22）：赋值 **4** 处（`:341` / `:348` / `:451` / `:500`）、解引用 **4** 处（`:380` / `:381` / `:532` / `:533`），其中 `:380` / `:381` 在**任何 try 之外**。
-- **处置方向**：与已有的 `user_msg_id` / `char_msg_id` 对齐 —— 那两个 id 变量有 `= None` 初值、解引用点用 `if uid is not None` 过滤，`*_rec` 是同一件事的漏网。**不先改**：本条是登记；且改它要先定「保存失败时 `user_created_at` / `char_created_at` 该给什么」（现在成功时给 `created_at`、`hidden` 时给 `""`）。
+- **修法（三件，`web/routers/chat.py`）**：
+  - 两个入口在 `nonfatal` 块**之前**给 `user_rec` / `char_rec` 初值 `None`（`_do_chat` `:358`–`359`、`_do_chat_stream` `:471`–`472`）—— 与既有的 `user_msg_id` / `char_msg_id` 对齐（那两个本来就有初值，`*_rec` 是同一件事的漏网）。同时给 `user_created_at` / `char_created_at` 初值 `""`。
+  - 新增私有 `_msg_fields(rec)`（`:266`）：`save_message` 的返回值 → `(msg_id, created_at)`；`rec is None` → `(None, "")`。**四处取值点全部改调它**（`:368` / `:375` / `:481` / `:528`），不在各处写 `(rec or {}).get(...)` —— 判据只写一份，漏一处就是又一次本条。存在的理由是「保存**可能**失败」这件事得在代码里有个地方表达。
+  - 保存失败时 `created_at` 给 `""` 而非 `None`：与 `hidden` 时原本给 `""` 同口径（对外它就是「这一条的时间戳」，没有这条消息时给空串）。原先 `:380` 的 `user_rec.get("created_at", "") if not hidden else ""` 里那个 `if not hidden` 因此变冗余（`hidden` 时 `_msg_fields(None)` 已给 `""`），删除。
+- **验证（`tests/test_nonfatal.py`，9 passed）**：
+  - `test_do_chat_returns_normally_when_save_fails`：**strict xfail 翻正**（原标记即「已知本条未修」）。断言接口正常返回、`reply == "回复"`、两个 id 为 `None`、两个 `created_at` 为 `""`。
+  - 新增流式等价 `test_do_chat_stream_finishes_with_a_done_frame_when_save_fails`：保存失败 → **`errors == []`**、恰好一个 `done` 帧、两个 id 为 `None`、两个 `created_at` 为 `""`、正文照常流出（`"回复"`）。这条钉的正是原记账里「done 帧变 error 帧」的形态。
+  - `test_do_chat_save_failure_reaches_the_panel`：**不在 spec 点名的用例里，一并翻正**。它原以 `pytest.raises(Exception)` 包住调用 —— 依赖的就是本条的 `UnboundLocalError`，修完后不再抛，不翻正必红。同因一并删掉的还有非流式入口里 `user_created_at` 上那个冗余的 `if not hidden else ""`（`hidden` 时 `_msg_fields(None)` 已给 `""`）。
+  - **变异验证**：`git checkout -- web/routers/chat.py` 回退到修前形态（先备份修后文件），上述三条用例**全红**；恢复后 9 passed。
+- **判据命令**：`git grep -n "user_rec\|char_rec\|_msg_fields" web/routers/chat.py` —— 数「每个赋值点是否在 `nonfatal` 之前有初值」「每个解引用点是否经 `_msg_fields`」。读数（2026-09-22 修后）：`*_rec` 初值 **4** 处（`:358`/`:359`/`:471`/`:472`）、`_msg_fields` 调用 **4** 处（`:368`/`:375`/`:481`/`:528`）、裸 `*_rec.get(` / `*_rec[` **0** 处。
+- **未修（另记，只报告不改）**：流式「助手消息已存、用户消息未存」时，`_do_chat_stream` 的回滚条件 `user_msg_id is not None and not tokens` 两半仍为假（前者是 `None`、`tokens` 非空）→ 回滚不触发，库里留下无配对的助手消息。同类：非流式 `ids_to_add = [user_msg_id, char_msg_id]`（`:376`）**只在两笔都成功时才算**，若用户消息写成功、助手消息写失败，用户行已落库却不在 `session["message_ids"]` 里。两者都是「配对/一致性」问题，不是本条要修的解引用崩溃 —— 待单独立项。
 - **行号漂移（2026-09-22 现跑，缺陷 93/94 那轮 `try/except + print` → `async with nonfatal(...)` 之后）**：赋值点 **4** 处仍在 —— `:342` / `:349`（`_do_chat`）、`:448` / `:495`（`_do_chat_stream`）；解引用点仍是 4 处 —— `:377` / `:378`（在任何 `try` 之外，仍 500）、`:523` / `:524`（在大 try 之内，其 `try` 起 `:454`、`except` 在 `:545`，回滚条件在 `:550`、error 帧在 `:555`）。**结论（哪几处在 try 之外）未变**，变的只是坐标。另注：吞错点的**形态**变了（不再是 `except` 里 print，而是 `async with nonfatal(...)` 吞掉），但「吞掉 ⇒ 名字未绑定」这条因果不受影响 —— 换构造没有、也不该消掉本条。
 
 **99. PG 侧没有迁移账本 —— 每轮 init 全量重放，改约束定义只对新建库生效** —— 状态：**记账**（不修，2026-09-21）
