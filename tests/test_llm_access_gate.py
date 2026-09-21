@@ -18,9 +18,9 @@ spec 在库：`docs/specs/llm-access-gate.md`（v5 全量取代 v1–v4）。命
     证的是「请求在出站前就被挡下」，不是「挡下之后恰好也没发出去」。
   - L8 的端点/流式两条走**带身份的 `/api/` 路径**（需 JWT），公开路径那条走非 `/api/`
     路径（免 JWT）—— 三者都必须拿到 contextvar，这正是「中间件单出口」要证的。
-  - L10 的扫描面不含 `web/app.py`：Gradio 死代码，docstring 标 `.. deprecated::`，
-    `Dockerfile` / `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` 零引用
-    （AGENTS.md 已记）。把它算进来只会让锁恒红，且它守的与那个死文件无关。
+  - 扫描面**不设逐文件豁免**：曾经排除过 `web/app.py`（Gradio 死代码，`Dockerfile` /
+    compose / `start_all.bat` / workflow 零引用），该文件已于 2026-09-21 退役删除 ——
+    排除项随之消失。要再排除就得先问「这个文件为什么还活着」。
   - 别名绕过（`A = LLMAdapter; A(...)`）AST 认不出 —— L10 / L12 / L13 都看不见，
     写在这里，不假装它们挡住了。
 """
@@ -865,13 +865,6 @@ def test_l9_audit_failure_keeps_the_403(monkeypatch):
 #: `scripts/` 是运维/调试脚本（spec §2.9：独立进程、不注册守卫）。
 _NON_PROD_TOP = ("tests/", "scripts/")
 
-#: 扫描面里逐条排除的文件 —— 与上面的目录排除同一个理由栏。
-_EXCLUDED_FILES = frozenset({
-    # Gradio 死代码（文件头「边界」已记）：`Dockerfile` / compose / workflow 零引用。
-    # 留着只会让 L10 恒红，而它守的「生产构造点唯一」与那个死文件无关。
-    "web/app.py",
-})
-
 
 def _production_py(*, dirs: tuple[str, ...] = ()) -> list[str]:
     """生产 .py 的扫描面 —— 全仓**工作区**（相对路径，排序稳定）。L10 / L12 / L13 共用。
@@ -897,8 +890,7 @@ def _production_py(*, dirs: tuple[str, ...] = ()) -> list[str]:
     out = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "*.py"],
         cwd=root, capture_output=True, text=True, encoding="utf-8").stdout
-    files = [p for p in out.splitlines()
-             if p and not p.startswith(_NON_PROD_TOP) and p not in _EXCLUDED_FILES]
+    files = [p for p in out.splitlines() if p and not p.startswith(_NON_PROD_TOP)]
     if dirs:
         files = [p for p in files if p.split("/")[0] in dirs]
     return sorted(files)
