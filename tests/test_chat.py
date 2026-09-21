@@ -27,7 +27,7 @@ def main():
     rag = RAGEngine({"chunk_size": 200, "chunk_overlap": 30, "top_k": 2})
     rag.index(test_text)
 
-    engine = ChatEngine(llm, rag, card)
+    engine = ChatEngine(llm, rag, card, storage=None)
     for q in ["你好啊张总", "李四最近怎么样", "你还想着王芳吗"]:
         resp = engine.chat(q)
         print(f"用户：{q}")

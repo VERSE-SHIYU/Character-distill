@@ -95,7 +95,7 @@ class TestBuildTimeAwarenessBlock:
 
     def _make_engine(self) -> ChatEngine:
         card = CharacterCard(name="测试角色")
-        return ChatEngine(_StubLLM(), None, card, card_id="t")
+        return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
 
     def test_sydney_tz_hour_in_output(self):
         """Output contains the correct hour for Sydney."""

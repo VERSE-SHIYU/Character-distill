@@ -1388,6 +1388,7 @@ async def start_session(
                 memory_manager=get_memory_manager(),
                 card_id=req.card_id,
                 user_role=req.user_role,
+                storage=storage,
             )
             session_id = _uuid.uuid4().hex[:12]
             sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}

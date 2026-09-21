@@ -657,6 +657,7 @@ class TextManager:
             memory_manager=self._memory_manager,
             card_id=card_id,
             user_role=user_role,
+            storage=self._storage,
         )
         session_id = uuid.uuid4().hex[:12]
         self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}

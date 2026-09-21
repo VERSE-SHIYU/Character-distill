@@ -209,7 +209,6 @@ async def _ensure_session(
         engine.user_role = db_session["user_role"]
     # Restore affinity from DB
     engine._session_id = session_id
-    engine._user_id = user_id
     try:
         data, source = await read_persisted_affinity(session_id, storage)
         if source == 'state':
@@ -306,8 +305,6 @@ async def _do_chat(
     try:
         engine = session.get("engine")
         if engine:
-            engine._storage = storage
-            engine._user_id = user_id
             engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
             engine.affinity_enabled = affinity_enabled
@@ -431,8 +428,6 @@ async def _do_chat_stream(
 
     engine = session.get("engine")
     if engine:
-        engine._storage = storage
-        engine._user_id = user_id
         engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
         engine.affinity_enabled = affinity_enabled
@@ -463,8 +458,6 @@ async def _do_chat_stream(
 
         try:
             engine = session["engine"]
-            engine._storage = storage
-            engine._user_id = user_id
             print(f"[chat] _do_chat_stream session={session_id} history={len(engine.history) if engine else 0} messages")
             # Prepend quote context for LLM if replying
             llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg

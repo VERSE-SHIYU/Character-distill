@@ -191,14 +191,15 @@ class ContextEngine:
         card_id: str = "",
         llm=None,
         model: str = "",
-        usage_ctx=None,
+        *,
+        storage: Any,
     ) -> None:
         self.card = card
         self.rag = rag
         self.memory = memory_manager
         self.card_id = card_id
         self._llm = llm
-        self._usage_ctx = usage_ctx
+        self._storage = storage
         self.web_search_enabled = False
 
         # Dynamic token budget based on model
@@ -209,21 +210,6 @@ class ContextEngine:
         self.MAX_MEMORY = budgets["memory"]
         self.MAX_CARD_EXT = budgets["card_ext"]
         print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
-
-    # ── 记账 ──────────────────────────────────────────────────
-
-    def _record_usage(self, action: str) -> None:
-        """把本引擎内的 LLM 花费接进唯一记账出口。
-
-        ``storage`` 是**依赖**，由构造方以 ``usage_ctx`` 延迟提供：ChatEngine 的
-        这个字段在构造之后才被路由绑定，构造时取值会拿到 None。延迟取值保证任何
-        时刻调用都读到当前绑定值。**归属（user_id）不在这里传** —— 出口自己读
-        上下文（缺陷 83）。
-        """
-        if self._usage_ctx is None:
-            return
-        storage = self._usage_ctx()
-        try_record_usage(storage, self._llm, action, source="ContextEngine")
 
     # ── 公开接口 ──────────────────────────────────────────────
 
@@ -544,7 +530,7 @@ class ContextEngine:
         )
         try:
             filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
-            self._record_usage("chat_web_filter")
+            try_record_usage(self._storage, self._llm, "chat_web_filter", source="ContextEngine")
         except Exception as exc:
             print(f"[ContextEngine] Character filter failed: {exc}")
             return items, ""

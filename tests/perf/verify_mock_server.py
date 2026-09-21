@@ -91,7 +91,7 @@ def chat_engine_e2e(base: str) -> dict:
     from core.schema import CharacterCard
     llm = LLMAdapter(api_key="mock", base_url=base, model="mock-chat", temperature=0)
     card = CharacterCard(name="测试卡")
-    engine = ChatEngine(llm=llm, rag=None, card=card, card_id="perf-verify")
+    engine = ChatEngine(llm=llm, rag=None, card=card, card_id="perf-verify", storage=None)
     pieces = []
     t0 = time.monotonic()
     for piece in engine.chat_stream("今天过得怎么样？给我讲讲。", voice_mode=False):

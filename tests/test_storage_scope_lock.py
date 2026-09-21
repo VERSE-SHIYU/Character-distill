@@ -38,7 +38,7 @@ UNSCOPED_ALLOWLIST = {
         "`_enclosing_function` 沿 parents 一路上溯到模块。"
         "trash_service 自身无登录语境概念 —— 它拿到的 storage 是 duck-typed，身份由形参 user 带入。",
     "core/chat_engine.py:_evaluate_affinity":
-        "引擎读自身 session_id；ChatEngine 无 user 语境（self._user_id 只在 __init__ 初始化，全仓无赋值点）",
+        "引擎读自身 session_id；ChatEngine 无 user 语境（身份不挂在实例上，由记账出口自读上下文 —— 缺陷 83）",
     "core/chat_engine.py:_build_time_awareness_block":
         "同上：引擎读自身 session_id，无调用方身份可传",
     "core/chat_engine.py:generate_reunion_greeting":
