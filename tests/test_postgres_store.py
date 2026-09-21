@@ -1536,6 +1536,97 @@ class TestPgDeletingTheDraftLeavesTheCopyAlive:
         assert await store.get_card_owned(copy_id, a) is None, "副本没被级联删掉"
 
 
+@_pg
+class TestPgUnpublishIsWithdrawingTheRelease:
+    """同 SQLite 侧同名类（`TestUnpublishIsWithdrawingTheRelease`）：下架 = 撤回发布。
+
+    这段 Python 与 SQLite 侧逐字相同、只差占位符与取值方式（`fetchval` vs `fetchone`），
+    但真库行为要各自闭环：唯一索引与 `ON CONFLICT` 的推断在两侧是两套实现（PG 的部分唯一
+    索引 / SQLite 的 `ON CONFLICT … WHERE`），改一侧不跑另一侧会立刻造出分叉。
+    """
+
+    @staticmethod
+    async def _scalar(store, sql, *args):
+        async with await store._connect() as conn:
+            return await conn.fetchval(sql, *args)
+
+    async def test_unpublish_leaves_no_published_id_but_keeps_the_row(self, store, text_id):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+        assert (await store.get_card_owned(draft, a))["published_id"] == copy_id, \
+            "夹具里草稿就没认出副本，本用例会恒绿"
+
+        await store.update_card_visibility(copy_id, "private")
+
+        assert (await store.get_card_owned(draft, a))["published_id"] is None, \
+            "下架后 published_id 仍指向副本 —— 在架判据退成了关系谓词"
+        tid = await self._scalar(store, "SELECT text_id FROM cards WHERE id = $1", draft)
+        listed = [c for c in await store.list_cards(tid, a) if c["id"] == draft]
+        assert listed and listed[0]["published_id"] is None, \
+            "list_cards 下架后仍把副本当在架（在架判据退成了关系谓词）"
+        assert await store.get_card_owned(copy_id, a) is not None, \
+            "下架把副本行删了 —— 撤回发布只该下架，不该解绑"
+
+    async def test_republish_reuses_the_row_and_takes_the_drafts_current_values(self, store, text_id):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+        assert await store.toggle_like(copy_id, f"fan_{uuid.uuid4().hex}") is not None, \
+            "点赞没挂上，下面那条「点赞保留」会恒绿"
+
+        await store.update_card_visibility(copy_id, "private")          # 下架
+        await store.update_card(draft, {"name": "李四"})                 # 草稿改名
+        await store.save_card_avatar(draft, a, "NEWAV")                 # 草稿改头像
+
+        again = await store.publish_card(draft, a, "新desc", "新tag", "v2", '{"name": "李四"}')
+
+        assert again == copy_id, "重发没复用原副本行 —— 又新建了一张（唯一索引没派上用场）"
+        copy = await store.get_card_owned(copy_id, a)
+        assert json.loads(copy["card_json"])["name"] == "李四", \
+            "重发的副本内容不是草稿当前值（DO UPDATE 没从草稿这一次读里取值）"
+        assert copy["market_description"] == "新desc", "重发没更新发布字段（走了插入分支而非更新）"
+        assert copy["visibility"] == "public", "重发没把副本拨回在架"
+        assert await self._scalar(store, "SELECT likes FROM cards WHERE id = $1", copy_id) == 1, \
+            "重发把点赞弄丢了 —— 更新列清单里不该有 likes（它属于副本这一行）"
+        assert await self._scalar(
+            store, "SELECT COUNT(*) FROM cards WHERE published_from = $1 AND deleted_at IS NULL",
+            draft) == 1, "同一草稿有了多张存活副本"
+        assert await self._scalar(
+            store, "SELECT MAX(version_num) FROM card_versions WHERE card_id = $1",
+            copy_id) == 2, "版本号没接着 +1 —— 插入与更新走了两条版本路径"
+
+    async def test_a_second_live_copy_of_the_same_draft_is_rejected_by_the_database(self, store, text_id):
+        """同 SQLite 侧同名用例：拒它的必须是那条部分唯一索引，且软删的那张要能插进去。
+
+        刻意不走 `publish_card` —— 理由见 SQLite 侧那段（`ON CONFLICT` 推断的就是这条索引，
+        索引不在时 publish 先报错，红在 publish 上而非本条要锁的库约束）。
+        """
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft = await _pg_draft(store, a)
+
+        await self._raw_insert_copy(store, f"card_{uuid.uuid4().hex}", a, draft)
+
+        with pytest.raises(Exception) as exc:
+            await self._raw_insert_copy(store, f"card_{uuid.uuid4().hex}", a, draft)
+        assert "UNIQUE" in str(exc.value).upper(), \
+            f"写入被拒了，但不是唯一索引拦的 —— 判据不成立：{exc.value!r}"
+
+        gone = f"card_{uuid.uuid4().hex}"
+        await self._raw_insert_copy(store, gone, a, draft, deleted=True)
+        assert await self._scalar(store, "SELECT COUNT(*) FROM cards WHERE id = $1", gone) == 1, \
+            "已软删的副本把位置占住了 —— 唯一索引的谓词掉了 WHERE deleted_at IS NULL"
+
+    @staticmethod
+    async def _raw_insert_copy(store, card_id, owner, published_from, deleted=False):
+        async with await store._connect() as conn:
+            await conn.execute(
+                """INSERT INTO cards (id, name, card_json, user_id, visibility, published_from,
+                                      deleted_at)
+                   VALUES ($1, $2, $3, $4, 'public', $5, $6)""",
+                card_id, "冒名副本", "{}", owner, published_from,
+                "2020-01-01T00:00:00+00:00" if deleted else None,
+            )
+
+
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
 # 故意**不挂** `@_pg` —— 它是用来验「_pg 到底跳了没跳」的那把尺子，自己不能被同一把尺子量。
 
