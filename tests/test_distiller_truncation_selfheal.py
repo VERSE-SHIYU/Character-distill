@@ -131,7 +131,11 @@ class TestMapStageUnchanged:
         llm.async_chat = _boom
         d = Distiller(llm)
 
-        results, failures = await d._run_map_concurrent(["片段一"], "阿Q")
+        def _build_prompt(chunk: str) -> tuple[str, str]:
+            return Distiller._map_system_prompt("阿Q"), Distiller._map_user_prompt(chunk, "阿Q")
+
+        results, failures = await d._run_map_concurrent(
+            ["片段一"], _build_prompt, "distill_map")
 
         assert results == [(0, "")]
         assert len(failures) == 1

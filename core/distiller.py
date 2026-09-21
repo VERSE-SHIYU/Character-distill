@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -220,6 +220,57 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
     if cand["fingerprint"] != text_fingerprint(chunk):
         return None
     return cand["result"]
+
+
+#: Map 阶段失败片的容忍上限：失败占比 **>** 此值即整批 bail，等于不算超。
+_MAP_FAILURE_RATIO = 0.5
+
+
+def _map_failure_exceeds_tolerance(failed: int, total: int) -> bool:
+    """Map 失败率是否越过容忍上限 —— 同步路径与流式路径的**唯一**判据。
+
+    调用方保证 ``total > 0``：空文本在 long-context 分流处就返回了，走不到 Map。
+
+    原先两条路各写一遍 ``failed / total_chunks > 0.5``，改一处漏一处；识别若再加一份
+    就是第三处。阈值与判据一并收在这里。
+    """
+    return failed / total > _MAP_FAILURE_RATIO
+
+
+_T = TypeVar("_T")
+
+
+def _run_async_in_ctx_thread(factory: _cabc.Callable[[], _cabc.Awaitable[_T]]) -> _T:
+    """唯一的 sync→async 桥接：在派生线程里新建 loop 跑协程，把结果带回调用线程。
+
+    调用方通常正处在 uvicorn 的事件循环里，不能原地 ``asyncio.run`` —— 故必须下到
+    派生线程去建自己的 loop。**必须用 ``C.ctx_thread``**（缺陷 35）：记账身份靠
+    contextvars 传播，裸 ``threading.Thread`` 会让派生线程读到空身份、账落空。
+
+    收的是**工厂**而不是协程对象：协程绑定创建它的循环，跨线程传递是错的。
+
+    **清理失败的语义（工厂方的义务，不由本函数承担）**：一次「主流程已成功」的调用，
+    不能因为收尾（如关闭 async client）出错而整体失败。工厂自己把清理包住 —— 记日志
+    （带异常本体）、不覆盖主结果、不上抛。**这不是新增的宽容，是把原有的意外行为变显式**：
+    旧实现里工厂先把结果塞进 queue，消费方拿到即 break，随后 ``finally`` 里 close 抛的错
+    成了没人读的第二个 queue item —— 同样不上抛，但**连日志都没有**。「静默吞掉」与
+    「明确记一笔再继续」对调用方等价，对排障不等价。
+    """
+    outcome: queue.Queue = queue.Queue()
+
+    def _thread_run() -> None:
+        try:
+            outcome.put((True, asyncio.run(factory())))
+        except BaseException as exc:  # 含 KeyboardInterrupt：不能让它把 q.get() 悬死
+            outcome.put((False, exc))
+
+    t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
+    t.start()
+    ok, payload = outcome.get()
+    t.join(timeout=5)
+    if not ok:
+        raise payload
+    return payload
 
 
 class Distiller:
@@ -1096,12 +1147,16 @@ class Distiller:
     async def _run_map_concurrent(
         self,
         chunks: list[str],
-        character_name: str,
+        build_prompt: _cabc.Callable[[str], tuple[str, str]],
+        usage_action: str,
         on_chunk_done: "callable | None" = None,
-        is_chat: bool = False,
         client: AsyncOpenAI | None = None,
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
+
+        ``build_prompt(chunk) -> (system, user)`` 由调用方给：蒸馏是「收集某角色的
+        人格证据」，识别是「列出全书角色名单」，提示词不同、并发与记账骨架相同。
+        ``usage_action`` 是整阶段汇总落账的 action 名。
 
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
         ``on_chunk_done(index, result)`` is called synchronously within the
@@ -1112,13 +1167,10 @@ class Distiller:
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
         usages: list[dict | None] = []
-        map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
-        map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
         async def _one(i: int, chunk: str) -> tuple[int, str]:
             async with sem:
-                system = map_system_fn(character_name)
-                user = map_user_fn(chunk, character_name)
+                system, user = build_prompt(chunk)
                 usage = None
                 try:
                     result, usage = await self._llm.async_chat(
@@ -1145,7 +1197,7 @@ class Distiller:
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
         merged = aggregate_usage(usages, len(usages))
         if merged is not None:
-            self._try_record_usage("distill_map", merged)
+            self._try_record_usage(usage_action, merged)
         return results, failures
 
     async def _run_reduce_concurrent(
@@ -1323,39 +1375,34 @@ class Distiller:
             on_progress(0, total)
 
         # Run async Map in a dedicated thread (safe even under uvicorn async context)
-        q: queue.Queue = queue.Queue()
+        map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
+        map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
-        async def _map_wrapper():
+        def _build_map_prompt(chunk: str) -> tuple[str, str]:
+            return map_system_fn(character_name), map_user_fn(chunk, character_name)
+
+        async def _map_run():
             run_client = self._llm._make_async_client()
             try:
-                results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat, client=run_client)
-                q.put(("done", results, failures))
+                return await self._run_map_concurrent(
+                    relevant, _build_map_prompt, "distill_map", _on_done, client=run_client,
+                )
             finally:
-                await run_client.close()
+                # 清理失败不覆盖主结果、不上抛（语义见 _run_async_in_ctx_thread 的
+                # docstring）：一次已经花过钱的 Map 不该因为关连接出错而整体判失败。
+                # 原先这里是裸 `await run_client.close()`，异常被 queue 意外吞掉且无日志。
+                try:
+                    await run_client.close()
+                except Exception as exc:
+                    print(f"[distiller] Map client close failed (non-fatal): "
+                          f"{type(exc).__name__}: {exc}")
 
-        def _thread_run():
-            try:
-                asyncio.run(_map_wrapper())
-            except Exception as exc:
-                q.put(("error", str(exc)))
-
-        t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
-        t.start()
-
-        map_results: list[tuple[int, str]] = []
-        map_failures: list[tuple[int, Exception]] = []
-        while True:
-            item = q.get()
-            kind = item[0]
-            if kind == "done":
-                map_results = item[1]
-                map_failures = item[2]
-                break
-            if kind == "error":
-                raise RuntimeError(f"Map 阶段失败：{item[1]}")
-            # else: progress is handled via _on_done callback already
-
-        t.join(timeout=5)
+        try:
+            map_results, map_failures = _run_async_in_ctx_thread(_map_run)
+        except Exception as exc:
+            # 上抛形态保持不变（RuntimeError + 同一句文案）：按类型/文案分流的地方
+            # 不受这次重构影响。
+            raise RuntimeError(f"Map 阶段失败：{exc}") from exc
 
         if on_progress:
             on_progress(total, total)
@@ -1363,7 +1410,7 @@ class Distiller:
         # Failure rate check: if >50% chunks failed, bail with clear error
         total_chunks = len(relevant)
         failed = len(map_failures)
-        if failed / total_chunks > 0.5:
+        if _map_failure_exceeds_tolerance(failed, total_chunks):
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
                 raise DistillError(
@@ -1636,7 +1683,7 @@ class Distiller:
         # Failure rate check: if >50% chunks failed, bail
         total_chunks = len(relevant)
         failed = len(map_failures)
-        if failed / total_chunks > 0.5:
+        if _map_failure_exceeds_tolerance(failed, total_chunks):
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
                 print(f"[distiller] aborting stream: API 429；{failed}/{total_chunks} 个分片失败")
