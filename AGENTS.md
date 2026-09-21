@@ -116,7 +116,7 @@ config.yaml 现值（现读，非转述）：
 
 > **全表状态口径（2026-09-19 现跑现数）**：1–74 共 74 条 —— **已修 53**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；**本轮新增的 59–63 与 65 已同批修完**，锁在 `tests/test_llm_access_gate.py`）/ **记账 11**（35、36、47、56、57、58、64、66、67、68、69）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 11**。
 > **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
-> **缺陷 35 与新增的 83–85 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`，该条标题已改）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**83 / 84 / 85 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：35 与 83–85 的当前状态都写在各条标题上，重算是个待办而不是事实）。
+> **缺陷 35、36 与新增的 83–90 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**36 也已转为「已修」**（`0605bdf` → `ef43b38`）—— 同处引用的 **36 也已算多**；**83–90 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：各条当前状态都写在各条标题上，重算是个待办而不是事实）。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -584,13 +584,15 @@ config.yaml 现值（现读，非转述）：
 
 **未覆盖（登记，不是遗漏）**：本条只修**蒸馏族**。同一形态在**聊天族**照旧（见 83 / 84），Gradio 路径同形态但**生产不可达**（见 85）。
 
-**36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
+**36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**已修**（`0605bdf` `00e0710` `d5bdbc3` `592cc28` `5088c29` `ef43b38`，2026-09-21；2026-09-14 首记，原状态「记账（不修，待裁范围）」）
 - **事实**：`/identify`（`web/routers/distill.py:658`）在属主校验后读 `get_characters_owned`（678），命中即返回、**不发 LLM**；`/start`（734）这条全流水线**不读该缓存** —— 角色识别由流水线内的 `distiller.identify_characters`（`core/distiller.py:635`）直接跑。
 - **它自己的那层缓存不是 `characters_json`**：`identify_characters` 用的是**进程内 TTL memo**（`core/distiller.py:28-32`，`IDENTIFY_CACHE_TTL_SECONDS = 600`），键 = `sha256(前 10000 字) + model`。寿命是**进程**，不是库。
 - **实测**：本次 `/start` 之前该文本的 `characters_json` 已存 8 个角色（早先 `/identify` 的产物），流水线仍在 12:30:07 真发了 identify 调用（`action=distill_identify`）；日志里 `[distill] identify cache hit` **零命中** —— 因为本次 rebuild 刚重启过容器，进程内 memo 是冷的。
 - **意义（解释了上一轮的一个推理为什么只在一条路上成立）**：上一轮判定「再点一次不可能复现，因为 `characters_json` 已缓存 8 个角色、命中即返回」—— 该推理**只在 `/identify` 上成立**。`/start` 不等价。
-- **处置方向（记在条目里，不实现）**：**不一定要「对齐」** —— 两条路由的语义本就不同（`/identify` = 只看角色，`/start` = 全量重跑），`/start` 复用库缓存会让「重跑」不再重跑。要裁的是**产品语义**：「`/start` 该不该复用已有识别结果」，而不是「补一行 cache 读取」。
-- **判据命令**：`git grep -n 'get_characters_owned\|identify_characters' web/routers/distill.py core/distiller.py`
+- **收口（2026-09-21）**：按**产品语义**裁，不是补一行 cache 读取 —— 名单是**作品的属性**，所以「读缓存 → 识别 → 落库」收敛成唯一入口 `core/character_roster.py`（S4 `5088c29`），所有**有 `text_id`** 的调用方（`/identify` `/run` `/run_stream` `/reindex`、`TextManager.distill_all` / `get_or_distill` / `_build_all_characters`、`/start` 的 bg 线程）一律走它（S5 `ef43b38`）；`refresh=True` 保留「用户显式点重新识别」这条语义，不再靠「调另一条路由」表达重跑。legacy 的 `/api/identify`、`/api/distill` 与 `web/app.py:85`（Gradio）保持现场识别 —— 只有原文、没有 `text_id`，读不到也落不了这份缓存。
+- **同轮一起落地的两处前提**：① 原 `identify_characters` 取 `text[:10000]`，红楼梦只覆盖头两章，残缺名单被当全书名单落库 —— 改为按 `_chunk_size` 全片识别再合并（S2 `00e0710`；合并输出上限另提 `d5bdbc3`）。② `characters_json` 没有版本，口径一改旧名单不会失效 —— 加 `texts.characters_version`（SQLite 087 / PG 020，S3 `592cc28`），版本号的唯一定义是 `Distiller.IDENTIFY_VERSION`，读回时版本不符即当无缓存。
+- **判据命令**：`git grep -n 'get_characters_owned\|save_characters' -- web/ core/`（应**只剩** `core/character_roster.py`）、`git grep -n 'identify_characters' -- web/ core/`（应只剩 `core/distiller.py` 的定义、`core/character_roster.py` 的调用、`_do_identify` / `_resolve_character_name` 两条 legacy 纯文本路径、`web/app.py:85`）
+- **同轮另记的观察（各自单列，均未修）**：见 86–90。
 
 **37. （前提证伪）`get_distiller` 的单例被 `/run_stream` 原地改写 —— 该形态不可达，usage 不会记到别人名下** —— 状态：**证伪，不成立**（2026-09-14 当天记下、当天核掉）
 - **原假设**：`get_distiller(llm=None)` 返回模块级单例 `_distiller`（`web/deps.py:182-192`），而 `/run_stream` 原地改写其 `_storage` / `_user_id`（`web/routers/distill.py:1075-1076`）→ 共享可变状态跨请求污染 → 之后某个没有 per-user key 的请求取回被污染的单例，usage 记到前一个用户名下。当时标注为「静态读出、未实跑验证」。
@@ -1191,6 +1193,40 @@ PROBE_IMAGE         false
 - **生产不可达（实测）**：`Dockerfile:52` 是 `CMD ["python", "-m", "web.server"]`；`git grep -rn "web\.app\b"` **零命中** —— 全仓无任何模块 import 它。它只在有人手工拉起 Gradio demo 时才会被加载。
 - **判据命令**：`git grep -n "Distiller(" -- web/app.py`、`git grep -rn "web\.app\b" -- .`（应零命中）
 - **处置方向**：先判这个 Gradio 入口是否还有人用 —— 已废弃就随它退役，还在用就照 83 收敛。**不先改**。
+
+**86. `_run_distill_task` 取名单失败时 `except Exception: chars = []` —— 错因被吞，故障以「输入有问题」的口径上报** —— 状态：**记账**（不修，2026-09-21；缺陷 36 收口时发现）
+- **形态**：`web/routers/distill.py:371-375` 的 bg 线程里，`resolve_characters` 的任何异常都被宽捕获吞成空名单 —— 不打印、不分类。缺陷 36 收口把这里从 `distiller.identify_characters(content)` 换成 `submit_to_main_loop(resolve_characters(...))`，**原样保留了这个形状**（「发现 spec 外问题先报告，不顺手修」）。
+- **可达，且后果不是静默成功而是错因混淆**：`/start` 的 `DistillTaskRequest.character_name` 默认 `""`（`:245`），bg 线程对空名字走 `if not name:` 分支（`:376-383`）—— 名单空则任务以 **error** 收口、message 为 `"No characters identified"`。于是**上游故障（网络超时、DB 不可用、额度耗尽）与「这本书里确实没有角色」在用户与排查者眼里是同一句话**，日志里一个字都没有。这是缺陷 38 的同族（客户端条件与上游故障共用一条上屏文案），只是这里连运维口径都没留下。
+- **点名蒸馏不受影响**：`name` 非空时名单只用来取别名，空名单 → `aliases_for` 返回 `[]` → 蒸馏照常产卡。所以影响面**只在空 `character_name` 的 `/start`**。
+- **判据命令**：`git grep -n "chars = \[\]" -- web/routers/distill.py`（现命中 1 处，在 `except Exception:` 正下方）
+- **处置方向**：把宽捕获改成 `except Exception as exc: print(...)` + 以 **500 口径**（「操作失败，请稍后重试」）收口，把「这本没有角色」留给真正的空结果分支。**先不改**：要连带定「识别失败该报 5xx 还是可重试」，属缺陷 38 那张表的范围。
+
+**87. 名著模式的「深度预处理」整条支线从没接线 —— `coref_resolve` 与 `update_text_resolved` 零调用点** —— 状态：**记账**（不修，2026-09-21；缺陷 36 收口时普查发现的存量）
+- **事实（现跑）**：`core/distiller.py:1037` `coref_resolve` 有定义、**全仓零生产调用点**；`update_text_resolved`（`storage/sqlite_store.py:627` / `storage/postgres_store.py:186`）同样零调用点。写侧唯一入口是 `save_text(..., content_resolved="", coref_resolved=0)`，两个调用点（`core/text_manager.py:247` / `:367`）都没传 → 两列恒为 `''` / `0`。
+- **读侧唯一消费者**：`web/routers/distill.py:34-40` `_get_distill_content` —— 仅当 `DISTILL_USE_COREF=1` 时取 `content_resolved`，而它恒空，`if resolved and ...` 恒假 → 与 `=0` 逐字等价。
+- **性质**：不是「坏了」（没有正确行为可对照），是**整条支线从没接线**。按「三之二」的口径它本属「立项」；留在缺陷表是因为它**以可用特性的形态存在**（`DISTILL_USE_COREF` 开关 + `.env.example:51` 的有注释条目 + 两列 schema：SQLite `storage/migrations/056_coref_resolved.sql`、PG 内联在 `storage/migrations_pg/001_init.sql`），读代码的人会以为它可以打开。
+- **判据命令**：`git grep -n "coref_resolve\|update_text_resolved" -- '*.py'`（除定义与 tests 外应零命中）、`git grep -n "DISTILL_USE_COREF" -- .`（现仅 `web/routers/distill.py:36` 一处读）
+- **处置方向**：要么删（函数 + 两列 + 分支 + 环境变量），要么接线（上传时跑一次并写回）。**先不删**：`content_resolved` / `coref_resolved` 在 `save_text` 的公开签名与 `tests/test_storage_contract_shape.py` 的契约里，删列要新写 DROP 迁移并改契约。裁定归用户。
+
+**88. `distill_incremental_stream` 内联了一份 Map 循环的副本** —— 状态：**记账**（不修，2026-09-21；S1 泛化 Map 原语时确认不是漏改）
+- **形态**：`core/distiller.py:1820-1879` 的 `_map_with_progress` 自己重写了一遍 semaphore / `done_count` / `lock` / `failures` / `usages` / `_one` / `gather` / `aggregate_usage`，与 `_run_map_concurrent`（`:1407-`）同形。S1（`0605bdf`）已把 Map 参数化成 `build_prompt` + `usage_action`，**识别侧复用了它，流式蒸馏侧没有**。
+- **为什么当时没顺手合并（不是忘了）**：流式多三样东西 —— 续跑命中短路（`_resume_hit`）、逐片 checkpoint 落库（`save_distill_chunk` + `ON CONFLICT DO NOTHING` 的指纹语义）、以及用 `queue.Queue` 把进度倒回生成器。`_run_map_concurrent` 的 `on_chunk_done` 是**同步回调**，而生成器要 `yield`，`yield` 不能出现在回调里 —— 这是**两条真不同的控制流**，合并需要一个能把进度事件带出任务并交回生成器的通道，是设计活不是替换。
+- **代价**：「失败片是否落 checkpoint」「失败片按字符估算补记账」这两条口径必须两处手工一致，而详细注释只写在流式这一侧（`:1844-1865`）。
+- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/`（现为 **2** 处；并成 1 处即已收口）
+- **处置方向**：把 Map 抽成 async 生成器（`async for ev in _map_events(...)`），同步侧用 `asyncio.run` + 收集、流式侧直接转发。**先不动**：会碰 `resume_candidates` 与 checkpoint 的既有语义，超出本案范围。
+
+**89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**记账**（不修，2026-09-21；S4 建唯一入口时确认）
+- **两份的键不同**：进程内 memo（`core/distiller.py:846`）键 = `text_fingerprint(text) + ":" + model`，TTL 600s、上限 100 条、寿命是**进程**；库缓存键 = (text_id, 属主, `IDENTIFY_VERSION`)，寿命是**库**。
+- **两者的失效条件不一致**：`characters_version` 一改，库缓存立刻当无缓存重算；而 memo 不认版本号 —— `identify_characters` 的注释（`core/distiller.py:836-837`）明写「版本判定在 `core/character_roster.py` 那一层，这里不管版本」。于是版本变更后 roster 会调一次识别、**拿到 memo 里的旧口径名单**、再以**新版本号**写回库 —— 旧名单被洗成新名单，S3 的版本门形同虚设。
+- **当前不可达（判据不是推论）**：`IDENTIFY_VERSION` 是类常量（`core/distiller.py:322`），改它必改代码，改代码必重启进程，重启则 memo 为空。窗口要打开需要**一个不改代码就能变版本号的入口**（读 env / config）。
+- **判据命令**：`git grep -n "IDENTIFY_CACHE" -- core/`、`git grep -n "IDENTIFY_VERSION" -- core/ CONFIG* docs/ 2>/dev/null`（版本号若出现在 env/config 读取处，窗口即已打开）
+- **处置方向**：把 `IDENTIFY_VERSION` 并进 memo 的键（两行），或让 `identify_characters` 不自带缓存、缓存统一归 roster 层。**先不动**：窗口不可达时改它拿不到红源，变异打不红的判据没有分辨力。
+
+**90. 两个后端每次启动都重跑全部迁移，且没有「已应用」记录表** —— 状态：**记账**（不修，2026-09-21；S3 加 087/020 时确认口径）
+- **事实**：全仓无 `schema_migrations` 一类记录表。SQLite 的幂等靠**读现状**（`storage/sqlite_store.py:97` / `:195` / `:249` 的 `PRAGMA table_info`，逐列比对后再决定加不加）；PG 靠 `ADD COLUMN IF NOT EXISTS` / `DROP COLUMN IF EXISTS`。启动时**每一份** `.sql` 都会被解析并执行一遍。
+- **后果（缺陷 21 / 23 已各自从一侧记过，这里记共同的前提）**：① 迁移文件**不能重写** —— 改一个已应用过的迁移，对已有库是 no-op，而对新库生效，于是「文件里的第 N 号迁移」与「这个库实际经历过的变更」没有对应关系；② 排查时无法回答「这个库跑过哪些迁移」；③ 每次启动都要把整批文件重新解析、逐条试探性 DDL。
+- **为什么只记不修**：加记录表要处理「已有库首次见到这张表时如何回填」——回填本身就是一次不可验证的猜测（拿什么当真源？文件列表？），且会与缺陷 21 的豁免清单、缺陷 23 的 fresh-schema 锁互相纠缠。属于基础设施改造，得单独立项。
+- **判据命令**：`git grep -n "schema_migrations\|migration_history\|_applied\b" -- storage/`（应零命中）
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
