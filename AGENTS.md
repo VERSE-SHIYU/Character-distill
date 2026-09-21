@@ -116,6 +116,7 @@ config.yaml 现值（现读，非转述）：
 
 > **全表状态口径（2026-09-19 现跑现数）**：1–74 共 74 条 —— **已修 53**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；**本轮新增的 59–63 与 65 已同批修完**，锁在 `tests/test_llm_access_gate.py`）/ **记账 11**（35、36、47、56、57、58、64、66、67、68、69）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 11**。
 > **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
+> **缺陷 35 与新增的 83–85 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`，该条标题已改）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**83 / 84 / 85 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：35 与 83–85 的当前状态都写在各条标题上，重算是个待办而不是事实）。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -541,14 +542,47 @@ config.yaml 现值（现读，非转述）：
   - **变异验证**（`tests/test_distiller_routing.py::TestReduceAllEmptyBails`，两条）：删掉守卫 → 两条双双变红（sync 落到 format 阶段、stream 不再产 error 帧），日志复现原形状 `Reduce batch 0/1 returned empty, skipped` → 第三次 reduce 调用（凭空归并）→ `distill_format` → 落卡。**用例的假件必须模拟「零条分析也产出非空」**，否则 `:1726` 那道门在用例里反而拦住了，测不到真缺口。
   - **同病第二处已一并覆盖**：`distill_incremental`（`/run` 走的那条）的 `_do_reduce` 递归同样吃空列表，见上方「非 stream 路径同病」条 —— 守卫落在汇合点后，这一处无需另改（递归传入的 `merged` 已被上游拦住）。
 
-**35. `/start` 后台线程路径的 usage 记账全程空转 —— 缺陷 22 收口后的覆盖缺口** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
+**35. `/start` 后台线程路径的 usage 记账全程空转 —— 缺陷 22 收口后的覆盖缺口** —— 状态：**已修**（`dc7b09f` + `34bf075`，2026-09-21；2026-09-14 首记）
+> 下面 6 条是**修复前的现场记录**，行号与默认值都是当时的形态，保留原文以便对照。
+
 - **事实**：本次运行 5 个 action 各打一条 `[Distiller] usage not recorded: storage/user_id missing (user=, action=…)` —— `distill_identify` / `distill_map` / `distill_reduce` / `distill_format` / `distill_autotag`。`user=` 为空即证据（`core/utils.py:64` 的 print 把 `user_id` 直接填进去）。
 - **根因**：`/start`（`web/routers/distill.py:734`）→ `_distill_start_impl`（763）→ `_run_distill_task`（317）**后台线程**。该线程**收到了 `user_id` 参数，但只用它放并发槽**（`_release_user_slot`），**从不把 `distiller._storage` / `distiller._user_id` 接上去**。`Distiller.__init__` 的默认是 `self._user_id = ""`（`core/distiller.py:239`）。
 - **对照（同一仓库里的正确写法）**：`/run_stream`（`web/routers/distill.py:1044`）在 1075–1076 显式写了 `distiller._storage = storage` / `distiller._user_id = user_id`。全仓 `distiller._user_id = …` / `distiller._storage = …` **只此一处**（`git grep -n 'distiller\._user_id\|distiller\._storage'`）→ **三道蒸馏入口里只有 `/run_stream` 一条接了**：`/start`（后台线程，`_run_distill_task`）不接；`/run`（`web/routers/distill.py:686` → `TextManager.get_or_distill`，`core/text_manager.py:407`）也不接 —— 它的 distiller 由 `web/deps.py:254` 现造（`Distiller(llm)`），同样落 `_user_id=""` / `_storage=None` 默认值。`Distiller.__init__` 的这两个默认值见 `core/distiller.py:238-239`，全仓 5 处 `Distiller(...)` 构造点（`web/app.py:48` / `web/deps.py:185,191,254,297`）无一传身份。
 - **机制**：`core/utils.py:63` `if not storage or not user_id:` → print + `return`。整条链的记账出口是接上了的（缺陷 22 刚把 36 个 LLM 调用点全部接进该出口），**但这条路上入口的两个实参都是空的**，于是出口空转。
 - **与缺陷 22 的关系（关键）**：22 修的是「**出口从未写**」；本条是「**出口写了、这条路从未注入**」。二者**不重叠**，但**机制锁看不见本条** —— `tests/test_usage_accounting_lock.py` 的判据是**静态调用链**（「存在调用 LLM 但不流向记账出口的调用点即红」），而本条的调用**在代码路径上确实流向出口**，只是运行期早退。**判据是调用图，不是实参** —— 这是该锁的又一类盲区（与缺陷 25「签名的代理代替 SQL 事实」同谱系：静态形态对，运行期事实错）。
 - **后果**：除 `/run_stream` 外的蒸馏入口（`/start`、`/run`）上，distiller 内部那几笔 token 用量**一条都不入库**；而 `/start` 正是前端主要的蒸馏入口 —— 「蒸馏成本统计」在这些路上系统性偏低（偏低的统计比没有更危险，同缺陷 22 的措辞）。本次观测到的只是 `/start` 这一条（5 条 no-op 打点即其证据）；`/run` 的同一形态由静态读代码得出，**未实跑验证**。
-- **处置方向（记在条目里，不实现）**：① 让 `_run_distill_task` 注入 `storage` / `user_id`（照 `/run_stream` 的写法）；② 更根本的是**补一条运行期判据** —— 蒸馏路径上出现「记账出口空转」不应只是 `print` 一行淹没在 429 风暴里。范围待裁：注入点、以及是否把静态锁扩到「实参非空」这一层（若是，需要先想清怎么在不跑流水线的前提下判定）。
+- ~~**处置方向（记在条目里，不实现）**：① 让 `_run_distill_task` 注入 `storage` / `user_id`（照 `/run_stream` 的写法）；② 更根本的是**补一条运行期判据**……~~ **已按下文实现** —— 但**没有**照 ① 补注入：给 `/start` 补一次注入只是把「谁忘了写」从一条路挪到另一条，缺陷形态原样留着。改成身份**不再靠往实例上写属性传**。
+
+**修法（`dc7b09f`，2026-09-21）** —— 身份收敛成**一个** contextvar：
+- 身份 = `LLM_CALLER`（`core/request_context.py`）。**写口一处**：`AuthMiddleware` 在它唯一的 `call_next` 出口前设一次；**读口一处**：记账出口用 `current_user_id()` 读它。传播是白拿的 —— `core/concurrency` 的 `ctx_thread` / `ctx_submit` 本来就 `copy_context()`，派生线程自动带上。
+- `storage` 是**依赖不是身份**：走构造注入，由**唯一生产装配出口** `web/deps.get_distiller` 注入（`Distiller(llm, storage=get_storage())`）。不往身份里夹带，也不为它在 `core/` 新建第二个模块。
+- `/run_stream` 那两行逐路由写属性**删掉**：六条蒸馏路由共用同一个机制，路由侧一行都不用写。
+
+**返工（`34bf075`）** 首版错在哪：在 `core/` 另建了一个只装 user_id 的 ContextVar，中间件于是同一个出口**连写两份同一个值** —— 正是 `web/llm_gate.py` docstring 禁的那件事（`web/` 没有 `__init__.py`，同名两个 ContextVar 各看各的，中间件设的值另一边读不到）。正确解法是把身份上下文**下沉到 core**：`git mv web/request_context.py core/request_context.py`（不留兼容转发），`current_user_id()` 读的就是门读的那一个 `LLM_CALLER`。
+
+**回归锁（`tests/test_usage_identity_context.py`，10 条）** —— 分五层，各锁一维：
+- 派生面传播 ×2：身份进 `ctx_thread` / `ctx_submit` 后读得到（写后**还原** —— 不还原会污染同进程后面「无上下文即 fail-closed」的门用例，实测踩过）；
+- **写口唯一**：AST 现算 `LLM_CALLER.set` 的调用点只有两处（`AuthMiddleware.dispatch` 与 `system_llm_context`），判据是**接收者名 + 方法名** —— 换包装、换函数名、在路由里直接伪造身份都逃不掉；
+- **身份 ContextVar 唯一**：AST 现算 `ContextVar(...)` 的定义只有 `LLM_CALLER` 与 `_EMBED_DEADLINE` 两处。白名单按 **`file:line 名字` 整串**钉死，**不按名字** —— 按名字放行挡不住「在另一个模块里再写一遍同名 `LLM_CALLER`」，而那正是要挡的形态；
+- 形态 ×2：`Distiller` 无 `self._user_id`；`web/` 里没有对 distiller 实例写身份的赋值；
+- 落库：真 app + 真中间件 + 真 `/start` 后台线程，`usage_stats` 恰 5 行、`user_id` 全是请求身份、action 面 == 5 个蒸馏动作。
+- **负控 ×2**：合成第三处写口 / 合成第三个 `ContextVar(` 定义，扫描器都必须报得出来 —— 否则那两条锁是在假绿。
+
+**变异（7 种，2026-09-21 现跑，各按「修复前的代码长什么样」改）**：A 身份退回实例属性 → 形态 + 落库红；B 删中间件那一次写 → 写口唯一 + 中间件 + 落库红；C 写口挪到 `call_next` 之后 → 中间件 + 落库红；D 多出第三处写口 → 写口唯一红；E `get_distiller` 不注 storage → 落库红；F `ctx_thread` 退回裸线程 → 传播 + 落库红；**G 再建一份携带 user_id 的 ContextVar → 只打红「ContextVar 唯一」那一条**。基线绿、复原绿，每个变异只红它该红的。
+
+**读数（现跑，探针 `e2e/scratch/probe_start_usage_leak.py`，真 Distiller + 真后台线程）**：
+
+| 入口 | 修复前 发出 / 落库 | 修复后 发出 / 落库 |
+|---|---|---|
+| `/start` | 5 / **0** | 5 / **5** |
+| `/run_stream` | 4 / 4 | 4 / 4 |
+| `/run` | 5 / **0** | 5 / **5** |
+
+修复后「守卫拦下（日志）」= 0 —— 那行 `usage not recorded` 不再出现。
+
+**全量**：SQLite **1392 passed / 69 skipped / 1 xfailed**（返工前后逐位相同，差量 0）；PG（一次性容器，`REQUIRE_PG_TESTS=1`）**1460 passed / 1 skipped / 1 xfailed、0 failed**。PG 是**返工前**的读数 —— 返工只动 import 路径与上下文归属、不碰存储层，但**未重跑**，属推断非实测。
+
+**未覆盖（登记，不是遗漏）**：本条只修**蒸馏族**。同一形态在**聊天族**照旧（见 83 / 84），Gradio 路径同形态但**生产不可达**（见 85）。
 
 **36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
 - **事实**：`/identify`（`web/routers/distill.py:658`）在属主校验后读 `get_characters_owned`（678），命中即返回、**不发 LLM**；`/start`（734）这条全流水线**不读该缓存** —— 角色识别由流水线内的 `distiller.identify_characters`（`core/distiller.py:635`）直接跑。
@@ -1137,6 +1171,26 @@ PROBE_IMAGE         false
 - **性质：数据丢失风险，与普通记账项区分开** —— 它是**某次 users 重建中途失败的现场**：成功路径会把 `users_mig` 改名回 `users`，不留残骸。而且它**当前反而挡住了丢数据** —— `CREATE TABLE users_mig` 排在 `DROP TABLE users` **之前**，表已存在就直接报错，`DROP` 那一步根本不执行（78 / 79 说的 CASCADE 清空因此没发生）。这是巧合，不是设计。
 - **它现在会让应用起不来**：在 SQLite < 3.35 上（**真正会进回落分支的环境**，本机 3.49 走原生 `DROP COLUMN`，进不到这一支）报 `table users_mig already exists` → init 失败 → 应用直接起不来。实测：活库副本上按 `(3, 34, 0)` 跑 `_ensure_initialized()` 即复现。
 - **处置方向**：先判它是不是缺陷 79 修复前那次失败的遗骸，是就清掉，并给回落分支补幂等（`DROP TABLE IF EXISTS users_mig`）—— 那属于加锁，不在本轮。
+
+**83. 聊天族的身份与依赖全靠「往引擎实例上写属性」传 —— 同形 11 行散在 4 个文件，且写的字段集互不一致** —— 状态：**记账**（不修，2026-09-21）
+- **病灶（与缺陷 35 修复前同形）**：`ChatEngine.__init__`（`core/chat_engine.py:123-124`）持有 `self._storage = None` / `self._user_id: str = ""`，路由在构造**之后**才逐个把值写上去。缺陷 35 已把**蒸馏族**从这条路上摘掉（身份走 `LLM_CALLER`），**聊天族没动**。
+- **读数（现跑）**：`git grep -n "\._user_id = \|\._storage = " -- web/ core/` → 引擎侧写点 **11 行、4 个文件**：`web/routers/chat.py` 7 行（212 / 309 / 310 / 434 / 435 / 466 / 467）、`web/routers/group.py` 1 行（219）、`web/routers/history.py` 1 行（313）、`core/group_session.py` 2 行（163 / 353）。
+- **字段集不一致**：`chat.py:212` **只写 `_user_id`**、不写 `_storage`；`group.py:219` / `history.py:313` / `group_session.py:163,353` **只写 `_storage`**、不写 `_user_id` —— 后四处的路径上 `_user_id` 保持初值 `""`，与缺陷 35 修复前 `Distiller` 的默认值逐字相同。「得记得写」在同一个仓里已经兑现成了「写的字段都不一样」。
+- **代价已有化石证据**：`core/context_engine.py:215-220` 的 `_record_usage` docstring 明写「ChatEngine 的这两个字段在构造之后才被路由绑定，构造时取值会拿到 None」—— 为绕开这个时序，`ContextEngine` 只好接受一个**延迟取值回调** `usage_ctx`（`core/chat_engine.py:171` 传 `lambda: (self._storage, self._user_id)`）。属性注入这条路已经贵到要在下游多养一个间接层。
+- **性质**：与 35 同一个病，只是在聊天族上还没发作（症状形态不同，故不在 35 的范围内）。
+- **判据命令**：`git grep -n "\._user_id = \|\._storage = " -- web/ core/`（引擎侧写点数现为 11）、`git grep -n "usage_ctx" core/`（回调还在 ⟹ 时序问题还在）
+- **处置方向**：照 35 的形态收敛（身份走 `core/request_context`、`storage` 走构造注入）。**本轮不做**：改它会碰 `ChatEngine` / `ContextEngine` / 4 个路由及其测试，超出本案 2 个门的硬范围。
+
+**84. `AgentLoop` 的记账身份取自 `ChatEngine` 的实例字段 —— 83 的下游，不是独立病灶** —— 状态：**记账**（不修，2026-09-21）
+- **形态**：`core/chat_engine.py:302` 造 `AgentLoop(self.llm, toolkit, storage=self._storage, user_id=self._user_id)`；`core/agent/agent_loop.py:64-65` 在构造里存下这两个值，`:116` 用它们调记账出口（`try_record_usage(..., "chat_agent_route", source="AgentLoop")`）。
+- **为什么单列一条**：它的**注入形态本身是对的**（构造注入，与 35 里 `storage` 的走法一致），坏的是**喂进来的值**来自 83 的那两个实例字段 —— 路由不写 `engine._user_id`，`AgentLoop` 拿到的就是 `""`。单列是为了标明**依赖方向**（84 只能随 83 一起修），不是又多一处病灶。
+- **判据命令**：`git grep -n "AgentLoop(" -- core/ web/`（构造点现为 1 处，全在 `chat_engine.py:302`）
+
+**85. `web/app.py:48` 的 `Distiller(_llm)` 是缺陷 35 的同形残留 —— 生产不可达** —— 状态：**记账**（不修，2026-09-21）
+- **形态**：`web/app.py:48` 只传 llm、不传 storage 就造 `Distiller` —— 与 35 修复前的默认值同形。它没被 35 的修复覆盖，是因为它是 **Gradio** 入口，不在 `web/routers/` 那一族的装配路径上。
+- **生产不可达（实测）**：`Dockerfile:52` 是 `CMD ["python", "-m", "web.server"]`；`git grep -rn "web\.app\b"` **零命中** —— 全仓无任何模块 import 它。它只在有人手工拉起 Gradio demo 时才会被加载。
+- **判据命令**：`git grep -n "Distiller(" -- web/app.py`、`git grep -rn "web\.app\b" -- .`（应零命中）
+- **处置方向**：先判这个 Gradio 入口是否还有人用 —— 已废弃就随它退役，还在用就照 83 收敛。**不先改**。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
