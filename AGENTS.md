@@ -1248,17 +1248,22 @@ PROBE_IMAGE         false
 - **形状锁不受牵连**：`test_usage_accounting_lock._audit()` 的配平是 `records >= need`，且互斥分支合并计一组 —— `_collect_stream` 早已是同形（try 一支 + except 一支），本条只是让非流式支对齐它，没有改写配平口径。
 - **判据命令**：`git grep -n "estimate_usage_from_chars" core/distiller.py` —— 全文 **6** 处：`_collect_stream` 的 except 支 1 处、`_chat_accounted` 体内**恰 2** 处（硬失败支 + 截断支）、余 3 处是 map 失败分片与档案压缩（与本条无关）。**注意这条判据与缺陷 91 那条不是同一条**：91 要的是「两条截断路**共用同一个口径**」，判据是 `_prompt_chars` 恰三处；本条要的是「两条非流式出口**各自**按字符估算」，才数 `estimate_usage_from_chars`。
 
-**93. 用量写库失败只留一行 print 就被吞 —— SG 全员用量为 0 直到人工发现** —— 状态：**记账**（不修，2026-09-21；SG「全员用量为 0」排查的收口）
+**93. 用量写库失败只留一行 print 就被吞 —— SG 全员用量为 0 直到人工发现** —— 状态：**已修（可见性）**（2026-09-22；机制根因 2026-09-21 已修，见下「修法」两条）
 - **链路**：记账出口是 `core/utils.try_record_usage`（`core/utils.py:51`），以 `submit_to_main_loop(_write(), wait=False)`（`:98`）投递 —— 写库跑在别处，请求线程不等它。内层 `_write` 的 except 只 `print(f"[{source}] Record usage failed (non-fatal): {exc}")`（`:96`），**不重抛、不置标志、不影响响应**。写侧 `PostgresStore.record_usage`（`storage/postgres_store.py:3014`）自己 print 一行后抛 `StoreError`（`:3022`）—— 这一抛正落进上面那层 except 里。
 - **实害（SG 2026-09-21 只读取证）**：`usage_stats` 的 `max(id)=104` 而序列 `last_value=2`，每条 INSERT 都撞 `usage_stats_pkey`；表里最后一行 `created_at = 2026-06-26 19:10:28+00`（当天 0 行、近 7 天 0 行）；全部 104 行 `action='chat'`，从无 `distill_*` 行。设置页「我的用量」与 admin 用量页都是 0 —— **展示层是忠实的**（`web/routers/auth.py:577` → `get_usage_stats`；`web/routers/admin.py:397` → `get_all_usage_summary`），它读的就是这张冻住的表。
-- **为什么只记不修**：把「账写不进去」从 non-fatal 改成可见（对用户报错 / 健康检查置红 / 计数告警）是**产品口径决策** —— 用量算不算必须送达的账，得先定。本次只修了让事故无声的**机制根因**（identity 序列落后于表数据，见下）：新增 `storage/pg_identity_sync.py`，启动时与导入脚本末尾对齐全部 identity 序列；**吞异常那一层原样保留**，故本条仍记在账上。
-- **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为两处（`core/utils.py:96` / `storage/postgres_store.py:3022`），都是「print 一行，不改请求结果」。
+- **修法（两段，别混着读）**：
+  - **机制根因**（2026-09-21）：新增 `storage/pg_identity_sync.py`，启动时与导入脚本末尾对齐全部 identity 序列 —— 让写入**能**成功。这一修不改「失败会怎样」，只去掉「必然失败」这个前提。
+  - **可见性**（2026-09-22）：吞异常那一层不再只 print，改为上报后台日志面板。新增唯一构造 `core/nonfatal.nonfatal(source, what)`（异步上下文管理器：吞掉块内异常并以 logging ERROR 上报，`exc_info=True`；`CancelledError` / `KeyboardInterrupt` / `SystemExit` 照常上抛）—— 面板 `RingBufferHandler` 只收 WARNING+ 且只存 `getMessage()`，故异常类型由本构造拼进消息文本。`core/utils.try_record_usage` 的 `_write` 是改点之一。
+  - **仍未定的那半**：「账写不进去」要不要进一步升级（对用户报错 / 健康检查置红 / 计数告警）是**产品口径决策** —— 用量算不算必须送达的账，得先定。本轮只解决「无声」。
+- **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
-**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**记账**（不修，2026-09-21；同上排查的顺带发现）
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口）
 - **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
 - **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
-- **为什么只记不修**：先定口径；且两条路径的生成器结构不同（群聊是单 try 包全场、一对一逐段 try），动哪边都要先确认不改变既有的「回复中途失败」语义。
-- **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 print 还是 `yield` 一条 error 事件」。读数（2026-09-21）：`group.py:575/597/610` 三条的最近一层 except 是 `:633`（yield error）；`chat.py` 的每一条都有自己的 print 兜底。
+- **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
+- **仍未定的那半（要产品决定）**：群的**流式**那条把 `str(exc)` 当 SSE 事件摊给用户（`group.py:632` 的 `except Exception as exc` → `:633` 的 `yield ... {'error': str(exc)}`）—— 本轮**没动**。它与一对一的「吞」是两套口径，而要统一就得先答「群里为什么该看见、一对一为什么不该」（说不出就是遗留，§四）。另外把内部异常文本直接回给前端本身还是一条信息泄漏面。
+- **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
+- **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
 
 **95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
 - **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
@@ -1298,6 +1303,7 @@ PROBE_IMAGE         false
 - **顺带订正 94 的一处读数**：94 把 `_do_chat_stream` 读成「三笔各自 try + print，一对一全部吞」。按本条现跑，`:532` / `:533` 的解引用**在大 try（`:459-549`）之内**，那处失败**不吞** —— 会以 error 帧摊到用户面前。即一对一**流式**这条路也有一处把异常摊给用户，94 的「一对一全部吞」在此不完全成立。
 - **判据命令**：`git grep -n "user_rec\|char_rec" web/routers/chat.py` —— 数「赋值点在不在 try 内 / 解引用点在不在同一个 try 内」。读数（2026-09-22）：赋值 **4** 处（`:341` / `:348` / `:451` / `:500`）、解引用 **4** 处（`:380` / `:381` / `:532` / `:533`），其中 `:380` / `:381` 在**任何 try 之外**。
 - **处置方向**：与已有的 `user_msg_id` / `char_msg_id` 对齐 —— 那两个 id 变量有 `= None` 初值、解引用点用 `if uid is not None` 过滤，`*_rec` 是同一件事的漏网。**不先改**：本条是登记；且改它要先定「保存失败时 `user_created_at` / `char_created_at` 该给什么」（现在成功时给 `created_at`、`hidden` 时给 `""`）。
+- **行号漂移（2026-09-22 现跑，缺陷 93/94 那轮 `try/except + print` → `async with nonfatal(...)` 之后）**：赋值点 **4** 处仍在 —— `:342` / `:349`（`_do_chat`）、`:448` / `:495`（`_do_chat_stream`）；解引用点仍是 4 处 —— `:377` / `:378`（在任何 `try` 之外，仍 500）、`:523` / `:524`（在大 try 之内，其 `try` 起 `:454`、`except` 在 `:545`，回滚条件在 `:550`、error 帧在 `:555`）。**结论（哪几处在 try 之外）未变**，变的只是坐标。另注：吞错点的**形态**变了（不再是 `except` 里 print，而是 `async with nonfatal(...)` 吞掉），但「吞掉 ⇒ 名字未绑定」这条因果不受影响 —— 换构造没有、也不该消掉本条。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

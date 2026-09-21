@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import user_facing_error
@@ -1463,14 +1464,12 @@ async def start_session(
     if opening:
         engine_obj = sessions[session_id].get("engine") if sessions.get(session_id) else None
         if engine_obj:
-            try:
+            async with nonfatal("start_session", "save opening message"):
                 rec = await storage.save_message(session_id, "char", opening, "", retracted=False)
                 first_created_at = rec.get("created_at", "")
                 engine_obj.history.append({"role": "assistant", "content": opening})
                 sessions[session_id].setdefault("message_ids", []).append(rec["id"])
                 print(f"[start_session] Injected opening into session {session_id}")
-            except Exception as exc:
-                print(f"[start_session] Save opening message failed (non-fatal): {exc}")
 
     result = card.model_dump()
     result["session_id"] = session_id

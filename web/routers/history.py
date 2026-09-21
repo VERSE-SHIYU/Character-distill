@@ -15,6 +15,7 @@ from core.affinity_service import read_persisted_affinity
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
+from core.nonfatal import nonfatal
 from storage.base import StorageBase
 from routers.auth import get_current_user
 
@@ -320,7 +321,7 @@ async def resume_session(
     _daily_visits[session_id] = (_daily_visit_today, _visit_count)
 
     greeting_data: dict[str, Any] | None = None
-    try:
+    async with nonfatal("history", "reunion greeting"):
         greeting = await asyncio.to_thread(
             engine.generate_reunion_greeting, None, _body.voice_mode,
         )
@@ -333,8 +334,6 @@ async def resume_session(
                 "reunion_greeting_created_at": msg_rec["created_at"],
                 "reunion_greeting": greeting,
             }
-    except Exception as exc:
-        print(f"[history] Reunion greeting failed (non-fatal): {exc}")
 
     # ── 今日到访觉察：count>=3 且当次未触发重逢问候 → 传给 engine ──
     if _visit_count >= 3 and not greeting_data:

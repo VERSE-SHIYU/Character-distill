@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.nonfatal import nonfatal
 from core.request_context import current_user_id
 from core.scheduling import submit_to_main_loop
 
@@ -89,10 +90,8 @@ def try_record_usage(
     chunk_count = usage.get("chunk_count")
 
     async def _write() -> None:
-        try:
+        async with nonfatal("usage", f"record usage ({source}/{action})"):
             await storage.record_usage(user_id, action, pt, ct, model,
                                        is_estimated=is_est, chunk_count=chunk_count)
-        except Exception as exc:
-            print(f"[{source}] Record usage failed (non-fatal): {exc}")
 
     submit_to_main_loop(_write(), wait=False)

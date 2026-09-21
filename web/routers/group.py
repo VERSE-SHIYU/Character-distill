@@ -20,6 +20,7 @@ from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
+from core.nonfatal import nonfatal
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
@@ -507,7 +508,7 @@ async def send_message(
     user_speaker = req.speaker or group.speaker_name
     user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
-    try:
+    async with nonfatal("group", "save messages"):
         await storage.save_group_message(
             group_id, user_speaker, "user", req.message, user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
@@ -516,8 +517,6 @@ async def send_message(
             group_id, group.engines[req.target_card_id].card.name,
             "assistant", resp, req.target_card_id,
         )
-    except Exception as exc:
-        print(f"[group] Save messages failed (non-fatal): {exc}")
 
     # 后台评估点赞触发的 affinity 变化（不阻塞回复）
     asyncio.create_task(
