@@ -92,6 +92,8 @@ services:
       # `:-` 给空串：变量没传时不报错（门禁不启用），而不是让解析期失败。
       # 空串的语义是「不启用」，见 web/demo_gate.py 的 demo_usernames()。
       - DEMO_USERNAMES=${DEMO_USERNAMES:-}
+      # 告警收件邮箱：同一条链路、同一条理由（见 DEPLOY.md「由部署下发的配置」）。
+      - ALERT_EMAIL=${ALERT_EMAIL:-}
     depends_on:
       postgres:
         condition: service_healthy
