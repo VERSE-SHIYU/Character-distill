@@ -25,20 +25,20 @@ logger = logging.getLogger(__name__)
 
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
-#     X.forked_from = D.id AND X.visibility = 'public'
-#     AND X.deleted_at IS NULL AND X.user_id = D.user_id
+#     X.published_from = D.id AND X.visibility = 'public' AND X.deleted_at IS NULL
 #
-# 四要素缺一不可，最后一条是根因所在：`cards.forked_from` 单列同时承载两种关系 ——
-# 「草稿 → 作者自己的发布副本」（本定义）与「公开卡 → 任意用户的 fork」
-# （`get_card_forks`，另一种关系，不适用本定义）。不比 user_id 就区分不开二者：
-# 他人 fork 的 `forked_from` 同样指向原卡。
+# 「同一作者」不再出现在谓词里：它是**列的定义**。`published_from` 只承载这一种关系，
+# 「他人 fork」由 `forked_from` 承载（`get_card_forks`，另一种关系，不适用本定义）——
+# 此前两者共用 `forked_from` 单列，判据里才必须靠 `X.user_id = D.user_id` 去补区分；
+# 现在这条判据由复合外键 `(published_from, user_id) → cards(id, user_id)` 在库里强制
+# （见 `_rebuild_cards_published_from` 与 migrations_pg/020）。
 #
 # 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
 # `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次，其余调用处
-# 一律引用本函数 —— 任何一处再手写 `forked_from = ... AND visibility = 'public'`
-# 都是缺「同一作者」判据的第二份写法。PG 侧同形（只差 `$n` 占位符）。
-_PUBLISHED_COPY_OF = ("{copy}.forked_from = {draft}.id AND {copy}.visibility = 'public'"
-                      " AND {copy}.deleted_at IS NULL AND {copy}.user_id = {draft}.user_id")
+# 一律引用本函数 —— 任何一处再手写 `published_from = ... AND visibility = 'public'`
+# 都是这份关系的第二份写法。PG 侧同形（只差 `$n` 占位符）。
+_PUBLISHED_COPY_OF = ("{copy}.published_from = {draft}.id AND {copy}.visibility = 'public'"
+                      " AND {copy}.deleted_at IS NULL")
 
 
 def _published_copy_of(copy_ref: str, draft_ref: str) -> str:
@@ -600,16 +600,22 @@ class SQLiteStore(StorageBase):
                     if sqlite3.sqlite_version_info >= (3, 25):
                         # Auto-deduplicate: keep only the newest card per text_id+name
                         # Exclude forked cards (forked_from != '') to preserve independent copies
+                        #
+                        # `published_from IS NULL` 是本条 DELETE 的第二个排除条件，二者缺一即
+                        # **删错东西**：发布副本的 `forked_from` 是 ''（它是作者自己的副本，
+                        # 不是他人 fork），又与作者的草稿同 text_id 同 name —— 只按 forked_from
+                        # 排除的话，副本会被当成「重复草稿」删掉，且删哪张取决于 rowid（通常
+                        # 删掉更早的那张，即草稿本身）。
                         await conn.execute("""
                             DELETE FROM cards
-                            WHERE forked_from = '' AND id NOT IN (
+                            WHERE forked_from = '' AND published_from IS NULL AND id NOT IN (
                                 SELECT id FROM (
                                     SELECT id, ROW_NUMBER() OVER (
                                         PARTITION BY text_id, name
                                         ORDER BY rowid DESC
                                     ) AS rn
                                     FROM cards
-                                    WHERE forked_from = ''
+                                    WHERE forked_from = '' AND published_from IS NULL
                                 ) WHERE rn = 1
                             )
                         """)
@@ -1258,8 +1264,8 @@ class SQLiteStore(StorageBase):
 
         三条写都带身份：本卡（`id` + `user_id`）、本卡的发布副本（向下）、本卡本身是发布
         副本时的那张草稿（向上）。上下同步都引用 `_published_copy_of` 这一份关系定义 ——
-        「作者自己的发布副本」与「任意用户的 fork」靠 `user_id = D.user_id` 区分 —— 缺这条
-        同一作者判据时，他人 fork 会被当成发布副本。
+        「作者自己的发布副本」与「任意用户的 fork」现在分属 `published_from` / `forked_from`
+        两列，故他人 fork 不再可能被当成发布副本。
         """
         try:
             async with await self._connect() as conn:
@@ -5638,7 +5644,7 @@ class SQLiteStore(StorageBase):
                 fork_id = uuid.uuid4().hex[:12]
                 await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data, user_id,
-                                          visibility, forked_from, likes, voice_ref_json,
+                                          visibility, published_from, likes, voice_ref_json,
                                           market_description, market_tags, publish_message)
                        VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, ?, ?)""",
                     (fork_id,
