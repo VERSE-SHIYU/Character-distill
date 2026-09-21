@@ -132,6 +132,31 @@ vim .env
 
 > 两台机器的 `JWT_SECRET`、`FERNET_KEY` 可各自独立；数据库密码各自设置。
 
+### 由部署下发的配置（**不写进服务器 `.env`**）
+
+有一类配置不由上面的 `.env` 管，而是随部署下发 —— **唯一来源是 GitHub 仓库变量**
+（Repo → Settings → Secrets and variables → Actions → **Variables** 标签页）：
+
+```
+${VAR} → deploy.yml 顶层 env 的 ${{ vars.VAR }}
+       → appleboy/ssh-action 的 envs: 名单 → 远端 shell 里 export
+       → docker compose 插值 ${VAR:-} → 容器环境变量
+```
+
+`docker-compose.prod.yml` 在 `environment:` 里声明它们，靠 compose 的
+「`environment` 优先于 `env_file`」盖住服务器 `.env` 的同名项，所以**在服务器 `.env`
+里写同名项是不生效的** —— 改了既不随部署生效，两地还会各改各的。这类项的名单漂移是
+**静默**的（没有报错可看），故一律只在仓库变量里改。
+
+| 仓库变量 | 含义 |
+|---|---|
+| `DEMO_USERNAMES` | 演示账号门禁名单，逗号分隔（大小写不敏感，两侧空格自动去除）。**空 = 门禁不启用**，判据见 `web/demo_gate.py`。 |
+
+> 改完仓库变量后**重新跑一次 deploy（`both`）** 即生效：`compose up -d` 检测到容器
+> 环境变化会重建 app 容器，不需要手动 `restart`，也不需要登服务器。
+> 上线顺序：先用演示账号配好 API key、预置书与卡、跑通对话，**最后**才设这一项 ——
+> 否则预置过程本身会被门禁挡住。
+
 ## 4. SSL 证书（两台都装同一套）
 
 ```bash

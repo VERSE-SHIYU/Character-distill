@@ -46,6 +46,11 @@ env:
   ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
   ALIYUN_APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
   ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
+  # 演示账号名单：**唯一来源是 GitHub 仓库变量**（Settings → Variables → DEMO_USERNAMES）。
+  # 不写在服务器 .env 里 —— 那份文件不由部署管理，改了不随部署生效，且两地必然漂移。
+  # 定义在**工作流顶层**：两个 job 共用同一处，各 job 无需重写；job 级 env 只在键名
+  # 相同时覆盖顶层，此处键名不冲突，合并没有歧义。空值 = 门禁不启用（见 web/demo_gate.py）。
+  DEMO_USERNAMES: ${{ vars.DEMO_USERNAMES }}
 
 jobs:
   # ── 解析目标镜像：digest / rollback tag / pinned run ────────
@@ -161,7 +166,7 @@ jobs:
           username: root
           key: ${{ secrets.SZ_DEPLOY_KEY }}
           command_timeout: 30m
-          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,DEMO_USERNAMES
           script: |
             set -e
             cd /opt/character-distill
@@ -180,21 +185,61 @@ jobs:
               exit 1
             fi
 
-            # Pull app — prefer Aliyun CR (fast), fallback to GHCR (slow but reliable)
-            ALIYUN_APP="${{ env.ALIYUN_APP_IMAGE }}:${COMMIT_SHA}"
-            GHCR_APP="${{ env.APP_IMAGE }}@${APP_DIGEST}"
-            docker pull ${ALIYUN_APP} 2>/dev/null || docker pull ${GHCR_APP}
+            ALIYUN_REPO_PREFIX="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
+            GHCR_REPO_PREFIX="ghcr.io/verse-shiyu"
 
-            # Pull nginx — same strategy
-            ALIYUN_NGINX="${{ env.ALIYUN_NGINX_IMAGE }}:${COMMIT_SHA}"
-            GHCR_NGINX="${{ env.NGINX_IMAGE }}@${NGINX_DIGEST}"
-            docker pull ${ALIYUN_NGINX} 2>/dev/null || docker pull ${GHCR_NGINX}
+            # 拉一个镜像，把**实际命中的仓库**写进全局 PULLED_REGISTRY。
+            # 阿里云优先（同区，快；对 SZ 是必需），拉不到再试 GHCR。
+            # 调用方只拿 PULLED_REGISTRY 去导出 compose 的 *_IMAGE_REGISTRY ——
+            # 「部署用哪个镜像」只取自实际拉取成功的那一个，不预设、不写死。
+            # 两个仓库都失败则 return 1，调用方立刻失败，绝不继续 compose up
+            #（写死一个没拉到的仓库，compose 会自己再去拉一次，失败信息埋在 compose 里）。
+            #
+            # 只此一处：app / nginx / postgres / fail2ban 四处共用同一条判断。
+            # 各写一份的话，迟早在某一次改动后分叉 —— 而分叉出来的那半正是本次的病灶：
+            # 拉取阶段认了 GHCR、导出阶段仍写阿里云，两边各说各话。
+            #
+            # $1=阿里云引用(repo:tag) $2=回落仓库$3=回落 digest(可空) $4=回落 tag
+            # digest 落地的镜像本地没有 tag，而 compose 的 image: 只能是 repo:tag，
+            # 故补一个 $4 的 tag（SG 那条路一直是这么做的）。
+            pull_image() {
+              PULLED_REGISTRY=""
+              if docker pull "$1" 2>/dev/null; then
+                PULLED_REGISTRY="${ALIYUN_REPO_PREFIX}"
+              elif [ -n "$3" ] && docker pull "$2@$3"; then
+                docker tag "$2@$3" "$2:$4"
+                PULLED_REGISTRY="${2%/*}"
+              elif docker pull "$2:$4"; then
+                PULLED_REGISTRY="${2%/*}"
+              else
+                return 1
+              fi
+            }
 
-            # Deploy with Aliyun registry (fast local pull)
-            export APP_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
-            export NGINX_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
-            export PG_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
-            export FAIL2BAN_IMAGE_REGISTRY="${{ env.ALIYUN_REGISTRY }}/verse-shiyu"
+            pull_image "${ALIYUN_REPO_PREFIX}/character-distill-app:${COMMIT_SHA}" \
+                       "${GHCR_REPO_PREFIX}/character-distill-app" "${APP_DIGEST}" "${COMMIT_SHA}" \
+              || { echo "FATAL: app 镜像在阿里云与 GHCR 均拉取失败，中止部署（不执行 compose up）"; exit 1; }
+            export APP_IMAGE_REGISTRY="${PULLED_REGISTRY}"
+
+            pull_image "${ALIYUN_REPO_PREFIX}/character-distill-nginx:${COMMIT_SHA}" \
+                       "${GHCR_REPO_PREFIX}/character-distill-nginx" "${NGINX_DIGEST}" "${COMMIT_SHA}" \
+              || { echo "FATAL: nginx 镜像在阿里云与 GHCR 均拉取失败，中止部署（不执行 compose up）"; exit 1; }
+            export NGINX_IMAGE_REGISTRY="${PULLED_REGISTRY}"
+
+            # postgres / fail2ban 同样走这条判断。这两者原先被无条件写死成阿里云：Docker Hub
+            # 从 SZ 拉超时（2026-07-01 的 `8213668` 就是为这个才改的），所以阿里云必须留在
+            # 首选位；但「写死」正是本次要拆掉的东西 —— 拉不到就该退到 Docker Hub，两边都
+            # 拉不到就报错，而不是把 compose 指向一个本地不存在的引用。
+            pull_image "${ALIYUN_REPO_PREFIX}/postgres:16-alpine" \
+                       "docker.io/library/postgres" "" "16-alpine" \
+              || { echo "FATAL: postgres 镜像在阿里云与 Docker Hub 均拉取失败，中止部署"; exit 1; }
+            export PG_IMAGE_REGISTRY="${PULLED_REGISTRY}"
+
+            pull_image "${ALIYUN_REPO_PREFIX}/fail2ban:1.1.0" \
+                       "docker.io/crazymax/fail2ban" "" "1.1.0" \
+              || { echo "FATAL: fail2ban 镜像在阿里云与 Docker Hub 均拉取失败，中止部署"; exit 1; }
+            export FAIL2BAN_IMAGE_REGISTRY="${PULLED_REGISTRY}"
+
             export APP_IMAGE_TAG=${COMMIT_SHA}
             export NGINX_IMAGE_TAG=${COMMIT_SHA}
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
@@ -226,11 +271,17 @@ jobs:
 
             SZ_rollback() {
               if [ -n "$PREV_SHA" ]; then
-                # Try Aliyun first for rollback, fallback to GHCR
-                docker pull ${ALIYUN_APP%:*}:"${PREV_SHA}" 2>/dev/null || \
-                  docker pull ghcr.io/verse-shiyu/character-distill-app:"${PREV_SHA}"
-                docker pull ${ALIYUN_NGINX%:*}:"${PREV_SHA}" 2>/dev/null || \
-                  docker pull ghcr.io/verse-shiyu/character-distill-nginx:"${PREV_SHA}"
+                # 回滚同样走 pull_image：回滚用的镜像也得与导出的仓库同源。旧写法拉取时认
+                # 阿里云-or-GHCR，却把 APP_IMAGE_REGISTRY 固定成阿里云 —— 从 GHCR 拉回来的
+                # 那一版，compose 根本找不到。
+                pull_image "${ALIYUN_REPO_PREFIX}/character-distill-app:${PREV_SHA}" \
+                           "${GHCR_REPO_PREFIX}/character-distill-app" "" "${PREV_SHA}" \
+                  || { echo "回滚失败：app ${PREV_SHA} 在两个仓库都拉不到，保持现状"; return 1; }
+                export APP_IMAGE_REGISTRY="${PULLED_REGISTRY}"
+                pull_image "${ALIYUN_REPO_PREFIX}/character-distill-nginx:${PREV_SHA}" \
+                           "${GHCR_REPO_PREFIX}/character-distill-nginx" "" "${PREV_SHA}" \
+                  || { echo "回滚失败：nginx ${PREV_SHA} 在两个仓库都拉不到，保持现状"; return 1; }
+                export NGINX_IMAGE_REGISTRY="${PULLED_REGISTRY}"
                 export APP_IMAGE_TAG=${PREV_SHA}
                 export NGINX_IMAGE_TAG=${PREV_SHA}
                 docker compose -f docker-compose.prod.yml up -d
@@ -309,7 +360,7 @@ jobs:
           host: 43.134.55.201
           username: ubuntu
           key: ${{ secrets.SG_DEPLOY_KEY }}
-          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,DEMO_USERNAMES
           script: |
             set -e
             cd /home/ubuntu/Character-distill
