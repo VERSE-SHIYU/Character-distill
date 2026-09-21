@@ -117,7 +117,7 @@ config.yaml 现值（现读，非转述）：
 > **全表状态口径（2026-09-19 现跑现数）**：1–74 共 74 条 —— **已修 53**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；**本轮新增的 59–63 与 65 已同批修完**，锁在 `tests/test_llm_access_gate.py`）/ **记账 11**（35、36、47、56、57、58、64、66、67、68、69）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 11**。
 > **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
 > **缺陷 35 与新增的 83–85 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`，该条标题已改）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**83 / 84 / 85 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：35 与 83–85 的当前状态都写在各条标题上，重算是个待办而不是事实）。
-> **86–88 又是 2026-09-21 新增的记账条目**（`published_from` 拆列那一案交接时登记的三条越界项，各见下条），那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：三条的当前状态都写在各条标题上，重算是个待办而不是事实）。
+> **86–88 又是 2026-09-21 新增的条目**（`published_from` 拆列那一案交接时登记的三条越界项，各见下条）：**87 / 88 已在该案内修掉**（`e8906f6` `0ec13ce` `8942c3f` 与 `2c7b815`），**86 仍记账**（改的是「020 未发布、本案不受影响」的口径）。那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：三条的当前状态都写在各条标题上，重算是个待办而不是事实）。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -1195,24 +1195,28 @@ PROBE_IMAGE         false
 
 **86. PG 侧没有迁移账本 —— 每轮 init 全量重放，改约束定义只对新建库生效** —— 状态：**记账**（不修，2026-09-21）
 - **形态**：`PostgresStore._ensure_initialized`（`storage/postgres_store.py:94`）每轮 init 走 `sorted(migrations_dir.glob("*.sql"))` 全部执行（`:112`），**没有** applied-migrations 表 —— `git grep -n "schema_migrations\|applied_migrations\|migrations_applied" -- storage/ web/ core/` 零命中。幂等全靠每个文件自己手写（`ADD COLUMN IF NOT EXISTS` / `DO $$ ... EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;`）。
-- **代价（本轮实测）**：020 把 `cards_published_from_fkey` 从 `ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED` 改成 `ON DELETE SET NULL (published_from)`，在**已存在的库**上不生效 —— `DO` 块把 `duplicate_object` 吞掉，约束保持旧定义。验证必须**删库重建**才看得到新定义；生产上要手工 `DROP CONSTRAINT` 再加。
+- **代价（本轮实测）**：020 把 `cards_published_from_fkey` 从 `ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED` 改成 `ON DELETE SET NULL (published_from)`，在**已存在的库**上不生效 —— `DO` 块把 `duplicate_object` 吞掉，约束保持旧定义。验证必须**删库重建**才看得到新定义。**020 尚未合入 main、未上生产，本案不受影响** —— 这条代价现在只作用于「今后改**既有**约束的迁移」：那些迁移要么显式写「只对新建库生效」，要么自带 DROP + ADD。
 - **为什么这条要紧**：它让「迁移文件是唯一真源」在 PG 侧**不成立** —— 文件写什么不代表库里是什么，两者只能靠重建对齐。任何改**既有**表/约束的迁移，都必须显式声明「只对新建库生效 + 存量库的处置」。
 - **判据命令**：`git grep -n "glob(\"\*.sql\")" -- storage/postgres_store.py`（现 1 处）、上一条账本 grep（应零命中）
 - **处置方向**：给 PG 侧补一张 applied 表（至少记录文件名 + 校验和）。**本轮不做**：补账本要改 init 全流程并回填存量库状态，超出本案范围。
 
-**87. `publish_card` 先查后插、无唯一约束 —— 同一草稿可能并存两张发布副本** —— 状态：**记账**（不修，2026-09-21）
-- **形态**：`publish_card`（`storage/postgres_store.py:4696` / `storage/sqlite_store.py:5591`）第一步 `SELECT` 找「调用者自己的发布副本」，查不到才 `INSERT`。两步之间没有事务、也没有约束 —— PG 侧是 asyncpg autocommit，两个并发请求可以都查不到、各插一张。
-- **为什么现有约束拦不住**：`cards_id_user_id_key` 是 `UNIQUE (id, user_id)`，管的是「行不重复」，管不了「同一 `published_from` 只能有一行」；`published_from` 上没有任何索引或唯一约束（`git grep -n "published_from" -- storage/migrations_pg/*.sql storage/migrations/*.sql` 只有列声明与 FK，无 UNIQUE）。
-- **后果**：两张并存后，`_PUBLISHED_COPY_OF` 的判据对两行都成立，取哪张取决于查询顺序 —— 头像同步只落到其中一张，另一张逐渐与草稿脱节。
-- **判据命令**：`git grep -n "async def publish_card" -- storage/`（两处，各自「先 fetchrow 再 INSERT」的结构肉眼可验）
-- **处置方向**：与 88 一起 —— 语义定了才知道该建哪种索引（见 88），故两条都停在记账。
+**87. `publish_card` 先查后插、无唯一约束 —— 同一草稿可能并存两张发布副本** —— 状态：**已修**（`e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
+- **病灶**：`publish_card`（`storage/postgres_store.py:4696` / `storage/sqlite_store.py:5591`）第一步 `SELECT` 找「调用者自己的发布副本」，查不到才 `INSERT`。两步之间没有事务、也没有约束 —— PG 侧是 asyncpg autocommit，两个并发请求可以都查不到、各插一张。
+- **为什么原有约束拦不住**：`cards_id_user_id_key` 是 `UNIQUE (id, user_id)`，管的是「行不重复」，管不了「同一 `published_from` 只能有一行」；`published_from` 上没有任何唯一约束。
+- **后果**：两张并存后，判据对两行都成立，取哪张取决于查询顺序 —— 头像同步只落到其中一张，另一张逐渐与草稿脱节。
+- **落点：把「至多一张」交给库**，不再靠调用点记得查。部分唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`（087 / 020 各一份；SQLite 侧因 087 会被整份跳过，另在 `_ensure_initialized` 无条件补建一次）+ `publish_card` 合成**一条** `INSERT … ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE … RETURNING id`（更新列清单取自草稿的**同一次读**，`EXCLUDED` 即本行 VALUES）。唯一性不看 `visibility` —— 见 88 的裁定。
+- **红源**（`tests/test_published_copy_relation.py::TestUnpublishIsWithdrawingTheRelease` 与 PG 侧同名类，各 3 条）：其中 `test_a_second_live_copy_of_the_same_draft_is_rejected_by_the_database` 越过 store 裸插第二张存活副本，断言必须被数据库拒（判据是 `"UNIQUE"` 出现在异常里，不是随便什么错）。**刻意不走 `publish_card`**：upsert 的 `ON CONFLICT` 推断的目标就是这条索引，索引不在时 publish 自己先报「no unique or exclusion constraint matching the ON CONFLICT specification」，红在 publish 上而非本条要锁的库约束。
+- **变异（实测红，验后已还原，两引擎各跑一遍）**：去掉部分唯一索引（087 的 CREATE + `_ensure_initialized` 那句；PG 侧改 020 并把测试库索引 `DROP` 掉）→ 上述那条红在 `DID NOT RAISE`。**同时另外两条也红**：同一条索引是 `ON CONFLICT` 的推断目标，索引没了 publish 直接报错 —— 实测到的耦合，不是判据不具分辨力。
+- **判据命令**：`git grep -n "ON CONFLICT (published_from)" -- storage/`（两处）、`git grep -n "async def publish_card" -- storage/postgres_store.py storage/sqlite_store.py`（两处，均已是单条 upsert；`base.py` 另有一处抽象声明）
 
-**88. 下架后再发布会产生第二张副本，旧副本仍指向草稿 —— 语义待定** —— 状态：**记账**（不修，2026-09-21）
-- **形态**：`_PUBLISHED_COPY_OF`（`storage/sqlite_store.py:40` / `storage/postgres_store.py:31`）的判据含 `visibility = 'public'`。作者把自己已发布的副本**下架**（`update_card_visibility(id, 'private')`）后再点发布，旧副本因不再 public 而查不到 → 建**第二张**副本。
-- **读数（现跑，SQLite 真库）**：发布 → 下架 → 再发布，两次返回的 id **不同**（`c5b0e1107b3c` / `73764e5f142a`）；随后直读 `cards` 里 `published_from = <草稿 id>` 的行 **= 2 行**（一张 private、一张 public）—— 旧副本没被删，`published_from` 也没清，只是不再被认作「那张发布副本」。
-- **语义待定（本条的真正内容）**：下架算「撤回发布」还是「转入历史版本」？前者 ⟹ 旧副本该被删或复用；后者 ⟹ 它是合法的第二行，需要的是**部分唯一索引** `UNIQUE (published_from, user_id) WHERE visibility = 'public' AND deleted_at IS NULL`。
-- **判据命令**：`git grep -n "visibility = 'public'" -- storage/sqlite_store.py`（定义在 `:40`）、`git grep -n "published_from" -- storage/migrations_pg/*.sql`（现无 UNIQUE）
-- **处置方向**：先裁语义，再决定索引。**不先加约束** —— 现在加会把「下架 = 转历史」这条尚未裁定的走向提前锁死。
+**88. 下架与「是不是发布副本」写进同一个谓词 —— 下架后再发布会并存第二张副本，旧副本仍指向草稿** —— 状态：**已修**（`2c7b815` `e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
+- **病灶**：`_PUBLISHED_COPY_OF` 原先的判据含 `visibility = 'public'`，把**关系**（副本属于哪张草稿）与**状态**（在不在架）压进一个谓词。作者把已发布的副本**下架**（`update_card_visibility(id, 'private')`）后再点发布，旧副本因不再 public 而查不到 → 建**第二张**副本。
+- **修复前读数（SQLite 真库）**：发布 → 下架 → 再发布，两次返回的 id 不同（`c5b0e1107b3c` / `73764e5f142a`）；直读 `cards` 里 `published_from = <草稿 id>` 的行 **= 2 行**（一张 private、一张 public）。
+- **裁定（本条的真正内容）：下架 = 撤回发布** —— 副本行仍在（关系不断），只是不再在架；重发**复用同一行**，内容取草稿当前值，点赞 / 他人 fork / 版本历史都留在那一行上。于是唯一性不看 `visibility`，只看「未删」。
+- **落点：一条关系、一条在架，且在架由关系组合而来**。`storage/{sqlite,postgres}_store.py` 顶部：`_PUBLISHED_COPY_OF` 去掉 `visibility`；新增 `_live_published_copy_of` = `(关系) AND copy.visibility = 'public'` —— `visibility` 这个状态字面量因此只出现**一处**。调用点分派：`published_id` 三处（`get_card_unscoped` / `get_card_owned` / `list_cards`）用**在架**；头像同步两处（`save_card_avatar` 上/下）用**关系**（下架不该把草稿与副本的头像同步断开）。
+- **红源**（两引擎各 3 条，同上）：`test_unpublish_leaves_no_published_id_but_keeps_the_row` 锁「下架后 `published_id` 为空（`get_card_owned` + `list_cards` 各一次）、副本行仍在」；`test_republish_reuses_the_row_and_takes_the_drafts_current_values` 锁重发语义 —— id 不变、`card_json` 取草稿当前值、发布字段更新、拨回在架、**点赞保留**（`toggle_like` 挂的）、该草稿存活副本行数 = 1、版本号 `MAX+1` 到 2。
+- **变异（实测红，验后已还原，两引擎各跑一遍）**：把三处 `published_id` 的 `_live_published_copy_of` 换回关系谓词 `_published_copy_of` → 第 1 条红在 `assert '7291dc30492d' is None`（正是要钉的那句）。
+- **判据命令**：`git grep -n "_PUBLISHED_COPY_OF = " -- storage/`（两处定义，两行都不含 `visibility`）、`git grep -c "_live_published_copy_of('" -- storage/`（两个 store 文件各 3 处调用）。**不要**用 `git grep -n "visibility = 'public'"`：那条会命中 market 查询等十余处正常用法，判据不可辨。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
