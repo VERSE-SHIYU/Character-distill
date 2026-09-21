@@ -19,9 +19,11 @@ token 花出去就花出去了。初次与重修同走这一个原语（重修�
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,7 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import Distiller
-from core.utils import estimate_usage_from_chars
+from core.utils import estimate_usage_from_chars, try_record_usage
 
 # CharacterCard 只有 name 是必填
 CARD = '{"name": "角色"}'
@@ -68,15 +70,36 @@ class _FakeLLM:
 
 # ── 记账探针 ─────────────────────────────────────────────────────────────────
 
+def _recorder(sink: Callable[[str, dict | None], None]):
+    """记账替身：**唯一**一份，`usage` 与 `records` 两个夹具共用。
+
+    自己不写签名 —— 收 `*args, **kwargs`，先拿真函数
+    `inspect.signature(core.utils.try_record_usage).bind()` 校验一遍，过了再收进 sink。
+    签名因此只有真函数一份：真函数**加了无默认值的参数**或**删了参数**，调用方那串
+    kwargs 就 bind 不上，替身当场 TypeError 红掉。旧版是两份手抄签名，`user_id` 那次
+    只有一份跟着改，另一份要到合并后才炸。
+
+    真函数加**带默认值**的参数不算漂移：调用方不传是合法调用，bind 通过、替身照绿。
+    """
+    real = inspect.signature(try_record_usage)
+
+    def _rec(*args, **kwargs):
+        bound = real.bind(*args, **kwargs)
+        bound.apply_defaults()
+        sink(bound.arguments["action"], bound.arguments["usage"])
+
+    return _rec
+
+
 @pytest.fixture
 def usage(monkeypatch) -> list[str]:
     """替换 `_try_record_usage` 的唯一下游，同步收下每次记账的 action。"""
     calls: list[str] = []
 
-    def _rec(*, storage, llm, action="chat", usage=None, source="core"):
+    def _sink(action, _usage):
         calls.append(action)
 
-    monkeypatch.setattr("core.distiller.try_record_usage", _rec)
+    monkeypatch.setattr("core.distiller.try_record_usage", _recorder(_sink))
     return calls
 
 
@@ -176,10 +199,10 @@ def records(monkeypatch) -> list[tuple[str, dict | None]]:
     """同 `usage`，但连 usage 载荷一起收下 —— 估算账要验的正是载荷。"""
     out: list[tuple[str, dict | None]] = []
 
-    def _rec(*, storage, user_id, llm, action="chat", usage=None, source="core"):
+    def _sink(action, usage):
         out.append((action, usage))
 
-    monkeypatch.setattr("core.distiller.try_record_usage", _rec)
+    monkeypatch.setattr("core.distiller.try_record_usage", _recorder(_sink))
     return out
 
 
