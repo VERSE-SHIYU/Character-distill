@@ -25,7 +25,7 @@ from httpx import ASGITransport, AsyncClient
 
 from core import concurrency as C  # 派生与上下文传播
 import deps
-from core.distiller import text_fingerprint
+from core.distiller import Distiller, text_fingerprint
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -760,6 +760,132 @@ class TestFPerUserGate:
         for i in range(3):
             assert "服务器繁忙" not in (rows[i]["message"] or ""), f"第 {i + 1} 个不该撞闸"
         assert "服务器繁忙" in (rows[3]["message"] or ""), "第 4 个该撞全局闸"
+
+
+class TestS5RosterIsTheOnlyEntryOnStart:
+    """S5：/start 的名单走唯一入口 —— 缓存命中就不识别，未命中才识别一次并写回。
+
+    改前 /start 在 `_run_distill_task` 里直调 `distiller.identify_characters`：不读
+    缓存、不写回，于是同一份名单每蒸一次算一次，用户看到的「正在识别角色…」每次都
+    要等满。变异对象 = 恢复那条直调：下面第一条用例的 identify 计数变 1。
+    """
+
+    def _text(self, store, uid, body="角色说的话"):
+        tid = f"txt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
+        return tid
+
+    def _run_start(self, store, uid, tid, monkeypatch, distiller, threads):
+        client = _build_client(store, uid)
+        resp = client.post("/api/distill/start",
+                           json={"text_id": tid, "character_name": "甲", "force": False})
+        assert resp.status_code == 200, resp.text
+        for t in threads:
+            t.join(timeout=30)
+        return resp
+
+    @staticmethod
+    def _spy_identify(monkeypatch, distiller):
+        """记 identify 调用次数；真结果照返回（不改变被考路径的下游）。"""
+        calls: list[str] = []
+        real = distiller.identify_characters
+
+        def counting(content):
+            calls.append(content)
+            return real(content)
+
+        monkeypatch.setattr(distiller, "identify_characters", counting)
+        return calls
+
+    @staticmethod
+    def _spy_aliases(monkeypatch, distiller) -> dict:
+        """记喂给蒸馏的 aliases —— 光看「没识别」证明不了名单真被用上了。"""
+        seen: dict = {}
+        real = distiller.distill_incremental_stream
+
+        def spy(text, character_name, aliases=None, *args, **kwargs):
+            seen["aliases"] = aliases
+            return real(text, character_name, aliases, *args, **kwargs)
+
+        monkeypatch.setattr(distiller, "distill_incremental_stream", spy)
+        return seen
+
+    def test_cached_roster_skips_identify_and_feeds_aliases(self, store, user_id, monkeypatch):
+        """名单已缓存：识别零调用，且缓存里的别名真的传给了蒸馏。"""
+        distiller, _sem, threads, _llm = _install_bg(monkeypatch, store)
+        tid = self._text(store, user_id)
+        _run_async(store.save_characters(
+            tid, [{"name": "甲", "aliases": ["阿甲"]}], version=Distiller.IDENTIFY_VERSION))
+        calls = self._spy_identify(monkeypatch, distiller)
+        seen = self._spy_aliases(monkeypatch, distiller)
+
+        self._run_start(store, user_id, tid, monkeypatch, distiller, threads)
+
+        assert calls == [], "缓存命中却仍跑了识别"
+        assert seen["aliases"] == ["阿甲"], "名单没被用上（别名不是从缓存来的）"
+
+    def test_cold_roster_identifies_once_and_persists(self, store, user_id, monkeypatch):
+        """名单未缓存：识别一次，并按当前算法版本写回 —— 下一次 /start 才能白拿。"""
+        distiller, _sem, threads, _llm = _install_bg(monkeypatch, store)
+        tid = self._text(store, user_id)
+        calls = self._spy_identify(monkeypatch, distiller)
+
+        self._run_start(store, user_id, tid, monkeypatch, distiller, threads)
+
+        assert len(calls) == 1, f"该识别一次，实际 {len(calls)} 次"
+        assert _run_async(store.get_characters_owned(
+            tid, user_id, version=Distiller.IDENTIFY_VERSION)) == [{"name": "甲", "aliases": []}]
+
+
+class TestS5RunRosterWhenNameEmpty:
+    """/run 不点名角色时也走唯一入口。
+
+    改前 `/run` 复用 legacy 的 `_resolve_character_name` —— 那条路只有原文没有 text_id，
+    只能现场识别、也无处落缓存；`/run` 手里有 text_id，跟着走等于每请求重算一次。
+    变异对象 = 把这里改回 `_resolve_character_name`：下面用例的 identify 计数变 1。
+    """
+
+    class _TM:
+        """只记调用参数 —— 本用例考的是「交出去的**是谁**」，不是蒸馏结果。"""
+
+        def __init__(self):
+            self.character_name = None
+
+        async def get_or_distill(self, text_id, character_name, **kwargs):
+            self.character_name = character_name
+            return {"card_id": "", "session_id": "", "character_name": character_name}
+
+    def test_cached_roster_skips_identify_and_names_the_character(
+        self, store, user_id, monkeypatch,
+    ):
+        tid = f"txt_{uuid.uuid4().hex}"
+        _run_async(store.save_text(tid, "src.txt", "角色说的话", user_id=user_id))
+        _run_async(store.save_characters(
+            tid, [{"name": "甲", "aliases": ["阿甲"]}], version=Distiller.IDENTIFY_VERSION))
+
+        calls: list[str] = []
+
+        class _D:
+            def identify_characters(self, content):
+                calls.append(content)
+                return [{"name": "错的名字", "aliases": []}]
+
+        tm = self._TM()
+
+        async def _llm(*a, **kw):
+            return object()
+
+        monkeypatch.setattr(deps, "get_user_llm", _llm)
+        monkeypatch.setattr(deps, "get_distiller", lambda llm=None: _D())
+        monkeypatch.setattr(deps, "get_text_manager", lambda llm=None: tm)
+        monkeypatch.setattr(D, "get_indexing_service", lambda: None)
+
+        resp = _build_client(store, user_id).post(
+            "/api/distill/run", json={"text_id": tid})
+
+        assert resp.status_code == 200, resp.text
+        assert calls == [], "缓存命中却仍跑了识别 —— /run 没走名单入口"
+        assert tm.character_name == "甲", "没点名时该用名单里的第一个角色"
 
 
 # ── 交错竞态（6.2 核心）：写入循环运行期间删文本 → 两表零行 ───────────────────

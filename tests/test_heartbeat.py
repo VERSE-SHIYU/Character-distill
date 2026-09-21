@@ -8,7 +8,8 @@ Test strategy:
   2. Start a heartbeat thread that updates message every 5s of elapsed time
   3. Block with a sleep() mimicking identify_characters() LLM call
   4. Verify the message was updated during the block
-  5. Also verify the syntax of web/routers/distill.py via actual import
+  5. Also verify the syntax of web/routers/distill.py, and that the blocking
+     identify call still exists in its唯一入口 core/character_roster.py
 """
 
 import threading
@@ -92,10 +93,15 @@ def test_module_imports():
         # We can't fully import it without all deps, so we verify the AST
         # is valid AND the control flow makes sense (try/except/finally nesting)
         module_path = os.path.join(repo_root, "web", "routers", "distill.py")
+        # 阻塞的识别调用在 S5 收进了唯一入口（core/character_roster.py）——
+        # 判据跟着**被考的对象**走，不跟着「它上次在哪个文件」走。
+        roster_path = os.path.join(repo_root, "core", "character_roster.py")
         import ast
 
         with open(module_path, encoding="utf-8") as f:
             tree = ast.parse(f.read())
+        with open(roster_path, encoding="utf-8") as f:
+            roster_tree = ast.parse(f.read())
 
         # Walk the AST looking for the key patterns
         class HeartbeatVisitor(ast.NodeVisitor):
@@ -115,9 +121,11 @@ def test_module_imports():
                     self.try_finally_count += 1
                 self.generic_visit(node)
 
-            def visit_Call(self, node):
-                if (isinstance(node.func, ast.Attribute)
-                        and node.func.attr == "identify_characters"):
+            def visit_Attribute(self, node):
+                # 数**引用**而不是数调用：唯一入口里是
+                # `asyncio.to_thread(distiller.identify_characters, content)`——
+                # 属性当实参传，不构成 Call.func，数 Call 会漏成 0。
+                if node.attr == "identify_characters":
                     self.identify_calls += 1
                 self.generic_visit(node)
 
@@ -127,16 +135,19 @@ def test_module_imports():
         print(f"[AST] try blocks: {v.try_count}")
         print(f"[AST] try/finally blocks: {v.try_finally_count}")
         print(f"[AST] try/except/finally blocks: {v.try_except_finally_count}")
-        print(f"[AST] identify_characters calls: {v.identify_calls}")
+
+        rv = HeartbeatVisitor()
+        rv.visit(roster_tree)
+        print(f"[AST] identify_characters calls (roster): {rv.identify_calls}")
 
         # Main identify has try/except/finally for proper cleanup.
         assert v.try_except_finally_count >= 1, (
             f"FAIL: expected >=1 try/except/finally block, "
             f"found {v.try_except_finally_count}"
         )
-        assert v.identify_calls >= 1, (
-            f"FAIL: expected >=1 identify_characters call, "
-            f"found {v.identify_calls}"
+        assert rv.identify_calls >= 1, (
+            f"FAIL: expected >=1 identify_characters call in {roster_path}, "
+            f"found {rv.identify_calls}"
         )
         print("[PASS] module AST structure is valid")
 

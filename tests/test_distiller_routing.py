@@ -244,6 +244,16 @@ class TestMapPhaseFailureHandling:
         return fake
 
     def _make_distiller(self, mock_llm) -> Distiller:
+        # 真实的 `LLMAdapter._make_async_client()` 返回 AsyncOpenAI，它的 close() 是**协程**；
+        # 裸 MagicMock 的属性是同步方法，`await client.close()` 会 TypeError。桩要和真实接口
+        # 一致，否则用例考的是 mock 的瑕疵、不是被考的路径。
+        async def _close() -> None:
+            return None
+
+        client = MagicMock()
+        client.close = _close
+        mock_llm._make_async_client = MagicMock(return_value=client)
+
         d = Distiller(llm=mock_llm, config_path=None)
         d._longctx_threshold = 0  # Force Map-Reduce chunked path
         d._chunk_size = 3000

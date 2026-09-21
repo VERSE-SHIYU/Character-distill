@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
@@ -382,9 +383,8 @@ class TextManager:
         content = text_rec.get("content", "")
 
         try:
-            chars = await asyncio.to_thread(
-                self._distiller.identify_characters, content
-            )
+            chars = await resolve_characters(
+                self._storage, self._distiller, text_id, user_id, content)
         except Exception as exc:
             print(f"[TextManager] Identify characters failed: {exc}")
             raise
@@ -451,11 +451,9 @@ class TextManager:
             # Resolve aliases for incremental distill
             aliases: list[str] = []
             try:
-                chars = await asyncio.to_thread(self._distiller.identify_characters, content)
-                for c in chars:
-                    if c["name"] == character_name:
-                        aliases = c.get("aliases", [])
-                        break
+                chars = await resolve_characters(
+                    self._storage, self._distiller, text_id, user_id, content)
+                aliases = aliases_for(chars, character_name)
             except Exception as exc:
                 print(f"[TextManager] Identify aliases failed, using empty: {exc}")
 
@@ -619,12 +617,10 @@ class TextManager:
         """
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
         try:
-            cached = await self._storage.get_characters_owned(text_id, user_id)
+            cached = await cached_characters(self._storage, text_id, user_id)
             if cached:
-                name_to_aliases = {c["name"]: c.get("aliases", []) for c in cached}
                 for char in all_characters:
-                    if char["name"] in name_to_aliases:
-                        char["aliases"] = name_to_aliases[char["name"]]
+                    char["aliases"] = aliases_for(cached, char["name"])
         except Exception as exc:
             print(f"[TextManager] Alias cache merge failed: {exc}")
         return all_characters

@@ -12,6 +12,7 @@ import uuid
 import aiosqlite
 import pytest
 
+from core.distiller import Distiller
 from storage.sqlite_store import SQLiteStore
 
 
@@ -1757,3 +1758,35 @@ class TestDistillTaskPersistence:
         await store.create_distill_task("dtS", "u1", tid, status="done")
         assert await store.delete_text(tid) is True
         assert (await store.get_distill_task_unscoped("dtS"))["task_id"] == "dtS"
+
+
+class TestCharactersCacheVersion:
+    """名单缓存带版本（087）：识别算法一改，旧名单必须自己失效。
+
+    为什么只靠 text_id 当缓存键不够：第一版识别只覆盖前 1 万字（红楼梦只认头两章），
+    那份残缺名单在库里和完整名单**长得一模一样** —— 读回来无从分辨。版本号是唯一能
+    让它自己失效的东西，且不必动旧数据（DEFAULT 0 天然不匹配当前版本）。
+    """
+
+    async def test_same_version_hits(self, store):
+        """写当前版本、读当前版本 → 命中。"""
+        tid = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid, "t.txt", "内容" * 10, user_id="u1")
+        chars = [{"name": "宝玉", "aliases": ["怡红公子"]}]
+        await store.save_characters(tid, chars, version=Distiller.IDENTIFY_VERSION)
+        assert await store.get_characters_owned(
+            tid, "u1", version=Distiller.IDENTIFY_VERSION) == chars
+
+    async def test_legacy_version_reads_as_miss(self, store):
+        """v0（迁移前写下的名单）按当前版本读 → None，调用方据此重跑识别。
+
+        第一条断言说明这不是「读不出任何版本 0 的数据」：0 对 0 照样命中，
+        失效只发生在**版本不符**时。
+        """
+        tid = f"txt_{uuid.uuid4().hex}"
+        await store.save_text(tid, "t.txt", "内容" * 10, user_id="u1")
+        await store.save_characters(tid, [{"name": "宝玉"}], version=0)
+
+        assert await store.get_characters_owned(tid, "u1", version=0) == [{"name": "宝玉"}]
+        assert await store.get_characters_owned(
+            tid, "u1", version=Distiller.IDENTIFY_VERSION) is None

@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 import collections.abc as _cabc
 
 import yaml
@@ -36,12 +36,41 @@ _IDENTIFY_CACHE: OrderedDict[str, tuple[list[dict[str, Any]], float]] = OrderedD
 _IDENTIFY_CACHE_LOCK = threading.Lock()
 
 
+#: 别名收录规则：识别与合并**共用这一段文本**，不写两份。
+#: 别名在下游是按子串匹配用的（蒸馏选片 `any(t in c for t in match_terms)`、RAG 打标签
+#: `rag.py:_tag_characters`），所以一个多人共用的称呼一旦进了 aliases，就会把别人的场景
+#: 误标给此人。判据交给 LLM，代码里不加子串/规则推断。
+ALIAS_UNIQUENESS_RULE = (
+    "aliases 只收录在全文范围内唯一指向此人的称呼；"
+    "多人共用的泛称（如「二爷」同时指宝玉和贾琏、「太太」「老爷」「奶奶」）一律不收录。"
+)
+
 IDENTIFY_SYSTEM_PROMPT = (
     "阅读以下文本，找出所有有名字且有对话或行为描写的角色。\n"
     "关键要求：如果同一个人有多个称呼（全名、昵称、绰号、姓氏、官职、敬称、代称），"
     "必须归为一组。选最常用的全名作 name，其余放入 aliases。\n"
+    + ALIAS_UNIQUENESS_RULE + "\n"
     '例如：魏无羡/魏婴/夷陵老祖 → name: "魏无羡", aliases: ["魏婴", "夷陵老祖"]\n'
     '例如：汪东城/大东 → name: "汪东城", aliases: ["大东"]\n'
+    "\n"
+    "只返回 JSON 数组，格式：\n"
+    '[{"name": "主名", "aliases": ["别名1", "别名2"], '
+    '"importance": "主要/次要", "reason": "简述"}]\n'
+    "不要返回任何其他内容。"
+)
+
+#: 多分片识别的合并提示：各分片各列各的名单，同一人会在不同分片里被反复列出、
+#: 且各分片看不到对方的判断——归组与主次必须在这一步按**全书**重判。输出格式与
+#: ``IDENTIFY_SYSTEM_PROMPT`` 相同（都是 JSON 数组），故沿用同一个解析器。
+IDENTIFY_MERGE_PROMPT = (
+    "以下是从同一部作品的不同片段中各自识别出的角色名单，片段之间可能有重复。\n"
+    "请合并为一份全书名单：\n"
+    "1. 同一个人在不同片段里的不同称呼（全名、昵称、绰号、姓氏、官职、敬称、代称）"
+    "必须归为一组，不要因为分片而重复列出；\n"
+    "2. 选最常用的全名作 name，其余称呼放入 aliases；\n"
+    "3. " + ALIAS_UNIQUENESS_RULE + "\n"
+    "4. importance（主要/次要）按此人在**全书**中的戏份判，不按单个片段里的出现次数；\n"
+    "5. reason 保留最具体的一条。\n"
     "\n"
     "只返回 JSON 数组，格式：\n"
     '[{"name": "主名", "aliases": ["别名1", "别名2"], '
@@ -221,11 +250,75 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
     return cand["result"]
 
 
+#: Map 阶段失败片的容忍上限：失败占比 **>** 此值即整批 bail，等于不算超。
+_MAP_FAILURE_RATIO = 0.5
+
+
+def _map_failure_exceeds_tolerance(failed: int, total: int) -> bool:
+    """Map 失败率是否越过容忍上限 —— 同步路径与流式路径的**唯一**判据。
+
+    调用方保证 ``total > 0``：空文本在 long-context 分流处就返回了，走不到 Map。
+
+    原先两条路各写一遍 ``failed / total_chunks > 0.5``，改一处漏一处；识别若再加一份
+    就是第三处。阈值与判据一并收在这里。
+    """
+    return failed / total > _MAP_FAILURE_RATIO
+
+
+_T = TypeVar("_T")
+
+
+def _run_async_in_ctx_thread(factory: _cabc.Callable[[], _cabc.Awaitable[_T]]) -> _T:
+    """唯一的 sync→async 桥接：在派生线程里新建 loop 跑协程，把结果带回调用线程。
+
+    调用方通常正处在 uvicorn 的事件循环里，不能原地 ``asyncio.run`` —— 故必须下到
+    派生线程去建自己的 loop。**必须用 ``C.ctx_thread``**（缺陷 35）：记账身份靠
+    contextvars 传播，裸 ``threading.Thread`` 会让派生线程读到空身份、账落空。
+
+    收的是**工厂**而不是协程对象：协程绑定创建它的循环，跨线程传递是错的。
+
+    **清理失败的语义（工厂方的义务，不由本函数承担）**：一次「主流程已成功」的调用，
+    不能因为收尾（如关闭 async client）出错而整体失败。工厂自己把清理包住 —— 记日志
+    （带异常本体）、不覆盖主结果、不上抛。**这不是新增的宽容，是把原有的意外行为变显式**：
+    旧实现里工厂先把结果塞进 queue，消费方拿到即 break，随后 ``finally`` 里 close 抛的错
+    成了没人读的第二个 queue item —— 同样不上抛，但**连日志都没有**。「静默吞掉」与
+    「明确记一笔再继续」对调用方等价，对排障不等价。
+    """
+    outcome: queue.Queue = queue.Queue()
+
+    def _thread_run() -> None:
+        try:
+            outcome.put((True, asyncio.run(factory())))
+        except BaseException as exc:  # 含 KeyboardInterrupt：不能让它把 q.get() 悬死
+            outcome.put((False, exc))
+
+    t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
+    t.start()
+    ok, payload = outcome.get()
+    t.join(timeout=5)
+    if not ok:
+        raise payload
+    return payload
+
+
 class Distiller:
     """基于 LLM 的角色识别与角色卡蒸馏。"""
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
+    #: 合并全书名单的输出上限 —— 整本书的花名册装不进 CARD_MAX_TOKENS。
+    #: 依据：DeepSeek 官方 deepseek-v4-pro 最大输出 384K
+    #: （https://api-docs.deepseek.com/quick_start/pricing）；红楼梦级名单估算 2–3 万字符
+    #: ≈ 1.5–2 万 tokens，取约 3 倍余量。流式没有总时长上限（核实见
+    #: adapters/llm_adapter.py:720-738：budget 只包 create() 返回前），故这个值只受模型
+    #: 输出上限约束，不被生成轮 45s/60s 的墙钟夹逼。**只给合并用**：不改 config.yaml，
+    #: 也不动其他路径的 CARD_MAX_TOKENS。真撞上限仍按截断路径抛，不加兜底。
+    IDENTIFY_MERGE_MAX_TOKENS = 65536
+    #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
+    #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
+    #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
+    #: 存储层与 `core/character_roster.py` 都从这里取，不许各写各的字面量。
+    IDENTIFY_VERSION = 2
 
     def __init__(
         self,
@@ -447,39 +540,115 @@ class Distiller:
         # 括号不成对 = 结构未闭合
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
-    def _chat_initial(
-        self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
+    @staticmethod
+    def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
+        """一次调用实际喂进去的字符总数 —— 估算账的输入（两侧字符 → token 估算）。
+
+        流式与非流式两条截断路共用这一个口径：同一段 prompt 在两支里算出同一个数，
+        免得「按字符估算」这个数各写一遍、迟早漂成两个。
+        """
+        return len(system_prompt) + sum(len(str(m.get("content", ""))) for m in messages)
+
+    def _collect_stream(
+        self, system_prompt: str, messages: list[dict[str, Any]], label: str,
+        usage_action: str, max_tokens: int | None = None,
     ) -> tuple[str, bool]:
-        """初次生成调用 → ``(回复文本, 上游是否已确定截断)``。
+        """流式收全文 → ``(文本, 上游是否已确定截断)``，**并在本级记账**。
+
+        长输出（红楼梦级的名单合并）非流式必然撞墙：生成轮有 45s 单次 / 60s 总墙钟上限，
+        流式一旦开始吐字就不再有总时长夹逼（`chat_stream` 的 deadline 只包 ``create()``
+        返回前，见 adapters/llm_adapter.py）。所以长输出这条路两处都得流式。
+
+        截断时流里已有正文仍然交出去：``chat_stream`` 在吐最后一片**之前**校验
+        finish_reason（校验不过那片不交付），异常里的 content 是空的，但累积到此刻的
+        部分正文还在本函数手里 —— 半截正文是重修的证据，不是要丢掉的东西。这也是本
+        函数与 `_chat_accounted` 非流式那支的唯一差别：那支的正文挂在异常上（``info[1]``）。
+
+        **记账落在发起调用的这一级**（形态锁的判据）：谁消费响应谁把账记进唯一出口
+        （`_try_record_usage`），调用方不必记得补一笔 —— 靠调用方代记是约定不是机制，
+        新增一个调用方漏写就是一段没账的成本。成功时流已耗尽，`last_usage` 立刻读
+        （晚了会被下一次调用覆盖）。截断与其余失败都按字符估算补记：usage chunk 排在
+        finish_reason **之后**，校验不过就不交付，故截断时 `last_usage` 必为 ``None``；
+        而失败调用同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
+        """
+        prompt_chars = self._prompt_chars(system_prompt, messages)
+        parts: list[str] = []
+        try:
+            for piece in self._llm.chat_stream(
+                system_prompt, messages,
+                max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
+            ):
+                parts.append(piece)
+        except Exception as exc:
+            text = "".join(parts)
+            info = incomplete_response_info(exc)
+            self._try_record_usage(
+                usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
+            )
+            if info is None or info[0] != "length":
+                print(f"调用 LLM 进行{label}失败：{exc}")
+                raise
+            return text, True
+        self._try_record_usage(usage_action)
+        return "".join(parts), False
+
+    def _chat_accounted(
+        self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
+        stream: bool = False, max_tokens: int | None = None,
+    ) -> tuple[str, bool]:
+        """调一次 LLM 并把这一笔记进唯一出口 → ``(回复文本, 上游是否已确定截断)``。
+
+        **初次与重修共用**（`_parse_json_with_retry` 的重修环也走这里）：两处只是提示词
+        不同，记账口径不该因轮次再分家。
 
         ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
         `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
         其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
 
-        **初次调用的唯一记账出口**（缺陷 16）：三个站点（`distill` /
-        `_distill_longcontext` / `distill_incremental` 的收尾格式化）原本各记各的——
-        两处各补一条 `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用
-        漏记。收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
-        截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记。
-        重修调用是另一条出口，记在 `_parse_json_with_retry`。
+        ``stream=True`` 走 `_collect_stream`（长输出用），截断口径完全相同，记账落在
+        那个原语里（同样是发起调用的那一级）。
+
+        记账不变量（缺陷 16）：三个站点（`distill` / `_distill_longcontext` /
+        `distill_incremental` 的收尾格式化）原本各记各的——两处各补一条
+        `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用漏记。
+        收敛到这里：**一次调用恰记一条 usage，与它结果如何无关** —— token 花出去就
+        花出去了，成功、截断、硬失败三种收尾都是同一次调用。
+
+        截断与硬失败那两路**拿不到 `last_usage`**：`chat()` 进本轮就先清空，而
+        `_extract_content` 的抛出点在 usage 回写之前，故只能按字符估算补记 ——
+        截断支带上已生成的半截正文（缺陷 91），硬失败支 completion 侧为 0（缺陷 92），
+        与流式支 `_collect_stream` 的 except 支同口径。
         """
+        _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
+        if stream:
+            return self._collect_stream(system_prompt, messages, label, action, _mt)
         truncated = False
+        usage = None
         try:
-            reply = self._llm.chat(system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS)
+            reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is None or info[0] != "length" or not info[1]:
+                # 硬失败照样烧了 token（重试墙下正是空烧）—— 与截断支、流式支同口径：
+                # 先记一条估算账再原样上抛。只记成功会让统计系统性偏低（缺陷 91 同形）。
+                self._try_record_usage(action, estimate_usage_from_chars(
+                    self._prompt_chars(system_prompt, messages)))
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
             reply, truncated = info[1], True
-        self._try_record_usage(action)
+            usage = estimate_usage_from_chars(
+                self._prompt_chars(system_prompt, messages), len(reply))
+        self._try_record_usage(action, usage)
         return reply, truncated
 
     def _parse_json_with_retry(
         self, reply: str, retry_prompt: str, retry_messages: list[dict[str, Any]],
         action_label: str = "distill", required_keys: tuple[str, ...] = ("name",),
         upstream_truncated: bool = False,
-    ) -> dict[str, Any]:
+        list_item_keys: tuple[str, ...] | None = None,
+        stream: bool = False,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
 
         Args:
@@ -491,21 +660,74 @@ class Distiller:
                 ``isinstance(data, dict)`` 无法区分"合法 JSON 但结构错误"
                 （例如 LLM 跑题吐出 ``{"status": "..."}``）和真正的角色卡，
                 这里在 json.loads 之后补一道形状检查，三次尝试都生效。
-            upstream_truncated: 上游是否已确定截断（`_chat_initial` 拿到 length
+            upstream_truncated: 上游是否已确定截断（`_chat_accounted` 拿到 length
                 终态时为 True）。确定信号预置 ``truncated``，无需再从文本形状猜；
                 厂商不回 finish_reason 时保持 False，由 `_looks_truncated` 兜底。
+            list_item_keys: 目标形态切到**数组**——非空、每项都是含这些字段的 dict。
+                不给时是角色卡（dict + ``required_keys``）。识别结果的合并走这一支：
+                它与 ``IDENTIFY_SYSTEM_PROMPT`` 输出同格式（JSON 数组），所以共用这
+                同一个重修环，而不是再写一份。
+            stream: 两次重修调用是否走流式。初次调用已经是流式的长输出（合并），
+                重修若退回非流式就还是会撞 45s/60s 的生成墙钟上限——通道必须一致。
+            max_tokens: 重修调用的输出上限，默认 ``CARD_MAX_TOKENS``。长输出（合并）
+                要显式抬高：上限不够时重修出来还是半截，重试没有意义。
 
         Returns:
-            解析后的 dict。
+            解析后的 dict（默认）或 list[dict]（``list_item_keys`` 给定时）。
 
         Raises:
             ValueError: 所有尝试均失败时抛出，附带可读消息和原始输出摘要。
         """
         import time as _time
 
-        schema_hint = ""
-        if required_keys:
-            schema_hint = "，必须包含字段：" + "、".join(required_keys)
+        # 形状判据与措辞按目标形态分档。dict 那支的 prompt 文案逐字节不变（只多一层闭包）。
+        if list_item_keys is None:
+            def _accept(data: Any) -> bool:
+                return _shape_ok(data, required_keys)
+
+            def _is_shape_candidate(data: Any) -> bool:
+                return isinstance(data, dict)
+
+            def _detail(data: Any, prefix: str) -> str:
+                if isinstance(data, dict):
+                    return (f"{prefix}dict missing required keys {required_keys}: "
+                            f"got keys {list(data.keys())}")
+                return f"{prefix}value is not a dict"
+
+            _shape_noun = "角色卡结构"
+            _expected_kind = "的完整 JSON 对象"
+            schema_hint = "，必须包含字段：" + "、".join(required_keys) if required_keys else ""
+        else:
+            def _accept(data: Any) -> bool:
+                # 空数组不算合格：合并把整本书的角色丢光了，是失败不是答案
+                return (
+                    isinstance(data, list) and len(data) > 0
+                    and all(_shape_ok(item, list_item_keys) for item in data)
+                )
+
+            def _is_shape_candidate(data: Any) -> bool:
+                return isinstance(data, list)
+
+            def _detail(data: Any, prefix: str) -> str:
+                if isinstance(data, list):
+                    return (f"{prefix}list items missing required keys {list_item_keys} "
+                            f"(或数组为空)：{len(data)} 项")
+                return f"{prefix}value is not a list"
+
+            _shape_noun = "角色数组结构"
+            _expected_kind = "的完整 JSON 数组"
+            schema_hint = "，每项必须包含字段：" + "、".join(list_item_keys)
+
+        def _repair(system: str, messages: list[dict[str, Any]]) -> tuple[str, bool]:
+            """重修调用 → ``(文本, 上游是否已确定截断)``。通道与记账都与初次调用同路。
+
+            直接委托 `_chat_accounted`：重修不再自带一份记账（写在本函数里就等于
+            「调用方要记得补账」，流式那支还会与 `_collect_stream` 的本级记账**双计**）。
+            """
+            return self._chat_accounted(
+                system, messages, action_label, action_label,
+                stream=stream, max_tokens=max_tokens,
+            )
 
         attempts = 0
         last_error = None
@@ -518,14 +740,12 @@ class Distiller:
         try:
             _extracted = self._extract_json(reply.strip())
             data = json.loads(_extracted)
-            if _shape_ok(data, required_keys):
+            if _accept(data):
                 T.set_current_attr("repair_stage", 1)
                 return data
-            if isinstance(data, dict):
-                last_error = f"parsed dict missing required keys {required_keys}: got keys {list(data.keys())}"
+            last_error = _detail(data, "parsed ")
+            if _is_shape_candidate(data):
                 last_bad_shape_reply = reply.strip()
-            else:
-                last_error = "parsed value is not a dict"
         except json.JSONDecodeError as exc:
             if Distiller._looks_truncated(_extracted):
                 truncated = True
@@ -541,10 +761,10 @@ class Distiller:
         try:
             if last_bad_shape_reply is not None:
                 fix_system = (
-                    "你的上一次输出是合法的 JSON，但不是要求的角色卡结构——"
+                    f"你的上一次输出是合法的 JSON，但不是要求的{_shape_noun}——"
                     f"缺少必需字段{schema_hint}。\n"
                     "你可能误把这当成了一次对话来回复。请重新输出，"
-                    "只返回符合下方 Schema 的完整 JSON 对象，不要markdown代码块，不要任何解释，"
+                    f"只返回符合下方 Schema{_expected_kind}，不要markdown代码块，不要任何解释，"
                     "不要输出对话或状态消息。\n\n"
                     f"Schema:\n{retry_prompt}"
                 )
@@ -562,23 +782,23 @@ class Distiller:
                     )
                 fix_user_content = reply.strip()
 
-            fix_reply = self._llm.chat(
-                fix_system,
-                [{"role": "user", "content": fix_user_content}],
-                max_tokens=self.CARD_MAX_TOKENS,
+            fix_reply, fix_truncated = _repair(
+                fix_system, [{"role": "user", "content": fix_user_content}],
             )
-            try:
-                data = json.loads(self._extract_json(fix_reply.strip()))
-                if _shape_ok(data, required_keys):
-                    self._try_record_usage(action_label)
-                    T.set_current_attr("repair_stage", 2)
-                    return data
-                if isinstance(data, dict):
-                    last_error = f"fix_reply dict missing required keys {required_keys}: got keys {list(data.keys())}"
-                else:
-                    last_error = "fix_reply parsed value is not a dict"
-            except json.JSONDecodeError as exc:
-                last_error = str(exc)
+            if fix_truncated:
+                # 流式那支不抛异常，截断信号只能自己往上带；不带的话会退化成
+                # 「格式异常」，把「超长」这条排障线索丢掉。
+                truncated = True
+                last_error = f"fix_reply 也被截断（已生成 {len(fix_reply)} 字符）"
+            else:
+                try:
+                    data = json.loads(self._extract_json(fix_reply.strip()))
+                    if _accept(data):
+                        T.set_current_attr("repair_stage", 2)
+                        return data
+                    last_error = _detail(data, "fix_reply ")
+                except json.JSONDecodeError as exc:
+                    last_error = str(exc)
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is not None:
@@ -600,22 +820,21 @@ class Distiller:
                     "请只输出符合 Schema 的角色卡 JSON 对象，不要扮演角色说话，不要输出状态消息或对话回复。"
                 ),
             }
-            retry_reply = self._llm.chat(
+            retry_reply, retry_truncated = _repair(
                 retry_prompt, [*retry_messages, anti_drift_notice],
-                max_tokens=self.CARD_MAX_TOKENS,
             )
-            try:
-                data = json.loads(self._extract_json(retry_reply.strip()))
-                if _shape_ok(data, required_keys):
-                    self._try_record_usage(action_label)
-                    T.set_current_attr("repair_stage", 3)
-                    return data
-                if isinstance(data, dict):
-                    last_error = f"retry dict missing required keys {required_keys}: got keys {list(data.keys())}"
-                else:
-                    last_error = "retry parsed value is not a dict"
-            except json.JSONDecodeError as exc:
-                last_error = str(exc)
+            if retry_truncated:
+                truncated = True
+                last_error = f"full retry 也被截断（已生成 {len(retry_reply)} 字符）"
+            else:
+                try:
+                    data = json.loads(self._extract_json(retry_reply.strip()))
+                    if _accept(data):
+                        T.set_current_attr("repair_stage", 3)
+                        return data
+                    last_error = _detail(data, "retry ")
+                except json.JSONDecodeError as exc:
+                    last_error = str(exc)
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is not None:
@@ -642,16 +861,23 @@ class Distiller:
     # ── public entry points (unchanged) ────────────────────────────────
 
     def identify_characters(self, text: str) -> list[dict[str, Any]]:
-        """截取文本前 10000 字，调用 LLM 识别具名且有言行描写的角色。
+        """识别**全书**中具名且有言行描写的角色。
+
+        文本按 ``_chunk_size`` 分片：单分片走一次调用（与改前逐行等价，含一次重试），
+        多分片逐片识别后合并。原先只取前 10000 字 —— 红楼梦这类长篇只覆盖头两章，
+        名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。
+
+        ``IDENTIFY_VERSION`` 是识别口径的版本号，但**这里不管版本**：进程内 TTL 缓存
+        是本进程自己刚算出来的，落库的版本判定在 `core/character_roster.py` 那一层。
 
         Args:
-            text: 原始叙事文本。
+            text: 原始叙事文本（全文）。
 
         Returns:
-            角色信息字典列表；解析反复失败时返回空列表并打印警告。
+            角色信息字典列表；单分片解析反复失败时返回空列表并打印警告，且**不落缓存**
+            —— 缓存住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
         """
-        excerpt = text[:10000]
-        key = hashlib.sha256(excerpt.encode()).hexdigest() + ":" + self._llm.model
+        key = text_fingerprint(text) + ":" + self._llm.model
 
         # Check cache
         with _IDENTIFY_CACHE_LOCK:
@@ -665,27 +891,53 @@ class Distiller:
                 else:
                     del _IDENTIFY_CACHE[key]
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": excerpt}]
+        chunks = self._split_chunks(text, self._chunk_size)
+        if len(chunks) <= 1:
+            single = self._identify_single_call(text)
+            if single is None:
+                return []
+            result = single
+        else:
+            result = self._identify_over_chunks(chunks)
 
-        def _parse_list(raw: str) -> list[dict[str, Any]]:
-            try:
-                parsed = json.loads(Distiller._extract_json(raw))
-            except json.JSONDecodeError as exc:
-                print(f"解析角色识别 JSON 失败：{exc}")
-                raise
-            if not isinstance(parsed, list):
-                print("角色识别结果不是 JSON 数组")
-                raise TypeError("expected JSON array")
-            out: list[dict[str, Any]] = []
-            for idx, item in enumerate(parsed):
-                if isinstance(item, dict):
-                    if "aliases" not in item:
-                        item["aliases"] = []
-                    out.append(item)
-                else:
-                    print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
-            return out
+        # Cache on success (deep copy to isolate from caller mutation)
+        with _IDENTIFY_CACHE_LOCK:
+            _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
+            if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
+                _IDENTIFY_CACHE.popitem(last=False)
+        return result
 
+    @staticmethod
+    def _normalize_identify_items(parsed: Any) -> list[dict[str, Any]]:
+        """识别/合并结果的统一归一：补 aliases、丢掉非对象项（带告警）。"""
+        if not isinstance(parsed, list):
+            print("角色识别结果不是 JSON 数组")
+            raise TypeError("expected JSON array")
+        out: list[dict[str, Any]] = []
+        for idx, item in enumerate(parsed):
+            if isinstance(item, dict):
+                item.setdefault("aliases", [])
+                out.append(item)
+            else:
+                print(f"警告：角色识别数组第 {idx} 项不是对象，已跳过")
+        return out
+
+    @classmethod
+    def _parse_identify_list(cls, raw: str) -> list[dict[str, Any]]:
+        try:
+            parsed = json.loads(cls._extract_json(raw))
+        except json.JSONDecodeError as exc:
+            print(f"解析角色识别 JSON 失败：{exc}")
+            raise
+        return cls._normalize_identify_items(parsed)
+
+    def _identify_single_call(self, text: str) -> list[dict[str, Any]] | None:
+        """单分片的识别：一次调用 + 一次重试（与原实现逐行等价）。
+
+        Returns:
+            角色列表；两次解析都失败时返回 ``None`` —— 调用方据此**不落缓存**。
+        """
+        messages: list[dict[str, Any]] = [{"role": "user", "content": text}]
         try:
             reply = self._llm.chat(IDENTIFY_SYSTEM_PROMPT, messages)
         except Exception as exc:
@@ -695,7 +947,7 @@ class Distiller:
         self._try_record_usage("distill_identify")
 
         try:
-            result = _parse_list(reply)
+            return self._parse_identify_list(reply)
         except Exception:
             retry_prompt = IDENTIFY_SYSTEM_PROMPT + "请只返回JSON数组"
             try:
@@ -705,17 +957,84 @@ class Distiller:
                 raise
             self._try_record_usage("distill_identify")
             try:
-                result = _parse_list(reply_retry)
+                return self._parse_identify_list(reply_retry)
             except Exception as exc:
                 print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
-                return []
+                return None
 
-        # Cache on success (deep copy to isolate from caller mutation)
-        with _IDENTIFY_CACHE_LOCK:
-            _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
-            if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
-                _IDENTIFY_CACHE.popitem(last=False)
-        return result
+    def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
+        """逐片识别 + 合并。
+
+        失败率（调用失败 + 结果解析失败）越过 ``_map_failure_exceeds_tolerance`` 即抛：
+        拿半本书的名单当全书名单，比报错更糟。未越线则继续 —— 合并那一步只看拿到的名单。
+        """
+        def _build_prompt(chunk: str) -> tuple[str, str]:
+            return IDENTIFY_SYSTEM_PROMPT, chunk
+
+        map_results, failures = self._run_map_with_client(
+            chunks, _build_prompt, "distill_identify",
+        )
+
+        total = len(chunks)
+        parse_failed = 0
+        parts: list[str] = []
+        for _idx, raw in map_results:
+            if not raw.strip():
+                continue          # 该片已在 failures 里计过
+            try:
+                items = self._parse_identify_list(raw)
+            except Exception as exc:
+                print(f"[distiller] identify chunk parse failed: {exc}")
+                parse_failed += 1
+                continue
+            if items:
+                # 重新序列化：交给合并的是**已归一**的名单，格式统一、可直接被解析
+                parts.append(json.dumps(items, ensure_ascii=False))
+
+        failed = len(failures) + parse_failed
+        if _map_failure_exceeds_tolerance(failed, total):
+            last_error = str(failures[-1][1]) if failures else "分片结果无法解析为角色数组"
+            if "429" in last_error:
+                raise DistillError(
+                    "识别失败：上游接口限流，请稍后重试",
+                    f"API 429；{failed}/{total} 个分片识别失败",
+                )
+            raise DistillError(
+                "识别失败：部分片段处理失败，请重试",
+                f"{failed}/{total} 个分片识别失败；最后错误：{last_error}",
+            )
+        if failed:
+            print(f"[distiller] {failed}/{total} identify chunks failed (within tolerance), continuing")
+
+        if not parts:
+            raise DistillError("识别失败：未能从任何片段中识别到角色")
+        return self._identify_merge(parts)
+
+    def _identify_merge(self, parts: list[str]) -> list[dict[str, Any]]:
+        """把各分片的名单合并成一份全书名单：归组、按全书重判主次。"""
+        body = (
+            "以下是从同一部作品的不同片段中各自识别出的角色名单：\n\n"
+            + "\n\n---片段分隔---\n\n".join(
+                f"[分片 {i + 1}]\n{p}" for i, p in enumerate(parts)
+            )
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": body}]
+        # 走 _chat_accounted：它把账记进唯一出口（缺陷 16），且能把上游确定的 length
+        # 截断信号带进重修环，而不是让半截 JSON 直接抛。
+        # stream=True：红楼梦级的名单合并不是非流式那 45s/60s 墙钟能装下的输出。
+        # max_tokens 显式抬到 IDENTIFY_MERGE_MAX_TOKENS：CARD_MAX_TOKENS 装不下全书名单，
+        # 初次调用与重修都用它（重修上限不够时重修出来还是半截）。
+        reply, upstream_truncated = self._chat_accounted(
+            IDENTIFY_MERGE_PROMPT, messages, "角色识别合并", "distill_identify",
+            stream=True, max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
+        )
+        merged = self._parse_json_with_retry(
+            reply, IDENTIFY_MERGE_PROMPT, messages,
+            action_label="distill_identify", list_item_keys=("name",),
+            upstream_truncated=upstream_truncated, stream=True,
+            max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
+        )
+        return self._normalize_identify_items(merged)
 
     @staticmethod
     def _split_chunks(text: str, chunk_size: int) -> list[str]:
@@ -927,7 +1246,7 @@ class Distiller:
             {"role": "user", "content": "以下是需要分析的文本：\n\n" + text[: self._chunk_size * 10]},
         ]
 
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "角色蒸馏", "distill")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "角色蒸馏", "distill")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1014,7 +1333,7 @@ class Distiller:
         )
 
         user_messages = [{"role": "user", "content": user_content}]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "整本蒸馏", "distill_longcontext")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1091,15 +1410,47 @@ class Distiller:
 
     # ── MapReduce internals ────────────────────────────────────────────
 
+    def _run_map_with_client(
+        self,
+        chunks: list[str],
+        build_prompt: _cabc.Callable[[str], tuple[str, str]],
+        usage_action: str,
+        on_chunk_done: "callable | None" = None,
+    ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
+        """建 async client → 跑 Map → 关掉它。**同步侧调 Map 的唯一姿势。**
+
+        「建 client / 跑 / 关」这一段蒸馏与识别都要，而清理失败的语义必须一致
+        （关闭出错不改判已成功的主结果、不上抛、只记日志 —— 理由见
+        `_run_async_in_ctx_thread` 的 docstring）：两份复制迟早漂移，收在这里。
+        """
+        async def _run():
+            run_client = self._llm._make_async_client()
+            try:
+                return await self._run_map_concurrent(
+                    chunks, build_prompt, usage_action, on_chunk_done, client=run_client,
+                )
+            finally:
+                try:
+                    await run_client.close()
+                except Exception as exc:
+                    print(f"[distiller] Map client close failed (non-fatal): "
+                          f"{type(exc).__name__}: {exc}")
+
+        return _run_async_in_ctx_thread(_run)
+
     async def _run_map_concurrent(
         self,
         chunks: list[str],
-        character_name: str,
+        build_prompt: _cabc.Callable[[str], tuple[str, str]],
+        usage_action: str,
         on_chunk_done: "callable | None" = None,
-        is_chat: bool = False,
         client: AsyncOpenAI | None = None,
     ) -> tuple[list[tuple[int, str]], list[tuple[int, Exception]]]:
         """Core Map — concurrent chunk analysis shared by sync and stream.
+
+        ``build_prompt(chunk) -> (system, user)`` 由调用方给：蒸馏是「收集某角色的
+        人格证据」，识别是「列出全书角色名单」，提示词不同、并发与记账骨架相同。
+        ``usage_action`` 是整阶段汇总落账的 action 名。
 
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
         ``on_chunk_done(index, result)`` is called synchronously within the
@@ -1110,13 +1461,10 @@ class Distiller:
         lock = asyncio.Lock()
         failures: list[tuple[int, Exception]] = []
         usages: list[dict | None] = []
-        map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
-        map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
         async def _one(i: int, chunk: str) -> tuple[int, str]:
             async with sem:
-                system = map_system_fn(character_name)
-                user = map_user_fn(chunk, character_name)
+                system, user = build_prompt(chunk)
                 usage = None
                 try:
                     result, usage = await self._llm.async_chat(
@@ -1143,7 +1491,7 @@ class Distiller:
         # 续跑命中/重试会让二者不一致，chunk_count 数的是真的调了几次）。
         merged = aggregate_usage(usages, len(usages))
         if merged is not None:
-            self._try_record_usage("distill_map", merged)
+            self._try_record_usage(usage_action, merged)
         return results, failures
 
     async def _run_reduce_concurrent(
@@ -1321,39 +1669,20 @@ class Distiller:
             on_progress(0, total)
 
         # Run async Map in a dedicated thread (safe even under uvicorn async context)
-        q: queue.Queue = queue.Queue()
+        map_system_fn = self._map_system_prompt_chat if is_chat else self._map_system_prompt
+        map_user_fn = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
-        async def _map_wrapper():
-            run_client = self._llm._make_async_client()
-            try:
-                results, failures = await self._run_map_concurrent(relevant, character_name, _on_done, is_chat, client=run_client)
-                q.put(("done", results, failures))
-            finally:
-                await run_client.close()
+        def _build_map_prompt(chunk: str) -> tuple[str, str]:
+            return map_system_fn(character_name), map_user_fn(chunk, character_name)
 
-        def _thread_run():
-            try:
-                asyncio.run(_map_wrapper())
-            except Exception as exc:
-                q.put(("error", str(exc)))
-
-        t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
-        t.start()
-
-        map_results: list[tuple[int, str]] = []
-        map_failures: list[tuple[int, Exception]] = []
-        while True:
-            item = q.get()
-            kind = item[0]
-            if kind == "done":
-                map_results = item[1]
-                map_failures = item[2]
-                break
-            if kind == "error":
-                raise RuntimeError(f"Map 阶段失败：{item[1]}")
-            # else: progress is handled via _on_done callback already
-
-        t.join(timeout=5)
+        try:
+            map_results, map_failures = self._run_map_with_client(
+                relevant, _build_map_prompt, "distill_map", _on_done,
+            )
+        except Exception as exc:
+            # 上抛形态保持不变（RuntimeError + 同一句文案）：按类型/文案分流的地方
+            # 不受这次重构影响。
+            raise RuntimeError(f"Map 阶段失败：{exc}") from exc
 
         if on_progress:
             on_progress(total, total)
@@ -1361,7 +1690,7 @@ class Distiller:
         # Failure rate check: if >50% chunks failed, bail with clear error
         total_chunks = len(relevant)
         failed = len(map_failures)
-        if failed / total_chunks > 0.5:
+        if _map_failure_exceeds_tolerance(failed, total_chunks):
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
                 raise DistillError(
@@ -1426,7 +1755,7 @@ class Distiller:
             f"- personality_traits 每条必须附带具体场景证据\n\n"
             f"{profile_draft}"
         }]
-        reply, upstream_truncated = self._chat_initial(system_prompt, user_messages, "最终格式化", "distill_format")
+        reply, upstream_truncated = self._chat_accounted(system_prompt, user_messages, "最终格式化", "distill_format")
 
         data = self._parse_json_with_retry(
             reply, system_prompt, user_messages,
@@ -1634,7 +1963,7 @@ class Distiller:
         # Failure rate check: if >50% chunks failed, bail
         total_chunks = len(relevant)
         failed = len(map_failures)
-        if failed / total_chunks > 0.5:
+        if _map_failure_exceeds_tolerance(failed, total_chunks):
             err_text = str(map_failures[-1][1])
             if "rate limited (429)" in err_text or "429" in err_text:
                 print(f"[distiller] aborting stream: API 429；{failed}/{total_chunks} 个分片失败")

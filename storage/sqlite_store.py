@@ -61,6 +61,7 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
+    "087_characters_version.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -703,34 +704,44 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] List texts failed: {exc}")
             raise
 
-    async def save_characters(self, text_id: str, characters: list) -> None:
-        """Cache identified characters for a text."""
+    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+        """Cache identified characters for a text, tagged with the identify algorithm version.
+
+        `version` 由调用方给（`Distiller.IDENTIFY_VERSION`）—— 存储层不认识这个数，
+        只负责存。存储层自己填字面量的话，改识别口径时这里必漏改一处。
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE texts SET characters_json = ? WHERE id = ?",
-                    (json.dumps(characters, ensure_ascii=False), text_id),
+                    "UPDATE texts SET characters_json = ?, characters_version = ? WHERE id = ?",
+                    (json.dumps(characters, ensure_ascii=False), version, text_id),
                 )
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Save characters failed: {exc}")
             raise
 
-    async def get_characters_owned(self, text_id: str, user_id: str) -> list | None:
+    async def get_characters_owned(
+        self, text_id: str, user_id: str, *, version: int,
+    ) -> list | None:
         """Get cached identified characters for a text the user owns, or None.
 
         属主过滤在 SQL 里 —— 与 `get_text_owned` 同范式（缺陷 11）。返回 None 同时表示
         「无缓存」与「非属主」，调用方先用 `get_text_owned` 判定存在性/属主，再读缓存。
         **读缓存必须在属主校验之后**：顺序反了等于没有校验（distill 路由踩过）。
+
+        `version` 不符也返回 None（当无缓存）：旧版本的名单是残缺的（第一版只覆盖前
+        1 万字，即头两章），沿用比重算更糟。调用方据此重跑识别并回写。
         """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT characters_json FROM texts WHERE id = ? AND user_id = ?",
+                    "SELECT characters_json, characters_version FROM texts "
+                    "WHERE id = ? AND user_id = ?",
                     (text_id, user_id),
                 )
                 row = await cursor.fetchone()
-            if row and row[0]:
+            if row and row[0] and row[1] == version:
                 return json.loads(row[0])
             return None
         except Exception as exc:

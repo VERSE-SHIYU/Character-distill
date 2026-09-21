@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import user_facing_error
+from core.character_roster import aliases_for, resolve_characters
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
@@ -363,8 +364,13 @@ def _run_distill_task(
         _set_task(task_id, {"status": "identifying", "progress_pct": 5, "character": name or char_name, "message": "正在读取文本…"})
         _set_task(task_id, {"progress_pct": 8, "message": "正在识别角色…"})
 
+        # 名单走唯一入口，读缓存/落库在主 loop 上（asyncpg 池只属于主 loop）。
+        # 身份靠 `run_coroutine_threadsafe` 传递：它在**调用线程**里 copy_context，
+        # 所以本线程经 `C.ctx_thread` 带来的 LLM_CALLER 会一路传到识别调用里，
+        # 记账不丢人（与 `_persist_snap` 走的是同一条投递）。
         try:
-            chars = distiller.identify_characters(content)
+            chars = submit_to_main_loop(
+                resolve_characters(get_storage(), distiller, text_id, user_id, content))
         except Exception:
             chars = []
         if not name:
@@ -375,10 +381,7 @@ def _run_distill_task(
             if not name:
                 _set_task(task_id, {"status": "error", "message": "Identified result missing name"})
                 return
-        for c in chars:
-            if c.get("name") == name:
-                aliases = c.get("aliases", [])
-                break
+        aliases = aliases_for(chars, name)
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
 
@@ -612,10 +615,24 @@ async def _do_identify(text: str, distiller: Distiller) -> dict[str, Any]:
     return {"characters": chars}
 
 
+def _first_character_name(chars: list[dict[str, Any]]) -> str:
+    """名单里的第一个角色名；空名单 / 缺 name 都是 400（同一处判据）。"""
+    if not chars:
+        raise HTTPException(400, "No characters identified")
+    name = chars[0].get("name", "")
+    if not name:
+        raise HTTPException(400, "Identified result missing name")
+    return name
+
+
 async def _resolve_character_name(
     text: str, character_name: str, distiller: Distiller
 ) -> str:
-    """Auto-identify the first character if no name was provided."""
+    """纯文本接口用：没有 text_id 就没有名单可读，只能现场识别（无缓存可落）。
+
+    有 text_id 的路由一律走 `core.character_roster.resolve_characters` —— 那条路读
+    缓存、识别完写回，不会每请求重算。
+    """
     name = character_name.strip()
     if name:
         return name
@@ -624,12 +641,7 @@ async def _resolve_character_name(
     except Exception as exc:
         print(f"[distill] Auto-identify failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
-    if not chars:
-        raise HTTPException(400, "No characters identified")
-    name = chars[0].get("name", "")
-    if not name:
-        raise HTTPException(400, "Identified result missing name")
-    return name
+    return _first_character_name(chars)
 
 
 # ---- New routes (storage-backed, via TextManager) ----
@@ -652,12 +664,9 @@ async def identify_by_text_id(
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    cached = await storage.get_characters_owned(req.text_id, user_id)
-    if cached:
-        return {"characters": cached}
-    result = await _do_identify(text_rec["content"], distiller)
-    await storage.save_characters(req.text_id, result["characters"])
-    return result
+    chars = await resolve_characters(
+        storage, distiller, req.text_id, user_id, text_rec["content"])
+    return {"characters": chars}
 
 
 @router.post("/run")
@@ -684,7 +693,12 @@ async def distill_by_text_id(
     _er = (_api_config or {}).get("embedding_region", "")
 
     content = _get_distill_content(text_rec)
-    char_name = await _resolve_character_name(content, req.character_name, distiller)
+    # 空 character_name 才需要名单；非空时用户已点名，不必读名单。
+    char_name = req.character_name.strip()
+    if not char_name:
+        chars = await resolve_characters(
+            storage, distiller, req.text_id, user_id, content)
+        char_name = _first_character_name(chars)
 
     try:
         result = await text_manager.get_or_distill(
@@ -1047,11 +1061,11 @@ async def distill_stream(
     async def _event_gen():
         yield f"data: {json.dumps({'status': 'identifying'}, ensure_ascii=False, default=str)}\n\n"
 
-        # ONE LLM call: resolve name (if needed) + aliases
+        # 名单走唯一入口：命中缓存即不发 LLM，未命中才识别一次并写回
         nonlocal char_name
-        aliases: list[str] = []
         try:
-            chars = await asyncio.to_thread(distiller.identify_characters, content)
+            chars = await resolve_characters(
+                storage, distiller, req.text_id, user_id, content)
         except Exception as exc:
             print(f"[distill] Identify failed: {exc}")
             chars = []
@@ -1063,10 +1077,7 @@ async def distill_stream(
             if not char_name:
                 yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False, default=str)}\n\n"
                 return
-        for c in chars:
-            if c.get("name") == char_name:
-                aliases = c.get("aliases", [])
-                break
+        aliases = aliases_for(chars, char_name)
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
@@ -1170,8 +1181,9 @@ async def reindex_rag(
 ) -> dict[str, Any]:
     """Rebuild RAG indices for all in-memory sessions with character metadata.
 
-    Reads the text from storage, runs identify_characters, then rebuilds
-    each session's RAG index to include character tags so that
+    Reads the text from storage, takes the roster from
+    ``core.character_roster.resolve_characters`` (缓存命中就不发 LLM),
+    then rebuilds each session's RAG index to include character tags so that
     ``character_name`` filtering works in subsequent chat queries.
     """
     user_id = user["id"]
@@ -1186,7 +1198,7 @@ async def reindex_rag(
     content = _get_distill_content(text_rec)
 
     try:
-        chars = await asyncio.to_thread(distiller.identify_characters, content)
+        chars = await resolve_characters(storage, distiller, text_id, user_id, content)
     except Exception as exc:
         print(f"[distill] Reindex identify failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
