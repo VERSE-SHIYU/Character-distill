@@ -24,7 +24,9 @@ import pathlib
 import re
 import subprocess
 import uuid
+from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -33,7 +35,7 @@ from pwdlib import PasswordHash
 import deps
 import route_facts
 import server
-from routers.auth import _create_access_token, get_jwt_secret, security_scheme
+from routers.auth import JWT_ALGORITHM, _create_access_token, get_jwt_secret, security_scheme
 from server import AuthMiddleware
 from storage.sqlite_store import SQLiteStore
 from web.demo_gate import (
@@ -81,6 +83,14 @@ def _headers(user: dict) -> dict:
 def _url(path: str) -> str:
     """路由模板 → 一个具体 URL（占位符一律填 "probe"）。"""
     return re.sub(r"\{[^}]+\}", "probe", path)
+
+
+def _expired_token() -> str:
+    """签名**有效**、但 `exp` 已过去的 token —— 与「随机串」是两种事态。"""
+    return jwt.encode(
+        {"sub": "usr_whoever", "exp": datetime.now(timezone.utc) - timedelta(minutes=1)},
+        get_jwt_secret(), algorithm=JWT_ALGORITHM,
+    )
 
 
 def _gate_blocked(r) -> bool:
@@ -364,6 +374,59 @@ class TestNonDemoAccountUnchanged:
         ]:
             r = client.request(method, path, headers=_headers(plain), json={})
             assert not _gate_blocked(r), f"{method} {path} 对非演示账号也拦了：{r.text}"
+
+
+class TestIdentityIsOptionalNotIgnored:
+    """公开路径上「有凭据就认身份」—— 曾经是「一律置空」。
+
+    这两件事是一体两面，少任何一面都出问题：一律置空 ⇒ 20 条 `/api/market/*` 写路由
+    漏在门禁射程外（于是有了那次「委派」补丁，而委派要求门禁自己声明
+    `Depends(security_scheme/get_storage/get_jwt_secret)` —— 门禁是**全局依赖**，
+    于是每条请求、包括公开 GET，都先把 secret 读一遍）；一律拦截 ⇒ 公开页面对
+    过期凭据回 401，而公开的语义是「这里不鉴权」，不是「这里必须没有身份」。
+    """
+
+    def test_public_reads_survive_an_unset_secret(self, client, monkeypatch):
+        """`JWT_SECRET` 未配置时，公开**读**路径不该因为一个与本请求无关的配置变成 500。
+
+        判据是具体状态码而不是「!= 500」：`!= 500` 对「整条路由没了、回 404」也是绿的，
+        而那正是另一种坏法。唯一放宽的是 `/`（前端产物不在仓里，404 与 200 都算够到
+        路由，故只否掉 500）。
+
+        **不含** `/api/auth/register` 这类要**签发** token 的写路由：它们真需要 secret，
+        未配置时 500 是对的（那是另一件事，不是「公开读被配置拖累」）。
+        """
+        monkeypatch.delenv("JWT_SECRET", raising=False)
+        for url in ("/api/health", "/api/announcement/active", "/api/market/tags"):
+            r = client.get(url)
+            assert r.status_code == 200, (
+                f"GET {url} 在 JWT_SECRET 未配置时返回 {r.status_code}，期望 200：{r.text[:200]}"
+            )
+        assert client.get("/").status_code != 500, "非 /api 路径被 secret 配置拖成了 500"
+
+    def test_expired_or_invalid_token_on_a_public_path_is_anonymous(self, client):
+        """公开路径上的过期/无效凭据 → 匿名放行，**不是 401**。
+
+        公开的语义是「这里不鉴权」：探针打 `/api/health`、未登录的浏览器读市场列表，
+        都带着一个过期 token 也要走得通。身份在这里只用来让门禁判得出账号，判不出来
+        就是「没身份」，不是「不许进」。
+        """
+        for token in (_expired_token(), "not-a-jwt"):
+            r = client.get("/api/market/tags", headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 200, (
+                f"公开路径被一个过期/无效凭据拦成 {r.status_code}：{r.text[:200]}"
+            )
+
+    def test_a_valid_token_is_still_recognized_on_a_public_path(self, client, demo):
+        """公开路径上的**有效**凭据必须被认出来 —— 这就是「可选」与「忽略」的差别。
+
+        这条不成立时，`/api/market/*` 的 20 条写路由会全部漏在门禁之外（演示账号能
+        发帖、点赞、删评论），而所有读路径看起来都正常。
+        """
+        r = client.post("/api/market/probe/like", headers=_headers(demo), json={})
+        assert _gate_blocked(r), (
+            f"公开路径上的有效身份没被认出来：{r.status_code} {r.text[:200]}"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

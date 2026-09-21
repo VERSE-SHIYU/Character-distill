@@ -278,6 +278,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import time
 
+#: 「身份**可选**」的路径：中间件照常解析身份，只是**失败不拦**。
+#:
+#: 语义不是「这里没有身份」——那会让带凭据的请求在这里被当成匿名，`/api/market/*` 的
+#: 写路由与 `request.state.user` 的读者都会拿到空身份。带有效凭据时身份就是真的；
+#: 没带、过期、无效，才退化成空身份放行。
 PUBLIC_PATHS = {"/api/auth/register", "/api/auth/login", "/api/auth/refresh", "/api/auth/send-code", "/api/auth/reset-password", "/api/health", "/api/health/ready", "/api/announcement/active"}
 PUBLIC_PREFIXES = ("/assets/", "/static/", "/favicon", "/manifest", "/login", "/api/market/", "/api/inter-node/")
 
@@ -296,42 +301,60 @@ def _maybe_update_last_active(user_id: str) -> None:
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """鉴权 + **一次**身份上下文的设置。
+    """鉴权 + **一次**身份解析 + **一次**身份上下文的设置。
 
-    形态是刻意的：`call_next` 只有**一个**出口，身份 contextvar（`LLM_CALLER` —— 门的
-    策略与记账的归属读的是同一个）只在那一个出口前设**一次**。早退的 401/403
-    各自 return 响应（没有下游，不需要上下文）；公开路径与鉴权路径在出口处合流，
-    靠 `user`/`user_id` 的初值区分 —— 于是「两条分支都要设值」不是两份要同步维护
-    的代码，而是同一个出口。
+    三个「一次」都是判据，不是风格：
+
+    **解析只有一处**（`resolve_identity` 在 `web/server.py` 里就这一行）。公开路径
+    与非公开路径的差别**只是失败拦不拦** —— 若按路径分叉成两段解析，两段会各自漂移
+    而互不报错。带 Bearer 凭据就解析一次，判出来是什么就是什么。
+
+    **出口只有一个**：`call_next` 之前设身份 contextvar（`LLM_CALLER` —— 门的策略与
+    记账的归属读的是同一个）。早退的 401/403 各自 return 响应（没有下游，不需要
+    上下文）；公开路径与鉴权路径在出口处合流 —— 「身份可选」的那条也把认出来的身份
+    带走，只是判失败时退化成空身份而不是拦下。
 
     设在出口**之前**是硬要求：contextvar 只对 `call_next` 之后的下游可见，设在它
     后面，端点体与流式响应体读到的都是默认值（实测，见 L8）。
+
+    **没凭据时不碰 secret、不碰 storage**：secret 以取值函数传入（未配置时取值会抛），
+    storage 的取值在「有 Bearer 凭据」的分支里 —— 于是一条没带凭据的公开请求既不
+    因为一个与本请求无关的配置变成 500，也不做无谓的库读。
     """
 
     async def dispatch(self, request: Request, call_next):
-        user: dict = {}          # 公开路径 / 非 /api/ 路径的身份：空 dict，等同未登录
+        user: dict = {}
         user_id: str | None = None
         path = request.url.path
+        # 「身份可选」：公开路径照常解析，只是判失败时不拦（语义见 PUBLIC_PATHS 注释）。
+        public = (path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
+                  or not path.startswith("/api/"))
 
-        # Allow public paths through
-        if not (path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/")):
-            auth_header = request.headers.get("Authorization", "")
-            scheme, _, token = auth_header.partition(" ")
+        auth_header = request.headers.get("Authorization", "")
+        scheme, _, token = auth_header.partition(" ")
+        verdict: Verdict
+        if token and scheme.lower() == "bearer":
             # secret 传**函数本身**，不在这里取值：取值会抛（JWT_SECRET 未配置时），
             # 而一条没带凭据的请求本该 401、不该因为配置变成 500。按需取值见 resolve_identity。
-            verdict, user = await resolve_identity(
-                token if scheme.lower() == "bearer" else None,
-                get_jwt_secret,
-                get_storage(),
-            )
-            if verdict is not Verdict.OK:
+            verdict, user = await resolve_identity(token, get_jwt_secret, get_storage())
+        else:
+            verdict, user = Verdict.MISSING, None
+
+        if verdict is not Verdict.OK:
+            if not public:
                 status, detail = IDENTITY_REJECTIONS[verdict]
                 return JSONResponse({"detail": detail}, status_code=status)
-
+            user = {}
+        else:
             user_id = user["id"]
-            _maybe_update_last_active(user_id)
+            # 公开路径不记活跃：`/api/market/*` 是轮询路径，写放大换不到东西。
+            if not public:
+                _maybe_update_last_active(user_id)
 
-        request.state.user = user  # default {} 防止非 API 路径上 AttributeError
+        request.state.user = user
+        # 公开路径的要判失败不拦这件事，下游（演示门禁）需要知道：它决定「凭据在不在
+        # 这条路由上算数」时要用到这个事实，而 `PUBLIC_PATHS` 只在本模块定义一次。
+        request.state.identity_optional = public
         # 身份只设这一处：门的策略（geo）与记账的归属读的都是它（缺陷 35）
         LLM_CALLER.set(Caller(ip=get_client_ip(request), user_id=user_id))
         return await call_next(request)

@@ -3,8 +3,8 @@
 
 **事实与策略分离**，沿用 `core/request_context.py` / `web/llm_gate.py` 那条线：
 「谁在调」是事实 —— 身份由 `web/server.py` 的 `AuthMiddleware` 解析一次、写在
-`request.state.user` 上；本模块**不复写解析逻辑**，只在中间件没解析的那类路径上
-向既有解析器要一次（见下）。「许不许写」是策略 —— 全部落在本模块里，一处定义。
+`request.state.user` 上；本模块**只读它**，一行解析都不写。「许不许写」是策略 ——
+全部落在本模块里，一处定义。
 
 **为什么是全局依赖而不是中间件。** 中间件在**路由匹配之前**执行，那时还不知道
 这条请求落到哪条路由上，只能按 URL 字符串猜，`{session_id}` 这类模板无从取得；
@@ -16,55 +16,45 @@
 （`AuthMiddleware` / `auth.get_current_user` / `auth.get_optional_user`）。把
 `is_demo` 的结果挂到 user 字典上，就得同时改那 3 处，漏一处就是静默放行或静默拒绝。
 所以口径是 `is_demo(user)` 这个**纯函数**，谁拿到 user 字典谁自己调。
-（3 处解析的收敛方案见本次工作记录的报告，属另一笔。）
 
 **默认拒绝 + 白名单。** 只读方法（GET/HEAD/OPTIONS）放行；写方法仅放行
 `DEMO_WRITE_ALLOWLIST` 里逐条列出的 (方法, 路由模板)，其余一律 403。白名单是
 **精确到模板**的，不是前缀 —— 前缀匹配会把 `/api/chat/send` 之外将来长出来的
 `/api/chat/send_whatever` 一起放行，而新增写路由本该默认被拦。
 
-**公开前缀路径上的身份（这条不补，门禁会漏掉 20 条写路由）。** `AuthMiddleware`
-对公开路径把 `request.state.user` 置为 `{}` —— 它的语义是「这里不 401，路由自己
-会鉴权」，**不是**「这条请求没有身份」。而 `PUBLIC_PREFIXES` 里就有 `/api/market/`，
-于是 `/api/market/*` 的写方法（发帖、评论、点赞、fork、发布、关注、删除…）带着
-**有效 token** 走到这里时，`request.state.user` 是 `{}`；只看它就会判成「非演示账号」
-放行，那 20 条写路由也就全部漏掉（实测：`POST /api/market/{id}/like` 返回的是端点自己的
-404，不是本门的 403）。所以：**写方法、`request.state.user` 为空、且这条路由自己
-会解析凭据时**，委派给 `auth.get_optional_user` 再解析一次。这是委派、不是第二份
-口径 —— 解析规则仍只有 `routers/auth.py` 那一处；本模块只多知道「去哪儿问」。
+**为什么「凭据在这里算不算数」是判据而不是名单。** 判据**不是**「路径在不在某个
+公开名单上」（那是第二份要与 `PUBLIC_PATHS` 同步维护的清单，漏一条就是静默放行），
+而是**这条路由的依赖树里有没有 `security_scheme`** —— 有，说明它自己会从凭据里解析
+身份，凭据在这个端点上构成「以该账号行事」，本门才管得着（`/api/market/*` 的 20 条
+写路由都是）；没有的（5 条公开鉴权路由 / 8 条 `/api/inter-node/*` 的 HMAC 机器接口），
+凭据在这里不构成「以该账号行事」，本门不该管。
 
-**为什么委派要加「且这条路由自己会解析凭据」这半句。** 无差别委派会把
-`/api/auth/register` 一起拦掉，而那正是拒绝文案让演示访客去做的事 —— 前端
-`client.js` 的 `getAuthHeaders()` 只要 localStorage 里有 token 就挂 `Authorization`，
-于是访客带着 **demo 的 token** 去注册，委派解析出 demo 身份、`/api/auth/register`
-又不在白名单，得到 403「注册后可使用完整功能」：文案与行为自相矛盾，访客被锁死在
-演示账号里。判据**不是**「路径在不在某个公开名单上」（那是第二份要与 `PUBLIC_PATHS`
-同步维护的清单），而是**这条路由的依赖树里有没有 `security_scheme`** —— 有，说明它
-自己会从凭据里解析身份（`/api/market/*` 的 20 条写路由都是），委派才有意义；没有
-（5 条公开鉴权路由 / 8 条 `/api/inter-node/*` 的 HMAC 机器接口），凭据在这个端点上
-不构成「以该账号行事」，门禁不该管。
+**这条判据为什么必须留**（去掉会让演示访客被锁死）：前端 `client.js` 的
+`getAuthHeaders()` 只要 localStorage 里有 token 就挂 `Authorization`，于是访客带着
+**demo 的 token** 打 `/api/auth/register`。中间件现在在公开路径上也会认出这个有效
+凭据（「身份可选」，见 `web/server.py` 的 `PUBLIC_PATHS` 注释），于是
+`request.state.user` 是**真的 demo 身份** —— 只按身份判就会回「演示账号不支持此操作，
+注册后可使用完整功能」：文案让他去注册，行为不许他注册。故先按判据把这类路由整个
+排除出射程：凭据在那儿不构成「以该账号行事」，本门无从判定，也不该拦。
 
-**只读方法先短路**，连这次委派都不走：GET 占绝大多数（静态资源、SPA、全部读接口），
-它们不该为一次用不上的身份解析买单。于是委派的判定只落在「公开前缀路径上的写方法」
-（`/api/market/*` 20 条 + `/api/inter-node/*` 8 条），而非演示用户走的非公开写路径
-读的是中间件已解析好的值，零额外开销。
+**曾经的做法是「委派」**（`request.state.user` 为空且路由自鉴权时，调
+`auth.get_optional_user` 再解析一次）。那是补中间件「公开路径一律置空身份」这个洞的，
+代价是门禁得声明 `Depends(security_scheme/get_storage/get_jwt_secret)` —— 门禁是
+**全局依赖**，这三个参数在**进函数体之前**被框架解析，于是每条请求（含公开 GET、
+静态资源、`/`）都先把 secret 读一遍，`JWT_SECRET` 未配置时公开读变成 500。
+根因修在中间件（公开路径改成「身份可选」），委派随之删除：本模块现在不声明任何
+依赖参数，也不调用解析器。
 
-**真正不经过演示判定的写方法**只有公开路径上那 5 条鉴权路由
-（`login` / `register` / `refresh` / `reset-password` / `send-code`）—— 它们是
-`PUBLIC_PATHS` 且**不带** `/api/market/` 那种「路由自鉴权」前缀，中间件不解析、
-`get_optional_user` 也拿不到凭据，故恒判为非演示账号。这是对的：演示访客必须能注册
-一个真账号（提示文案让他去注册），也必须能刷新 token 才留得住。故它们**不进白名单**
-—— 进了也只是够不着的死条目。`/api/inter-node/*` 同理（HMAC 机器接口，不带用户身份）。
+**只读方法先短路**：GET 占绝大多数（静态资源、SPA、全部读接口），它们不该为一次
+用不上的判定买单。
 """
 from __future__ import annotations
 
 import os
 
 from fastapi import Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials
 
-from deps import get_storage
-from routers.auth import get_jwt_secret, get_optional_user, security_scheme
+from routers.auth import security_scheme
 
 #: 环境变量名。**全仓唯一读取点**在本模块（`demo_usernames`），测试有锁钉住这点。
 DEMO_USERNAMES_ENV = "DEMO_USERNAMES"
@@ -128,7 +118,7 @@ def is_demo_write_allowed(method: str, path: str) -> bool:
 
 
 def _route_reads_credentials(route) -> bool:
-    """这条路由自己会从凭据里解析身份吗 —— 依赖树里有没有 `security_scheme`。
+    """凭据在这条路由上「算不算数」—— 它的依赖树里有没有 `security_scheme`。
 
     `get_current_user` / `get_optional_user` 都把 `security_scheme` 挂在自己的子依赖里，
     故查这一个符号就覆盖了「自行鉴权」的全部写法。递归而非只看第一层：将来多包一层
@@ -136,7 +126,7 @@ def _route_reads_credentials(route) -> bool:
 
     判据取自**路由对象本身**（与 `route.path` 同一类事实），不是一份要与
     `PUBLIC_PATHS` 同步维护的路径名单 —— 名单漏一条就是静默放行。取不到 route 时
-    恒为 False：拿不准就不委派，与 `is_demo` 对空 user 的处置同一口径。
+    恒为 False：拿不准就**不进门禁的射程**，与 `is_demo` 对空 user 的处置同一口径。
     """
     def _walk(dep) -> bool:
         for sub in getattr(dep, "dependencies", None) or ():
@@ -147,21 +137,25 @@ def _route_reads_credentials(route) -> bool:
     return _walk(getattr(route, "dependant", None))
 
 
-async def demo_readonly_gate(
-    request: Request,
-    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
-    storage=Depends(get_storage),
-    secret: str = Depends(get_jwt_secret),
-) -> None:
+async def demo_readonly_gate(request: Request) -> None:
     """门禁依赖本体。放行返回 None，拒绝抛 403 + `DEMO_REFUSAL`。
 
-    顺序是刻意的，三步都别调换：
+    顺序是刻意的，四步都别调换：
 
-      1. **只读方法先放行** —— 连身份都不解析（委派只发生在写方法上，见模块文档）。
-      2. **拿身份** —— 优先用 `AuthMiddleware` 已解析的 `request.state.user`；为空
-         （= 公开路径，典型是 `/api/market/*`）**且这条路由自己会解析凭据**时，
-         才委派 `get_optional_user`。后半个条件见模块文档「为什么委派要加这半句」。
-      3. **判目标** —— 读 `request.scope["route"]`，写方法不在白名单即拒。
+      1. **只读方法先放行** —— 读取一律不管。
+      2. **凭据不算数、且路径本来就是公开的** → 整个排除。两个条件缺一不可：
+         - 「公开」（`request.state.identity_optional`，中间件给的**事实**）：中间件
+           本来就没打算在这儿拦失败，身份只是顺带认出来的。`/api/auth/register` 那 5 条
+           就在这一类 —— 演示访客带着 demo 的 token 去注册，本门插进去只会把注册锁死
+           （文案让他去注册，行为不许他注册）。
+         - 「凭据不算数」（`_route_reads_credentials`）：这条路由自己不从凭据解析身份
+           （5 条公开鉴权路由、8 条 `/api/inter-node/*` 的 HMAC 机器接口）。
+         少了「公开」这一半，非公开路径上「没写鉴权依赖的新写路由」就会被整个放过 ——
+         那正是「新增写接口默认被拦」这条性质的反面（负控用例 `_solo_app` 钉着它）。
+         少了「凭据不算数」这一半，`/api/market/*` 的 20 条写路由会被漏掉。
+      3. **判身份** —— 读 `AuthMiddleware` 已解析好的 `request.state.user`；不是演示
+         账号就不管。
+      4. **判目标** —— 写方法不在白名单即拒。
 
     取不到路由模板时 `path=""`，落不进白名单，于是**写方法 fail-closed**：拿不准就拒，
     不是放行。
@@ -169,10 +163,10 @@ async def demo_readonly_gate(
     if request.method.upper() in READ_METHODS:
         return
     route = request.scope.get("route")
-    user = getattr(request.state, "user", None) or {}
-    if not user and _route_reads_credentials(route):
-        user = await get_optional_user(credentials, storage, secret) or {}
-    if not is_demo(user):
+    # 第 2 步：公开**且**凭据不算数 → 不在射程内（两条缺一不可，理由见文档串）。
+    if getattr(request.state, "identity_optional", False) and not _route_reads_credentials(route):
+        return
+    if not is_demo(getattr(request.state, "user", None) or {}):
         return
     if is_demo_write_allowed(request.method, getattr(route, "path", "")):
         return

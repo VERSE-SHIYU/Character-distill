@@ -323,3 +323,43 @@ def test_jwt_decode_has_exactly_one_call_site():
     assert len(hits) == 1, f"验签调用点应只有一处，实得 {hits}"
     assert hits[0].startswith("web/routers/auth.py:"), \
         f"验签应收敛在 routers/auth.py 里，实得 {hits[0]}"
+
+
+# ── 4. 中间件只解析一次身份：公开/非公开不是两段解析代码 ─────────────────────
+
+
+def _resolve_sites(src: str) -> list[int]:
+    """AST 现算：`resolve_identity(...)` 的调用点行号。
+
+    判据落在**调用**上（`ast.Call` 且 `func` 是那个名字），不认 import、不认字符串、
+    不认 `foo.resolve_identity` 这种属性访问 —— 后者不是同一个符号。
+    """
+    return sorted(
+        node.lineno for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name) and node.func.id == "resolve_identity"
+    )
+
+
+def test_the_middleware_resolves_identity_at_exactly_one_call_site():
+    """`web/server.py` 里 `resolve_identity` 恰好一处调用。
+
+    「公开路径」与「非公开路径」的差别只该是**失败拦不拦**，不是「解析不解析」：
+    一旦写成两处，公开那处与受保护那处就各有一份时机与形状，改一处不会动另一处，
+    也不报错 —— 正是这条收敛要消灭的形态。
+    """
+    synthetic = (
+        "def f():\n"
+        "    resolve_identity(t, s, st)\n"          # 2: 命中
+        "    other.resolve_identity(t, s, st)\n"    # 3: 属性访问，不是同一符号
+        "    note = 'resolve_identity(t)'\n"        # 4: 字符串，不是调用
+    )
+    assert _resolve_sites(synthetic) == [2], \
+        "扫描器把属性访问或字符串也算成了调用点 —— 判据面失效"
+
+    hits = _resolve_sites((_REPO / "web" / "server.py").read_text(encoding="utf-8"))
+    assert hits, "web/server.py 里找不到 `resolve_identity(...)` —— 中间件不再解析身份了？"
+    assert len(hits) == 1, (
+        f"中间件解析身份应只有一处调用，实得 web/server.py:{hits}。"
+        "公开路径若单开一处解析，两处会各自漂移而互不报错。"
+    )
