@@ -1283,11 +1283,11 @@ class TestPublishedCopyRelation:
         a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
         await store.save_text(text_id, "src.txt", "content", user_id=a)
         p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
-        await store.save_card_avatar(p, "AAAA")
+        await store.save_card_avatar(p, a, "AAAA")
 
         fork_id = f"card_{uuid.uuid4().hex}"
         assert await store.fork_card(p, fork_id, b, None) is not None, "夹具没建出 fork"
-        await store.save_card_avatar(fork_id, "BBBB")
+        await store.save_card_avatar(fork_id, b, "BBBB")
 
         assert await store.get_card_avatar_owned(fork_id, b) == "BBBB"
         assert await store.get_card_avatar_owned(p, a) == "AAAA", \
@@ -1297,12 +1297,12 @@ class TestPublishedCopyRelation:
         a = f"usr_a_{uuid.uuid4().hex}"
         await store.save_text(text_id, "src.txt", "content", user_id=a)
         p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
-        await store.save_card_avatar(p, "AAAA")
+        await store.save_card_avatar(p, a, "AAAA")
 
         fork_id = f"card_{uuid.uuid4().hex}"
         fork = await store.fork_card(p, fork_id, a, None)
         assert fork is not None and fork["visibility"] == "private"
-        await store.save_card_avatar(fork_id, "CCCC")
+        await store.save_card_avatar(fork_id, a, "CCCC")
 
         assert await store.get_card_avatar_owned(p, a) == "AAAA", \
             "私有 fork 改头像，向上同步把 fork 源（公开卡）也改了"
