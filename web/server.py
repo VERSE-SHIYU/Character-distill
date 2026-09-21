@@ -62,7 +62,7 @@ from routers.auth import (
     IDENTITY_REJECTIONS,
     Verdict,
     get_jwt_secret,
-    resolve_identity,
+    resolve_request_identity,
     validate_fernet_key,
     validate_jwt_secret,
 )
@@ -305,9 +305,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     三个「一次」都是判据，不是风格：
 
-    **解析只有一处**（`resolve_identity` 在 `web/server.py` 里就这一行）。公开路径
+    **解析只有一处**（`resolve_request_identity` 在 `web/server.py` 里就这一行）。公开路径
     与非公开路径的差别**只是失败拦不拦** —— 若按路径分叉成两段解析，两段会各自漂移
     而互不报错。带 Bearer 凭据就解析一次，判出来是什么就是什么。
+
+    **这一处必须是复用入口**（`resolve_request_identity`，不是 `resolve_identity`）：
+    端点侧的 `get_current_user` / `get_optional_user` 是同一个请求的第二次调用，走复用
+    入口才拿得到这里算好的那份，否则同一次请求要判两遍、多查一次库。
 
     **出口只有一个**：`call_next` 之前设身份 contextvar（`LLM_CALLER` —— 门的策略与
     记账的归属读的是同一个）。早退的 401/403 各自 return 响应（没有下游，不需要
@@ -335,8 +339,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         verdict: Verdict
         if token and scheme.lower() == "bearer":
             # secret 传**函数本身**，不在这里取值：取值会抛（JWT_SECRET 未配置时），
-            # 而一条没带凭据的请求本该 401、不该因为配置变成 500。按需取值见 resolve_identity。
-            verdict, user = await resolve_identity(token, get_jwt_secret, get_storage())
+            # 而一条没带凭据的请求本该 401、不该因为配置变成 500。按需取值见
+            # `resolve_identity`；这里走复用入口，端点侧的适配器才拿得到这份判定。
+            verdict, user = await resolve_request_identity(
+                request, token, get_jwt_secret, get_storage(),
+            )
         else:
             verdict, user = Verdict.MISSING, None
 

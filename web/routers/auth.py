@@ -239,14 +239,48 @@ async def resolve_identity(
     return Verdict.OK, user
 
 
+async def resolve_request_identity(
+    request: Request,
+    token: str | None,
+    secret_source: Callable[[], str],
+    storage: StorageBase,
+) -> tuple[Verdict, dict[str, Any] | None]:
+    """一次请求内身份**只判一次**：先看这次请求有没有算过同一个 token。
+
+    中间件在路由匹配**之前**就跑，带有效凭据的 `/api/` 请求因此先算一次；端点侧的
+    `get_current_user` / `get_optional_user` 拿到的是**同一个请求、同一个 token**，
+    再算一次就是重复（多一次 `get_user_by_id`，公开的 `/api/market/*` 写路由上实测
+    两次）。两层鉴权都留着 —— 纵深防御、纯路由 app 与 `get_jwt_secret` 注入点都要
+    适配器能独立工作；这里消掉的只是**同一次请求里的重复执行**。
+
+    **判定结果连带 token 一起存**，匹配的是 token 字符串而不是「有没有存过」：同一个
+    Request 上换了 token 就必须重算（`tests/test_identity_resolution.py` 有一条钉着
+    这点）。空 token 也照存 —— 没凭据时 `resolve_identity` 立刻返回 MISSING，不碰
+    secret 也不碰 storage，存下来省掉的正是这次空跑。
+
+    上游没存过（纯路由 app、探针 app、直接调用）就自己算 —— 与
+    `getattr(request.state, ..., None)` 取不到即视为「没有」同一条口径。
+    """
+    cached = getattr(request.state, "identity_verdict", None)
+    if cached is not None and cached[0] == token:
+        return cached[1], cached[2]
+    verdict, user = await resolve_identity(token, secret_source, storage)
+    request.state.identity_verdict = (token, verdict, user)
+    return verdict, user
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
     secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
-    """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid."""
-    verdict, user = await resolve_identity(
-        credentials.credentials if credentials else None, lambda: secret, storage,
+    """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid.
+
+    `request` 由框架注入（`Depends` 一个不动），只为复用中间件算过的同一次判定。
+    """
+    verdict, user = await resolve_request_identity(
+        request, credentials.credentials if credentials else None, lambda: secret, storage,
     )
     if verdict is Verdict.OK and user is not None:
         return user
@@ -255,13 +289,14 @@ async def get_current_user(
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
     secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
     """Like get_current_user but returns empty dict for unauthenticated requests."""
-    verdict, user = await resolve_identity(
-        credentials.credentials if credentials else None, lambda: secret, storage,
+    verdict, user = await resolve_request_identity(
+        request, credentials.credentials if credentials else None, lambda: secret, storage,
     )
     return user if verdict is Verdict.OK and user is not None else {}
 
