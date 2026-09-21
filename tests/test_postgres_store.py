@@ -1261,6 +1261,84 @@ class TestPgOwnedIdentityIsolation:
         assert await store.get_card_owned(card_id, other) is None, "非属主读到了他人 card"
 
 
+# ── 「草稿 ↔ 作者自己的发布副本」关系（PG 侧同形）─────────────────────────────
+# SQLite 语义用例在 tests/test_published_copy_relation.py 本机跑；PG 侧这一层必须在真 PG 上
+# 跑（§四「SQLite 全绿不构成后端命题的证据」）。关系定义与三条后果见该文件文档串。
+
+@_pg
+class TestPublishedCopyRelation:
+    """「X 是草稿 D 的发布副本」⟺ X.forked_from = D.id ∧ X.visibility='public'
+    ∧ X.deleted_at IS NULL ∧ X.user_id = D.user_id。两条 store 的 SQL 只差占位符，
+    但真库行为要各自闭环 —— 这段 Python 两侧逐字相同，改一侧不修另一侧会立刻造出分叉。
+    """
+
+    @staticmethod
+    async def _public_card(store, text_id, owner, tag) -> str:
+        cid = f"card_{tag}"
+        await store.save_card(cid, text_id, "张三", json.dumps({"name": "张三"}), user_id=owner)
+        await store.update_card_visibility(cid, "public")
+        return cid
+
+    async def test_fork_avatar_save_leaves_origin_avatar_alone(self, store, text_id):
+        a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "content", user_id=a)
+        p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
+        await store.save_card_avatar(p, "AAAA")
+
+        fork_id = f"card_{uuid.uuid4().hex}"
+        assert await store.fork_card(p, fork_id, b, None) is not None, "夹具没建出 fork"
+        await store.save_card_avatar(fork_id, "BBBB")
+
+        assert await store.get_card_avatar_owned(fork_id, b) == "BBBB"
+        assert await store.get_card_avatar_owned(p, a) == "AAAA", \
+            "他人 fork 改头像，向上同步污染了原作者的公开卡"
+
+    async def test_private_self_fork_avatar_save_leaves_origin_alone(self, store, text_id):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "content", user_id=a)
+        p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
+        await store.save_card_avatar(p, "AAAA")
+
+        fork_id = f"card_{uuid.uuid4().hex}"
+        fork = await store.fork_card(p, fork_id, a, None)
+        assert fork is not None and fork["visibility"] == "private"
+        await store.save_card_avatar(fork_id, "CCCC")
+
+        assert await store.get_card_avatar_owned(p, a) == "AAAA", \
+            "私有 fork 改头像，向上同步把 fork 源（公开卡）也改了"
+
+    async def test_published_id_ignores_other_users_public_fork(self, store, text_id):
+        a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "content", user_id=a)
+        p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
+        fork_id = f"card_{uuid.uuid4().hex}"
+        assert await store.fork_card(p, fork_id, b, None) is not None
+        await store.update_card_visibility(fork_id, "public")
+
+        for label, got in (("get_card_owned", await store.get_card_owned(p, a)),
+                           ("get_card_unscoped", await store.get_card_unscoped(p))):
+            assert not got.get("published_id"), \
+                f"{label} 把他人 fork 当成了 P 的发布副本：{got.get('published_id')!r}"
+        listed = [c for c in await store.list_cards(text_id, a) if c["id"] == p]
+        assert listed and not listed[0].get("published_id"), \
+            f"list_cards 把他人 fork 当成了 P 的发布副本：{listed[0].get('published_id')!r}"
+
+    async def test_publish_does_not_reuse_other_users_public_fork(self, store, text_id):
+        a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "content", user_id=a)
+        p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
+        fork_id = f"card_{uuid.uuid4().hex}"
+        assert await store.fork_card(p, fork_id, b, None) is not None
+        await store.update_card_visibility(fork_id, "public")
+
+        new_id = await store.publish_card(p, a, "A的发布", "tag", "v1", '{"name": "张三"}')
+        assert new_id and new_id != fork_id, "发布复用了他人 fork 当自己的发布副本"
+        assert await store.get_card_owned(new_id, a) is not None, "发布出来的副本不属于发布者"
+        b_fork = await store.get_card_owned(fork_id, b)
+        assert b_fork is not None and b_fork["market_description"] != "A的发布", \
+            "他人 fork 的发布字段被 A 的发布覆盖"
+
+
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
 # 故意**不挂** `@_pg` —— 它是用来验「_pg 到底跳了没跳」的那把尺子，自己不能被同一把尺子量。
 
