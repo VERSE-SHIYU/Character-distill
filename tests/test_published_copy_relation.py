@@ -98,8 +98,9 @@ class TestOriginAvatarSaveDoesNotLeakIntoOthersForks:
     """后果 4（同根因，方向相反）：改自己公开卡的头像，不得写进他人的公开 fork。
 
     向下同步修复前写作 `WHERE forked_from = ? AND visibility = 'public'` —— 缺「同一属主」，
-    于是原卡改头像会把**任意用户**的公开 fork 一并改掉（跨属主写入）。缺陷 84 的关系定义
-    在向下方向上的作用就是这条：`X.user_id = D.user_id` 把他人 fork 排除掉。
+    于是原卡改头像会把**任意用户**的公开 fork 一并改掉（跨属主写入）。关系定义里那条
+    「同一作者」判据在向下方向上的作用就是这条：把他人 fork 排除掉（拆列后该判据不再写在
+    谓词里，移到 `published_from` 这一列上，由复合外键在库里强制）。
     """
 
     async def test_origin_avatar_save_leaves_others_public_fork_alone(self, store, user_a, user_b):
