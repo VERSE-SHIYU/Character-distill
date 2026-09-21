@@ -271,8 +271,14 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 光有 continue-on-error 只接了「失败」，接不住「挂住」：挂死不算失败，这一步会一直
+      # 占着直到 build job 撞 360 分钟上限，把整条 build 一起拖住（2026-09-21 实发：卡在
+      # `docker push` 上 2h40m）。step 级 timeout-minutes 到点即失败，由本步的
+      # continue-on-error 接住 —— 挂死从此也落进「可选步骤失败」那一类。
+      # 取值 = 最近 20 次成功 build 中本步耗时的 max×3 向上取整，数据见引入本行的 commit message。
       - name: Push app image to Aliyun CR
         continue-on-error: true
+        timeout-minutes: 89
         run: |
           docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
           docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
@@ -292,8 +298,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # 同上一步：取值 = 最近 20 次成功 build 中本步耗时的 max×3 向上取整，数据见引入本行的 commit message。
       - name: Push nginx image to Aliyun CR
         continue-on-error: true
+        timeout-minutes: 3
         run: |
           docker pull ${{ env.NGINX_IMAGE }}:${{ github.sha }}
           docker tag ${{ env.NGINX_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_NGINX_IMAGE }}:${{ github.sha }}
