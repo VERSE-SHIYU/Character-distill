@@ -1293,6 +1293,24 @@ class TestPublishedCopyRelation:
         assert await store.get_card_avatar_owned(p, a) == "AAAA", \
             "他人 fork 改头像，向上同步污染了原作者的公开卡"
 
+    async def test_origin_avatar_save_leaves_others_public_fork_alone(self, store, text_id):
+        """后果 4（同根因，方向相反）：改自己公开卡的头像，不得写进他人的公开 fork。"""
+        a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
+        await store.save_text(text_id, "src.txt", "content", user_id=a)
+        p = await self._public_card(store, text_id, a, uuid.uuid4().hex[:12])
+        await store.save_card_avatar(p, a, "AAAA")
+
+        fork_id = f"card_{uuid.uuid4().hex}"
+        assert await store.fork_card(p, fork_id, b, None) is not None, "夹具没建出 fork"
+        await store.update_card_visibility(fork_id, "public")
+        assert await store.get_card_avatar_owned(fork_id, b) == "AAAA", "fork 该继承原卡头像"
+
+        await store.save_card_avatar(p, a, "NEWAV")
+
+        assert await store.get_card_avatar_owned(p, a) == "NEWAV", "本卡头像必须写进去"
+        assert await store.get_card_avatar_owned(fork_id, b) == "AAAA", \
+            "改原卡头像，向下同步写进了他人的公开 fork（跨属主写入）"
+
     async def test_private_self_fork_avatar_save_leaves_origin_alone(self, store, text_id):
         a = f"usr_a_{uuid.uuid4().hex}"
         await store.save_text(text_id, "src.txt", "content", user_id=a)

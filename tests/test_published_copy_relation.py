@@ -79,6 +79,31 @@ class TestOtherUserForkDoesNotPolluteOrigin:
             "他人 fork 改头像，向上同步污染了原作者的公开卡"
 
 
+class TestOriginAvatarSaveDoesNotLeakIntoOthersForks:
+    """后果 4（同根因，方向相反）：改自己公开卡的头像，不得写进他人的公开 fork。
+
+    向下同步修复前写作 `WHERE forked_from = ? AND visibility = 'public'` —— 缺「同一属主」，
+    于是原卡改头像会把**任意用户**的公开 fork 一并改掉（跨属主写入）。缺陷 84 的关系定义
+    在向下方向上的作用就是这条：`X.user_id = D.user_id` 把他人 fork 排除掉。
+    """
+
+    async def test_origin_avatar_save_leaves_others_public_fork_alone(self, store, user_a, user_b):
+        tid = await _text(store, user_a)
+        p = await _public_card(store, user_a, tid)
+        await store.save_card_avatar(p, user_a, "AAAA")
+
+        fork_id = f"card_{uuid.uuid4().hex}"
+        assert await store.fork_card(p, fork_id, user_b, None) is not None, "夹具没建出 fork"
+        await store.update_card_visibility(fork_id, "public")
+        assert await store.get_card_avatar_owned(fork_id, user_b) == "AAAA", "fork 该继承原卡头像"
+
+        await store.save_card_avatar(p, user_a, "NEWAV")
+
+        assert await store.get_card_avatar_owned(p, user_a) == "NEWAV", "本卡头像必须写进去"
+        assert await store.get_card_avatar_owned(fork_id, user_b) == "AAAA", \
+            "改原卡头像，向下同步写进了他人的公开 fork（跨属主写入）"
+
+
 class TestOwnForkDoesNotDesyncDraft:
     """后果 2：A 自 fork 出的私有卡，改头像不得反向改掉作为 fork 源的公开卡。"""
 
