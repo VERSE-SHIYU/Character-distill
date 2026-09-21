@@ -307,6 +307,14 @@ class Distiller:
 
     SAFE_SINGLE_REDUCE = 80
     CARD_MAX_TOKENS = 8192  # 角色卡 JSON 长输出需要更大 token 上限
+    #: 合并全书名单的输出上限 —— 整本书的花名册装不进 CARD_MAX_TOKENS。
+    #: 依据：DeepSeek 官方 deepseek-v4-pro 最大输出 384K
+    #: （https://api-docs.deepseek.com/quick_start/pricing）；红楼梦级名单估算 2–3 万字符
+    #: ≈ 1.5–2 万 tokens，取约 3 倍余量。流式没有总时长上限（核实见
+    #: adapters/llm_adapter.py:720-738：budget 只包 create() 返回前），故这个值只受模型
+    #: 输出上限约束，不被生成轮 45s/60s 的墙钟夹逼。**只给合并用**：不改 config.yaml，
+    #: 也不动其他路径的 CARD_MAX_TOKENS。真撞上限仍按截断路径抛，不加兜底。
+    IDENTIFY_MERGE_MAX_TOKENS = 65536
     #: 角色识别算法的版本：口径（提示词 / 覆盖范围 / 合并规则）一改就 +1。
     #: 名单落库时带此版本，读回时版本不符即当无缓存 —— 旧版本的名单是残缺的
     #: （只覆盖前 1 万字那版只认头两章），沿用比重算更糟。值是**唯一定义**，
@@ -536,6 +544,7 @@ class Distiller:
 
     def _collect_stream(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str,
+        max_tokens: int | None = None,
     ) -> tuple[str, bool]:
         """流式收全文 → ``(文本, 上游是否已确定截断)``。
 
@@ -552,7 +561,8 @@ class Distiller:
         truncated = False
         try:
             for piece in self._llm.chat_stream(
-                system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS,
+                system_prompt, messages,
+                max_tokens=self.CARD_MAX_TOKENS if max_tokens is None else max_tokens,
             ):
                 parts.append(piece)
         except Exception as exc:
@@ -565,7 +575,7 @@ class Distiller:
 
     def _chat_initial(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str, action: str,
-        stream: bool = False,
+        stream: bool = False, max_tokens: int | None = None,
     ) -> tuple[str, bool]:
         """初次生成调用 → ``(回复文本, 上游是否已确定截断)``。
 
@@ -582,13 +592,14 @@ class Distiller:
         截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记。
         重修调用是另一条出口，记在 `_parse_json_with_retry`。
         """
+        _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
         if stream:
-            reply, truncated = self._collect_stream(system_prompt, messages, label)
+            reply, truncated = self._collect_stream(system_prompt, messages, label, _mt)
             self._try_record_usage(action)
             return reply, truncated
         truncated = False
         try:
-            reply = self._llm.chat(system_prompt, messages, max_tokens=self.CARD_MAX_TOKENS)
+            reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
         except Exception as exc:
             info = incomplete_response_info(exc)
             if info is None or info[0] != "length" or not info[1]:
@@ -604,6 +615,7 @@ class Distiller:
         upstream_truncated: bool = False,
         list_item_keys: tuple[str, ...] | None = None,
         stream: bool = False,
+        max_tokens: int | None = None,
     ) -> dict[str, Any] | list[dict[str, Any]]:
         """增强 JSON 解析：清理 → fix_reply → 重调 LLM，最多 3 次尝试。
 
@@ -625,6 +637,8 @@ class Distiller:
                 同一个重修环，而不是再写一份。
             stream: 两次重修调用是否走流式。初次调用已经是流式的长输出（合并），
                 重修若退回非流式就还是会撞 45s/60s 的生成墙钟上限——通道必须一致。
+            max_tokens: 重修调用的输出上限，默认 ``CARD_MAX_TOKENS``。长输出（合并）
+                要显式抬高：上限不够时重修出来还是半截，重试没有意义。
 
         Returns:
             解析后的 dict（默认）或 list[dict]（``list_item_keys`` 给定时）。
@@ -674,9 +688,10 @@ class Distiller:
 
         def _repair(system: str, messages: list[dict[str, Any]]) -> tuple[str, bool]:
             """重修调用 → ``(文本, 上游是否已确定截断)``。通道与初次调用一致。"""
+            _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
             if stream:
-                return self._collect_stream(system, messages, action_label)
-            return self._llm.chat(system, messages, max_tokens=self.CARD_MAX_TOKENS), False
+                return self._collect_stream(system, messages, action_label, _mt)
+            return self._llm.chat(system, messages, max_tokens=_mt), False
 
         attempts = 0
         last_error = None
@@ -973,13 +988,17 @@ class Distiller:
         # 走 _chat_initial：它就是「初次调用的唯一记账出口」（缺陷 16），且能把上游
         # 确定的 length 截断信号带进重修环，而不是让半截 JSON 直接抛。
         # stream=True：红楼梦级的名单合并不是非流式那 45s/60s 墙钟能装下的输出。
+        # max_tokens 显式抬到 IDENTIFY_MERGE_MAX_TOKENS：CARD_MAX_TOKENS 装不下全书名单，
+        # 初次调用与重修都用它（重修上限不够时重修出来还是半截）。
         reply, upstream_truncated = self._chat_initial(
-            IDENTIFY_MERGE_PROMPT, messages, "角色识别合并", "distill_identify", stream=True,
+            IDENTIFY_MERGE_PROMPT, messages, "角色识别合并", "distill_identify",
+            stream=True, max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
         )
         merged = self._parse_json_with_retry(
             reply, IDENTIFY_MERGE_PROMPT, messages,
             action_label="distill_identify", list_item_keys=("name",),
             upstream_truncated=upstream_truncated, stream=True,
+            max_tokens=self.IDENTIFY_MERGE_MAX_TOKENS,
         )
         return self._normalize_identify_items(merged)
 

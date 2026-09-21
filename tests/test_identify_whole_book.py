@@ -153,6 +153,24 @@ class TestWholeBookCoverage:
         assert llm.chat_stream.call_count == 2      # 初次 + 重修
         assert llm.chat.call_count == 0
 
+    def test_merge_max_tokens_is_raised(self):
+        """合并调用的 max_tokens 是 IDENTIFY_MERGE_MAX_TOKENS，且初次与重修一致。
+
+        CARD_MAX_TOKENS（8192）装不下整本书的花名册——撞上去就是「超长被截断」，
+        识别整个失败。这一条也顺带锁住重修没退回小上限（退回则重修白修）。
+        """
+        llm = _make_llm(
+            async_chat=_map_stub(),
+            chat_stream=_merge_stream(first=["不是 JSON"]),
+        )
+        d = _make_distiller(llm)
+
+        d.identify_characters(WHOLE_BOOK_TAIL_CHARS)
+
+        passed = [c.kwargs.get("max_tokens") for c in llm.chat_stream.call_args_list]
+        assert passed == [Distiller.IDENTIFY_MERGE_MAX_TOKENS] * 2
+        assert Distiller.IDENTIFY_MERGE_MAX_TOKENS > Distiller.CARD_MAX_TOKENS
+
 
 class TestChunkFailurePolicy:
     """分片失败率判据（与 Map 阶段同一条：``_map_failure_exceeds_tolerance``）。"""
