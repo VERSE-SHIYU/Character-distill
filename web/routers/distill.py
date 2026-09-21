@@ -652,11 +652,13 @@ async def identify_by_text_id(
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    cached = await storage.get_characters_owned(req.text_id, user_id)
+    cached = await storage.get_characters_owned(
+        req.text_id, user_id, version=Distiller.IDENTIFY_VERSION)
     if cached:
         return {"characters": cached}
     result = await _do_identify(text_rec["content"], distiller)
-    await storage.save_characters(req.text_id, result["characters"])
+    await storage.save_characters(
+        req.text_id, result["characters"], version=Distiller.IDENTIFY_VERSION)
     return result
 
 

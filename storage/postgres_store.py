@@ -258,32 +258,41 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] List texts failed: {exc}")
             raise
 
-    async def save_characters(self, text_id: str, characters: list) -> None:
-        """Cache identified characters for a text."""
+    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+        """Cache identified characters for a text, tagged with the identify algorithm version.
+
+        `version` 由调用方给（`Distiller.IDENTIFY_VERSION`）—— 存储层不认识这个数，
+        只负责存（同 sqlite 侧）。
+        """
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE texts SET characters_json = $1 WHERE id = $2",
-                    json.dumps(characters, ensure_ascii=False), text_id,
+                    "UPDATE texts SET characters_json = $1, characters_version = $3 WHERE id = $2",
+                    json.dumps(characters, ensure_ascii=False), text_id, version,
                 )
         except Exception as exc:
             print(f"[PostgresStore] Save characters failed: {exc}")
             raise
 
-    async def get_characters_owned(self, text_id: str, user_id: str) -> list | None:
+    async def get_characters_owned(
+        self, text_id: str, user_id: str, *, version: int,
+    ) -> list | None:
         """Get cached identified characters for a text the user owns, or None.
 
         属主过滤在 SQL 里 —— 与 `get_text_owned` 同范式（缺陷 11）。返回 None 同时表示
         「无缓存」与「非属主」，调用方先用 `get_text_owned` 判定存在性/属主，再读缓存。
         **读缓存必须在属主校验之后**：顺序反了等于没有校验（distill 路由踩过）。
+
+        `version` 不符也返回 None（当无缓存），理由见 sqlite 侧同名方法。
         """
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT characters_json FROM texts WHERE id = $1 AND user_id = $2",
+                    "SELECT characters_json, characters_version FROM texts "
+                    "WHERE id = $1 AND user_id = $2",
                     text_id, user_id,
                 )
-            if row and row[0]:
+            if row and row[0] and row[1] == version:
                 return json.loads(row[0])
             return None
         except Exception as exc:

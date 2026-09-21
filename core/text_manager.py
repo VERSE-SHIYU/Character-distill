@@ -619,7 +619,8 @@ class TextManager:
         """
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
         try:
-            cached = await self._storage.get_characters_owned(text_id, user_id)
+            cached = await self._storage.get_characters_owned(
+                text_id, user_id, version=Distiller.IDENTIFY_VERSION)
             if cached:
                 name_to_aliases = {c["name"]: c.get("aliases", []) for c in cached}
                 for char in all_characters:

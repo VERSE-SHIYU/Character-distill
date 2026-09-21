@@ -1,0 +1,12 @@
+-- 020 — texts.characters_version：名单出自哪一版识别算法
+--
+-- 与 sqlite 侧 087 是同一件事实（同名同默认值同语义），改一处必须改两处。
+-- 细节理由见 storage/migrations/087_characters_version.sql，此处只记 PG 侧的形态差异：
+--
+-- ADD COLUMN IF NOT EXISTS 而非裸 ADD COLUMN：PG 支持，且是新库与已建库走同一条路径
+-- 的唯一形态（把列写进 001_init.sql 的 CREATE TABLE 对已建库是 no-op，缺陷 21/23）。
+--
+-- 现有行由 PG 自己填常量默认值 0（= 迁移前那版名单），当前 IDENTIFY_VERSION 是 2，
+-- 旧缓存因此天然不匹配、被当无缓存重算。**不写 UPDATE / DELETE**：本文件每次启动
+-- 都会重跑，数据语句等于每次启动执行一遍。
+ALTER TABLE texts ADD COLUMN IF NOT EXISTS characters_version INTEGER DEFAULT 0;
