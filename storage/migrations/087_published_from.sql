@@ -1,0 +1,16 @@
+-- 087 — cards.published_from：把「草稿 → 作者自己的发布副本」独立成一列
+--
+-- 背景与 PG 侧 020 是同一件事实（SQLite 侧的详细理由见 storage/postgres_store.py 与
+-- sqlite_store.py 顶部的 `_PUBLISHED_COPY_OF` 定义块）：`forked_from` 单列同时承载
+-- 「作者自己的发布副本」与「任意用户的 fork」两种关系，区分它们唯一的判据是
+-- `copy.user_id = draft.user_id`。拆列后本列只表示前者，并由表级复合外键 + UNIQUE
+-- 强制「同一作者」。
+--
+-- **本文件只加列**：SQLite 加得了列，加不了表级 UNIQUE 与复合外键（要重建表）。
+-- 那两件事走 `_ensure_initialized` 里的 `_rebuild_cards_published_from` —— 它按 PRAGMA
+-- 现算列清单来重建，所以列必须先在这里存在。
+--
+-- 本列也是 SQLite 启动去重那条 DELETE 的判据之一（见 sqlite_store.py 的两条去重
+-- DELETE）：发布副本的 `forked_from` 变成 '' 之后，不加 `published_from IS NULL`
+-- 它会和作者的草稿同 text_id 同 name，被去重 DELETE 当成重复草稿删掉。
+ALTER TABLE cards ADD COLUMN published_from TEXT DEFAULT NULL;

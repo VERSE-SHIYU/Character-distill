@@ -88,6 +88,7 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
+    "087_published_from.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -250,10 +251,14 @@ async def _rebuild_cards_nullable_text_id(conn: Any) -> dict[str, int]:
     return orphans
 
 
-def _cards_rebuild_columns(info_rows: Any, fk_rows: Any) -> list[str]:
+def _cards_rebuild_columns(
+    info_rows: Any, fk_rows: Any, extra_constraints: tuple[str, ...] = ()
+) -> list[str]:
     """从 PRAGMA 现算 cards 的列定义与 FK 子句 —— 不维护列清单（会随迁移腐烂）。
 
     除 `text_id` 的非空位按目标规格强制去掉外，其余逐格复刻 table_info 给的事实。
+    `extra_constraints` 是**目标形态新增**的表级约束（要重建的目的就是加它们）：
+    `PRAGMA` 看不到 UNIQUE，所以这类约束不可能从现状推出来，只能由调用方给。
     """
     cols: list[str] = []
     for _cid, name, ctype, notnull, dflt, pk in info_rows:
@@ -268,7 +273,94 @@ def _cards_rebuild_columns(info_rows: Any, fk_rows: Any) -> list[str]:
     for _id, _seq, parent, frm, to, _upd, on_del, _match in fk_rows:
         cols.append(f'FOREIGN KEY ("{frm}") REFERENCES "{parent}"("{to}") '
                     f"ON DELETE {on_del}")
+    cols.extend(extra_constraints)
     return cols
+
+
+# 「删除一张卡 → 指向它的发布副本就地把 `published_from` 置空」的触发器。
+#
+# 定义**只在这一处**、由 `_ensure_initialized` 在本文件顶部注册的迁移之后创建：
+# SQLite 没有 `CREATE OR REPLACE TRIGGER`，而表重建会把触发器连同旧表一起丢掉，
+# 所以它不能只写在 .sql 迁移里（重建一次就永久缺了）。
+#
+# 为什么用触发器而不是「在每一条硬删路径上各清一次」：硬删有 4 条路径
+# （`purge_card` / 按 `text_id` / 按 `user_id` / 启动去重），只清其中一条，其余
+# 三条删到「有发布副本的草稿」时直接撞复合外键 —— 其中启动去重那条会让**启动失败**。
+# 汇合点放进库里，一处定义覆盖全部路径。
+#
+# **AFTER 而不是 BEFORE，且两引擎取同一种**（PG 侧 020 同款）。实测（SQLite 3.49.1、
+# PG 16）：SQLite 两种都能过；PG 只能 AFTER —— `BEFORE DELETE` 在 PG 上禁止改
+# 「同一命令还要删的行」，按 text_id / 按 user_id / texts 级联这类**多行**删除直接报
+# TriggeredDataChangeViolation。取同一种是为了不让人以为两边的时序有别。
+# 另外实测：`texts` 的 `ON DELETE CASCADE` 引发的删除同样会触发它
+# （`recursive_triggers` 默认关闭时也触发）。
+_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_cards_clear_published_from
+AFTER DELETE ON cards
+FOR EACH ROW
+BEGIN
+    UPDATE cards SET published_from = NULL WHERE published_from = OLD.id;
+END
+"""
+
+
+async def _cards_published_fk_present(conn: Any) -> bool:
+    """cards 上有没有 `(published_from, user_id) → (id, user_id)` 这条复合外键。
+
+    判据读的是**库的现状**（PRAGMA），不是迁移文件写了没有 —— 重建过的老库与全新库
+    走同一条路径，与 `_apply_migration` 同一口径。
+    """
+    cursor = await conn.execute("PRAGMA foreign_key_list(cards)")
+    for _id, seq, parent, frm, to, _upd, on_del, _match in await cursor.fetchall():
+        if (seq == 0 and parent == "cards" and frm == "published_from" and to == "id"
+                and on_del.upper().replace("_", " ") == "NO ACTION"):
+            return True
+    return False
+
+
+async def _rebuild_cards_published_from(conn: Any) -> None:
+    """给 cards 补上 `UNIQUE(id, user_id)` 与复合外键 —— 拆 `forked_from` 的后半件。
+
+    **为什么必须重建表**：SQLite 的 `ALTER TABLE` 能加列（087 就是这么加的）、也能加
+    **单列** REFERENCES，但表级 UNIQUE 与复合外键都加不了。这是本次改动里唯一需要重建
+    的部分，故与 `_rebuild_cards_nullable_text_id` 同款手法（`_fk_disabled` 的关外键
+    理由见该件 docstring，此处不抄第二份）。
+
+    列清单与既有 FK 从 PRAGMA 现算（`_cards_rebuild_columns`），照旧不维护清单；
+    本函数只补«现状里推不出»的两条约束：UNIQUE 与复合外键 —— `PRAGMA` 看不见 UNIQUE。
+    索引由 sqlite_master 现算重放；**触发器不做同样处理**：重建本就会把旧触发器删掉，
+    由调用方在本函数之后创建（定义见 `_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER`）。
+    """
+    cursor = await conn.execute("PRAGMA table_info(cards)")
+    info = await cursor.fetchall()
+    fk = await conn.execute("PRAGMA foreign_key_list(cards)")
+    fks = await fk.fetchall()
+    idx = await conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'cards' "
+        "AND sql IS NOT NULL")
+    idx_sql = [row[0] for row in await idx.fetchall()]
+
+    names = [r[1] for r in info]
+    collist = ", ".join(f'"{c}"' for c in names)
+    # `id` 已是主键，故 UNIQUE(id, user_id) 恒成立 —— 它不会因存量数据失败，
+    # 存在的全部意义是给复合外键一个可指向的目标（PG 侧 020 同款）。
+    extra = (
+        'UNIQUE ("id", "user_id")',
+        'FOREIGN KEY ("published_from", "user_id") REFERENCES "cards"("id", "user_id") '
+        "ON DELETE NO ACTION",
+    )
+    async with _fk_disabled(conn):
+        await conn.executescript(f"""
+            CREATE TABLE cards_mig (
+                {",\n    ".join(_cards_rebuild_columns(info, fks, extra))}
+            );
+            INSERT INTO cards_mig ({collist}) SELECT {collist} FROM cards;
+            DROP TABLE cards;
+            ALTER TABLE cards_mig RENAME TO cards;
+        """)
+        for sql in idx_sql:
+            await conn.execute(sql)
+        await conn.commit()
 
 
 async def _apply_migration(conn: Any, path: Path) -> None:
@@ -491,6 +583,16 @@ class SQLiteStore(StorageBase):
                     if any(r[1] == "text_id" and r[3] for r in await cursor.fetchall()):
                         orphans = await _rebuild_cards_nullable_text_id(conn)
                         print(f"[SQLiteStore] cards.text_id 改可空完成；孤儿行处置读数：{orphans}")
+
+                    # cards 的复合外键（拆 `forked_from` 的第二半，见
+                    # `_rebuild_cards_published_from`）。判据同样是库的现状，跑过一次即
+                    # 永久跳过。**必须排在上一块之后**：那块重建表时会连 UNIQUE 一起丢掉，
+                    # 先建 FK 再被重建清掉，下一轮启动会因「外键缺目标」而失败。
+                    # 触发器无条件补一句（IF NOT EXISTS，重建后会缺，这里兜住）。
+                    if not await _cards_published_fk_present(conn):
+                        await _rebuild_cards_published_from(conn)
+                    await conn.execute(_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER)
+                    await conn.commit()
 
                     # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜
                     # "no such window function" 来兼容老库 —— 换成一次版本判断：能力不足时
