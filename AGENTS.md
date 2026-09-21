@@ -1230,15 +1230,34 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -c "CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq" -- storage/`（现给 `090` / `023` 各 1，恰好 2）、`git grep -nE "ALTER[[:space:]]+TABLE[[:space:]]+cards[[:space:]]+ADD[[:space:]]+COLUMN" -- storage/migrations/090_published_from_live_uniq.sql storage/migrations_pg/023_published_from_live_uniq.sql`（应零命中）。**不要**用裸 `ADD COLUMN` 做这条判据：这两份文件的注释里就写着「本文件不含 ADD COLUMN」（解释成因时必然引到这个词），实测会命中注释 —— 判据必须是语句形。
 
 **90. 唯一索引排在回填之前 —— 存量库里回填与建索引互相撞，两种顺序都让 init 失败** —— 状态：**已修**（`d14fe29`，2026-09-21）
-- **形态**：索引原与加列同写在 088，而回填（Step 3，089）必须排在它前面。存量库里同一草稿可能有多张存活副本（缺陷 87 的旧语义：每发布一次新建一行），回填把它们的 `published_from` 都写成同一草稿 id → 撞唯一索引。
+- **形态**：索引原与加列同写在 088，而回填必须排在它前面。存量库里同一草稿可能有多张存活副本（缺陷 87 的旧语义：每发布一次新建一行），回填把它们的 `published_from` 都写成同一草稿 id → 撞唯一索引。
 - **实测复现（`scripts/probe_published_index_sources.py` B 段，含两张同草稿存活副本的库）**：
   - B1 索引先建、再回填 → 建索引 `OK`（`published_from` 全为 NULL，唯一索引不互撞），回填 `IntegrityError: UNIQUE constraint failed: cards.published_from`
   - B2 回填先、再建索引 → 回填 `OK`，建索引同一个 `IntegrityError`
   - B3 回填 → 收敛（多余副本软删）→ 建索引 → **三步全 OK，存活副本 1 张**
 - **结论：光换顺序不解决** —— 两种顺序都让 init 失败，只是炸在不同语句；让引脚建得上的是**收敛**。
-- **落点**：顺序排成 加列(`088` / `021`) → 回填并收敛(`089` / `022`，Step 3) → 建唯一索引(`090` / `023`)，SQLite 与 PG 两侧同序。索引因此与加列解耦，顺带解掉 89 的重复来源。
-- **待补**：`089` / `022`（回填并收敛）本身的迁移与库上复现属 Step 3；本条目只锁顺序与文件落点。
-- **判据命令**：`ls storage/migrations | grep published_from`（现给 `088_` `090_`，`089_` 由 Step 3 补）、`ls storage/migrations_pg | grep published_from`（现给 `021_` `023_`，`022_` 由 Step 3 补）
+- **落点**：顺序排成 加列(`088` / `021`) → 回填并收敛 → 建唯一索引(`090` / `023`)，SQLite 与 PG 两侧同序。索引因此与加列解耦，顺带解掉 89 的重复来源。
+- **订正（2026-09-22）**：回填并收敛**没有**独立的 `089` / `022` 文件 —— 它写在加列那一份里（SQLite 088 尾部、PG 021 的同一个 DO 块），因为「只跑一次」的谓词只能是「列已存在则整份跳过」，另开文件就得引入迁移账本。逐条见缺陷 91。
+- **判据命令**：`ls storage/migrations | grep published_from`（应给 `088_` `090_` 两条）、`ls storage/migrations_pg | grep published_from`（应给 `021_` `023_` 两条）
+
+**91. 回填每次启动重跑会把合法自我 fork 改判成发布副本 —— 回填必须绑在加列那一刻** —— 状态：**已修**（`04dc4ef`，2026-09-22）
+- **形态**：PG 侧没有「已应用」账本，每轮 init 全量重放每个文件（缺陷 86）；SQLite 侧 `_apply_migration` 的跳过判据是「本文件每个 ADD COLUMN 的列都已存在 → **整份**跳过」。回填若写成独立文件（原定的 `089` / `022`），这两个机制都拦不住它重跑。
+- **为什么重跑会出事**：fork 路由允许 fork 自己的公开卡（`web/routers/market.py` 的 `POST /{card_id}/fork`），而 `fork_card` 只写 `forked_from`、从不碰 `published_from` —— 新代码会写出一条**同属主 `forked_from`** 的合法行。回填谓词正是「同属主」，重跑就把它改判成发布副本（语义被写坏）；同一张副本被 fork 两次再撞 023/090 的唯一索引 → 启动失败。
+- **落点（不引入迁移账本、不改执行器）**：PG `021` 整份包进一个 `DO $$ IF NOT EXISTS (information_schema.columns.published_from) THEN … END $$`，块内依次 加列 → 复合 FK → 回填 → 收敛（同一事务），列已存在则整块跳过；SQLite `088` 把回填并收敛放在 `ADD COLUMN` 那句之后作尾段，与加列共用同一个跳过谓词。两侧同形；`090` / `023`（唯一索引）不变，排在其后。**没有独立的 `089` / `022` 文件。**
+- **谓词**：与代码里唯一那份关系谓词同义 —— `_PUBLISHED_COPY_OF`（`storage/sqlite_store.py` 顶部，PG 侧 `storage/postgres_store.py` 同形）= `published_from = D.id AND deleted_at IS NULL`。SQL 里写不出函数，回填段写成 `c.forked_from = d.id AND c.user_id = d.user_id`（属主相同）**并带 `c.deleted_at IS NULL`**。**不看 `visibility`**（下架 = 撤回发布，副本行仍存活、仍是发布副本）。
+- **偏离声明**：用户裁定原文是「不看 visibility、**不看 deleted_at**」；实现**保留了 `deleted_at IS NULL`**，取「与 `_PUBLISHED_COPY_OF` 逐字同义」这一读法（去掉它会让回填把已软删副本也认成发布副本，而代码不认 —— 两边分叉且无测试会红）。等价锁就是钉这一条的。
+- **收敛**：同一草稿多张存活副本时，按 `(likes desc, 被 fork 数 desc, created_at desc, id desc)` 排名取第一张写 `published_from` 并清 `forked_from`；**落选的不动**（`forked_from` 原样，成为普通 fork）。不 DELETE、不改 visibility。
+- **④⑤ 读数（存量两库，2026-09-21 22:44–22:53 只读现跑，SG + SZ 生产库）**：④ 疑似自 fork **0 行**、⑤ `user_id IS NULL` **0 行**（两地明细 SELECT 也 0 行）；⑥ 同草稿多张存活副本 **0 行**。两地基线非空（SZ 17 张卡 / 3 张有 `forked_from` / 5 条版本行；SG 34 / 4 / 6），故 0 是「真的没有」而非「库是空的」。
+- **假设（两地均 0 ⇒ 不特判）**：存量两库上本段是空操作，回填与收敛都不为它们开特判分支；对其它形态的库（旧 `pg_dump` 备份恢复）本段按其谓词自行成立。**复跑查询**：`scripts/audit_published_from_prebackfill.sql`（只读，**必须在回填前**跑）。
+- **锁（红源各自独立）**：`tests/test_published_from_backfill.py`（SQLite：T1 / T2 / T3 + 等价锁）与 `tests/test_postgres_store.py::TestPgPublishedFromBackfill`（PG：T1 / T2 / T3 + T4 双侧逐行比）。
+  - T1 旧形态库（草稿 + 同属主副本）启动后：副本 `published_from` 指向草稿、`forked_from` 清空。
+  - **T2（本案的根本命题）** 回填后新建一条「同属主自我 fork」，再次初始化：其 `forked_from` 不变、`published_from` 仍为空。
+  - T3 同一草稿 3 张存活副本 → 恰一张拿到 `published_from`，另两张 `forked_from` 不变、行数不变。
+  - T4 同一组夹具（id 用 prefix 定死，两侧行同名）在 SQLite 与 PG 上逐行比读数一致。
+  - 等价锁：同一批旧形态数据分别问 SQL 回填谓词与 Python `_PUBLISHED_COPY_OF`，比选中行集。
+- **旧形态夹具怎么造**：SQLite 侧 `ALTER TABLE cards DROP COLUMN published_from` 被表级复合外键挡住（`unknown column … in foreign key definition`）→ 只能重建表（`_revert_cards_to_pre_088`）；PG 侧直接 `DROP COLUMN`（先删 FK 与 `cards_id_user_id_key`）。行仍由 store 正常写入，只把 `forked_from` / `likes` / `visibility` 三列改回旧语义。**读数一律走裸 `sqlite3`**，不走 `SQLiteStore._connect()`（后者会先跑 init，把夹具前提和断言一起改掉 → 测试恒绿）。
+- **变异（实测红，验后已还原；各条红因不同）**：① 拆成独立文件 → 只有 T2 红（`assert '' == 'card_…'`）；② SQLite 去收敛 → T3 红（`UNIQUE constraint failed: cards.published_from`）；③ 整段去掉回填 → 4 条全红；④ PG 回填脱出 `IF` → 新库上 T2 红；⑤ PG 去收敛 → T3 红（`could not create unique index … Key (published_from)=(t3_draft) is duplicated`）。**前两版不忠实已换掉**：`if False` 去掉整份跳过 → 红在别的数据迁移（`no such column: u.password_hash`）；拆文件第一版忘了把 088 截断 → 回填写两遍撞唯一索引。判据按「修复前的代码长什么样」改，不按「哪里能动」改。
+- **判据命令**：`ls storage/migrations | grep published_from`（两条）、`ls storage/migrations_pg | grep published_from`（两条）；`git grep -c "rn = 1" -- storage/migrations/088_published_from.sql storage/migrations_pg/021_published_from.sql`（各 1 = 收敛只在一处）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
