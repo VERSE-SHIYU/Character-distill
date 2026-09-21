@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from deps import get_storage
+from core.distiller import Distiller
 from routers.auth import get_current_user
 from routers.card import router as card_router
 from routers.history import router as history_router
@@ -33,6 +34,9 @@ from routers.distill import router as distill_router
 from routers.market import router as market_router
 from routers.text import router as text_router
 from storage.sqlite_store import SQLiteStore
+
+# 名单缓存的版本号：与路由/存储层读的是同一个常量，测试里不写死字面量。
+_IDENTIFY_VERSION = Distiller.IDENTIFY_VERSION
 
 
 def _run_async(coro):
@@ -417,9 +421,11 @@ class TestDefect19PrimitiveLeaks:
     def test_20_characters_owned_sql_filter(self, store, user_a, user_b):
         """原语层：非属主读他人文本的角色缓存得 None（属主过滤在 SQL）。"""
         tid = _create_text(store, user_a)
-        _run_async(store.save_characters(tid, [{"name": "张三", "aliases": ["三哥"]}]))
-        assert _run_async(store.get_characters_owned(tid, user_a)) == [{"name": "张三", "aliases": ["三哥"]}]
-        assert _run_async(store.get_characters_owned(tid, user_b)) is None
+        _run_async(store.save_characters(
+            tid, [{"name": "张三", "aliases": ["三哥"]}], version=_IDENTIFY_VERSION))
+        assert _run_async(store.get_characters_owned(tid, user_a, version=_IDENTIFY_VERSION)) == [
+            {"name": "张三", "aliases": ["三哥"]}]
+        assert _run_async(store.get_characters_owned(tid, user_b, version=_IDENTIFY_VERSION)) is None
 
     def test_21_text_comments_owned_sql_filter(self, store, user_a, user_b):
         """原语层：非属主读他人文本的评论得空页，不是「无权限」也不是别人家的评论。
@@ -454,7 +460,8 @@ class TestDefect19PrimitiveLeaks:
         否则 404 是死代码。两条都锁：状态码 + 不返回他人缓存内容。
         """
         tid = _create_text(store, user_a)
-        _run_async(store.save_characters(tid, [{"name": "张三", "aliases": ["三哥"]}]))
+        _run_async(store.save_characters(
+            tid, [{"name": "张三", "aliases": ["三哥"]}], version=_IDENTIFY_VERSION))
         r = client_b.post("/api/distill/identify", json={"text_id": tid})
         assert r.status_code == 404, f"Expected 404, got {r.status_code}: {r.json()}"
         assert "张三" not in r.text, "非属主拿到了他人文本的角色缓存"

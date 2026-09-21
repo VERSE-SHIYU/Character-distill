@@ -114,11 +114,9 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-19 现跑现数）**：1–74 共 74 条 —— **已修 53**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；**本轮新增的 59–63 与 65 已同批修完**，锁在 `tests/test_llm_access_gate.py`）/ **记账 11**（35、36、47、56、57、58、64、66、67、68、69）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 11**。
-> **75–82 不在上面那行的 74 条里**（那行标着 2026-09-19 现跑现数，这八条都产生于 2026-09-20 及以后）：75 / 76 / 77 / 78 / 79 **已修**，80 / 81 / 82 **记账（不修）**。整行口径**顺延到下次收口时重算** —— 重算要连「三之三」里的 59–74 一起数，那一步不在本轮范围内，故此处只写顺延、不改数（顺延句里不出现会过期的断言：八条的状态已写明，重算是个待办而不是事实）。
-> **缺陷 35 与新增的 83–85 又让那行的状态滞后了**（那一行仍标着 2026-09-19 现跑现数）：**35 已从「记账」转为「已修」**（`dc7b09f` + `34bf075`，该条标题已改）—— 故 117 行里「记账 11（35、36、…）」中的 **35 已算多**；**83 / 84 / 85 是 2026-09-21 新增的记账条目**（各见下条）。整行口径同样**顺延到下次收口时重算**，此处只写顺延、不改数（顺延句里不出现会过期的断言：35 与 83–85 的当前状态都写在各条标题上，重算是个待办而不是事实）。
-> **86–88 又是 2026-09-21 新增的条目**（`published_from` 拆列那一案交接时登记的三条越界项，各见下条）：**87 / 88 已在该案内修掉**（`e8906f6` `0ec13ce` `8942c3f` 与 `2c7b815`），**86 仍记账**（改的是「021 未发布、本案不受影响」的口径）。那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：三条的当前状态都写在各条标题上，重算是个待办而不是事实）。
-> **89 / 90 是 2026-09-21 新增的两条，且同批已修**（`published_from` 一案验收判「不通过」时发现的两个问题：索引有两份定义、索引排在回填之前；修在同一 commit `d14fe29`，各见下条）。同一行里 **87 的落点与变异段也已订正** —— 它原文指向的「088 的 CREATE + `_ensure_initialized` 那句」正是 89 拆掉的两份定义。那行的口径**同样顺延到下次收口时重算** —— 此处只写顺延、不改数（顺延句里不出现会过期的断言：两条的当前状态都写在各条标题上，重算是个待办而不是事实）。
+> **全表状态口径（2026-09-22 现跑现数）**：1–98 共 98 条 —— **已修 65**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**）/ **记账 23**（47、56、57、58、64、66、67、68、69、80、81、82、86、87、88、89、90、93、94、95、96、97、98）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 23**。
+> **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
+> **99–104 是 `published_from` 一案（本分支）并入 main 时按 main 现有最大号**顺延**过来的六条**（并线时本线原编 86–91，与 main 的 86–91 撞号 —— 撞的是编号不是内容，按「按 main 上现有最大编号顺延」改号，两边条目都留）。状态：**已修 5**（100–104）/ **记账 1**（99，PG 无迁移账本，不修）—— **不重算上面那行的桶**：那条口径标着 2026-09-22 现跑现数、只覆盖 1–98，这六条产生在同一天但并入更晚，整行重算留到下次收口（此处只写顺延、不改数）。**注意本分支已推送的 commit message 里仍写着旧号 86–91**（`d17ee54` / `ef6deb6` / `04dc4ef` / `b86b1fd`）：推送后不改写历史，故那几处是历史坐标，以台账现号为准。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
@@ -586,13 +584,15 @@ config.yaml 现值（现读，非转述）：
 
 **未覆盖（登记，不是遗漏）**：本条只修**蒸馏族**。同一形态在**聊天族**照旧（见 83 / 84），Gradio 路径同形态但**生产不可达**（见 85）。
 
-**36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**记账（不修，待裁范围）**（2026-09-14）
+**36. `/api/distill/start` 不读 `characters_json` 缓存（只有 `/identify` 读）** —— 状态：**已修**（`0605bdf` `00e0710` `d5bdbc3` `592cc28` `5088c29` `ef43b38`，2026-09-21；2026-09-14 首记，原状态「记账（不修，待裁范围）」）
 - **事实**：`/identify`（`web/routers/distill.py:658`）在属主校验后读 `get_characters_owned`（678），命中即返回、**不发 LLM**；`/start`（734）这条全流水线**不读该缓存** —— 角色识别由流水线内的 `distiller.identify_characters`（`core/distiller.py:635`）直接跑。
 - **它自己的那层缓存不是 `characters_json`**：`identify_characters` 用的是**进程内 TTL memo**（`core/distiller.py:28-32`，`IDENTIFY_CACHE_TTL_SECONDS = 600`），键 = `sha256(前 10000 字) + model`。寿命是**进程**，不是库。
 - **实测**：本次 `/start` 之前该文本的 `characters_json` 已存 8 个角色（早先 `/identify` 的产物），流水线仍在 12:30:07 真发了 identify 调用（`action=distill_identify`）；日志里 `[distill] identify cache hit` **零命中** —— 因为本次 rebuild 刚重启过容器，进程内 memo 是冷的。
 - **意义（解释了上一轮的一个推理为什么只在一条路上成立）**：上一轮判定「再点一次不可能复现，因为 `characters_json` 已缓存 8 个角色、命中即返回」—— 该推理**只在 `/identify` 上成立**。`/start` 不等价。
-- **处置方向（记在条目里，不实现）**：**不一定要「对齐」** —— 两条路由的语义本就不同（`/identify` = 只看角色，`/start` = 全量重跑），`/start` 复用库缓存会让「重跑」不再重跑。要裁的是**产品语义**：「`/start` 该不该复用已有识别结果」，而不是「补一行 cache 读取」。
-- **判据命令**：`git grep -n 'get_characters_owned\|identify_characters' web/routers/distill.py core/distiller.py`
+- **收口（2026-09-21）**：按**产品语义**裁，不是补一行 cache 读取 —— 名单是**作品的属性**，所以「读缓存 → 识别 → 落库」收敛成唯一入口 `core/character_roster.py`（S4 `5088c29`），所有**有 `text_id`** 的调用方（`/identify` `/run` `/run_stream` `/reindex`、`TextManager.distill_all` / `get_or_distill` / `_build_all_characters`、`/start` 的 bg 线程）一律走它（S5 `ef43b38`）；`refresh=True` 保留「用户显式点重新识别」这条语义，不再靠「调另一条路由」表达重跑。legacy 的 `/api/identify`、`/api/distill` 与 `web/app.py:85`（Gradio）保持现场识别 —— 只有原文、没有 `text_id`，读不到也落不了这份缓存。
+- **同轮一起落地的两处前提**：① 原 `identify_characters` 取 `text[:10000]`，红楼梦只覆盖头两章，残缺名单被当全书名单落库 —— 改为按 `_chunk_size` 全片识别再合并（S2 `00e0710`；合并输出上限另提 `d5bdbc3`）。② `characters_json` 没有版本，口径一改旧名单不会失效 —— 加 `texts.characters_version`（SQLite 087 / PG 020，S3 `592cc28`），版本号的唯一定义是 `Distiller.IDENTIFY_VERSION`，读回时版本不符即当无缓存。
+- **判据命令**：`git grep -n 'get_characters_owned\|save_characters' -- web/ core/`（应**只剩** `core/character_roster.py`）、`git grep -n 'identify_characters' -- web/ core/`（应只剩 `core/distiller.py` 的定义、`core/character_roster.py` 的调用、`_do_identify` / `_resolve_character_name` 两条 legacy 纯文本路径、`web/app.py:85`）
+- **同轮另记的观察（各自单列，均未修）**：见 86–90。
 
 **37. （前提证伪）`get_distiller` 的单例被 `/run_stream` 原地改写 —— 该形态不可达，usage 不会记到别人名下** —— 状态：**证伪，不成立**（2026-09-14 当天记下、当天核掉）
 - **原假设**：`get_distiller(llm=None)` 返回模块级单例 `_distiller`（`web/deps.py:182-192`），而 `/run_stream` 原地改写其 `_storage` / `_user_id`（`web/routers/distill.py:1075-1076`）→ 共享可变状态跨请求污染 → 之后某个没有 per-user key 的请求取回被污染的单例，usage 记到前一个用户名下。当时标注为「静态读出、未实跑验证」。
@@ -808,7 +808,7 @@ config.yaml 现值（现读，非转述）：
   - `scripts/test_distill.py`、`scripts/test_search_api.py`、`tests/test_chat.py` 一类是吃 `sys.argv` / 带 `main()` 的**手工脚本**，只有文件名对得上 ⇒ 光看文件名会凭空造缺口；
   - `tests/test_admin_tasks_api.py` 一类**整份只有 `class Test*`**（面内共 30+ 份）⇒ 只查模块级函数的普查会漏掉它们 —— **假阴性比假阳性坏，那是真的失守**；
   - 嵌在别的函数里的 `def test_*` 不可收集 ⇒ 收进普查是凭空造缺口。
-- **遍历方式（与既有普查唯一的偏差，如实记）**：本锁用 `os.walk` **原地剪枝**，既有那几把锁仍是「`rglob` 完再逐条筛」。**决定只改这一把的理由**：偏差只在遍历方式，**结果同、代价差一个数量级以上**（「结果同」怎么核的、实测值与日期、以及为什么这类比值不能当指标 —— 全在 `tests/test_collection_surface_lock.py::_walk` 的 docstring。**同一事实只留一处**：台账记「为什么做这个决定」，docstring 记「这条判据怎么工作」，§四「同一个理由不要落在三个地方」）。既有那几把锁**本轮只记不改**（不在本条目射程内）。
+- **遍历方式（已被 2026-09-21 的改动取代，如实记）**：`1060495` 时本锁用 `os.walk` **原地剪枝**，理由是「结果同、代价差一个数量级以上」（`os.walk` 剪枝 vs `rglob` 走完全树再筛；实测值与日期、以及为什么这类比值不能当指标，原写在 `_walk` 的 docstring 里）。**那个理由只对「怎么遍历目录树」成立，前提本身就错了** —— 目录树里躺着的并不都是本仓代码，`.claude/worktrees/` 下每个兄弟 worktree 都带着完整一份仓库副本。故 2026-09-21 把两条 census 锁的取文件方式一起换成问 `git`（`tests/repo_files.py::repo_py`），**`_walk` 与 `_PRUNED_DIRS` 已删**，本条目的性能取舍随之作废。来由与验收见 §三之二 D。既有那几把锁（扫 `core/` / `web/` 等**具名子目录**的）**仍不改**：它们不从仓库根起扫，兄弟 worktree 的副本进不了它们的面。
 - **变异验证（两臂，全量已还原 —— `git status` 只剩新文件）**：
   - 臂 ①：造 `web/test_zz_probe.py`（含 `def test_*`、在收集面外）→ 只有「现场有、名单没有」那条红并点名该文件，另外四条不动（证明是一条独立判据）。
   - 臂 ②：`git mv web/test_spa_fallback.py tests/` → 该方向立刻变绿，而「名单只许减少」那条红并点名要删的行；**把那行删掉后五条全绿** —— 这正是验收里「挪回收集面 → 判据应变绿」的落点。判据不替你宣布「已修」，它只把陈旧的那一行指出来（两向表的既有语义，同 `lock_coverage_gaps` 的「名单只许减少」）。
@@ -1174,7 +1174,7 @@ PROBE_IMAGE         false
 - **它现在会让应用起不来**：在 SQLite < 3.35 上（**真正会进回落分支的环境**，本机 3.49 走原生 `DROP COLUMN`，进不到这一支）报 `table users_mig already exists` → init 失败 → 应用直接起不来。实测：活库副本上按 `(3, 34, 0)` 跑 `_ensure_initialized()` 即复现。
 - **处置方向**：先判它是不是缺陷 79 修复前那次失败的遗骸，是就清掉，并给回落分支补幂等（`DROP TABLE IF EXISTS users_mig`）—— 那属于加锁，不在本轮。
 
-**83. 聊天族的身份与依赖全靠「往引擎实例上写属性」传 —— 同形 11 行散在 4 个文件，且写的字段集互不一致** —— 状态：**记账**（不修，2026-09-21）
+**83. 聊天族的身份与依赖全靠「往引擎实例上写属性」传 —— 同形 11 行散在 4 个文件，且写的字段集互不一致** —— 状态：**已修**（`15c6a6a` + `8efb67c` + `b259e82`，2026-09-22）
 - **病灶（与缺陷 35 修复前同形）**：`ChatEngine.__init__`（`core/chat_engine.py:123-124`）持有 `self._storage = None` / `self._user_id: str = ""`，路由在构造**之后**才逐个把值写上去。缺陷 35 已把**蒸馏族**从这条路上摘掉（身份走 `LLM_CALLER`），**聊天族没动**。
 - **读数（现跑）**：`git grep -n "\._user_id = \|\._storage = " -- web/ core/` → 引擎侧写点 **11 行、4 个文件**：`web/routers/chat.py` 7 行（212 / 309 / 310 / 434 / 435 / 466 / 467）、`web/routers/group.py` 1 行（219）、`web/routers/history.py` 1 行（313）、`core/group_session.py` 2 行（163 / 353）。
 - **字段集不一致**：`chat.py:212` **只写 `_user_id`**、不写 `_storage`；`group.py:219` / `history.py:313` / `group_session.py:163,353` **只写 `_storage`**、不写 `_user_id` —— 后四处的路径上 `_user_id` 保持初值 `""`，与缺陷 35 修复前 `Distiller` 的默认值逐字相同。「得记得写」在同一个仓里已经兑现成了「写的字段都不一样」。
@@ -1182,35 +1182,148 @@ PROBE_IMAGE         false
 - **性质**：与 35 同一个病，只是在聊天族上还没发作（症状形态不同，故不在 35 的范围内）。
 - **判据命令**：`git grep -n "\._user_id = \|\._storage = " -- web/ core/`（引擎侧写点数现为 11）、`git grep -n "usage_ctx" core/`（回调还在 ⟹ 时序问题还在）
 - **处置方向**：照 35 的形态收敛（身份走 `core/request_context`、`storage` 走构造注入）。**本轮不做**：改它会碰 `ChatEngine` / `ContextEngine` / 4 个路由及其测试，超出本案 2 个门的硬范围。
+- **收口（2026-09-22，照上面那个方向做的）**：`15c6a6a` 把 `storage` 改成构造注入（路由不再构造后写 `_storage`），`8efb67c` 把记账身份收敛到出口自读 `current_user_id()`（`_user_id` 实例字段随之消失、`ContextEngine` 那个延迟取值回调 `usage_ctx` 也一并删掉），`b259e82` 上锁。判据现跑：`git grep -n "\._user_id = \|\._storage = " -- web/ core/` → 引擎侧**外部写点 0**（余 7 处 `self._storage = storage` 全部落在各自 `__init__` 内，是构造注入本身）；`git grep -n "usage_ctx" core/` → **零命中**（回调已删 ⟹ 那个时序问题不再存在）。**注意本条只收掉了「依赖」**：靠实例字段传的**会话状态**（`_session_id` / `_group_id` / `_user_tz`）没动，另记 96。
 
-**84. `AgentLoop` 的记账身份取自 `ChatEngine` 的实例字段 —— 83 的下游，不是独立病灶** —— 状态：**记账**（不修，2026-09-21）
+**84. `AgentLoop` 的记账身份取自 `ChatEngine` 的实例字段 —— 83 的下游，不是独立病灶** —— 状态：**已修**（随 `8efb67c`，2026-09-22）
 - **形态**：`core/chat_engine.py:302` 造 `AgentLoop(self.llm, toolkit, storage=self._storage, user_id=self._user_id)`；`core/agent/agent_loop.py:64-65` 在构造里存下这两个值，`:116` 用它们调记账出口（`try_record_usage(..., "chat_agent_route", source="AgentLoop")`）。
 - **为什么单列一条**：它的**注入形态本身是对的**（构造注入，与 35 里 `storage` 的走法一致），坏的是**喂进来的值**来自 83 的那两个实例字段 —— 路由不写 `engine._user_id`，`AgentLoop` 拿到的就是 `""`。单列是为了标明**依赖方向**（84 只能随 83 一起修），不是又多一处病灶。
 - **判据命令**：`git grep -n "AgentLoop(" -- core/ web/`（构造点现为 1 处，全在 `chat_engine.py:302`）
+- **收口（2026-09-22，随 83 的 `8efb67c` 一并，不是单独一次改动）**：身份不再由 `ChatEngine` 实例字段喂进来，故本条要标的那个依赖方向已经没有下游了。判据现跑：`AgentLoop(` 构造点仍 **1 处**（现 `core/chat_engine.py:308`，行号随 83 的重构位移），**实参只剩 `storage=self._storage`、`user_id=` 已去掉** —— 这正是「喂进来的值」那一半被摘掉的读数。
 
-**85. `web/app.py:48` 的 `Distiller(_llm)` 是缺陷 35 的同形残留 —— 生产不可达** —— 状态：**记账**（不修，2026-09-21）
+**85. `web/app.py:48` 的 `Distiller(_llm)` 是缺陷 35 的同形残留 —— 生产不可达** —— 状态：**已修**（`238610d` + `680eafe`，2026-09-22）
 - **形态**：`web/app.py:48` 只传 llm、不传 storage 就造 `Distiller` —— 与 35 修复前的默认值同形。它没被 35 的修复覆盖，是因为它是 **Gradio** 入口，不在 `web/routers/` 那一族的装配路径上。
 - **生产不可达（实测）**：`Dockerfile:52` 是 `CMD ["python", "-m", "web.server"]`；`git grep -rn "web\.app\b"` **零命中** —— 全仓无任何模块 import 它。它只在有人手工拉起 Gradio demo 时才会被加载。
 - **判据命令**：`git grep -n "Distiller(" -- web/app.py`、`git grep -rn "web\.app\b" -- .`（应零命中）
 - **处置方向**：先判这个 Gradio 入口是否还有人用 —— 已废弃就随它退役，还在用就照 83 收敛。**不先改**。
+- **收口（2026-09-22，按「已废弃就随它退役」那一支处置）**：`238610d` 删掉整个 `web/app.py`（那个 `Distiller(_llm)` 随之消失），`680eafe` 把随它进场的 `gradio` 从 dev 锁（`requirements-dev.in` / `.txt`）里摘掉 —— 删代码不删依赖会留一个没人 import 的重量级包。判据现跑：两条都**零命中**（`git grep -n "Distiller(" -- web/app.py` 与 `git grep -rn "web\.app\b" -- .`；文件本身已不存在，故第一条是对着一个不再存在的路径取的零）。
 
-**86. PG 侧没有迁移账本 —— 每轮 init 全量重放，改约束定义只对新建库生效** —— 状态：**记账**（不修，2026-09-21）
+**86. `_run_distill_task` 取名单失败时 `except Exception: chars = []` —— 错因被吞，故障以「输入有问题」的口径上报** —— 状态：**记账**（不修，2026-09-21；缺陷 36 收口时发现）
+- **形态**：`web/routers/distill.py:371-375` 的 bg 线程里，`resolve_characters` 的任何异常都被宽捕获吞成空名单 —— 不打印、不分类。缺陷 36 收口把这里从 `distiller.identify_characters(content)` 换成 `submit_to_main_loop(resolve_characters(...))`，**原样保留了这个形状**（「发现 spec 外问题先报告，不顺手修」）。
+- **可达，且后果不是静默成功而是错因混淆**：`/start` 的 `DistillTaskRequest.character_name` 默认 `""`（`:245`），bg 线程对空名字走 `if not name:` 分支（`:376-383`）—— 名单空则任务以 **error** 收口、message 为 `"No characters identified"`。于是**上游故障（网络超时、DB 不可用、额度耗尽）与「这本书里确实没有角色」在用户与排查者眼里是同一句话**，日志里一个字都没有。这是缺陷 38 的同族（客户端条件与上游故障共用一条上屏文案），只是这里连运维口径都没留下。
+- **点名蒸馏不受影响**：`name` 非空时名单只用来取别名，空名单 → `aliases_for` 返回 `[]` → 蒸馏照常产卡。所以影响面**只在空 `character_name` 的 `/start`**。
+- **判据命令**：`git grep -n "chars = \[\]" -- web/routers/distill.py`（现命中 1 处，在 `except Exception:` 正下方）
+- **处置方向**：把宽捕获改成 `except Exception as exc: print(...)` + 以 **500 口径**（「操作失败，请稍后重试」）收口，把「这本没有角色」留给真正的空结果分支。**先不改**：要连带定「识别失败该报 5xx 还是可重试」，属缺陷 38 那张表的范围。
+
+**87. 名著模式的「深度预处理」整条支线从没接线 —— `coref_resolve` 与 `update_text_resolved` 零调用点** —— 状态：**记账**（不修，2026-09-21；缺陷 36 收口时普查发现的存量）
+- **事实（现跑）**：`core/distiller.py:1037` `coref_resolve` 有定义、**全仓零生产调用点**；`update_text_resolved`（`storage/sqlite_store.py:627` / `storage/postgres_store.py:186`）同样零调用点。写侧唯一入口是 `save_text(..., content_resolved="", coref_resolved=0)`，两个调用点（`core/text_manager.py:247` / `:367`）都没传 → 两列恒为 `''` / `0`。
+- **读侧唯一消费者**：`web/routers/distill.py:34-40` `_get_distill_content` —— 仅当 `DISTILL_USE_COREF=1` 时取 `content_resolved`，而它恒空，`if resolved and ...` 恒假 → 与 `=0` 逐字等价。
+- **性质**：不是「坏了」（没有正确行为可对照），是**整条支线从没接线**。按「三之二」的口径它本属「立项」；留在缺陷表是因为它**以可用特性的形态存在**（`DISTILL_USE_COREF` 开关 + `.env.example:51` 的有注释条目 + 两列 schema：SQLite `storage/migrations/056_coref_resolved.sql`、PG 内联在 `storage/migrations_pg/001_init.sql`），读代码的人会以为它可以打开。
+- **判据命令**：`git grep -n "coref_resolve\|update_text_resolved" -- '*.py'`（除定义与 tests 外应零命中）、`git grep -n "DISTILL_USE_COREF" -- .`（现仅 `web/routers/distill.py:36` 一处读）
+- **处置方向**：要么删（函数 + 两列 + 分支 + 环境变量），要么接线（上传时跑一次并写回）。**先不删**：`content_resolved` / `coref_resolved` 在 `save_text` 的公开签名与 `tests/test_storage_contract_shape.py` 的契约里，删列要新写 DROP 迁移并改契约。裁定归用户。
+
+**88. `distill_incremental_stream` 内联了一份 Map 循环的副本** —— 状态：**记账**（不修，2026-09-21；S1 泛化 Map 原语时确认不是漏改）
+- **形态**：`core/distiller.py:1820-1879` 的 `_map_with_progress` 自己重写了一遍 semaphore / `done_count` / `lock` / `failures` / `usages` / `_one` / `gather` / `aggregate_usage`，与 `_run_map_concurrent`（`:1407-`）同形。S1（`0605bdf`）已把 Map 参数化成 `build_prompt` + `usage_action`，**识别侧复用了它，流式蒸馏侧没有**。
+- **为什么当时没顺手合并（不是忘了）**：流式多三样东西 —— 续跑命中短路（`_resume_hit`）、逐片 checkpoint 落库（`save_distill_chunk` + `ON CONFLICT DO NOTHING` 的指纹语义）、以及用 `queue.Queue` 把进度倒回生成器。`_run_map_concurrent` 的 `on_chunk_done` 是**同步回调**，而生成器要 `yield`，`yield` 不能出现在回调里 —— 这是**两条真不同的控制流**，合并需要一个能把进度事件带出任务并交回生成器的通道，是设计活不是替换。
+- **代价**：「失败片是否落 checkpoint」「失败片按字符估算补记账」这两条口径必须两处手工一致，而详细注释只写在流式这一侧（`:1844-1865`）。
+- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/`（现为 **2** 处；并成 1 处即已收口）
+- **处置方向**：把 Map 抽成 async 生成器（`async for ev in _map_events(...)`），同步侧用 `asyncio.run` + 收集、流式侧直接转发。**先不动**：会碰 `resume_candidates` 与 checkpoint 的既有语义，超出本案范围。
+
+**89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**记账**（不修，2026-09-21；S4 建唯一入口时确认）
+- **两份的键不同**：进程内 memo（`core/distiller.py:846`）键 = `text_fingerprint(text) + ":" + model`，TTL 600s、上限 100 条、寿命是**进程**；库缓存键 = (text_id, 属主, `IDENTIFY_VERSION`)，寿命是**库**。
+- **两者的失效条件不一致**：`characters_version` 一改，库缓存立刻当无缓存重算；而 memo 不认版本号 —— `identify_characters` 的注释（`core/distiller.py:836-837`）明写「版本判定在 `core/character_roster.py` 那一层，这里不管版本」。于是版本变更后 roster 会调一次识别、**拿到 memo 里的旧口径名单**、再以**新版本号**写回库 —— 旧名单被洗成新名单，S3 的版本门形同虚设。
+- **当前不可达（判据不是推论）**：`IDENTIFY_VERSION` 是类常量（`core/distiller.py:322`），改它必改代码，改代码必重启进程，重启则 memo 为空。窗口要打开需要**一个不改代码就能变版本号的入口**（读 env / config）。
+- **判据命令**：`git grep -n "IDENTIFY_CACHE" -- core/`、`git grep -n "IDENTIFY_VERSION" -- core/ CONFIG* docs/ 2>/dev/null`（版本号若出现在 env/config 读取处，窗口即已打开）
+- **处置方向**：把 `IDENTIFY_VERSION` 并进 memo 的键（两行），或让 `identify_characters` 不自带缓存、缓存统一归 roster 层。**先不动**：窗口不可达时改它拿不到红源，变异打不红的判据没有分辨力。
+
+**90. 两个后端每次启动都重跑全部迁移，且没有「已应用」记录表** —— 状态：**记账**（不修，2026-09-21；S3 加 087/020 时确认口径）
+- **事实**：全仓无 `schema_migrations` 一类记录表。SQLite 的幂等靠**读现状**（`storage/sqlite_store.py:97` / `:195` / `:249` 的 `PRAGMA table_info`，逐列比对后再决定加不加）；PG 靠 `ADD COLUMN IF NOT EXISTS` / `DROP COLUMN IF EXISTS`。启动时**每一份** `.sql` 都会被解析并执行一遍。
+- **后果（缺陷 21 / 23 已各自从一侧记过，这里记共同的前提）**：① 迁移文件**不能重写** —— 改一个已应用过的迁移，对已有库是 no-op，而对新库生效，于是「文件里的第 N 号迁移」与「这个库实际经历过的变更」没有对应关系；② 排查时无法回答「这个库跑过哪些迁移」；③ 每次启动都要把整批文件重新解析、逐条试探性 DDL。
+- **为什么只记不修**：加记录表要处理「已有库首次见到这张表时如何回填」——回填本身就是一次不可验证的猜测（拿什么当真源？文件列表？），且会与缺陷 21 的豁免清单、缺陷 23 的 fresh-schema 锁互相纠缠。属于基础设施改造，得单独立项。
+- **判据命令**：`git grep -n "schema_migrations\|migration_history\|_applied\b" -- storage/`（应零命中）
+
+**91. 非流式截断那一笔记账是空转 —— 出口拿到 `usage=None`，一条也不落库** —— 状态：**已修**（2026-09-21，记账收敛那一轮的下一项）
+
+- **事实**：`_chat_accounted` 非流式支在 `length` 截断的返回路径上调 `self._try_record_usage(action)` —— **载荷为 `None`**。出口 `try_record_usage` 见此走 `if usage is None: usage = llm.last_usage`（`core/utils.py:74`），而 `adapters/llm_adapter.py` 的 `chat()` 进本轮就先 `self.last_usage = None`（`:634`），`_extract_content` 的抛出点又在 usage 回写（`:651`）**之前** ⇒ `if not usage:` 命中，打印一行 `[Distiller] usage not recorded: no usage data` 后 `return`，**一条不落库**。
+- **与流式支的关系**：**同一形态，只修了一半**。`_collect_stream` 那条截断路已在上一轮（记账收进调用原语）按 `estimate_usage_from_chars` 补记，非流式支没跟上 —— 于是「截断烧掉的 token」在**长输出走流式**的路上有账、在**短输出走非流式**的路上无声无息（生产口径：系统性偏低，且低于哪一段取决于输出长短）。
+- **为什么既有测试看不见（关键）**：`tests/test_distill_usage_accounting.py` 的 `usage` 探针**只收 `action`、丢掉载荷** —— `test_truncated_initial_call_is_still_recorded` 断言的 `["distill", "distill"]` 在「记了一条空载荷」与「记了一条估算」两种实现下**同样成立**。**判据读的是动作序列，不是载荷**，与缺陷 25「签名的代理代替 SQL 事实」同谱系：形态对、事实错。（同一文件的流式用例之所以能判，是因为它用的是连载荷一起收的 `records` 探针。）
+- **修法**：非流式支把截断那条路的 `usage` 置为 `estimate_usage_from_chars(self._prompt_chars(system_prompt, messages), len(reply))`；两条截断路共用新抽的 `Distiller._prompt_chars`（原先这个字符数只在 `_collect_stream` 里现算）—— 「按字符估算」只留一个口径。正常返回那条路**不动**（`usage=None` ⇒ 出口回落 `last_usage`，那才是真实读数，不是估的）。
+- **锁**：`tests/test_distill_usage_accounting.py::TestNonStreamTruncationAccounting::test_truncated_chat_records_one_estimated_entry`（断言 `[a for a,_ in records] == ["distill"]`、载荷 `== estimate_usage_from_chars(两侧已见字符)`、`estimated is True`）。**红源已钉**：用例先写、先跑 —— 红在 `assert payload is not None`（`1 failed, 6 passed`，同文件其余用例不受影响）；改完 `26 passed`（连同 `test_distiller_truncation_selfheal` / `test_usage_accounting_lock` / `test_usage_identity_context`）。
+- **判据命令**：`git grep -n "_prompt_chars" core/distiller.py` —— 应恰三处：定义一处 + 两条截断路各一处。**口径的唯一性靠这条**，不靠数 `estimate_usage_from_chars` 的命中（那个字符串全仓 6 处，另有 map 失败片 `1472` / `1894` 与压缩 `1724`，故它对「两条截断路共用同一口径」没有判别力 —— 本条初稿写的「应恰三处」是**错的**，落笔时按想当然写、没现跑，当场订正）。
+- **顺带**（同一文件内的重复）：造截断异常的 `_Msg` / `_Choice` 三件套原先内联在 `test_truncated_initial_call_is_still_recorded` 体内，新用例要用第二遍 —— 提为模块级 `_truncated_exc(where)`，那条老用例改调它（净删 8 行，断言不变）。
+
+**92. 非流式硬失败一条账都不记 —— 同一个事实在流式/非流式两侧记出两个数** —— 状态：**已修**（2026-09-21，缺陷 91 的下一项）
+- **事实**：`_chat_accounted` 非流式支的硬失败分支（`info is None or info[0] != "length" or not info[1]`）打印一行后直接 `raise`，**记账出口一次都没走到**。而流式支 `_collect_stream` 的 `except` 支在同一个条件下先 `estimate_usage_from_chars(prompt_chars, len(text))` 补记、再 `raise`。于是**同一件事**（这次调用没产出正文，但 token 花了 —— 重试墙下正是空烧）在长输出（走流式）有账、在短输出（走非流式）无账。
+- **为什么它是缺陷而不是设计（找的是可判定的理由，不是「像不像」）**：旧口径只写在对它的描述里 —— `core/distiller.py` 的「``raise`` 那条路不记」与 `tests/test_distill_usage_accounting.py` 模块头的同一句。但**说不出判据**：凭什么叫截断该记、硬失败不该记？两者都是「token 已花、正文没拿到」，都拿不到 `last_usage`（`chat()` 进本轮清空，`_extract_content` 的抛出点在 usage 回写之前）。**理由不改口径就是遗留，不是决策**（§四「理由要升格成判据」）。同一取向本仓早有先例：map 失败分片与档案压缩那两处的注释就写着「失败重试墙下空烧，只记成功 = 统计系统性偏低」。
+- **修法**：硬失败支在 `raise` 之前补记 `estimate_usage_from_chars(self._prompt_chars(system_prompt, messages))` —— completion 侧按 **0** 算（没有产出任何正文，这正是它与截断支传 `len(reply)` 的唯一差别）。两处 docstring 改写成新不变量：**一次调用恰记一条 usage，与它结果如何无关**。
+- **锁**：`tests/test_distill_usage_accounting.py::TestNonStreamHardFailureAccounting::test_hard_failure_records_one_estimated_entry`（断言 `[a for a,_ in records] == ["distill"]`、载荷 `== estimate_usage_from_chars(两侧字符, 0)`、`estimated is True`）。**红源已钉**：用例先写先跑，红在 `assert [] == ['distill']`；改完 17 passed（连同 `test_usage_accounting_lock` / `test_distiller_truncation_selfheal`）。
+- **形状锁不受牵连**：`test_usage_accounting_lock._audit()` 的配平是 `records >= need`，且互斥分支合并计一组 —— `_collect_stream` 早已是同形（try 一支 + except 一支），本条只是让非流式支对齐它，没有改写配平口径。
+- **判据命令**：`git grep -n "estimate_usage_from_chars" core/distiller.py` —— 全文 **6** 处：`_collect_stream` 的 except 支 1 处、`_chat_accounted` 体内**恰 2** 处（硬失败支 + 截断支）、余 3 处是 map 失败分片与档案压缩（与本条无关）。**注意这条判据与缺陷 91 那条不是同一条**：91 要的是「两条截断路**共用同一个口径**」，判据是 `_prompt_chars` 恰三处；本条要的是「两条非流式出口**各自**按字符估算」，才数 `estimate_usage_from_chars`。
+
+**93. 用量写库失败只留一行 print 就被吞 —— SG 全员用量为 0 直到人工发现** —— 状态：**已修（可见性）**（2026-09-22；机制根因 2026-09-21 已修，见下「修法」两条）
+- **链路**：记账出口是 `core/utils.try_record_usage`（`core/utils.py:51`），以 `submit_to_main_loop(_write(), wait=False)`（`:98`）投递 —— 写库跑在别处，请求线程不等它。内层 `_write` 的 except 只 `print(f"[{source}] Record usage failed (non-fatal): {exc}")`（`:96`），**不重抛、不置标志、不影响响应**。写侧 `PostgresStore.record_usage`（`storage/postgres_store.py:3014`）自己 print 一行后抛 `StoreError`（`:3022`）—— 这一抛正落进上面那层 except 里。
+- **实害（SG 2026-09-21 只读取证）**：`usage_stats` 的 `max(id)=104` 而序列 `last_value=2`，每条 INSERT 都撞 `usage_stats_pkey`；表里最后一行 `created_at = 2026-06-26 19:10:28+00`（当天 0 行、近 7 天 0 行）；全部 104 行 `action='chat'`，从无 `distill_*` 行。设置页「我的用量」与 admin 用量页都是 0 —— **展示层是忠实的**（`web/routers/auth.py:577` → `get_usage_stats`；`web/routers/admin.py:397` → `get_all_usage_summary`），它读的就是这张冻住的表。
+- **修法（两段，别混着读）**：
+  - **机制根因**（2026-09-21）：新增 `storage/pg_identity_sync.py`，启动时与导入脚本末尾对齐全部 identity 序列 —— 让写入**能**成功。这一修不改「失败会怎样」，只去掉「必然失败」这个前提。
+  - **可见性**（2026-09-22）：吞异常那一层不再只 print，改为上报后台日志面板。新增唯一构造 `core/nonfatal.nonfatal(source, what)`（异步上下文管理器：吞掉块内异常并以 logging ERROR 上报，`exc_info=True`；`CancelledError` / `KeyboardInterrupt` / `SystemExit` 照常上抛）—— 面板 `RingBufferHandler` 只收 WARNING+ 且只存 `getMessage()`，故异常类型由本构造拼进消息文本。`core/utils.try_record_usage` 的 `_write` 是改点之一。
+  - **仍未定的那半**：「账写不进去」要不要进一步升级（对用户报错 / 健康检查置红 / 计数告警）是**产品口径决策** —— 用量算不算必须送达的账，得先定。本轮只解决「无声」。
+- **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
+
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口）
+- **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
+- **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
+- **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
+- **仍未定的那半（要产品决定）**：群的**流式**那条把 `str(exc)` 当 SSE 事件摊给用户（`group.py:632` 的 `except Exception as exc` → `:633` 的 `yield ... {'error': str(exc)}`）—— 本轮**没动**。它与一对一的「吞」是两套口径，而要统一就得先答「群里为什么该看见、一对一为什么不该」（说不出就是遗留，§四）。另外把内部异常文本直接回给前端本身还是一条信息泄漏面。
+- **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
+- **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
+
+**95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
+- **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
+- **后果**：一条**公开**且依赖树里挂着 `get_optional_user` 的路由（`web/routers/market.py` 的 `GET /api/market/card/{card_id}`、评论列表），在 `JWT_SECRET` 未配置时，一次本该正常的**匿名读**变成 **500**（异常从 `solve_dependencies` → `run_in_threadpool` 抛出）；secret 配好时同一请求是 **404「角色不存在」**（正常走到函数体）。即：**配置缺失把一个公开读变成了 500，而它既不是鉴权失败也不是业务失败**。
+- **与缺陷 46 的关系**：46 收敛了「**显式直接读环境**」的 5 处调用点（auth.py 4 + server.py 1）。本条是同一缺陷的**另一种形态** —— 没有显式调用，是框架按依赖树代劳；46 的判据命令（`git grep` 直接读环境）**看不见它**。所以它既不在 46 的修复面里，也不在 46 的判据覆盖里。
+- **与本线 `1fc61ab` 的关系**：那次只消除了「同一请求内身份判两次」（重复的 `get_user_by_id`），**没动 `Depends(get_jwt_secret)` 的急切求值时机** —— 复用入口 `resolve_request_identity` 收的是 `secret_source` 取值函数，但适配器自身这个 `Depends` 参数仍在进函数体前被求值。本条是那次改动**明确留下的残留**（合并时由用户点名登记）。
+- **证据（现跑现数，2026-09-21）**：产数脚本 `scripts/probe_eager_jwt_secret.py`（已入库），三行对照 ——
+  - `JWT_SECRET` 已配置：`GET /api/market/card/nope` → **404**、`GET /api/market/tags` → **200**、`GET /api/history/list` → **401**
+  - `JWT_SECRET` 未配置：`GET /api/market/card/nope` → **500**、`GET /api/market/tags` → **200**、`GET /api/history/list` → **401**
+  - 读法：`card/nope` 是「公开 + 依赖树里有适配器」→ 唯一随 secret 配置变色的那条；`tags` 无适配器 → 不受影响；`history/list` 受保护 → **中间件在路由前就拦下**（401），secret 根本轮不到读。三条缺一不可：只有第一条会红的话，无法排除「所有公开路由都 500」这种更宽的病灶。
+- **为什么只记不修**：修它要把适配器的 `secret` 从**值**改成**取值函数**（`secret_source`），与 `storage` 一并由解析器统一控制取值时机（有凭据才取 secret、解码成功才取 storage）。那是**接口变更**：牵动四个入口的调用形态与既有 `Depends(get_jwt_secret)` 注入契约（缺陷 46 的测试正是靠 `app.dependency_overrides[get_jwt_secret]` 显式给值）。本轮是合 main 的登记动作，不在范围内。
+- **判据命令**：`.venv/Scripts/python.exe scripts/probe_eager_jwt_secret.py` —— 期望 `== JWT_SECRET unset ==` 段出现 `GET  /api/market/card/nope    -> 500`，而同段 `tags -> 200`、`history/list -> 401`。（本条**没有** `git grep` 型判据：事实是行为差异，不是文本事实 —— 与 91 / 92 那两条靠 `git grep` 数命中不同，别照抄。）
+
+**96. `ChatEngine` 构造后由外部写入的会话状态字段（`_session_id` / `_group_id` / `_user_tz`）—— 是状态不是依赖，能否构造注入待调研** —— 状态：**记账**（不修，2026-09-22；83 收口时登记的残留）
+- **事实（现跑）**：`ChatEngine.__init__` 只给初值 —— `self._session_id: str = ""`（`core/chat_engine.py:131`）、`self._group_id: str = ""`（`:132`）、`self._user_tz: str = ""`（`:133`）；三个字段的**实际值全部由构造之后的外部写点给出**：`web/routers/chat.py` 5 处（`_session_id` `:211` / `:308` / `:431`，`_user_tz` `:303` / `:427`）、`web/routers/history.py` 2 处（`_session_id` `:301`，`_user_tz` `:314`）、`core/group_session.py` 2 处（`_group_id` `:163` / `:352`）、`scripts/run_agent_eval.py` 3 处（`_session_id` `:177` / `:331` / `:370`）—— 合计 **12 行 / 4 文件**（测试里的同形赋值另计）。
+- **与 83 的区别（这就是为什么不并入 83）**：83 修的是**依赖**（`storage`、记账身份）被实例字段传递 —— 依赖在构造那一刻**已经存在**，只是传晚了一步，所以构造注入是纯粹的改进。这三条不是依赖，是**有生命周期的会话状态**，且**在构造时刻根本还没有值**：`_session_id` 会在 auto-resume 时被换成另一个 id（`web/routers/chat.py:194-196` 把引擎整个搬到原 `session_id` 名下、`:211` 再把字段改成新值 —— **同一个引擎实例会被贴上不同的 session id**），`_user_tz` 随客户端每次请求刷新（`:303` / `:427`），`_group_id` 要到群聊装配时才定（`core/group_session.py:163`）。构造注入只是把赋值挪个地方，**不解决「同一实例跨多个 session id」这件事**。
+- **与 `_unscoped` 读无耦合（现跑核实）**：引擎里那三处 `self._storage.get_session_unscoped(self._session_id)`（`core/chat_engine.py:651` / `:1017` / `:1358`）用的是字段的**值**，不是字段的**来法** —— 这三个字段将来无论改成构造注入还是保持构造后赋值，那三处的行为逐字不变。本条的处置因此**不牵动** ownership / 裁决那一族逻辑，别把它和 `_unscoped` 的归属议题绑在一起。
+- **判据命令**：`git grep -n "\._session_id = \|\._group_id = \|\._user_tz = " -- web/ core/ scripts/` —— 现为 **12 行 / 4 个文件**（分布见上）。**本条没有「应为 0」这种验收值**：它是**待调研**，不是待修 —— 先要判「能不能构造注入」，再谈写点该不该清零。
+- **处置方向**：先调研「引擎实例的生命周期与 session 的对应关系」—— 若一个 `ChatEngine` 实例确实只服务一个 session，则可构造注入；若确实要跨 session 复用（auto-resume 那条路已经这么用了），那这份状态本来就不该挂在实例上，得先定承载物。**不先改**。
+
+**97. `Login to Aliyun CR` 无 `continue-on-error` 且排在 GHCR 构建之前 —— 阿里云链路一断，GHCR 镜像也构建不出来** —— 状态：**记账**（不修，2026-09-22；CI build 悬挂排查的顺带发现）
+- **事实**：`.github/workflows/build.yml` 的 `build` job 步骤次序是 `Login to GHCR`（`:248`）→ `Login to Aliyun CR`（`:255`）→ `Build and push app image`（`:262`，**推 GHCR**）→ `Push app image to Aliyun CR`（`:279`）→ `Build and push nginx image`（`:289`，**推 GHCR**）→ `Push nginx image to Aliyun CR`（`:302`）。两个推送步都标着 `continue-on-error: true` 并各带 step 级 `timeout-minutes`（`89` / `3`）—— **`continue-on-error` 的全部含义就是「这步失败不算 build 失败」，即「阿里云是可选」**。可它们前面那个 `Login to Aliyun CR` **没有**这个标记：登录失败 = 本步 failure = 后续步全部 skipped，**连推 GHCR 的那两个 build/push 步一起带走**。
+- **证据（run `35586099467`，2026-09-21 重跑那次）**：`Login to Aliyun CR | failure`（`read: connection reset by peer`，对 `dockerauth.cn-hangzhou.aliyuncs.com`），紧接着 `Build and push app image | skipped`、`Push app image to Aliyun CR | skipped`、`Push nginx image to Aliyun CR | skipped` —— 那次**一个镜像都没推出去**（GHCR 那两步也是 skipped），而 gate / sentinel 两条 test job 都是 success。
+- **为什么这是矛盾而不是设计（要可判定的判据，不是「像不像」）**：同一份文件对「阿里云挂了会怎样」给出了两种口径 —— 推送步说「可选，失败就跳过」，登录步说「必需，失败就整条 build 停」。**两种口径都写在同一段里，而谁也没解释为什么登录比推送更必需** —— 登录只是推送的**前置**，它自己失败没有独立后果（不推就不推）。说不出「为什么」，就是遗留（§四「理由要升格成判据」）。
+- **待裁定**：阿里云到底是**必需**还是**可选**？
+  - 若**必需** → 现在这样（硬失败、挡 GHCR）就没错 —— 那反倒该议两个推送步的 `continue-on-error` 是不是也该撤（一个说必需、两个说可选，仍是两套口径）。
+  - 若**可选** → 要么把 `Login to Aliyun CR` 挪到 GHCR 那两个 build/push 之后，要么给它加 `continue-on-error` 并把两个推送步改成**有条件执行**（登录没成功就别推，而不是推了报错）。
+- **判据命令**：`git grep -n "continue-on-error\|name: Login to\|name: Build and push\|name: Push .* to Aliyun CR" .github/workflows/build.yml` —— 逐个数「这一步失败会不会带走后面所有步」。读数（2026-09-22）：`Login to Aliyun CR` 无标记（会带走）、两个 `Push * to Aliyun CR` 有标记（不会）。**缺口就是这处不对称**，不在「阿里云该不该可选」这个产品问题上。
+
+**98. 保存失败被「non-fatal」吞掉后 `user_rec` / `char_rec` 未绑定，同一函数后面照样解引用它 —— 保存失败被转译成 `UnboundLocalError`** —— 状态：**记账**（不修，2026-09-22；缺陷 94 的同族，登记前已核对 94，不是同一件事）
+- **形态**：`web/routers/chat.py` 两个入口都是「`*_msg_id = None` 有初值，`*_rec`（`save_message` 的返回值）**没有初值**」，保存又都套在「non-fatal」的 `except`（只 print）里 —— **`except` 一吞，那个 `*_rec` 就是未绑定**，而函数后面照样对它 `.get()`。
+- **两处的解引用点与失败形态（现跑）**：
+  - `_do_chat`（非流式）：`user_rec` 绑在 `:341`（在 `if not hidden:` 内）、`char_rec` 绑在 `:348`；解引用在 `:380`（`user_rec.get("created_at", "") if not hidden else ""`）与 `:381`（`char_rec.get("created_at", "")`）。这个 dict 构造**不在任何 try 里**，异常直接冒出 `_do_chat` → 路由 `send_message`（`:607` 是裸 `return await _do_chat(...)`，无兜底）→ **500**。
+  - `_do_chat_stream`（流式）：`user_rec` 绑在 `:451`、`char_rec` 在 `:500`；解引用在同一个 `done` payload 的 `:532` / `:533`。这两行**在大 try 内**（`try` 起 `:459`、`except` 在 `:549`）→ 失败形态**不是 500 而是**：正文已整段流给用户，末尾 `done` 帧却变成 `{"error": ...}`（`:564`），客户端拿不到 `user_msg_id` / `char_msg_id` / `user_created_at`；且 `:554` 的回滚条件 `user_msg_id is not None and not tokens` **两半都为假**（前者是 `None`、`tokens` 非空）→ **回滚也不触发**（库里留下助手消息、没有配对的用户消息）。
+- **触发条件正是 94 描述的那个「吞」**：`save_message` 抛任何异常（PG 拒写、identity 序列落后撞主键 —— 93 号那类）都在 `:456` / `:374` / `:505` 被吞成一行 print，**执行继续往下走**，然后在上面那几行解引用未绑定的名字。
+- **与缺陷 94 的关系**：同族，但**不是同一件事**，故不并入 94 作补充、另开本条。94 记的是「保存失败的**可见性**在群聊与一对一之间不一致」（吞 vs 摊给用户），判据是「这个保存点的最近一层 except 是 print 还是 yield」；本条记的是「**吞**这个动作让一个名字没被绑定、而代码后面要用它」—— 是 `except` 的**副作用**，不是可见性口径。修法也不同：94 要先定口径，本条只要给 `user_rec` / `char_rec` 一个初值（`None`）并把解引用改成 `(user_rec or {}).get(...)`（或把赋值挪到 try 之外）。
+- **顺带订正 94 的一处读数**：94 把 `_do_chat_stream` 读成「三笔各自 try + print，一对一全部吞」。按本条现跑，`:532` / `:533` 的解引用**在大 try（`:459-549`）之内**，那处失败**不吞** —— 会以 error 帧摊到用户面前。即一对一**流式**这条路也有一处把异常摊给用户，94 的「一对一全部吞」在此不完全成立。
+- **判据命令**：`git grep -n "user_rec\|char_rec" web/routers/chat.py` —— 数「赋值点在不在 try 内 / 解引用点在不在同一个 try 内」。读数（2026-09-22）：赋值 **4** 处（`:341` / `:348` / `:451` / `:500`）、解引用 **4** 处（`:380` / `:381` / `:532` / `:533`），其中 `:380` / `:381` 在**任何 try 之外**。
+- **处置方向**：与已有的 `user_msg_id` / `char_msg_id` 对齐 —— 那两个 id 变量有 `= None` 初值、解引用点用 `if uid is not None` 过滤，`*_rec` 是同一件事的漏网。**不先改**：本条是登记；且改它要先定「保存失败时 `user_created_at` / `char_created_at` 该给什么」（现在成功时给 `created_at`、`hidden` 时给 `""`）。
+- **行号漂移（2026-09-22 现跑，缺陷 93/94 那轮 `try/except + print` → `async with nonfatal(...)` 之后）**：赋值点 **4** 处仍在 —— `:342` / `:349`（`_do_chat`）、`:448` / `:495`（`_do_chat_stream`）；解引用点仍是 4 处 —— `:377` / `:378`（在任何 `try` 之外，仍 500）、`:523` / `:524`（在大 try 之内，其 `try` 起 `:454`、`except` 在 `:545`，回滚条件在 `:550`、error 帧在 `:555`）。**结论（哪几处在 try 之外）未变**，变的只是坐标。另注：吞错点的**形态**变了（不再是 `except` 里 print，而是 `async with nonfatal(...)` 吞掉），但「吞掉 ⇒ 名字未绑定」这条因果不受影响 —— 换构造没有、也不该消掉本条。
+
+**99. PG 侧没有迁移账本 —— 每轮 init 全量重放，改约束定义只对新建库生效** —— 状态：**记账**（不修，2026-09-21）
+- **与缺陷 90 同源，不重复记账**：90 记的是「两个后端都没有已应用记录表」这个共同前提（含只记不修的理由）；本条只补**本案在 PG 侧实测到的那条具体代价**，以及它在 `published_from` 一案里的适用边界。两条都留 —— 90 是前提，本条是该前提在一个改动上的后果。
 - **形态**：`PostgresStore._ensure_initialized`（`storage/postgres_store.py:94`）每轮 init 走 `sorted(migrations_dir.glob("*.sql"))` 全部执行（`:112`），**没有** applied-migrations 表 —— `git grep -n "schema_migrations\|applied_migrations\|migrations_applied" -- storage/ web/ core/` 零命中。幂等全靠每个文件自己手写（`ADD COLUMN IF NOT EXISTS` / `DO $$ ... EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL; END $$;`）。
 - **代价（本轮实测）**：021 把 `cards_published_from_fkey` 从 `ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED` 改成 `ON DELETE SET NULL (published_from)`，在**已存在的库**上不生效 —— `DO` 块把 `duplicate_object` 吞掉，约束保持旧定义。验证必须**删库重建**才看得到新定义。**021 尚未合入 main、未上生产，本案不受影响** —— 这条代价现在只作用于「今后改**既有**约束的迁移」：那些迁移要么显式写「只对新建库生效」，要么自带 DROP + ADD。
 - **为什么这条要紧**：它让「迁移文件是唯一真源」在 PG 侧**不成立** —— 文件写什么不代表库里是什么，两者只能靠重建对齐。任何改**既有**表/约束的迁移，都必须显式声明「只对新建库生效 + 存量库的处置」。
 - **判据命令**：`git grep -n "glob(\"\*.sql\")" -- storage/postgres_store.py`（现 1 处）、上一条账本 grep（应零命中）
 - **处置方向**：给 PG 侧补一张 applied 表（至少记录文件名 + 校验和）。**本轮不做**：补账本要改 init 全流程并回填存量库状态，超出本案范围。
 
-**87. `publish_card` 先查后插、无唯一约束 —— 同一草稿可能并存两张发布副本** —— 状态：**已修**（`e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
+**100. `publish_card` 先查后插、无唯一约束 —— 同一草稿可能并存两张发布副本** —— 状态：**已修**（`e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
 - **病灶**：`publish_card`（`storage/postgres_store.py:4696` / `storage/sqlite_store.py:5591`）第一步 `SELECT` 找「调用者自己的发布副本」，查不到才 `INSERT`。两步之间没有事务、也没有约束 —— PG 侧是 asyncpg autocommit，两个并发请求可以都查不到、各插一张。
 - **为什么原有约束拦不住**：`cards_id_user_id_key` 是 `UNIQUE (id, user_id)`，管的是「行不重复」，管不了「同一 `published_from` 只能有一行」；`published_from` 上没有任何唯一约束。
 - **后果**：两张并存后，判据对两行都成立，取哪张取决于查询顺序 —— 头像同步只落到其中一张，另一张逐渐与草稿脱节。
-- **落点：把「至多一张」交给库**，不再靠调用点记得查。部分唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`（`090` / `023` 各一份）+ `publish_card` 合成**一条** `INSERT … ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE … RETURNING id`（更新列清单取自草稿的**同一次读**，`EXCLUDED` 即本行 VALUES）。唯一性不看 `visibility` —— 见 88 的裁定。（索引原先与加列同写在 088 / 021、SQLite 侧另在执行器尾部补建一次；两份定义的成因与拆开见 89，编号排到回填之后见 90。）
+- **落点：把「至多一张」交给库**，不再靠调用点记得查。部分唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`（`090` / `023` 各一份）+ `publish_card` 合成**一条** `INSERT … ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE … RETURNING id`（更新列清单取自草稿的**同一次读**，`EXCLUDED` 即本行 VALUES）。唯一性不看 `visibility` —— 见 88 的裁定。（索引原先与加列同写在 088 / 021、SQLite 侧另在执行器尾部补建一次；两份定义的成因与拆开见 102，编号排到回填之后见 103。）
 - **红源**（`tests/test_published_copy_relation.py::TestUnpublishIsWithdrawingTheRelease` 与 PG 侧同名类，各 3 条）：其中 `test_a_second_live_copy_of_the_same_draft_is_rejected_by_the_database` 越过 store 裸插第二张存活副本，断言必须被数据库拒（判据是 `"UNIQUE"` 出现在异常里，不是随便什么错）。**刻意不走 `publish_card`**：upsert 的 `ON CONFLICT` 推断的目标就是这条索引，索引不在时 publish 自己先报「no unique or exclusion constraint matching the ON CONFLICT specification」，红在 publish 上而非本条要锁的库约束。
 - **变异（实测红，验后已还原，两引擎各跑一遍）**：去掉部分唯一索引（删掉 `090` / `023` 的 CREATE 并把测试库索引 `DROP` 掉；当时那句还在 088 与执行器尾部）→ 上述那条红在 `DID NOT RAISE`。**同时另外两条也红**：同一条索引是 `ON CONFLICT` 的推断目标，索引没了 publish 直接报错 —— 实测到的耦合，不是判据不具分辨力。
 - **判据命令**：`git grep -n "ON CONFLICT (published_from)" -- storage/`（两处）、`git grep -n "async def publish_card" -- storage/postgres_store.py storage/sqlite_store.py`（两处，均已是单条 upsert；`base.py` 另有一处抽象声明）
 
-**88. 下架与「是不是发布副本」写进同一个谓词 —— 下架后再发布会并存第二张副本，旧副本仍指向草稿** —— 状态：**已修**（`2c7b815` `e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
+**101. 下架与「是不是发布副本」写进同一个谓词 —— 下架后再发布会并存第二张副本，旧副本仍指向草稿** —— 状态：**已修**（`2c7b815` `e8906f6` `0ec13ce` `8942c3f`，2026-09-21）
 - **病灶**：`_PUBLISHED_COPY_OF` 原先的判据含 `visibility = 'public'`，把**关系**（副本属于哪张草稿）与**状态**（在不在架）压进一个谓词。作者把已发布的副本**下架**（`update_card_visibility(id, 'private')`）后再点发布，旧副本因不再 public 而查不到 → 建**第二张**副本。
 - **修复前读数（SQLite 真库）**：发布 → 下架 → 再发布，两次返回的 id 不同（`c5b0e1107b3c` / `73764e5f142a`）；直读 `cards` 里 `published_from = <草稿 id>` 的行 **= 2 行**（一张 private、一张 public）。
 - **裁定（本条的真正内容）：下架 = 撤回发布** —— 副本行仍在（关系不断），只是不再在架；重发**复用同一行**，内容取草稿当前值，点赞 / 他人 fork / 版本历史都留在那一行上。于是唯一性不看 `visibility`，只看「未删」。
@@ -1219,7 +1332,7 @@ PROBE_IMAGE         false
 - **变异（实测红，验后已还原，两引擎各跑一遍）**：把三处 `published_id` 的 `_live_published_copy_of` 换回关系谓词 `_published_copy_of` → 第 1 条红在 `assert '7291dc30492d' is None`（正是要钉的那句）。
 - **判据命令**：`git grep -n "_PUBLISHED_COPY_OF = " -- storage/`（两处定义，两行都不含 `visibility`）、`git grep -c "_live_published_copy_of('" -- storage/`（两个 store 文件各 3 处调用）。**不要**用 `git grep -n "visibility = 'public'"`：那条会命中 market 查询等十余处正常用法，判据不可辨。
 
-**89. 同一份索引 DDL 两个来源 —— `_apply_migration` 的「列都在即整份跳过」静默吞掉尾部语句** —— 状态：**已修**（`d14fe29`，2026-09-21）
+**102. 同一份索引 DDL 两个来源 —— `_apply_migration` 的「列都在即整份跳过」静默吞掉尾部语句** —— 状态：**已修**（`d14fe29`，2026-09-21）
 - **形态**：`cards_published_from_live_uniq` 同时定义在 `storage/migrations/088_published_from.sql` 与 `storage/sqlite_store.py` 的 `_CARDS_LIVE_PUBLISHED_UNIQ_INDEX`（由 `_ensure_initialized` 尾部无条件执行）。前者注释自陈「因为会被跳过所以这里再补一句」—— 两处定义是**同一成因的产物**，不是两次疏忽。PG 侧只有 021 一份，无此问题。
 - **成因（实测，`scripts/probe_published_index_sources.py` A 段）**：判据是 `_apply_migration` 的「脚本里每个 ADD COLUMN 的列都已存在 → 整份跳过」（`storage/sqlite_store.py` 的 `_apply_migration`）。088 正是加列那份，列一旦存在（088 跑过之后就是）整份被跳。读数：全新库决策 `APPLY 088` → 索引在；「列已存在」的库决策 `SKIP 088` → 索引**仍在**（来自执行器尾部那句）；把尾部那句钝化 → 索引**没了**（该形态下尾部是唯一来源）；自造 [ADD COLUMN + CREATE INDEX] 同文件，首次 APPLY 建了索引、列已在再跑 → 返回 OK 但索引不在（**静默吞掉**）；只含 CREATE INDEX 的文件连跑两次 = APPLY / APPLY。
 - **同一处那条触发器的成因**（用户要求一并判）：**不同源、不同处置**。它不在任何 `.sql` 里（`git grep -rn TRIGGER storage/migrations storage/migrations_pg` 零命中），唯一来源就是执行器尾部那句；重建表前后各量一次 sqlite_master：索引**在**（`_rebuild_cards_published_from` 按 sqlite_master 重放）、触发器**没了**（不重放）。即它的成因是「重建丢」，必须留在 Python 侧，**不动**。
@@ -1229,19 +1342,19 @@ PROBE_IMAGE         false
 - **变异（实测红，验后已还原）**：① 往 090 塞一句 ADD COLUMN → 红在「出现了 ADD COLUMN」；② 执行器里再写一份索引定义 → 红在「还有 1 处可执行的 CREATE UNIQUE INDEX」；③ 把 090 的登记挪到 088 之前（两条都仍在名单里，只换次序）→ 红在 `assert 9 > 10`。③ 第一版是直接删掉 088 那条登记，红因变成 `ValueError: … is not in list` —— 测的不是顺序断言本身，已改成只换次序重跑。
 - **判据命令**：`git grep -c "CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq" -- storage/`（现给 `090` / `023` 各 1，恰好 2）、`git grep -nE "ALTER[[:space:]]+TABLE[[:space:]]+cards[[:space:]]+ADD[[:space:]]+COLUMN" -- storage/migrations/090_published_from_live_uniq.sql storage/migrations_pg/023_published_from_live_uniq.sql`（应零命中）。**不要**用裸 `ADD COLUMN` 做这条判据：这两份文件的注释里就写着「本文件不含 ADD COLUMN」（解释成因时必然引到这个词），实测会命中注释 —— 判据必须是语句形。
 
-**90. 唯一索引排在回填之前 —— 存量库里回填与建索引互相撞，两种顺序都让 init 失败** —— 状态：**已修**（`d14fe29`，2026-09-21）
-- **形态**：索引原与加列同写在 088，而回填必须排在它前面。存量库里同一草稿可能有多张存活副本（缺陷 87 的旧语义：每发布一次新建一行），回填把它们的 `published_from` 都写成同一草稿 id → 撞唯一索引。
+**103. 唯一索引排在回填之前 —— 存量库里回填与建索引互相撞，两种顺序都让 init 失败** —— 状态：**已修**（`d14fe29`，2026-09-21）
+- **形态**：索引原与加列同写在 088，而回填必须排在它前面。存量库里同一草稿可能有多张存活副本（缺陷 100 的旧语义：每发布一次新建一行），回填把它们的 `published_from` 都写成同一草稿 id → 撞唯一索引。
 - **实测复现（`scripts/probe_published_index_sources.py` B 段，含两张同草稿存活副本的库）**：
   - B1 索引先建、再回填 → 建索引 `OK`（`published_from` 全为 NULL，唯一索引不互撞），回填 `IntegrityError: UNIQUE constraint failed: cards.published_from`
   - B2 回填先、再建索引 → 回填 `OK`，建索引同一个 `IntegrityError`
   - B3 回填 → 收敛（多余副本软删）→ 建索引 → **三步全 OK，存活副本 1 张**
 - **结论：光换顺序不解决** —— 两种顺序都让 init 失败，只是炸在不同语句；让引脚建得上的是**收敛**。
-- **落点**：顺序排成 加列(`088` / `021`) → 回填并收敛 → 建唯一索引(`090` / `023`)，SQLite 与 PG 两侧同序。索引因此与加列解耦，顺带解掉 89 的重复来源。
-- **订正（2026-09-22）**：回填并收敛**没有**独立的 `089` / `022` 文件 —— 它写在加列那一份里（SQLite 088 尾部、PG 021 的同一个 DO 块），因为「只跑一次」的谓词只能是「列已存在则整份跳过」，另开文件就得引入迁移账本。逐条见缺陷 91。
+- **落点**：顺序排成 加列(`088` / `021`) → 回填并收敛 → 建唯一索引(`090` / `023`)，SQLite 与 PG 两侧同序。索引因此与加列解耦，顺带解掉 102 的重复来源。
+- **订正（2026-09-22）**：回填并收敛**没有**独立的 `089` / `022` 文件 —— 它写在加列那一份里（SQLite 088 尾部、PG 021 的同一个 DO 块），因为「只跑一次」的谓词只能是「列已存在则整份跳过」，另开文件就得引入迁移账本。逐条见缺陷 104。
 - **判据命令**：`ls storage/migrations | grep published_from`（应给 `088_` `090_` 两条）、`ls storage/migrations_pg | grep published_from`（应给 `021_` `023_` 两条）
 
-**91. 回填每次启动重跑会把合法自我 fork 改判成发布副本 —— 回填必须绑在加列那一刻** —— 状态：**已修**（`04dc4ef`，2026-09-22）
-- **形态**：PG 侧没有「已应用」账本，每轮 init 全量重放每个文件（缺陷 86）；SQLite 侧 `_apply_migration` 的跳过判据是「本文件每个 ADD COLUMN 的列都已存在 → **整份**跳过」。回填若写成独立文件（原定的 `089` / `022`），这两个机制都拦不住它重跑。
+**104. 回填每次启动重跑会把合法自我 fork 改判成发布副本 —— 回填必须绑在加列那一刻** —— 状态：**已修**（`04dc4ef`，2026-09-22）
+- **形态**：PG 侧没有「已应用」账本，每轮 init 全量重放每个文件（缺陷 99）；SQLite 侧 `_apply_migration` 的跳过判据是「本文件每个 ADD COLUMN 的列都已存在 → **整份**跳过」。回填若写成独立文件（原定的 `089` / `022`），这两个机制都拦不住它重跑。
 - **为什么重跑会出事**：fork 路由允许 fork 自己的公开卡（`web/routers/market.py` 的 `POST /{card_id}/fork`），而 `fork_card` 只写 `forked_from`、从不碰 `published_from` —— 新代码会写出一条**同属主 `forked_from`** 的合法行。回填谓词正是「同属主」，重跑就把它改判成发布副本（语义被写坏）；同一张副本被 fork 两次再撞 023/090 的唯一索引 → 启动失败。
 - **落点（不引入迁移账本、不改执行器）**：PG `021` 整份包进一个 `DO $$ IF NOT EXISTS (information_schema.columns.published_from) THEN … END $$`，块内依次 加列 → 复合 FK → 回填 → 收敛（同一事务），列已存在则整块跳过；SQLite `088` 把回填并收敛放在 `ADD COLUMN` 那句之后作尾段，与加列共用同一个跳过谓词。两侧同形；`090` / `023`（唯一索引）不变，排在其后。**没有独立的 `089` / `022` 文件。**
 - **谓词**：与代码里唯一那份关系谓词同义 —— `_PUBLISHED_COPY_OF`（`storage/sqlite_store.py` 顶部，PG 侧 `storage/postgres_store.py` 同形）= `published_from = D.id AND deleted_at IS NULL`。SQL 里写不出函数，回填段写成 `c.forked_from = d.id AND c.user_id = d.user_id`（属主相同）**并带 `c.deleted_at IS NULL`**。**不看 `visibility`**（下架 = 撤回发布，副本行仍存活、仍是发布副本）。
@@ -1302,6 +1415,15 @@ PROBE_IMAGE         false
   - **删除的边界是量出来的，不是「我觉得难」**：死参数普查命中 14 处候选，其中**至少 1 处是结构性误判** —— `core/embeddings.py` 的 `Mem0BridgeEmbedder._dimensions` 被 `core/rag.py` 以 `getattr(self._embedding_function, "_dimensions", None)` **外部读取**，而那正是 `CollectionUnusableError` 的维度判据（本次幂等负控二依赖的机制）。**`getattr` 形式的读取对任何 AST 形状扫描都是隐形的**（没有 `.` 前导、也不在同一个类里）；要排掉它就得挂一张豁免表 —— 那正是「守卫与被守对象之间的第二份手工清单」（§四 ③层）。故**只取数、不建锁**：取数工具 `tests/census_dead_attrs.py` **已入库**（模块名不以 `test_` 开头，pytest 不收集，`--collect-only` 核过），**它不是判据，别把它做成锁**。**可复算读数**：`git ls-files` 的 95 个 `.py`（去掉 `tests/`）→ **9 处命中**；同一判据在本次改动**前**（`06ecabb` / `8457271`）是 **11** 处，差正好是本次删掉的两个 `TextManager` 死参数（`_rag_config` / `_summary_threshold`）—— 逐条对得上。**一条撤回**：本轮中途我报过一个「**14 处**」，那是**手边 scratch 脚本跑的、判据没钉下来**；现在用入库的 `census_dead_attrs.py` 在任何一种能构造出的扫描面上都复现不出 14（入库去 `tests/` = 11；入库含 `tests/` = 17；gitignore 盘面 = 1；把「读」收紧成「排除 `__init__` 体内的读」= 26），故**那个数作废，以 9（改后）/ 11（改前）为准**。这正是本节「被台账引用的数字，产出它的脚本与原始产物必须入库」那条的现场实例 —— 脚本不入库，数字就只剩「记录」而没有「配方」，**四读法重建也救不回来**（同缺陷 38 的「267 处」，那条的教训就是上一轮重建仍无定论）。脚本已入库，故这两个数这次可复算。（另须注意：gitignore 的 scratch 盘面**确实存在**同类命中，实测只有 1 处 —— `e2e/scratch_3c_resume.py` 的 `FakeLLM._make_async_client`，不在上面 95 个入库文件里，故不影响读数，也不该被算进分母。）
   - **变异结论（如实：没有锁报它）**：把 `_distiller` 单例放回去并接上线（恢复 `get_distiller` 的单例分支 + 让 `reset_llm_and_dependents` 重建它），跑 7 个受影响用例集 —— **没有任何锁变红**。与 M3 同处置：**边界属实**。构造点唯一那把锁管的是 `TextManager` 的**装配处数**，不管 `Distiller` 的**实例化**；收敛后本已无第二个 `Distiller` 装配点，锁的对象消失，故不为此新建锁。**「没有锁报它」是实跑确认的，不是「做不出」** —— 此二者在台账里必须分开写。7 个用例集里的 6 处 `deps.get_distiller` monkeypatch 点也逐个核过：**收敛后仍可 patch**（`test_distill_task_api.py` ×4、`test_domain_exception_exit.py` ×1、`test_security_authz.py` ×1；子集实测 172 passed / 2 skipped）。
   - **缺陷 37 的连带变化**：见缺陷 37 条目的「连带变化（2026-09-18）」段 —— 那条判据命令命中行数 4 → 1，改前/改后逐行对照写在那里。
+
+**D. 两条 census 锁的扫描面不能再遍历目录树**（2026-09-21 立项，同日**已做** —— 本次提交，见 `git log -- tests/repo_files.py`）
+- **事实**：`.claude/worktrees/<name>/` 是 git worktree 的挂载点（`.gitignore:228` 忽略、不入库），每个都带一份完整的仓库副本。`tests/test_collection_surface_lock.py` 的收集面与 `tests/test_exception_pickle_lock.py` 的异常类普查原先都取「仓库根以下」，于是兄弟 worktree 的 `tests/` 与 `core/` / `adapters/` / `storage/` 进了分母 —— 表现是这两条锁在本机**恒红**，且红的报文长度随活着的 worktree 个数增长。现证与反向对照见 §四「测试结论也不许依赖测试机的工作目录布局」。
+- **为什么它不是缺陷而是一件事**：锁的**命题**没错（本仓确实不该有收集面外的测试文件；带自定义状态的异常类确实该全登记），错的是扫描面的分母混进了**别的工作树**。故处置是换扫描面，不是改命题 —— 改了命题就是把真判据也一起放宽。
+- **处置（用户裁定，2026-09-21）：扫描面改成问 `git`（`git ls-files --cached --others --exclude-standard '*.py'`）；明令不得加 `.claude/` 等路径排除规则。** 理由：路径黑名单是又一条静默通道 —— 名单漏一格就少扫一片；而「第三方 vendored 代码 / 构建缓存 / 兄弟 worktree / 本地一次性脚本」本来就不是「豁免」，是**不在仓库里**，该由 `.gitignore` 说。排除规则因此只剩一份（`.gitignore`），两条锁里那两份逐字重复的 `_PRUNED_DIRS` 一并删掉。
+- **落点**：新增 `tests/repo_files.py::repo_py(root)`（唯一取法，docstring 写清为什么不是 `os.walk`/`rglob`、以及 `--others` 为什么不能省），两条 census 锁改为调它。取向与 `tests/test_llm_access_gate.py::_production_py` 一致（那边 2026-09-17 已踩过「只认 `--cached` 时新写的文件对锁隐形」：L12 读成 3/2、真值 1/1）。
+- **实测差集（改动前现跑，2026-09-21）**：旧面 **1084** 条 vs 新面 **238** 条。旧面独有 846 条，其中非 worktree 的还有 140 条本地产物（`e2e/scratch/**`、`data/eval_scratch/**`、`scripts/{import,export}_shiyu.py` —— 后两个在 `.gitignore:282-283` 被**点名**忽略）。新面 ⊂ 旧面，**新面独有 0 条**。
+- **这三个数**是那一刻**快照**，别拿去当判据或对表 —— 本条目落进提交时就已变成 240：本改动自己新增了两个 `tests/repo_files*.py`，而新面是「问 `git`」，**未 `git add` 的新文件本来就在面里**（这正是 `--others` 那半在起作用，是特性不是漂移）。**可复跑的判据只有两条**：新面 `git ls-files --cached --others --exclude-standard '*.py' | wc -l`（读数随文件增减走）；旧面得把 `repo_py` 变异回 `os.walk` 再跑锁（见下一条验收②）—— 旧面那个 1084 依赖一份**已删除**的 `_PRUNED_DIRS`，没有等价的单行命令，**所以别引用它当判据**。
+- **验收（两个方向，均已现跑）**：① 仓库根下三个活 worktree 时，两条 census 锁 + 新锁 **16 passed**；② **反向对照**：把 `repo_py` 变异回 `os.walk` → **3 failed** —— 两条 census 锁各自点名 `.claude/worktrees/<各 worktree>/tests/test_*.py`，新加的合成反例锁（`tests/test_repo_files.py`）点名 `junk/hidden.py`；恢复后 16 passed。第二条是关键：合成反例**只在临时小仓库里造一个被 `.gitignore` 覆盖的 `.py`**，故它在干净 clone（CI）上同样可判定 —— 只靠「本机有兄弟 worktree」才红的锁，CI 上恒绿，等于没有。
 
 ### 三之三、LLM 访问门 + core 反向依赖（C0–C5，2026-09-17 起）
 
@@ -1487,6 +1609,8 @@ PROBE_IMAGE         false
 - **进程级状态：谁改谁还原，且断言者必须自建它断言的前提 —— 两件事都别信「碰巧在」。** 判据：动手改之前问「**这条断言依赖的进程级前提是谁建的？**」—— 答「进来时就在 / 上一条用例留下的」就是依赖 ambient 状态，必须自己建；动过任何进程级状态，退出时必须还原成**入场原值**。两个分界：① **`None` / 空集不等于「还原」** —— 本案四处状态（守卫、投递器、载体登记表、`LLM_CALLER`）没有一处是用例私有的，生产 lifespan 一跑就注册了：置 `None` 是把**生产那一份**拆掉，后续用例轻则静默改走回退分支，重则凭空被门管住、报 `LLMCallerMissing` 而与自己的断言无关；② **ContextVar 与普通全局的还原方式不同** —— `var.set` 返回的 **token** 连「本来没设过」这个事实一并还原，快照式的「写回 `None`」做不到（`tests/test_llm_access_gate.py` 的 `_set_var` / `_snapshot` 两个载体共用 `_Restored` 那一对 `__enter__` / `__exit__`）。**「自建前提」侧的实例**：`tests/test_log_collector.py::test_install_log_collector_idempotent` 原按 `count_before + 1` 断言，偷带的前提是「入场时没人装过」—— 只有看哪条用例先跑才成立；命题本是**幂等**（装几次都恰好一个 handler），改成「装一次断言 == 1、再装一次仍 == 1」，前提就由用例自己建出来了。
 
 - **用例的通过条件不许依赖测试机的凭据 —— 判定标准是「干净克隆 + 无 `.env` + 无 `config.yaml` + 无任何 API key」时全量全绿。** 判据：新增/改动任何用例之后，用**空 key 环境**再跑一遍全量。本仓的构造法是 `DEEPSEEK_API_KEY=`（**空串**，不是 unset）—— `load_dotenv(override=False)` 按**存在性**判断，已存在的空串压过 `.env` 里的值。**这条踩过两次**：L4（活会话那道）与 `TestFPerUserGate` 的初版各自都只在**本机有 key** 时成立，表现是「本机绿、干净克隆红」，而红的样子指向用例自己的断言、与成因无关。与上一条同源：上一条管**同一进程内的相邻用例**，这条管**同一份代码换一台机器**；共同判据是同一句 —— **把「它凭什么会绿」逐条列出来，凡答不出「用例自己建的」就是外部条件。**
+
+- **测试结论也不许依赖测试机的工作目录布局 —— 仓库根下挂着兄弟 worktree 时，两条 census 锁必红，红的信息里的路径前缀就是判据。** 事实：`tests/test_collection_surface_lock.py::test_every_test_shaped_file_is_inside_the_collection_surface` 与 `tests/test_exception_pickle_lock.py::test_census_matches_registry` 的扫描面都是「仓库根以下」（前者 `os.walk`、后者 `REPO_ROOT.rglob`），而 `.claude/worktrees/<name>/` 下每个兄弟 worktree 都带着完整一份仓库副本 —— 于是它们的 `tests/` 与 `core/` / `adapters/` / `storage/` 被算成了本仓「收集面外的测试文件」与「未登记的异常类」。**证据（2026-09-21，`1036c65` + 记账收敛改动，现跑）**：全量 `2 failed, 1413 passed, 69 skipped, 1 xfailed`，两条即此二者；两条**单独重跑仍红**（`2 failed in 43.46s`），命中项**逐条都在 `.claude/worktrees/` 下**（`{avatar-owner, chat-identity, demo-readonly}` × 8 个已知异常类 = 24 条）。**反向对照**（照本节「定性一个环境缺陷前先做反向对照，把可疑变量逐个摘掉」）：同一 commit `git clone` 到仓库**外**（clone 里没有 `.claude/`，`git worktree list` 只有它自己），两条锁所在的**整个文件共 14 passed 全绿** —— 红源由此唯一地钉在「根下有没有兄弟 worktree」这一个变量上。**定性：环境问题，非编号缺陷**（判据命令：看红的信息里点名的路径是否**全部**带 `.claude/worktrees/` 前缀，是即属本条，**别去改代码**）。**根治已做（2026-09-21，§三之二 D）：扫描面从「遍历目录树」换成「问 `git`」，两条锁不再依赖工作目录布局；同日的反向对照是把它变异回 `os.walk` 后 3 failed、恢复后 16 passed。** 本条保留的是**方法**，不是待办：与上一条同族且互补 —— 那条管**凭据 / `data/` / 单例**这类 ambient 状态，这条管**工作目录的物理布局**；判据是同一句的镜像 —— **把「它凭什么会红」逐条列出来，凡答不出「本仓代码变了」就是外部条件**，而外部条件里凡是**能由本仓声明掉的**（`.gitignore` 就能声明「这不是本仓代码」），就该换成依赖那份声明，别靠读锁的人当场判读。**留个反例做量尺**：新加的 `tests/test_repo_files.py` 只在临时小仓库里合成一个被忽略的 `.py`，故它在**干净 clone 上也能判**；只靠「本机有兄弟 worktree」才红的断言，CI 上恒绿 —— 那是伪装成防线的空白。
 
 ### 五、验证工具现状
 

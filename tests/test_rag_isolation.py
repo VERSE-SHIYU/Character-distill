@@ -35,7 +35,7 @@ async def test_context_engine_rag_none():
     from core.context_engine import ContextEngine
 
     card = _make_card("测试角色", ["温柔"], "测试背景")
-    ctx = ContextEngine(card=card, rag=None, card_id="test")
+    ctx = ContextEngine(card=card, rag=None, card_id="test", storage=None)
     result = ctx._retrieve_scenes("你好")
     assert result == "", f"Expected empty string, got: {result!r}"
     print("PASS (returns empty, no crash)")
@@ -50,7 +50,7 @@ async def test_create_session_rag_none():
 
     from core.chat_engine import ChatEngine
     llm = MagicMock()
-    engine = ChatEngine(llm, None, card, card_id="test")
+    engine = ChatEngine(llm, None, card, card_id="test", storage=None)
     assert engine.rag is None, f"Expected rag=None, got {engine.rag}"
     assert engine._ctx_engine.rag is None
     # Build system prompt should work without RAG

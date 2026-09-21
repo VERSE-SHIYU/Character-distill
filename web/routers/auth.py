@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import logging
 import os
@@ -9,6 +10,7 @@ import re
 import secrets
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -167,51 +169,136 @@ class TokenResponse(BaseModel):
 # ---- Dependency ----
 
 
+class Verdict(enum.Enum):
+    """凭据 → 身份的判定结果。**事实**，不含任何 HTTP 形态。"""
+
+    OK = "ok"
+    MISSING = "missing"      # 没带凭据 / scheme 不是 Bearer
+    EXPIRED = "expired"
+    INVALID = "invalid"      # 签名错、格式错、其它任何解不开
+    NO_SUB = "no_sub"        # 验签通过但 payload 里没有 sub
+    NO_USER = "no_user"      # sub 指向的账号不存在
+    DISABLED = "disabled"
+
+
+#: 拒绝事态 → (状态码, 文案)。**只写这一处**：三个出口的 401/403 都从这里取，
+#: 于是「中间件说 Token 已过期、依赖又是另一句」这种漂移在结构上不可能发生。
+#:
+#: 状态码与收敛前逐一相同（不变的鉴权结果）；文案统一了两处历史分歧：
+#: 过期取「Token 已过期，请重新登录」（中间件那份更完整），sub 缺失取「Token 无效」
+#: （与签名不对同类，不另立一句）。前端按状态码分支，不解析文案。
+IDENTITY_REJECTIONS: dict[Verdict, tuple[int, str]] = {
+    Verdict.MISSING: (401, "请先登录"),
+    Verdict.EXPIRED: (401, "Token 已过期，请重新登录"),
+    Verdict.INVALID: (401, "Token 无效"),
+    Verdict.NO_SUB: (401, "Token 无效"),
+    Verdict.NO_USER: (401, "用户不存在"),
+    Verdict.DISABLED: (403, "账号已被禁用"),
+}
+
+
+async def resolve_identity(
+    token: str | None,
+    secret_source: Callable[[], str],
+    storage: StorageBase,
+) -> tuple[Verdict, dict[str, Any] | None]:
+    """凭据 → (事态, 身份)。**全仓唯一的验签与取号点**（`jwt.decode` 只在这里调）。
+
+    `token=None` 包住两种「没凭据」：真的没带，以及 scheme 不是 Bearer
+    （`security_scheme` 是 HTTPBearer 且 `auto_error=False`，非 Bearer 时它返回 None）。
+    调用方拿到事后自己决定出口形态：抛异常、返回空字典、还是造 JSONResponse。
+
+    不返回 HTTP 形态是刻意的：`web/server.py` 的中间件与两个依赖依赖各自的错误通道，
+    在这里统一成一种就把另外两种形态的语义丢掉了。
+
+    **secret 以「取值函数」传入，且在判完 MISSING 之后才调。** `get_jwt_secret()` 在
+    `JWT_SECRET` 未配置/过短时是抛 `RuntimeError` 的，即「取 secret」本身会失败。若在
+    入口先取值，一条**没带凭据**的请求（本该 401）就会因为一个与它无关的配置变成 500 ——
+    鉴权结果被配置改了。传函数、按需调，是让「不需要 secret 的路径」根本不碰它。
+
+    为什么不是「让调用方自己先判一下再传值」：那会把「没凭据」的判定开出第二个出处，
+    而收敛成一处正是本函数存在的理由。时机与判定都留在这一处，调用方只给**怎么取**。
+    """
+    if not token:
+        return Verdict.MISSING, None
+    secret = secret_source()
+    try:
+        payload = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return Verdict.EXPIRED, None
+    except jwt.InvalidTokenError:
+        return Verdict.INVALID, None
+    user_id = payload.get("sub")
+    if not user_id:
+        return Verdict.NO_SUB, None
+    user = await storage.get_user_by_id(user_id)
+    if user is None:
+        return Verdict.NO_USER, None
+    if user.get("is_disabled"):
+        return Verdict.DISABLED, None
+    return Verdict.OK, user
+
+
+async def resolve_request_identity(
+    request: Request,
+    token: str | None,
+    secret_source: Callable[[], str],
+    storage: StorageBase,
+) -> tuple[Verdict, dict[str, Any] | None]:
+    """一次请求内身份**只判一次**：先看这次请求有没有算过同一个 token。
+
+    中间件在路由匹配**之前**就跑，带有效凭据的 `/api/` 请求因此先算一次；端点侧的
+    `get_current_user` / `get_optional_user` 拿到的是**同一个请求、同一个 token**，
+    再算一次就是重复（多一次 `get_user_by_id`，公开的 `/api/market/*` 写路由上实测
+    两次）。两层鉴权都留着 —— 纵深防御、纯路由 app 与 `get_jwt_secret` 注入点都要
+    适配器能独立工作；这里消掉的只是**同一次请求里的重复执行**。
+
+    **判定结果连带 token 一起存**，匹配的是 token 字符串而不是「有没有存过」：同一个
+    Request 上换了 token 就必须重算（`tests/test_identity_resolution.py` 有一条钉着
+    这点）。空 token 也照存 —— 没凭据时 `resolve_identity` 立刻返回 MISSING，不碰
+    secret 也不碰 storage，存下来省掉的正是这次空跑。
+
+    上游没存过（纯路由 app、探针 app、直接调用）就自己算 —— 与
+    `getattr(request.state, ..., None)` 取不到即视为「没有」同一条口径。
+    """
+    cached = getattr(request.state, "identity_verdict", None)
+    if cached is not None and cached[0] == token:
+        return cached[1], cached[2]
+    verdict, user = await resolve_identity(token, secret_source, storage)
+    request.state.identity_verdict = (token, verdict, user)
+    return verdict, user
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
     secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
-    """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid."""
-    if credentials is None:
-        raise HTTPException(401, "请先登录")
-    try:
-        payload = jwt.decode(credentials.credentials, secret, algorithms=[JWT_ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token 已过期")
-    except jwt.InvalidTokenError:
-        raise HTTPException(401, "Token 无效")
-    user_id = payload.get("sub")
-    if not user_id:
-        raise HTTPException(401, "Token 缺少用户标识")
-    user = await storage.get_user_by_id(user_id)
-    if user is None:
-        raise HTTPException(401, "用户不存在")
-    if user.get("is_disabled"):
-        raise HTTPException(403, "账号已被禁用")
+    """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid.
 
-    return user
+    `request` 由框架注入（`Depends` 一个不动），只为复用中间件算过的同一次判定。
+    """
+    verdict, user = await resolve_request_identity(
+        request, credentials.credentials if credentials else None, lambda: secret, storage,
+    )
+    if verdict is Verdict.OK and user is not None:
+        return user
+    status, detail = IDENTITY_REJECTIONS[verdict]
+    raise HTTPException(status, detail)
 
 
 async def get_optional_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
     secret: str = Depends(get_jwt_secret),
 ) -> dict[str, Any]:
     """Like get_current_user but returns empty dict for unauthenticated requests."""
-    if credentials is None:
-        return {}
-    try:
-        payload = jwt.decode(credentials.credentials, secret, algorithms=[JWT_ALGORITHM])
-    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-        return {}
-    user_id = payload.get("sub")
-    if not user_id:
-        return {}
-    user = await storage.get_user_by_id(user_id)
-    if user is None or user.get("is_disabled"):
-        return {}
-    return user
+    verdict, user = await resolve_request_identity(
+        request, credentials.credentials if credentials else None, lambda: secret, storage,
+    )
+    return user if verdict is Verdict.OK and user is not None else {}
 
 
 # ---- Routes ----

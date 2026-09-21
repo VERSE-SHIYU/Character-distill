@@ -49,9 +49,10 @@
 - **L12 的现状读数**（生产、入库 .py、去 tests/ 与 scripts/）：
   `check_api_allowed(` 4 处调用、`record_geo_block(` 3 处调用（另有 3 处同名的 storage 方法**定义**，不计）。
 - **L13 的现状读数**：`core/` + `adapters/` 里 10 处 `from deps import`，与 F8 逐条对上。
-- **`web/app.py` 是死代码**：Gradio，docstring 标 `.. deprecated::`，`Dockerfile` /
-  `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` 零引用（AGENTS.md 已记）。
-  故 L10 的扫描面不含它。
+- **`web/app.py` 已退役删除**（2026-09-21）：Gradio 旧入口，docstring 标 `.. deprecated::`，
+  `Dockerfile` / `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` 零引用
+  （AGENTS.md 已记）。L10 此前逐文件豁免它，豁免项随文件一并删除 —— 扫描面现在不设
+  逐文件豁免。
 - **L15 有半条命题没有观测点** → **裁定：补配对读口**。L15 的后半「OTEL 开启时 telemetry
   已注册载体」在 v5 里没有可判定的观测点 —— 载体注册不像守卫那样有与
   `register_context_carrier` 配对的读口（`set_call_guard` / `get_call_guard` 那对）。

@@ -1,0 +1,21 @@
+-- 087 — texts.characters_version：texts.characters_json 里那份名单出自哪一版识别算法
+--
+-- 为什么要落库：名单的缓存键此前只有 text_id —— 识别口径改了（覆盖范围从「前 1 万字」
+-- 改成全书、合并规则、别名收录规则），库里存的旧名单**没有任何东西能识别出来**，
+-- 于是一直被当成全书名单用。红楼梦那版只认头两章，且残缺得看不出来。
+--
+-- 版本号只有**一个**定义：`core/distiller.py::Distiller.IDENTIFY_VERSION`。本列不由
+-- 存储层填 —— `save_characters` / `get_characters_owned` 收 `version` 参数，调用方传入；
+-- 存储层不认识这个数，只负责比对。写死字面量等于第二份定义，改口径时必漏一处。
+--
+-- DEFAULT 0 = 迁移之前写下的名单（识别算法第一版，即 kk 只截前 1 万字那版）。
+-- 当前 IDENTIFY_VERSION 是 2，故所有旧缓存天然不匹配、被当无缓存重算一次 ——
+-- **这正是本列存在的目的**：不清旧数据也不信任它，靠版本号让它自己失效。
+--
+-- 迁移里**不许有 UPDATE / DELETE**：两个后端每次启动都会重跑全部迁移，写数据语句
+-- 就是每次启动都执行一遍（见 AGENTS.md 记账条目）。本列只在 ADD COLUMN 时由 DB 填
+-- 常量默认值，现有行由 SQLite 自己补 0。
+--
+-- SQLite 没有 ADD COLUMN IF NOT EXISTS，重复执行靠执行器读 PRAGMA 前置
+-- （`storage/sqlite_store.py::_apply_migration`），故此处是裸 ADD COLUMN。
+ALTER TABLE texts ADD COLUMN characters_version INTEGER DEFAULT 0;

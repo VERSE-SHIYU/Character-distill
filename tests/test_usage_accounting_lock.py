@@ -25,7 +25,7 @@
 scripts/ 与 tests/ 是开发/评测工具、不在生产路径，不归本锁红绿。
 
 变异（自测见本文件末尾两个 test_mutation_*）：
-  - 删掉 `_run_map_concurrent` 里那把 `distill_map` 落账 → 直接调用形态的那处 map 分片红
+  - 删掉 `_run_map_concurrent` 里那把整阶段汇总落账 → 直接调用形态的那处 map 分片红
   - 删掉 market 里 `at_reply` 的落账 → 「方法当值搬走」形态的那处红
 """
 from __future__ import annotations
@@ -520,7 +520,7 @@ def _mutate(rel: str, anchor: str, replacement: str) -> str:
 def test_mutation_dropping_a_record_call_goes_red():
     """变异自测（直接调用形态）：拿掉 Map 段的落账 → 锁红并点名那处 async_chat。"""
     rel = "core/distiller.py"
-    anchor = '            self._try_record_usage("distill_map", merged)\n'
+    anchor = '            self._try_record_usage(usage_action, merged)\n'
     mutated = _mutate(rel, anchor, "            pass  # 变异：落账调用被拿掉\n")
 
     _, _, dropped, _ = _audit({rel: mutated})
@@ -535,7 +535,7 @@ def test_mutation_dropping_a_value_form_record_call_goes_red():
     第一版普查只查 Call 形态，整类漏掉 to_thread(llm.chat, ...) —— 这条钉住那个盲区。
     """
     rel = "web/routers/market.py"
-    anchor = '        try_record_usage(storage, user["id"], llm, "chat_ai_reply", source="market")\n'
+    anchor = '        try_record_usage(storage, llm, "chat_ai_reply", source="market")\n'
     mutated = _mutate(rel, anchor, "        pass  # 变异：落账调用被拿掉\n")
 
     _, _, dropped, _ = _audit({rel: mutated})

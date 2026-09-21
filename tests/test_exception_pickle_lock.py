@@ -27,12 +27,9 @@ import pickle
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+import repo_files
 
-# 排除目录：vendored 第三方（services/gptsovits，22738 个 .py、未入库）与构建/缓存产物。
-# 只扫本仓库自有代码 —— 第三方异常的序列化行为不归我们管，也不该由本锁红绿。
-_PRUNED_DIRS = {"gptsovits", "node_modules", ".git", "__pycache__", ".venv", "venv",
-                "site-packages", "dist", "build", ".mypy_cache", ".pytest_cache"}
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 _EXC_SUFFIX = ("Error", "Exception", "Warning", "Exit", "Interrupt")
 
@@ -107,17 +104,25 @@ def _has_custom_state(cls: ast.ClassDef) -> bool:
 
 
 def _census() -> set[tuple[str, str]]:
+    """面 = 仓库自有 `.py`（问 git，不遍历目录树）—— 见 `tests/repo_files.py`。
+
+    `rglob` 那版会把 `.claude/worktrees/<兄弟 worktree>/` 与本地产物（`e2e/scratch/**`、
+    `scripts/import_shiyu.py`）一起当成本仓代码：红绿于是取决于别的会话开了几个 worktree。
+    实测见 AGENTS.md §四与 §三之二 D。
+
+    变异：把 `repo_py` 换回 `Path.rglob("*.py")` → 现场 .claude/worktrees 下的异常类
+    （各 worktree 都有一份 `adapters/llm_adapter.py` 等）涌入 `census - registered` → 红。
+    """
     found: set[tuple[str, str]] = set()
-    for p in sorted(REPO_ROOT.rglob("*.py")):
-        if set(p.relative_to(REPO_ROOT).parts) & _PRUNED_DIRS:
-            continue
+    for rel in repo_files.repo_py(REPO_ROOT):
+        p = REPO_ROOT / rel
         try:
             tree = ast.parse(p.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue
         for name, cls in _exception_classes(tree).items():
             if _has_custom_state(cls):
-                found.add((p.relative_to(REPO_ROOT).as_posix(), name))
+                found.add((rel, name))
     return found
 
 

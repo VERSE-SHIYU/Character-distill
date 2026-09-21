@@ -36,7 +36,6 @@ class TestGapLogic:
         engine._memory = None
         engine._storage = MagicMock()
         engine._card_id = "test-card"
-        engine._user_id = "test-user"
         engine._group_id = ""
         engine._affinity_service = AffinityService()
         engine._reaction_service = MagicMock()

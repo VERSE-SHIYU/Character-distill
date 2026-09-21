@@ -172,6 +172,7 @@ async def run_case(
         card=card,
         memory_manager=None,   # eval 中不依赖外部 memory manager
         card_id=f"eval-{uuid4().hex[:8]}",
+        storage=None,
     )
     engine._session_id = f"eval-{uuid4().hex[:12]}"
     engine.agent_mode = (mode == "agent")
@@ -326,7 +327,7 @@ async def _run_legacy(
     expected: list[str], keyword: str | None,
 ) -> CaseResult:
     """Legacy 模式：engine.chat() → 采集 system prompt 指标。"""
-    engine = ChatEngine(llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}")
+    engine = ChatEngine(llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}", storage=None)
     engine._session_id = f"eval-{uuid4().hex[:12]}"
     engine.agent_mode = False
 
@@ -365,7 +366,7 @@ async def _run_agent(
     expected: list[str], keyword: str | None,
 ) -> CaseResult:
     """Agent 模式：手动 build → AgentLoop → LLM 最终生成，全指标采集。"""
-    engine = ChatEngine(llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}")
+    engine = ChatEngine(llm=llm, rag=None, card=card, card_id=f"eval-{uuid4().hex[:8]}", storage=None)
     engine._session_id = f"eval-{uuid4().hex[:12]}"
     engine.agent_mode = True
 

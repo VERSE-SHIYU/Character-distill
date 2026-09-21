@@ -444,6 +444,7 @@ def test_chat_engine_last_traces_wired_on_both_paths():
         card=make_card(),
         memory_manager=FakeMemory(),
         card_id="card_test",
+        storage=None,
     )
 
     # 非 agent：_compose_context（_compose_system_prompt 与 group_session 共用它）

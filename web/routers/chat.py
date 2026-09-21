@@ -18,6 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
+from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
@@ -209,7 +210,6 @@ async def _ensure_session(
         engine.user_role = db_session["user_role"]
     # Restore affinity from DB
     engine._session_id = session_id
-    engine._user_id = user_id
     try:
         data, source = await read_persisted_affinity(session_id, storage)
         if source == 'state':
@@ -306,8 +306,6 @@ async def _do_chat(
     try:
         engine = session.get("engine")
         if engine:
-            engine._storage = storage
-            engine._user_id = user_id
             engine._session_id = session_id
             engine._ctx_engine.web_search_enabled = web_search
             engine.affinity_enabled = affinity_enabled
@@ -339,7 +337,7 @@ async def _do_chat(
     # Dual-write to SQLite (non-fatal on failure)
     user_msg_id = None
     char_msg_id = None
-    try:
+    async with nonfatal("chat", "dual-write messages"):
         if not hidden:
             user_rec = await storage.save_message(
                 session_id, "user", msg, "",
@@ -365,17 +363,13 @@ async def _do_chat(
             last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
             new_summary = f"历史摘要：{engine.last_summary}"
             if new_summary != last_saved:
-                try:
+                async with nonfatal("chat", "save summary"):
                     sum_rec = await storage.save_message(
                         session_id, "summary", new_summary, "",
                     )
                     ids_to_add.append(sum_rec["id"])
-                except Exception as exc:
-                    print(f"[chat] Save summary failed (non-fatal): {exc}")
 
         session.setdefault("message_ids", []).extend(ids_to_add)
-    except Exception as exc:
-        print(f"[chat] Dual-write messages failed (non-fatal): {exc}")
 
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
@@ -431,8 +425,6 @@ async def _do_chat_stream(
 
     engine = session.get("engine")
     if engine:
-        engine._storage = storage
-        engine._user_id = user_id
         engine._session_id = session_id
         engine._ctx_engine.web_search_enabled = web_search
         engine.affinity_enabled = affinity_enabled
@@ -451,20 +443,16 @@ async def _do_chat_stream(
         rag_context = ""
         user_msg_id: int | None = None
         char_msg_id: int | None = None
-        try:
+        async with nonfatal("chat", "save user message"):
             if not hidden:
                 user_rec = await storage.save_message(
                     session_id, "user", msg, "",
                     reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
                 )
                 user_msg_id = user_rec["id"]
-        except Exception as exc:
-            print(f"[chat] Save user message failed (non-fatal): {exc}")
 
         try:
             engine = session["engine"]
-            engine._storage = storage
-            engine._user_id = user_id
             print(f"[chat] _do_chat_stream session={session_id} history={len(engine.history) if engine else 0} messages")
             # Prepend quote context for LLM if replying
             llm_msg = f'[引用: "{reply_to_preview}"]\n{msg}' if reply_to_preview else msg
@@ -501,7 +489,7 @@ async def _do_chat_stream(
             if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
                 engine.history[-1]["retracted"] = True
 
-            try:
+            async with nonfatal("chat", "save assistant message"):
                 # 同 _do_chat：证据在本轮流式生成期间写入 engine.last_traces，
                 # 后面的 post_stream_process 是另一轮，取早了/晚了都是错的那一轮。
                 char_rec = await storage.save_message(
@@ -509,8 +497,6 @@ async def _do_chat_stream(
                     evidence=evidence_to_json(getattr(engine, "last_traces", [])),
                 )
                 char_msg_id = char_rec["id"]
-            except Exception as exc:
-                print(f"[chat] Save assistant message failed (non-fatal): {exc}")
 
             msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
             if msg_ids:
@@ -524,13 +510,11 @@ async def _do_chat_stream(
                 last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
                 new_summary = f"历史摘要：{engine.last_summary}"
                 if new_summary != last_saved:
-                    try:
+                    async with nonfatal("chat", "save summary"):
                         sum_rec = await storage.save_message(
                             session_id, "summary", new_summary, "",
                         )
                         session.setdefault("message_ids", []).append(sum_rec["id"])
-                    except Exception as exc:
-                        print(f"[chat] Save summary failed (non-fatal): {exc}")
 
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],

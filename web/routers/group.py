@@ -20,6 +20,7 @@ from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
+from core.nonfatal import nonfatal
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
@@ -144,6 +145,7 @@ async def _rebuild_group_session(
             per_user_llm, text_rag_cache[text_id], card,
             memory_manager=memory_manager,
             card_id=card_id,
+            storage=storage,
         )
         engines[card_id] = engine
 
@@ -216,7 +218,6 @@ async def _run_group_affinity(
     main_loop = asyncio.get_running_loop()
     for card_id, signals in by_card.items():
         engine = group.engines[card_id]
-        engine._storage = storage
         engine._main_loop = main_loop
         # 不设 _session_id —— 群聊只更新内存，不写 DB
         engine.ingest_reaction_signals([
@@ -335,6 +336,7 @@ async def create_group(
             per_user_llm, text_rag_cache[text_id], card,
             memory_manager=memory_manager,
             card_id=card_id,
+            storage=storage,
         )
         engines[card_id] = engine
         card_infos.append({"card_id": card_id, "name": card.name})
@@ -506,7 +508,7 @@ async def send_message(
     user_speaker = req.speaker or group.speaker_name
     user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
-    try:
+    async with nonfatal("group", "save messages"):
         await storage.save_group_message(
             group_id, user_speaker, "user", req.message, user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
@@ -515,8 +517,6 @@ async def send_message(
             group_id, group.engines[req.target_card_id].card.name,
             "assistant", resp, req.target_card_id,
         )
-    except Exception as exc:
-        print(f"[group] Save messages failed (non-fatal): {exc}")
 
     # 后台评估点赞触发的 affinity 变化（不阻塞回复）
     asyncio.create_task(
