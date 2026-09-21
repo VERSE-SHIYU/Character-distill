@@ -8,14 +8,17 @@
 把出口整个换成 `list.append`，用**不带身份**的 Distiller 跑，断言的是「出口被触发、
 action 对」—— 出口在参数为空时照样被调用，只是自己 early-return。
 
-**本锁补的那一维**：身份**值**是否到位、是否落在库里。分四层，各锁一维：
+**本锁补的那一维**：身份**值**是否到位、是否落在库里。分五层，各锁一维：
 
   1. 派生面传播 —— `ctx_thread` / `ctx_submit` 派生出去之后还读不读得到（各一条）；
   2. 写口唯一 —— 全仓 AST 现算：`LLM_CALLER.set` 的调用点只有两处，都在既定出口上
      （`AuthMiddleware.dispatch` 与 `core.request_context.system_llm_context`）；
-  3. 形态 —— `Distiller` 不再持有 `_user_id` 实例属性；`web/` 里不再有对 distiller
+  3. **身份 ContextVar 唯一** —— 全仓 AST 现算：`ContextVar(...)` 的定义只有两处
+     （`LLM_CALLER` 与 `_EMBED_DEADLINE`）。**这一条挡的是「又建一份身份」** ——
+     第 2 条只管「谁写」，管不了「写进第几个变量」；
+  4. 形态 —— `Distiller` 不再持有 `_user_id` 实例属性；`web/` 里不再有对 distiller
      实例写身份的那两行（「两条路各写一份」的复发形态）；
-  4. 落库 —— 真 app + 真 `AuthMiddleware` + 真 `/start` 路由，断言 `usage_stats`
+  5. 落库 —— 真 app + 真 `AuthMiddleware` + 真 `/start` 路由，断言 `usage_stats`
      行数 == 出口发出笔数，且 `user_id` 是请求身份。
 
 **身份只有一份。** 读口是 `core.request_context.current_user_id()`，它读的就是门用的
@@ -179,7 +182,79 @@ def test_identity_write_scan_is_not_vacuous():
     assert len(hits) == 1, f"扫描器漏掉了合成写口（{hits}）—— 判据面失效"
 
 
-# ── 3. 形态 ────────────────────────────────────────────────────────────────
+# ── 3. 身份 ContextVar 唯一 ─────────────────────────────────────────────────
+
+
+def _contextvar_defs(paths: list[Path]) -> list[str]:
+    """全仓现算：`ContextVar(...)` 的**定义**点，返回 `file:line 目标名`。
+
+    判据落在 Call 上（裸 `ContextVar(...)` 与 `contextvars.ContextVar(...)` 都认），
+    名字事后按行号回填 —— 只扫赋值语句会漏掉「定义在别处、只是没用赋值接住」的形态。
+    查不出名字的记 `<匿名>`，**照样是一次命中**：判断的是「这里新建了一个上下文变量」，
+    名字只用来读。
+    """
+    hits: list[str] = []
+    for p in paths:
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        names: dict[int, str] = {}
+        for n in ast.walk(tree):
+            if isinstance(n, ast.AnnAssign) and isinstance(n.value, ast.Call):
+                names[n.value.lineno] = ast.unparse(n.target)
+            elif isinstance(n, ast.Assign) and len(n.targets) == 1 \
+                    and isinstance(n.value, ast.Call):
+                names[n.value.lineno] = ast.unparse(n.targets[0])
+        for n in ast.walk(tree):
+            if not isinstance(n, ast.Call):
+                continue
+            f = n.func
+            if (isinstance(f, ast.Name) and f.id == "ContextVar") \
+                    or (isinstance(f, ast.Attribute) and f.attr == "ContextVar"):
+                rel = p.relative_to(_REPO).as_posix()
+                hits.append(f"{rel}:{n.lineno} {names.get(n.lineno, '<匿名>')}")
+    return sorted(hits)
+
+
+def _contextvar_def(path: Path, name: str) -> str:
+    """某一个具名 ContextVar 的 `file:line 名字` —— 白名单按现算取，不手抄行号。"""
+    for h in _contextvar_defs([path]):
+        if h.endswith(" " + name):
+            return h
+    raise AssertionError(f"{path.name} 里没有名为 {name} 的 ContextVar 定义 —— 机制没了")
+
+
+def test_only_one_identity_contextvar_exists():
+    """全仓上下文变量只有两个：身份一个、嵌入超时一个。
+
+    **白名单按 `file:line 名字` 整串钉死，不按名字**：按名字放行的话，在另一个模块里
+    再写一遍 `LLM_CALLER = ContextVar("llm_caller")` 也能过 —— 而那正是要挡的形态
+    （`web/` 没有 `__init__.py`，同名两个变量各看各的，中间件设的值另一边读不到）。
+    新增一条 ContextVar 时，**先回答它是不是第二份身份**，再来改这里。
+    """
+    hits = _contextvar_defs(_py_files(_REPO / "core", _REPO / "web", _REPO / "adapters"))
+    allowed = sorted([
+        _contextvar_def(_REPO / "core" / "embeddings.py", "_EMBED_DEADLINE"),
+        _contextvar_def(_REPO / "core" / "request_context.py", "LLM_CALLER"),
+    ])
+    assert hits == allowed, (
+        f"上下文变量不止这两个：{hits}，白名单是 {allowed}。带着用户身份的那种只能有 "
+        "`LLM_CALLER` 一份 —— 多一份就意味着有两处「谁在调」的答案，中间件只写得进其中一个。")
+
+
+def test_contextvar_scan_is_not_vacuous():
+    """负控：扫描器对**合成**出来的第三个定义必须报得出来 —— 否则上一条是在假绿。"""
+    probe = _REPO / "e2e" / "scratch" / "_synthetic_ctxvar_probe.py"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text(
+        'import contextvars\nX = contextvars.ContextVar("x")\n', encoding="utf-8")
+    try:
+        hits = _contextvar_defs([probe])
+    finally:
+        probe.unlink(missing_ok=True)
+    assert len(hits) == 1 and hits[0].endswith(" X"), (
+        f"扫描器漏掉了合成的 ContextVar 定义（{hits}）—— 判据面失效")
+
+
+# ── 4. 形态 ────────────────────────────────────────────────────────────────
 
 
 def test_distiller_holds_no_user_identity_attribute():
