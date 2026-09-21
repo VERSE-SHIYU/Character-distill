@@ -10,13 +10,17 @@ sub 缺失 —— 中间件「Token 无效」vs `get_current_user`「Token 缺�
 **期望表写在本文件里，不 import 生产那张表。** import 过来断言等于让被测对象判自己：
 表改错时测试跟着一起改，什么也锁不住。
 
-**三个出口怎么观测**：中间件只能走真 app（`server.app` + 真 `AuthMiddleware`）——
+**三个出口怎么观测**：中间件走真 app（`server.app` + 真 `AuthMiddleware`）——
 它挂在 ASGI 栈上，没有别的入口；`get_current_user` / `get_optional_user` 是普通协程，
 带显式参数直调，不经路由。这样三个出口的观测各自都在真路径上，且互不遮挡
 （走路由调 `get_current_user` 的话，中间件会先返回 401，永远看不到第二个出口）。
+**唯有一处例外**：锁中间件自己的 scheme 判断时，真 app 反而挡视线 —— 受保护路由也
+`Depends(get_current_user)`，会把同一个请求再拒一次，中间件放行了也看不出来。那一处
+单独装中间件 + 不装鉴权依赖的探针路由来测（`test_basic_scheme_with_a_valid_jwt_is_not_authenticated`）。
 
-**边界**：锁的是「七事态 × 三出口」的**可观测映射**，外加一条静态锁（`jwt.decode`
-调用点全仓唯一）。不锁枚举名、不锁表的数据结构、不锁门禁怎么用这些出口。
+**边界**：锁的是「七事态 × 三出口」的**可观测映射**、两条「没凭据/凭据 scheme 不对时
+不读 secret、不通过鉴权」的判据，外加一条静态锁（`jwt.decode` 调用点全仓唯一）。
+不锁枚举名、不锁表的数据结构、不锁门禁怎么用这些出口。
 
 Run: pytest tests/test_identity_resolution.py -v
 """
@@ -30,10 +34,11 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
+from starlette.requests import Request
 
 import deps
 import server
@@ -43,6 +48,7 @@ from routers.auth import (
     get_current_user,
     get_jwt_secret,
     get_optional_user,
+    security_scheme,
 )
 from storage.sqlite_store import SQLiteStore
 
@@ -194,7 +200,77 @@ def test_every_state_maps_identically_across_the_three_exits(state, store, user,
     assert optional == {}, f"{where} 非 OK 时 get_optional_user 必须返回空身份，实得 {optional}"
 
 
-# ── 2. 收敛形态：`jwt.decode` 全仓只有一个调用点 ─────────────────────────────
+# ── 2. 没凭据的路径不读 secret；非 Bearer 一律不通过鉴权 ────────────────────
+
+
+def _http_request(headers: dict[str, str]) -> Request:
+    """最小 ASGI scope —— 只为把请求头喂给 `security_scheme` 这个被测对象。"""
+    return Request({
+        "type": "http",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "server": ("testserver", 80),
+        "client": ("testclient", 1234),
+    })
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Basic YWJj"}],
+    ids=["no_header", "basic_bogus"],
+)
+def test_missing_credentials_never_read_the_secret(headers, store, monkeypatch, client):
+    """没带凭据的请求不该碰 `JWT_SECRET`。
+
+    中间件若在**知道这条请求带没带凭据之前**就去取 secret，`JWT_SECRET` 未配置时
+    「请先登录」会变成 500 —— 鉴权结果被一个与本请求无关的配置改变。所以 secret 以
+    **取值函数**传入：先判 MISSING，判到就直接返回，根本不调用它。
+    """
+    monkeypatch.delenv("JWT_SECRET", raising=False)
+    r = client.get(PROTECTED, headers=headers)
+    assert (r.status_code, r.json().get("detail")) == (401, "请先登录"), \
+        f"没凭据的请求被 secret 配置影响了：{r.status_code} {r.text[:200]}"
+
+
+def test_basic_scheme_with_a_valid_jwt_is_not_authenticated(store, user, client):
+    """`Authorization: Basic <合法 JWT>` **不得**通过鉴权。
+
+    弱化版（`Basic YWJj`）证明不了这件事：它本就不是合法 JWT，即使 scheme 判断被删掉，
+    也只是从「请先登录」变成「Token 无效」，状态码仍是 401 —— 判据只剩文案差异，而文案
+    不是安全属性。这里配的是**真签出来的 token**，锁的是「不得通过鉴权」本身。
+
+    **中间件出口必须单独装中间件来测。** 拿真 app 的受保护路由测不出来：那条路由自己也
+    `Depends(get_current_user)`，会把同一个请求再拒一次，于是中间件放行了也看不见
+    —— 实测把 scheme 判断删掉（M2），真 app 那条断言仍然绿。探针路由不装鉴权依赖，
+    中间件的决定就是唯一的闸门，放行与否直接暴露成 200/401。
+    """
+    token = _create_access_token(user["id"], user["username"], get_jwt_secret())
+    headers = {"Authorization": f"Basic {token}"}
+
+    probe = FastAPI()
+    probe.add_middleware(server.AuthMiddleware)
+
+    @probe.get("/api/probe")
+    def _probe(request: Request):
+        return {"id": (request.state.user or {}).get("id")}
+
+    r = TestClient(probe, raise_server_exceptions=False).get("/api/probe", headers=headers)
+    assert r.status_code != 200, f"Basic + 合法 JWT 通过了中间件鉴权：{r.status_code} {r.text[:200]}"
+    assert (r.status_code, r.json().get("detail")) == (401, "请先登录")
+
+    # 依赖侧：直接驱动真实的 `security_scheme`（HTTPBearer）。不手工构造
+    # `credentials=None` 代替 —— 那等于把被测的 scheme 判断整个跳过。
+    assert _run(security_scheme(_http_request(headers))) is None, \
+        "HTTPBearer 对 Basic scheme 给出了凭据 —— 它的 scheme 判断没了"
+
+    # 真 app 上的端到端兜底：不管哪一层拦下的，都不得是 200。
+    assert client.get(PROTECTED, headers=headers).status_code != 200
+
+
+# ── 3. 收敛形态：`jwt.decode` 全仓只有一个调用点 ─────────────────────────────
 
 
 def _py_files(*roots: pathlib.Path) -> list[pathlib.Path]:

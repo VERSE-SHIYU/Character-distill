@@ -317,9 +317,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if not (path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES) or not path.startswith("/api/")):
             auth_header = request.headers.get("Authorization", "")
             scheme, _, token = auth_header.partition(" ")
+            # secret 传**函数本身**，不在这里取值：取值会抛（JWT_SECRET 未配置时），
+            # 而一条没带凭据的请求本该 401、不该因为配置变成 500。按需取值见 resolve_identity。
             verdict, user = await resolve_identity(
                 token if scheme.lower() == "bearer" else None,
-                get_jwt_secret(),
+                get_jwt_secret,
                 get_storage(),
             )
             if verdict is not Verdict.OK:

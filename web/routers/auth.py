@@ -10,6 +10,7 @@ import re
 import secrets
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -198,7 +199,7 @@ IDENTITY_REJECTIONS: dict[Verdict, tuple[int, str]] = {
 
 async def resolve_identity(
     token: str | None,
-    secret: str,
+    secret_source: Callable[[], str],
     storage: StorageBase,
 ) -> tuple[Verdict, dict[str, Any] | None]:
     """凭据 → (事态, 身份)。**全仓唯一的验签与取号点**（`jwt.decode` 只在这里调）。
@@ -209,9 +210,18 @@ async def resolve_identity(
 
     不返回 HTTP 形态是刻意的：`web/server.py` 的中间件与两个依赖依赖各自的错误通道，
     在这里统一成一种就把另外两种形态的语义丢掉了。
+
+    **secret 以「取值函数」传入，且在判完 MISSING 之后才调。** `get_jwt_secret()` 在
+    `JWT_SECRET` 未配置/过短时是抛 `RuntimeError` 的，即「取 secret」本身会失败。若在
+    入口先取值，一条**没带凭据**的请求（本该 401）就会因为一个与它无关的配置变成 500 ——
+    鉴权结果被配置改了。传函数、按需调，是让「不需要 secret 的路径」根本不碰它。
+
+    为什么不是「让调用方自己先判一下再传值」：那会把「没凭据」的判定开出第二个出处，
+    而收敛成一处正是本函数存在的理由。时机与判定都留在这一处，调用方只给**怎么取**。
     """
     if not token:
         return Verdict.MISSING, None
+    secret = secret_source()
     try:
         payload = jwt.decode(token, secret, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
@@ -236,7 +246,7 @@ async def get_current_user(
 ) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid."""
     verdict, user = await resolve_identity(
-        credentials.credentials if credentials else None, secret, storage,
+        credentials.credentials if credentials else None, lambda: secret, storage,
     )
     if verdict is Verdict.OK and user is not None:
         return user
@@ -251,7 +261,7 @@ async def get_optional_user(
 ) -> dict[str, Any]:
     """Like get_current_user but returns empty dict for unauthenticated requests."""
     verdict, user = await resolve_identity(
-        credentials.credentials if credentials else None, secret, storage,
+        credentials.credentials if credentials else None, lambda: secret, storage,
     )
     return user if verdict is Verdict.OK and user is not None else {}
 
