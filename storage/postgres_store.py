@@ -4712,37 +4712,20 @@ class PostgresStore(StorageBase):
     # ──── Market publish / version / fork API ────
 
     async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
-        """发布：已有「调用者自己的发布副本」时原地复用（`_published_copy_of`）。
+        """把草稿发布到市场：一草稿至多一张副本，重复发布就地更新（单条 upsert）。
 
-        他人对同一张卡的公开 fork 不是发布副本，不会被复用 —— 判据是同一作者。
+        判据是 `published_from` 这**一列**（同作者由复合外键保证），「至多一张」由
+        `cards_published_from_live_uniq` 在库里强制 —— 所以这里是**一条**语句，
+        不再是「先查后插」：那两步之间既没有事务也没有约束，并发下会各插一张。
+
+        更新分支的语义（裁定：下架 = 撤回发布）：**复用原副本行**，内容取草稿当前值
+        （插入与更新同源于下面这一次读），只把 `visibility` 拨回 `'public'`；点赞、
+        他人 fork、版本历史都留在原行上，不新建。
+        他人对同一张卡的公开 fork 不是发布副本 —— 它 `published_from` 为空，不参与本判据。
         """
         try:
             async with await self._connect() as conn:
-                existing = await conn.fetchrow(
-                    f"SELECT id FROM cards WHERE EXISTS (SELECT 1 FROM cards d"
-                    f" WHERE d.id = $1 AND d.user_id = $2 AND {_published_copy_of('cards', 'd')})",
-                    card_id, user_id,
-                )
-                if existing:
-                    fork_id = existing[0]
-                    await conn.execute(
-                        """UPDATE cards SET market_description = $1, market_tags = $2, publish_message = $3,
-                           visibility = 'public'
-                           WHERE id = $4 AND deleted_at IS NULL""",
-                        description, tags, message, fork_id,
-                    )
-                    ver_row = await conn.fetchrow(
-                        "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = $1",
-                        fork_id,
-                    )
-                    next_ver = ver_row[0] if ver_row else 1
-                    await conn.execute(
-                        """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
-                           VALUES ($1, $2, $3, $4, $5, '{}', $6)""",
-                        uuid.uuid4().hex[:12], fork_id, user_id, next_ver, message, card_json_snapshot,
-                    )
-                    return fork_id
-
+                # 草稿读一次：INSERT 与 DO UPDATE 共用这批值（EXCLUDED 即本行的 VALUES）
                 src = await conn.fetchrow(
                     """SELECT text_id, name, card_json, avatar_data, voice_ref_json
                        FROM cards WHERE id = $1 AND deleted_at IS NULL""",
@@ -4751,19 +4734,35 @@ class PostgresStore(StorageBase):
                 if not src:
                     return None
 
-                fork_id = uuid.uuid4().hex[:12]
-                await conn.execute(
+                row = await conn.fetchrow(
                     """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data, user_id,
                                           visibility, published_from, likes, voice_ref_json,
                                           market_description, market_tags, publish_message)
-                       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, 'public', $7, 0, $8, $9, $10, $11)""",
-                    fork_id, src["text_id"], src["name"], src["card_json"], src["avatar_data"] or "", user_id, card_id,
+                       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, $5, $6, 'public', $7, 0, $8, $9, $10, $11)
+                       ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE SET
+                           visibility = 'public',
+                           name = EXCLUDED.name,
+                           card_json = EXCLUDED.card_json,
+                           avatar_data = EXCLUDED.avatar_data,
+                           voice_ref_json = EXCLUDED.voice_ref_json,
+                           market_description = EXCLUDED.market_description,
+                           market_tags = EXCLUDED.market_tags,
+                           publish_message = EXCLUDED.publish_message
+                       RETURNING id""",
+                    uuid.uuid4().hex[:12], src["text_id"], src["name"], src["card_json"],
+                    src["avatar_data"] or "", user_id, card_id,
                     src["voice_ref_json"] or "", description, tags, message,
                 )
+                fork_id = row["id"]
+                ver_row = await conn.fetchrow(
+                    "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = $1",
+                    fork_id,
+                )
+                next_ver = ver_row[0] if ver_row else 1
                 await conn.execute(
                     """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
-                       VALUES ($1, $2, $3, 1, $4, '{}', $5)""",
-                    uuid.uuid4().hex[:12], fork_id, user_id, message, card_json_snapshot,
+                       VALUES ($1, $2, $3, $4, $5, '{}', $6)""",
+                    uuid.uuid4().hex[:12], fork_id, user_id, next_ver, message, card_json_snapshot,
                 )
             return fork_id
         except Exception as exc:

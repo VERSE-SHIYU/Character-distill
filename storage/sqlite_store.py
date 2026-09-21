@@ -5623,51 +5623,21 @@ class SQLiteStore(StorageBase):
     # ──── Market publish / version / fork API ────
 
     async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
-        """Publish a card to market by creating an independent fork.
+        """把草稿发布到市场：一草稿至多一张副本，重复发布就地更新（单条 upsert）。
 
-        Creates a new card record (fork) with visibility='public', writes v1
-        card_versions entry.  Returns the new card_id, or None on failure.
+        判据是 `published_from` 这**一列**（同作者由复合外键保证），「至多一张」由
+        `cards_published_from_live_uniq` 在库里强制 —— 所以这里是**一条**语句，
+        不再是「先查后插」：那两步之间既没有事务也没有约束，并发下会各插一张。
 
-        If a published fork already exists — i.e. a card that is **the caller's** published
-        copy of `card_id` (`_published_copy_of`) — updates that fork in place instead —
-        idempotent. 他人对同一张卡的公开 fork 不是发布副本，不会被复用 —— 判据是同一作者。
+        更新分支的语义（裁定：下架 = 撤回发布）：**复用原副本行**，内容取草稿当前值
+        （插入与更新同源于下面这一次读），只把 `visibility` 拨回 `'public'`；点赞、
+        他人 fork、版本历史都留在原行上，不新建。
+        他人对同一张卡的公开 fork 不是发布副本 —— 它 `published_from` 为空，不参与本判据。
         """
         try:
             now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
-                # Check if the caller's published fork already exists（引用关系定义）
-                cursor = await conn.execute(
-                    f"SELECT id FROM cards WHERE EXISTS (SELECT 1 FROM cards d"
-                    f" WHERE d.id = ? AND d.user_id = ? AND {_published_copy_of('cards', 'd')})",
-                    (card_id, user_id),
-                )
-                existing = await cursor.fetchone()
-                if existing:
-                    # Re-publish: update existing fork
-                    fork_id = existing["id"]
-                    await conn.execute(
-                        """UPDATE cards SET market_description = ?, market_tags = ?, publish_message = ?,
-                           visibility = 'public'
-                           WHERE id = ? AND deleted_at IS NULL""",
-                        (description, tags, message, fork_id),
-                    )
-                    # Write next version
-                    cursor = await conn.execute(
-                        "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = ?",
-                        (fork_id,),
-                    )
-                    row = await cursor.fetchone()
-                    next_ver = row[0] if row else 1
-                    await conn.execute(
-                        """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
-                           VALUES (?, ?, ?, ?, ?, '{}', ?)""",
-                        (uuid.uuid4().hex[:12], fork_id, user_id, next_ver, message, card_json_snapshot),
-                    )
-                    await conn.commit()
-                    return fork_id
-
-                # First-time publish: create a fork (independent copy)
-                # Read original card data
+                # 草稿读一次：INSERT 与 DO UPDATE 共用这批值（EXCLUDED 即本行的 VALUES）
                 cursor = await conn.execute(
                     """SELECT text_id, name, card_json, avatar_data, voice_ref_json
                        FROM cards WHERE id = ? AND deleted_at IS NULL""",
@@ -5677,23 +5647,44 @@ class SQLiteStore(StorageBase):
                 if not src:
                     return None
 
-                fork_id = uuid.uuid4().hex[:12]
-                await conn.execute(
+                # RETURNING 需要 SQLite >= 3.35（草稿卡 id 只在冲突时才知道，不能再自己拼）
+                cursor = await conn.execute(
                     """INSERT INTO cards (id, text_id, name, card_json, created_at, avatar_data, user_id,
                                           visibility, published_from, likes, voice_ref_json,
                                           market_description, market_tags, publish_message)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, ?, ?)""",
-                    (fork_id,
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'public', ?, 0, ?, ?, ?, ?)
+                       ON CONFLICT (published_from) WHERE deleted_at IS NULL DO UPDATE SET
+                           visibility = 'public',
+                           name = EXCLUDED.name,
+                           card_json = EXCLUDED.card_json,
+                           avatar_data = EXCLUDED.avatar_data,
+                           voice_ref_json = EXCLUDED.voice_ref_json,
+                           market_description = EXCLUDED.market_description,
+                           market_tags = EXCLUDED.market_tags,
+                           publish_message = EXCLUDED.publish_message
+                       RETURNING id""",
+                    (uuid.uuid4().hex[:12],
                      src["text_id"], src["name"], src["card_json"],
                      now,
                      src["avatar_data"], user_id, card_id,
                      src["voice_ref_json"],
                      description, tags, message),
                 )
+                row = await cursor.fetchone()
+                if not row:
+                    return None
+                fork_id = row[0]
+
+                cursor = await conn.execute(
+                    "SELECT COALESCE(MAX(version_num), 0) + 1 FROM card_versions WHERE card_id = ?",
+                    (fork_id,),
+                )
+                row = await cursor.fetchone()
+                next_ver = row[0] if row else 1
                 await conn.execute(
                     """INSERT INTO card_versions (id, card_id, user_id, version_num, publish_message, diff_json, card_json_snapshot)
-                       VALUES (?, ?, ?, 1, ?, '{}', ?)""",
-                    (uuid.uuid4().hex[:12], fork_id, user_id, message, card_json_snapshot),
+                       VALUES (?, ?, ?, ?, ?, '{}', ?)""",
+                    (uuid.uuid4().hex[:12], fork_id, user_id, next_ver, message, card_json_snapshot),
                 )
                 await conn.commit()
             return fork_id
