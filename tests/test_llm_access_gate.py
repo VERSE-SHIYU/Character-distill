@@ -71,7 +71,7 @@ def _gate():
 
 
 def _ctx():
-    """`web/request_context.py`：请求身份上下文（C2b 建，门在 C3 import 它）。
+    """`core/request_context.py`：请求身份上下文（C2b 建于 web/，缺陷 35 下沉到 core）。
 
     与 `_gate()` 分开是职责线，不是搬家：`Caller` / `LLM_CALLER` / `system_llm_context`
     是「谁在调」这个**事实**；`web/llm_gate.py` 的 geo 判定是「许不许调」这个**策略**。
@@ -79,7 +79,7 @@ def _ctx():
     读策略一律走 `_gate()`，两个模块的身份对象必须同一个（`web/` 无 `__init__.py`，
     换个模块名会 import 出**第二个** ContextVar，两边都看不见对方设的值）。
     """
-    return _mod("web.request_context")
+    return _mod("core.request_context")
 
 
 def _resolution():

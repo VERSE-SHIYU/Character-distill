@@ -203,7 +203,7 @@ def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
     没有单例路径：`llm is None ⟺ get_llm() is None`，取单例那条分支走不到（缺陷 37）。
 
     storage 在这里注入：这是蒸馏器**唯一**的生产装配出口，七个蒸馏路由全走它。
-    身份不在这里 —— 它是请求级的，由 `core.request_identity` 的上下文带（缺陷 35）。
+    身份不在这里 —— 它是请求级的，由 `core.request_context` 的上下文带（缺陷 35）。
     """
     if llm is None:
         return None
@@ -275,7 +275,7 @@ def _assemble_text_manager(distiller: Distiller, llm: LLMAdapter) -> TextManager
 
     `distiller` / `llm` 必须由调用方传实例 —— 本函数不取单例、不缓存：per-user
     路径每次都要新实例（共享即跨请求错归，见缺陷 37）。请求级身份不再靠「往
-    distiller 上写属性」传，改走 `core.request_identity` 的上下文（缺陷 35）。
+    distiller 上写属性」传，改走 `core.request_context` 的上下文（缺陷 35）。
     """
     return TextManager(get_storage(), distiller, llm, get_sessions(),
                        indexing_service=get_indexing_service(),

@@ -39,8 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import get_client_ip, limiter
-from core.request_identity import set_request_user_id
-from web.request_context import Caller, LLM_CALLER
+from core.request_context import Caller, LLM_CALLER
 
 from security import SecurityHeadersMiddleware
 
@@ -293,8 +292,8 @@ def _maybe_update_last_active(user_id: str) -> None:
 class AuthMiddleware(BaseHTTPMiddleware):
     """鉴权 + **一次**身份上下文的设置。
 
-    形态是刻意的：`call_next` 只有**一个**出口，两个 contextvar（门的 `LLM_CALLER`
-    与记账的 `set_request_user_id`）都只在那一个出口前设**一次**。早退的 401/403
+    形态是刻意的：`call_next` 只有**一个**出口，身份 contextvar（`LLM_CALLER` —— 门的
+    策略与记账的归属读的是同一个）只在那一个出口前设**一次**。早退的 401/403
     各自 return 响应（没有下游，不需要上下文）；公开路径与鉴权路径在出口处合流，
     靠 `user`/`user_id` 的初值区分 —— 于是「两条分支都要设值」不是两份要同步维护
     的代码，而是同一个出口。
@@ -334,8 +333,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             _maybe_update_last_active(user_id)
 
         request.state.user = user  # default {} 防止非 API 路径上 AttributeError
+        # 身份只设这一处：门的策略（geo）与记账的归属读的都是它（缺陷 35）
         LLM_CALLER.set(Caller(ip=get_client_ip(request), user_id=user_id))
-        set_request_user_id(user_id)  # 记账身份（缺陷 35）—— 全仓唯一写口
         return await call_next(request)
 
 

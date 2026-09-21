@@ -23,7 +23,7 @@ from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_faci
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
-from core.request_identity import current_user_id
+from core.request_context import current_user_id
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
 
@@ -242,7 +242,7 @@ class Distiller:
             storage: 记账落库用的存储（依赖，非身份）。生产由唯一装配出口
                 `web/deps.get_distiller` 注入；直接 ``Distiller(llm)`` 的地方记不上账。
 
-        **身份不走构造参数**：user_id 逐请求变化，放在 `core.request_identity`
+        **身份不走构造参数**：user_id 逐请求变化，放在 `core.request_context`
         的上下文里（缺陷 35）—— 构造期注入等于每个构造点都要记得写一遍，
         而漏掉的那次只会留一行日志。
         """

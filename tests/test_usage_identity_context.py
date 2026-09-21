@@ -11,17 +11,25 @@ action 对」—— 出口在参数为空时照样被调用，只是自己 early
 **本锁补的那一维**：身份**值**是否到位、是否落在库里。分四层，各锁一维：
 
   1. 派生面传播 —— `ctx_thread` / `ctx_submit` 派生出去之后还读不读得到（各一条）；
-  2. 写口唯一 —— 全仓 AST 现算：`set_request_user_id` 的调用点只有
-     `AuthMiddleware.dispatch` 一处，`core/` 内 0 处；
+  2. 写口唯一 —— 全仓 AST 现算：`LLM_CALLER.set` 的调用点只有两处，都在既定出口上
+     （`AuthMiddleware.dispatch` 与 `core.request_context.system_llm_context`）；
   3. 形态 —— `Distiller` 不再持有 `_user_id` 实例属性；`web/` 里不再有对 distiller
      实例写身份的那两行（「两条路各写一份」的复发形态）；
   4. 落库 —— 真 app + 真 `AuthMiddleware` + 真 `/start` 路由，断言 `usage_stats`
      行数 == 出口发出笔数，且 `user_id` 是请求身份。
 
-**已登记的边界（不是遗漏）。** 第 4 条只覆盖 MapReduce 那条分支（短路成单次
-longcontext 会变成 3 笔），也只断言「笔数对得上」——token 数值是否精确不在这里，
-那是 `test_llm_access_gate` 的用量记账面。第 2/3 条是**形锁**：它们能挡住「又写一处」，
-但挡不住「把身份改从参数传」这类整体换形 —— 那种变更会先打红第 4 条。
+**身份只有一份。** 读口是 `core.request_context.current_user_id()`，它读的就是门用的
+那个 `LLM_CALLER` —— **不是**第二个 ContextVar。这条是本案返工的由来：第一版在
+`core/` 另建了一个只装 user_id 的 ContextVar，中间件于是同一个出口连写两份同一个
+值。`web/` 没有 `__init__.py`，两个同名 ContextVar 会各看各的，这份「重复」迟早
+分叉成两份事实。
+
+**已登记的边界（不是遗漏）。** 第 2 条的扫描面是 `core/` + `web/` + `adapters/`，
+**不含 `tests/`**：用例本身要设上下文来观察传播，那是观察装置不是写口。第 4 条只
+覆盖 MapReduce 那条分支（短路成单次 longcontext 会变成 3 笔），也只断言「笔数对得上」
+—— token 数值是否精确不在这里，那是 `test_llm_access_gate` 的用量记账面。第 2/3 条是
+**形锁**：它们能挡住「又写一处」，但挡不住「把身份改从参数传」这类整体换形 —— 那种
+变更会先打红第 4 条。
 """
 from __future__ import annotations
 
@@ -44,7 +52,7 @@ from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 from core import concurrency as C
 from core import scheduling as S
-from core.request_identity import current_user_id, set_request_user_id
+from core.request_context import Caller, LLM_CALLER, current_user_id
 
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -67,28 +75,42 @@ def _py_files(*roots: Path) -> list[Path]:
 
 
 def test_identity_reaches_ctx_thread():
-    set_request_user_id("u_thread")
+    tok = LLM_CALLER.set(Caller(ip=None, user_id="u_thread"))
     seen: list[str | None] = []
 
     # 断言写在**主线程**：线程体里抛的异常只进 stderr，用例照样绿 —— 那样这条锁
     # 在裸 threading.Thread 下不会响（实测踩过）。
-    t = C.ctx_thread(lambda: seen.append(current_user_id()))
-    t.start()
-    t.join(timeout=10)
+    try:
+        t = C.ctx_thread(lambda: seen.append(current_user_id()))
+        t.start()
+        t.join(timeout=10)
+    finally:
+        # **必须还原**：`LLM_CALLER` 就是门读的那个 ContextVar（身份只有一份），
+        # 留在本线程上下文里会污染同进程后面的门用例 —— 它们断言「没有上下文时
+        # fail-closed」，读到的却是我这一笔（实测：不还原则 L7 红）。
+        LLM_CALLER.reset(tok)
     assert seen == ["u_thread"], f"ctx_thread 派生面读到 {seen} —— contextvar 没被拷过去"
 
 
 def test_identity_reaches_ctx_submit():
-    set_request_user_id("u_pool")
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        assert C.ctx_submit(pool, current_user_id).result(timeout=10) == "u_pool"
+    tok = LLM_CALLER.set(Caller(ip=None, user_id="u_pool"))
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            assert C.ctx_submit(pool, current_user_id).result(timeout=10) == "u_pool"
+    finally:
+        LLM_CALLER.reset(tok)
 
 
 # ── 2. 写口唯一 ────────────────────────────────────────────────────────────
 
 
 def _identity_writes(paths: list[Path]) -> list[str]:
-    """全仓现算：`set_request_user_id(...)` 的调用点，返回 `file:line`。"""
+    """全仓现算：`LLM_CALLER.set(...)` 的调用点，返回 `file:line`。
+
+    判据是**接收者名字 + 方法名**（`LLM_CALLER` / `set`），不是某一处的临时函数名 ——
+    写口换一层包装、或有人在路由里直接 `LLM_CALLER.set(Caller(...))` 伪造身份，
+    点的都是同一个 ContextVar，都会被抓到。
+    """
     hits: list[str] = []
     for p in paths:
         tree = ast.parse(p.read_text(encoding="utf-8"))
@@ -96,41 +118,60 @@ def _identity_writes(paths: list[Path]) -> list[str]:
             if not isinstance(n, ast.Call):
                 continue
             f = n.func
-            name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
-            if name == "set_request_user_id":
+            if isinstance(f, ast.Attribute) and f.attr == "set" \
+                    and isinstance(f.value, ast.Name) and f.value.id == "LLM_CALLER":
                 hits.append(f"{p.relative_to(_REPO).as_posix()}:{n.lineno}")
-    return hits
+    return sorted(hits)
 
 
-def test_only_the_auth_middleware_writes_request_identity():
+def test_only_the_two_declared_exits_write_identity():
     hits = _identity_writes(_py_files(_REPO / "core", _REPO / "web", _REPO / "adapters"))
-    assert hits == ["web/server.py:" + str(_middleware_identity_line())], (
-        f"身份写口不唯一：{hits}。`core.request_identity.set_request_user_id` 只应由 "
-        "`web/server.py` 的 AuthMiddleware 在它那个单一 call_next 出口前调一次 —— "
-        "多一处写口就意味着又多了一条「得记得写」的路。")
+    allowed = sorted([f"core/request_context.py:{_system_context_identity_line()}",
+                      f"web/server.py:{_middleware_identity_line()}"])
+    assert hits == allowed, (
+        f"身份写口不唯一：{hits}，只应是 {allowed}。身份只有 `LLM_CALLER` 这一份，"
+        "写它的只应是 `web/server.py` 的 AuthMiddleware（请求内，单一 call_next 出口前"
+        "设一次）与 `core/request_context.system_llm_context`（请求外，显式声明）—— "
+        "多一处写口就是又多了一条「得记得写」的路，或一条能伪造身份的路。")
+
+
+def _llm_caller_set_line(src: str, scopes: list) -> int:
+    """在给定 AST 结点的子树里找那一行 `LLM_CALLER.set(...)` 的**源码行号**。"""
+    for scope in scopes:
+        for n in ast.walk(scope):
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
+                    and n.func.attr == "set" and isinstance(n.func.value, ast.Name) \
+                    and n.func.value.id == "LLM_CALLER":
+                return n.lineno
+    raise AssertionError("没找到 LLM_CALLER.set —— 身份根本没被设过")
 
 
 def _middleware_identity_line() -> int:
-    """`AuthMiddleware.dispatch` 里那一行 `set_request_user_id(...)` 的行号。"""
+    """`AuthMiddleware.dispatch` 里那一行 `LLM_CALLER.set(...)` 的行号。"""
     src = (_REPO / "web" / "server.py").read_text(encoding="utf-8")
     for cls in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.ClassDef)]:
-        if cls.name != "AuthMiddleware":
-            continue
-        for fn in [n for n in cls.body
-                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                   and n.name == "dispatch"]:
-            for n in ast.walk(fn):
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) \
-                        and n.func.id == "set_request_user_id":
-                    return n.lineno
-    raise AssertionError("AuthMiddleware.dispatch 里没有 set_request_user_id 调用 —— 身份根本没被设过")
+        if cls.name == "AuthMiddleware":
+            dispatch = [n for n in cls.body
+                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and n.name == "dispatch"]
+            return _llm_caller_set_line(src, dispatch)
+    raise AssertionError("web/server.py 里没有 AuthMiddleware 类")
+
+
+def _system_context_identity_line() -> int:
+    """`system_llm_context` 里那一行 `LLM_CALLER.set(...)` 的行号。"""
+    src = (_REPO / "core" / "request_context.py").read_text(encoding="utf-8")
+    for fn in [n for n in ast.parse(src).body if isinstance(n, ast.FunctionDef)]:
+        if fn.name == "system_llm_context":
+            return _llm_caller_set_line(src, [fn])
+    raise AssertionError("core/request_context.py 里没有 system_llm_context —— 请求外的那条出口没了")
 
 
 def test_identity_write_scan_is_not_vacuous():
-    """负控：扫描器对**合成**出来的第二处写口必须报得出来 —— 否则上一条是在假绿。"""
+    """负控：扫描器对**合成**出来的第三处写口必须报得出来 —— 否则上一条是在假绿。"""
     probe = _REPO / "e2e" / "scratch" / "_synthetic_write_probe.py"
     probe.parent.mkdir(parents=True, exist_ok=True)
-    probe.write_text("set_request_user_id('x')\n", encoding="utf-8")
+    probe.write_text("LLM_CALLER.set(SYSTEM)\n", encoding="utf-8")
     try:
         hits = _identity_writes([probe])
     finally:
@@ -148,7 +189,7 @@ def test_distiller_holds_no_user_identity_attribute():
              and isinstance(n.value, ast.Name) and n.value.id == "self"]
     assert not found, (
         f"core/distiller.py 第 {found} 行又出现了 self._user_id —— 身份一旦挂回实例属性，"
-        "「谁忘了注入谁就静默不记」这个形态就回来了。身份走 core.request_identity 的上下文。")
+        "「谁忘了注入谁就静默不记」这个形态就回来了。身份走 core.request_context 的上下文。")
 
 
 def test_no_identity_write_on_distiller_instances():

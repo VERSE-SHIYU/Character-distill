@@ -2,10 +2,11 @@
 """LLM 访问门：**策略**与出口（spec v5 §2.6）。
 
 身份上下文（`Caller` / `SYSTEM` / `LLM_CALLER` / `system_llm_context`）在
-`web/request_context.py` —— 本模块 **import 它，不重新定义**。这样分是因为两件事
+`core/request_context.py` —— 本模块 **import 它，不重新定义**。这样分是因为两件事
 的职责线不同：「谁在调」是事实，「许不许调」是策略。`web/` 没有 `__init__.py`，
 换个模块名再定义一次 `LLM_CALLER` 会得到**第二个** ContextVar，中间件设的值这边
-根本读不到 —— 那不是风格问题，是两侧各看各的。
+根本读不到 —— 那不是风格问题，是两侧各看各的。（上下文住 `core/` 而不是 `web/`：
+记账出口 `core/distiller.py` 也读它，而 `core` 不许 import `web`，见 L13。）
 
 门位是**调用点门**：判定结果以「拒绝理由」的形式经 `LLMCallRefused` 抛在出站之前，
 调用方不需要知道 gate 模块存在。装门只有 `install_llm_gate` 一个入口 ——
@@ -19,7 +20,7 @@ from adapters.llm_adapter import set_call_guard
 from core.scheduling import submit_to_main_loop
 from deps import get_storage
 from web.geo_guard import check_api_allowed
-from web.request_context import LLM_CALLER, SYSTEM
+from core.request_context import LLM_CALLER, SYSTEM
 
 logger = logging.getLogger("charsim.llm_gate")
 
@@ -62,7 +63,7 @@ def geo_call_guard(base_url: str) -> str | None:
     if caller is None:
         raise LLMCallerMissing(
             f"出站前拿不到调用方身份（base_url={base_url!r}）—— 门 fail-closed；"
-            "请求之外的调用请显式声明 web.request_context.system_llm_context()"
+            "请求之外的调用请显式声明 core.request_context.system_llm_context()"
         )
     if caller is SYSTEM:
         return None
