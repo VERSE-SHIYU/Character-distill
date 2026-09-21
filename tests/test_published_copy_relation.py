@@ -3,12 +3,17 @@
 
 关系定义（唯一权威表达）：
 
-    「X 是草稿 D 的发布副本」 ⟺ X.forked_from = D.id AND X.visibility = 'public'
-                                AND X.deleted_at IS NULL AND X.user_id = D.user_id
+    「X 是草稿 D 的发布副本」 ⟺ X.published_from = D.id AND X.visibility = 'public'
+                                AND X.deleted_at IS NULL
 
-`cards.forked_from` 单列承载了两种关系：本文件的这一种，以及「公开卡被任意用户 fork」
-（`get_card_forks`）。前者在 pg / sqlite 各有 5 处独立书写，判据不一致 —— 都不比作者
-user_id，于是三条后果：
+「同一作者」不在谓词里 —— 它是 `published_from` 这一列的**定义**，由复合外键
+`(published_from, user_id) → cards(id, user_id)` 在库里强制（锁见
+`TestDatabaseRejectsCrossOwnerPublishedFrom`）。
+
+拆列之前，`cards.forked_from` 单列承载了两种关系：本文件的这一种，以及「公开卡被任意
+用户 fork」（`get_card_forks`）。区分二者唯一的判据是「副本与草稿同属主」，而它要每个
+调用点自己记得比（pg / sqlite 各有 5 处独立书写）—— 漏一处即静默跨属主写入，于是三条
+后果：
 
   1. B fork A 的公开卡 P，B 改自己那张 fork 的头像 → 向上同步把 P 的头像也改了
   2. A fork 自己的公开卡 P，A 改那张私有 fork 的头像 → 同样改掉 P，与草稿脱节
@@ -57,6 +62,16 @@ async def _public_card(store, user_id, text_id, card_id=None) -> str:
     await store.save_card(card_id, text_id, "张三", json.dumps({"name": "张三"}), user_id=user_id)
     await store.update_card_visibility(card_id, "public")
     return card_id
+
+
+async def _published(store, owner) -> tuple[str, str]:
+    """作者发布过的一张草稿及其发布副本 —— 后半段各用例的共同夹具。"""
+    tid = await _text(store, owner)
+    draft = f"card_{uuid.uuid4().hex}"
+    await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=owner)
+    copy_id = await store.publish_card(draft, owner, "desc", "tag", "v1", '{"name": "张三"}')
+    assert copy_id, "夹具没发布出副本，本用例会恒绿"
+    return draft, copy_id
 
 
 class TestOtherUserForkDoesNotPolluteOrigin:
@@ -131,34 +146,25 @@ class TestAuthorOwnPublishedCopyStillSyncs:
     排除掉（例如把「同属主」写成「公开卡才同步」），那时这类正向用例会先红。
     """
 
-    @staticmethod
-    async def _published(store, user_a) -> tuple[str, str]:
-        tid = await _text(store, user_a)
-        draft = f"card_{uuid.uuid4().hex}"
-        await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=user_a)
-        copy_id = await store.publish_card(draft, user_a, "desc", "tag", "v1", '{"name": "张三"}')
-        assert copy_id, "夹具没发布出副本，本用例会恒绿"
-        return draft, copy_id
-
     async def test_draft_avatar_syncs_down_to_published_copy(self, store, user_a):
-        draft, copy_id = await self._published(store, user_a)
+        draft, copy_id = await _published(store, user_a)
         await store.save_card_avatar(draft, user_a, "DRAFT_AVATAR")
         assert await store.get_card_avatar_owned(copy_id, user_a) == "DRAFT_AVATAR", \
             "改草稿头像不再向下同步到作者的发布副本"
 
     async def test_published_copy_avatar_syncs_up_to_draft(self, store, user_a):
-        draft, copy_id = await self._published(store, user_a)
+        draft, copy_id = await _published(store, user_a)
         await store.save_card_avatar(copy_id, user_a, "COPY_AVATAR")
         assert await store.get_card_avatar_owned(draft, user_a) == "COPY_AVATAR", \
             "改发布副本头像不再向上同步到作者的草稿"
 
     async def test_published_id_is_the_authors_published_copy(self, store, user_a):
-        draft, copy_id = await self._published(store, user_a)
+        draft, copy_id = await _published(store, user_a)
         assert (await store.get_card_owned(draft, user_a))["published_id"] == copy_id, \
             "作者的发布副本没被认出来"
 
     async def test_republish_reuses_the_authors_published_copy(self, store, user_a):
-        draft, copy_id = await self._published(store, user_a)
+        draft, copy_id = await _published(store, user_a)
         again = await store.publish_card(draft, user_a, "desc2", "tag", "v2", '{"name": "张三"}')
         assert again == copy_id, "重新发布没复用作者自己的发布副本（原地更新语义丢了）"
 
@@ -201,3 +207,103 @@ class TestOtherUserPublicForkIsNotThePublishedCopy:
         assert await store.get_card_owned(fork_id, user_b) is not None, "他人 fork 被发布动作弄丢了"
         b_fork = await store.get_card_owned(fork_id, user_b)
         assert b_fork["market_description"] != "A的发布", "他人 fork 的发布字段被 A 的发布覆盖"
+
+
+class TestDatabaseRejectsCrossOwnerPublishedFrom:
+    """「同一作者」由复合外键在库里强制，不再靠每个调用点记得比 user_id。
+
+    锁的是**库**的现状，不是源码：拿 store 自己的连接直接写一条跨属主的
+    `published_from`，必须被外键拒掉。哪天有人把约束去掉（重建表时漏传 extra 约束、
+    或迁移里删掉 FK），这组用例先红；否则要等某个调用点再次忘了比 user_id 才发现。
+    """
+
+    @staticmethod
+    async def _raw_insert(store, card_id, owner, published_from):
+        async with await store._connect() as conn:
+            await conn.execute(
+                """INSERT INTO cards (id, name, card_json, user_id, visibility, published_from)
+                   VALUES (?, ?, ?, ?, 'public', ?)""",
+                (card_id, "越权副本", "{}", owner, published_from),
+            )
+
+    async def test_cross_owner_published_from_is_rejected(self, store, user_a, user_b):
+        draft, _copy = await _published(store, user_a)
+
+        with pytest.raises(Exception) as exc:
+            await self._raw_insert(store, f"card_{uuid.uuid4().hex}", user_b, draft)
+        assert "FOREIGN KEY" in str(exc.value).upper(), \
+            f"写入被拒了，但不是外键拦的 —— 判据不成立：{exc.value!r}"
+
+        # 同属主那条必须仍写得进去，否则「一律拒绝」也能让上面那条绿。
+        ok = f"card_{uuid.uuid4().hex}"
+        await self._raw_insert(store, ok, user_a, draft)
+        assert await store.get_card_owned(ok, user_a) is not None, "同属主的副本写入被误伤"
+
+    async def test_published_from_to_a_missing_card_is_rejected(self, store, user_a):
+        with pytest.raises(Exception) as exc:
+            await self._raw_insert(store, f"card_{uuid.uuid4().hex}", user_a, "card_不存在")
+        assert "FOREIGN KEY" in str(exc.value).upper(), \
+            f"写入被拒了，但不是外键拦的 —— 判据不成立：{exc.value!r}"
+
+
+class TestDeletingTheDraftLeavesTheCopyAlive:
+    """4 条硬删路径（purge_card / 按 text_id / 按 user_id / 启动去重）的汇合点在库里。
+
+    只清 purge_card 一条的话，另外三条删草稿时同样会撞复合外键：`hard_delete_text` 与
+    `delete_user` 把副本一起删掉（FK 在**语句末**检查，父子同删的语句侥幸不报），但
+    **启动去重**那条会让启动直接失败。故逐条钉住：不抛异常、该活着的活着、
+    `published_from` 被清空。
+    """
+
+    @staticmethod
+    async def _column_of(store, card_id, column):
+        async with await store._connect() as conn:
+            cursor = await conn.execute(
+                f"SELECT {column} FROM cards WHERE id = ?", (card_id,))
+            row = await cursor.fetchone()
+        return None if row is None else row[0]
+
+    async def test_purging_the_draft_keeps_the_copy_with_null_published_from(self, store, user_a):
+        draft, copy_id = await _published(store, user_a)
+
+        assert await store.purge_card(draft) is True
+
+        assert await store.get_card_owned(copy_id, user_a) is not None, \
+            "删草稿把发布副本一起删了（副本本身要存活）"
+        assert await self._column_of(store, copy_id, "published_from") is None, \
+            "草稿被删后副本的 published_from 没清空 —— 下一条删卡路径会撞外键"
+
+    async def test_hard_deleting_the_text_removes_both_without_error(self, store, user_a):
+        draft, copy_id = await _published(store, user_a)
+        tid = await self._column_of(store, draft, "text_id")
+
+        assert await store.hard_delete_text(tid) is True
+
+        assert await store.get_card_owned(draft, user_a) is None, "草稿没被删"
+        assert await store.get_card_owned(copy_id, user_a) is None, "副本没随文本一起删"
+
+    async def test_deleting_the_user_removes_both_without_error(self, store, user_a):
+        draft, copy_id = await _published(store, user_a)
+        # 卡与文本都是裸 user_id，`delete_user` 却要求 users 里有这一行（没有就 ValueError）。
+        await store.create_user(user_a, user_a, "x")
+
+        await store.delete_user(user_a)
+
+        assert await store.get_card_owned(draft, user_a) is None, "草稿没被删"
+        assert await store.get_card_owned(copy_id, user_a) is None, "副本没随用户一起删"
+
+    async def test_startup_dedupe_keeps_both_the_draft_and_its_copy(self, store, user_a):
+        """重启跑到启动去重：草稿与副本同 text_id 同 name，副本不得被当成重复草稿。
+
+        副本是更晚插入的那张，去重按 rowid 留新 —— 判据一旦退回只看 `forked_from = ''`，
+        被删掉的是**草稿**，所以下面那句断言在草稿上。
+        """
+        draft, copy_id = await _published(store, user_a)
+
+        restarted = SQLiteStore(store.db_path)
+        await restarted._ensure_initialized()
+
+        assert await restarted.get_card_owned(draft, user_a) is not None, \
+            "启动去重把作者的草稿删了（留下的是更晚插入的副本）"
+        assert await restarted.get_card_owned(copy_id, user_a) is not None, \
+            "启动去重把发布副本删了"

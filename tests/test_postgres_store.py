@@ -237,6 +237,17 @@ async def _clean_tables(store: PostgresStore) -> None:
             await conn.execute(f"DELETE FROM {t}")
 
 
+async def _pg_published(store, owner) -> tuple[str, str]:
+    """作者发布过的一张草稿及其发布副本（SQLite 侧同名助手同形）。"""
+    tid = f"txt_{uuid.uuid4().hex}"
+    draft = f"card_{uuid.uuid4().hex}"
+    await store.save_text(tid, "src.txt", "content", user_id=owner)
+    await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=owner)
+    copy_id = await store.publish_card(draft, owner, "desc", "tag", "v1", '{"name": "张三"}')
+    assert copy_id, "夹具没发布出副本，本用例会恒绿"
+    return draft, copy_id
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -1267,9 +1278,10 @@ class TestPgOwnedIdentityIsolation:
 
 @_pg
 class TestPublishedCopyRelation:
-    """「X 是草稿 D 的发布副本」⟺ X.forked_from = D.id ∧ X.visibility='public'
-    ∧ X.deleted_at IS NULL ∧ X.user_id = D.user_id。两条 store 的 SQL 只差占位符，
-    但真库行为要各自闭环 —— 这段 Python 两侧逐字相同，改一侧不修另一侧会立刻造出分叉。
+    """「X 是草稿 D 的发布副本」⟺ X.published_from = D.id ∧ X.visibility='public'
+    ∧ X.deleted_at IS NULL。「同一作者」不在谓词里 —— 它是 `published_from` 这一列的
+    定义，由复合外键在库里强制。两条 store 的 SQL 只差占位符，但真库行为要各自闭环 ——
+    这段 Python 两侧逐字相同，改一侧不修另一侧会立刻造出分叉。
     """
 
     @staticmethod
@@ -1396,6 +1408,113 @@ class TestPgAuthorOwnPublishedCopyStillSyncs:
         draft, copy_id = await self._published(store, a)
         again = await store.publish_card(draft, a, "desc2", "tag", "v2", '{"name": "张三"}')
         assert again == copy_id, "重新发布没复用作者自己的发布副本（原地更新语义丢了）"
+
+
+@_pg
+class TestPgDatabaseRejectsCrossOwnerPublishedFrom:
+    """同 SQLite 侧同名类：同一作者由复合外键在库里强制。
+
+    两引擎的落地路径完全不同（SQLite 靠重建表把约束写进 DDL，PG 靠 mig 020 的
+    ALTER TABLE + DEFERRABLE），只验一侧会整条漏掉另一侧。
+    """
+
+    @staticmethod
+    async def _raw_insert(store, card_id, owner, published_from):
+        async with await store._connect() as conn:
+            await conn.execute(
+                """INSERT INTO cards (id, name, card_json, user_id, visibility, published_from)
+                   VALUES ($1, $2, $3, $4, 'public', $5)""",
+                card_id, "越权副本", "{}", owner, published_from,
+            )
+
+    async def test_cross_owner_published_from_is_rejected(self, store):
+        a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
+        draft, _copy = await _pg_published(store, a)
+
+        with pytest.raises(Exception) as exc:
+            await self._raw_insert(store, f"card_{uuid.uuid4().hex}", b, draft)
+        assert "FOREIGN KEY" in str(exc.value).upper(), \
+            f"写入被拒了，但不是外键拦的 —— 判据不成立：{exc.value!r}"
+
+        # 同属主那条必须仍写得进去，否则「一律拒绝」也能让上面那条绿。
+        ok = f"card_{uuid.uuid4().hex}"
+        await self._raw_insert(store, ok, a, draft)
+        assert await store.get_card_owned(ok, a) is not None, "同属主的副本写入被误伤"
+
+    async def test_published_from_to_a_missing_card_is_rejected(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        with pytest.raises(Exception) as exc:
+            await self._raw_insert(store, f"card_{uuid.uuid4().hex}", a, "card_不存在")
+        assert "FOREIGN KEY" in str(exc.value).upper(), \
+            f"写入被拒了，但不是外键拦的 —— 判据不成立：{exc.value!r}"
+
+
+@_pg
+class TestPgDeletingTheDraftLeavesTheCopyAlive:
+    """同 SQLite 侧同名类：删草稿的每条路径，副本都得存活、`published_from` 清空、不报错。
+
+    PG 侧没有启动去重那条（那是 SQLite 旧库升级的补丁），但多一条**由库自己发起**的
+    多行删除 —— 见本类最后那条。PG 的 FK 是 `DEFERRABLE INITIALLY DEFERRED`、触发器是
+    `AFTER DELETE`，这个组合是实测逼出来的（非推迟的 FK 检查排在用户 AFTER 触发器之前，
+    单行删除必报 ForeignKeyViolation；`BEFORE DELETE` 则会撞 PG 的
+    TriggeredDataChangeViolation）。这组用例就是那个组合的护栏。
+    """
+
+    @staticmethod
+    async def _column_of(store, card_id, column):
+        async with await store._connect() as conn:
+            return await conn.fetchval(f"SELECT {column} FROM cards WHERE id = $1", card_id)
+
+    async def test_purging_the_draft_keeps_the_copy_with_null_published_from(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+
+        assert await store.purge_card(draft) is True
+
+        assert await store.get_card_owned(copy_id, a) is not None, \
+            "删草稿把发布副本一起删了（副本本身要存活）"
+        assert await self._column_of(store, copy_id, "published_from") is None, \
+            "草稿被删后副本的 published_from 没清空 —— 下一条删卡路径会撞外键"
+
+    async def test_hard_deleting_the_text_removes_both_without_error(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+        tid = await self._column_of(store, draft, "text_id")
+
+        assert await store.hard_delete_text(tid) is True
+
+        assert await store.get_card_owned(draft, a) is None, "草稿没被删"
+        assert await store.get_card_owned(copy_id, a) is None, "副本没随文本一起删"
+
+    async def test_deleting_the_user_removes_both_without_error(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+        # 卡与文本都是裸 user_id，`delete_user` 却要求 users 里有这一行（没有就 ValueError）。
+        await store.create_user(a, a, "x")
+
+        await store.delete_user(a)
+
+        assert await store.get_card_owned(draft, a) is None, "草稿没被删"
+        assert await store.get_card_owned(copy_id, a) is None, "副本没随用户一起删"
+
+    async def test_cascading_the_text_away_keeps_both_deletions_legal(self, store):
+        """`cards.text_id → texts(id) ON DELETE CASCADE`：库自己发起的多行删除。
+
+        store 的三条路径都是**显式** `DELETE FROM cards`（CASCADE 那时已够不着任何卡，
+        因为卡先没了），所以纯级联这条只能从库侧进 —— 而它恰是唯一一条「同一命令里删掉
+        的父子行撞上同一条 FK」的路径：正是它把 BEFORE 触发器判死（多行删除时 PG 禁止
+        触发器改「同一命令还要删的行」）。保留这条，免得有人把 DEFERRABLE 当成可随手去掉
+        的样式选择。
+        """
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await _pg_published(store, a)
+        tid = await self._column_of(store, draft, "text_id")
+
+        async with await store._connect() as conn:
+            await conn.execute("DELETE FROM texts WHERE id = $1", tid)
+
+        assert await store.get_card_owned(draft, a) is None, "草稿没被级联删掉"
+        assert await store.get_card_owned(copy_id, a) is None, "副本没被级联删掉"
 
 
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
