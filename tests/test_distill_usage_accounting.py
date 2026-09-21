@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""缺陷 16：蒸馏初次调用的 usage 记账收敛到**唯一出口**。
+"""缺陷 16：蒸馏调用的 usage 记账收敛到**唯一出口**。
 
-三个站点各调一次 `_chat_initial`：`distill`（短文本截断模式）、
+三个站点各调一次 `_chat_accounted`：`distill`（短文本截断模式）、
 `_distill_longcontext`（整本蒸）、`distill_incremental`（MapReduce 收尾格式化）。
 原状口径不一致 —— 后两处各自紧跟一条 `_try_record_usage`，而 `distill` 那处
 **根本没有**，短文本路径的初次调用（真实烧掉的 token）一条都不记。
 
-收敛后不变量：**一次成功的 `_chat_initial` 调用恰记一条 usage**，`raise` 那条路不记；
-重修调用是另一条独立出口（`_parse_json_with_retry`），它记的是另一笔真实调用。
+收敛后不变量：**一次 `_chat_accounted` 调用恰记一条 usage，与它结果如何无关** ——
+token 花出去就花出去了。初次与重修同走这一个原语（重修环不再自带记账，否则流式那支
+与 `_collect_stream` 的本级记账双计）。**旧口径是「`raise` 那条路不记」**，本轮改掉：
+非流式的截断支（缺陷 91）与硬失败支（缺陷 92）都拿不到 `last_usage`，各自按字符估算
+补记后再交出去 / 上抛，与流式支 `_collect_stream` 的 except 支同口径。
 
 本文件锁的是**出口发了几次、带什么 action**，不锁 storage 落库链路（`record_usage`
 的线程化落库另有独立测试）。故直接替换 `core.distiller.try_record_usage` 做同步计数 ——
@@ -16,9 +19,11 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from adapters.llm_adapter import IncompleteResponseError, _extract_content
 from core.distiller import Distiller
+from core.utils import estimate_usage_from_chars, try_record_usage
 
 # CharacterCard 只有 name 是必填
 CARD = '{"name": "角色"}'
@@ -64,15 +70,36 @@ class _FakeLLM:
 
 # ── 记账探针 ─────────────────────────────────────────────────────────────────
 
+def _recorder(sink: Callable[[str, dict | None], None]):
+    """记账替身：**唯一**一份，`usage` 与 `records` 两个夹具共用。
+
+    自己不写签名 —— 收 `*args, **kwargs`，先拿真函数
+    `inspect.signature(core.utils.try_record_usage).bind()` 校验一遍，过了再收进 sink。
+    签名因此只有真函数一份：真函数**加了无默认值的参数**或**删了参数**，调用方那串
+    kwargs 就 bind 不上，替身当场 TypeError 红掉。旧版是两份手抄签名，`user_id` 那次
+    只有一份跟着改，另一份要到合并后才炸。
+
+    真函数加**带默认值**的参数不算漂移：调用方不传是合法调用，bind 通过、替身照绿。
+    """
+    real = inspect.signature(try_record_usage)
+
+    def _rec(*args, **kwargs):
+        bound = real.bind(*args, **kwargs)
+        bound.apply_defaults()
+        sink(bound.arguments["action"], bound.arguments["usage"])
+
+    return _rec
+
+
 @pytest.fixture
 def usage(monkeypatch) -> list[str]:
     """替换 `_try_record_usage` 的唯一下游，同步收下每次记账的 action。"""
     calls: list[str] = []
 
-    def _rec(*, storage, user_id, llm, action="chat", usage=None, source="core"):
+    def _sink(action, _usage):
         calls.append(action)
 
-    monkeypatch.setattr("core.distiller.try_record_usage", _rec)
+    monkeypatch.setattr("core.distiller.try_record_usage", _recorder(_sink))
     return calls
 
 
@@ -86,7 +113,7 @@ class TestInitialCallAccounting:
     def test_distill_records_initial_call(self, usage):
         """回归主体：`distill` 初次成功原本**零记账**（三站点里漏记的那一处）。
 
-        变异：把 `_chat_initial` 里那条 `_try_record_usage(action)` 删掉 → 本用例红。
+        变异：把 `_chat_accounted` 里那条 `_try_record_usage(action)` 删掉 → 本用例红。
         """
         _distiller([CARD]).distill("文本", "角色")
         assert usage == ["distill"]
@@ -113,30 +140,152 @@ class TestInitialCallAccounting:
     def test_truncated_initial_call_is_still_recorded(self, usage):
         """`length` 截断那一路也是成功调用：token 已烧、半截正文还要进重修环 → 记。
 
-        这条钉的是 `_chat_initial` 里 `truncated = True` 那条返回分支 —— 只记「正常
+        这条钉的是 `_chat_accounted` 里 `truncated = True` 那条返回分支 —— 只记「正常
         return」不记「截断 return」的实现会漏掉它，本用例红。走真实 `_extract_content`
         造异常（不直接构造异常类），否则「去掉 content 传递」的变异测不出来。
         """
-        class _Msg:
-            def __init__(self, content):
-                self.content = content
-
-        class _Choice:
-            def __init__(self, finish_reason, content):
-                self.finish_reason = finish_reason
-                self.message = _Msg(content)
-
-        with pytest.raises(IncompleteResponseError) as ei:
-            _extract_content(_Choice("length", '{"name": "角'), where="chat")
-        truncated_exc = ei.value
-
         llm = _FakeLLM([])
-        llm.chat = MagicMock(side_effect=[truncated_exc, CARD])
+        llm.chat = MagicMock(side_effect=[_truncated_exc("chat"), CARD])
 
         card = Distiller(llm, config_path=None).distill("文本", "角色")
         assert card.name == "角色"
         assert llm.chat.call_count == 2, "一次截断 + 一次重修"
         assert usage == ["distill", "distill"], "截断那次同样烧了 token，必须记"
+
+
+# ── 流式通道：截断也落一条估算账（记账落在发起调用的那一级） ──────────────────
+
+PARTIAL = '{"name": "阿'   # 被 max_tokens 截断的半截角色卡
+SYSTEM, USER = "系统提示", "用户正文"
+
+
+class _Msg:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, finish_reason, content):
+        self.finish_reason = finish_reason
+        self.message = _Msg(content)
+
+
+def _truncated_exc(where: str) -> IncompleteResponseError:
+    """经**真实**的 `_extract_content` 造截断异常，不直接构造异常类。
+
+    直接 `IncompleteResponseError("length", where, content=...)` 会绕过 content 的传递
+    链，于是「去掉 content 传递」的变异测不出来 —— 那是个没判别力的用例。
+    """
+    with pytest.raises(IncompleteResponseError) as ei:
+        _extract_content(_Choice("length", PARTIAL), where=where)
+    return ei.value
+
+
+class _FakeStreamLLM(_FakeLLM):
+    """`chat_stream` 吐完预设片段后抛上游截断信号 —— usage chunk 排在它后面，永不交付。"""
+
+    def __init__(self, pieces: list[str], exc: BaseException):
+        super().__init__([])
+        self._pieces = pieces
+        self._exc = exc
+
+    def chat_stream(self, system, messages, max_tokens=None):
+        yield from self._pieces
+        raise self._exc
+
+
+@pytest.fixture
+def records(monkeypatch) -> list[tuple[str, dict | None]]:
+    """同 `usage`，但连 usage 载荷一起收下 —— 估算账要验的正是载荷。"""
+    out: list[tuple[str, dict | None]] = []
+
+    def _sink(action, usage):
+        out.append((action, usage))
+
+    monkeypatch.setattr("core.distiller.try_record_usage", _recorder(_sink))
+    return out
+
+
+class TestStreamChannelAccounting:
+    def test_truncated_stream_records_one_estimated_entry(self, records):
+        """流式截断（finish_reason=length）→ 补一条**估算**账，半截正文照常交出去。
+
+        `chat_stream` 的 usage chunk 排在 finish_reason **之后**，校验不过就不交付，
+        故截断时 `last_usage` 必为 None —— 不按字符估算补记，这一笔在生产里就是
+        静默不落库（只记成功 = 统计系统性偏低）。
+
+        变异：把 `_collect_stream` 里异常/截断那条 `_try_record_usage` 删掉 → 本用例红。
+        """
+        exc = IncompleteResponseError("length", "chat_stream", content=PARTIAL)
+        d = Distiller(_FakeStreamLLM([PARTIAL], exc), config_path=None)
+
+        text, truncated = d._chat_accounted(
+            SYSTEM, [{"role": "user", "content": USER}],
+            "识别合并", "distill_identify", stream=True,
+        )
+
+        assert (text, truncated) == (PARTIAL, True), "半截正文是重修的证据，必须交出去"
+        assert [a for a, _ in records] == ["distill_identify"], records
+        payload = records[0][1]
+        assert payload["estimated"] is True, "拿不到 last_usage，只能标估算"
+        assert payload == estimate_usage_from_chars(
+            len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+
+
+class TestNonStreamTruncationAccounting:
+    def test_truncated_chat_records_one_estimated_entry(self, records):
+        """非流式 `length` 截断 → 与流式支同口径，补一条**估算**账。
+
+        `chat()` 进本轮就先 `last_usage = None`（`adapters/llm_adapter.py:634`），而
+        `_extract_content` 的抛出点在 usage 回写（`:651`）**之前** —— 故这条路上
+        `_try_record_usage(action)` 拿到 `usage=None`，落到 `try_record_usage` 的
+        `if not usage` 分支：打印一行「no usage data」就 return，**一条也不落库**。
+        形如「只记成功」的静默偏低，与流式支修掉的那条同形态。
+
+        变异：把非流式截断支那条 `estimate_usage_from_chars(...)` 退回 `usage=None`
+        （即本用例加入前的实现）→ `payload` 变 None，本用例红。
+        """
+        llm = _FakeLLM([])
+        llm.chat = MagicMock(side_effect=_truncated_exc("chat"))
+
+        text, truncated = Distiller(llm, config_path=None)._chat_accounted(
+            SYSTEM, [{"role": "user", "content": USER}], "角色蒸馏", "distill",
+        )
+
+        assert (text, truncated) == (PARTIAL, True), "半截正文是重修的证据，必须交出去"
+        assert [a for a, _ in records] == ["distill"], records
+        payload = records[0][1]
+        assert payload is not None, "截断时拿不到 last_usage，必须按字符估算补记"
+        assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
+        assert payload == estimate_usage_from_chars(
+            len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+
+
+class TestNonStreamHardFailureAccounting:
+    def test_hard_failure_records_one_estimated_entry(self, records):
+        """非流式**硬失败**（网络 / content_filter / 资源不足）同样烧了 token → 记一条估算账。
+
+        与截断支、以及流式支 `_collect_stream` 的 except 支**同一口径**：token 已经花出去了
+        （重试墙下正是空烧），只记成功会让统计系统性偏低。旧口径「`raise` 那条路不记」
+        让同一个事实在流式与非流式两侧记出两个数 —— 而这两支本来就是一次调用的两种收法。
+
+        变异：把 `_chat_accounted` 硬失败支那条 `_try_record_usage` 删掉（即本用例加入前的
+        实现）→ `records` 为空，本用例红。
+        """
+        llm = _FakeLLM([])
+        llm.chat = MagicMock(side_effect=RuntimeError("boom"))
+
+        with pytest.raises(RuntimeError):
+            Distiller(llm, config_path=None)._chat_accounted(
+                SYSTEM, [{"role": "user", "content": USER}], "角色蒸馏", "distill",
+            )
+
+        assert [a for a, _ in records] == ["distill"], records
+        payload = records[0][1]
+        assert payload is not None, "硬失败时拿不到 last_usage，必须按字符估算补记"
+        assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
+        assert payload == estimate_usage_from_chars(len(SYSTEM) + len(USER)), (
+            "硬失败没有产出任何正文，completion 侧按 0 算；prompt 侧照实")
 
 
 # ── 收尾格式化站点：第三次收敛后的独立锁 ─────────────────────────────────────

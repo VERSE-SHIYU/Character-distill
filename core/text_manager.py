@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from adapters.llm_adapter import LLMAdapter
+from core.character_roster import aliases_for, cached_characters, resolve_characters
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
@@ -59,14 +60,14 @@ class TextManager:
     # call is pure cost today; re-enable once the judge targets executable-config
     # field landings (decision_style/speaking_style/values + precedence wording).
 
-    async def _guard_card(self, card: CharacterCard, user_id: str = "") -> GuardVerdict:
+    async def _guard_card(self, card: CharacterCard) -> GuardVerdict:
         if not self._guard_enabled:
             return GuardVerdict()
         if self._llm is None:
             return GuardVerdict()
         try:
             return await asyncio.to_thread(
-                guard_card_obj, card, self._llm, storage=self._storage, user_id=user_id,
+                guard_card_obj, card, self._llm, storage=self._storage,
             )
         except Exception as exc:
             print(f"[TextManager] Card guard crashed (flagging): {exc}")
@@ -382,9 +383,8 @@ class TextManager:
         content = text_rec.get("content", "")
 
         try:
-            chars = await asyncio.to_thread(
-                self._distiller.identify_characters, content
-            )
+            chars = await resolve_characters(
+                self._storage, self._distiller, text_id, user_id, content)
         except Exception as exc:
             print(f"[TextManager] Identify characters failed: {exc}")
             raise
@@ -451,11 +451,9 @@ class TextManager:
             # Resolve aliases for incremental distill
             aliases: list[str] = []
             try:
-                chars = await asyncio.to_thread(self._distiller.identify_characters, content)
-                for c in chars:
-                    if c["name"] == character_name:
-                        aliases = c.get("aliases", [])
-                        break
+                chars = await resolve_characters(
+                    self._storage, self._distiller, text_id, user_id, content)
+                aliases = aliases_for(chars, character_name)
             except Exception as exc:
                 print(f"[TextManager] Identify aliases failed, using empty: {exc}")
 
@@ -467,7 +465,7 @@ class TextManager:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
                 raise
 
-            verdict = await self._guard_card(card, user_id)
+            verdict = await self._guard_card(card)
             card_id = uuid.uuid4().hex[:12]
             try:
                 await self._storage.save_card(
@@ -505,7 +503,7 @@ class TextManager:
                     f"你是{card.name}，保持角色风格。",
                     [{"role": "user", "content": variation_prompt}],
                 )
-                try_record_usage(self._storage, user_id, self._llm,
+                try_record_usage(self._storage, self._llm,
                                  "chat_opening_variation", source="TextManager")
                 opening = opening.strip()
                 if opening and len(opening) <= 200:
@@ -555,7 +553,7 @@ class TextManager:
         """
         # Prompt-injection field guard: neutralize flagged leaves on the card
         # *before* persist, so no injection text ever lands in stored card_json.
-        verdict = await self._guard_card(card, user_id)
+        verdict = await self._guard_card(card)
         card_id = uuid.uuid4().hex[:12]
         result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json(), user_id)
         # save_card does upsert by text_id+name — on re-distill it returns the existing ID
@@ -619,12 +617,10 @@ class TextManager:
         """
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
         try:
-            cached = await self._storage.get_characters_owned(text_id, user_id)
+            cached = await cached_characters(self._storage, text_id, user_id)
             if cached:
-                name_to_aliases = {c["name"]: c.get("aliases", []) for c in cached}
                 for char in all_characters:
-                    if char["name"] in name_to_aliases:
-                        char["aliases"] = name_to_aliases[char["name"]]
+                    char["aliases"] = aliases_for(cached, char["name"])
         except Exception as exc:
             print(f"[TextManager] Alias cache merge failed: {exc}")
         return all_characters
@@ -657,6 +653,7 @@ class TextManager:
             memory_manager=self._memory_manager,
             card_id=card_id,
             user_role=user_role,
+            storage=self._storage,
         )
         session_id = uuid.uuid4().hex[:12]
         self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}

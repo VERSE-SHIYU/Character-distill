@@ -310,7 +310,6 @@ async def resume_session(
         print(f"[history] Restore affinity failed (non-fatal): {exc}")
 
     # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
-    engine._storage = storage
     if _body.client_tz:
         engine._user_tz = _body.client_tz
 

@@ -30,17 +30,12 @@ from __future__ import annotations
 
 import ast
 import fnmatch
-import os
 import pathlib
 
 import policy_table
+import repo_files
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-
-# 与 tests/test_exception_pickle_lock.py 逐字同一份排除表。它是**扫描范围**，不是「豁免」——
-# 第三方 vendored 代码与构建/缓存产物本来就不该进任何普查，与「有意不收集的测试」是两回事。
-_PRUNED_DIRS = {"gptsovits", "node_modules", ".git", "__pycache__", ".venv", "venv",
-                "site-packages", "dist", "build", ".mypy_cache", ".pytest_cache"}
 
 # 有意留在收集面外的**测试**：键 = 仓库相对路径，值 = 为什么它必须留在外面。
 # 机械校验交给 tests/policy_table.py（本仓「人声明的豁免表」的单一出口，不另造一套）。
@@ -88,29 +83,14 @@ def _has_collectable_item(tree: ast.Module, func_pats, class_pats) -> bool:
     return False
 
 
-def _walk(root: pathlib.Path):
-    """遍历仓库自有的 `.py`，**在走之前**剪掉 `_PRUNED_DIRS`。
-
-    与 `tests/test_exception_pickle_lock.py` 等既有普查同一份排除表，只有遍历方式不同：
-    那边用 `REPO_ROOT.rglob("*.py")` 再逐条筛（走完全树才筛），这里用 `os.walk` +
-    `dirs[:]` 原地剪枝 —— **实测快一个数量级以上，结果同**（`2026-09-15 实测 167×；
-    2026-09-17 复测 36×、同日再测 67×` —— 比值随手一测就翻倍，**这类数字不是指标**，
-    别拿它当验收门槛）。「结果同」不是目视：两法产出的路径集合逐元素相等（322 个，
-    差集两向皆空）。差值全在 `services/gptsovits`（22738 个不入库的 .py）与 `.venv` 上：
-    rglob 会把它们走完再丢掉，而本锁一次收集要跑三遍。
-
-    「为什么只改这一把锁、其余仍是 rglob」是**决策**，写在 AGENTS.md 缺陷 43 条目；
-    这里只写**机制**（§四「同一个理由不要落在三个地方」）。
-    """
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in _PRUNED_DIRS]
-        for name in filenames:
-            if name.endswith(".py"):
-                yield pathlib.Path(dirpath) / name
-
-
 def _census(config) -> tuple[set[str], set[str]]:
     """(收集面内的, 收集面外的) 两组「像个测试的文件」，仓库相对 posix 路径。
+
+    扫描面 = 仓库自有 `.py`（问 `git`，不遍历目录树）—— 见 `tests/repo_files.py`。以前用
+    `os.walk` 走目录树，于是 `.claude/worktrees/<兄弟 worktree>/` 与本地产物都算成本仓代码，
+    红绿取决于别的会话开了几个 worktree（实测 846 条 offender）。变异：把 `repo_py` 换回
+    `os.walk` → `test_every_test_shaped_file_is_inside_the_collection_surface` 立刻点名
+    `.claude/worktrees/*/tests/test_*.py`。
 
     面外只看目录归属 —— 与 pytest 一致，它也是从 `testpaths` 起走目录树。**逐案的**排除面
     （`--ignore` / 嵌套 `collect_ignore`）不在本判据内：本仓今天一处都没有
@@ -125,7 +105,8 @@ def _census(config) -> tuple[set[str], set[str]]:
 
     inside: set[str] = set()
     outside: set[str] = set()
-    for path in sorted(_walk(root)):
+    for rel in repo_files.repo_py(root):
+        path = root / rel
         if not _matches(path.name, file_pats):
             continue
         try:
@@ -135,7 +116,7 @@ def _census(config) -> tuple[set[str], set[str]]:
         if not _has_collectable_item(tree, func_pats, class_pats):
             continue
         (inside if any(path.resolve().is_relative_to(d) for d in surface) else outside)\
-            .add(path.relative_to(root).as_posix())
+            .add(rel)
     return inside, outside
 
 

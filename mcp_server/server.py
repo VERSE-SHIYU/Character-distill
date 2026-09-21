@@ -127,6 +127,7 @@ def _make_toolkit(card, rag, card_id: str):
         card_id=card_id,
         llm=llm,
         model=llm_model,
+        storage=_get_storage(),
     )
     return AgentToolkit(ctx, current_mood=os.getenv("MCP_MOOD"))
 

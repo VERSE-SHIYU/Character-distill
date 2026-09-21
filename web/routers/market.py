@@ -470,7 +470,7 @@ async def _publish_preflight(card: dict, user: dict, storage: StorageBase) -> tu
     #    injection failure is routed to the manual queue, never silently passed.
     #    实例走全局工厂 `get_llm()`（§2.8 的唯一构造出口）；未配置 key 时它返回 None，
     #    由 `auto_review_split` 的注入通道落成 `error=True` → 下面那条转人工分支。
-    review = await auto_review_split(card_json, get_llm(), storage=storage, user_id=user["id"])
+    review = await auto_review_split(card_json, get_llm(), storage=storage)
     if review["injection"].get("error"):
         reason = f"[publish-injection] 审核调用失败：{review['injection'].get('reason', '')}"
         print(f"[market-pregate] injection review error → flag: {reason}")
@@ -850,7 +850,7 @@ async def at_reply(
         ai_text = await asyncio.to_thread(
             llm.chat, system_prompt, [{"role": "user", "content": user_content}]
         )
-        try_record_usage(storage, user["id"], llm, "chat_ai_reply", source="market")
+        try_record_usage(storage, llm, "chat_ai_reply", source="market")
     except Exception as exc:
         # 上屏不带 `{exc}`：上游/驱动原文只进日志（缺陷 38 同形态）。
         print(f"[market] AI reply failed: {exc}")

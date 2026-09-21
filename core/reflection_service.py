@@ -33,11 +33,12 @@ class ReflectionService:
         self._rounds_since_reflect: int = 0
 
     def maybe_reflect(self, importance: int, llm, card_name: str,
-                      storage=None, user_id: str = "") -> bool:
+                      storage=None) -> bool:
         """双条件（累计 + 轮数）触发反思，高质量素材不足时 defer 不归零。
 
-        storage/user_id 透传给 memory.reflect —— 反思在后台线程跑，记账必须在
-        线程内完成，调用方事后补记不了。
+        storage 透传给 memory.reflect —— 反思在后台线程跑，记账必须在
+        线程内完成，调用方事后补记不了。归属不走参数：那条线程经 `ctx_thread`
+        派生，身份自己跟着上下文过去（缺陷 83）。
         """
         from core.memory_manager import REFLECTION_THRESHOLD, REFLECTION_MIN_ROUNDS, REFLECTION_MIN_QUALITY
 
@@ -101,5 +102,5 @@ class ReflectionService:
         print(f"[Reflection] {len(raw)} raw memories, top-10 importance range: "
               f"{recent[-1]['importance']}-{recent[0]['importance']}")
         self._memory.reflect(self._card_id, llm, recent, card_name,
-                             storage=storage, user_id=user_id)
+                             storage=storage)
         return True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.request_context import current_user_id
 from core.scheduling import submit_to_main_loop
 
 # 字符→token 的估算系数。**唯一出处**：chat_stream 的兜底与这里必须同源，
@@ -49,7 +50,6 @@ def aggregate_usage(usages: list[dict | None], chunk_count: int) -> dict | None:
 
 def try_record_usage(
     storage: Any,
-    user_id: str,
     llm: Any,
     action: str = "chat",
     usage: dict | None = None,
@@ -59,15 +59,21 @@ def try_record_usage(
 
     Args:
         storage: Storage backend with ``record_usage`` coroutine.
-        user_id: The user whose usage to record.
         llm: LLM adapter instance (expects ``last_usage`` dict and ``_model``).
         action: Label for the usage record (e.g. ``"chat"``, ``"distill"``).
         usage: Optional usage dict; falls back to ``llm.last_usage``.
         source: Source name for error messages (e.g. ``"ChatEngine"``, ``"Distiller"``).
 
+    **归属在出口读一次**：谁在调由 ``core.request_context.current_user_id()`` 回答
+    （请求身份，缺陷 35 收敛的那一个）；调用方不再逐处把 user_id 喂进来 —— 那条路在
+    聊天族兑现成了「有的地方只写 `_storage`、有的地方只写 `_user_id`」，写漏一处就
+    整条路静默不记账（缺陷 83）。身份在**本函数入口**读，不在 ``_write`` 里读：
+    投递出去的那段跑在主 loop 上，那一刻的上下文未必还是发起者的。
+
     投递经 ``core.scheduling.submit_to_main_loop(wait=False)`` —— 唯一的跨 loop 出口。
     此前这里自建 event loop 起线程写库，等于把「投递」这件事又定义了一遍（缺陷 16 形态）。
     """
+    user_id = current_user_id()
     if not storage or not user_id:
         print(f"[{source}] usage not recorded: storage/user_id missing (user={user_id}, action={action})")
         return

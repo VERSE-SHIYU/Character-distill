@@ -160,7 +160,6 @@ class GroupSession:
 
         # ── 后台评估好感 ──
         if self._storage and self.id:
-            engine._storage = self._storage
             engine._group_id = self.id
             try:
                 asyncio.create_task(
@@ -350,7 +349,6 @@ class GroupSession:
 
         # ── 后台评估好感（不阻塞回复） ──
         if not auto_mode and not is_silent and self._storage and self.id:
-            engine._storage = self._storage
             engine._group_id = self.id
             try:
                 asyncio.create_task(

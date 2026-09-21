@@ -110,8 +110,15 @@ class ChatEngine:
         memory_manager=None,
         card_id: str = "",
         context_window: int = 100,
+        *,
+        storage,
     ) -> None:
-        """注入模型适配器、RAG 引擎与角色卡。"""
+        """注入模型适配器、RAG 引擎、角色卡与存储。
+
+        ``storage`` 必填：它是**依赖**不是身份（归属由记账出口读上下文，缺陷 83），
+        构造后往实例上写属性那条路已删 —— 路由晚写到一半（只写 `_storage` 忘了
+        `_user_id`）就是群聊整轮不记账的那个形态（缺陷 83/84）。
+        """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
         self.card: CharacterCard = card
@@ -120,8 +127,7 @@ class ChatEngine:
         self._memory = memory_manager
         self._card_id = card_id
         self._context_window = context_window
-        self._storage = None
-        self._user_id: str = ""
+        self._storage = storage
         self._session_id: str = ""
         self._group_id: str = ""       # 群聊上下文：群 ID（空串=单聊或无上下文）
         self._user_tz: str = ""
@@ -168,7 +174,7 @@ class ChatEngine:
             card_id=card_id,
             llm=llm,
             model=getattr(llm, "model", ""),
-            usage_ctx=lambda: (self._storage, self._user_id),
+            storage=storage,
         )
         self.agent_mode: bool = False
 
@@ -299,7 +305,7 @@ class ChatEngine:
         from core.agent.agent_loop import AgentLoop
 
         toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
-        result = AgentLoop(self.llm, toolkit, storage=self._storage, user_id=self._user_id).run(system_prompt, llm_messages)
+        result = AgentLoop(self.llm, toolkit, storage=self._storage).run(system_prompt, llm_messages)
         set_current_attr("degraded", bool(result.degraded))
         if result.degraded:
             print("[ChatEngine] agent degraded → legacy context injection")
@@ -503,7 +509,7 @@ class ChatEngine:
             )
         reflected = self._reflection_service.maybe_reflect(
             self._last_importance, self.llm, self.card.name,
-            storage=self._storage, user_id=self._user_id,
+            storage=self._storage,
         )
         if reflected:
             self._extract_catchwords()
@@ -529,7 +535,6 @@ class ChatEngine:
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
             storage=self._storage,
-            user_id=self._user_id,
             llm=self.llm,
             action=action,
             usage=usage,
@@ -641,7 +646,7 @@ class ChatEngine:
         if self._last_user_msg_at is None and self.history and self._storage and self._session_id:
             try:
                 from core.scheduling import submit_to_main_loop
-                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
+                # _unscoped：引擎读自身 session_id，ChatEngine 侧没有可比对的 user 语境。
                 session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id), timeout=5,
                 )
@@ -680,7 +685,6 @@ class ChatEngine:
             llm=self.llm,
             reaction_appraisal=reaction_appraisal,
             departure_notice=departure_notice,
-            user_id=self._user_id,
         )
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance
@@ -1008,7 +1012,7 @@ class ChatEngine:
             try:
                 from core.scheduling import submit_to_main_loop
                 import time as _t; _t0 = _t.time()
-                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
+                # _unscoped：引擎读自身 session_id，ChatEngine 侧没有可比对的 user 语境。
                 session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id),
                     timeout=5,
@@ -1349,7 +1353,7 @@ class ChatEngine:
             from core.scheduling import submit_to_main_loop
 
             if session_data is None:
-                # _unscoped：引擎读自身 session_id，ChatEngine 无 user 语境（self._user_id 恒空）。
+                # _unscoped：引擎读自身 session_id，ChatEngine 侧没有可比对的 user 语境。
                 session_data = submit_to_main_loop(
                     self._storage.get_session_unscoped(self._session_id),
                     timeout=5,

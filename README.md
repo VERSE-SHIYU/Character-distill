@@ -160,7 +160,6 @@ Character-distill/
 │   └── migrations_pg/          # PostgreSQL 迁移（001~008，生产准出 schema）
 ├── web/
 │   ├── server.py               # FastAPI 入口（JWT 中间件 + WAF + 限流）
-│   ├── app.py                  # 应用装配
 │   ├── deps.py                 # 依赖注入（单例 + 用户 LLM 缓存 + 会话 TTL 清理）
 │   ├── security.py             # 安全响应头中间件
 │   ├── limiter.py              # slowapi 限流配置

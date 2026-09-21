@@ -56,13 +56,13 @@ class AgentLoop:
 
     MAX_STEPS = 3
 
-    def __init__(self, llm: Any, toolkit: Any, storage: Any = None, user_id: str = "") -> None:
+    def __init__(self, llm: Any, toolkit: Any, storage: Any = None) -> None:
         self._llm = llm
         self._toolkit = toolkit
-        # 记账上下文由调用方（ChatEngine）注入；缺省 None → try_record_usage 显式报「无法记账」，
+        # storage 由调用方（ChatEngine）注入；缺省 None → try_record_usage 显式报「无法记账」，
         # 不静默丢弃。每步决策都是一次真实 LLM 花费，必须落账。
+        # **归属不由构造注入**：谁在调由记账出口自己读上下文（缺陷 83/84）。
         self._storage = storage
-        self._user_id = user_id
 
     @T.spanned("agent.plan", op="plan")
     def run(self, character_hint: str, messages: list[dict]) -> AgentLoopResult:
@@ -113,7 +113,7 @@ class AgentLoop:
 
             # 每步决策都是一次真实 LLM 花费，紧跟调用后落账。last_usage 在 chat_with_tools
             # 入口已置 None，故厂商未回 usage 时记「无数据」而非冒用上一轮的值（串号比漏记更糟）。
-            try_record_usage(self._storage, self._user_id, self._llm, "chat_agent_route", source="AgentLoop")
+            try_record_usage(self._storage, self._llm, "chat_agent_route", source="AgentLoop")
 
             if not msg.tool_calls:
                 break

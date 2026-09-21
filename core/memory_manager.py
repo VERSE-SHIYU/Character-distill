@@ -366,13 +366,14 @@ class MemoryManager:
             return False
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
-                storage=None, user_id: str = "") -> None:
+                storage=None) -> None:
         """把近期高重要性记忆综合成 1-2 条高阶洞察，后台写回。
 
         recent_memories: 已过滤的非反思记忆，每项含 text/importance/mood 等。
         llm: 复用 engine 的 LLM client（llm.chat(sp, [msg])）。
-        storage/user_id: 记账归属上下文 —— 反思跑在后台线程、调用方无法在事后补记，
-        故必须由调用方传入，在线程内紧跟调用落账。
+        storage: 记账落库用的依赖 —— 反思跑在后台线程、调用方无法在事后补记，
+        故必须由调用方传入，在线程内紧跟调用落账。**归属不走这个参数**：线程经
+        `ctx_thread` 派生，身份自己跟着上下文过去（缺陷 83）。
         """
         if not self.enabled:
             return
@@ -400,7 +401,7 @@ class MemoryManager:
                     "你是一个善于反思和内省的AI角色。",
                     [{"role": "user", "content": prompt}],
                 )
-                try_record_usage(storage, user_id, llm, "memory_reflect", source="MemoryManager")
+                try_record_usage(storage, llm, "memory_reflect", source="MemoryManager")
                 print(f"[Reflection] LLM reply ({len(reply)} chars): {reply[:300]}")
 
                 insights = [

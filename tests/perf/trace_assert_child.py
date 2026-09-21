@@ -84,9 +84,8 @@ def make_engine(base: str):
     from core.chat_engine import ChatEngine
     from core.schema import CharacterCard
     llm = LLMAdapter(api_key="mock", base_url=base, model="deepseek-v4-pro", temperature=0, max_tokens=24)
-    engine = ChatEngine(llm=llm, rag=None, card=CharacterCard(name="测试卡"), card_id="trace-card")
-    engine._storage = None  # 关 usage 后台线程（storage 缺省 → try_record_usage 直接返回）
-    engine._user_id = ""
+    # storage=None 关 usage 后台线程（try_record_usage 见空 storage 直接返回）
+    engine = ChatEngine(llm=llm, rag=None, card=CharacterCard(name="测试卡"), card_id="trace-card", storage=None)
     return engine
 
 

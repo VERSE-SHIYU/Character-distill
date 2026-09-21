@@ -16,10 +16,16 @@ action 对」—— 出口在参数为空时照样被调用，只是自己 early
   3. **身份 ContextVar 唯一** —— 全仓 AST 现算：`ContextVar(...)` 的定义只有两处
      （`LLM_CALLER` 与 `_EMBED_DEADLINE`）。**这一条挡的是「又建一份身份」** ——
      第 2 条只管「谁写」，管不了「写进第几个变量」；
-  4. 形态 —— `Distiller` 不再持有 `_user_id` 实例属性；`web/` 里不再有对 distiller
-     实例写身份的那两行（「两条路各写一份」的复发形态）；
-  5. 落库 —— 真 app + 真 `AuthMiddleware` + 真 `/start` 路由，断言 `usage_stats`
-     行数 == 出口发出笔数，且 `user_id` 是请求身份。
+  4. 形态 —— 不再有 `self._user_id` 实例属性；`web/` 里不对**任何**实例写
+     `_storage` / `_user_id`（判据按属性名认，不按接收者名字离散）；
+  5. 落库（蒸馏族）—— 真 app + 真 `AuthMiddleware` + 真 `/start` 路由，断言
+     `usage_stats` 行数 == 出口发出笔数，且 `user_id` 是请求身份；
+  6. 聊天族（缺陷 83/84）—— 记账出口签名里没有身份参数、`storage` 在
+     `ChatEngine` / `ContextEngine` 上是必填仅关键字、`ContextEngine` 不收
+     `usage_ctx` 回调、聊天族三个文件没有 `self._user_id` 且 `self._storage` 只在
+     `__init__` 写；
+  7. 落库（聊天族）—— 真 app + 真中间件 + 带认证的 SSE `/api/chat/send`，断言
+     `usage_stats` 那行的 `action='chat'`、`user_id` 是请求身份。
 
 **身份只有一份。** 读口是 `core.request_context.current_user_id()`，它读的就是门用的
 那个 `LLM_CALLER` —— **不是**第二个 ContextVar。这条是本案返工的由来：第一版在
@@ -28,16 +34,18 @@ action 对」—— 出口在参数为空时照样被调用，只是自己 early
 分叉成两份事实。
 
 **已登记的边界（不是遗漏）。** 第 2 条的扫描面是 `core/` + `web/` + `adapters/`，
-**不含 `tests/`**：用例本身要设上下文来观察传播，那是观察装置不是写口。第 4 条只
+**不含 `tests/`**：用例本身要设上下文来观察传播，那是观察装置不是写口。第 5 条只
 覆盖 MapReduce 那条分支（短路成单次 longcontext 会变成 3 笔），也只断言「笔数对得上」
 —— token 数值是否精确不在这里，那是 `test_llm_access_gate` 的用量记账面。第 2/3 条是
 **形锁**：它们能挡住「又写一处」，但挡不住「把身份改从参数传」这类整体换形 —— 那种
-变更会先打红第 4 条。
+变更会先打红第 4 条。第 7 条当时**测不到**「身份读在出口入口而非 `_write` 里」那一维，
+理由与实测见该节标题下的登记。
 """
 from __future__ import annotations
 
 import ast
 import asyncio
+import inspect
 import sqlite3
 import threading
 import uuid
@@ -267,20 +275,28 @@ def test_distiller_holds_no_user_identity_attribute():
         "「谁忘了注入谁就静默不记」这个形态就回来了。身份走 core.request_context 的上下文。")
 
 
-def test_no_identity_write_on_distiller_instances():
-    """`web/` 里不得再对 distiller 实例写身份 —— 那正是 `/start` 漏、`/run_stream` 独有注入的形态。"""
+def test_no_router_writes_deps_onto_instances():
+    """`web/` 里不得对**任何**实例写 `_storage` / `_user_id`。
+
+    判据是按**属性名**认的，不按接收者名字离散 —— 这条原来只扫 distiller，挡不住
+    聊天族：路由构造完 ChatEngine 之后再往上写属性，写漏一处（写了 `_storage` 忘
+    `_user_id`，或反过来）就是整条路静默不记账（缺陷 83）。`X._storage = ` 不论
+    `X` 叫什么，都是同一形态的复发。
+    """
     offenders: list[str] = []
     for p in _py_files(_REPO / "web"):
         for n in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
-            if not isinstance(n, ast.Assign):
+            if not isinstance(n, (ast.Assign, ast.AnnAssign)):
                 continue
-            for t in n.targets:
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            for t in targets:
                 if isinstance(t, ast.Attribute) and t.attr in ("_user_id", "_storage") \
-                        and isinstance(t.value, ast.Name) and "distiller" in t.value.id:
+                        and isinstance(t.value, ast.Name):
                     offenders.append(f"{p.relative_to(_REPO).as_posix()}:{t.lineno}")
     assert not offenders, (
-        f"又往 distiller 实例上写身份：{offenders}。storage 由唯一装配出口 "
-        "`web/deps.get_distiller` 注入，身份由上下文带 —— 路由侧不该有任何一行。")
+        f"路由又往实例上写依赖/身份：{offenders}。storage 由构造注入"
+        "（`ChatEngine(..., storage=...)` / `web/deps.get_distiller`），身份由上下文带 "
+        "—— 构造后写属性那条路已删，回来就是缺陷 83。")
 
 
 # ── 4. 中间件真的在出口前设了 ────────────────────────────────────────────────
@@ -504,3 +520,227 @@ def _wait_for_rows(db: str, expected: int, timeout: float = 40.0):
             return rows
         time.sleep(0.25)
     return _usage_rows(db)
+
+
+# ── 6. 聊天族：storage 是构造依赖，身份由出口自读（缺陷 83/84）──────────────
+#
+# 上一节锁的是蒸馏族那条路。这一节锁聊天族补上的那一维：**构造后写属性**这条路被
+# 删了。原来的形态是「路由构造完引擎，再 `engine._storage = ...`」—— 没有类型看得
+# 出来，写漏一处就整条路静默不记账（缺陷 83）；`AgentLoop` 还从 ChatEngine 实例字段
+# 上读归属（缺陷 84），而那个字段本身就没人在构造期填。
+#
+# 两条各锁一维：签名（依赖必填、身份不进签名、没有回调式归属）与实例形态（没有身份
+# 属性、storage 只在 `__init__` 写）。「值真的到位」那一维由下一节的行为锁承担 ——
+# 记不进去是静默的，形锁本身不会响。
+
+_CHAT_FAMILY = ("core/chat_engine.py", "core/context_engine.py", "core/agent/agent_loop.py")
+
+
+def test_usage_exit_takes_no_identity_argument():
+    """`try_record_usage` 的签名里没有身份 —— 身份归它自己读，不是调用方喂的。
+
+    留一个 `user_id` 形参，就等于把「谁在调」的答案又摊回 13 个调用点：那些点各有
+    各的上下文，写漏一处是静默丢账，不是报错。
+    """
+    from core.utils import try_record_usage
+
+    params = inspect.signature(try_record_usage).parameters
+    identityish = [n for n in params if "user" in n]
+    assert not identityish, (
+        f"记账出口又收身份参数 {identityish}（签名 {list(params)}）—— 归属只应来自 "
+        "`core.request_context.current_user_id()`，调用方不再逐处喂。")
+    assert "storage" in params, "storage 仍是出口的入参（它是依赖；身份才是被删的那个）"
+
+
+def test_chat_family_requires_injected_storage():
+    """`storage` 在聊天族构造器上是**必填的仅关键字参数**，没有默认值。
+
+    有默认值就有「不传也能构造出来」的实例 —— 那些实例的账是静默丢的（出口那句
+    print 只进日志）。缺省 None 是给 `AgentLoop` 这类内部组件的过渡口，不是给引擎的。
+    """
+    from core.chat_engine import ChatEngine
+    from core.context_engine import ContextEngine
+
+    for cls in (ChatEngine, ContextEngine):
+        p = inspect.signature(cls.__init__).parameters.get("storage")
+        assert p is not None, f"{cls.__name__} 没有 storage 形参 —— 依赖没走构造注入"
+        assert p.kind is inspect.Parameter.KEYWORD_ONLY, (
+            f"{cls.__name__}.storage 不是仅关键字 —— 位置传参会把 llm/rag 的顺序依赖"
+            "又借回来，改签名时静默错位")
+        assert p.default is inspect.Parameter.empty, (
+            f"{cls.__name__}.storage 有默认值 {p.default!r} —— 又能构造出没有 storage "
+            "的实例了，缺陷 83 的静默丢账面跟着回来")
+
+
+def test_context_engine_takes_storage_not_a_usage_ctx_callback():
+    """ContextEngine 直接收 storage，不再收一个「把归属延后到调用时」的回调。
+
+    `usage_ctx=lambda: (self._storage, self._user_id)` 那种形态把归属拆成两半：回调
+    返回什么由**持有引擎的那个对象**决定 —— 于是「谁在调」又挂回了实例字段（缺陷 84）。
+    """
+    from core.context_engine import ContextEngine
+
+    params = inspect.signature(ContextEngine.__init__).parameters
+    assert "usage_ctx" not in params, (
+        "ContextEngine 又收 usage_ctx 回调了 —— 归属被推迟到调用时、由持有者的实例"
+        "字段回答，正是缺陷 84 的形态。它只该接 storage。")
+
+
+def _instance_write_leaks(rels: tuple[str, ...] = _CHAT_FAMILY) -> list[str]:
+    """给定文件里「身份挂回实例」与「storage 写在 `__init__` 之外」的写点。"""
+    leaks: list[str] = []
+    for rel in rels:
+        p = _REPO / rel
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        inits = [(n.lineno, n.end_lineno) for n in ast.walk(tree)
+                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "__init__"]
+        for n in ast.walk(tree):
+            if not isinstance(n, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+            for t in targets:
+                if not (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                        and t.value.id == "self"):
+                    continue
+                if t.attr == "_user_id":
+                    leaks.append(f"{rel}:{t.lineno} self._user_id")
+                elif t.attr == "_storage" and not any(a <= t.lineno <= b for a, b in inits):
+                    leaks.append(f"{rel}:{t.lineno} self._storage 写在 __init__ 之外")
+    return sorted(leaks)
+
+
+def test_chat_family_holds_no_identity_attribute():
+    """聊天族不得再有 `self._user_id`，`self._storage` 只在 `__init__` 里写。
+
+    这两条是同一个形态的两半：身份一旦挂回实例，就又有「谁忘了注入谁就静默不记」；
+    storage 一旦能在构造后被改写，路由就又有了「写一半」的余地（缺陷 83）。
+    """
+    leaks = _instance_write_leaks()
+    assert not leaks, (
+        f"聊天族又出现构造后写属性/身份挂实例：{leaks}。storage 走必填构造注入，"
+        "归属由记账出口读 `core.request_context` —— 实例上不该有这两个字段的写点。")
+
+
+def test_chat_family_write_scan_is_not_vacuous():
+    """负控：扫描器对**合成**的两种写点都要报得出来 —— 否则上一条是在假绿。"""
+    probe = _REPO / "e2e" / "scratch" / "_synthetic_chat_family_probe.py"
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.write_text(
+        "class E:\n"
+        "    def __init__(self, storage):\n"
+        "        self._storage = storage\n"
+        "    def late_bind(self, storage):\n"
+        "        self._storage = storage\n"
+        "        self._user_id = 'u'\n",
+        encoding="utf-8")
+    try:
+        leaks = _instance_write_leaks(("e2e/scratch/_synthetic_chat_family_probe.py",))
+    finally:
+        probe.unlink(missing_ok=True)
+    assert len(leaks) == 2 and any("_user_id" in x for x in leaks), (
+        f"扫描器漏掉了合成写点（{leaks}）—— 判据面失效")
+
+
+# ── 7. 落库：真 SSE 聊天请求，账归属**请求身份** ───────────────────────────
+#
+# 上面那两条形态锁管的是「没有第二处写口」。这一条从路由那端进、到库那端出，管的是
+# **值真的到位** —— 缺陷 83 的两半（身份传得进派生线程、storage 到位）任缺一半，
+# 这里都是 0 行而不是报错（记不进去是静默的，所以形态锁之外还要一条行为锁）。
+#
+# 登记一个**测不到**的边界：`try_record_usage` 把身份读在函数入口、不读在 `_write`
+# 里，这一条**没有**锁。实测本仓三种投递都传播调用方上下文（`run_coroutine_threadsafe`、
+# 无运行 loop 时的 `asyncio.run`、有运行 loop 时的 `create_task`），所以把读取挪进
+# `_write` 也照样读到身份 —— 变异打不红，做了就是一条不具分辨力的假锁。要锁它得现造
+# 一个不传播上下文的投递实现，那锁的是假想形态。**留作已知的未锁面**：`_write` 里的
+# 读法对今天的投递实现是等价的，那种写法只是对「投递契约不承诺传播」更稳。
+
+
+class _ChatLLM:
+    """聊天路径要的那几个口：模型名、usage、流式产出。"""
+
+    def __init__(self) -> None:
+        self._model = "lock-chat-model"
+        self.last_usage = {"prompt_tokens": 17, "completion_tokens": 4}
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def chat_stream(self, system, messages, max_tokens=None):
+        self.last_usage = {"prompt_tokens": 17, "completion_tokens": 4}
+        yield "我"
+        yield "在。"
+
+
+def test_chat_sse_lands_usage_row_with_request_identity(monkeypatch):
+    """带认证的 SSE 聊天请求 → `usage_stats` 有一行，`action='chat'`、归属请求身份。
+
+    这条从路由那端进、到库那端出，中间不碰任何实例属性 —— 缺陷 83 的两半（身份传得
+    进去、storage 到位）任缺一半，这里都是 0 行而不是报错。
+    """
+    from core.chat_engine import ChatEngine
+    from core.schema import CharacterCard
+    from routers.chat import router as chat_router
+
+    uid = f"u_sse_{uuid.uuid4().hex[:8]}"
+    db = _REPO / "e2e" / "scratch" / f"_sse_{uuid.uuid4().hex[:8]}.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store = SQLiteStore(str(db))
+    sid = f"s_sse_{uuid.uuid4().hex[:8]}"
+    tid = f"txt_{uuid.uuid4().hex[:8]}"
+
+    # rag=None：ContextEngine 对未配置检索是**显式空**（不是失败），而真 RAGEngine
+    # 构造要 embedding key —— 这条锁的是身份与记账，不是检索，没必要把 key 拖进来。
+    engine = ChatEngine(
+        _ChatLLM(),
+        None,
+        CharacterCard(name="甲", identity="测试"),
+        card_id="c_lock",
+        storage=store,
+    )
+    sessions = deps.get_sessions()
+    sessions[sid] = {"engine": engine, "user_id": uid,
+                     "lock": asyncio.Lock(), "message_ids": []}
+
+    async def _resolve(user_id, storage=None):
+        return llm
+
+    llm = engine.llm
+    monkeypatch.setattr(deps, "_storage", store)      # 中间件查 users 行要用
+    monkeypatch.setattr(deps, "get_user_llm", _resolve)   # `/send` 的 503 门（解析出口）
+    app = FastAPI()
+    app.include_router(chat_router)
+    app.add_middleware(server.AuthMiddleware)
+    app.dependency_overrides[get_storage] = lambda: store
+    app.dependency_overrides[get_current_user] = lambda: {
+        "id": uid, "username": "t", "is_admin": False,
+    }
+
+    try:
+        with _LoopSubmitter() as sub:
+            # 会话那条链得真在库里：`messages.session_id` 有外键，缺了会话行时
+            # `save_message` 抛的是 FK 错、被路由吞成 non-fatal，随后那条路自己会
+            # 撞 `user_rec` 未绑定（预存缺陷，不在本次范围）—— 那会让这条锁测到
+            # 别的东西上。种子只补链，不碰被测行为。
+            sub.run(store.create_user(uid, uid, "probe-hash"))
+            sub.run(store.save_text(tid, "src.txt", "甲说了一句话。", user_id=uid))
+            sub.run(store.save_card("c_lock", tid, "甲", "{}", user_id=uid))
+            sub.run(store.save_session(sid, "c_lock", "", "", uid))
+            r = TestClient(app).post(
+                "/api/chat/send",
+                json={"session_id": sid, "message": "你好", "stream": True},
+                headers={"Authorization": f"Bearer {_token(uid)}"},
+            )
+            rows = _wait_for_rows(str(db), expected=1)
+    finally:
+        sessions.pop(sid, None)
+        try:
+            db.unlink()
+        except OSError:
+            pass
+
+    assert r.status_code == 200, f"SSE 聊天没跑起来：{r.status_code} {r.text[:300]}"
+    assert '"done": true' in r.text, f"流没走到终态：{r.text[:300]}"
+    assert rows == [("chat", uid)], (
+        f"usage_stats 是 {rows}（期望 [('chat', {uid!r})]）—— 走了整条 SSE 路却"
+        "没落账，或归属不是请求身份。")
