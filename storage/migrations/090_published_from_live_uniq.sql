@@ -15,14 +15,15 @@
 --    （另测：SQLite 的表重建**不会**丢索引 —— `_rebuild_cards_published_from` 按
 --    sqlite_master 重放它；同一次重建会丢触发器，那才是 sqlite_store.py 里对应那句的成因。）
 --
--- ② 编号必须在**回填之后**（089）。存量库里同一草稿可能有多张存活副本（旧语义每发布一次
+-- ② 编号必须在**回填并收敛之后**。存量库里同一草稿可能有多张存活副本（旧语义每发布一次
 --    新建一行）。实测在含两张同草稿存活副本的库上：
 --      · 索引先建、再回填 → 建索引成功（`published_from` 全为 NULL，唯一索引不互撞），
 --        回填报 `UNIQUE constraint failed: cards.published_from`
 --      · 回填先、再建索引 → 回填成功，建索引报同一个错
 --    两种顺序都让 init 失败，只是炸在不同语句；**光换顺序不解决，收敛才是解**。
---    故顺序排成：加列(088) → 回填并收敛(089) → 建唯一索引(本文件)。
---    实测「回填 → 收敛（多余副本软删）→ 建索引」三步全通过，存活副本 1 张。
+--    回填并收敛不走独立文件，就在 088 尾部（同一份 SKIP 谓词管住它，故只跑一次）；
+--    顺序是：加列 + 回填并收敛(088) → 建唯一索引(本文件)。实测「回填 → 收敛
+--    （只留一张拿 published_from，其余落回普通 fork）→ 建索引」三步全通过，存活副本 1 张。
 CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq
     ON cards(published_from)
  WHERE deleted_at IS NULL;

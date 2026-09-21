@@ -33,6 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from conftest import PG_ENV, pg_reachable, pg_required
 
+# SQLite 侧的旧形态夹具（T4 要拿同一组夹具在两侧各跑一遍，再逐行比读数）。tests/ 在
+# sys.path 上，与 `conftest` 走同一个导入路径。
+from test_published_from_backfill import run_old_shape_scenario, seed_old_shape_copies
+
 from storage.postgres_store import PostgresStore
 from storage.sqlite_store import SQLiteStore
 
@@ -1651,3 +1655,136 @@ def test_pg_suite_is_not_silently_disabled_where_pg_is_required():
         "本模块 50 条用例会整体 skip 成静默通道。修 DATABASE_URL / postgres service，"
         "不要靠关掉这条断言来让它变绿。"
     )
+
+
+# ── 088/021 的存量回填（PG 侧）───────────────────────────────────────────────
+#
+# 与 `tests/test_published_from_backfill.py`（SQLite 侧）同形、同判据。两侧的实现路径
+# 完全不同 —— SQLite 靠 `_apply_migration` 的「列都在即整份跳过」把回填绑死在 088，
+# PG 靠 021 里那个「列不存在才跑」的 DO 块 —— 只验一侧会整条漏掉另一侧。
+
+async def _revert_cards_to_pre_021(store: PostgresStore) -> None:
+    """把建好的库改回旧形态：cards 去掉 `published_from` 列、复合外键与 023 的索引。
+
+    PG 比 SQLite 省事：`DROP COLUMN` 能直接跑，不用重建表（SQLite 那边被表级复合外键
+    挡住了，见 SQLite 侧同名助手的 docstring）。`cards_id_user_id_key` 得一起删 ——
+    它是 021 的 IF 分支里建的，留着的话重放会在「加约束」那步报重复。
+    """
+    async with await store._connect() as conn:
+        await conn.execute("DROP INDEX IF EXISTS cards_published_from_live_uniq")
+        await conn.execute("ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_published_from_fkey")
+        await conn.execute("ALTER TABLE cards DROP CONSTRAINT IF EXISTS cards_id_user_id_key")
+        await conn.execute("ALTER TABLE cards DROP COLUMN IF EXISTS published_from")
+
+
+@_pg
+class TestPgPublishedFromBackfill:
+    """T1 / T2 / T3 的 PG 版；T4 在同一组夹具上比两侧读数。"""
+
+    @staticmethod
+    async def _reading(store, ids) -> dict:
+        async with await store._connect() as conn:
+            rows = await conn.fetch(
+                "SELECT id, published_from, forked_from FROM cards WHERE id = ANY($1::text[])",
+                list(ids))
+        return {r["id"]: (r["published_from"], r["forked_from"]) for r in rows}
+
+    async def test_T1_startup_moves_the_copy_relation_onto_published_from(self, store):
+        owner = f"usr_{uuid.uuid4().hex}"
+        draft, copies = await seed_old_shape_copies(
+            store, owner, [0], "t1", style="dollar")
+        await _revert_cards_to_pre_021(store)
+
+        # 前提：列真的不在了，否则下面测的是「本来就对」的库。
+        async with await store._connect() as conn:
+            gone = await conn.fetchval(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 'cards' AND column_name = 'published_from'")
+        assert gone == 0, "夹具没把列去掉，本用例会恒绿"
+
+        restarted = PostgresStore(_dsn())
+        try:
+            await restarted._ensure_initialized()
+            got = await self._reading(restarted, [draft, *copies])
+        finally:
+            await restarted.close()
+
+        assert got[copies[0]] == (draft, ""), \
+            f"旧形态库启动后副本没归位：{got[copies[0]]!r}，期望 published_from={draft!r} 且 forked_from=''"
+        assert got[draft] == (None, ""), f"草稿被误改成 fork：{got[draft]!r}"
+
+    async def test_T2_self_fork_created_after_backfill_survives_the_next_startup(self, store):
+        owner = f"usr_{uuid.uuid4().hex}"
+        draft, copies = await seed_old_shape_copies(
+            store, owner, [0], "t2", style="dollar")
+        copy_id = copies[0]
+        await _revert_cards_to_pre_021(store)
+
+        first = PostgresStore(_dsn())
+        try:
+            await first._ensure_initialized()
+            assert await first.get_card_owned(copy_id, owner) is not None
+            async with await first._connect() as conn:
+                assert await conn.fetchval(
+                    "SELECT published_from FROM cards WHERE id = $1", copy_id) == draft, \
+                    "夹具的回填没成功，本用例会恒绿"
+            # 回填之后才产生的合法自我 fork（`fork_card` 只写 forked_from）。
+            self_fork = f"card_{uuid.uuid4().hex}"
+            assert await first.fork_card(copy_id, self_fork, owner, None) is not None, \
+                "夹具没 fork 出来，本用例会恒绿"
+        finally:
+            await first.close()
+
+        # 新实例 = 再次跑全部迁移文件（PG 每轮 init 全量重放，没有「已应用」账本）。
+        second = PostgresStore(_dsn())
+        try:
+            await second._ensure_initialized()
+            got = await self._reading(second, [self_fork])
+        finally:
+            await second.close()
+
+        assert got[self_fork] == (None, copy_id), (
+            "二次启动把合法自我 fork 改判成了发布副本 —— 回填又跑了一遍："
+            f"{got[self_fork]!r}（期望 (None, {copy_id!r}))")
+
+    async def test_T3_convergence_picks_exactly_one_and_keeps_the_losers_rows(self, store):
+        owner = f"usr_{uuid.uuid4().hex}"
+        draft, copies = await seed_old_shape_copies(
+            store, owner, [1, 9, 5], "t3", style="dollar")
+        winner, losers = copies[1], [copies[0], copies[2]]
+        await _revert_cards_to_pre_021(store)
+
+        restarted = PostgresStore(_dsn())
+        try:
+            await restarted._ensure_initialized()
+            got = await self._reading(restarted, [draft, *copies])
+        finally:
+            await restarted.close()
+
+        assert got[winner] == (draft, ""), f"收敛没留下任何一张：{got[winner]!r}"
+        for loser in losers:
+            assert got[loser] == (None, draft), (
+                f"落选副本 {loser} 被改动了 —— 它该原样成为普通 fork：{got[loser]!r}")
+
+    async def test_T4_sqlite_and_pg_agree_on_the_same_fixture(self, store, tmp_path):
+        """同一组夹具（同 prefix、同 likes）在两侧跑完，逐行读数必须完全一致。"""
+        owner = f"usr_{uuid.uuid4().hex}"
+        likes = [1, 9, 5]
+
+        draft, copies = await seed_old_shape_copies(
+            store, owner, likes, "t4", style="dollar")
+        await _revert_cards_to_pre_021(store)
+        restarted = PostgresStore(_dsn())
+        try:
+            await restarted._ensure_initialized()
+            pg_reading = await self._reading(restarted, [draft, *copies])
+        finally:
+            await restarted.close()
+
+        sqlite_reading = await run_old_shape_scenario(tmp_path, owner, likes, "t4")
+
+        assert sqlite_reading and sqlite_reading.keys() == pg_reading.keys(), \
+            f"两侧行集不同：SQLite {sorted(sqlite_reading)} / PG {sorted(pg_reading)}"
+        diff = {k: (sqlite_reading[k], pg_reading[k])
+                for k in pg_reading if sqlite_reading[k] != pg_reading[k]}
+        assert not diff, f"同一组夹具在两侧结果不一致（列 = SQLite / PG）：{diff}"

@@ -58,7 +58,7 @@ SELECT id, text_id, name, visibility, forked_from, deleted_at
 -- 为什么值得单独数：旧语义「每发布一次新建一行」会留下同一草稿的多张存活副本。
 -- 唯一索引 `cards_published_from_live_uniq ON cards(published_from) WHERE deleted_at IS NULL`
 -- 要求一个 `published_from` 至多一张存活行，故回填遇到这批行必撞索引（实测：两个顺序
--- 都让 init 失败，炸在不同语句）。规模决定收敛那步（089/022）要不要特判留哪一张。
+-- 都让 init 失败，炸在不同语句）。规模决定收敛那步（写在 088 尾部 / 021 的 DO 块里）要不要特判留哪一张。
 -- 注意：这里**不看 visibility** —— 下架 = 撤回发布，副本行仍存活，仍占唯一性。
 SELECT d.id AS draft_id, COUNT(*) AS live_copies,
        array_agg(c.id || ':' || c.visibility || ':' || c.created_at ORDER BY c.created_at) AS copies

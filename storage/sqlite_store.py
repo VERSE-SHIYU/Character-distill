@@ -106,8 +106,10 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
     "088_published_from.sql",
-    # 089 是 Step 3 的回填并收敛（尚未落地）；索引必须排在它之后 —— 存量库里同一草稿
-    # 可能有多张存活副本，回填不加收敛就撞唯一索引，两个顺序都让 init 失败（实测）。
+    # 回填并收敛就写在 088 尾部（不是独立文件）：它必须**只跑一次**，而唯一的「只跑一次」
+    # 谓词就是 088 那句 ADD COLUMN（列已存在 → `_apply_migration` 整份跳过，含尾部数据段）。
+    # 索引必须排在它之后 —— 存量库里同一草稿可能有多张存活副本，回填不加收敛就撞唯一索引，
+    # 两个顺序都让 init 失败（实测）。
     "090_published_from_live_uniq.sql",
 )
 
