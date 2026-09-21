@@ -6,8 +6,7 @@
 #   uv pip compile requirements-dev.in -o requirements-dev.txt \
 #     -c requirements.txt --universal --python-version 3.12
 # ═══════════════════════════════════════════════════════════════════════════
-# 仅开发/调试时需要（Gradio 旧入口已废弃）
-gradio>=5.0.0
+# 仅开发/调试时需要
 pytest
 pytest-asyncio
 # MCP SDK —— mcp_server 协议层测试依赖（test_rag_unusable 走 mcp_server 降级路径）。
