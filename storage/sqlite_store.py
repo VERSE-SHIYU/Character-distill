@@ -321,6 +321,21 @@ END
 """
 
 
+# 「一草稿至多一张存活副本」（087 追加的那条部分唯一索引）。
+#
+# **为什么迁移文件里写了、这里还要执行一遍**：`_apply_migration` 的判据是「脚本里每个
+# ADD COLUMN 的列都已存在 → 整份跳过」。列正是 087 加的，所以**在列已存在之后建的库**
+# 再跑 087 会整份跳过 —— 连同末尾这条索引一起。只写迁移文件的话，全新库有索引、老库没有，
+# 同一个仓两种库行为不一致；而 publish_card 的 `ON CONFLICT` 依赖它，缺了就当场报
+# `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`。
+# 与上面那条触发器同理：都属于「迁移文件之外无条件兜一句」。
+_CARDS_LIVE_PUBLISHED_UNIQ_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq
+    ON cards(published_from)
+ WHERE deleted_at IS NULL
+"""
+
+
 async def _cards_published_fk_present(conn: Any) -> bool:
     """cards 上有没有 `(published_from, user_id) → (id, user_id)` 这条复合外键。
 
@@ -611,6 +626,7 @@ class SQLiteStore(StorageBase):
                     if not await _cards_published_fk_present(conn):
                         await _rebuild_cards_published_from(conn)
                     await conn.execute(_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER)
+                    await conn.execute(_CARDS_LIVE_PUBLISHED_UNIQ_INDEX)
                     await conn.commit()
 
                     # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜

@@ -46,3 +46,12 @@ BEGIN
         ON DELETE SET NULL (published_from);
 EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
 END $$;
+
+-- 「一草稿至多一张存活副本」由库强制（裁定：下架 = 撤回发布，副本行仍在，只是不再在架，
+-- 重发复用同一行）。故唯一性不看 visibility，只看「未删」。
+--
+-- **回填须先收敛多副本**：存量库里若同一 published_from 有多行未删副本，本索引建不上，
+-- 迁移会当场报错（这是想要的 —— 静默跳过就等于没约束）。收敛顺序见步骤 3 的回填迁移。
+CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq
+    ON cards(published_from)
+ WHERE deleted_at IS NULL;

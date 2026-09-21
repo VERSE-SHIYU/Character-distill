@@ -74,6 +74,19 @@ async def _published(store, owner) -> tuple[str, str]:
     return draft, copy_id
 
 
+async def _draft(store, owner) -> str:
+    """一张**没有任何副本**的草稿，给「库拒跨属主写入」那组当靶子。
+
+    不能用 `_published`：它自带一张存活副本，靶子上的 `published_from` 已被占用，
+    于是复合外键还没轮到，部分唯一索引先报重复 —— 判据被邻居遮住（实测：断言收到的
+    是 UNIQUE 冲突而非 FOREIGN KEY）。
+    """
+    tid = await _text(store, owner)
+    draft = f"card_{uuid.uuid4().hex}"
+    await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=owner)
+    return draft
+
+
 class TestOtherUserForkDoesNotPolluteOrigin:
     """后果 1：fork 的头像改动不得向上落到原作者的公开卡。"""
 
@@ -216,6 +229,10 @@ class TestDatabaseRejectsCrossOwnerPublishedFrom:
     锁的是**库**的现状，不是源码：拿 store 自己的连接直接写一条跨属主的
     `published_from`，必须被外键拒掉。哪天有人把约束去掉（重建表时漏传 extra 约束、
     或迁移里删掉 FK），这组用例先红；否则要等某个调用点再次忘了比 user_id 才发现。
+
+    靶子必须是**没有副本的草稿**（`_draft`）：两条约束都盯着 `published_from`，靶子上
+    若已有一张存活副本，先报的是部分唯一索引的重复，外键还没轮到 —— 判据照样「红」，
+    红的却不是要锁的那条。
     """
 
     @staticmethod
@@ -228,7 +245,7 @@ class TestDatabaseRejectsCrossOwnerPublishedFrom:
             )
 
     async def test_cross_owner_published_from_is_rejected(self, store, user_a, user_b):
-        draft, _copy = await _published(store, user_a)
+        draft = await _draft(store, user_a)
 
         with pytest.raises(Exception) as exc:
             await self._raw_insert(store, f"card_{uuid.uuid4().hex}", user_b, draft)

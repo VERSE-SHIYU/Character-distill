@@ -248,6 +248,15 @@ async def _pg_published(store, owner) -> tuple[str, str]:
     return draft, copy_id
 
 
+async def _pg_draft(store, owner) -> str:
+    """一张**没有任何副本**的草稿（SQLite 侧 `_draft` 同形、同理由）。"""
+    tid = f"txt_{uuid.uuid4().hex}"
+    draft = f"card_{uuid.uuid4().hex}"
+    await store.save_text(tid, "src.txt", "content", user_id=owner)
+    await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=owner)
+    return draft
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 @pytest.fixture
@@ -1415,7 +1424,10 @@ class TestPgDatabaseRejectsCrossOwnerPublishedFrom:
     """同 SQLite 侧同名类：同一作者由复合外键在库里强制。
 
     两引擎的落地路径完全不同（SQLite 靠重建表把约束写进 DDL，PG 靠 mig 020 的
-    ALTER TABLE + DEFERRABLE），只验一侧会整条漏掉另一侧。
+    ALTER TABLE），只验一侧会整条漏掉另一侧。
+
+    靶子必须是**没有副本的草稿**（`_pg_draft`）：两条约束都盯着 `published_from`，
+    靶子上若已有一张存活副本，先报的是部分唯一索引的重复，外键还没轮到。
     """
 
     @staticmethod
@@ -1429,7 +1441,7 @@ class TestPgDatabaseRejectsCrossOwnerPublishedFrom:
 
     async def test_cross_owner_published_from_is_rejected(self, store):
         a, b = f"usr_a_{uuid.uuid4().hex}", f"usr_b_{uuid.uuid4().hex}"
-        draft, _copy = await _pg_published(store, a)
+        draft = await _pg_draft(store, a)
 
         with pytest.raises(Exception) as exc:
             await self._raw_insert(store, f"card_{uuid.uuid4().hex}", b, draft)
