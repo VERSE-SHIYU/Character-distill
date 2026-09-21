@@ -119,21 +119,8 @@ class TestInitialCallAccounting:
         return」不记「截断 return」的实现会漏掉它，本用例红。走真实 `_extract_content`
         造异常（不直接构造异常类），否则「去掉 content 传递」的变异测不出来。
         """
-        class _Msg:
-            def __init__(self, content):
-                self.content = content
-
-        class _Choice:
-            def __init__(self, finish_reason, content):
-                self.finish_reason = finish_reason
-                self.message = _Msg(content)
-
-        with pytest.raises(IncompleteResponseError) as ei:
-            _extract_content(_Choice("length", '{"name": "角'), where="chat")
-        truncated_exc = ei.value
-
         llm = _FakeLLM([])
-        llm.chat = MagicMock(side_effect=[truncated_exc, CARD])
+        llm.chat = MagicMock(side_effect=[_truncated_exc("chat"), CARD])
 
         card = Distiller(llm, config_path=None).distill("文本", "角色")
         assert card.name == "角色"
@@ -145,6 +132,28 @@ class TestInitialCallAccounting:
 
 PARTIAL = '{"name": "阿'   # 被 max_tokens 截断的半截角色卡
 SYSTEM, USER = "系统提示", "用户正文"
+
+
+class _Msg:
+    def __init__(self, content):
+        self.content = content
+
+
+class _Choice:
+    def __init__(self, finish_reason, content):
+        self.finish_reason = finish_reason
+        self.message = _Msg(content)
+
+
+def _truncated_exc(where: str) -> IncompleteResponseError:
+    """经**真实**的 `_extract_content` 造截断异常，不直接构造异常类。
+
+    直接 `IncompleteResponseError("length", where, content=...)` 会绕过 content 的传递
+    链，于是「去掉 content 传递」的变异测不出来 —— 那是个没判别力的用例。
+    """
+    with pytest.raises(IncompleteResponseError) as ei:
+        _extract_content(_Choice("length", PARTIAL), where=where)
+    return ei.value
 
 
 class _FakeStreamLLM(_FakeLLM):
@@ -194,6 +203,35 @@ class TestStreamChannelAccounting:
         assert [a for a, _ in records] == ["distill_identify"], records
         payload = records[0][1]
         assert payload["estimated"] is True, "拿不到 last_usage，只能标估算"
+        assert payload == estimate_usage_from_chars(
+            len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
+
+
+class TestNonStreamTruncationAccounting:
+    def test_truncated_chat_records_one_estimated_entry(self, records):
+        """非流式 `length` 截断 → 与流式支同口径，补一条**估算**账。
+
+        `chat()` 进本轮就先 `last_usage = None`（`adapters/llm_adapter.py:634`），而
+        `_extract_content` 的抛出点在 usage 回写（`:651`）**之前** —— 故这条路上
+        `_try_record_usage(action)` 拿到 `usage=None`，落到 `try_record_usage` 的
+        `if not usage` 分支：打印一行「no usage data」就 return，**一条也不落库**。
+        形如「只记成功」的静默偏低，与流式支修掉的那条同形态。
+
+        变异：把非流式截断支那条 `estimate_usage_from_chars(...)` 退回 `usage=None`
+        （即本用例加入前的实现）→ `payload` 变 None，本用例红。
+        """
+        llm = _FakeLLM([])
+        llm.chat = MagicMock(side_effect=_truncated_exc("chat"))
+
+        text, truncated = Distiller(llm, config_path=None)._chat_accounted(
+            SYSTEM, [{"role": "user", "content": USER}], "角色蒸馏", "distill",
+        )
+
+        assert (text, truncated) == (PARTIAL, True), "半截正文是重修的证据，必须交出去"
+        assert [a for a, _ in records] == ["distill"], records
+        payload = records[0][1]
+        assert payload is not None, "截断时拿不到 last_usage，必须按字符估算补记"
+        assert payload["estimated"] is True, "估的账要标出来，别冒充真实读数"
         assert payload == estimate_usage_from_chars(
             len(SYSTEM) + len(USER), len(PARTIAL)), "prompt/completion 两侧都要按已见字符算"
 

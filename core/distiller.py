@@ -542,6 +542,15 @@ class Distiller:
         # 括号不成对 = 结构未闭合
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
+    @staticmethod
+    def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
+        """一次调用实际喂进去的字符总数 —— 估算账的输入（两侧字符 → token 估算）。
+
+        流式与非流式两条截断路共用这一个口径：同一段 prompt 在两支里算出同一个数，
+        免得「按字符估算」这个数各写一遍、迟早漂成两个。
+        """
+        return len(system_prompt) + sum(len(str(m.get("content", ""))) for m in messages)
+
     def _collect_stream(
         self, system_prompt: str, messages: list[dict[str, Any]], label: str,
         usage_action: str, max_tokens: int | None = None,
@@ -564,9 +573,7 @@ class Distiller:
         finish_reason **之后**，校验不过就不交付，故截断时 `last_usage` 必为 ``None``；
         而失败调用同样烧了 token（重试墙下空烧）—— 只记成功会让统计系统性偏低。
         """
-        prompt_chars = len(system_prompt) + sum(
-            len(str(m.get("content", ""))) for m in messages
-        )
+        prompt_chars = self._prompt_chars(system_prompt, messages)
         parts: list[str] = []
         try:
             for piece in self._llm.chat_stream(
@@ -607,12 +614,15 @@ class Distiller:
         `distill_incremental` 的收尾格式化）原本各记各的——两处各补一条
         `_try_record_usage`、`distill` 那处根本没有，口径不一致且初次调用漏记。
         收敛到这里：**这一次调用真的成功了就恰记一条**，``raise`` 那条路不记。
-        截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记。
+        截断那一路也是成功调用（token 已经烧了，半截正文还要进重修环），照记 ——
+        但它**拿不到 `last_usage`**：`chat()` 进本轮就先清空，而 `_extract_content`
+        的抛出点在 usage 回写之前，故只能按字符估算补记（缺陷 91），与流式支同口径。
         """
         _mt = self.CARD_MAX_TOKENS if max_tokens is None else max_tokens
         if stream:
             return self._collect_stream(system_prompt, messages, label, action, _mt)
         truncated = False
+        usage = None
         try:
             reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
         except Exception as exc:
@@ -621,7 +631,9 @@ class Distiller:
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
             reply, truncated = info[1], True
-        self._try_record_usage(action)
+            usage = estimate_usage_from_chars(
+                self._prompt_chars(system_prompt, messages), len(reply))
+        self._try_record_usage(action, usage)
         return reply, truncated
 
     def _parse_json_with_retry(

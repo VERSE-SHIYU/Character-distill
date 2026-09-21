@@ -1228,6 +1228,16 @@ PROBE_IMAGE         false
 - **为什么只记不修**：加记录表要处理「已有库首次见到这张表时如何回填」——回填本身就是一次不可验证的猜测（拿什么当真源？文件列表？），且会与缺陷 21 的豁免清单、缺陷 23 的 fresh-schema 锁互相纠缠。属于基础设施改造，得单独立项。
 - **判据命令**：`git grep -n "schema_migrations\|migration_history\|_applied\b" -- storage/`（应零命中）
 
+**91. 非流式截断那一笔记账是空转 —— 出口拿到 `usage=None`，一条也不落库** —— 状态：**已修**（2026-09-21，记账收敛那一轮的下一项）
+
+- **事实**：`_chat_accounted` 非流式支在 `length` 截断的返回路径上调 `self._try_record_usage(action)` —— **载荷为 `None`**。出口 `try_record_usage` 见此走 `if usage is None: usage = llm.last_usage`（`core/utils.py:74`），而 `adapters/llm_adapter.py` 的 `chat()` 进本轮就先 `self.last_usage = None`（`:634`），`_extract_content` 的抛出点又在 usage 回写（`:651`）**之前** ⇒ `if not usage:` 命中，打印一行 `[Distiller] usage not recorded: no usage data` 后 `return`，**一条不落库**。
+- **与流式支的关系**：**同一形态，只修了一半**。`_collect_stream` 那条截断路已在上一轮（记账收进调用原语）按 `estimate_usage_from_chars` 补记，非流式支没跟上 —— 于是「截断烧掉的 token」在**长输出走流式**的路上有账、在**短输出走非流式**的路上无声无息（生产口径：系统性偏低，且低于哪一段取决于输出长短）。
+- **为什么既有测试看不见（关键）**：`tests/test_distill_usage_accounting.py` 的 `usage` 探针**只收 `action`、丢掉载荷** —— `test_truncated_initial_call_is_still_recorded` 断言的 `["distill", "distill"]` 在「记了一条空载荷」与「记了一条估算」两种实现下**同样成立**。**判据读的是动作序列，不是载荷**，与缺陷 25「签名的代理代替 SQL 事实」同谱系：形态对、事实错。（同一文件的流式用例之所以能判，是因为它用的是连载荷一起收的 `records` 探针。）
+- **修法**：非流式支把截断那条路的 `usage` 置为 `estimate_usage_from_chars(self._prompt_chars(system_prompt, messages), len(reply))`；两条截断路共用新抽的 `Distiller._prompt_chars`（原先这个字符数只在 `_collect_stream` 里现算）—— 「按字符估算」只留一个口径。正常返回那条路**不动**（`usage=None` ⇒ 出口回落 `last_usage`，那才是真实读数，不是估的）。
+- **锁**：`tests/test_distill_usage_accounting.py::TestNonStreamTruncationAccounting::test_truncated_chat_records_one_estimated_entry`（断言 `[a for a,_ in records] == ["distill"]`、载荷 `== estimate_usage_from_chars(两侧已见字符)`、`estimated is True`）。**红源已钉**：用例先写、先跑 —— 红在 `assert payload is not None`（`1 failed, 6 passed`，同文件其余用例不受影响）；改完 `26 passed`（连同 `test_distiller_truncation_selfheal` / `test_usage_accounting_lock` / `test_usage_identity_context`）。
+- **判据命令**：`git grep -n "_prompt_chars" core/distiller.py` —— 应恰三处：定义一处 + 两条截断路各一处。**口径的唯一性靠这条**，不靠数 `estimate_usage_from_chars` 的命中（那个字符串全仓 6 处，另有 map 失败片 `1472` / `1894` 与压缩 `1724`，故它对「两条截断路共用同一口径」没有判别力 —— 本条初稿写的「应恰三处」是**错的**，落笔时按想当然写、没现跑，当场订正）。
+- **顺带**（同一文件内的重复）：造截断异常的 `_Msg` / `_Choice` 三件套原先内联在 `test_truncated_initial_call_is_still_recorded` 体内，新用例要用第二遍 —— 提为模块级 `_truncated_exc(where)`，那条老用例改调它（净删 8 行，断言不变）。
+
 ### 三之二、特性缺失 / 立项（非缺陷）
 
 > 与「缺陷」分开记账：**缺陷 = 有东西坏了**（有正确行为可对照）；**立项 = 有东西从来没建**（没有可对照的现状，做它就是加功能）。混在一起会让缺陷清单虚高、也让「还有几个真缺陷待修」失真。三、里的编号 10 只留占位，指向本节。
