@@ -188,6 +188,10 @@ class StorageBase(ABC):
         """Get a card's avatar with no ownership filter.
 
         无身份读：仅 `fork_card` 深拷贝公开卡时用（原卡已验 public）。
+
+        本方法是本节判据（「两个实现都有 ∧ routers/core 调用」）的唯一放宽项：它没有
+        routers / core 调用点，只有 `fork_card` 在用。收进来的代价是它没有外部调用方
+        背书 —— 将来若 `fork_card` 不再深拷贝头像，这条声明会先变成事实上的死契约。
         """
 
     # ── Card detail / listings ────────────────────────────
