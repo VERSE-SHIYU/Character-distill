@@ -16,29 +16,46 @@ from .base import StorageBase, StoreError
 
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
-#     X.published_from = D.id AND X.visibility = 'public' AND X.deleted_at IS NULL
+#     关系：    X.published_from = D.id AND X.deleted_at IS NULL
+#     在架副本：关系 AND X.visibility = 'public'
 #
-# 「同一作者」不再出现在谓词里：它是**列的定义**。`published_from` 只承载这一种关系，
+# 两件事分开，是因为**下架 ≠ 撤回关系**。作者下架后那张副本仍在：`published_from` 还指着
+# 草稿、头像仍两向同步、点赞与版本历史都还在，只是不再对市场可见。故：
+#   - `published_id`（对外展示的「当前发布副本」）用**在架**谓词 —— 下架后为空
+#   - 头像上下同步用**关系**谓词 —— 下架不该断开草稿与副本
+# 此前只有一条含 `visibility` 的谓词，下架会把关系一并抹掉，重发只能另建一张副本
+# （原缺陷形态见台账 88）。
+#
+# 「同一作者」不出现在谓词里：它是**列的定义**。`published_from` 只承载这一种关系，
 # 「他人 fork」由 `forked_from` 承载（`get_card_forks`，另一种关系，不适用本定义）——
 # 此前两者共用 `forked_from` 单列，判据里才必须靠 `X.user_id = D.user_id` 去补区分；
 # 现在这条判据由复合外键 `(published_from, user_id) → cards(id, user_id)` 在库里强制
 # （见 migrations_pg/020 与 sqlite_store.py 的 `_rebuild_cards_published_from`）。
 #
 # 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
-# `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次，其余调用处
-# 一律引用本函数 —— 任何一处再手写 `published_from = ... AND visibility = 'public'`
-# 都是这份关系的第二份写法。SQLite 侧同形（只差 `?` 占位符）。
-_PUBLISHED_COPY_OF = ("{copy}.published_from = {draft}.id AND {copy}.visibility = 'public'"
-                      " AND {copy}.deleted_at IS NULL")
+# `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次、「在架」只在
+# `_live_published_copy_of` 里组合一次 —— 任何一处再手写 `published_from = ... AND
+# visibility = 'public'` 都是这份关系的第二份写法。SQLite 侧同形（只差 `?` 占位符）。
+_PUBLISHED_COPY_OF = "{copy}.published_from = {draft}.id AND {copy}.deleted_at IS NULL"
 
 
 def _published_copy_of(copy_ref: str, draft_ref: str) -> str:
-    """关系定义「X 是草稿 D 的发布副本」的 SQL 谓词。X = `copy_ref` 行，D = `draft_ref` 行。
+    """**关系**「X 是草稿 D 的发布副本」的 SQL 谓词。X = `copy_ref` 行，D = `draft_ref` 行。
 
     两侧 `copy_ref` / `draft_ref` 都可以是别名、表名，或在外层被 `$n` 绑定的行 —— 谓词只看
     SQL 引用，不关心它们从哪来（`save_card_avatar` 就是把被更新的 `cards` 行当其中一侧用）。
     """
     return _PUBLISHED_COPY_OF.format(copy=copy_ref, draft=draft_ref)
+
+
+def _live_published_copy_of(copy_ref: str, draft_ref: str) -> str:
+    """**在架副本**：上面的关系再叠加 `visibility = 'public'`。
+
+    组合而非另写一份，故 `visibility` 这个状态只出现在这里一处。用于对外展示的
+    `published_id` —— 下架后它不再指向任何副本。
+    """
+    return (f"({_published_copy_of(copy_ref, draft_ref)})"
+            f" AND {copy_ref}.visibility = 'public'")
 
 
 class _PoolContext:
@@ -542,7 +559,7 @@ class PostgresStore(StorageBase):
         `tests/test_storage_scope_lock.py::UNSCOPED_ALLOWLIST` 并写明为何不需要身份。
         """
         try:
-            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1",
@@ -559,7 +576,7 @@ class PostgresStore(StorageBase):
         属主过滤在 SQL（`cards.user_id`）。非属主与不存在同判 None，调用方统一 404。
         """
         try:
-            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1 AND c.user_id = $2",
@@ -651,7 +668,7 @@ class PostgresStore(StorageBase):
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
         try:
-            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'cards')} LIMIT 1"
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_live_published_copy_of('c2', 'cards')} LIMIT 1"
             async with await self._connect() as conn:
                 if user_id:
                     rows = await conn.fetch(
@@ -685,9 +702,10 @@ class PostgresStore(StorageBase):
         """Save base64 avatar image for a card the user owns, and sync to its published copy.
 
         三条写都带身份：本卡（`id` + `user_id`）、本卡的发布副本（向下）、本卡本身是发布
-        副本时的那张草稿（向上）。上下同步都引用 `_published_copy_of` 这一份关系定义 ——
+        副本时的那张草稿（向上）。上下同步都引用 `_published_copy_of` 这一份**关系**定义 ——
         「作者自己的发布副本」与「任意用户的 fork」现在分属 `published_from` / `forked_from`
         两列，故他人 fork 不再可能被当成发布副本。
+        **有意用关系而非在架谓词**：下架只是不再对市场可见，不该把草稿与副本的头像同步断开。
         """
         try:
             async with await self._connect() as conn:
