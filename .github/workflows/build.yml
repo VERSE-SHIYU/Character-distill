@@ -252,7 +252,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # continue-on-error 的判据与下面两个 Aliyun 推送步是同一条：阿里云是**可选**的 ——
+      # 它断了，GHCR 那条路照样要把 app / nginx / digest 产出来。原先唯独登录步没有这个
+      # 标记，于是阿里云链路一断（2026-09-21 实发：`read: connection reset by peer`），
+      # 本步 failure → 后面全部 skipped，**连推 GHCR 的两步一起带走**，一次构建一个镜像
+      # 都没推出去（GHCR 那两步也是 skipped，而 gate / sentinel 都是 success）。
+      # 选「加标记」而不是「把登录挪到 GHCR 那两步之后」：登录的消费者只有紧跟其后的两个
+      # 阿里云推送步；挪位会把 build 序列切成两段（app 的阿里云推送插到 nginx 的 GHCR 构建
+      # 之前变成之后），而 timeout 的采样是按现有序列取的。加一行标记不动序列，失败照旧可见
+      # （本步仍然标红），只是不再带走后面所有步。
       - name: Login to Aliyun CR
+        continue-on-error: true
         uses: docker/login-action@v4
         with:
           registry: ${{ env.ALIYUN_REGISTRY }}
@@ -275,10 +285,14 @@ jobs:
       # 占着直到 build job 撞 360 分钟上限，把整条 build 一起拖住（2026-09-21 实发：卡在
       # `docker push` 上 2h40m）。step 级 timeout-minutes 到点即失败，由本步的
       # continue-on-error 接住 —— 挂死从此也落进「可选步骤失败」那一类。
-      # 取值 = 最近 20 次成功 build 中本步耗时的 max×3 向上取整，数据见引入本行的 commit message。
+      # 取值 10 分钟的依据（近 20 次成功 build 的本步耗时，原始样本见 `ec62a04`）：
+      #   p50 = 62s，19/20 次 ≤ 107s（最快 55s、最慢 101s，其余全在 55–63s 一条带上）。
+      #   唯一的 1762s（约 29 分钟）是**离群值**，不作为基准 —— 取 max×3 就会让一个正常
+      #   几十秒的可选步骤，每次挂死都白占 runner 89 分钟（上面那次实发正是如此）。
+      #   10 分钟 = p50 的 9.7 倍、离群值以外最大值的 5.6 倍，正常抖动够用，挂死也收得住。
       - name: Push app image to Aliyun CR
         continue-on-error: true
-        timeout-minutes: 89
+        timeout-minutes: 10
         run: |
           docker pull ${{ env.APP_IMAGE }}:${{ github.sha }}
           docker tag ${{ env.APP_IMAGE }}:${{ github.sha }} ${{ env.ALIYUN_APP_IMAGE }}:${{ github.sha }}
