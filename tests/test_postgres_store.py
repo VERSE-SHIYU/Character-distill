@@ -1451,13 +1451,15 @@ class TestPgDatabaseRejectsCrossOwnerPublishedFrom:
 
 @_pg
 class TestPgDeletingTheDraftLeavesTheCopyAlive:
-    """同 SQLite 侧同名类：删草稿的每条路径，副本都得存活、`published_from` 清空、不报错。
+    """同 SQLite 侧同名类：删草稿的每条路径，副本该活的活着、该随删的随删，且都不报错。
 
     PG 侧没有启动去重那条（那是 SQLite 旧库升级的补丁），但多一条**由库自己发起**的
-    多行删除 —— 见本类最后那条。PG 的 FK 是 `DEFERRABLE INITIALLY DEFERRED`、触发器是
-    `AFTER DELETE`，这个组合是实测逼出来的（非推迟的 FK 检查排在用户 AFTER 触发器之前，
-    单行删除必报 ForeignKeyViolation；`BEFORE DELETE` 则会撞 PG 的
-    TriggeredDataChangeViolation）。这组用例就是那个组合的护栏。
+    多行删除 —— 见本类最后那条。解绑由复合外键的原生动作承担：`ON DELETE SET NULL
+    (published_from)`。这组用例就是那个动作的护栏。
+
+    变异（实测红，验后已还原）：把列清单去掉（退成整键 `SET NULL`）→ 副本的 `user_id`
+    一并被清空 → 第一条红在「副本不再属于原主」（`get_card_owned` 按 (id, user_id) 查，
+    返回 None）。锁定列清单就是锁定这张副本还认得出原主。
     """
 
     @staticmethod
@@ -1471,10 +1473,15 @@ class TestPgDeletingTheDraftLeavesTheCopyAlive:
 
         assert await store.purge_card(draft) is True
 
-        assert await store.get_card_owned(copy_id, a) is not None, \
-            "删草稿把发布副本一起删了（副本本身要存活）"
+        # 先钉 user_id：外键动作的列清单一旦丢掉，被清的是整条外键（含 user_id），
+        # 副本会从「属于 a」变成「无主」—— 那时下面按 (id, user_id) 查的断言也红，
+        # 但红在「副本没了」上，指错病根。这条让它红在真正的列上。
+        assert await self._column_of(store, copy_id, "user_id") == a, \
+            "副本的 user_id 被清空了 —— 外键动作丢了列清单（退成整键 SET NULL）"
         assert await self._column_of(store, copy_id, "published_from") is None, \
             "草稿被删后副本的 published_from 没清空 —— 下一条删卡路径会撞外键"
+        assert await store.get_card_owned(copy_id, a) is not None, \
+            "删草稿把发布副本一起删了（副本本身要存活）"
 
     async def test_hard_deleting_the_text_removes_both_without_error(self, store):
         a = f"usr_a_{uuid.uuid4().hex}"
@@ -1501,10 +1508,10 @@ class TestPgDeletingTheDraftLeavesTheCopyAlive:
         """`cards.text_id → texts(id) ON DELETE CASCADE`：库自己发起的多行删除。
 
         store 的三条路径都是**显式** `DELETE FROM cards`（CASCADE 那时已够不着任何卡，
-        因为卡先没了），所以纯级联这条只能从库侧进 —— 而它恰是唯一一条「同一命令里删掉
-        的父子行撞上同一条 FK」的路径：正是它把 BEFORE 触发器判死（多行删除时 PG 禁止
-        触发器改「同一命令还要删的行」）。保留这条，免得有人把 DEFERRABLE 当成可随手去掉
-        的样式选择。
+        因为卡先没了），所以纯级联这条只能从库侧进。它同时是最容易把实现写回触发器的
+        那条：同一命令里删掉的父子行，PG 禁止 `BEFORE DELETE` 触发器去改
+        （TriggeredDataChangeViolation，实测）。原生动作不受此限 —— 保留这条，免得有人
+        把外键动作换成触发器。
         """
         a = f"usr_a_{uuid.uuid4().hex}"
         draft, copy_id = await _pg_published(store, a)
