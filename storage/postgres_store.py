@@ -542,8 +542,7 @@ class PostgresStore(StorageBase):
         `tests/test_storage_scope_lock.py::UNSCOPED_ALLOWLIST` 并写明为何不需要身份。
         """
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1",
@@ -560,8 +559,7 @@ class PostgresStore(StorageBase):
         属主过滤在 SQL（`cards.user_id`）。非属主与不存在同判 None，调用方统一 404。
         """
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = $1 AND c.user_id = $2",
@@ -653,8 +651,7 @@ class PostgresStore(StorageBase):
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = cards.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'cards')} LIMIT 1"
             async with await self._connect() as conn:
                 if user_id:
                     rows = await conn.fetch(
@@ -4696,11 +4693,16 @@ class PostgresStore(StorageBase):
     # ──── Market publish / version / fork API ────
 
     async def publish_card(self, card_id: str, user_id: str, description: str, tags: str, message: str, card_json_snapshot: str) -> str | None:
+        """发布：已有「调用者自己的发布副本」时原地复用（`_published_copy_of`）。
+
+        他人对同一张卡的公开 fork 不是发布副本，不会被复用（缺陷 84）。
+        """
         try:
             async with await self._connect() as conn:
                 existing = await conn.fetchrow(
-                    "SELECT id FROM cards WHERE forked_from = $1 AND visibility = 'public' AND deleted_at IS NULL",
-                    card_id,
+                    f"SELECT id FROM cards WHERE EXISTS (SELECT 1 FROM cards d"
+                    f" WHERE d.id = $1 AND d.user_id = $2 AND {_published_copy_of('cards', 'd')})",
+                    card_id, user_id,
                 )
                 if existing:
                     fork_id = existing[0]

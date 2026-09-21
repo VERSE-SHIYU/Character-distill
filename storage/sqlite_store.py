@@ -1006,8 +1006,7 @@ class SQLiteStore(StorageBase):
         `tests/test_storage_scope_lock.py::UNSCOPED_ALLOWLIST` 并写明为何不需要身份。
         """
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ?",
@@ -1025,8 +1024,7 @@ class SQLiteStore(StorageBase):
         属主过滤在 SQL（`cards.user_id`）。非属主与不存在同判 None，调用方统一 404。
         """
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = c.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'c')} LIMIT 1"
             async with await self._connect() as conn:
                 cursor = await conn.execute(
                     f"SELECT c.id AS id, c.text_id AS text_id, c.name AS name, c.card_json AS card_json, c.created_at AS created_at, c.user_id AS user_id, c.visibility AS visibility, c.forked_from AS forked_from, c.deleted_at AS deleted_at, c.avatar_data AS avatar_data, c.market_description AS market_description, c.market_tags AS market_tags, c.publish_message AS publish_message, ({pub_sub}) AS published_id, COALESCE(u.username, '') AS author_username FROM cards c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = ? AND c.user_id = ?",
@@ -1121,8 +1119,7 @@ class SQLiteStore(StorageBase):
     async def list_cards(self, text_id: str, user_id: str = "") -> list[dict]:
         """List all cards under one text id, optionally filtered by user."""
         try:
-            pub_sub = ("SELECT c2.id FROM cards c2 WHERE c2.forked_from = cards.id"
-                       " AND c2.visibility = 'public' AND c2.deleted_at IS NULL LIMIT 1")
+            pub_sub = f"SELECT c2.id FROM cards c2 WHERE {_published_copy_of('c2', 'cards')} LIMIT 1"
             async with await self._connect() as conn:
                 if user_id:
                     cursor = await conn.execute(
@@ -5486,16 +5483,18 @@ class SQLiteStore(StorageBase):
         Creates a new card record (fork) with visibility='public', writes v1
         card_versions entry.  Returns the new card_id, or None on failure.
 
-        If a published fork already exists (forked_from = card_id,
-        visibility = 'public'), updates that fork in place instead — idempotent.
+        If a published fork already exists — i.e. a card that is **the caller's** published
+        copy of `card_id` (`_published_copy_of`) — updates that fork in place instead —
+        idempotent. 他人对同一张卡的公开 fork 不是发布副本，不会被复用（缺陷 84）。
         """
         try:
             now = datetime.now(timezone.utc).isoformat()
             async with await self._connect() as conn:
-                # Check if a published fork already exists
+                # Check if the caller's published fork already exists（引用关系定义）
                 cursor = await conn.execute(
-                    "SELECT id FROM cards WHERE forked_from = ? AND visibility = 'public' AND deleted_at IS NULL",
-                    (card_id,),
+                    f"SELECT id FROM cards WHERE EXISTS (SELECT 1 FROM cards d"
+                    f" WHERE d.id = ? AND d.user_id = ? AND {_published_copy_of('cards', 'd')})",
+                    (card_id, user_id),
                 )
                 existing = await cursor.fetchone()
                 if existing:
