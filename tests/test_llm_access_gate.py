@@ -1172,8 +1172,15 @@ def test_l14_unregistered_fallback_semantics():
 
 
 def test_l14_usage_recording_goes_through_the_primitive():
-    """`core/utils.py` 的记账出口不许再自建 event loop —— 投递这件事只在一个地方定义。"""
+    """`core/utils.py` 的记账出口不许再自建 event loop —— 投递这件事只在一个地方定义。
+
+    身份由**_上下文**提供（出口自读，缺陷 83 之后不再走参数）：本用例必须显式挂上
+    `LLM_CALLER`，否则出口在「无归属」处早退，投递原语一次都到不了 —— 那条早退不是
+    本用例要测的行为，用 `_set_var` 给它一个归属（退出时还原，理由见 `_Restored`
+    docstring：不还原会污染同进程后面 L7 的「无上下文 = fail-closed」）。
+    """
     S = _mod("core.scheduling")
+    ctx = _ctx()
     seen: list[tuple] = []
 
     def _recorder(coro, *, wait: bool = True, timeout: float | None = None):
@@ -1190,7 +1197,8 @@ def test_l14_usage_recording_goes_through_the_primitive():
         _model = "m"
 
     with _snapshot(S.get_loop_submitter, S.set_loop_submitter, _recorder):
-        _mod("core.utils").try_record_usage(_Storage(), "u14", _LLM(), action="chat")
+        with _set_var(ctx.LLM_CALLER, ctx.Caller(ip=None, user_id="u14")):
+            _mod("core.utils").try_record_usage(_Storage(), _LLM(), action="chat")
 
     assert seen, "记账没有经投递原语出去（还在自建 loop）"
     assert seen[0][1] is False, f"记账投递必须是 wait=False：{seen}"

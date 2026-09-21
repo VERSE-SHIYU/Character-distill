@@ -23,7 +23,6 @@ from adapters.llm_adapter import LLMAdapter, incomplete_response_info, user_faci
 from core.chat_preprocessor import ChatPreprocessor
 from core.schema import CharacterCard, PRESET_TAGS
 from core.utils import aggregate_usage, estimate_usage_from_chars, try_record_usage
-from core.request_context import current_user_id
 from core import telemetry as T  # OTel 埋点
 from core import concurrency as C  # 派生与上下文传播
 
@@ -274,7 +273,6 @@ class Distiller:
     def _try_record_usage(self, action: str = "distill", usage: dict | None = None) -> None:
         try_record_usage(
             storage=self._storage,
-            user_id=current_user_id() or "",
             llm=self._llm,
             action=action,
             usage=usage,

@@ -168,7 +168,7 @@ class ChatEngine:
             card_id=card_id,
             llm=llm,
             model=getattr(llm, "model", ""),
-            usage_ctx=lambda: (self._storage, self._user_id),
+            usage_ctx=lambda: self._storage,
         )
         self.agent_mode: bool = False
 
@@ -299,7 +299,7 @@ class ChatEngine:
         from core.agent.agent_loop import AgentLoop
 
         toolkit = AgentToolkit(self._ctx_engine, current_mood=self._mood)
-        result = AgentLoop(self.llm, toolkit, storage=self._storage, user_id=self._user_id).run(system_prompt, llm_messages)
+        result = AgentLoop(self.llm, toolkit, storage=self._storage).run(system_prompt, llm_messages)
         set_current_attr("degraded", bool(result.degraded))
         if result.degraded:
             print("[ChatEngine] agent degraded → legacy context injection")
@@ -503,7 +503,7 @@ class ChatEngine:
             )
         reflected = self._reflection_service.maybe_reflect(
             self._last_importance, self.llm, self.card.name,
-            storage=self._storage, user_id=self._user_id,
+            storage=self._storage,
         )
         if reflected:
             self._extract_catchwords()
@@ -529,7 +529,6 @@ class ChatEngine:
     def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
         try_record_usage(
             storage=self._storage,
-            user_id=self._user_id,
             llm=self.llm,
             action=action,
             usage=usage,
@@ -680,7 +679,6 @@ class ChatEngine:
             llm=self.llm,
             reaction_appraisal=reaction_appraisal,
             departure_notice=departure_notice,
-            user_id=self._user_id,
         )
         result = self._pipeline.run(ctx)
         self._last_importance = result.importance

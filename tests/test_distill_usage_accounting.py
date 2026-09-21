@@ -69,7 +69,7 @@ def usage(monkeypatch) -> list[str]:
     """替换 `_try_record_usage` 的唯一下游，同步收下每次记账的 action。"""
     calls: list[str] = []
 
-    def _rec(*, storage, user_id, llm, action="chat", usage=None, source="core"):
+    def _rec(*, storage, llm, action="chat", usage=None, source="core"):
         calls.append(action)
 
     monkeypatch.setattr("core.distiller.try_record_usage", _rec)

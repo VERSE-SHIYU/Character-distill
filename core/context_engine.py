@@ -215,14 +215,15 @@ class ContextEngine:
     def _record_usage(self, action: str) -> None:
         """把本引擎内的 LLM 花费接进唯一记账出口。
 
-        归属上下文（storage/user_id）由构造方以 ``usage_ctx`` 延迟提供：ChatEngine
-        的这两个字段在构造之后才被路由绑定，构造时取值会拿到 None。延迟取值保证
-        任何时刻调用都读到当前绑定值。
+        ``storage`` 是**依赖**，由构造方以 ``usage_ctx`` 延迟提供：ChatEngine 的
+        这个字段在构造之后才被路由绑定，构造时取值会拿到 None。延迟取值保证任何
+        时刻调用都读到当前绑定值。**归属（user_id）不在这里传** —— 出口自己读
+        上下文（缺陷 83）。
         """
         if self._usage_ctx is None:
             return
-        storage, user_id = self._usage_ctx()
-        try_record_usage(storage, user_id, self._llm, action, source="ContextEngine")
+        storage = self._usage_ctx()
+        try_record_usage(storage, self._llm, action, source="ContextEngine")
 
     # ── 公开接口 ──────────────────────────────────────────────
 

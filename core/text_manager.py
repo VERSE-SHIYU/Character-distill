@@ -59,14 +59,14 @@ class TextManager:
     # call is pure cost today; re-enable once the judge targets executable-config
     # field landings (decision_style/speaking_style/values + precedence wording).
 
-    async def _guard_card(self, card: CharacterCard, user_id: str = "") -> GuardVerdict:
+    async def _guard_card(self, card: CharacterCard) -> GuardVerdict:
         if not self._guard_enabled:
             return GuardVerdict()
         if self._llm is None:
             return GuardVerdict()
         try:
             return await asyncio.to_thread(
-                guard_card_obj, card, self._llm, storage=self._storage, user_id=user_id,
+                guard_card_obj, card, self._llm, storage=self._storage,
             )
         except Exception as exc:
             print(f"[TextManager] Card guard crashed (flagging): {exc}")
@@ -467,7 +467,7 @@ class TextManager:
                 print(f"[TextManager] Distill '{character_name}' failed: {exc}")
                 raise
 
-            verdict = await self._guard_card(card, user_id)
+            verdict = await self._guard_card(card)
             card_id = uuid.uuid4().hex[:12]
             try:
                 await self._storage.save_card(
@@ -505,7 +505,7 @@ class TextManager:
                     f"你是{card.name}，保持角色风格。",
                     [{"role": "user", "content": variation_prompt}],
                 )
-                try_record_usage(self._storage, user_id, self._llm,
+                try_record_usage(self._storage, self._llm,
                                  "chat_opening_variation", source="TextManager")
                 opening = opening.strip()
                 if opening and len(opening) <= 200:
@@ -555,7 +555,7 @@ class TextManager:
         """
         # Prompt-injection field guard: neutralize flagged leaves on the card
         # *before* persist, so no injection text ever lands in stored card_json.
-        verdict = await self._guard_card(card, user_id)
+        verdict = await self._guard_card(card)
         card_id = uuid.uuid4().hex[:12]
         result_card = await self._storage.save_card(card_id, text_id, card.name, card.model_dump_json(), user_id)
         # save_card does upsert by text_id+name — on re-distill it returns the existing ID

@@ -285,7 +285,7 @@ async def cancel_distill_tasks_by_user_id(user_id: str) -> int:
     return n
 
 
-def _generate_awakening(llm, card: CharacterCard, storage=None, user_id: str = "") -> str:
+def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
     """Generate an awakening line for a newly distilled character.
 
     Returns the line text, or empty string on any failure.
@@ -305,7 +305,7 @@ def _generate_awakening(llm, card: CharacterCard, storage=None, user_id: str = "
             f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
         )
         result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
-        try_record_usage(storage, user_id, llm, "chat_awakening", source="distill")
+        try_record_usage(storage, llm, "chat_awakening", source="distill")
         result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
         if not result or len(result) > 100:
             return ""
@@ -550,7 +550,7 @@ def _run_distill_task(
         print(f"[distill] Card saved: card_id={result.get('card_id','')} name={name} text_id={text_id} user_id={user_id}")
 
         # Generate awakening line (non-fatal, outside lock)
-        awakening = _generate_awakening(llm, card, storage=get_storage(), user_id=user_id)
+        awakening = _generate_awakening(llm, card, storage=get_storage())
 
         # Persist awakening_message to card (non-fatal)
         if awakening:
@@ -1135,7 +1135,7 @@ async def distill_stream(
         if per_user_llm is not None:
             awakening = await asyncio.to_thread(
                 _generate_awakening, per_user_llm, card,
-                storage=get_storage(), user_id=user_id,
+                storage=get_storage(),
             )
 
         # Persist awakening_message to card (non-fatal)
@@ -1433,7 +1433,7 @@ async def start_session(
             opening = await asyncio.to_thread(
                 per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
             )
-            try_record_usage(storage, user_id, per_user_llm, "chat_session_opening", source="distill")
+            try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
             opening = opening.strip().strip('"').strip("'").strip("「」")
             if opening and len(opening) <= 100:
                 print(f"[start_session] Generated opening: {opening}")
