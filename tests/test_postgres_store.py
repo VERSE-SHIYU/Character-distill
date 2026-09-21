@@ -1339,6 +1339,47 @@ class TestPublishedCopyRelation:
             "他人 fork 的发布字段被 A 的发布覆盖"
 
 
+@_pg
+class TestPgAuthorOwnPublishedCopyStillSyncs:
+    """正向护栏（同 SQLite 侧同名类）：作者自己的草稿 ↔ 发布副本仍两向同步。"""
+
+    @staticmethod
+    async def _published(store, owner) -> tuple[str, str]:
+        tid = f"txt_{uuid.uuid4().hex}"
+        draft = f"card_{uuid.uuid4().hex}"
+        await store.save_text(tid, "src.txt", "content", user_id=owner)
+        await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=owner)
+        copy_id = await store.publish_card(draft, owner, "desc", "tag", "v1", '{"name": "张三"}')
+        assert copy_id, "夹具没发布出副本，本用例会恒绿"
+        return draft, copy_id
+
+    async def test_draft_avatar_syncs_down_to_published_copy(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await self._published(store, a)
+        await store.save_card_avatar(draft, a, "DRAFT_AVATAR")
+        assert await store.get_card_avatar_owned(copy_id, a) == "DRAFT_AVATAR", \
+            "改草稿头像不再向下同步到作者的发布副本"
+
+    async def test_published_copy_avatar_syncs_up_to_draft(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await self._published(store, a)
+        await store.save_card_avatar(copy_id, a, "COPY_AVATAR")
+        assert await store.get_card_avatar_owned(draft, a) == "COPY_AVATAR", \
+            "改发布副本头像不再向上同步到作者的草稿"
+
+    async def test_published_id_is_the_authors_published_copy(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await self._published(store, a)
+        assert (await store.get_card_owned(draft, a))["published_id"] == copy_id, \
+            "作者的发布副本没被认出来"
+
+    async def test_republish_reuses_the_authors_published_copy(self, store):
+        a = f"usr_a_{uuid.uuid4().hex}"
+        draft, copy_id = await self._published(store, a)
+        again = await store.publish_card(draft, a, "desc2", "tag", "v2", '{"name": "张三"}')
+        assert again == copy_id, "重新发布没复用作者自己的发布副本（原地更新语义丢了）"
+
+
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
 # 故意**不挂** `@_pg` —— 它是用来验「_pg 到底跳了没跳」的那把尺子，自己不能被同一把尺子量。
 

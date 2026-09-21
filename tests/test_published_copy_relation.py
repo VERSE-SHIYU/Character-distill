@@ -99,6 +99,45 @@ class TestOwnForkDoesNotDesyncDraft:
             "私有 fork 改头像，向上同步把 fork 源（公开卡）也改了 —— 草稿与副本脱节"
 
 
+class TestAuthorOwnPublishedCopyStillSyncs:
+    """正向：功能没被删 —— 作者自己的草稿 ↔ 发布副本仍两向同步、仍是彼此的发布副本。
+
+    这四条在修复前后都绿（它们是回归护栏，不是红源）：判据收窄时最容易顺手把真副本也
+    排除掉（例如把「同属主」写成「公开卡才同步」），那时这类正向用例会先红。
+    """
+
+    @staticmethod
+    async def _published(store, user_a) -> tuple[str, str]:
+        tid = await _text(store, user_a)
+        draft = f"card_{uuid.uuid4().hex}"
+        await store.save_card(draft, tid, "张三", json.dumps({"name": "张三"}), user_id=user_a)
+        copy_id = await store.publish_card(draft, user_a, "desc", "tag", "v1", '{"name": "张三"}')
+        assert copy_id, "夹具没发布出副本，本用例会恒绿"
+        return draft, copy_id
+
+    async def test_draft_avatar_syncs_down_to_published_copy(self, store, user_a):
+        draft, copy_id = await self._published(store, user_a)
+        await store.save_card_avatar(draft, user_a, "DRAFT_AVATAR")
+        assert await store.get_card_avatar_owned(copy_id, user_a) == "DRAFT_AVATAR", \
+            "改草稿头像不再向下同步到作者的发布副本"
+
+    async def test_published_copy_avatar_syncs_up_to_draft(self, store, user_a):
+        draft, copy_id = await self._published(store, user_a)
+        await store.save_card_avatar(copy_id, user_a, "COPY_AVATAR")
+        assert await store.get_card_avatar_owned(draft, user_a) == "COPY_AVATAR", \
+            "改发布副本头像不再向上同步到作者的草稿"
+
+    async def test_published_id_is_the_authors_published_copy(self, store, user_a):
+        draft, copy_id = await self._published(store, user_a)
+        assert (await store.get_card_owned(draft, user_a))["published_id"] == copy_id, \
+            "作者的发布副本没被认出来"
+
+    async def test_republish_reuses_the_authors_published_copy(self, store, user_a):
+        draft, copy_id = await self._published(store, user_a)
+        again = await store.publish_card(draft, user_a, "desc2", "tag", "v2", '{"name": "张三"}')
+        assert again == copy_id, "重新发布没复用作者自己的发布副本（原地更新语义丢了）"
+
+
 class TestOtherUserPublicForkIsNotThePublishedCopy:
     """后果 3：B 把自己对 P 的 fork 设为公开，它仍不是「P 的发布副本」。"""
 
