@@ -288,12 +288,12 @@ def _cards_rebuild_columns(
 # 三条删到「有发布副本的草稿」时直接撞复合外键 —— 其中启动去重那条会让**启动失败**。
 # 汇合点放进库里，一处定义覆盖全部路径。
 #
-# **AFTER 而不是 BEFORE，且两引擎取同一种**（PG 侧 020 同款）。实测（SQLite 3.49.1、
-# PG 16）：SQLite 两种都能过；PG 只能 AFTER —— `BEFORE DELETE` 在 PG 上禁止改
-# 「同一命令还要删的行」，按 text_id / 按 user_id / texts 级联这类**多行**删除直接报
-# TriggeredDataChangeViolation。取同一种是为了不让人以为两边的时序有别。
-# 另外实测：`texts` 的 `ON DELETE CASCADE` 引发的删除同样会触发它
-# （`recursive_triggers` 默认关闭时也触发）。
+# 这是**两侧唯一的实现差异**：PG 侧 020 用外键原生动作 `ON DELETE SET NULL
+# (published_from)`，是列级 SET NULL；SQLite 没有这个语法（`SET NULL` 只能作用于
+# 整条外键的每一列），故这一侧由此触发器承担同一件事。语义一致：只置空副本的
+# `published_from`，`user_id` 原样保留，副本存活。
+# 实测（SQLite 3.49.1）：`texts` 的 `ON DELETE CASCADE` 引发的删除同样会触发它
+# （`recursive_triggers` 默认关闭时也触发）—— 即 4 条硬删路径都汇到这里。
 _CARDS_CLEAR_PUBLISHED_FROM_TRIGGER = """
 CREATE TRIGGER IF NOT EXISTS trg_cards_clear_published_from
 AFTER DELETE ON cards
@@ -344,6 +344,8 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
     collist = ", ".join(f'"{c}"' for c in names)
     # `id` 已是主键，故 UNIQUE(id, user_id) 恒成立 —— 它不会因存量数据失败，
     # 存在的全部意义是给复合外键一个可指向的目标（PG 侧 020 同款）。
+    # FK 动作是 `NO ACTION` 而非 PG 那条列级 `SET NULL`：SQLite 无列清单语法，
+    # 「删草稿→副本解绑」由 `_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER` 承担。
     extra = (
         'UNIQUE ("id", "user_id")',
         'FOREIGN KEY ("published_from", "user_id") REFERENCES "cards"("id", "user_id") '
