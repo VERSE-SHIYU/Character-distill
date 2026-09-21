@@ -495,7 +495,7 @@ class TestDefect19Commit2OwnedPrimitives:
     def test_27_card_avatar_owned_sql_filter(self, store, user_a, user_b):
         tid = _create_text(store, user_a)
         cid = _create_card(store, user_a, tid)
-        _run_async(store.save_card_avatar(cid, "QVhBVkFUQVI="))
+        _run_async(store.save_card_avatar(cid, user_a, "QVhBVkFUQVI="))
         assert _run_async(store.get_card_avatar_owned(cid, user_a)) == "QVhBVkFUQVI="
         assert _run_async(store.get_card_avatar_owned(cid, user_b)) is None
 

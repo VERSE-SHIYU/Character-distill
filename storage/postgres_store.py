@@ -14,6 +14,32 @@ import asyncpg  # type: ignore[import-not-found]
 
 from .base import StorageBase, StoreError
 
+# ── 「X 是草稿 D 的发布副本」的唯一权威定义（缺陷 84）─────────────────────────
+#
+#     X.forked_from = D.id AND X.visibility = 'public'
+#     AND X.deleted_at IS NULL AND X.user_id = D.user_id
+#
+# 四要素缺一不可，最后一条是根因所在：`cards.forked_from` 单列同时承载两种关系 ——
+# 「草稿 → 作者自己的发布副本」（本定义）与「公开卡 → 任意用户的 fork」
+# （`get_card_forks`，另一种关系，不适用本定义）。不比 user_id 就区分不开二者：
+# 他人 fork 的 `forked_from` 同样指向原卡。
+#
+# 谓词用 `{copy}` / `{draft}` 两个 SQL 引用占位，调用处传自己那层的别名（或表名）：
+# `_published_copy_of("c2", "c")`。关系只在 `_PUBLISHED_COPY_OF` 里写一次，其余调用处
+# 一律引用本函数 —— 任何一处再手写 `forked_from = ... AND visibility = 'public'`
+# 都是在造第二份判据，正是缺陷 84 的形态。SQLite 侧同形（只差 `?` 占位符）。
+_PUBLISHED_COPY_OF = ("{copy}.forked_from = {draft}.id AND {copy}.visibility = 'public'"
+                      " AND {copy}.deleted_at IS NULL AND {copy}.user_id = {draft}.user_id")
+
+
+def _published_copy_of(copy_ref: str, draft_ref: str) -> str:
+    """关系定义「X 是草稿 D 的发布副本」的 SQL 谓词。X = `copy_ref` 行，D = `draft_ref` 行。
+
+    两侧 `copy_ref` / `draft_ref` 都可以是别名、表名，或在外层被 `$n` 绑定的行 —— 谓词只看
+    SQL 引用，不关心它们从哪来（`save_card_avatar` 就是把被更新的 `cards` 行当其中一侧用）。
+    """
+    return _PUBLISHED_COPY_OF.format(copy=copy_ref, draft=draft_ref)
+
 
 class _PoolContext:
     """Wrap an asyncpg pool connection for `async with ...` usage."""
@@ -658,28 +684,32 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] List standalone cards failed: {exc}")
             raise
 
-    async def save_card_avatar(self, card_id: str, avatar_data: str) -> None:
-        """Save base64 avatar image for a card, and sync to published copy."""
+    async def save_card_avatar(self, card_id: str, user_id: str, avatar_data: str) -> None:
+        """Save base64 avatar image for a card the user owns, and sync to its published copy.
+
+        三条写都带身份：本卡（`id` + `user_id`）、本卡的发布副本（向下）、本卡本身是发布
+        副本时的那张草稿（向上）。上下同步都引用 `_published_copy_of` 这一份关系定义 ——
+        「作者自己的发布副本」与「任意用户的 fork」靠 `user_id = D.user_id` 区分（缺陷 84）。
+        """
         try:
             async with await self._connect() as conn:
                 async with conn.transaction():
                     await conn.execute(
-                        "UPDATE cards SET avatar_data = $1 WHERE id = $2",
-                        avatar_data, card_id,
+                        "UPDATE cards SET avatar_data = $1 WHERE id = $2 AND user_id = $3",
+                        avatar_data, card_id, user_id,
                     )
+                    # 向下：本卡的发布副本（引用关系定义，副本行 = cards，草稿行 = 本卡）
                     await conn.execute(
-                        "UPDATE cards SET avatar_data = $1 WHERE forked_from = $2 AND visibility = 'public' AND deleted_at IS NULL",
-                        avatar_data, card_id,
+                        f"UPDATE cards SET avatar_data = $1 WHERE EXISTS (SELECT 1 FROM cards d"
+                        f" WHERE d.id = $2 AND d.user_id = $3 AND {_published_copy_of('cards', 'd')})",
+                        avatar_data, card_id, user_id,
                     )
-                    row = await conn.fetchrow(
-                        "SELECT forked_from FROM cards WHERE id = $1 AND forked_from IS NOT NULL AND forked_from != ''",
-                        card_id,
+                    # 向上：本卡是某张草稿的发布副本时，回写那张草稿（引用同一关系定义，方向相反）
+                    await conn.execute(
+                        f"UPDATE cards SET avatar_data = $1 WHERE EXISTS (SELECT 1 FROM cards c"
+                        f" WHERE c.id = $2 AND c.user_id = $3 AND {_published_copy_of('c', 'cards')})",
+                        avatar_data, card_id, user_id,
                     )
-                    if row:
-                        await conn.execute(
-                            "UPDATE cards SET avatar_data = $1 WHERE id = $2",
-                            avatar_data, row[0],
-                        )
         except Exception as exc:
             print(f"[PostgresStore] Save card avatar failed: {exc}")
             raise

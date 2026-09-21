@@ -65,14 +65,14 @@ class TestOtherUserForkDoesNotPolluteOrigin:
     async def test_fork_avatar_save_leaves_origin_avatar_alone(self, store, user_a, user_b):
         tid = await _text(store, user_a)
         p = await _public_card(store, user_a, tid)
-        await store.save_card_avatar(p, "AAAA")
+        await store.save_card_avatar(p, user_a, "AAAA")
 
         fork_id = f"card_{uuid.uuid4().hex}"
         fork = await store.fork_card(p, fork_id, user_b, None)
         assert fork is not None and fork["id"] == fork_id, "夹具没建出 fork，本用例会恒绿"
         assert await store.get_card_avatar_owned(fork_id, user_b) == "AAAA", "fork 该继承原卡头像"
 
-        await store.save_card_avatar(fork_id, "BBBB")
+        await store.save_card_avatar(fork_id, user_b, "BBBB")
 
         assert await store.get_card_avatar_owned(fork_id, user_b) == "BBBB", "本卡头像必须写进去"
         assert await store.get_card_avatar_owned(p, user_a) == "AAAA", \
@@ -85,14 +85,14 @@ class TestOwnForkDoesNotDesyncDraft:
     async def test_private_self_fork_avatar_save_leaves_origin_alone(self, store, user_a):
         tid = await _text(store, user_a)
         p = await _public_card(store, user_a, tid)
-        await store.save_card_avatar(p, "AAAA")
+        await store.save_card_avatar(p, user_a, "AAAA")
 
         fork_id = f"card_{uuid.uuid4().hex}"
         fork = await store.fork_card(p, fork_id, user_a, None)  # fork_card 不禁自 fork
         assert fork is not None and fork["visibility"] == "private", "夹具没建出私有 fork"
         assert fork["user_id"] == user_a
 
-        await store.save_card_avatar(fork_id, "CCCC")
+        await store.save_card_avatar(fork_id, user_a, "CCCC")
 
         assert await store.get_card_avatar_owned(fork_id, user_a) == "CCCC"
         assert await store.get_card_avatar_owned(p, user_a) == "AAAA", \
