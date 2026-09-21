@@ -106,6 +106,9 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
     "084_distill_tasks.sql", "085_usage_chunk_count.sql", "086_message_evidence.sql",
     "088_published_from.sql",
+    # 089 是 Step 3 的回填并收敛（尚未落地）；索引必须排在它之后 —— 存量库里同一草稿
+    # 可能有多张存活副本，回填不加收敛就撞唯一索引，两个顺序都让 init 失败（实测）。
+    "090_published_from_live_uniq.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -299,6 +302,8 @@ def _cards_rebuild_columns(
 # 定义**只在这一处**、由 `_ensure_initialized` 在本文件顶部注册的迁移之后创建：
 # SQLite 没有 `CREATE OR REPLACE TRIGGER`，而表重建会把触发器连同旧表一起丢掉，
 # 所以它不能只写在 .sql 迁移里（重建一次就永久缺了）。
+# 与唯一索引的不对称（实测重建前后各量一次 sqlite_master）：索引在（它按 sqlite_master
+# 重放）、触发器没了（不重放）—— 所以只有触发器需要这句兜底。
 #
 # 为什么用触发器而不是「在每一条硬删路径上各清一次」：硬删有 4 条路径
 # （`purge_card` / 按 `text_id` / 按 `user_id` / 启动去重），只清其中一条，其余
@@ -318,21 +323,6 @@ FOR EACH ROW
 BEGIN
     UPDATE cards SET published_from = NULL WHERE published_from = OLD.id;
 END
-"""
-
-
-# 「一草稿至多一张存活副本」（088 追加的那条部分唯一索引）。
-#
-# **为什么迁移文件里写了、这里还要执行一遍**：`_apply_migration` 的判据是「脚本里每个
-# ADD COLUMN 的列都已存在 → 整份跳过」。列正是 088 加的，所以**在列已存在之后建的库**
-# 再跑 088 会整份跳过 —— 连同末尾这条索引一起。只写迁移文件的话，全新库有索引、老库没有，
-# 同一个仓两种库行为不一致；而 publish_card 的 `ON CONFLICT` 依赖它，缺了就当场报
-# `ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint`。
-# 与上面那条触发器同理：都属于「迁移文件之外无条件兜一句」。
-_CARDS_LIVE_PUBLISHED_UNIQ_INDEX = """
-CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq
-    ON cards(published_from)
- WHERE deleted_at IS NULL
 """
 
 
@@ -623,10 +613,13 @@ class SQLiteStore(StorageBase):
                     # 永久跳过。**必须排在上一块之后**：那块重建表时会连 UNIQUE 一起丢掉，
                     # 先建 FK 再被重建清掉，下一轮启动会因「外键缺目标」而失败。
                     # 触发器无条件补一句（IF NOT EXISTS，重建后会缺，这里兜住）。
+                    # 唯一索引**不在这里兜**：它的定义只在
+                    # `090_published_from_live_uniq.sql`，那份文件不含 ADD COLUMN，故
+                    # `_apply_migration` 的「列都在即整份跳过」判据对它不成立（实测连跑两次
+                    # 均 APPLY）—— 重建又会重放它，两处都不会缺，多写一句就是第二个来源。
                     if not await _cards_published_fk_present(conn):
                         await _rebuild_cards_published_from(conn)
                     await conn.execute(_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER)
-                    await conn.execute(_CARDS_LIVE_PUBLISHED_UNIQ_INDEX)
                     await conn.commit()
 
                     # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜

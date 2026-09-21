@@ -63,6 +63,44 @@ def test_exemption_has_one_source_in_the_executor(monkeypatch):
         test_every_migration_file_is_dispatched()
 
 
+def test_live_published_uniq_index_has_one_unskippable_source():
+    """`cards_published_from_live_uniq` 的定义只能在一个**不会被跳过**的文件里。
+
+    背景（实测）：`_apply_migration` 的判据是「脚本里每个 ADD COLUMN 的列都已存在 → 整份
+    跳过」。这条索引原先和 088 的 ADD COLUMN 同文件，而列正是 088 加的 —— 列一旦存在
+    （088 跑过之后就是），整份脚本被静默跳过，索引永远建不上；于是执行器尾部又写了第二句
+    兜底。同一个仓由此出现「两份定义、两种库两种行为」，且 publish_card 的 `ON CONFLICT`
+    认的就是这条索引，缺了当场报错。
+
+    锁两件事：
+      ① 定义所在文件不含 ADD COLUMN（判据对它不成立，每次 init 都 APPLY，实测连跑两次均
+         APPLY）；
+      ② 执行器里没有第二份可执行的索引定义（注释不算）。
+    """
+    name = "090_published_from_live_uniq.sql"
+    text = (MIGRATIONS_DIR / name).read_text(encoding="utf-8")
+    assert "cards_published_from_live_uniq" in text, f"{name} 里没有索引定义"
+    stray = sqlite_store._ADD_COLUMN_RE.findall(text)
+    assert not stray, (
+        f"{name} 里出现了 ADD COLUMN（{stray}）—— 列一旦存在，这份文件会被整份跳过，"
+        "索引随之永远建不上。加列放在 088，本文件只放索引。")
+
+    # ② 单一来源：执行器里不得再有可执行的索引定义（注释/文档字符串里的引用不算）
+    tree = ast.parse(SQLITE_STORE.read_text(encoding="utf-8"))
+    ddl = [n.value for n in ast.walk(tree)
+           if isinstance(n, ast.Constant) and isinstance(n.value, str)
+           and "CREATE UNIQUE INDEX" in n.value.upper()]
+    assert not ddl, (
+        f"执行器里还有 {len(ddl)} 处可执行的 CREATE UNIQUE INDEX —— "
+        f"索引的定义只留在 {name}，两处定义必然出现两种库两种行为。")
+
+    # ③ 顺序：索引必须排在回填并收敛之后（Step 3 的 089 落地后即 089 之后）
+    order = list(sqlite_store._MIGRATIONS_AFTER_USER_REBUILD)
+    assert order.index(name) > order.index("088_published_from.sql"), (
+        "索引排到了加列之前 —— 存量库里同一草稿的多张存活副本会撞唯一索引，"
+        "回填并收敛必须排在它前面。")
+
+
 def test_migration_runner_never_swallows_a_failure():
     """迁移执行区不得有「只 print、从不重抛」的 except 块。
 

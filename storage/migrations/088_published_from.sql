@@ -6,20 +6,15 @@
 -- `copy.user_id = draft.user_id`。拆列后本列只表示前者，并由表级复合外键 + UNIQUE
 -- 强制「同一作者」。
 --
--- **本文件只加列与索引**：SQLite 加得了列、也加得了索引，加不了表级 UNIQUE 与复合外键
+-- **本文件只加列**：SQLite 加得了列、也加得了索引，加不了表级 UNIQUE 与复合外键
 -- （那两件要重建表）。复合约束走 `_ensure_initialized` 里的 `_rebuild_cards_published_from`
 -- —— 它按 PRAGMA 现算列清单来重建，所以列必须先在这里存在。
+--
+-- 唯一索引**不在这里**、在 090：本文件含 ADD COLUMN，而 `_apply_migration` 的判据是
+-- 「脚本里每个 ADD COLUMN 的列都已存在 → 整份跳过」—— 列一旦存在（本文件跑过之后就是），
+-- 整份脚本连同尾部任何语句一起跳过，索引就永远建不上。成因与实测见 090 顶部。
 --
 -- 本列也是 SQLite 启动去重那条 DELETE 的判据之一（见 sqlite_store.py 的两条去重
 -- DELETE）：发布副本的 `forked_from` 变成 '' 之后，不加 `published_from IS NULL`
 -- 它会和作者的草稿同 text_id 同 name，被去重 DELETE 当成重复草稿删掉。
 ALTER TABLE cards ADD COLUMN published_from TEXT DEFAULT NULL;
-
--- 「一草稿至多一张存活副本」由库强制（裁定：下架 = 撤回发布，副本行仍在，只是不再在架，
--- 重发复用同一行）。故唯一性不看 visibility，只看「未删」。
---
--- **回填须先收敛多副本**：存量库里若同一 published_from 有多行未删副本，本索引建不上，
--- 迁移会当场报错（这是想要的 —— 静默跳过就等于没约束）。收敛顺序见步骤 3 的回填迁移。
-CREATE UNIQUE INDEX IF NOT EXISTS cards_published_from_live_uniq
-    ON cards(published_from)
- WHERE deleted_at IS NULL;
