@@ -1246,6 +1246,18 @@ PROBE_IMAGE         false
 - **形状锁不受牵连**：`test_usage_accounting_lock._audit()` 的配平是 `records >= need`，且互斥分支合并计一组 —— `_collect_stream` 早已是同形（try 一支 + except 一支），本条只是让非流式支对齐它，没有改写配平口径。
 - **判据命令**：`git grep -n "estimate_usage_from_chars" core/distiller.py` —— 全文 **6** 处：`_collect_stream` 的 except 支 1 处、`_chat_accounted` 体内**恰 2** 处（硬失败支 + 截断支）、余 3 处是 map 失败分片与档案压缩（与本条无关）。**注意这条判据与缺陷 91 那条不是同一条**：91 要的是「两条截断路**共用同一个口径**」，判据是 `_prompt_chars` 恰三处；本条要的是「两条非流式出口**各自**按字符估算」，才数 `estimate_usage_from_chars`。
 
+**93. 用量写库失败只留一行 print 就被吞 —— SG 全员用量为 0 直到人工发现** —— 状态：**记账**（不修，2026-09-21；SG「全员用量为 0」排查的收口）
+- **链路**：记账出口是 `core/utils.try_record_usage`（`core/utils.py:51`），以 `submit_to_main_loop(_write(), wait=False)`（`:98`）投递 —— 写库跑在别处，请求线程不等它。内层 `_write` 的 except 只 `print(f"[{source}] Record usage failed (non-fatal): {exc}")`（`:96`），**不重抛、不置标志、不影响响应**。写侧 `PostgresStore.record_usage`（`storage/postgres_store.py:3014`）自己 print 一行后抛 `StoreError`（`:3022`）—— 这一抛正落进上面那层 except 里。
+- **实害（SG 2026-09-21 只读取证）**：`usage_stats` 的 `max(id)=104` 而序列 `last_value=2`，每条 INSERT 都撞 `usage_stats_pkey`；表里最后一行 `created_at = 2026-06-26 19:10:28+00`（当天 0 行、近 7 天 0 行）；全部 104 行 `action='chat'`，从无 `distill_*` 行。设置页「我的用量」与 admin 用量页都是 0 —— **展示层是忠实的**（`web/routers/auth.py:577` → `get_usage_stats`；`web/routers/admin.py:397` → `get_all_usage_summary`），它读的就是这张冻住的表。
+- **为什么只记不修**：把「账写不进去」从 non-fatal 改成可见（对用户报错 / 健康检查置红 / 计数告警）是**产品口径决策** —— 用量算不算必须送达的账，得先定。本次只修了让事故无声的**机制根因**（identity 序列落后于表数据，见下）：新增 `storage/pg_identity_sync.py`，启动时与导入脚本末尾对齐全部 identity 序列；**吞异常那一层原样保留**，故本条仍记在账上。
+- **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为两处（`core/utils.py:96` / `storage/postgres_store.py:3022`），都是「print 一行，不改请求结果」。
+
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**记账**（不修，2026-09-21；同上排查的顺带发现）
+- **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
+- **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
+- **为什么只记不修**：先定口径；且两条路径的生成器结构不同（群聊是单 try 包全场、一对一逐段 try），动哪边都要先确认不改变既有的「回复中途失败」语义。
+- **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 print 还是 `yield` 一条 error 事件」。读数（2026-09-21）：`group.py:575/597/610` 三条的最近一层 except 是 `:633`（yield error）；`chat.py` 的每一条都有自己的 print 兜底。
+
 **95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
 - **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
 - **后果**：一条**公开**且依赖树里挂着 `get_optional_user` 的路由（`web/routers/market.py` 的 `GET /api/market/card/{card_id}`、评论列表），在 `JWT_SECRET` 未配置时，一次本该正常的**匿名读**变成 **500**（异常从 `solve_dependencies` → `run_in_threadpool` 抛出）；secret 配好时同一请求是 **404「角色不存在」**（正常走到函数体）。即：**配置缺失把一个公开读变成了 500，而它既不是鉴权失败也不是业务失败**。
