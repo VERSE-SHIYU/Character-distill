@@ -6,6 +6,7 @@ import useSwipeBack from '../hooks/useSwipeBack'
 import ThemeDrawer from './common/ThemeDrawer'
 import ConfirmModal from './common/ConfirmModal'
 import { SETTINGS_ENTRIES } from '../config/mineEntries'
+import { isAdmin } from '../utils/role'
 import { LogIn, ChevronRight } from './common/Icon'
 
 export default function SettingsPanel() {
@@ -29,7 +30,7 @@ export default function SettingsPanel() {
         <PageHeader title="设置" onBack={popView} />
       </header>
 
-      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: authUser?.role === 'admin' }} onAction={handleAction} />
+      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: isAdmin(authUser) }} onAction={handleAction} />
       <div className="entry-group-gap" />
 
       <button type="button" className="entry-list-item settings-logout-btn" onClick={() => setLogoutConfirm(true)}>

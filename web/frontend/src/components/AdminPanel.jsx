@@ -8,6 +8,7 @@ import Modal from './common/Modal'
 import { Trash2, Dashboard as DashIcon, Users as UsersIcon, Ticket, BarChart as BarChartIcon, Flag, Shield, Star, Terminal, Megaphone, Settings, Download, Close, AlignLeft, AlignCenter, AlignRight } from './common/Icon'
 import { formatChatTime, formatDateTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
+import { isAdmin } from '../utils/role'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import EmojiPicker from './common/EmojiPicker'
 
@@ -439,7 +440,7 @@ function UsersTab() {
   }
 
   const toggleSelectAll = () => {
-    const selectable = users.filter((u) => u.id !== authUser?.id && u.role !== 'admin')
+    const selectable = users.filter((u) => u.id !== authUser?.id && !isAdmin(u))
     if (selectable.length === 0) return
     const allSelected = selectable.every((u) => selectedUsers.has(u.id))
     if (allSelected) {
@@ -511,8 +512,8 @@ function UsersTab() {
               <tr>
                 <th style={{ width: 36 }}>
                   <input type="checkbox" onChange={toggleSelectAll}
-                    checked={users.filter((u) => u.id !== authUser?.id && u.role !== 'admin').length > 0 &&
-                      users.filter((u) => u.id !== authUser?.id && u.role !== 'admin').every((u) => selectedUsers.has(u.id))}
+                    checked={users.filter((u) => u.id !== authUser?.id && !isAdmin(u)).length > 0 &&
+                      users.filter((u) => u.id !== authUser?.id && !isAdmin(u)).every((u) => selectedUsers.has(u.id))}
                   />
                 </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
@@ -529,7 +530,7 @@ function UsersTab() {
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    {u.id === authUser?.id ? null : u.role === 'admin' ? (
+                    {u.id === authUser?.id ? null : isAdmin(u) ? (
                       <input type="checkbox" disabled title="不能选择管理员账号" style={{ opacity: 0.35, cursor: 'not-allowed' }} />
                     ) : (
                       <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
