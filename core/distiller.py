@@ -874,8 +874,12 @@ class Distiller:
             text: 原始叙事文本（全文）。
 
         Returns:
-            角色信息字典列表；单分片解析反复失败时返回空列表并打印警告，且**不落缓存**
-            —— 缓存住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
+            角色信息字典列表，**名单可以为空**（全书真的没有具名角色）。空名单照样
+            落缓存：它是一次成功的识别结果。
+
+        Raises:
+            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片失败率越过容忍线。
+                失败走异常，因此**天然不会进缓存**，无需调用方额外判断。
         """
         key = text_fingerprint(text) + ":" + self._llm.model
 
@@ -893,14 +897,13 @@ class Distiller:
 
         chunks = self._split_chunks(text, self._chunk_size)
         if len(chunks) <= 1:
-            single = self._identify_single_call(text)
-            if single is None:
-                return []
-            result = single
+            result = self._identify_single_call(text)
         else:
             result = self._identify_over_chunks(chunks)
 
-        # Cache on success (deep copy to isolate from caller mutation)
+        # 只缓存成功结果（空名单也算成功）。失败在上面就抛了，走不到这里 —— 缓存
+        # 住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
+        # deep copy 隔离调用方的改动。
         with _IDENTIFY_CACHE_LOCK:
             _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
             if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
@@ -931,11 +934,15 @@ class Distiller:
             raise
         return cls._normalize_identify_items(parsed)
 
-    def _identify_single_call(self, text: str) -> list[dict[str, Any]] | None:
+    def _identify_single_call(self, text: str) -> list[dict[str, Any]]:
         """单分片的识别：一次调用 + 一次重试（与原实现逐行等价）。
 
         Returns:
-            角色列表；两次解析都失败时返回 ``None`` —— 调用方据此**不落缓存**。
+            角色列表，**可以为空**（这一段真的没有具名角色）。
+
+        Raises:
+            DistillError: 两次解析均失败。解析不出来是**失败**，不是「没有角色」——
+                返回空列表会让上游把它当成一份合法的空名单。
         """
         messages: list[dict[str, Any]] = [{"role": "user", "content": text}]
         try:
@@ -959,14 +966,19 @@ class Distiller:
             try:
                 return self._parse_identify_list(reply_retry)
             except Exception as exc:
-                print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
-                return None
+                raise DistillError(
+                    "识别失败：模型返回的角色名单无法解析，请重试",
+                    f"单分片两次解析均失败；最后错误：{exc}",
+                )
 
     def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
         """逐片识别 + 合并。
 
         失败率（调用失败 + 结果解析失败）越过 ``_map_failure_exceeds_tolerance`` 即抛：
         拿半本书的名单当全书名单，比报错更糟。未越线则继续 —— 合并那一步只看拿到的名单。
+
+        未越线、且每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，
+        不是识别失败。与单分片同口径 —— 空名单是合法结果，失败才抛。
         """
         def _build_prompt(chunk: str) -> tuple[str, str]:
             return IDENTIFY_SYSTEM_PROMPT, chunk
@@ -1007,7 +1019,9 @@ class Distiller:
             print(f"[distiller] {failed}/{total} identify chunks failed (within tolerance), continuing")
 
         if not parts:
-            raise DistillError("识别失败：未能从任何片段中识别到角色")
+            # 每一片都解析成空名单（且失败率未越线）→ 真空名单，不是失败。
+            # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
+            return []
         return self._identify_merge(parts)
 
     def _identify_merge(self, parts: list[str]) -> list[dict[str, Any]]:

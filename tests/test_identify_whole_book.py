@@ -230,3 +230,52 @@ class TestChunkFailurePolicy:
 
         assert "识别失败" in excinfo.value.user_message
         assert llm.chat_stream.call_count == 0
+
+
+class TestEmptyRosterIsNotFailure:
+    """名单为空是**合法的识别结果**，不是识别失败 —— 两条路径同口径。
+
+    「这本书没有具名角色」与「识别不出来」原先被两条相反的规则各判了一半：
+    单分片把解析失败降级成空名单，多分片把真空名单升级成失败。本组把两者钉在
+    同一口径上：**空名单是结果，失败才抛**。
+
+    变异对象 = 恢复 ``_identify_over_chunks`` 末尾的 `if not parts: raise`：
+    多分片那条变红。单分片那条守 ``_identify_single_call`` 不把合法空数组当解析失败。
+
+    与 ``TestChunkFailurePolicy`` 的分界：那一组考「片坏了怎么办」（失败率是否越线），
+    本组考「片全好但确实没人」（越线判据不该被真空名单触发）。
+    """
+
+    def setup_method(self):
+        _IDENTIFY_CACHE.clear()
+
+    def test_single_chunk_empty_array_is_an_empty_roster(self):
+        """单分片：模型回合法的空数组 → 空名单，不抛。"""
+        llm = _make_llm(chat=lambda *a, **kw: "[]")
+        d = _make_distiller(llm)
+
+        assert d.identify_characters("短文本，只有一个分片") == []
+
+    def test_all_chunks_empty_array_is_an_empty_roster(self):
+        """多分片：每一片都回合法的空数组 → 空名单，不抛、也不进合并。"""
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
+
+        llm = _make_llm(async_chat=async_chat)
+        d = _make_distiller(llm)
+
+        assert d.identify_characters("\n\n".join([FILLER] * 4)) == []
+        assert llm.chat_stream.call_count == 0, "没有名单可合并，不该走到合并那一步"
+
+    def test_empty_roster_is_cached_like_any_other_result(self):
+        """空名单同样是**成功结果**，照样进 memo —— 失败才不进缓存。"""
+        async def async_chat(system, messages, max_tokens=None, **kwargs):
+            return ("[]", {"prompt_tokens": 1, "completion_tokens": 1})
+
+        llm = _make_llm(async_chat=async_chat)
+        d = _make_distiller(llm)
+        text = "\n\n".join([FILLER] * 4)
+
+        assert d.identify_characters(text) == []
+        assert d.identify_characters(text) == []
+        assert llm.async_chat.call_count == 4, "第二次该命中缓存，不该再发分片调用"

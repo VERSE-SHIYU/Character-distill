@@ -20,7 +20,7 @@ from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
 from adapters.llm_adapter import user_facing_error
-from core.character_roster import aliases_for, resolve_characters
+from core.character_roster import aliases_for, resolve_characters, target_character_name
 from core.distiller import DistillError, Distiller, text_fingerprint
 from core.export import export_tavern_json
 from core.schema import CharacterCard
@@ -369,19 +369,14 @@ def _run_distill_task(
         # 身份靠 `run_coroutine_threadsafe` 传递：它在**调用线程**里 copy_context，
         # 所以本线程经 `C.ctx_thread` 带来的 LLM_CALLER 会一路传到识别调用里，
         # 记账不丢人（与 `_persist_snap` 走的是同一条投递）。
-        try:
-            chars = submit_to_main_loop(
-                resolve_characters(get_storage(), distiller, text_id, user_id, content))
-        except Exception:
-            chars = []
+        # 识别失败与「挑不出目标角色」都不在此捕获：两者都是 DistillError 家族，
+        # 冒泡到本函数外层 except，走 `user_facing_error` 那条唯一的渲染路径。
+        # 原先这里的宽捕获把上游故障（网络 / DB / 额度）渲染成了「没识别到角色」；
+        # 两段手抄的「空名单 / 缺 name」分支也一并收进 character_roster 的判据。
+        chars = submit_to_main_loop(
+            resolve_characters(get_storage(), distiller, text_id, user_id, content))
         if not name:
-            if not chars:
-                _set_task(task_id, {"status": "error", "message": "No characters identified"})
-                return
-            name = chars[0].get("name", "")
-            if not name:
-                _set_task(task_id, {"status": "error", "message": "Identified result missing name"})
-                return
+            name = target_character_name(chars)
         aliases = aliases_for(chars, name)
 
         _set_task(task_id, {"status": "analyzing", "current": 0, "total": 0, "progress_pct": 10, "character": name, "message": "开始分析…"})
@@ -616,14 +611,9 @@ async def _do_identify(text: str, distiller: Distiller) -> dict[str, Any]:
     return {"characters": chars}
 
 
-def _first_character_name(chars: list[dict[str, Any]]) -> str:
-    """名单里的第一个角色名；空名单 / 缺 name 都是 400（同一处判据）。"""
-    if not chars:
-        raise HTTPException(400, "No characters identified")
-    name = chars[0].get("name", "")
-    if not name:
-        raise HTTPException(400, "Identified result missing name")
-    return name
+# 「挑不出目标角色」不在这里渲染：`NoTargetCharacter` 是 `DistillError` 的子类，
+# 文案在 core/character_roster.py 一处定义，上行出口与本文件的识别失败同一条
+# （HTTP 走 web/server.py 的领域异常出口、bg 与 SSE 走 user_facing_error）。
 
 
 async def _resolve_character_name(
@@ -642,7 +632,8 @@ async def _resolve_character_name(
     except Exception as exc:
         print(f"[distill] Auto-identify failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
-    return _first_character_name(chars)
+    # 挑不出角色就抛 NoTargetCharacter（DistillError 子类）→ 400，不再在这里配码。
+    return target_character_name(chars)
 
 
 # ---- New routes (storage-backed, via TextManager) ----
@@ -699,7 +690,7 @@ async def distill_by_text_id(
     if not char_name:
         chars = await resolve_characters(
             storage, distiller, req.text_id, user_id, content)
-        char_name = _first_character_name(chars)
+        char_name = target_character_name(chars)
 
     try:
         result = await text_manager.get_or_distill(
@@ -1064,20 +1055,18 @@ async def distill_stream(
 
         # 名单走唯一入口：命中缓存即不发 LLM，未命中才识别一次并写回
         nonlocal char_name
+        # 识别失败与「挑不出目标角色」两类结果都在这一个 except 里渲染：本生成器
+        # 在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是错误帧，
+        # 故就地 yield —— 与 :1095 同形、共用 user_facing_error 这一份口径链。
         try:
             chars = await resolve_characters(
                 storage, distiller, req.text_id, user_id, content)
+            if not char_name:
+                char_name = target_character_name(chars)
         except Exception as exc:
             print(f"[distill] Identify failed: {exc}")
-            chars = []
-        if not char_name:
-            if not chars:
-                yield f"data: {json.dumps({'error': '未识别到任何角色'}, ensure_ascii=False, default=str)}\n\n"
-                return
-            char_name = chars[0].get("name", "")
-            if not char_name:
-                yield f"data: {json.dumps({'error': '识别结果缺少角色名'}, ensure_ascii=False, default=str)}\n\n"
-                return
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
+            return
         aliases = aliases_for(chars, char_name)
 
         # Incremental distillation with aliases for broader chunk matching

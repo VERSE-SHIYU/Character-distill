@@ -147,10 +147,13 @@ import copy
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from core.distiller import (
     _IDENTIFY_CACHE,
     IDENTIFY_CACHE_MAX_ENTRIES,
     IDENTIFY_CACHE_TTL_SECONDS,
+    DistillError,
 )
 
 
@@ -237,12 +240,21 @@ class TestIdentifyCharactersCache:
         assert llm.chat.call_count == 2
 
     def test_parse_failure_not_cached(self):
-        """解析失败（非 JSON）不写缓存，下次调用重新请求。"""
+        """解析失败**抛 DistillError**（不是返回空名单），且不写缓存。
+
+        「解析不出来」与「这本书没有角色」是两回事：前者是失败，后者是合法空名单。
+        把失败降级成 `[]`，上游就会把它当成「没识别到角色」报给用户 —— 网络、DB、
+        额度故障于是全都长成同一张脸。
+
+        变异对象 = 恢复成 `return None`（外层再变 `[]`）：下面两次 `pytest.raises`
+        直接红（DistillError 不抛了）。
+        """
         llm = _make_mock_llm(return_value="不是 JSON")
         d = Distiller(llm)
 
-        result = d.identify_characters(SAMPLE_TEXT)
-        assert result == []
-        result2 = d.identify_characters(SAMPLE_TEXT)
-        assert result2 == []
-        assert llm.chat.call_count >= 2
+        for _ in range(2):
+            with pytest.raises(DistillError):
+                d.identify_characters(SAMPLE_TEXT)
+
+        # 每次调用 = 1 次 + 1 次重试；两次调用共 4 次 —— 失败没进缓存，第二次仍重跑
+        assert llm.chat.call_count == 4
