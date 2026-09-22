@@ -236,7 +236,7 @@ def _distill_app(store, uid) -> FastAPI:
     app.include_router(distill_router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": uid, "username": "t", "is_admin": False,
+        "id": uid, "username": "t", "role": "user",
     }
     return app
 
@@ -423,7 +423,7 @@ class _AuthStore:
         self._uid = uid
 
     async def get_user_by_id(self, uid: str):
-        return {"id": self._uid, "username": "t", "is_admin": False}
+        return {"id": self._uid, "username": "t", "role": "user"}
 
     async def update_last_active(self, uid: str):
         return None
@@ -492,7 +492,7 @@ def test_l4_live_session_is_blocked_before_outbound(store, seed_user, monkeypatc
         server.register_domain_error_handlers(app)
         app.dependency_overrides[get_storage] = lambda: store
         app.dependency_overrides[get_current_user] = lambda: {
-            "id": uid, "username": "t", "is_admin": False,
+            "id": uid, "username": "t", "role": "user",
         }
         client = TestClient(app, raise_server_exceptions=False)
 

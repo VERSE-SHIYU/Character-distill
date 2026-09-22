@@ -81,7 +81,7 @@ def _client(store, user_id, monkeypatch) -> TestClient:
     app.include_router(distill_router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_id, "username": "testuser", "is_admin": False,
+        "id": user_id, "username": "testuser", "role": "user",
     }
     # `cancel_distill_tasks_by_text_id` 直接调 `deps.get_storage()`（**不经 Depends**），
     # `dependency_overrides` 拦不住它 —— 不重定向就会去开本机 `data/character_sim.db`。
@@ -249,7 +249,7 @@ class TestAdminIsAuthorized:
         app.include_router(distill_router)
         app.dependency_overrides[get_storage] = lambda: store
         app.dependency_overrides[get_current_user] = lambda: {
-            "id": f"admin_{uuid.uuid4().hex[:8]}", "username": "admin", "is_admin": True,
+            "id": f"admin_{uuid.uuid4().hex[:8]}", "username": "admin", "role": "admin",
         }
         monkeypatch.setattr(distill_module, "get_storage", lambda: store)
 

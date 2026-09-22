@@ -41,18 +41,18 @@ def store(tmp_path):
 
 @pytest.fixture
 def owner():
-    return {"id": f"owner_{uuid.uuid4().hex[:8]}", "is_admin": False}
+    return {"id": f"owner_{uuid.uuid4().hex[:8]}", "role": "user"}
 
 
 @pytest.fixture
 def intruder():
     """非属主、非 admin。"""
-    return {"id": f"intruder_{uuid.uuid4().hex[:8]}", "is_admin": False}
+    return {"id": f"intruder_{uuid.uuid4().hex[:8]}", "role": "user"}
 
 
 @pytest.fixture
 def admin():
-    return {"id": f"admin_{uuid.uuid4().hex[:8]}", "is_admin": True}
+    return {"id": f"admin_{uuid.uuid4().hex[:8]}", "role": "admin"}
 
 
 def _seed(store, entity: str, uid: str) -> str:

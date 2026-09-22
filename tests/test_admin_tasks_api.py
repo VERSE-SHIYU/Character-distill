@@ -54,12 +54,12 @@ def user_id():
     return f"usr_{uuid.uuid4().hex[:8]}"
 
 
-def _build_client(store, *, is_admin=True, uid="admin1"):
+def _build_client(store, *, role="admin", uid="admin1"):
     app = FastAPI()
     app.include_router(A.router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": uid, "username": "u", "is_admin": is_admin,
+        "id": uid, "username": "u", "role": role,
     }
     return TestClient(app)
 
@@ -190,6 +190,6 @@ class TestEnvelope:
 
 class TestAuthz:
     def test_non_admin_gets_403_not_404(self, store):
-        resp = _build_client(store, is_admin=False).get("/api/admin/tasks")
+        resp = _build_client(store, role="user").get("/api/admin/tasks")
         assert resp.status_code == 403
         assert resp.status_code != 404

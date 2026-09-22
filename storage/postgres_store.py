@@ -12,6 +12,7 @@ from typing import Any
 
 import asyncpg  # type: ignore[import-not-found]
 
+from core.roles import ROLES
 from .base import StorageBase, StoreError
 from .pg_identity_sync import align_identity_sequences
 
@@ -1611,7 +1612,8 @@ class PostgresStore(StorageBase):
         """Get one group session by id, with no ownership filter.
 
         **仅供管理员逃生口**：`core/authz.fetch_for_actor` 在属主取不到、且调用方
-        `is_admin` 时才落到这里。任何登录用户可达的路径都该用 `get_group_session_owned`。
+        是管理员（`core.roles.is_admin`）时才落到这里。任何登录用户可达的路径都该用
+        `get_group_session_owned`。
         """
         try:
             async with await self._connect() as conn:
@@ -2054,7 +2056,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     """SELECT u.id, u.username, u.nickname, s.password_hash,
-                              u.is_admin, u.is_disabled, u.created_at
+                              u.role, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.username_lower = $1""",
@@ -2072,7 +2074,7 @@ class PostgresStore(StorageBase):
                 row = await conn.fetchrow(
                     """SELECT u.id, u.username, u.nickname, s.password_hash,
                               u.email, u.email_verified,
-                              u.is_admin, u.is_disabled, u.created_at
+                              u.role, u.is_disabled, u.created_at
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.email = $1 AND u.email != ''""",
@@ -2089,7 +2091,7 @@ class PostgresStore(StorageBase):
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
                     """SELECT u.id, u.username, u.nickname, s.password_hash,
-                              u.is_admin, u.is_disabled, u.created_at,
+                              u.role, u.is_disabled, u.created_at,
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
                               u.bio, u.last_active_at, u.presence_visibility, u.following_visible,
@@ -2224,7 +2226,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 rows = await conn.fetch(
-                    "SELECT id, username, nickname, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
+                    "SELECT id, username, nickname, email, email_verified, role, is_disabled, created_at, last_login_at, last_active_at, presence_visibility FROM users ORDER BY created_at DESC"
                 )
             return self._list_rows(rows)
         except Exception as exc:
@@ -2324,12 +2326,20 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get dashboard stats failed: {exc}")
             raise
 
-    async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
+    async def set_user_role(self, user_id: str, role: str) -> None:
+        """设置用户角色。非法角色 / 用户不存在都抛异常 —— 不返回「成功却没写」。"""
+        if role not in ROLES:
+            raise ValueError(f"未知角色 {role!r}（合法值：{sorted(ROLES)}）")
         try:
             async with await self._connect() as conn:
-                await conn.execute("UPDATE users SET is_admin = $1 WHERE id = $2", int(is_admin), user_id)
+                tag = await conn.execute(
+                    "UPDATE users SET role = $1 WHERE id = $2", role, user_id)
+            if self._parse_rowcount(tag) == 0:
+                raise ValueError(f"用户不存在：{user_id}")
+        except ValueError:
+            raise
         except Exception as exc:
-            print(f"[PostgresStore] Set user admin failed: {exc}")
+            print(f"[PostgresStore] Set user role failed: {exc}")
             raise
 
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:
@@ -2847,7 +2857,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, username, email, email_verified, is_admin, is_disabled, created_at, last_login_at, last_active_at FROM users WHERE id = $1",
+                    "SELECT id, username, email, email_verified, role, is_disabled, created_at, last_login_at, last_active_at FROM users WHERE id = $1",
                     user_id,
                 )
                 if not row:
@@ -2955,7 +2965,7 @@ class PostgresStore(StorageBase):
         try:
             users = await self.get_all_users()
             output = io.StringIO()
-            fieldnames = ["id", "username", "email", "is_admin", "is_disabled", "created_at", "last_login_at"]
+            fieldnames = ["id", "username", "email", "role", "is_disabled", "created_at", "last_login_at"]
             writer = csv.DictWriter(output, fieldnames=fieldnames)
             writer.writeheader()
             for u in users:
@@ -3595,7 +3605,7 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get comment (owned) failed: {exc}")
             raise StoreError("get_comment_owned", exc) from exc
 
-    async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, is_admin: bool = False) -> bool:
+    async def delete_comment(self, comment_id: str, user_id: str, card_author_id: str | None = None, as_admin: bool = False) -> bool:
         try:
             async with await self._connect() as conn:
                 tag = await conn.execute(
@@ -4691,10 +4701,10 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Is friend check failed: {exc}")
             raise StoreError("is_friend", exc) from exc
 
-    async def can_see_online_status(self, viewer_id: str, target_id: str, is_admin: bool = False) -> bool:
+    async def can_see_online_status(self, viewer_id: str, target_id: str, as_admin: bool = False) -> bool:
         if viewer_id == target_id:
             return True
-        if is_admin:
+        if as_admin:
             return True
         try:
             async with await self._connect() as conn:

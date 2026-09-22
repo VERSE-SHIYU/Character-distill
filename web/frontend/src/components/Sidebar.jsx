@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import Avatar from './common/Avatar'
 import GlobalSearchBox from './common/GlobalSearchBox'
 import { displayName } from '../utils/displayName'
+import { isAdmin } from '../utils/role'
 import { THEMES } from '../utils/themes'
 import { applyTheme, getTheme, applyFontDisplay, getFontDisplay } from '../utils/theme'
 import { Check, Home, Edit3, Users, Clock, Globe, Trash2, Heart, User, Shield, MessageSquare, Palette, Mic, Settings, LogIn, Book, Close } from './common/Icon'
@@ -84,7 +85,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     }
   }, [setView])
 
-  const navItems = authUser?.is_admin
+  const navItems = isAdmin(authUser)
     ? [...NAV_ITEMS, { id: 'admin', icon: <Shield size={20} />, label: '管理' }]
     : NAV_ITEMS
 

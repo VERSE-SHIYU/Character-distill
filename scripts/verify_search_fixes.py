@@ -44,11 +44,11 @@ async def verify():
         # ── Set up two test users ───────────────────────────────────────────
         async with await store._connect() as conn:
             await conn.execute(
-                "INSERT INTO users (id, username, nickname, is_admin) VALUES ($1, $2, $3, 0)",
+                "INSERT INTO users (id, username, nickname) VALUES ($1, $2, $3)",
                 uid_a, username_a, "测试昵称Alpha",
             )
             await conn.execute(
-                "INSERT INTO users (id, username, nickname, is_admin) VALUES ($1, $2, $3, 0)",
+                "INSERT INTO users (id, username, nickname) VALUES ($1, $2, $3)",
                 uid_b, username_b, "Beta测试昵称",
             )
 

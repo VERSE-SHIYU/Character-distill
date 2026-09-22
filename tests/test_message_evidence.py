@@ -107,7 +107,7 @@ def client(store, user_id, sessions):
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_sessions] = lambda: sessions
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_id, "username": "testuser", "is_admin": False,
+        "id": user_id, "username": "testuser", "role": "user",
     }
     return TestClient(app)
 
@@ -698,7 +698,7 @@ def group_client(store, user_id):
     app.include_router(group_router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_id, "username": "testuser", "is_admin": False,
+        "id": user_id, "username": "testuser", "role": "user",
     }
     return TestClient(app)
 

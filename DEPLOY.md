@@ -150,13 +150,10 @@ ${VAR} → deploy.yml 顶层 env 的 ${{ vars.VAR }}
 
 | 仓库变量 | 含义 |
 |---|---|
-| `DEMO_USERNAMES` | 演示账号门禁名单，逗号分隔（大小写不敏感，两侧空格自动去除）。**空 = 门禁不启用**，判据见 `web/demo_gate.py`。 |
 | `ALERT_EMAIL` | 主动告警收件邮箱。**消费方 = `core/alerting.AlertHandler`**（`web/server.py` 的 lifespan 里挂到 root logger，紧跟 `install_log_collector()`）：ERROR 级日志按 (logger 名, 异常类型) 节流后发到这里，同键 1 小时一封。**空 = 不安装**（只记一条 WARNING），不设默认收件人。自测：`python -m core.alerting --test`。 |
 
 > 改完仓库变量后**重新跑一次 deploy（`both`）** 即生效：`compose up -d` 检测到容器
 > 环境变化会重建 app 容器，不需要手动 `restart`，也不需要登服务器。
-> 上线顺序：先用演示账号配好 API key、预置书与卡、跑通对话，**最后**才设这一项 ——
-> 否则预置过程本身会被门禁挡住。
 
 ## 4. SSL 证书（两台都装同一套）
 

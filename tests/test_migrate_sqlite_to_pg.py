@@ -49,7 +49,6 @@ def make_test_sqlite() -> str:
             username        TEXT NOT NULL,
             password_hash   TEXT NOT NULL,
             created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
-            is_admin        INTEGER DEFAULT 0,
             is_disabled     INTEGER DEFAULT 0,
             api_key         TEXT DEFAULT '',
             base_url        TEXT DEFAULT 'https://api.deepseek.com',

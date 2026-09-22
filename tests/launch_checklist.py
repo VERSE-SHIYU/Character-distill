@@ -71,7 +71,7 @@ def main():
         if admin_token:
             # Check if this user is admin
             me = req_json("GET", "/api/auth/me", headers={"Authorization": "Bearer " + admin_token})
-            if me.get("is_admin"):
+            if me.get("role") == "admin":
                 dash = req_json("GET", "/api/admin/dashboard", headers={"Authorization": "Bearer " + admin_token})
                 check(11, "Admin dashboard returns stats", "total_users" in dash)
             else:

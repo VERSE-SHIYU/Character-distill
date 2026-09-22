@@ -4,7 +4,7 @@ const { openApp, login, goToView, shot } = require('./helpers.cjs')
 const FAKE_USER = {
   id: 'u-testadmin', username: 'testadmin', nickname: '', bio: '',
   avatar_data: '', banner_data: '', has_api_key: true, has_embedding_key: false,
-  embedding_region: 'cn', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', is_admin: false,
+  embedding_region: 'cn', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', role: 'user',
 }
 const CARDS = {
   c1: { id: 'c1', name: '沈若言', card_json: JSON.stringify({ name: '沈若言', identity: '深夜电台 · 主播' }), avatar_data: '' },

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable
 
+from core import roles
+
 __all__ = ["fetch_for_actor"]
 
 _Owned = Callable[[str, str], Awaitable["dict | None"]]
@@ -28,7 +30,7 @@ async def fetch_for_actor(
 
       1. `owned(entity_id, user["id"])` 有结果 → 返回它。「存在且属于我」与
          「存在但不属于我」由此分开（后者为 None，调用方据此判 404，与非属主同码）。
-      2. 拿到 None ∧ `allow_admin` ∧ `user.is_admin` → 才落 `unscoped(entity_id)`。
+      2. 拿到 None ∧ `allow_admin` ∧ `roles.is_admin(user)` → 才落 `unscoped(entity_id)`。
       3. 其余一律返回 None，`unscoped` **不会被调用** —— 这是本原语存在的意义：
          不分身份就取数的路径只有一条，且看得见。
 
@@ -36,6 +38,6 @@ async def fetch_for_actor(
     都该判 404（防 ID 枚举），所以这里不做区分、也不抛异常。
     """
     record = await owned(entity_id, user["id"])
-    if record is None and allow_admin and user.get("is_admin"):
+    if record is None and allow_admin and roles.is_admin(user):
         return await unscoped(entity_id)
     return record

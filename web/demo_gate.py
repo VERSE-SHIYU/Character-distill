@@ -12,10 +12,10 @@
 `request.scope["route"]` 就是匹配到的那条 `APIRoute`，`.path` 是**带前缀的完整
 模板**（实测 `/api/history/{session_id}/resume`），判据因此是精确的。
 
-**为什么「是不是演示账号」只在本模块定义一次。** 身份解析目前有 3 处重复
-（`AuthMiddleware` / `auth.get_current_user` / `auth.get_optional_user`）。把
-`is_demo` 的结果挂到 user 字典上，就得同时改那 3 处，漏一处就是静默放行或静默拒绝。
-所以口径是 `is_demo(user)` 这个**纯函数**，谁拿到 user 字典谁自己调。
+**「是不是演示账号」不在这里定义。** 判据（用户的 role 列取值为 guest）全仓唯一定义在
+`core/roles.py` 的 `roles.is_guest`，本模块只调用它。此前这里读一份环境变量名单，与
+数据库里的身份是两套机制，同一个人可能在一边是访客、在另一边不是；名单已在身份收敛
+为 `users.role` 单列时整条删除。
 
 **默认拒绝 + 白名单。** 只读方法（GET/HEAD/OPTIONS）放行；写方法仅放行
 `DEMO_WRITE_ALLOWLIST` 里逐条列出的 (方法, 路由模板)，其余一律 403。白名单是
@@ -50,14 +50,10 @@
 """
 from __future__ import annotations
 
-import os
-
 from fastapi import Depends, HTTPException, Request
 
+from core import roles
 from routers.auth import security_scheme
-
-#: 环境变量名。**全仓唯一读取点**在本模块（`demo_usernames`），测试有锁钉住这点。
-DEMO_USERNAMES_ENV = "DEMO_USERNAMES"
 
 #: 被拒时的提示文案。前端 `fetchWithTimeout` 取 `body.detail` 直接展示，
 #: 所以这句就是用户看到的东西，与产品口径一致地写「注册后可使用完整功能」。
@@ -89,28 +85,6 @@ DEMO_WRITE_ALLOWLIST = frozenset({
 })
 
 
-def demo_usernames() -> frozenset[str]:
-    """`DEMO_USERNAMES` 的当前值 —— 逗号分隔，逐项 strip + 小写。
-
-    **不缓存**：与 `ADMIN_INVITE_CODE` 同形（用时就地读 env）。改配置重启即生效，
-    不用为此维护失效逻辑；每请求一次 `os.getenv` 的成本可以忽略。
-    """
-    raw = os.getenv(DEMO_USERNAMES_ENV, "")
-    return frozenset(name.strip().lower() for name in raw.split(",") if name.strip())
-
-
-def is_demo(user: dict | None) -> bool:
-    """这个身份是不是演示账号。纯函数，判据只看 `username`。
-
-    大小写不敏感，与 `users.username_lower` 那一列同口径 —— 否则 `Demo` 与 `demo`
-    会是两个身份，写进 env 的大小写决定门禁管不管得住。
-
-    空 user（未登录 / 公开路径）恒为 False：门禁不是鉴权，没登录的人不由它管。
-    """
-    username = ((user or {}).get("username") or "").strip().lower()
-    return bool(username) and username in demo_usernames()
-
-
 def is_demo_write_allowed(method: str, path: str) -> bool:
     """演示账号用 *method* 打 *path* 这条路由模板，许不许。纯判定，不碰请求。"""
     method = method.upper()
@@ -126,7 +100,7 @@ def _route_reads_credentials(route) -> bool:
 
     判据取自**路由对象本身**（与 `route.path` 同一类事实），不是一份要与
     `PUBLIC_PATHS` 同步维护的路径名单 —— 名单漏一条就是静默放行。取不到 route 时
-    恒为 False：拿不准就**不进门禁的射程**，与 `is_demo` 对空 user 的处置同一口径。
+    恒为 False：拿不准就**不进门禁的射程**，与身份判定对空 user 的处置同一口径。
     """
     def _walk(dep) -> bool:
         for sub in getattr(dep, "dependencies", None) or ():
@@ -153,8 +127,8 @@ async def demo_readonly_gate(request: Request) -> None:
          少了「公开」这一半，非公开路径上「没写鉴权依赖的新写路由」就会被整个放过 ——
          那正是「新增写接口默认被拦」这条性质的反面（负控用例 `_solo_app` 钉着它）。
          少了「凭据不算数」这一半，`/api/market/*` 的 20 条写路由会被漏掉。
-      3. **判身份** —— 读 `AuthMiddleware` 已解析好的 `request.state.user`；不是演示
-         账号就不管。
+      3. **判身份** —— 读 `AuthMiddleware` 已解析好的 `request.state.user`，交给
+         `roles.is_guest`（定义在 `core/roles.py`）。
       4. **判目标** —— 写方法不在白名单即拒。
 
     取不到路由模板时 `path=""`，落不进白名单，于是**写方法 fail-closed**：拿不准就拒，
@@ -166,7 +140,7 @@ async def demo_readonly_gate(request: Request) -> None:
     # 第 2 步：公开**且**凭据不算数 → 不在射程内（两条缺一不可，理由见文档串）。
     if getattr(request.state, "identity_optional", False) and not _route_reads_credentials(route):
         return
-    if not is_demo(getattr(request.state, "user", None) or {}):
+    if not roles.is_guest(getattr(request.state, "user", None) or {}):
         return
     if is_demo_write_allowed(request.method, getattr(route, "path", "")):
         return
@@ -189,7 +163,7 @@ def install_demo_gate(app) -> None:
 
 
 __all__ = [
-    "DEMO_USERNAMES_ENV", "DEMO_REFUSAL", "READ_METHODS", "DEMO_WRITE_ALLOWLIST",
-    "demo_usernames", "is_demo", "is_demo_write_allowed", "demo_readonly_gate",
+    "DEMO_REFUSAL", "READ_METHODS", "DEMO_WRITE_ALLOWLIST",
+    "is_demo_write_allowed", "demo_readonly_gate",
     "install_demo_gate",
 ]

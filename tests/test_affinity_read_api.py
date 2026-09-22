@@ -52,7 +52,7 @@ def client(store, user_id):
     app.dependency_overrides[get_current_user] = lambda: {
         "id": user_id,
         "username": "testuser",
-        "is_admin": False,
+        "role": "user",
     }
     return TestClient(app)
 

@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Response
 from pydantic import BaseModel
 
+from core import roles
 from core.authz import fetch_for_actor
 from core.schema import PRESET_TAGS
 from cross_border_sync import forward_card_to_peer
@@ -229,7 +230,7 @@ async def get_author(
         texts = []
 
     # Online presence
-    can_see = await storage.can_see_online_status(user["id"], user_id, is_admin=user.get("is_admin", False))
+    can_see = await storage.can_see_online_status(user["id"], user_id, as_admin=roles.is_admin(user))
     online = None
     last_active_at = None
     if can_see:
@@ -626,7 +627,7 @@ async def delete_card_version(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a specific version — admin only. Versions are permanent records."""
-    if not user.get("is_admin"):
+    if not roles.is_admin(user):
         raise HTTPException(403, "仅管理员可删除版本历史")
     ok = await storage.delete_card_version(card_id, version_id)
     if not ok:
@@ -752,7 +753,7 @@ async def delete_post(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Delete a post — owner or admin."""
-    if user.get("is_admin"):
+    if roles.is_admin(user):
         ok = await storage.admin_delete_post(post_id)
     else:
         ok = await storage.delete_post(post_id, user["id"])
@@ -882,7 +883,7 @@ async def batch_delete_comments(
     """Batch delete comments — card author or admin only."""
     card_author_id = await storage.get_card_author_id(card_id)
     # 卡不存在（author 为 None）与非属主同判 404：403 会让人靠状态码枚举出 card_id 存在。
-    if card_author_id != user["id"] and not user.get("is_admin"):
+    if card_author_id != user["id"] and not roles.is_admin(user):
         raise HTTPException(404, "卡片不存在或无权操作")
     comment_ids = body.get("comment_ids", [])
     if not comment_ids:

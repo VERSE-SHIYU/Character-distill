@@ -75,7 +75,7 @@ UNSCOPED_ALLOWLIST = {
         "评测脚本：session_id 由脚本自建的临时会话提供，无登录语境",
     "web/routers/text.py:get_text_deletion_impact":
         "admin 跨属主查看删除影响的显式逃生口：get_text_unscoped 作为值传给 "
-        "core.authz.fetch_for_actor，只有 get_text_owned 落空、allow_admin=True 且 user.is_admin 时才被调用",
+        "core.authz.fetch_for_actor，只有 get_text_owned 落空、allow_admin=True 且 roles.is_admin(user) 时才被调用",
     "web/routers/admin.py:admin_review_approve":
         "管理员复核任意用户被 flag 的卡 —— 跨属主就是该职责本身",
     "web/routers/inter_node.py:receive_dm":
@@ -306,7 +306,7 @@ OWNER_READ_ALLOWLIST = {
         "只要「是不是我的卡」请用 get_card_owned",
     "get_text_deletion_impact":
         "admin 跨属主查看删除影响的显式逃生口：web/routers/text.py 先 get_text_owned(text_id,"
-        "user_id)，拿不到且 user.is_admin 时才走到这里（否则 404）。它统计「删这篇文本会连带"
+        "user_id)，拿不到且 roles.is_admin(user) 时才走到这里（否则 404）。它统计「删这篇文本会连带"
         "影响多少卡/会话/消息」，加身份过滤会把管理员看到的数字变成 0，故 SQL 只按 text_id 筛"
         "（sqlite: cards.text_id / sessions↔cards / messages；PG 同形）。形参 user_id 是调用点"
         "统一签名留下的，SQL 不用它。router 层的同款逃生口已在 UNSCOPED_ALLOWLIST 登记。",

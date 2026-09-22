@@ -410,8 +410,9 @@ class StorageBase(ABC):
     async def get_group_session_unscoped(self, id: str) -> dict | None:
         """Get a group session by ID, with no ownership filter.
 
-        **仅供管理员逃生口**：`core/authz.fetch_for_actor` 在属主取不到、且调用方
-        `is_admin` 时才落到这里。任何登录用户可达的路径都该用 `get_group_session_owned`。
+        **仅供管理员逃生口**：`core/authz.fetch_for_actor` 在属主取不到、且调用方是管理员
+        （`core.roles.is_admin`）时才落到这里。任何登录用户可达的路径都该用
+        `get_group_session_owned`。
 
         （`get_group_session_owned` 本身未在基类声明 —— 群会话原语整体只落在两个
         实现里；`_unscoped` 这一支进基类，是为了让「两后端签名必须逐格相同」那条锁
@@ -527,8 +528,8 @@ class StorageBase(ABC):
         """Get a remote user profile by ID."""
 
     @abstractmethod
-    async def set_user_admin(self, user_id: str, is_admin: bool) -> None:
-        """Promote or demote a user to/from admin."""
+    async def set_user_role(self, user_id: str, role: str) -> None:
+        """Set a user's role. Role must be one of `core.roles.ROLES`; unknown id raises."""
 
     @abstractmethod
     async def set_user_disabled(self, user_id: str, is_disabled: bool) -> None:

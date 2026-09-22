@@ -1,9 +1,10 @@
-"""Admin: user management, invite codes. Requires is_admin=1."""
+"""Admin: user management, invite codes. Requires role=admin."""
 
 from __future__ import annotations
 
 import secrets
 import time
+from enum import Enum
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,6 +16,7 @@ from routers.auth import get_current_user
 from deps import get_config, get_sessions, get_storage, get_memory_manager, patch_config
 from storage.base import StorageBase
 from core.memory_manager import MemoryManager
+from core import roles
 from core.log_collector import get_recent_logs
 from limiter import limiter
 
@@ -24,7 +26,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def require_admin(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    if not user.get("is_admin"):
+    if not roles.is_admin(user):
         raise HTTPException(403, "需要管理员权限")
     return user
 
@@ -162,6 +164,41 @@ async def enable_user(
     return {"ok": True}
 
 
+class RoleRequest(str, Enum):
+    """请求体里的角色取值。成员值取自 `core/roles`，不在这里重抄一遍字符串。
+
+    用 Enum 而不是普通 `str` 字段：非法值由 Pydantic 判成 422（请求本身不合法），
+    不必在路由体里手写一次校验再返回 400。
+    """
+
+    admin = roles.ADMIN
+    user = roles.USER
+    guest = roles.GUEST
+
+
+class SetRoleRequest(BaseModel):
+    role: RoleRequest
+
+
+@router.patch("/users/{user_id}/role")
+@limiter.limit("30/minute")
+async def set_user_role(
+    request: Request,
+    user_id: str,
+    req: SetRoleRequest,
+    admin_user: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """改用户角色。不能改自己：否则管理员可以把自己降成普通用户，现场再没人能改回来。"""
+    if user_id == admin_user.get("id"):
+        raise HTTPException(400, "不能修改自己的角色")
+    try:
+        await storage.set_user_role(user_id, req.role.value)
+    except ValueError:
+        raise HTTPException(404, "用户不存在")
+    return {"ok": True, "role": req.role.value}
+
+
 class ResetPasswordRequest(BaseModel):
     new_password: str
 
@@ -204,7 +241,7 @@ async def delete_user(
     target = await storage.get_user_by_id(user_id)
     if not target:
         raise HTTPException(404, "用户不存在")
-    if target.get("is_admin"):
+    if roles.is_admin(target):
         raise HTTPException(400, "不能删除管理员账号，请先将其降级为普通用户")
 
     # Clean up Mem0 memories for each card owned by the user
@@ -258,7 +295,7 @@ async def batch_delete_users(
     admin_ids: list[str] = []
     for uid in req.user_ids:
         u = await storage.get_user_by_id(uid)
-        if u and u.get("is_admin"):
+        if u and roles.is_admin(u):
             admin_ids.append(u.get("username", uid))
     if admin_ids:
         raise HTTPException(400, f"不能删除管理员账号（{', '.join(admin_ids)}），请先将其降级为普通用户")

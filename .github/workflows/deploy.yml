@@ -46,13 +46,10 @@ env:
   ALIYUN_REGISTRY: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com
   ALIYUN_APP_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-app
   ALIYUN_NGINX_IMAGE: crpi-4frg6xezdr40bmtr.cn-shenzhen.personal.cr.aliyuncs.com/verse-shiyu/character-distill-nginx
-  # 演示账号名单：**唯一来源是 GitHub 仓库变量**（Settings → Variables → DEMO_USERNAMES）。
+  # 告警收件邮箱：唯一来源是 GitHub 仓库变量（Settings → Variables → ALERT_EMAIL）。
   # 不写在服务器 .env 里 —— 那份文件不由部署管理，改了不随部署生效，且两地必然漂移。
   # 定义在**工作流顶层**：两个 job 共用同一处，各 job 无需重写；job 级 env 只在键名
-  # 相同时覆盖顶层，此处键名不冲突，合并没有歧义。空值 = 门禁不启用（见 web/demo_gate.py）。
-  DEMO_USERNAMES: ${{ vars.DEMO_USERNAMES }}
-  # 告警收件邮箱：与 DEMO_USERNAMES 同一条链路（机制与「为什么不写服务器 .env」
-  # 见 DEPLOY.md 的「由部署下发的配置」一节）。同样只在仓库变量里改。
+  # 相同时覆盖顶层。机制见 DEPLOY.md 的「由部署下发的配置」一节。
   ALERT_EMAIL: ${{ vars.ALERT_EMAIL }}
 
 jobs:
@@ -169,7 +166,7 @@ jobs:
           username: root
           key: ${{ secrets.SZ_DEPLOY_KEY }}
           command_timeout: 30m
-          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,DEMO_USERNAMES,ALERT_EMAIL
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,ALERT_EMAIL
           script: |
             set -e
             cd /opt/character-distill
@@ -363,7 +360,7 @@ jobs:
           host: 43.134.55.201
           username: ubuntu
           key: ${{ secrets.SG_DEPLOY_KEY }}
-          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,DEMO_USERNAMES,ALERT_EMAIL
+          envs: APP_DIGEST,NGINX_DIGEST,COMMIT_SHA,ALERT_EMAIL
           script: |
             set -e
             cd /home/ubuntu/Character-distill

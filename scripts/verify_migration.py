@@ -12,7 +12,7 @@ async def verify():
     uid = "3996bd7f23a34311"
 
     # 1. User exists
-    user = await pg.fetchrow("SELECT id, username, is_admin FROM users WHERE id = $1", uid)
+    user = await pg.fetchrow("SELECT id, username, role FROM users WHERE id = $1", uid)
     print(f"User: {dict(user)}")
 
     # 2. Password correct

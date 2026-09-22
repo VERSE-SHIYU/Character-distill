@@ -87,12 +87,7 @@ services:
     environment:
       # 容器内连库必须用 compose 服务名 postgres，不能写 localhost
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      # 演示账号名单。compose 里 `environment` 的优先级**高于**上面的 `env_file`，
-      # 故这一行会盖住服务器 .env 中的同名项 —— 部署下发的值是唯一来源。
-      # `:-` 给空串：变量没传时不报错（门禁不启用），而不是让解析期失败。
-      # 空串的语义是「不启用」，见 web/demo_gate.py 的 demo_usernames()。
-      - DEMO_USERNAMES=${DEMO_USERNAMES:-}
-      # 告警收件邮箱：同一条链路、同一条理由（见 DEPLOY.md「由部署下发的配置」）。
+      # 告警收件邮箱：见 DEPLOY.md「由部署下发的配置」。
       - ALERT_EMAIL=${ALERT_EMAIL:-}
     depends_on:
       postgres:

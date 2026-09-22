@@ -511,7 +511,7 @@ def _client(monkeypatch) -> TestClient:
     app.state.limiter = limiter          # text 路由带 @limiter.limit
     app.include_router(text_router)
     app.dependency_overrides[get_storage] = lambda: _NullStore()
-    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "username": "t", "is_admin": False}
+    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "username": "t", "role": "user"}
 
     async def _fake_user_llm(*a, **kw):
         return object()          # 非 None，否则路由先 503

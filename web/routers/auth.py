@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
 from pydantic import BaseModel
 
+from core import roles
 from core.email_service import send_verification_code
 from deps import clear_user_llm_cache, get_config, get_storage
 from storage.base import StorageBase
@@ -134,7 +135,7 @@ class UserResponse(BaseModel):
     id: str
     username: str
     created_at: str
-    is_admin: bool = False
+    role: str = roles.DEFAULT_ROLE
     is_disabled: bool = False
     has_api_key: bool = False
     base_url: str = ""
@@ -421,8 +422,8 @@ async def register(
     # First user with seed code becomes admin
     admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
     if admin_seed and inv == admin_seed:
-        await storage.set_user_admin(user["id"], True)
-        user["is_admin"] = True
+        await storage.set_user_role(user["id"], roles.ADMIN)
+        user["role"] = roles.ADMIN
 
     access_token = _create_access_token(user["id"], user["username"], secret)
     refresh_token, _ = await _create_refresh_token(user["id"], storage)
@@ -831,7 +832,7 @@ async def get_user_online_status(
         raise HTTPException(404, "用户不存在")
 
     can_see = await storage.can_see_online_status(
-        user["id"], user_id, is_admin=user.get("is_admin", False)
+        user["id"], user_id, as_admin=roles.is_admin(user)
     )
     if not can_see:
         return {"online": None, "last_active_at": None, "hidden": True}
@@ -902,7 +903,7 @@ def _user_response(user: dict[str, Any]) -> dict[str, Any]:
         "username": user["username"],
         "nickname": user.get("nickname", ""),
         "created_at": user.get("created_at", ""),
-        "is_admin": bool(user.get("is_admin", False)),
+        "role": roles.role_of(user),
         "is_disabled": bool(user.get("is_disabled", False)),
         "bio": user.get("bio", ""),
     }
