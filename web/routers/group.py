@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from core.trash_service import hard_delete, restore, soft_delete
 from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
+from adapters.llm_adapter import user_facing_error
 from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -638,7 +639,8 @@ async def broadcast_message(
         except HTTPException:
             raise
         except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+            print(f"[group] Broadcast stream failed: {exc}")
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
