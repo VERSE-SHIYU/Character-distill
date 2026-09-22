@@ -1238,7 +1238,6 @@ PROBE_IMAGE         false
 - **修法（2026-09-22）**：版本号并进 memo 的键 —— `core/distiller.py::identify_characters` 的 `key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"`，并把「这里不管版本」那段 docstring 按事实改写为「键必须覆盖全部决定输入」。库缓存的版本判定仍在 `core/character_roster.py` 那一层（两道缓存各守各的版本）。
 - **锁与红源（形态锁，不是缺陷复现）**：`tests/test_character_roster.py::TestMemoKeyCoversIdentifyVersion::test_version_change_is_a_memo_miss` —— 灌 memo → `monkeypatch Distiller.IDENTIFY_VERSION` → 再 `resolve_characters`，断言 LLM 被再调一次、落库的是新名单且版本号是新的。**变异 = 从键里去掉版本号 → 该用例红（1 failed, 6 passed）**。它复现的是**生产当前不存在的时序**（常量变更必经重启），故锁的是**「缓存键覆盖全部决定输入」这一形态**，不是可达缺陷 —— 交付里已显式声明。
 - **随修收口的一条**：`resolve_characters` 的 `refresh` 参数已删除（生产零调用方、前端无入口，且真调用也会被 memo 吃掉 ⇒ 原先 docstring 说的「用户显式点重新识别」不成立）；`tests/test_character_roster.py` 里对应用例一并删除。
-- **未做（有意为之，非残留）**：`/reindex` 走 `resolve_characters` 不强制重识别（缓存命中即不发 LLM）—— 这是 S4 统一入口时的**设计选择**，docstring 已显式写明。
 
 **90. 两个后端每次启动都重跑全部迁移，且没有「已应用」记录表** —— 状态：**记账**（不修，2026-09-21；S3 加 087/020 时确认口径）
 - **事实**：全仓无 `schema_migrations` 一类记录表。SQLite 的幂等靠**读现状**（`storage/sqlite_store.py:97` / `:195` / `:249` 的 `PRAGMA table_info`，逐列比对后再决定加不加）；PG 靠 `ADD COLUMN IF NOT EXISTS` / `DROP COLUMN IF EXISTS`。启动时**每一份** `.sql` 都会被解析并执行一遍。
