@@ -18,7 +18,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core import roles
 from core.email_service import send_verification_code
@@ -149,6 +149,26 @@ class ApiConfigRequest(BaseModel):
     model: str = ""
     embedding_key: str = ""
     embedding_region: str = ""
+
+    @field_validator("embedding_region")
+    @classmethod
+    def _known_region_or_blank(cls, v: str) -> str:
+        """地域只能是空串或 `DASHSCOPE_BASE_URLS` 里的键（台账 120）。
+
+        空串是「这次不改这个字段」—— 仓储层对空字段一律不写（`update_user_api_config`），
+        所以放行空串与「不写」是同一件事，不是漏检。
+
+        查的是**同一张表**：另写一份 `{"cn", "intl"}` 会与构造函数分叉（试连端点已因此
+        改成查表，见 test_E9b）。导入放在函数内 —— `core.embeddings` 顶层 import chromadb，
+        路由模块不该为一次字段校验背上它。
+        """
+        if not v:
+            return v
+        from core.embeddings import DASHSCOPE_BASE_URLS
+
+        if v not in DASHSCOPE_BASE_URLS:
+            raise ValueError(f"地域只能是 {' / '.join(DASHSCOPE_BASE_URLS)}，或留空")
+        return v
 
 
 class EmbeddingTestRequest(BaseModel):
