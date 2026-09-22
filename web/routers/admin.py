@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from enum import Enum
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -163,8 +164,20 @@ async def enable_user(
     return {"ok": True}
 
 
+class RoleRequest(str, Enum):
+    """请求体里的角色取值。成员值取自 `core/roles`，不在这里重抄一遍字符串。
+
+    用 Enum 而不是普通 `str` 字段：非法值由 Pydantic 判成 422（请求本身不合法），
+    不必在路由体里手写一次校验再返回 400。
+    """
+
+    admin = roles.ADMIN
+    user = roles.USER
+    guest = roles.GUEST
+
+
 class SetRoleRequest(BaseModel):
-    role: str
+    role: RoleRequest
 
 
 @router.patch("/users/{user_id}/role")
@@ -179,13 +192,11 @@ async def set_user_role(
     """改用户角色。不能改自己：否则管理员可以把自己降成普通用户，现场再没人能改回来。"""
     if user_id == admin_user.get("id"):
         raise HTTPException(400, "不能修改自己的角色")
-    if req.role not in roles.ROLES:
-        raise HTTPException(400, f"未知角色：{req.role}")
     try:
-        await storage.set_user_role(user_id, req.role)
+        await storage.set_user_role(user_id, req.role.value)
     except ValueError:
         raise HTTPException(404, "用户不存在")
-    return {"ok": True, "role": req.role}
+    return {"ok": True, "role": req.role.value}
 
 
 class ResetPasswordRequest(BaseModel):
