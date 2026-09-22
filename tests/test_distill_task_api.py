@@ -264,7 +264,7 @@ def _build_client(store, uid):
 def _seed_distill_row(store, task_id, user_id, *, status="running", pct=0,
                       character="甲", text_id="txt1", message="m"):
     _run_async(store.create_distill_task(
-        task_id, user_id, text_id, character, status=status,
+        task_id, user_id, text_id, character=character, status=status,
         progress_pct=pct, message=message, card_id="", awakening="",
     ))
 
@@ -462,7 +462,7 @@ class _ResumeDistillerStub:
 def _seed_interrupted(store, user_id, tid, *, task_id, chunk_size, fp, chunks=()):
     """落一行 interrupted 任务（带 checkpoint 参数）+ 可选分片行。"""
     _run_async(store.create_distill_task(
-        task_id, user_id, tid, "甲", status="interrupted", progress_pct=40,
+        task_id, user_id, tid, character="甲", status="interrupted", progress_pct=40,
         message="进程重启，任务中断", card_id="", awakening="",
         chunk_size=chunk_size, text_fingerprint=fp,
     ))
@@ -906,7 +906,7 @@ class TestGRaceStaleWriteAfterDelete:
         task_id = f"dt_{uuid.uuid4().hex}"
         _run_async(store.save_text(tid, "src.txt", body, user_id=uid))
         _run_async(store.create_distill_task(
-            task_id, uid, tid, "甲", status="running", progress_pct=0,
+            task_id, uid, tid, character="甲", status="running", progress_pct=0,
             message="进行中", card_id="", awakening="",
         ))
         return tid, task_id

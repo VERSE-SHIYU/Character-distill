@@ -253,7 +253,11 @@ class TextManager:
 
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
+            await self._storage.save_text(
+                text_id, filename, cleaned,
+                title=title, description=description, text_type=text_type,
+                original_char_count=occ, user_id=user_id,
+            )
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -373,7 +377,11 @@ class TextManager:
 
         try:
             occ = original_chars if text_type == "chat" else None
-            await self._storage.save_text(text_id, filename, cleaned, title, description, text_type, occ, user_id)
+            await self._storage.save_text(
+                text_id, filename, cleaned,
+                title=title, description=description, text_type=text_type,
+                original_char_count=occ, user_id=user_id,
+            )
         except Exception as exc:
             print(f"[TextManager] Save text failed: {exc}")
             raise
@@ -466,7 +474,7 @@ class TextManager:
                     [{"role": "user", "content": variation_prompt}],
                 )
                 try_record_usage(self._storage, self._llm,
-                                 "chat_opening_variation", source="TextManager")
+                                 action="chat_opening_variation", source="TextManager")
                 opening = opening.strip()
                 if opening and len(opening) <= 200:
                     generated_opening = opening
@@ -494,7 +502,8 @@ class TextManager:
         # Fire-and-forget scene index (non-blocking, degraded silently)
         if self._indexing_service:
             self._indexing_service.schedule_scene_index(
-                text_id, card_id, content, card.name, all_characters,
+                text_id, card_id, content, card.name,
+                all_characters=all_characters,
                 embedding_key=embedding_key, embedding_region=embedding_region,
             )
 
@@ -554,7 +563,8 @@ class TextManager:
         # Fire-and-forget scene index (non-blocking, degraded silently)
         if self._indexing_service:
             self._indexing_service.schedule_scene_index(
-                text_id, actual_card_id, content, card.name, all_chars,
+                text_id, actual_card_id, content, card.name,
+                all_characters=all_chars,
                 embedding_key=embedding_key, embedding_region=embedding_region,
             )
         return result

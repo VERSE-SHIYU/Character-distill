@@ -177,7 +177,7 @@ def _group(store, uid):
 def _distill_task(store, uid):
     tid = f"dt_{uuid.uuid4().hex}"
     _run_async(store.create_distill_task(
-        tid, uid, "txt_x", "甲", status="running", progress_pct=0,
+        tid, uid, "txt_x", character="甲", status="running", progress_pct=0,
         message="m", card_id="", awakening="",
     ))
     return tid

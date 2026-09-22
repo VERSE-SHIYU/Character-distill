@@ -52,6 +52,7 @@ def aggregate_usage(usages: list[dict | None], chunk_count: int) -> dict | None:
 def try_record_usage(
     storage: Any,
     llm: Any,
+    *,
     action: str = "chat",
     usage: dict | None = None,
     source: str = "core",

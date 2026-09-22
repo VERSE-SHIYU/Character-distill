@@ -576,10 +576,10 @@ class TestUserPurgeDistillCascade:
         await store.create_user(other, f"pg_u2_{uuid.uuid4().hex[:8]}", "h")
         await store.save_text(text_id, "src.txt", "source")
 
-        await store.create_distill_task("dt_pg1", user_id, text_id, "张三")
+        await store.create_distill_task("dt_pg1", user_id, text_id, character="张三")
         await store.save_distill_chunk("dt_pg1", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_pg1", 1, json.dumps({"r": "一"}))
-        await store.create_distill_task("dt_pg2", other, text_id, "李四")
+        await store.create_distill_task("dt_pg2", other, text_id, character="李四")
         await store.save_distill_chunk("dt_pg2", 0, json.dumps({"r": "零"}))
 
         counts = await store.delete_user(user_id)
@@ -595,7 +595,7 @@ class TestUserPurgeDistillCascade:
     async def test_text_deletion_impact_counts_distill_rows(self, store, text_id, user_id):
         """永久删除会连带清蒸馏行，impact 必须如实计入（F2）。"""
         await store.save_text(text_id, "src.txt", "source")
-        await store.create_distill_task("dt_imp", user_id, text_id, "张三")
+        await store.create_distill_task("dt_imp", user_id, text_id, character="张三")
         await store.save_distill_chunk("dt_imp", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_imp", 1, json.dumps({"r": "一"}))
 
@@ -626,7 +626,7 @@ class TestUserPurgeDistillRace:
             tid = f"txt_{uuid.uuid4().hex}"
             task_id = f"dt_{uuid.uuid4().hex}"
             await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=uid)
-            await store.create_distill_task(task_id, uid, tid, "甲", status="running")
+            await store.create_distill_task(task_id, uid, tid, character="甲", status="running")
 
             stop = _aio.Event()
             ready = _aio.Event()
@@ -963,7 +963,7 @@ class TestDistillRaceStaleWriteAfterDelete:
             tid = f"txt_{uuid.uuid4().hex}"
             task_id = f"dt_{uuid.uuid4().hex}"
             await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
-            await store.create_distill_task(task_id, user_id, tid, "甲", status="running")
+            await store.create_distill_task(task_id, user_id, tid, character="甲", status="running")
 
             stop = _aio.Event()
             ready = _aio.Event()
@@ -1019,7 +1019,7 @@ class TestDistillLockContention:
         tid = f"txt_{uuid.uuid4().hex}"
         task_id = f"dt_{uuid.uuid4().hex}"
         await store.save_text(tid, "src.txt", "角色说的话" * 20, user_id=user_id)
-        await store.create_distill_task(task_id, user_id, tid, "甲", status="running")
+        await store.create_distill_task(task_id, user_id, tid, character="甲", status="running")
 
         shared = {"chunks_done": 0, "first_sample_at_chunks": -1, "samples": 0}
         progress_rows: list = []

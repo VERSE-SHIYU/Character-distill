@@ -68,7 +68,7 @@ def _seed(store, user_id, *, status="running", character="甲", text_id="txt1",
           message="m", pct=0):
     task_id = f"dt_{uuid.uuid4().hex}"
     _run_async(store.create_distill_task(
-        task_id, user_id, text_id, character, status=status,
+        task_id, user_id, text_id, character=character, status=status,
         progress_pct=pct, message=message, card_id="", awakening="",
     ))
     return task_id

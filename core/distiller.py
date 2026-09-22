@@ -1736,6 +1736,7 @@ class Distiller:
         self,
         text: str,
         character_name: str,
+        *,
         aliases: list[str] | None = None,
         text_type: str = "story",
         on_chunk_done: "callable | None" = None,

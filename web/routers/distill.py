@@ -298,7 +298,7 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
             f"不是重写开场白，而是原口吻的变形。只输出这句话本身，不要引号，不要解释，不超过50个字。"
         )
         result = llm.chat(prompt, [{"role": "user", "content": "请说苏醒台词"}])
-        try_record_usage(storage, llm, "chat_awakening", source="distill")
+        try_record_usage(storage, llm, action="chat_awakening", source="distill")
         result = result.strip().strip('"').strip("'").strip("「」").strip("《》")
         if not result or len(result) > 100:
             return ""
@@ -391,7 +391,8 @@ def _run_distill_task(
                 print(f"[distill] Persist chunk {index} of {task_id} failed (non-fatal): {exc}")
 
         stream = distiller.distill_incremental_stream(
-            content, name, aliases, text_type,
+            content, name,
+            aliases=aliases, text_type=text_type,
             on_chunk_done=_persist_chunk, resume_candidates=resume_candidates,
         )
         for piece in stream:
@@ -831,7 +832,7 @@ async def _distill_start_impl(
         else:
             # 新任务：纯 INSERT。主键冲突是真异常（新铸 uuid），由下面 except 兜成 503。
             await storage.create_distill_task(
-                task_id, user_id, req.text_id, req.character_name,
+                task_id, user_id, req.text_id, character=req.character_name,
                 status="running", progress_pct=0, message=_queued_msg,
                 card_id="", awakening="",
                 chunk_size=chunk_size, text_fingerprint=text_fp,
@@ -1055,7 +1056,8 @@ async def distill_stream(
 
         # Incremental distillation with aliases for broader chunk matching
         full = ""
-        stream = distiller.distill_incremental_stream(content, char_name, aliases, text_type)
+        stream = distiller.distill_incremental_stream(
+            content, char_name, aliases=aliases, text_type=text_type)
         while True:
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
@@ -1363,7 +1365,8 @@ async def start_session(
             indexing_service = get_indexing_service()
             if indexing_service:
                 indexing_service.schedule_scene_index(
-                    req.text_id, req.card_id, content, card.name, all_characters,
+                    req.text_id, req.card_id, content, card.name,
+                    all_characters=all_characters,
                     embedding_key=emb_key, embedding_region=emb_region,
                 )
         else:
@@ -1419,7 +1422,7 @@ async def start_session(
         opening = await asyncio.to_thread(
             per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
         )
-        try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
+        try_record_usage(storage, per_user_llm, action="chat_session_opening", source="distill")
         opening = opening.strip().strip('"').strip("'").strip("「」")
         if opening and len(opening) <= 100:
             print(f"[start_session] Generated opening: {opening}")

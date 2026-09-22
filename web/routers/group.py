@@ -521,12 +521,13 @@ async def send_message(
 
     async with nonfatal("group", "save messages"):
         await storage.save_group_message(
-            group_id, user_speaker, "user", req.message, user_speaker_card_id,
+            group_id, user_speaker, "user", req.message,
+            speaker_card_id=user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
         )
         await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
-            "assistant", resp, req.target_card_id,
+            "assistant", resp, speaker_card_id=req.target_card_id,
         )
 
     # 后台评估点赞触发的 affinity 变化（不阻塞回复）
@@ -584,7 +585,8 @@ async def broadcast_message(
             if not req.auto_mode:
                 async with nonfatal("group", "save user message") as user_out:
                     user_msg_id = await storage.save_group_message(
-                        group_id, user_speaker, "user", req.message, user_speaker_card_id,
+                        group_id, user_speaker, "user", req.message,
+                        speaker_card_id=user_speaker_card_id,
                         reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
                     )
                 yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id, 'saved': not user_out.failed}, ensure_ascii=False)}\n\n"
@@ -611,7 +613,8 @@ async def broadcast_message(
                             msg_id = None
                             async with nonfatal("group", "save silent message") as silent_out:
                                 msg_id = await storage.save_group_message(
-                                    group_id, r["speaker"], "silent", "", r["card_id"],
+                                    group_id, r["speaker"], "silent", "",
+                                    speaker_card_id=r["card_id"],
                                 )
                             yield f"data: {json.dumps({
                                 'type': 'reply',
@@ -626,7 +629,8 @@ async def broadcast_message(
                         msg_id = None
                         async with nonfatal("group", "save assistant message") as char_out:
                             msg_id = await storage.save_group_message(
-                                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+                                group_id, r["speaker"], "assistant", r["reply"],
+                                speaker_card_id=r["card_id"],
                             )
                         yield f"data: {json.dumps({
                             'type': 'reply',

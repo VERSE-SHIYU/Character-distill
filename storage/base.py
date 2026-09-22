@@ -86,7 +86,12 @@ class StorageBase(ABC):
         """
 
     @abstractmethod
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
+    async def save_text(
+        self, id: str, filename: str, content: str,
+        *,
+        title: str = "", description: str = "", text_type: str = "story",
+        original_char_count: int | None = None, user_id: str = "",
+    ) -> dict:
         """Save text content and return the stored record."""
 
     @abstractmethod
@@ -741,7 +746,14 @@ class StorageBase(ABC):
     # ── Distill task persistence ────────────────
 
     @abstractmethod
-    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+    async def create_distill_task(
+        self, task_id: str, user_id: str, text_id: str,
+        *,
+        character: str = "", status: str = "queued", progress_pct: int = 0,
+        message: str = "", card_id: str = "", awakening: str = "",
+        chunk_size: int | None = None, overlap: int | None = None,
+        text_fingerprint: str = "",
+    ) -> dict | None:
         """Insert a NEW distillation task row. Returns the stored row.
 
         INSERT-only — deliberately no upsert. A duplicate task_id is a real error

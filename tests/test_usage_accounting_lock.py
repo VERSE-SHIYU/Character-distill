@@ -535,7 +535,7 @@ def test_mutation_dropping_a_value_form_record_call_goes_red():
     第一版普查只查 Call 形态，整类漏掉 to_thread(llm.chat, ...) —— 这条钉住那个盲区。
     """
     rel = "web/routers/market.py"
-    anchor = '        try_record_usage(storage, llm, "chat_ai_reply", source="market")\n'
+    anchor = '        try_record_usage(storage, llm, action="chat_ai_reply", source="market")\n'
     mutated = _mutate(rel, anchor, "        pass  # 变异：落账调用被拿掉\n")
 
     _, _, dropped, _ = _audit({rel: mutated})

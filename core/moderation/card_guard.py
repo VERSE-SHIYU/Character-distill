@@ -141,7 +141,7 @@ def judge_card(card: dict, llm: LLMAdapter, timeout: float = 60.0,
                     max_tokens=1200,
                 )
                 # 落账必须在线程内：join(timeout) 超时后线程仍在跑，调用方无法事后补记
-                try_record_usage(storage, llm, "moderation_card_guard", source="card_guard")
+                try_record_usage(storage, llm, action="moderation_card_guard", source="card_guard")
             except Exception as exc:  # noqa: BLE001
                 box["ok"] = False
                 box["err"] = f"{type(exc).__name__}: {exc}"

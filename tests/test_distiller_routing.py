@@ -84,7 +84,8 @@ class TestReduceAllEmptyBails:
         llm = self._make_llm()
         d = self._make_distiller(llm)
 
-        frames = list(d.distill_incremental_stream(self.TEXT, "AB", [], "story"))
+        frames = list(d.distill_incremental_stream(
+            self.TEXT, "AB", aliases=[], text_type="story"))
 
         errors = [f for f in frames if isinstance(f, dict) and "error" in f]
         assert len(errors) == 1

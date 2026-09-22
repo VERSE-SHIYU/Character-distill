@@ -113,7 +113,7 @@ class AgentLoop:
 
             # 每步决策都是一次真实 LLM 花费，紧跟调用后落账。last_usage 在 chat_with_tools
             # 入口已置 None，故厂商未回 usage 时记「无数据」而非冒用上一轮的值（串号比漏记更糟）。
-            try_record_usage(self._storage, self._llm, "chat_agent_route", source="AgentLoop")
+            try_record_usage(self._storage, self._llm, action="chat_agent_route", source="AgentLoop")
 
             if not msg.tool_calls:
                 break

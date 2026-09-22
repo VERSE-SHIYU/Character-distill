@@ -82,7 +82,8 @@ def _run(llm, candidates, text=None):
     done: list[tuple[int, str, str]] = []
     tokens: list[str] = []
     for piece in d.distill_incremental_stream(
-        text if text is not None else TEXT, "角色", [], "story",
+        text if text is not None else TEXT, "角色",
+        aliases=[], text_type="story",
         on_chunk_done=lambda i, r, fp: done.append((i, r, fp)),
         resume_candidates=candidates,
     ):
@@ -248,7 +249,8 @@ class TestFailedChunkNotCheckpointed:
         pieces: list[str] = []
         events: list[dict] = []
         for piece in d.distill_incremental_stream(
-            self.TEXT3, "角色", [], "story",
+            self.TEXT3, "角色",
+            aliases=[], text_type="story",
             on_chunk_done=lambda i, r, fp: done.append((i, r, fp)),
             resume_candidates=None,
         ):
@@ -382,7 +384,8 @@ class TestFailureRateDenominator:
         events: list[dict] = []
         tokens: list[str] = []
         for piece in d.distill_incremental_stream(
-            TEXT, "角色", [], "story",
+            TEXT, "角色",
+            aliases=[], text_type="story",
             on_chunk_done=lambda i, r, fp: done2.append((i, r, fp)),
             resume_candidates=cands,
         ):

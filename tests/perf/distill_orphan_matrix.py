@@ -45,7 +45,7 @@ async def _seed(store, uid):
     await store.save_text(tid, "src.txt", "正文内容", user_id=uid)
     await store.save_card(cid, tid, "张三", '{"name": "张三"}', user_id=uid)
     await store.create_distill_task(
-        dtid, uid, tid, "张三", status="running", progress_pct=0,
+        dtid, uid, tid, character="张三", status="running", progress_pct=0,
         message="m", card_id=cid, awakening="", chunk_size=100, overlap=0,
         text_fingerprint="fp",
     )

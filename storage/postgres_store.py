@@ -216,7 +216,12 @@ class PostgresStore(StorageBase):
 
     # ── Texts ────────────────────────────────────────────────────
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
+    async def save_text(
+        self, id: str, filename: str, content: str,
+        *,
+        title: str = "", description: str = "", text_type: str = "story",
+        original_char_count: int | None = None, user_id: str = "",
+    ) -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
@@ -1709,9 +1714,12 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Hard delete group session failed: {exc}")
             raise
 
-    async def save_group_message(self, group_id: str, speaker: str, role: str, content: str,
-                                 speaker_card_id: str = "", reply_to_id: int | None = None,
-                                 reply_to_preview: str = "") -> int:
+    async def save_group_message(
+        self, group_id: str, speaker: str, role: str, content: str,
+        *,
+        speaker_card_id: str = "", reply_to_id: int | None = None,
+        reply_to_preview: str = "",
+    ) -> int:
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
@@ -3179,7 +3187,14 @@ class PostgresStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+    async def create_distill_task(
+        self, task_id: str, user_id: str, text_id: str,
+        *,
+        character: str = "", status: str = "queued", progress_pct: int = 0,
+        message: str = "", card_id: str = "", awakening: str = "",
+        chunk_size: int | None = None, overlap: int | None = None,
+        text_fingerprint: str = "",
+    ) -> dict | None:
         """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
         重复 task_id 抛异常：这里是新铸的 id，冲突是真 bug，不是"请更新已有行"。

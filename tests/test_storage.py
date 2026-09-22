@@ -825,10 +825,10 @@ class TestDeletePropagationAtomicity:
         tid = f"txt_{uuid.uuid4().hex}"
         await store.save_text(tid, "src.txt", "source")
 
-        await store.create_distill_task("dt_u1", uid, tid, "张三")
+        await store.create_distill_task("dt_u1", uid, tid, character="张三")
         await store.save_distill_chunk("dt_u1", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_u1", 1, json.dumps({"r": "一"}))
-        await store.create_distill_task("dt_u2", other, tid, "李四")
+        await store.create_distill_task("dt_u2", other, tid, character="李四")
         await store.save_distill_chunk("dt_u2", 0, json.dumps({"r": "零"}))
 
         counts = await store.delete_user(uid)
@@ -888,15 +888,15 @@ class TestTextDeletionImpact:
     async def test_counts_distill_rows(self, store, text_id):
         """永久删除会连带清蒸馏行，impact 必须如实计入（F2）。"""
         await store.save_text(text_id, "src.txt", "source")
-        await store.create_distill_task("dt_impact", "u_impact", text_id, "张三")
-        await store.create_distill_task("dt_impact2", "u_impact", text_id, "李四")
+        await store.create_distill_task("dt_impact", "u_impact", text_id, character="张三")
+        await store.create_distill_task("dt_impact2", "u_impact", text_id, character="李四")
         await store.save_distill_chunk("dt_impact", 0, json.dumps({"r": "零"}))
         await store.save_distill_chunk("dt_impact", 1, json.dumps({"r": "一"}))
         await store.save_distill_chunk("dt_impact2", 0, json.dumps({"r": "零"}))
         # 其它文本的蒸馏行不得被计入
         other_text = f"txt_{uuid.uuid4().hex}"
         await store.save_text(other_text, "other.txt", "other")
-        await store.create_distill_task("dt_other", "u_impact", other_text, "王五")
+        await store.create_distill_task("dt_other", "u_impact", other_text, character="王五")
         await store.save_distill_chunk("dt_other", 0, json.dumps({"r": "零"}))
 
         impact = await store.get_text_deletion_impact(text_id, "")
