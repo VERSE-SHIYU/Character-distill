@@ -614,6 +614,42 @@ class TestOneToOneSessionOwnership:
             deps.get_sessions().pop(sid, None)
 
 
+@pytest.fixture
+def no_api_key(monkeypatch):
+    """把解析出口钉成「没配 key」：`deps.get_user_llm` 返 None。
+
+    不能只靠「本机没设 key」：autouse 的 `_no_ambient_state` 已把 `deps.get_llm` 钉成
+    `_StubLLM`，而 `get_user_llm` 在用户没配 key 时正是**回落到 `get_llm()`** —— 于是默认
+    返回非 None，503 门根本不开。钉解析出口，才是 S0 ⑤ 探针里那个「没配 key」的状态。
+    """
+    import deps
+
+    async def _no_llm(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(deps, "get_user_llm", _no_llm)
+
+
+class TestStartSessionApiKeyGate:
+    """没配 key 时 `/start_session` 两条分支都必须 503，不许 200 建出 llm=None 的死会话。"""
+
+    def test_T7_independent_card_no_key_503(self, store, owner, owner_client, no_api_key):
+        cid = _card(store, owner)
+        r = owner_client.post("/api/distill/start_session", json={"card_id": cid})
+        assert r.status_code == 503, (
+            f"没配 key 却建出了独立卡片会话：{r.status_code} {r.text[:200]}")
+        assert _detail(r) == "请先在设置页配置 API Key", r.text[:200]
+
+    def test_T8_text_branch_no_key_503(self, store, owner, owner_client, no_api_key):
+        cid = _card(store, owner)
+        tid = _text(store, owner)
+        r = owner_client.post(
+            "/api/distill/start_session", json={"card_id": cid, "text_id": tid})
+        assert r.status_code == 503, (
+            f"没配 key 却走进了文本分支：{r.status_code} {r.text[:200]}")
+        assert _detail(r) == "请先在设置页配置 API Key", r.text[:200]
+
+
 class TestGroupSessionOwnership:
     """群聊：内存命中也得判「是不是你的」，不只看删没删。"""
 
