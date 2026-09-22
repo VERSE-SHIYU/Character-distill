@@ -1563,9 +1563,15 @@ PROBE_IMAGE         false
 
 #### D. 本案只报告项（逐条建条目，标状态）
 
-**64. `_snapshot` 还原器自己也需要一把锁 —— 含「入场值为 `None`」那一格** —— 状态：**记账（不修）**（2026-09-19 记）
-- `tests/test_llm_access_gate.py` 的 `_Restored` / `_snapshot` / `_set_var` 是四条进程级状态（守卫、投递器、载体登记表、`LLM_CALLER`）的还原器，而**它自己没有反向的守卫**：谁在 `with` 里 `set` 了又被别的路径覆盖，还原写回的是**入场快照**，不是「本该是什么」。
-- 尤其「入场为 `None`」这一格：`write(prev)` 把 `None` 写回去，会把**生产 lifespan 已经装好的那一份**拆掉（`_Restored` 的 docstring 记了这个坑）。当前的处置是「一律还原、不置 None」，但那是**用法纪律**，不是判据。
+**64. `_snapshot` 还原器自己也需要一把锁 —— 含「入场值为 `None`」那一格** —— 状态：**已修**（2026-09-22，只补可判定的一格）
+- `tests/test_llm_access_gate.py` 的 `_Restored` / `_snapshot` / `_set_var` 是四条进程级状态（守卫、投递器、载体登记表、`LLM_CALLER`）的还原器，而**它自己没有反向的守卫**：谁在 `with` 里 `set` 了又被别的路径覆盖，还原写回的是**入场快照**，不是「本该是什么」（这条是**设计如此**：块内跑 lifespan 装生产守卫、退出还原入场值，是本文件的定式，L4/L9/L11 都靠它）。
+- 修法：**只补可判定的那一格**。插桩实测（单文件一次跑 37 次退出）：入场非 `None`/装非 `None` 14 次；入场非 `None` 且块内被别的路径改过 3 次；**入场 `None`/装 `None`/块内被装上值 6 次**；入场 `None` 且退出仍 `None` 3 次；ContextVar 11 次。
+- 「入场值为 `None`」这一格分两种，**一种可判定、一种不可判定**：
+  - **普通全局：不可判定** —— `write(None)` 与「本来就没装」是**同一次写入**，两种写法可观测后果完全相同（连变异都造不出差别）。故**不造锁**，造出来只能是假锁。（`write(prev)` 把 `None` 写回去会拆掉块内那一份，这是上面说的定式，不是缺陷。）
+  - **ContextVar：可判定** —— 全局的「没装」就是 `None`，ContextVar 的「没设过」**不是** `None`（`get()` 抛 `LookupError`，只有 `get(None)` 返回 `None`）。补锁 `test_set_var_restores_the_unset_fact_not_a_none_value`：在空 `contextvars.Context()` 里自建前提（入场必然是「没设过」），块前块后 `LLM_CALLER.get()` 都必须抛 `LookupError`。
+- **变异读数**（单文件基线 48 passed）：撤销写成 `write(None)` → 3 红；写成 `write(value)`（不还原）→ 1 红；撤销改成 `pass`（完全不还原）→ 2 红 —— 这三种**已有用例间接打红**（红在后面用例上、与成因无关），按「已被打红的不新增锁」不补。`_set_var` 改成快照式 `var.set(None)` → **0 红**，即上面那一格此前无人看住；补锁后同变异 → 恰好本锁红（1 failed / 48 passed）。
+- **裁定·不做**：不给 `_Restored.__exit__` 加还原后自校验（`assert read() == prev`）。探针实测对现有 48 条零误伤（载体读口返回副本，故必须 `==` 不能 `is`），但它的判据「还原已生效」当前**没有可复现的缺陷形态**（还原是一次普通赋值），红源只能杜撰 —— 按项目尺度不加固。
+- **普查**：同机制另一处 `tests/test_usage_identity_context.py::_LoopSubmitter`（快照 `get_loop_submitter` + 退出写回，入场可为 `None` 的格相同），**裁定不动**（不在 ContextVar 侧、不走 token）。不同形：`tests/test_alerting.py::clean_root` 是**增量摘除**（把自己挂的摘掉，不写回快照）；`core/embeddings.py` / `core/request_context.py` 与 `test_usage_identity_context.py` 的 `set`/`reset` 站点**都用 token** 还原，是正确形态。
 
 **65. L12 扫描面尖角：只认 `git ls-files`，未入库的新文件看不见** —— 状态：**已修**（本步 C5）
 - 现象（实测）：`web/llm_gate.py` 尚未 `git add` 时，L12 读数是 **3/2**（真值 1/1），而当时锁看着是**绿的** —— 扫描面看不见的文件等于豁免。
@@ -1587,9 +1593,11 @@ PROBE_IMAGE         false
 - 收口带来的**行为差**（非缺陷）：`_collect_stream` 原先「`length` 但累积正文为空」返回 `("", True)`，环内归到「超长被截断」→ `DistillError` **400**；现在按失败原样上抛 → 统一出口 `incomplete:length` → **502**。受影响调用方是全部走 `stream=True` 的 `_chat_accounted`（环内 `_repair` 与长输出合并支）；现有测试无覆盖该格（`test_distill_usage_accounting.py::TestStreamChannelAccounting::test_truncated_stream_records_one_estimated_entry` 喂的是非空片段，不受影响）。
 - 「首调 502 / 环内 400」**保留**的理由：分档按**结论的来源**而不是文案关键词配码。首调上抛的是上游自己的终态（`kind=incomplete:length`），属上游档 502；环内是**本域**跑完 3 次后的结论（这份输入 + 这份配置就是装不下），抛 `DistillError` 走域档 400，文案是给用户的处置。两者不合并。
 
-**67. `install_log_collector` 的守卫与 3.12 `addHandler` 的去重重复** —— 状态：**记账（不修）**（2026-09-19 记）
-- `core/log_collector.py` 的 `if _handler not in root.handlers: root.addHandler(_handler)` —— 本机实测（Python 3.12.10）`logging.Logger.addHandler` 自身的实现就是 `if not (hdlr in self.handlers)`，**守卫是多余的**，删掉行为不变。
-- 不修的理由：纯冗余、零风险，删它属于「顺手改」，本轮不动。复算命令：打印 `inspect.getsource(logging.Logger.addHandler)`。
+**67. `install_log_collector` 的守卫与 3.12 `addHandler` 的去重重复** —— 状态：**已修**（2026-09-22）
+- `core/log_collector.py` 的 `if _handler not in root.handlers: root.addHandler(_handler)` —— 本机实测（Python 3.12.10）`logging.Logger.addHandler` 自身的实现就是 `if not (hdlr in self.handlers)`，**守卫是多余的**，删掉行为不变。复算命令：打印 `inspect.getsource(logging.Logger.addHandler)`。
+- **修法**：两行 → `logging.getLogger().addHandler(_handler)` 一行，注释写明去重由 `Logger.addHandler`（含它自己的 `_acquireLock()`）保证。不只是「等价」：我们的守卫在锁**外**，两个线程可以同时通过，去重实际一直靠 stdlib 兜住 —— 删掉后这一段才是原子的。
+- **红源读数**：把 `addHandler` 绕成 `root.handlers.append(_handler)`（去重不再成立这一形态）→ `tests/test_log_collector.py::test_install_log_collector_idempotent` **红**（1 failed / 6 passed）；不绕（= 本步修法）→ 7 passed。既有锁对**这条性质**有分辨力（分辨不了「谁在去重」，本就不必分辨），故**不新增锁**。
+- **普查**：`core/alerting.py:173` 形状相同但**机制不同** —— 它按**类**去重（`any(isinstance(h, AlertHandler))`，防「换个收件人再挂一个」），`addHandler` 按**身份**去重，删了会真挂两个 → 不并入。`web/deps.py:15` 与 `web/server.py:24,28` 的 `sys.path` 守卫，`list.insert` 不去重，守卫**承重** → 不同形。
 
 **68. `update_user_api_config` 在无用户行时静默不写** —— 状态：**记账（不修）**（2026-09-19 记）
 - 形态：`storage/sqlite_store.py`（PG 侧同）里写的是 `UPDATE user_secrets SET ... WHERE user_id = ?` / `UPDATE users SET ... WHERE id = ?`，**不检查受影响行数**；用户行不存在时 0 行匹配，`await conn.execute` 不报错、函数正常返回，调用方 `update_api_config` 回 `{"ok": True}`。
