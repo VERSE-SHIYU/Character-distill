@@ -1422,7 +1422,7 @@ async def start_session(
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
     # ── Inject opening line ──
-    # 上面 :1354 的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
+    # 本函数开头的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
     # None），故原先这里那层 `if per_user_llm is not None:` 恒真、它的 else 不可达。
     opening = ""
     try:
