@@ -604,23 +604,21 @@ async def broadcast_message(
 
                     s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
                     if s:
-                        msg_id = None
-                        saved = True
+                        # auto_mode 下本就没有「沉默」这条要记（改前也是不发帧的）—— 保持不变。
                         if not req.auto_mode:
                             async with nonfatal("group", "save silent message") as silent_out:
                                 msg_id = await storage.save_group_message(
                                     group_id, r["speaker"], "silent", "", r["card_id"],
                                 )
-                            saved = not silent_out.failed
-                        yield f"data: {json.dumps({
-                            'type': 'reply',
-                            'card_id': r['card_id'],
-                            'speaker': r['speaker'],
-                            'reply': '',
-                            'role': 'silent',
-                            'msg_id': msg_id,
-                            'saved': saved,
-                        }, ensure_ascii=False)}\n\n"
+                            yield f"data: {json.dumps({
+                                'type': 'reply',
+                                'card_id': r['card_id'],
+                                'speaker': r['speaker'],
+                                'reply': '',
+                                'role': 'silent',
+                                'msg_id': msg_id,
+                                'saved': not silent_out.failed,
+                            }, ensure_ascii=False)}\n\n"
                     else:
                         msg_id = None
                         async with nonfatal("group", "save assistant message") as char_out:
