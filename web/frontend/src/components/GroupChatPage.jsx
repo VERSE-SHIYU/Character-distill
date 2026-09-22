@@ -734,7 +734,7 @@ export default function GroupChatPage() {
       })
       await loadHistory(currentGroup.id)
     } catch (err) {
-      console.error('React failed:', err)
+      setError(err.message)
     }
   }
 

@@ -188,7 +188,9 @@ export default function MarketCardDetail() {
       const data = await res.json()
       setLiked(data.liked)
       setLikes(data.likes)
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handleComment = async () => {
@@ -220,13 +222,16 @@ export default function MarketCardDetail() {
             }),
           })
           await loadComments()
-        } catch {
-          // AI 回应失败不影响评论本身
+        } catch (err) {
+          // AI 回应失败不影响评论本身，但要让用户知道
+          setError(err.message)
         } finally {
           setAtReplying(false)
         }
       }
-    } catch {} finally { setCommentSending(false) }
+    } catch (err) {
+      setError(err.message)
+    } finally { setCommentSending(false) }
   }
 
   const doFork = async (textId) => {
@@ -245,7 +250,9 @@ export default function MarketCardDetail() {
         else await loadStandaloneCards()
         startChat(data.card)
       }
-    } catch {} finally { setForking(false) }
+    } catch (err) {
+      setError(err.message)
+    } finally { setForking(false) }
   }
 
   const handleFork = () => {
@@ -277,7 +284,7 @@ export default function MarketCardDetail() {
       await fetchWithTimeout(`/api/market/${cardId}/comments/${commentId}`, { method: 'DELETE' })
       await loadComments()
     } catch (err) {
-      console.error('Delete comment failed:', err)
+      setError(err.message)
     }
   }
 
@@ -293,7 +300,7 @@ export default function MarketCardDetail() {
       setBatchMode(false)
       await loadComments()
     } catch (err) {
-      console.error('Batch delete failed:', err)
+      setError(err.message)
     }
   }
 
@@ -372,7 +379,7 @@ export default function MarketCardDetail() {
       })
       await loadVersions()
     } catch (err) {
-      console.error('Edit version failed:', err)
+      setError(err.message)
     }
   }
 
@@ -434,10 +441,8 @@ export default function MarketCardDetail() {
       setCard(cardData)
       setLiked(cardData.liked_by_me || false)
       setLikes(cardData.likes || 0)
-    } catch (err) {
-      console.error('Edit save failed:', err)
-      setError(err.message || '保存失败')
     } finally {
+      // 失败不在这里显示：错误抛给 EditCardModal，由弹窗自己呈现
       setEditing(false)
     }
   }

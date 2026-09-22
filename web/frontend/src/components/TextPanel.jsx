@@ -806,23 +806,22 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
           data={parseCardJson(editCard)}
           cardId={editCard.id || editCard.card_id}
           onSave={async (cardJson) => {
-            try {
-              await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
-              })
-              setEditCard(null)
-              // Refresh all cards
-              const res = await fetchWithTimeout(`/api/distill/cards/by-text/${editCard.text_id}`)
-              if (res.ok) {
-                const cards = await res.json()
-                setAllCards((prev) => prev.map((c) => c.text_id === editCard.text_id
-                  ? cards.find((nc) => nc.id === c.id) || c
-                  : c
-                ))
-              }
-            } catch {}
+            // 失败不在这里吞：错误抛给 EditCardModal，由弹窗自己呈现
+            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+              body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
+            })
+            setEditCard(null)
+            // Refresh all cards
+            const res = await fetchWithTimeout(`/api/distill/cards/by-text/${editCard.text_id}`)
+            if (res.ok) {
+              const cards = await res.json()
+              setAllCards((prev) => prev.map((c) => c.text_id === editCard.text_id
+                ? cards.find((nc) => nc.id === c.id) || c
+                : c
+              ))
+            }
           }}
           onClose={() => setEditCard(null)}
         />
@@ -843,7 +842,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
             })
             setAllCards((prev) => prev.filter((x) => x.id !== id))
           } catch (err) {
-            console.error('Delete card failed:', err)
+            setLocalError(err.message)
           }
         }}
         onCancel={() => setDeleteTarget(null)}

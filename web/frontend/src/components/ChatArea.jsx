@@ -11,6 +11,7 @@ import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import EvidenceRail from './common/EvidenceRail'
 import Loading from './common/Loading'
+import ErrorBox from './common/ErrorBox'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
 import { formatChatTime } from '../utils/time'
@@ -152,6 +153,7 @@ function ChatView() {
   const userRole = sessionUserRole || userRolesByCard[currentCard?.id || currentCard?.card_id] || ''
 
   const [cropFile, setCropFile] = useState(null)
+  const [error, setError] = useState(null)
 
   // Font size: 0=small, 1=medium (default), 2=large
   const [fontLevel, setFontLevel] = useState(() => {
@@ -296,7 +298,10 @@ function ChatView() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ data: base64 }),
       })
-    } catch { /* non-fatal */ }
+    } catch (err) {
+      // 本地缓存已存下了，服务端没同步上 —— 换设备就会不一致，不能静默
+      setError(err.message)
+    }
     setCardAvatar(cardId, base64)
   }, [cardId, setCardAvatar])
 
@@ -482,6 +487,7 @@ function ChatView() {
 
   return (
     <div className={`chat-view chat-area${fontLevel === 0 ? ' has-text-sm' : fontLevel === 2 ? ' has-text-lg' : ''}`} {...chatSwipeBack}>
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <SplitOrFullscreen
         open={historyOpen}
         splitRatio={0.65}
@@ -745,7 +751,9 @@ function ChatView() {
                         const res = await fetchWithTimeout(`/api/chat/session/${sessionId}/reactions`)
                         const data = await res.json()
                         setReactions(data.reactions || {})
-                      } catch {}
+                      } catch (err) {
+                        setError(err.message)
+                      }
                     } : undefined}
                     onReply={msg.unsaved ? undefined : () => {
                       const preview = isUser

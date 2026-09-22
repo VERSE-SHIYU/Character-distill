@@ -637,6 +637,7 @@ function CardDetail({ card, textId, goBack }) {
   const [publishMessage, setPublishMessage] = useState('')
   const [publishSending, setPublishSending] = useState(false)
   const [publishError, setPublishError] = useState('')
+  const [error, setError] = useState(null)
 
   // 挂载时触发一次性迁移：把旧全局 user_role 搬进 userRolesByCard[cardId]
   const _cardId = card.id || card.card_id
@@ -697,7 +698,10 @@ function CardDetail({ card, textId, goBack }) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ data: base64 }),
           })
-        } catch { /* non-fatal */ }
+        } catch (err) {
+          // 本地缓存已存下了，服务端没同步上 —— 换设备就会不一致，不能静默
+          setError(err.message)
+        }
       }
       setCardAvatar(card.id, base64)
     },
@@ -727,6 +731,7 @@ function CardDetail({ card, textId, goBack }) {
 
   return (
     <div className="card-detail">
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <div className="card-detail-scroll">
         {/* Header: avatar + name + identity */}
         <div className="card-hero">

@@ -10,6 +10,7 @@ import PostCard from './common/PostCard'
 import BannerCropModal from './common/BannerCropModal'
 import ImageCropModal from './common/ImageCropModal'
 import ConfirmModal from './common/ConfirmModal'
+import ErrorBox from './common/ErrorBox'
 import { Theater, Book, MessageSquare, UserPlus, Users, Camera, Edit3, Heart, Globe, Lock, MapPin, Close, Clock } from './common/Icon'
 import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
@@ -25,6 +26,7 @@ import { getCoverGradient } from './BookReader'
 function MineCardMenu({ card, onRefresh }) {
   const [open, setOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [error, setError] = useState(null)
 
   const handleTogglePublic = async (e) => {
     e.stopPropagation()
@@ -35,7 +37,9 @@ function MineCardMenu({ card, onRefresh }) {
         body: JSON.stringify({ visibility: card.visibility === 'public' ? 'private' : 'public' }),
       })
       onRefresh()
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
     setOpen(false)
   }
 
@@ -55,13 +59,14 @@ function MineCardMenu({ card, onRefresh }) {
       })
       onRefresh()
     } catch (err) {
-      console.error('[MinePage] Delete failed:', err)
+      setError(err.message)
     }
     setOpen(false)
   }
 
   return (
     <div className="mine-card-menu-wrap">
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       <button
         type="button"
         className="mine-card-menu-btn"
@@ -124,6 +129,7 @@ export default function MinePage() {
   }, [pushView])
 
   // Store fetched author data when viewing others
+  const [error, setError] = useState(null)
   const [profileAuthor, setProfileAuthor] = useState(null)
   const [isFollowing, setIsFollowing] = useState(false)
   const [followsMe, setFollowsMe] = useState(false)
@@ -411,7 +417,9 @@ export default function MinePage() {
       })
       const data = await res.json()
       setIsFollowing(data.following)
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handleBannerSelect = (e) => {
@@ -465,8 +473,8 @@ export default function MinePage() {
         body: JSON.stringify({ avatar_data: croppedDataUrl }),
       })
       useAppStore.setState({ userAvatar: croppedDataUrl })
-    } catch (e) {
-      console.error('[MinePage] Avatar upload failed:', e)
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -511,8 +519,8 @@ export default function MinePage() {
       setTexts(prev => prev.map(t =>
         t.id === targetId ? { ...t, cover_data: result } : t
       ))
-    } catch (e) {
-      console.error('[MinePage] Book cover upload failed:', e)
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -537,6 +545,7 @@ export default function MinePage() {
   return (
     <div className="mine-page-v2" {...swipeBack}>
       {currentView !== 'mine' && <PageHeader title={username} onBack={popView} />}
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
       {/* ── Banner ── */}
       <div className="mine-banner" style={isMobile ? { maxHeight: 110 } : undefined}>
         {(isMe ? userBanner : profileAuthor?.banner_data) ? (
@@ -609,7 +618,9 @@ export default function MinePage() {
                           body: JSON.stringify({ bio }),
                         })
                         useAppStore.setState({ authUser: { ...authUser, bio } })
-                      } catch {}
+                      } catch (err) {
+                        setError(err.message)
+                      }
                     }
                   }}
                   onKeyDown={e => {
@@ -963,7 +974,9 @@ export default function MinePage() {
                         const res = await fetchWithTimeout(`/api/market/author/${userId}/posts`)
                         const data = await res.json()
                         setPosts(data.posts || [])
-                      } catch {}
+                      } catch (err) {
+                        setError(err.message)
+                      }
                       finally { setPosting(false) }
                     }}
                   >
@@ -1106,10 +1119,15 @@ export default function MinePage() {
                               type="button"
                               className="btn-sm btn-secondary"
                               onClick={async () => {
-                                await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
-                                  method: 'POST',
-                                  headers: getAuthHeaders(),
-                                })
+                                try {
+                                  await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
+                                    method: 'POST',
+                                    headers: getAuthHeaders(),
+                                  })
+                                } catch (err) {
+                                  setError(err.message)
+                                  return
+                                }
                                 setFollowing(prev => prev.filter(f => f.id !== u.id))
                                 setFollowingCount(prev => Math.max(0, prev - 1))
                               }}
@@ -1153,7 +1171,12 @@ export default function MinePage() {
         onConfirm={async () => {
           const id = deletePostId
           setDeletePostId(null)
-          await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
+          try {
+            await fetchWithTimeout(`/api/market/posts/${id}`, { method: 'DELETE', headers: getAuthHeaders() })
+          } catch (err) {
+            setError(err.message)
+            return
+          }
           setPosts(prev => prev.filter(p => p.id !== id))
         }}
         onCancel={() => setDeletePostId(null)}

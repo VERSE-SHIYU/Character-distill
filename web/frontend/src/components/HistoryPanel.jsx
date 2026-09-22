@@ -364,16 +364,23 @@ export default function HistoryPanel({ initialTrash = false }) {
 
   const handleBatchDelete = async () => {
     if (selectedIds.size === 0) return
+    const removed = new Set()
+    const failures = []
     for (const id of selectedIds) {
       try {
         await fetchWithTimeout(`/api/history/${id}`, { method: 'DELETE' })
+        removed.add(id)
       } catch (err) {
-        console.error('[HistoryPanel] batch delete failed:', err)
+        failures.push(err.message)
       }
     }
-    setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)))
+    // 只移除真正删掉的：失败的留在列表里，不然用户以为删干净了
+    setItems((prev) => prev.filter((it) => !removed.has(it.id)))
     setSelectedIds(new Set())
     setSelectMode(false)
+    if (failures.length) {
+      setError(failures.length === 1 ? failures[0] : `${failures.length} 项删除失败：${failures[0]}`)
+    }
   }
 
   const toggleGroup = (textId) => {
@@ -472,7 +479,7 @@ export default function HistoryPanel({ initialTrash = false }) {
       await fetchWithTimeout(`/api/text/${textId}`, { method: 'DELETE' })
       setTextItems((prev) => prev.filter((t) => t.id !== textId))
     } catch (err) {
-      console.error('[HistoryPanel] delete text failed:', err)
+      setError(err.message)
     }
   }
 
