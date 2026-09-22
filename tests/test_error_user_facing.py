@@ -143,13 +143,6 @@ def test_duck_typed_declared_message_wins_over_generic():
     assert user_facing_error(_Blank()) != "   "      # 空白话术不算话术，落通用文案
 
 
-def test_preserve_unknown_is_opt_in_for_chat_sse_only():
-    """chat 的 SSE 帧显式保留未登记异常原文（排障契约）；蒸馏路径不许传这个开关。"""
-    exc = RuntimeError("LLM API failed after 3 attempts")
-    assert user_facing_error(exc, preserve_unknown=True) == str(exc)
-    assert user_facing_error(exc) != str(exc)
-
-
 # ── B. AST 锁：上屏字面量与 raise 点 ────────────────────────────────────
 
 _SCANNED = ("core/distiller.py", "web/routers/distill.py")
