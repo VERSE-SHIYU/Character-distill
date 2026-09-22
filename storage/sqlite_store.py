@@ -141,14 +141,36 @@ _ADD_COLUMN_RE = re.compile(
     re.IGNORECASE,
 )
 
-# users 表**不得存在**的四列（数据居留）：password_hash / api_key / base_url / model
-# 已迁进 user_secrets（070），敏感字段与用户表物理分离。
+# users 表**不得存在**的列，逐列带退役理由 —— 结构化而不是靠注释说明，因为删列范围本身
+# 就是判据：下一个人问「这列为什么在名单里」「还能不能加回来」，看的是这里不是注释。
 #
-# 判据的单一事实源：删列（`_ensure_initialized` 的重建块）与「还有没有残留」的触发条件
-# 都读这里。**触发条件必须是「四列任一存在」而不是只认 password_hash**（缺陷 26）——
-# 018 每轮会重新加回 api_key/base_url/model，而 password_hash 首次启动后就再也不会回来，
-# 只认它会让「加了但没删」的残留态永久驻留，同一个库的「全新」与「重启过」变成两个 schema。
-_USERS_LEGACY_COLUMNS = ("password_hash", "api_key", "base_url", "model")
+# 理由只有两种，下面那句守卫机器强制：
+#   - `数据居留`：列承载敏感数据，已迁进 user_secrets（070），与用户表物理分离。
+#     password_hash 首次启动之后就再也不会回来。
+#   - `被迁移复活`：列是迁移落地的中间态，被**编号更小的迁移每轮重新加回**，得由本块再删
+#     一次。api_key / base_url / model 由 018 加回（018 摘不得 —— 老库上没这三列时 070 的
+#     `SELECT u.api_key` 直接 no such column，而执行器没有「已应用」账本）；is_admin 由
+#     013 加回，与 018 同形。091 的回填必须先于本次删列跑完，故 091 登记在 BEFORE 段
+#     （理由见那里的注释）。
+#
+# 判据的单一事实源：删列（`_ensure_initialized` 的 DROP/重建块）与「还有没有残留」的
+# 触发条件都读这里。**触发条件必须是「名单里任一列存在」而不是只认 password_hash**
+# （缺陷 26）—— 只认它会让「加了但没删」的残留态永久驻留，同一个库的「全新」与
+# 「重启过」变成两个 schema。
+_RETIRE_REASONS = frozenset({"数据居留", "被迁移复活"})
+
+_USERS_RETIRED_COLUMNS: dict[str, str] = {
+    "password_hash": "数据居留",
+    "api_key": "数据居留",
+    "base_url": "数据居留",
+    "model": "数据居留",
+    "is_admin": "被迁移复活",
+}
+
+if not set(_USERS_RETIRED_COLUMNS.values()) <= _RETIRE_REASONS:
+    raise ValueError(
+        f"退役列理由只许取 {sorted(_RETIRE_REASONS)}，"
+        f"实际拿到 {sorted(set(_USERS_RETIRED_COLUMNS.values()) - _RETIRE_REASONS)}")
 
 
 async def _existing_columns(conn: Any, table: str) -> set[str]:
@@ -534,17 +556,15 @@ class SQLiteStore(StorageBase):
 
                     # Migration 076 is handled inline as part of the operation — no SQL file needed.
 
-                    # Data residency: users 表不得留 `_USERS_LEGACY_COLUMNS` 那四列
-                    # （权威定义与「为什么触发条件不能只认 password_hash」见该常量处）。
+                    # users 表不得留 `_USERS_RETIRED_COLUMNS` 里的任一列（逐列理由见该常量处）。
                     # `if` 守卫本身就是幂等机制（列已删就整块跳过），所以不需要 except ——
                     # 删列失败照常上抛，不再被 print 吞成「初始化成功」。
                     cursor = await conn.execute("PRAGMA table_info(users)")
                     all_cols = [row[1] for row in await cursor.fetchall()]
-                    present = [c for c in _USERS_LEGACY_COLUMNS if c in all_cols]
+                    present = [c for c in _USERS_RETIRED_COLUMNS if c in all_cols]
                     if present and sqlite3.sqlite_version_info >= (3, 35):
-                        # 每轮启动都会走一遍（018 照加、这里照删，拉锯是有意保留的：
-                        # 018 不能摘 —— 老库上没这三列时 070 的 `SELECT u.api_key` 直接
-                        # no such column；执行器又没有「已应用」账本）。所以选原生
+                        # 每轮启动都会走一遍（018、013 照加，这里照删，拉锯是有意保留的 ——
+                        # 两处不能摘的理由见 `_USERS_RETIRED_COLUMNS`）。所以选原生
                         # DROP COLUMN：O(rows) 但省掉临时表 + INSERT..SELECT + 索引重建，
                         # 且**不碰**其余列的类型（重建的 col_defs 兜底会把未知列静默重定型
                         # 成 TEXT，这里没这个副作用）。
@@ -560,11 +580,10 @@ class SQLiteStore(StorageBase):
                         # later migrations survive the rebuild; col_defs supplies the
                         # type for known ones (unknown ones fall back to TEXT).
                         keep_cols = [c for c in all_cols
-                                     if c not in _USERS_LEGACY_COLUMNS]
+                                     if c not in _USERS_RETIRED_COLUMNS]
                         col_defs = {
                             "id": "TEXT PRIMARY KEY",
                             "username": "TEXT NOT NULL UNIQUE",
-                            "is_admin": "INTEGER DEFAULT 0",
                             "role": "TEXT NOT NULL DEFAULT 'user'",
                             "is_disabled": "INTEGER DEFAULT 0",
                             "avatar_data": "TEXT DEFAULT ''",
