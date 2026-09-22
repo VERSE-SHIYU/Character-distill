@@ -1479,7 +1479,7 @@ PROBE_IMAGE         false
 - **归属**：CI / 测试基础设施（不分线）。
 - **根因（2026-09-23 定位并修复）**：两个成因叠加，缺一不成——
   - **① 库有了两个来源（`dbdbf9c` 引入）**。那个提交把独立卡片分支的 `ChatEngine` 指到 `TextManager` **构造时捕获**的那份库上，而那份是 `deps.get_storage()` —— **进程级单例**（`web/deps.py:130`）。**测试换库走的是 `app.dependency_overrides[get_storage]`，只覆盖 `Depends(get_storage)` 那条路**，`TextManager` / `Distiller` 内部都是直接调 `get_storage()`，override 管不到。于是同一场测试里两条路读**两个库**：请求路径读 sqlite（被测的那份），引擎攥着的是**真库**（CI 里是 postgres）。
-  - **② 跨事件循环的报错被静默吞掉（见新条目 118）**。真库那份在 `TestClient` 下还叠了一层：没有 app lifespan ⇒ `core.scheduling` 的 loop submitter 从未注册 ⇒ `submit_to_main_loop(..., wait=True)` 走回退 `asyncio.run(coro)` **新建一个 loop**，而全局 `PostgresStore` 的连接池绑在另一个 loop 上 ⇒ asyncpg 抛 `got Future <Future pending> attached to a different loop`。SQL 已经写进 socket，服务端那笔事务留着不结算，连接既回不了池也关不掉（`Release connection failed: cannot perform operation: another operation is in progress`）。这条异常被 `core/chat_engine.py:637/655` 的宽 `except Exception` 当「非致命」打一行日志 —— **用例照样 PASSED，没有任何东西变红**。
+  - **② 跨事件循环的报错被静默吞掉（见新条目 123）**。真库那份在 `TestClient` 下还叠了一层：没有 app lifespan ⇒ `core.scheduling` 的 loop submitter 从未注册 ⇒ `submit_to_main_loop(..., wait=True)` 走回退 `asyncio.run(coro)` **新建一个 loop**，而全局 `PostgresStore` 的连接池绑在另一个 loop 上 ⇒ asyncpg 抛 `got Future <Future pending> attached to a different loop`。SQL 已经写进 socket，服务端那笔事务留着不结算，连接既回不了池也关不掉（`Release connection failed: cannot perform operation: another operation is in progress`）。这条异常被 `core/chat_engine.py:637/655` 的宽 `except Exception` 当「非致命」打一行日志 —— **用例照样 PASSED，没有任何东西变红**。
   - **挂死的链条**：那笔没结算的事务持 `cards` 上的 `AccessShareLock`（`migrations_pg/007_card_sync.sql` 的 `ALTER TABLE cards ADD COLUMN` 要 `AccessExclusive`，两者冲突）→ 下一个建 store 的用例（`tests/test_pg_identity_sync.py::test_store_startup_runs_the_alignment`）经 `_ensure_initialized` 重放全部迁移 → **永远等下去**。挂点因此落在那条用例上，但**它只是受害者不是元凶**（与本条下面「二分定位」的弱推论一致：它及其被测代码在区间内零改动）。
   - **为什么本地绿、CI 挂**：本地 `.env` 是 `STORAGE_BACKEND=sqlite`，两个来源**指向同一个文件**，分叉看不出来；CI 是 postgres，「请求路径 sqlite vs 引擎真 PG」才显形。**差异确实在环境，但根因在代码** —— 本条下面那句「差异不在代码而在环境」是当时的判断，现按实测订正。
   - **生产侧的同一处（`storage/postgres_store.py` 的 `_PoolContext.__aexit__`）**：那条卡住的连接 `pool.release()` 会抛，而原先的实现**只打一行 `Release connection failed` 就放手**（`self.conn = None`），槽位从此不回收 —— 池被一格一格吃光，之后**所有**请求一起挂住。这是「连接卡住」这条路上真正的生产风险，与测试能不能跑无关。修法与红源另见下面「同一处的生产修复」。
@@ -1511,7 +1511,7 @@ PROBE_IMAGE         false
   第二条取每个 job 的 `steps[]` 里 `name == "Run tests"` 的 `startedAt` / `completedAt` 相减；`completedAt` 为 `0001-01-01T00:00:00Z` 的表示该步没跑完（**这次统计就靠这条把两个挂起 run 摘出去的**）。**只点名命令、不入库数据文件** —— 样本随时可用上面两条重取。
 - **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（第一次）、`gh run view 35716206496`（第二次）—— 本仓 CI 不出产物，**run id 就是证据坐标**。
 
-**118. `chat_engine.py:637/655` 把「不同事件循环」的报错当非致命吞掉 —— 故障被静默掩盖** —— 状态：**记账**
+**123. `chat_engine.py:637/655` 把「不同事件循环」的报错当非致命吞掉 —— 故障被静默掩盖** —— 状态：**记账**
 - **归属**：D 组。
 - **坐标**：`core/chat_engine.py:637`（`except Exception as exc: print(f"[Affinity] Fetch reactions failed (non-fatal): {exc}")`）与 `:655`（`except Exception: pass`，整条 `pass`）。
 - **形态**：两处都是**宽 `except Exception` + 只打日志 / 什么都不做**。这正是 117 那两个成因里 ② 的落点：`submit_to_main_loop` 回退 `asyncio.run` 建新 loop、asyncpg 报 `got Future <Future pending> attached to a different loop`，异常被这两处吃掉，**调用方看不到、用例照样 PASSED**。
