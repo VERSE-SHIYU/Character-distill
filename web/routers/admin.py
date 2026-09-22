@@ -163,6 +163,31 @@ async def enable_user(
     return {"ok": True}
 
 
+class SetRoleRequest(BaseModel):
+    role: str
+
+
+@router.patch("/users/{user_id}/role")
+@limiter.limit("30/minute")
+async def set_user_role(
+    request: Request,
+    user_id: str,
+    req: SetRoleRequest,
+    admin_user: dict = Depends(require_admin),
+    storage: StorageBase = Depends(get_storage),
+) -> dict[str, Any]:
+    """改用户角色。不能改自己：否则管理员可以把自己降成普通用户，现场再没人能改回来。"""
+    if user_id == admin_user.get("id"):
+        raise HTTPException(400, "不能修改自己的角色")
+    if req.role not in roles.ROLES:
+        raise HTTPException(400, f"未知角色：{req.role}")
+    try:
+        await storage.set_user_role(user_id, req.role)
+    except ValueError:
+        raise HTTPException(404, "用户不存在")
+    return {"ok": True, "role": req.role}
+
+
 class ResetPasswordRequest(BaseModel):
     new_password: str
 
