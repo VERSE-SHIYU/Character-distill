@@ -17,6 +17,8 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+import aiosqlite
+
 from storage.sqlite_store import SQLiteStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,8 +26,9 @@ PG_DIR = ROOT / "storage" / "migrations_pg"
 
 EMBEDDING_COLS = ("embedding_key", "embedding_region")
 
-# texts 上**必须一直不存在**的退役列（缺陷 87）。056 每轮加回来、092 每轮删掉，
-# 判据是「两次 init 之间列集相等」——见 test_retired_texts_columns_stay_retired_after_restart。
+# texts 上**必须一直不存在**的退役列（缺陷 87）：056 已空操作，092 只在老库上真跑一次。
+# 判据是「重启后列集不变 **且** 重启时 092 没执行」——见
+# test_retired_texts_columns_stay_retired_after_restart。
 RETIRED_TEXT_COLS = ("content_resolved", "coref_resolved")
 
 # SQLite 自建、不出现在任何迁移文件里的内部表
@@ -166,26 +169,39 @@ class TestFreshSqliteSchema:
         for col in EMBEDDING_COLS:
             assert col in cols, f"半成品库 init 后缺 {col}；实际列={sorted(cols)}"
 
-    async def test_retired_texts_columns_stay_retired_after_restart(self, tmp_path, capsys):
-        """(f) texts 的退役列（缺陷 87）：新库没有，**第二次 init 后仍然没有**。
+    async def test_retired_texts_columns_stay_retired_after_restart(self, tmp_path, capsys, monkeypatch):
+        """(f) texts 的退役列（缺陷 87）：新库没有，**重启后仍然没有**，且**重启不重写这张表**。
 
-        为什么两段都要：056（BEFORE 段）每轮都 `ADD COLUMN` 把两列加回来，092（AFTER 段）
-        每轮再删。**首轮**的「净效果 = 列不存在」在顺序写反时也照样成立（056 先加、092
-        后删），看不出登记是否合理；**第二次 init** 才是判据 —— 只有在「092 确实排在 056
-        之后且确实被登记」时，两轮之间才会回到同一个「列不存在」的态。这条与 users 退役列
-        （`_USERS_RETIRED_COLUMNS`）是同一个不变量，两条列集相等断言同理。
+        056 现在是空操作（两列已由 092 退役；无迁移账本时每轮都会执行它，故不再 `ADD`）。
+        于是：新库从没建过这两列 ⇒ 092 的每句 DROP 都已生效 ⇒ **整份跳过**；老库（列还在）
+        ⇒ 092 真正执行一次 DROP，之后再跑同样整份跳过。
 
-        **变异（实测）**：把 `"092_retire_coref_columns.sql"` 从 `_MIGRATIONS_AFTER_USER_REBUILD`
-        摘掉 → 056 加的列没人删 → 首次 init 后列就在 → 红。
-        ⚠ **不是**「抽掉执行器的 DROP 支」—— 那条变异对本用例**打不红**（没有 DROP 支时
-        092 的裸 DROP 照样执行成功，因为 056 每轮已先把列加回来）。DROP 支自己的判别力
-        由 `tests/test_migration_dispatch.py::test_already_satisfied_drop_column_is_stripped`
-        承担，两条锁各锁一半，别把红源挂错地方。
+        故「二次 init 后列集不变」与「二次 init 时 092 整份跳过」是同一件事的两面，本用例
+        两条都断言：前者是结果，后者是机制。**必须两条都锁** —— 只比列集会漏掉「每轮把列
+        加回来又删掉」：那种形态下列集照样相等，但 `texts` 存的是全文，每次 init 都要把整张
+        表重写一遍（`DROP COLUMN` 在 SQLite 里是「建新表 + 拷数据 + 换名」）。
+
+        **变异（实测）**：把 056 恢复成两条 `ADD COLUMN` → 每轮先把列加回来 ⇒ 092 每轮都得
+        真发一次 DROP ⇒ 「整份跳过」断言红，而列集断言仍绿（092 又删回去了）。这正是加这条
+        断言的判别力所在。
+
+        ⚠ 与 `tests/test_migration_dispatch.py::test_already_satisfied_drop_column_is_stripped`
+        分工：那条锁执行器 DROP 支自身的剥除逻辑，本条锁端到端「重启态下 092 不再执行」。
         """
         db_path = str(tmp_path / "retired.db")
         await _init(SQLiteStore(db_path), capsys)
         first = _columns(db_path, "texts")
+
+        ran: list[str] = []
+        real_script = aiosqlite.Connection.executescript
+
+        async def _spy(conn, sql):
+            ran.append(sql)
+            return await real_script(conn, sql)
+
+        monkeypatch.setattr(aiosqlite.Connection, "executescript", _spy)
         await _init(SQLiteStore(db_path), capsys)
+        monkeypatch.undo()
         second = _columns(db_path, "texts")
         for cols, when in ((first, "首次 init 后"), (second, "第二次 init 后")):
             for col in RETIRED_TEXT_COLS:
@@ -193,6 +209,13 @@ class TestFreshSqliteSchema:
         assert first == second, (
             f"第二次 init 改动了 texts 列集 —— 「全新库」与「重启过的库」不是同一个 schema。"
             f"新加={sorted(second - first)} 少了={sorted(first - second)}")
+
+        # SQLite 侧只有 092 是 `.sql` 里的 DROP COLUMN（其余退役走 Python 表重建），
+        # 故「有 DROP COLUMN 发给 SQLite」即「092 没被整份跳过」。
+        executed = [s for s in ran if "DROP COLUMN" in s.upper()]
+        assert not executed, (
+            f"重启时 092 把 DROP COLUMN 真的执行了（{len(executed)} 次）—— texts 的整张表"
+            f"因此被重写；每一次启动都白付这个代价。首条脚本片段={executed[0][:120]!r}")
 
 
 class TestExemptionClosedLoop:

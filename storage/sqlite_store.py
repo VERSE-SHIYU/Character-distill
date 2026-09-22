@@ -120,9 +120,11 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 索引必须排在它之后 —— 存量库里同一草稿可能有多张存活副本，回填不加收敛就撞唯一索引，
     # 两个顺序都让 init 失败（实测）。
     "090_published_from_live_uniq.sql",
-    # 092 必须排在 056 之后 —— 056（BEFORE 段）每轮都 ADD 这两列，092 每轮再删掉，
-    # 净效果「列不存在」才是重启态的不变量（判据见 tests/test_sqlite_fresh_schema.py）。
-    # BEFORE 段整段都在本段之前，故登记在这里即满足「晚于 056」。
+    # 092 的 DROP 只对**老库**真正执行一次：056 已空操作，新库从没建过这两列，于是
+    # `_apply_migration` 的「整份跳过」条件（每句 DROP 的列都已不在）当场成立，重启不再
+    # 重写整张 texts（它存的是全文）。老库仍靠这里的那一次 DROP 退役。
+    # 排在 AFTER 段即满足「晚于 056」—— 老库升级时必须先让 BEFORE 段整段跑完。
+    # 判据见 tests/test_sqlite_fresh_schema.py::test_retired_texts_columns_stay_retired_after_restart。
     "092_retire_coref_columns.sql",
 )
 
