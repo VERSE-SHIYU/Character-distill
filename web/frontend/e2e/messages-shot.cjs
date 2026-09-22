@@ -4,7 +4,7 @@ const { openApp, login, goToView, shot } = require('./helpers.cjs')
 const FAKE_USER = {
   id: 'u-testadmin', username: 'testadmin', nickname: '', bio: '',
   avatar_data: '', banner_data: '', has_api_key: true, has_embedding_key: false,
-  embedding_region: 'cn', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', is_admin: false,
+  embedding_region: 'cn', base_url: 'https://api.deepseek.com', model: 'deepseek-v4-pro', role: 'user',
 }
 const OTHER = { id: 'u-testuser', username: 'testuser', nickname: '山野闲人' }
 const CONVS = [

@@ -5,7 +5,7 @@ const FAKE_USER = {
   id: 'u-testadmin', username: 'testadmin', nickname: '', bio: '',
   avatar_data: '', banner_data: '',
   has_api_key: false, has_embedding_key: false, embedding_region: 'cn',
-  base_url: '', model: '', is_admin: false,
+  base_url: '', model: '', role: 'user',
 }
 const USAGE = { total_calls: 42, total_prompt_tokens: 1500, total_completion_tokens: 300, by_action: {}, by_model: {} }
 

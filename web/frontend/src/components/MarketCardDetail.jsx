@@ -516,7 +516,7 @@ export default function MarketCardDetail() {
                   <Edit size={16} />
                 </button>
               )}
-              {(authUser?.is_admin || card.user_id === authUser?.id) && (
+              {(authUser?.role === 'admin' || card.user_id === authUser?.id) && (
                 <button type="button" className="btn-icon danger" onClick={() => setDeleteConfirmId(card.id)} title="删除">
                   <Trash2 size={16} />
                 </button>
@@ -785,10 +785,10 @@ export default function MarketCardDetail() {
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>
                         <div className="market-detail-comment-actions">
-                          {(card.user_id === authUser?.id || c.user_id === authUser?.id || authUser?.is_admin) && (
+                          {(card.user_id === authUser?.id || c.user_id === authUser?.id || authUser?.role === 'admin') && (
                             <button type="button" className="comment-action-btn danger" onClick={() => setDeleteCommentId(c.id)}>删除</button>
                           )}
-                          {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !authUser?.is_admin && (
+                          {c.user_id !== authUser?.id && card.user_id !== authUser?.id && authUser?.role !== 'admin' && (
                             <button type="button" className="comment-action-btn" onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}>举报</button>
                           )}
                         </div>
@@ -815,7 +815,7 @@ export default function MarketCardDetail() {
                           <p className="version-message">{v.publish_message || '无说明'}</p>
                           <span className="version-time">{formatRelativeTime(v.created_at)}</span>
                         </div>
-                        {(card.user_id === authUser?.id || authUser?.is_admin) && (
+                        {(card.user_id === authUser?.id || authUser?.role === 'admin') && (
                           <div className="version-actions">
                             {card.user_id === authUser?.id && (
                               <>
@@ -824,7 +824,7 @@ export default function MarketCardDetail() {
                                 <button type="button" className="version-action-btn" onClick={() => startEditVersion(v)} title="编辑"><Edit size={14} /></button>
                               </>
                             )}
-                            {authUser?.is_admin && (
+                            {authUser?.role === 'admin' && (
                               <button type="button" className="version-action-btn version-action-btn-danger" onClick={() => setDeleteVersionId(v.id)} title="删除"><Trash2 size={14} /></button>
                             )}
                           </div>

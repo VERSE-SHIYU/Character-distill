@@ -33,6 +33,12 @@ const NAV_GROUPS = [
   ]},
 ]
 
+/* 身份三值单列（users.role）的展示口径。顺序即下拉框顺序：管理能力从高到低。
+   「演示（只读）」= 后端门禁拒掉除白名单外一切写操作（见 web/demo_gate.py）。 */
+const ROLE_LABELS = { admin: '管理员', user: '用户', guest: '演示（只读）' }
+const ROLE_KEYS = ['admin', 'user', 'guest']
+const roleLabel = (role) => ROLE_LABELS[role] || role || ''
+
 /* ── SVG 圆环进度条 ── */
 function CircularProgress({ percent, size = 72, strokeWidth = 5 }) {
   const r = (size - strokeWidth) / 2
@@ -307,6 +313,7 @@ function UsersTab() {
   const [emailOk, setEmailOk] = useState('')
   const [emailSetting, setEmailSetting] = useState(false)
   const [disableConfirm, setDisableConfirm] = useState(null)
+  const [rolePending, setRolePending] = useState('')
   const [detailTarget, setDetailTarget] = useState(null)
   const [detailData, setDetailData] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -344,6 +351,23 @@ function UsersTab() {
       await load()
     } catch (err) {
       setActionError(err.message)
+    }
+  }
+
+  const changeRole = async (user, role) => {
+    if (role === user.role) return
+    setRolePending(user.id)
+    setActionError('')
+    try {
+      await adminAPI.setUserRole(user.id, role)
+      await load()
+    } catch (err) {
+      // 失败时也 load()：下拉框的 value 绑的是 users 里的 role，不重载就会停在用户
+      // 选的（没生效的）那一项上 —— 界面显示的角色与实际存的不是一个东西。
+      setActionError(err.message)
+      await load()
+    } finally {
+      setRolePending('')
     }
   }
 
@@ -415,7 +439,7 @@ function UsersTab() {
   }
 
   const toggleSelectAll = () => {
-    const selectable = users.filter((u) => u.id !== authUser?.id && !u.is_admin)
+    const selectable = users.filter((u) => u.id !== authUser?.id && u.role !== 'admin')
     if (selectable.length === 0) return
     const allSelected = selectable.every((u) => selectedUsers.has(u.id))
     if (allSelected) {
@@ -487,8 +511,8 @@ function UsersTab() {
               <tr>
                 <th style={{ width: 36 }}>
                   <input type="checkbox" onChange={toggleSelectAll}
-                    checked={users.filter((u) => u.id !== authUser?.id && !u.is_admin).length > 0 &&
-                      users.filter((u) => u.id !== authUser?.id && !u.is_admin).every((u) => selectedUsers.has(u.id))}
+                    checked={users.filter((u) => u.id !== authUser?.id && u.role !== 'admin').length > 0 &&
+                      users.filter((u) => u.id !== authUser?.id && u.role !== 'admin').every((u) => selectedUsers.has(u.id))}
                   />
                 </th>
                 <th style={{ minWidth: 120 }}>用户名</th>
@@ -505,7 +529,7 @@ function UsersTab() {
               {users.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    {u.id === authUser?.id ? null : u.is_admin ? (
+                    {u.id === authUser?.id ? null : u.role === 'admin' ? (
                       <input type="checkbox" disabled title="不能选择管理员账号" style={{ opacity: 0.35, cursor: 'not-allowed' }} />
                     ) : (
                       <input type="checkbox" checked={selectedUsers.has(u.id)} onChange={() => toggleSelectUser(u.id)} />
@@ -517,7 +541,21 @@ function UsersTab() {
                       {u.node_region === 'peer' ? '对端' : '本地'}
                     </span>
                   </td>
-                  <td>{u.is_admin ? '管理员' : '用户'}</td>
+                  <td>
+                    {/* 对端节点的用户不归本节点管：PATCH 打过去只会 404，故只展示不提供修改。 */}
+                    {u.id === authUser?.id || u.node_region === 'peer' ? (
+                      <span>{roleLabel(u.role)}</span>
+                    ) : (
+                      <select
+                        className="admin-role-select"
+                        value={u.role || 'user'}
+                        disabled={rolePending === u.id}
+                        onChange={(e) => changeRole(u, e.target.value)}
+                      >
+                        {ROLE_KEYS.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+                      </select>
+                    )}
+                  </td>
                   <td>
                     <span className={`admin-status${u.is_disabled ? ' disabled' : ''}`}>
                       {u.is_disabled ? '已禁用' : '正常'}
@@ -684,7 +722,7 @@ function UsersTab() {
             <div style={{ maxHeight: 120, overflow: 'auto', marginBottom: 12, padding: 8, backgroundColor: 'var(--pill-bg)', borderRadius: 6, fontSize: 13 }}>
               {[...selectedUsers].map((uid) => {
                 const u = users.find((x) => x.id === uid)
-                return <div key={uid} style={{ padding: '2px 0' }}>{u ? displayName(u) : uid} {u?.is_admin ? '(管理员)' : ''}</div>
+                return <div key={uid} style={{ padding: '2px 0' }}>{u ? displayName(u) : uid} {u ? `(${roleLabel(u.role)})` : ''}</div>
               })}
             </div>
             <label className="login-field" style={{ margin: 0 }}>
@@ -753,7 +791,7 @@ function UsersTab() {
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">角色</span>
-                    <span className="user-detail-value">{detailData.is_admin ? '管理员' : '用户'}</span>
+                    <span className="user-detail-value">{roleLabel(detailData.role)}</span>
                   </div>
                   <div className="user-detail-field">
                     <span className="user-detail-label">状态</span>

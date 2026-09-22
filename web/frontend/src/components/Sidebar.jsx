@@ -84,7 +84,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     }
   }, [setView])
 
-  const navItems = authUser?.is_admin
+  const navItems = authUser?.role === 'admin'
     ? [...NAV_ITEMS, { id: 'admin', icon: <Shield size={20} />, label: '管理' }]
     : NAV_ITEMS
 

@@ -29,7 +29,7 @@ export default function SettingsPanel() {
         <PageHeader title="设置" onBack={popView} />
       </header>
 
-      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: authUser?.is_admin }} onAction={handleAction} />
+      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: authUser?.role === 'admin' }} onAction={handleAction} />
       <div className="entry-group-gap" />
 
       <button type="button" className="entry-list-item settings-logout-btn" onClick={() => setLogoutConfirm(true)}>

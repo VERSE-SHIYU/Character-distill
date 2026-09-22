@@ -299,6 +299,15 @@ export const adminAPI = {
     },
   ).then(r => r.json()),
 
+  setUserRole: (userId, role) => fetchWithTimeout(
+    `/api/admin/users/${userId}/role`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    },
+  ).then(r => r.json()),
+
   generateInvites: (count = 1) => postJSON('/api/admin/invite/generate', { count }),
 
   listInvites: () => fetchWithTimeout('/api/admin/invite/list').then(r => r.json()),
