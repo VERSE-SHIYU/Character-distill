@@ -649,10 +649,6 @@ class StorageBase(ABC):
         """Get affinity scores for a (group, card) pair."""
 
     @abstractmethod
-    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
-        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
-
-    @abstractmethod
     async def update_user_banner(self, user_id: str, banner_data: str) -> None:
         """Update user banner image data."""
 

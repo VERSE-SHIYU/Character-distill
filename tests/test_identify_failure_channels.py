@@ -34,6 +34,7 @@ from fastapi.testclient import TestClient
 import deps
 import server
 from core.distiller import DistillError, Distiller
+from core.text_manager import TextManager
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -341,3 +342,34 @@ class TestIdentifyFamilyRoutesKeepDistillError:
 
         assert r.status_code == 400, r.text
         assert r.json()["detail"] == PARSE_FAIL_TEXT
+
+
+# ── 5. 点名 `/run` 的别名解析不吞 DistillError（TextManager 那处宽捕获） ───
+
+
+class TestNamedRunKeepsIdentifyFailure:
+    """点名蒸馏走 `TextManager.get_or_distill`：卡片未命中时要先取别名。
+
+    那段取别名原先自带 `except Exception: print(...)`，识别失败被**降级成「没有别名」**
+    —— 用户看到蒸馏照常成功、只是别名缺失，故障无声。删掉宽捕获后 `DistillError` 冒泡到
+    路由的 `except DistillError: raise`（`/run` 与 legacy `/api/distill` 各一处），
+    由 `web/server.py` 统一出口给出 400 + `user_message`。
+
+    变异对象 = 把宽捕获加回 `core/text_manager.py` 的别名段（`except Exception: print(...)`）
+    → 识别失败被吞，代码继续往下走（桩上没有 `distill_incremental` → AttributeError）→
+    500「操作失败，请稍后重试」→ 本用例的 400 断言红。
+    """
+
+    def test_named_run_identify_failure_is_400(self, store, user_id, monkeypatch):
+        tid = _seed_text(store, user_id)
+        distiller = _RaisingDistiller(DistillError(FAILURE_TEXT, "API 429"))
+        tm = TextManager(store, distiller, object(), {}, memory_manager=None)
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=distiller, tm=tm)
+
+        r = client.post(
+            "/api/distill/run", json={"text_id": tid, "character_name": "甲"})
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == FAILURE_TEXT
+        assert r.json()["detail"] != EMPTY_ROSTER_TEXT, "上游故障被渲染成了「没有角色」"

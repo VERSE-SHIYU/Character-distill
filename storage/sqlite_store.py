@@ -464,7 +464,9 @@ class _ConnectionContext:
     为什么把提交收在这里、而不是「每个写方法自己 commit」（缺陷 24，第八次同族显形）：
     后者把正确性寄托在人的记忆上 —— 忘了不报错、不告警，只是数据不在。实测两处漏网：
     `add_post_comment` 漏 commit，函数照常返回构造好的 dict，前端把评论显示出来、刷新即消失；
-    `cleanup_empty_cards` 同形，返回真实的 `rowcount` 却什么都没写。收口后**新写方法完全
+    另一处同形（UPDATE 后无 commit，返回真实的 `rowcount` 却什么都没写）已在 2026-09-22 随
+    缺陷 86 收尾删除 —— 全仓 `save_card` 的写点都写 `card.model_dump_json()`，无空卡来源。
+    收口后**新写方法完全
     不知道这件事也不会错**；`delete_user`（单连接 12 条写）/ `hard_delete_text`（8 条）等 27 个
     多步写方法依赖的原子性也由此保留（它们本就在末尾显式 commit，这里是兜底而非替代）。
 
@@ -5981,17 +5983,3 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get all reading progress failed: {exc}")
             raise StoreError("get_all_reading_progress", exc) from exc
-
-    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
-        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "UPDATE cards SET deleted_at = ? WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    (now, text_id, user_id),
-                )
-                return cursor.rowcount
-        except Exception as exc:
-            print(f"[SQLiteStore] Cleanup empty cards failed: {exc}")
-            raise StoreError("cleanup_empty_cards", exc) from exc

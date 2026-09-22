@@ -5011,17 +5011,3 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get all reading progress failed: {exc}")
             raise StoreError("get_all_reading_progress", exc) from exc
 
-    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
-        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            async with await self._connect() as conn:
-                tag = await conn.execute(
-                    "UPDATE cards SET deleted_at = $3 WHERE text_id = $1 AND user_id = $2 AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    text_id, user_id, now,
-                )
-                return self._parse_rowcount(tag)
-        except Exception as exc:
-            print(f"[PostgresStore] Cleanup empty cards failed: {exc}")
-            raise StoreError("cleanup_empty_cards", exc) from exc
-

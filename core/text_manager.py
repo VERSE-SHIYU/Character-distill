@@ -448,14 +448,14 @@ class TextManager:
                     break
 
         if card is None:
-            # Resolve aliases for incremental distill
-            aliases: list[str] = []
-            try:
-                chars = await resolve_characters(
-                    self._storage, self._distiller, text_id, user_id, content)
-                aliases = aliases_for(chars, character_name)
-            except Exception as exc:
-                print(f"[TextManager] Identify aliases failed, using empty: {exc}")
+            # Resolve aliases for incremental distill.
+            # **不设就地捕获**：识别失败（DistillError 家族）必须冒泡 —— 原先的宽捕获
+            # 把它降级成「没有别名」，用户看到的是蒸馏成功而别名缺失，故障无声。
+            # 上屏口径由调用方的 `except DistillError: raise` 交给统一出口
+            # （`web/server.py::_domain_error_status` → 400 + `user_message`）。
+            chars = await resolve_characters(
+                self._storage, self._distiller, text_id, user_id, content)
+            aliases = aliases_for(chars, character_name)
 
             try:
                 card = await asyncio.to_thread(

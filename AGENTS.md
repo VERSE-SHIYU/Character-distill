@@ -150,7 +150,7 @@ config.yaml 现值（现读，非转述）：
   - **明确不在本期**：`identify_characters` 不走 `_parse_json_with_retry`（自带 `_parse_list` + 一次重试，且要的是 list 不是 dict，形状契约不同）→ 无环可接，本轮不动
 - 回归锁：`tests/test_llm_adapter_finish_reason.py`（含变异验证）、`tests/test_chat_stream_error.py`
 
-**3. 第二道门是「非空」门，不是「结构合法」门** —— 状态：**纵深防御（主屏障已上移）**
+**3. 第二道门是「非空」门，不是「结构合法」门** —— 状态：**已裁定·不修**（2026-09-22）—— 有意设计的纵深防御：主屏障在上游（失败 Map 片**不落 checkpoint**），门的范围由 `tests/test_distill_resume.py::test_truncated_nonempty_result_passes_second_gate` 的活断言锁定，放宽或收紧都由它说话。
 - `_resume_hit` 门 2：`if not (isinstance(cand["result"], str) and cand["result"].strip()): return None`
 - 只判非空，挡不住非空的截断文本；docstring 自述即如此（`_resume_hit` docstring：「第 2 道是**纵深防御**，不是契约……不承诺结构校验」）
 - 三门（`_resume_hit`）：门 1 形状、门 2 非空、门 3 指纹
@@ -879,7 +879,7 @@ config.yaml 现值（现读，非转述）：
 - **订正（自己 commit message 里的数）**：`170d49a` 的正文写「`get_jwt_secret()` 是唯一取值点，7 个调用点」—— **7 是错的**，实测是 **5 个直接调用点**（auth.py 4 + server.py 1；其中 4 处是 `_create_access_token` 的调用者数量，与调用点数量不是一回事，当时把两者加在了一起）。口径以本条为准。
 - **实测**：干净 clone 条件（`JWT_SECRET= pytest tests/test_auth_tokens.py`）修复前 **2 failed**（栈底 `auth.py:41 RuntimeError`）、修复后 **3 passed**；`JWT_SECRET= pytest tests/` → **1123 passed, 64 skipped, 0 failed**；守卫的变异验证：把 `get_current_user` 的 decode 改回 `get_jwt_secret()` → **只有新增那条守卫红**（1 failed, 2 passed），还原后 3 passed。
 
-**47. `pymupdf` 的 `Document.__init__` 失败路径不释放 `fz_stream` —— 句柄只在那个异常对象被 GC 回收时才关** —— 状态：**记账（不修；这是上游的账，不是本仓的）**（2026-09-16 缺陷 41 · ④ 收口时逐层实测）
+**47. `pymupdf` 的 `Document.__init__` 失败路径不释放 `fz_stream` —— 句柄只在那个异常对象被 GC 回收时才关** —— 状态：**已裁定·上游跟踪**（2026-09-22）—— pymupdf 上游缺陷，本仓无修复点（不引 monkey-patch / 不 fork），只跟踪上游版本。（2026-09-16 缺陷 41 · ④ 收口时逐层实测）
 - 事实（`pymupdf 1.28.2`，`.venv/Lib/site-packages/pymupdf/__init__.py`）：`3012 fz_stream = mupdf.fz_open_file(filename)` → `3013 doc = mupdf.fz_open_document_with_stream_and_dir(...)` 抛 → `3016 raise FileDataError(...) from e`；**`3027 self.this = doc` 是成功路径才到得了的那一行**。`Document` 没有 `__del__`，`close()` 只把 `self.this` 置空 —— 失败路径上它**从没被赋值**，故**从外面关不掉**。
 - **滞留者是谁（这是可查的事实，链已追全）**：不是我们的异常处理，是**异常对象的 traceback 链**：`Document ← __init__ 的帧 ← traceback ← FileDataError ← traceback ← concurrent.futures.thread.run() ← … ← _asyncio.Task`。
 - **「是我们 `raise ... from e` 造成的」已被实测证伪**：四种写法（`from e` / `from None` / `del e` / 在 `with` 外 raise 且 `__context__` 为 None）失败形态**逐字相同**；`gc.collect()` 也放不掉（那是活引用，不是环）。故修法不在我们这一侧。
@@ -910,7 +910,7 @@ config.yaml 现值（现读，非转述）：
 - **残余接受（照记，别让人以为 PDF 上传修好了）**：真·有效 PDF 的解析路径**本机仍会崩** —— 本修复只消掉「测失败文案要拉起推理运行时」，**不修机器**。
 - **对缺陷 44 的后果（未在本机验证）**：import 挪到校验之后，容器内「缺 onnxruntime → 坏 PDF 返回 500」那条应当随之消失（坏 PDF 在 `pymupdf.open()` 就 400）。**本机无法验证**（Windows 那条拒绝装 pytest 的容器腿要另跑）。
 
-**50. 本机 `import onnxruntime` 一律崩 ⇒ 本地 PDF 上传在生产代码路径上就是坏的** —— 状态：**环境事实仍在，生产后果已消**（2026-09-16 缺陷 41 · ④ 收口时发现，**spec 外**；同日方案 C 落地，后果消失，见末条）
+**50. 本机 `import onnxruntime` 一律崩 ⇒ 本地 PDF 上传在生产代码路径上就是坏的** —— 状态：**已裁定·结案**（2026-09-22）—— 生产后果已由缺陷 44 消除，剩余只是本机环境事实，**不属本仓缺陷**。（2026-09-16 缺陷 41 · ④ 收口时发现，**spec 外**；同日方案 C 落地，后果消失，见末条）
 - 事实：本机锁版 `onnxruntime 1.30.0` 被 `C:\Windows\System32\onnxruntime.dll`（微软随系统装的 1.17.260613）抢先加载，ABI 不符 → **模块初始化时 access violation**。这条链在 `_extract_pdf` 里，是**生产代码路径**，所以本机**上传一份合法 PDF 也是坏的**。
 - **射程写清：只影响本机开发，不影响生产。** 容器是 Linux（无此 System32 DLL），实测 `1068 passed / 82 skipped / 0 failed`。这不是测试问题，是**生产功能在开发机上不可用**。
 - **原生层根因未查明** —— 照写「未查明」：已核的是「DLL 同名抢先 + ABI 不符」这一层，为什么 `System32` 那份能压过 pip 包内那份、以及为何换 `1.26.0` 就不崩，**没有查明**，不装懂。
@@ -1208,8 +1208,11 @@ PROBE_IMAGE         false
   - **没走 500 口径**：识别失败本来就是 `DistillError`（缺陷 38 那张表已定它走 400 + `user_message`），而本条的真问题是**「故障 vs 真空名单」不可辨**，不是「码配错了」。给 500 等于另开一条上屏口径，反而把 38 已经统一的那条拆开。所以修的是**分类**：故障抛异常、真空名单返回 `[]`，码沿用已有的领域异常出口。
   - **判据现跑**：`git grep -n "chars = \[\]" -- web/routers/distill.py` → **0 处**（修复前 2 处）；`git grep -rn "_first_character_name" -- '*.py'` → 生产代码零命中（余 1 处在新测试的文档字符串里，描述被删的机制）；中文文案只定义在 `core/character_roster.py:41-42` 一处。
   - **行为变化（须让上游知道）**：点名的 `/start` 与 `/run_stream`，识别失败由「降级为空别名继续蒸馏」变为**任务失败**；HTTP 400 的 detail 由英文变为中文（三通道统一）。锁在 `tests/test_identify_failure_channels.py`（5 条，三通道 + 单源判据），登记在 `tests/test_exception_pickle_lock.py`。
-  - **未做（另记）**：HTTP 与 bg / SSE 在同一件事上的**失败码不对称**（前者 400、后两者是任务态 / 错误帧）归 §H 第 1 项，本轮不动。另：本改动把识别失败新引入了 `_run_distill_task` 的外层 `except` → `cleanup_empty_cards(text_id, user_id)`，而它的键是 (text_id, 属主)、**不是任务** —— 当前无任何生产路径写空卡，故零波及，仅记。
-  - **未做的第二处（同形残留，点名 `/run` 仍降级）**：`core/text_manager.py:453-458` 的 `get_or_distill` 里，别名那段是 `except Exception as exc: print(...)` 后**带着空 `aliases` 继续蒸馏**（`:460`）。`/run` 在 `character_name` 非空时**跳过**路由层的 `resolve_characters`（`web/routers/distill.py:690`），识别的唯一入口就落在这里 —— 于是**点名 `/run` 的识别失败仍然照旧降级**，与 `/run_stream`、bg 两条（它们无条件先 resolve）**不同**。本轮的「行为变化」因此**不覆盖点名 `/run`**。未一并改的理由：它属 `TextManager` 的职责边界（与「别名取不到就不给别名」是两回事，要先定「取不到别名该不该让整次蒸馏失败」），不在本步三通道的范围内 —— **记在此处，别让 86 看起来全关了**。
+  - **失败码不对称（有意保留，不是残留）**：HTTP 400 / bg 任务态 / SSE 错误帧，三条通道的载体不同（同步响应 / 任务行 / 事件流），同一个异常各自只能有各自的形状；可辨性已由「故障抛异常、真空名单返回 `[]`」这一层保证，码的一致不是这里的判据。
+  - **清理空卡（2026-09-22 已删，§H 第 2 项）**：本改动把识别失败新引入了 `_run_distill_task` 外层 `except` 里的 `cleanup_empty_cards(text_id, user_id)`，而它的键是 (text_id、属主)、**不是任务** —— 会误伤同一属主在同一部作品下的其他卡片。既已确认无生产空卡来源（全仓 `save_card` 的 4 个写点都写 `card.model_dump_json()`；判据 `git grep -n "save_card(" -- '*.py'`），整段删除，不留「按任务键重写」的版本。删除面：`storage/base.py` 的声明、`storage/sqlite_store.py` / `storage/postgres_store.py` 的实现、`web/routers/distill.py` 外层 `except` 里的调用、`tests/test_e2e_flow.py::test_06_cleanup_empty_cards`、`tests/test_store_commit_contract.py` 的同名用例、`storage/sqlite_store.py` 注释里的引用。判据现跑：`git grep -n "cleanup_empty_cards" -- '*.py'` → 生产代码零命中。
+  - **点名 `/run` 的别名段（2026-09-22 已修，§H 第 1 项）**：`core/text_manager.py` 的 `get_or_distill` 里，别名那段原为 `except Exception as exc: print("Identify aliases failed, using empty")` 后**带着空 `aliases` 继续蒸馏**。`/run` 在 `character_name` 非空时**跳过**路由层的 `resolve_characters`（`web/routers/distill.py` 的 `if not char_name:`），识别的唯一入口就落在这里 —— 于是点名 `/run` 的识别失败**照旧降级**，与 `/run_stream`、bg 两条（无条件先 resolve）不同。**净删宽捕获**（不新增捕获 / 映射），`DistillError` 冒泡到调用方已有的 `except DistillError: raise` → `web/server.py` 统一出口。
+    - **三处调用方的行为变化（须让上游知道）**：① `POST /api/distill/run`（点名）识别失败由「降级为空别名、蒸馏照常成功」变为 **400 + `user_message`**；② legacy `POST /api/distill`（点名分支）同上；③ `TextManager.switch_character` 随之内联生效 —— 它**当前无生产调用方**（`git grep -n "switch_character" -- .` 只有定义与台账），故本条为零波及，记明以免被当成已覆盖的活路径。另：原先被一并吞掉的**存储层异常**（`StoreError` 等，非 `DistillError`）现在也不再降级，走路由的 `except Exception` → 500，属预期（真故障就该现形）。
+    - **锁与红源**：`tests/test_identify_failure_channels.py::TestNamedRunKeepsIdentifyFailure::test_named_run_identify_failure_is_400`（真 `TextManager` + 识别即抛的桩，断言 400 + `user_message`）。**变异 = 把宽捕获加回 `core/text_manager.py` 的别名段 → 该用例红（1 failed, 8 passed）**：失败被吞后代码继续往下走（桩上没有 `distill_incremental`）→ 500，与本用例的 400 不符。
 - **HTTP 侧收尾（2026-09-22）：识别族三条路由不再吞 `DistillError` —— 已修，不是残留** —— `_do_identify`（`POST /api/identify`）、`_resolve_character_name`（`POST /api/distill` 的**不点名那一支**）、`reindex_rag`（`POST /api/distill/reindex/{text_id}`）原先各自 `except Exception as exc: print(...); raise HTTPException(500, "操作失败，请稍后重试")`。这条就地捕获**把 `DistillError` 也拦下了** —— 单分片解析失败从 **400 变 500**，用户看不到「名单无法解析 / 上游限流」这类真实原因（缺陷 38 同族：客户端条件与上游故障共用一条上屏文案）。
   - **修法（净删，不新增捕获 / 映射 / helper）**：三处捕获全删，异常冒泡到 `web/server.py` 已有的三条出口 —— `DistillError` 及子类 → `_DOMAIN_ERROR_STATUS`（400 + `user_message`）、LLM 侧已知失败 → `_llm_error_handler`、其余意外异常 → `_global_exception_handler`（500 + traceback）。原先那两行 `print` 随之删掉：traceback 由全局出口打。同文件的 `/identify`（**带 text_id** 那条）本来就没有 try，是现成先例。
   - **判据现跑**：`git grep -n "操作失败，请稍后重试" -- web/routers/distill.py` → 仅剩 **6 处，全部落在名单段之外**（本文件其余 `except Exception` 归缺陷 71，按裁定一律不动）；三条名单段的路由函数体内已零命中。

@@ -580,14 +580,6 @@ def _run_distill_task(
         # 上屏走唯一出口，**此处不再拼「蒸馏失败：」前缀** —— 前缀在异常自带的
         # user_message 里已经有了，两边各拼一次就是缺陷 17 的双重前缀。
         _set_task(task_id, {"status": "error", "message": user_facing_error(exc), "text_id": text_id, "character": char_name})
-        # Clean up half-done cards (empty card_json)
-        try:
-            async def _cleanup():
-                store = get_storage()
-                await store.cleanup_empty_cards(text_id, user_id)
-            submit_to_main_loop(_cleanup())
-        except Exception as cleanup_err:
-            print(f"[distill] Cleanup half-done cards failed (non-fatal): {cleanup_err}")
     finally:
         # 终态确认在 release 之前：若刚才的终态 _set_task 落库失败，这里补最后一次
         # 写，否则 DB 行会永久停 running 占 count_running 槽（release 了 DB 没跟上）。
