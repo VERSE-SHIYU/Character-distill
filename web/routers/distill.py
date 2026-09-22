@@ -1349,6 +1349,10 @@ async def start_session(
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
+    # 没配 key 就建不出能用的会话（`_create_session` 挂在 text_manager 上，且引擎拿着 None
+    # 也聊不了）。与同文件其它端点同判 503；原先独立卡片分支会 200 建出一个 llm=None 的死会话。
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
 
     card_rec = await storage.get_card_owned(req.card_id, user_id)
     if not card_rec:
@@ -1380,7 +1384,7 @@ async def start_session(
             except Exception:
                 pass
             session_id = await asyncio.to_thread(
-                text_manager._create_session, content, card,
+                text_manager._create_session, card,
                 all_characters=all_characters, rag=None,
                 card_id=req.card_id, user_id=user_id,
                 user_role=req.user_role,
@@ -1393,18 +1397,15 @@ async def start_session(
                     embedding_key=emb_key, embedding_region=emb_region,
                 )
         else:
-            # 独立卡片模式：不加载原文，不构建 RAG，直接创建 ChatEngine
-            from core.chat_engine import ChatEngine
-            from deps import get_rag_config, get_memory_manager
-            engine = ChatEngine(
-                per_user_llm, None, card,
-                memory_manager=get_memory_manager(),
-                card_id=req.card_id,
+            # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
+            # 卡片 prompt）—— 这里原先手搓 ChatEngine 并直接写 sessions[id]，漏了 user_id，
+            # 于是 `_ensure_session` 的属主门整段被跳过（谁拿到 session_id 谁都能用）。
+            session_id = await asyncio.to_thread(
+                text_manager._create_session, card,
+                all_characters=[], rag=None,
+                card_id=req.card_id, user_id=user_id,
                 user_role=req.user_role,
-                storage=storage,
             )
-            session_id = _uuid.uuid4().hex[:12]
-            sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}
             all_characters = []
     except HTTPException:
         # 属主门的 404 这类有语义的拒绝不能被下面的宽 except 重抛成 500：
@@ -1420,43 +1421,42 @@ async def start_session(
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
-    # ── Inject opening line (always generate when LLM is available) ──
+    # ── Inject opening line ──
+    # 本函数开头的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
+    # None），故原先这里那层 `if per_user_llm is not None:` 恒真、它的 else 不可达。
     opening = ""
-    if per_user_llm is not None:
-        try:
-            style = card.speaking_style
-            traits = "，".join(card.personality_traits[:3])
-            seed = card.first_message or ""
-            user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
-            from core.clock import UserClock, describe_time_period
-            _now = UserClock.now(req.client_tz)
-            _period = describe_time_period(_now.hour)
-            seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
-            prompt = (
-                f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
-                f"身份：{card.identity}\n"
-                f"性格：{traits}\n"
-                f"语气：{style.tone}\n"
-                f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
-                f"{seed_line}"
-                f"当前时段：{_period}（{_now.hour}点）\n\n"
-                f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
-                f"时间藏在语气里不点明。\n"
-                f"(动作)台词，台词不超过50字。"
-            )
-            opening = await asyncio.to_thread(
-                per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
-            )
-            try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
-            opening = opening.strip().strip('"').strip("'").strip("「」")
-            if opening and len(opening) <= 100:
-                print(f"[start_session] Generated opening: {opening}")
-            else:
-                opening = card.first_message or ""
-        except Exception as exc:
-            print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+    try:
+        style = card.speaking_style
+        traits = "，".join(card.personality_traits[:3])
+        seed = card.first_message or ""
+        user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
+        from core.clock import UserClock, describe_time_period
+        _now = UserClock.now(req.client_tz)
+        _period = describe_time_period(_now.hour)
+        seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
+        prompt = (
+            f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
+            f"身份：{card.identity}\n"
+            f"性格：{traits}\n"
+            f"语气：{style.tone}\n"
+            f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
+            f"{seed_line}"
+            f"当前时段：{_period}（{_now.hour}点）\n\n"
+            f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
+            f"时间藏在语气里不点明。\n"
+            f"(动作)台词，台词不超过50字。"
+        )
+        opening = await asyncio.to_thread(
+            per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
+        )
+        try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
+        opening = opening.strip().strip('"').strip("'").strip("「」")
+        if opening and len(opening) <= 100:
+            print(f"[start_session] Generated opening: {opening}")
+        else:
             opening = card.first_message or ""
-    else:
+    except Exception as exc:
+        print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
         opening = card.first_message or ""
 
     # Save opening to DB + engine.history (seed only, no backfill to card)

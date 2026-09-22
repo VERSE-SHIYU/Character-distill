@@ -25,10 +25,16 @@ class GroupSession:
         user_persona_name: str = "",
         user_persona_desc: str = "",
         storage = None,
+        *,
+        user_id: str,
     ) -> None:
         self.id = id
         self.engines = engines  # card_id → ChatEngine
         self._storage = storage
+        # 属主。keyword-only 且**不给默认值**：漏传要当场 TypeError，而不是静默装个空串。
+        # 空串的后果是属主判定 `group.user_id == user_id` 永远不成立 —— 属主本人被当成外人，
+        # 自己的群聊被判 404。失败即关：响亮且当场暴露，不会静默放行。
+        self.user_id = user_id
         self.group_history: list[dict[str, Any]] = []
         self.lock = asyncio.Lock()
         self.user_persona_type = user_persona_type

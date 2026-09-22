@@ -250,7 +250,6 @@ async def resume_session(
         new_session_id = await asyncio.wait_for(
             asyncio.to_thread(
                 text_manager._create_session,
-                text_rec["content"],
                 card,
                 all_characters=all_characters,
                 rag=rag,

@@ -118,7 +118,8 @@ config.yaml 现值（现读，非转述）：
 > **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
 > **99–104 是 `published_from` 一案（本分支）并入 main 时按 main 现有最大号**顺延**过来的六条**（并线时本线原编 86–91，与 main 的 86–91 撞号 —— 撞的是编号不是内容，按「按 main 上现有最大编号顺延」改号，两边条目都留）。状态：**已修 5**（100–104）/ **记账 1**（99，PG 无迁移账本，不修）—— **不重算上面那行的桶**：那条口径标着 2026-09-22 现跑现数、只覆盖 1–98，这六条产生在同一天但并入更晚，整行重算留到下次收口（此处只写顺延、不改数）。**注意本分支已推送的 commit message 里仍写着旧号 86–91**（`d17ee54` / `ef6deb6` / `04dc4ef` / `b86b1fd`）：推送后不改写历史，故那几处是历史坐标，以台账现号为准。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
-> **105–110 是 2026-09-22 新记的六条**（105–108 是 `users.role` 一案并入 main 后、合并前补齐项里顺带读出的；109 / 110 是当晚交付报告里点出的两处），按 main 现有最大号顺延：**105 归 Spec 2、106 归蒸馏线、107 归蒸馏线、108 归 Spec 3（紧接本份）、109 归前端通用组件、110 归蒸馏线**；状态 **105 / 106 已修**（`9fae212` / `de49658`，随本份修）、**107 / 108 / 109 / 110 记账**。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这几条产生更晚）。**107–110 只报告不修**。
+> **105–107 是 2026-09-22 新记的三条**（`users.role` 一案并入 main 后、合并前补齐项里顺带读出的），按 main 现有最大号顺延：**105 归 Spec 2、106 归蒸馏线、107 归 D 组**。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。**订正（2026-09-22，72 线收尾）**：原写「状态全部『记账』」已过期 —— **107 已修**（`dbdbf9c` + `7a5992a`，由 72 线第 1 步的 503 门收口）；105 / 106 仍为记账。**同轮还按 main 现最大号顺延补记了 108–113 六条**（§三 末，72 线第 1 步收尾）—— 原拟 75–80，与 main 现有的 75–80 **撞号**，按「按 main 上现有最大编号顺延」改号（撞的是编号不是内容）。**判据是编号而非行序**：本文件编号跨小节、**与行序不同调**，按行尾取 max 只会取到 74 而漏掉真正最大的 107。
+> **本分支（`users.role` 一案）并入时补记的三条，按 main 现最大号顺延为 114–116**（原编 108 / 109 / 110，与 main 已在 §三 末占用的 108–110 **撞号** —— 撞的是编号不是内容，两边条目都留）：**114 归 Spec 3（紧接本份）、115 归前端通用组件、116 归蒸馏线**；状态**全部记账**（只报告不修）。**105 / 106 订正**：上面那条「105 / 106 仍为记账」已过期 —— 两条随本分支修完，**105 已修**（`9fae212`）、**106 已修**（`de49658`），见 §三 对应条目。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
@@ -1411,16 +1412,18 @@ PROBE_IMAGE         false
 - **变异（实测红，验后已还原；2026-09-22 现跑现数）**：把 store action 改回 `.catch(() => {})` + 无条件移除（即**修复前的代码形态**）→ `DistillCancelError` 4 条里红 2 条（任务条 / 工作台各自的「失败留任务」那条）、`cancelDistillTask.test.js` 3 条里红 1 条（「失败上抛且任务仍在列表」）—— 3 红 4 绿，正好是各自断言里负责失败路径的那几条；单独把工作台的 `<ErrorBox>` 摘掉（其余不动）→ `DistillCancelError` **只红 1 条**（工作台那条），另 3 条仍绿，证明两个落点各有一条独立的锁、不共用。
 - **判据命令**：`git grep -n "catch(() => {})" -- web/frontend/src/components/DistillTaskBar.jsx`（**零命中**）；`git grep -n "cancelDistillTask" -- web/frontend/src/store/useAppStore.js web/frontend/src/components/DistillTaskBar.jsx web/frontend/src/components/DistillWorkbench.jsx`（三个文件各 1 处定义/绑定 —— 写法只剩一种）。
 
-**107. LLM 全不可用时 `/api/distill/start_session` 回 500「操作失败，请稍后重试」—— 兄弟端点早就回 503 并说清原因** —— 状态：**记账**
-- **归属**：蒸馏线。
-- **形态**：`web/routers/distill.py:1351` 的 `text_manager = get_text_manager(llm=per_user_llm)`，而 `get_text_manager` 在 `llm is None` 时**返回 None**（`web/deps.py:290`）。`start_session` 不查 None，第 1372 行 `text_manager._build_all_characters(...)` 直接 `AttributeError`，被第 1414 行的宽 `except Exception` 兜成 `HTTPException(500, "操作失败，请稍后重试")`（第 1416 行）。
-- **实测**：2026-09-22 本机把后端起在「无任何 LLM 凭据」下（既无用户 key 也无全局 key），客户端点「+ 新建存档」→ `POST /api/distill/start_session -> 500`；服务端日志 `[deps] LLMAdapter init failed (API not configured?): missing API key …` + `[distill] Create session for card … failed: 'NoneType' object has no attribute '_build_all_characters'`。
-- **为什么算缺陷而不是「配置错了活该」**：同一文件的兄弟端点 `web/routers/distill.py:685-686` 有正解 —— `if text_manager is None: raise HTTPException(503, "请先在设置页配置 API Key")`；且本端点第 1425 行自己就用 `if per_user_llm is not None:` 表达过「LLM 可以缺席」（开场白那一段）。缺席是被预期的状态，只是早退那一步没跟上。**500 把「没配 key」说成「服务端故障」**：用户据此会去重试，而正确的下一步是去设置页配 key。
+**107. LLM 全不可用时 `/api/distill/start_session` 回 500「操作失败，请稍后重试」—— 兄弟端点早就回 503 并说清原因** —— 状态：**已修**（`dbdbf9c` + `7a5992a`）
+- **归属**：D 组。
+- **收口**：由 72 线第 1 步的 **503 门**收口 —— `start_session` 在建会话之前统一判 `text_manager is None` → `503 请先在设置页配置 API Key`，与同文件兄弟端点同码同文案。该门同时消掉了「独立卡片分支 200 建出一个 llm=None 的死会话」这一半（见缺陷 108–109）。测试见 `tests/test_ownership_404.py::TestStartSessionApiKeyGate` 的 T7 / T8（`7a5992a`），`no_api_key` 夹具把 `deps.get_user_llm` 钉成返 `None`。
+- **两条分支两种状态码（原 110 的内容，2026-09-22 并入）**：没配 key 时 `get_text_manager(llm=None)` 返 `None`（`web/deps.py:290` 的 `llm is None ⟺ None`）。**独立卡片分支**手搓的引擎拿 `llm=None` 照样 200，**建出一个聊不了的会话**；**文本分支**撞上 `NoneType` 才 500。同一个前置条件、两条分支两种码 —— 门槛提到两条分支之前后，两种码归一为 503。红源：T7 / T8。
+- **形态（修前）**：`web/routers/distill.py` 的 `text_manager = get_text_manager(llm=per_user_llm)`，而 `get_text_manager` 在 `llm is None` 时**返回 None**（`web/deps.py:290`）。`start_session` 不查 None，`text_manager._build_all_characters(...)` 直接 `AttributeError`，被宽 `except Exception` 兜成 `HTTPException(500, "操作失败，请稍后重试")`。
+- **实测（修前）**：2026-09-22 本机把后端起在「无任何 LLM 凭据」下（既无用户 key 也无全局 key），客户端点「+ 新建存档」→ `POST /api/distill/start_session -> 500`；服务端日志 `[deps] LLMAdapter init failed (API not configured?): missing API key …` + `[distill] Create session for card … failed: 'NoneType' object has no attribute '_build_all_characters'`。
+- **为什么算缺陷而不是「配置错了活该」**：同一文件的兄弟端点（`text_manager is None` → 503「请先在设置页配置 API Key」）有正解；且本端点开场白那一段原先自己就用 `if per_user_llm is not None:` 表达过「LLM 可以缺席」。缺席是被预期的状态，只是早退那一步没跟上。**500 把「没配 key」说成「服务端故障」**：用户据此会去重试，而正确的下一步是去设置页配 key。**（该 `if per_user_llm is not None:` 已于 `926d870` 删除**：有了 503 门它恒真、else 不可达，留着只是死分支。）
 - **触发面（不是「游客必然中招」）**：`deps.get_user_llm` 在用户没配 key 时**回落全局**（`web/deps.py:107` 的 `resolve_llm(config, build_user=…, get_global=get_llm)`），故配了全局 key 的生产不触发；触发条件是**两份都缺**（自托管未配、或本机开发环境）。
-- **判据命令**：`git grep -n "text_manager is None" -- web/routers/distill.py`（现应只给 685 一处；补上 `start_session` 的守卫后应为两处）。
+- **判据命令**：`git grep -n "text_manager is None" -- web/routers/distill.py` → **4 行**：`bare` 形式两处（`/run` 的 :685 与 `start_session` 的 :1354，正是本条要的两处），另两处是 `or` 组合形态（`text_manager is None or distiller is None` / `distiller is None or text_manager is None`）被同一子串顺带匹配到。判据要的是**裸形式两处**，不是子串命中数。
 
-**108. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**记账**
-- **归属**：Spec 3（紧接本份）。**说明（spec 补充 5）**：Spec 3 的 S0 普查把 105、106 两处也纳入，与其余 9 处统一迁移到同一套写失败处理机制，全仓只留一种写法。
+**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**记账**
+- **归属**：Spec 3（紧接本份）。**说明（spec 补充 5）**：记 **114** 时，在条目里注明：「Spec 3 的 S0 普查把 105、106 两处也纳入，与其余 9 处统一迁移到同一套写失败处理机制，全仓只留一种写法。」（补充 5 原文写的是「记 108 时」—— 该编号与本条一起按 main 现最大号顺延为 114。）
 - **坐标（按 spec 补充 3 #7 记录）**：`MinePage.jsx:37`（改可见性，PATCH）、`:413`（关注，POST）、`:611`（改简介）、`:963`（发动态）、`AuthorPage.jsx:197`（给帖子点赞，POST）、`MarketCardDetail.jsx:189`（给角色卡点赞，POST）、`PostCard.jsx:106`（发评论，POST）、`PrivateMessageChat.jsx:254`（撤回消息，POST）、`GroupChatPage.jsx:1358`。
 - **形态**：写请求（POST/PUT/PATCH/DELETE）后面接一个静默 `catch {}`（或 `catch {} finally { … }`）—— 失败（含门禁 403）被吞掉，界面既不提示也不回滚，用户以为成功。**与 105 / 106 同形**，105 / 106 是其中被点名先修的两处。
 - **复核附注（2026-09-22，现跑现数，**未改**本条目按 spec 定下的范围）**：按「写调用后 25 行内出现静默 catch」重扫 `web/frontend/src/**/*.jsx`，得 16 处原始命中。与上面 9 处逐一对：
@@ -1429,7 +1432,7 @@ PROBE_IMAGE         false
   - **口径**：本条目正文仍按 spec 记录的 9 个坐标为准；上述偏差**只作复核留痕**，Spec 3 立项时按「重扫一遍再定坐标」而非照抄本条目。
 - **判据命令**：`git grep -n "catch {}" -- web/frontend/src/components/MinePage.jsx web/frontend/src/components/AuthorPage.jsx web/frontend/src/components/MarketCardDetail.jsx web/frontend/src/components/common/PostCard.jsx web/frontend/src/components/PrivateMessageChat.jsx`（上面 8 处坐标都在输出里；**同一个正则也会带出同文件里读请求 / `JSON.parse` 的 `catch {}`**，所以命中数多于 8 属正常，逐条按上下文定案，不按命中数定案）；复核用的重扫以「写方法 + 静默 catch 出现在 25 行窗口内」做初筛，再逐条读上下文。
 
-**109. `ErrorBox` 渲染出字面 `??` 与 `?` —— 图标字形丢在了文件里** —— 状态：**记账**
+**115. `ErrorBox` 渲染出字面 `??` 与 `?` —— 图标字形丢在了文件里** —— 状态：**记账**
 - **归属**：前端通用组件（不分线）。
 - **形态**：`web/frontend/src/components/common/ErrorBox.jsx:6` 是 `<span style={{ flex: 1 }}>?? {message}</span>`，第 19 行关闭按钮的内容是一个 `?`。按 `ErrorBox` 的用途（错误提示条）推断，原意应是 ⚠️ 与 ✕，写进文件时丢成了 `?`。**是文件里的字面 `?`，不是终端编码或字体显示问题**（读源码即可见）。
 - **影响面**：所有用 `ErrorBox` 的界面都会带上这个前缀与关闭按钮，**本份新做的 105 / 106 两处上屏也在这条路径上**（拒绝文案本身完整，前缀是多余的 `??`）。功能不受影响 —— `.error-box` 与文案都在 —— 属观感 / 可读性缺陷。
@@ -1437,7 +1440,7 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -n '?? {message}' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 1 行）。
 - **修法（留待，未做）**：换成语义正确的字形。改前先确认现有断言的写法 —— 本份的测试用的是 `toContain('…detail…')`，不受前缀影响；但别处若有 `toBe` 全等断言要一并核。
 
-**110. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**记账**
+**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**记账**
 - **归属**：蒸馏线。
 - **形态**：`web/frontend/src/components/DistillWorkbench.jsx:110` 的 effect 依赖 `[texts, loadTexts]`，函数体第 91 行是 `if (texts.length === 0) { loadTexts(); return }`。而 `web/frontend/src/store/useAppStore.js:656` 的 `loadTexts` 每次都执行 `set({ texts: data })`（第 661 行）—— **不论 `data` 是不是空数组都换一个新引用**，`texts` 的引用必然变化 → effect 重跑 → 仍然是空 → 再调 `loadTexts()`。闭环成立，**与网络是否失败无关**，触发条件只是「文本列表为空」。
 - **实测**：2026-09-22 的 S4 浏览器点检与写 106 的组件测试时都撞到。vitest 侧的表现是该用例文件**挂住不退出**（需手动 kill；那次留下过 3 个挂死的 vitest 进程，清掉后全量才恢复正常）。测试侧的规避写法是别给空列表 —— `web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 的 `beforeEach` 就为此塞了 `texts: [{ id: 'x1', filename: 'a.txt' }]`。
@@ -1594,7 +1597,8 @@ PROBE_IMAGE         false
 - 复算命令：`git grep -c 'except Exception' web/routers/*.py`（合计口径按 §四「聚合统计必须写明口径」，此处是**文件计数之和**）。
 
 **72. 活会话持有旧 key 实例：`clear_user_llm_cache` 不重建会话** —— 状态：**另开议题**
-- 用户换 key 后，新请求解析到新实例，但**内存里已有的会话**仍拿着旧实例（`get_sessions()` 里的 engine 持 `llm`）。旧 key 仍然可用 —— 在**撤销**场景下这是安全缺口。
+- 用户换 key 后，新请求解析到新实例，但**内存里已有的会话**仍拿着旧实例（`get_sessions()` 里的 engine 持 `llm`）。
+- **这不是安全缺口**（原状态行称「撤销场景下是安全缺口」，滞后，就地订正）：`update_user_api_config` 的 docstring 明写「空字段不写入」（`storage/sqlite_store.py`），即**用户根本没法通过 API 清掉 key**；「换 key」是把该用户的旧 key 换成他自己的新 key，旧实例拿的不是别人的凭据，也不存在「撤销」这个动作。真实后果是**功能性的**：换 key / 换 model 之后，已有的活会话**不生效**，要等会话重建才切过去。
 - 与缺陷 61（F6）是同一形态的两半：61 修的是「geo 判定不跟着会话走」，这条是「**凭据**不跟着会话走」。
 
 **73. `core/embeddings.py` 与 mem0 的出站不经过 adapter，是否需要 geo 约束待定** —— 状态：**另开议题**
@@ -1603,6 +1607,35 @@ PROBE_IMAGE         false
 
 **74. embedding 配置读取有 5 处完全相同的写法（含变体约 8 处）** —— 状态：**另开议题**
 - 同一份「读 `embedding_key` / `embedding_region` 并给默认值」的逻辑散在多处，与缺陷 35/62 同族（同一件事抄多遍，漏改一处是静默的）。本轮的解析出口收敛（`get_user_llm`）只覆盖了 LLM 那一条，**embedding 那条没并入**。
+
+**108. 独立卡片会话不登记属主，`_ensure_session` 的属主门整段被跳过** —— 状态：**已修**（`dbdbf9c` + `b728ca8`）
+- `/api/distill/start_session` 不带 `text_id` 的「独立卡片」分支原先手搓 `ChatEngine(...)` 并直接写 `sessions[session_id] = {...}`，条目里**没有 `user_id`**。而 `_ensure_session` 的命中校验写成 `if session.get("user_id") and session["user_id"] != user_id` —— 「没登记」使整段短路放行，**任何登录用户拿到该 `session_id` 都能用**。
+- 修法两半：`dbdbf9c` 让该分支改走**唯一**的建会话点 `TextManager._create_session(rag=None)`，条目自带 `user_id`；`b728ca8` 把命中校验的前置 `session.get("user_id") and` 删掉 —— 条目没登记属主时 `None != user_id` 判「不是你的」。**失败即关**：将来再冒出一个忘了登记的构造点，后果是**属主本人 404**（响亮、当场暴露），而不是所有人放行（静默）。
+- 红源：`tests/test_ownership_404.py::TestOneToOneSessionOwnership::test_T6_unregistered_entry_fails_closed`（T6 是补写的 —— T1 在「所有构造点都已登记」之后**打不红**，见 §四「每条断言要有专属红源」）。
+
+**109. 群聊内存命中只判「删没删」，不判「是不是你的」** —— 状态：**已修**（`dbdbf9c`）
+- `/{group_id}/send` 与 `/{group_id}/broadcast` 各写了一遍「内存取 → 取不到就重建 → 还取不到 404」。内存命中后 `get_group_session_owned` 对非属主返回 `None`，而调用处只判 `if session_rec and session_rec.get("deleted_at")` —— `None` 直接放行。
+- 修法：`GroupSession` 增加 **keyword-only、无默认值**的 `user_id`；两处读取合成一个 `_get_owned_group(group_id, user_id, storage)`（内存命中也要 `group.user_id == user_id`，否则按属主重建）。非属主与「不存在」因此**同码同文案**（`群聊会话已过期，请重新创建`）。`deleted_at` → 410 的判断不动（管的是「已删除」，与属主无关）。
+- 红源：`tests/test_ownership_404.py::TestGroupSessionOwnership` 的 T3（`/send`）与 T4（`/broadcast`）。
+
+**110. `start_session` 无 key：独立卡片 200 建出一个死会话、文本分支 500** —— 状态：**并入 107**
+- 同一事实（没配 key 时 `start_session` 的行为）、同一修复提交（`dbdbf9c` + `7a5992a`），内容已整体并入 **107**，此处不再单独维护 —— 同一个事实记两条，改状态必然只改到一处。
+
+**111. `_create_session` 死参数 `text`** —— 状态：**已修**（`5947d18`）
+- `text` 是**第一个位置参数**，函数体从未引用（正文经 `card` 与调用方的 RAG 进引擎）。**死参数为错位留出空间** —— 与缺陷 G 那次的落脚点同形：调用点按位置多传一个实参就有地方可落、静默装错值。删掉后 `card` 成为唯一的位置参数，多传的位置实参当场 `TypeError`。
+- 6 个调用点同步去掉首个位置实参；`tests/test_create_session_kwonly_lock.py` 的 `_POSITIONAL_OK` 收成 `("self", "card")`，并把 `text` 加进「死参数不许回来」的签名断言（**不放松锁的命题**）。
+- 红源：把 `text` 加回签名 → `test_dead_params_that_gave_the_overrun_somewhere_to_land_stay_deleted` / `test_optional_params_are_keyword_only` / `test_keyword_call_binds_each_name_to_its_own_value` 三条红。
+
+**112. 全量里约 20 条 `PytestUnhandledThreadExceptionWarning`（aiosqlite `Event loop is closed`），条数与命中用例每次不同** —— 状态：**记账**
+- 本轮未引入、本轮不修：需要单独查线程 / loop 生命周期，与本轮「会话属主」议题**无共同成因**。记在此处，以免下次当成新问题重查。
+
+**113. 全量跑时 T2 额外报 `coroutine ... was never awaited`（只跑 `tests/test_ownership_404.py` 不出现）** —— 状态：**已修**（`8dfb1f8`）
+- 成因：`tests/test_llm_access_gate.py::test_l11_app_installs_the_production_guard` 用 `with TestClient(server.app)` 触发真实 lifespan，以证明「生产经 lifespan 装上了门」。**启动同时也注册了 `core.scheduling` 的投递器**（`set_main_loop`），而该用例只还原了守卫 —— 退出后 loop 已被 `TestClient` 关掉，注册却还指着它。
+- 之后第一个走 `submit_to_main_loop` 的用例把协程投到死 loop 上；`core/chat_engine.py` 的宽 `except` 吞掉异常，于是它以 `coroutine ... was never awaited` 的形式飘在**别的**用例头上（最难查的那种串味）。
+- 修法：把启动那一段包进本文件既有的 `_snapshot(S.get_loop_submitter, S.set_loop_submitter, before)` 惯用法，并在块后断言已还原。**不新建全局夹具** —— 还原责任归泄漏用例自己（与 `_Restored` docstring 的「还原，而不是置 None」同理由）。
+- 红源：撤掉那层 `_snapshot` 包装 → `test_l11_app_installs_the_production_guard` 的最后一条断言红。
+- **已知边界（2026-09-22 审计）**：**lifespan 注册的守卫与投递器没有配对注销** —— 生产关停路径不撤销这两处注册。目前全仓**只有 `test_l11` 会启动生产 lifespan**，两个注册都由测试侧的 `_snapshot` 隔离，故影响面就这一处；测试侧隔离进程级注册也正是本仓既定机制。
+- **收敛时机**：**出现第二个启动 lifespan 的用例时**，再把这套还原收敛成统一机制。在那之前不动 —— 为一个假想的用例去给 `deps` 加注销接口、改生产关停流程，规模不相称；且「关停后仍在跑的线程再投递，该走死 loop 报错还是走 `core.scheduling` 的回退语义」需要单独调研，不能夹在收尾里。
 
 ### 四、验证纪律
 
