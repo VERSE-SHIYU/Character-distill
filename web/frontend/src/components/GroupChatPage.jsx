@@ -4,6 +4,7 @@ import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout, postJSON, streamSSE } from '../api/client'
+import { fetchCardsByText } from '../api/cards'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -303,7 +304,7 @@ export default function GroupChatPage() {
       const grouped = {}
       for (const text of texts) {
         try {
-          const res = await fetchWithTimeout(`/api/distill/cards/by-text/${text.id}`)
+          const res = await fetchCardsByText(text.id)
           const data = await res.json()
           const cards = []
           for (const c of data) {
@@ -531,7 +532,7 @@ export default function GroupChatPage() {
     const grouped = {}
     for (const text of texts) {
       try {
-        const res = await fetchWithTimeout(`/api/distill/cards/by-text/${text.id}`)
+        const res = await fetchCardsByText(text.id)
         const data = await res.json()
         const cards = []
         for (const c of data) {
