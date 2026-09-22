@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, fireEvent, waitFor, act } from '@testing-library/react'
+import { render, fireEvent, waitFor } from '@testing-library/react'
 import Sidebar from '../Sidebar'
 import ChatArea from '../ChatArea'
 import CharCard from '../CharCard'
