@@ -1231,12 +1231,27 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -n "coref_resolve\|update_text_resolved" -- '*.py'`（除定义与 tests 外应零命中）、`git grep -n "DISTILL_USE_COREF" -- .`（现仅 `web/routers/distill.py:36` 一处读）
 - **处置方向**：要么删（函数 + 两列 + 分支 + 环境变量），要么接线（上传时跑一次并写回）。**先不删**：`content_resolved` / `coref_resolved` 在 `save_text` 的公开签名与 `tests/test_storage_contract_shape.py` 的契约里，删列要新写 DROP 迁移并改契约。裁定归用户。
 
-**88. `distill_incremental_stream` 内联了一份 Map 循环的副本** —— 状态：**记账**（不修，2026-09-21；S1 泛化 Map 原语时确认不是漏改）
-- **形态**：`core/distiller.py:1820-1879` 的 `_map_with_progress` 自己重写了一遍 semaphore / `done_count` / `lock` / `failures` / `usages` / `_one` / `gather` / `aggregate_usage`，与 `_run_map_concurrent`（`:1407-`）同形。S1（`0605bdf`）已把 Map 参数化成 `build_prompt` + `usage_action`，**识别侧复用了它，流式蒸馏侧没有**。
-- **为什么当时没顺手合并（不是忘了）**：流式多三样东西 —— 续跑命中短路（`_resume_hit`）、逐片 checkpoint 落库（`save_distill_chunk` + `ON CONFLICT DO NOTHING` 的指纹语义）、以及用 `queue.Queue` 把进度倒回生成器。`_run_map_concurrent` 的 `on_chunk_done` 是**同步回调**，而生成器要 `yield`，`yield` 不能出现在回调里 —— 这是**两条真不同的控制流**，合并需要一个能把进度事件带出任务并交回生成器的通道，是设计活不是替换。
-- **代价**：「失败片是否落 checkpoint」「失败片按字符估算补记账」这两条口径必须两处手工一致，而详细注释只写在流式这一侧（`:1844-1865`）。
-- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/`（现为 **2** 处；并成 1 处即已收口）
-- **处置方向**：把 Map 抽成 async 生成器（`async for ev in _map_events(...)`），同步侧用 `asyncio.run` + 收集、流式侧直接转发。**先不动**：会碰 `resume_candidates` 与 checkpoint 的既有语义，超出本案范围。
+**88. `distill_incremental_stream` 内联了一份 Map 循环的副本** —— 状态：**已修**（2026-09-22；2026-09-21 首记，原状态「记账（不修）」）
+- **形态（修复前）**：`core/distiller.py:1820-1879` 的 `_map_with_progress` 自己重写了一遍 semaphore / `done_count` / `lock` / `failures` / `usages` / `_one` / `gather` / `aggregate_usage`，与 `_run_map_concurrent`（`:1407-`）同形。S1（`0605bdf`）已把 Map 参数化成 `build_prompt` + `usage_action`，**识别侧复用了它，流式蒸馏侧没有**；连「建 client → 跑 → 关」那一段的清理语义也是第二份手抄。
+- **首记的「是设计活不是替换」对了一半**：流式侧确有三样独占 —— 续跑命中短路（`_resume_hit`）、逐片 checkpoint 落库（`save_distill_chunk` + `ON CONFLICT DO NOTHING` 的指纹语义）、进度经 `queue.Queue` 倒回生成器。但**通道本来就存在**（生成器自 S1 起就是线程 + 队列），且命中片可以**在调原语之前**就摘出去 —— 收进预扫之后，「原语只看未命中片」是唯一真正需要设计的一处，其余全是收口。
+- **修法（2026-09-22）**：
+  - 原语 `_run_map_concurrent`（`:1459`）只加 `ok` 标志：成功片 `ok = True`（`:1488`）、失败片 `ok = False`（`:1501`），回调签名改 3 参 `on_chunk_done(index, result, ok)`（`:1506`），docstring（`:1473-1476`）改述「`ok=False` 的片结果是空串且已计入 failures，调用方据此决定落不落 checkpoint」。同步侧 `_on_done`（`:1683`）同步改签名（标志在同步路径不参与计数，忽略）。
+  - 流式 Map 相整段替换：预扫（`:1872-1886`，命中片零 LLM 调用经 `_resume_hit` 直接并入 `map_results`，并就地补发其进度事件）→ `_on_chunk` 闭包（`:1893-1897`，**全函数唯一一处**把原语侧未命中片下标 `j` 映射回 `relevant` 的原始下标；指纹与 checkpoint 用的都是原始下标）→ `_thread_run`（`:1899-1911`，调 `_run_map_with_client`，即收口后全仓唯一建/关 Map client 处）→ 队列排空循环（`:1916-1943`，成功片回调落 checkpoint、失败片点名不落且打印）。
+  - **全命中也走原语**（不分叉）：`miss_indices` 为空时原语收到空列表 —— `_run_map_concurrent` 对空 `usages` 的 `aggregate_usage` 返回 None、不写零成本假账、零 LLM 调用。
+- **行为变化**：
+  - client 关闭语义收敛到 `_run_map_with_client`（`:1431`）一处；流式侧原先自己 hand-rolled 的建/关副本删除。
+  - 回调契约由「2 参、指纹在回调内算」改为「3 参；指纹仍由本侧从 `relevant[idx]` 现算」（只有生成器侧拿得到原文）。
+  - 失败率**分母不变**，仍是全书相关片数 `total_chunks = len(relevant)`（流式 `:1952`、同步 `:1712`）—— 命中片不进原语但仍计入分母，否则续跑会让失败率虚高、越线整批 bail。该口径已补注释锁在 `:1950-1951`。
+  - 文档陈旧行号随本步修正：`_resume_hit` docstring（`:237`）改述主屏障在流式侧（失败 Map 片不落 checkpoint，`ok=False` 即不回调落库）。
+- **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/` → **1** 处（`core/distiller.py:1478`；修复前 2 处）；`git grep -n "_map_with_progress" -- core/` → 零命中（余 1 处在本条「形态（修复前）」的叙述里）。
+- **锁与红源（本步零新增锁）**：按「现有测试能打红的变异不新增锁」逐条实打（每条跑完按字节还原，`还原核验: 全部字节一致 = True`）——
+  - **L1** 直通形态（命中片也送原语）：红 **7** 条，全在 `tests/test_distill_resume.py`；代表读数 `assert 12 == 0`「全命中不该再发任何 Map 调用」（`:174`）。
+  - **L2** `ok` 恒真：红 **1** 条 —— `TestFailedChunkNotCheckpointed::test_failed_chunk_is_not_checkpointed`。
+  - **L3** 生成器里加回整阶段落账：红 **1** 条 —— `test_usage_identity_context.py::test_start_route_lands_usage_rows`，读数 `assert 6 == 5`（多落一行 `distill_map`，与出口 5 笔对不上）。
+  - **L4** 分母改成未命中片数：红 **4** 条，全在 `tests/test_distill_resume.py`。
+  - 四条**均已被现有测试打红** ⇒ 本步不新增任何锁（与预判相反：L3、L4 也已被覆盖）。
+- **残留覆盖缺口（如实记）**：L4 那 4 条红**全部**来自全命中退化路径的 `ZeroDivisionError`（`core/distiller.py:266` 的 `failed / total`，`total == 0`），**没有**一条现有用例断言「本轮有命中、也有失败」时失败率的分母口径。该性质（分母是全书相关片数）目前只由 `:1950-1951` 的注释与本条判据命令守着；要真锁住需新写一条「有命中 + 有失败」的用例，本步按「只为打不红的补锁」规则未加。
+- **不加 L5（显式声明）**：进度事件的**顺序**（命中片是否仍早于未命中片上屏）**不是契约** —— 它只影响进度条抖动，不改变任何落库 / 计费 / 续跑结果，故不为它立锁。
 
 **89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**已修**（`e1d3cbc`，2026-09-22；2026-09-21 首记，原状态「记账（不修）」）
 - **两份的键不同**：进程内 memo（`core/distiller.py:884`）键 = `text_fingerprint(text) + ":" + model`，TTL 600s、上限 100 条、寿命是**进程**；库缓存键 = (text_id, 属主, `IDENTIFY_VERSION`)，寿命是**库**。

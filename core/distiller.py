@@ -235,7 +235,8 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
     这一类错误，不承诺结构校验——非空但内容不完整（截断的自由文本）照过。
     Map 返回的是自由文本角色证据，不产 JSON，所以「半截 JSON」不是本门的场景。
     主屏障在上游：distill_incremental_stream 里失败的 Map 片不落 checkpoint
-    （抛异常即跳过 on_chunk_done），正常路径下这里根本不该出现空串候选。
+    （原语的回调带 ``ok`` 标志，``ok=False`` 即不回调落库），正常路径下这里根本
+    不该出现空串候选。
     上游截断另由 adapters/llm_adapter.py 的 finish_reason 裁决层在源头变显式失败。
     """
     if not candidates:
@@ -1470,8 +1471,9 @@ class Distiller:
         ``usage_action`` 是整阶段汇总落账的 action 名。
 
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
-        ``on_chunk_done(index, result)`` is called synchronously within the
-        async loop each time a chunk finishes.
+        ``on_chunk_done(index, result, ok)`` is called synchronously within the
+        async loop each time a chunk finishes；``ok=False`` 的片结果是空串、且已计入
+        failures —— 调用方据此决定该片要不要落 checkpoint（流式侧不落）。
         """
         sem = asyncio.Semaphore(self._map_concurrency)
         done_count = [0]
@@ -1483,6 +1485,7 @@ class Distiller:
             async with sem:
                 system, user = build_prompt(chunk)
                 usage = None
+                ok = True
                 try:
                     result, usage = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}], client=client
@@ -1495,11 +1498,12 @@ class Distiller:
                     async with lock:
                         failures.append((i, exc))
                     result = ""
+                    ok = False
             async with lock:
                 done_count[0] += 1
                 usages.append(usage)
             if on_chunk_done:
-                on_chunk_done(i, result)
+                on_chunk_done(i, result, ok)
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
@@ -1676,7 +1680,7 @@ class Distiller:
         completed = [0]
         lock = threading.Lock()
 
-        def _on_done(_idx: int, _result: str) -> None:
+        def _on_done(_idx: int, _result: str, _ok: bool) -> None:
             with lock:
                 completed[0] += 1
             if on_progress:
@@ -1865,86 +1869,50 @@ class Distiller:
         map_system = self._map_system_prompt_chat if is_chat else self._map_system_prompt
         map_user = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
-        # ── Phase 1: Map — concurrent with per-chunk progress via thread+queue ──
+        # ── Phase 1: Map — 命中片先摘出，只把未命中片交给原语；进度经线程+队列 ──
+        # 续跑命中在**调原语之前**处理：命中片零 LLM 调用，直接并入 map_results 供
+        # reduce 消费；原语从此不认识 _resume_hit / checkpoint（它只跑给定的分片）。
+        # 命中片的进度事件在此补发，与原先「命中片早于未命中片完成」的次序一致。
+        map_results: list[tuple[int, str]] = []
+        miss_indices: list[int] = []
+        current = 0
+        for i, chunk in enumerate(relevant):
+            hit = _resume_hit(i, chunk, resume_candidates)
+            if hit is None:
+                miss_indices.append(i)
+                continue
+            map_results.append((i, hit))
+            current += 1
+            yield {"status": "analyzing", "current": current, "total": total}
+
         q: queue.Queue = queue.Queue()
 
-        async def _map_with_progress() -> None:
-            run_client = self._llm._make_async_client()
-            try:
-                sem = asyncio.Semaphore(self._map_concurrency)
-                done_count = [0]
-                lock = asyncio.Lock()
-                failures: list[tuple[int, Exception]] = []
-                usages: list[dict | None] = []
+        def _build_map_prompt(chunk: str) -> tuple[str, str]:
+            return map_system(character_name), map_user(chunk, character_name)
 
-                async def _one(i: int, chunk: str) -> tuple[int, str]:
-                    cached = _resume_hit(i, chunk, resume_candidates)
-                    if cached is not None:
-                        # 命中：零 LLM 调用，缓存结果照常并入 map_results 供 reduce 消费
-                        result, from_cache, checkpoint_ok = cached, True, True
-                    else:
-                        checkpoint_ok = True
-                        async with sem:
-                            system = map_system(character_name)
-                            user = map_user(chunk, character_name)
-                            usage = None
-                            try:
-                                result, usage = await self._llm.async_chat(
-                                    system, [{"role": "user", "content": user}], client=run_client
-                                )
-                            except Exception as exc:
-                                print(f"[distiller] Map chunk {i} failed: {exc}")
-                                async with lock:
-                                    failures.append((i, exc))
-                                # 失败片不落 checkpoint：空串配一个合法指纹写进去，续跑时
-                                # 只有 _resume_hit 的门 2（非空）拦得住它，而 ON CONFLICT
-                                # DO NOTHING 会让那行永久占位——重跑成功也写不进去。
-                                # 空串仍并入 map_results（统一 append，不特判），但这不是契约：
-                                # raw_analyses 按「非空且 != 无」过滤它，失败率判断用的是
-                                # map_failures —— 收或收不到都无观测差异，别据此写断言。
-                                # 已知残留（非进展循环）：该片下轮无候选 → 重发 → 同参数下
-                                # 可能再次失败 → 该片永不成功。兜底是本函数末尾的
-                                # `failed / total_chunks > 0.5` 整批 bail 分支；50% 以下会带着
-                                # 缺片继续产出。缓解手段是调 llm.max_tokens（LLM_MAX_TOKENS
-                                # 环境变量）或减小 chunk_size，不在适配器层解决。
-                                # 实测佐证：同一片两次调用一次 content=0 一次 content=2060，
-                                # 是随机饿死而非确定性截断，故重发有概率成功、不是死循环。
-                                result = ""
-                                checkpoint_ok = False
-                                # 失败片照样烧 token（重试墙下空烧 26–100s）——prompt 侧
-                                # 按字符估算补记，completion 未知记 0 并标 estimated。
-                                usage = estimate_usage_from_chars(len(system) + len(user))
-                            async with lock:
-                                usages.append(usage)
-                        from_cache = False
-                    async with lock:
-                        done_count[0] += 1
-                        current = done_count[0]
-                    q.put(("chunk", current, i, result, from_cache, checkpoint_ok))
-                    return (i, result)
-
-                tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
-                await asyncio.gather(*tasks)
-                # 整阶段汇总一条：命中缓存的片零调用不进 usages，chunk_count 数的是真调用次数
-                merged = aggregate_usage(usages, len(usages))
-                if merged is not None:
-                    self._try_record_usage("distill_map", merged)
-                q.put(("done", failures))
-            finally:
-                await run_client.close()
+        def _on_chunk(j: int, result: str, ok: bool) -> None:
+            # 原语看到的是**未命中片列表**的下标 j —— 这里是全函数唯一一处把它映射回
+            # relevant 的原始下标（指纹与 checkpoint 用的都是原始下标）。miss_indices
+            # 与 relevant 在 t.start() 之后只读，故无需加锁。
+            q.put(("chunk", miss_indices[j], result, ok))
 
         def _thread_run() -> None:
             try:
-                asyncio.run(_map_with_progress())
+                # 返回值里的 results 不用：每片的 (原始下标, 结果) 已由 _on_chunk 经队列带回。
+                _results, failures = self._run_map_with_client(
+                    [relevant[i] for i in miss_indices],
+                    _build_map_prompt, "distill_map", _on_chunk,
+                )
             except Exception as exc:
                 # 传异常本体而非 str(exc)：这一支的下游是**上屏**（下面的 yield），
                 # 上屏文案必须经 user_facing_error 收敛，str() 会把内部标识带出去。
                 q.put(("error", exc, None, None))
+                return
+            q.put(("done", failures))
 
         t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
         t.start()
 
-        map_results: list[tuple[int, str]] = []
         map_failures: list[tuple[int, Exception]] = []
         while True:
             item = q.get()
@@ -1958,26 +1926,29 @@ class Distiller:
                 yield {"error": user_facing_error(item[1])}
                 return
             if kind == "chunk":
-                _k, _current, idx, result, from_cache, checkpoint_ok = item
+                _k, idx, result, ok = item
                 map_results.append((idx, result))
                 # 每片完成即回调落库（不攒批：攒批时 OOM 会丢掉一整批已付费的结果）。
-                # 缓存命中的片已在库里，不重复写。指纹在此算——只有这里能拿到 relevant[idx] 的原文。
-                # 失败片（checkpoint_ok=False）不回调：写进去的是空串 + 合法指纹，
-                # 续跑时只有门 2 拦得住，且 ON CONFLICT DO NOTHING 让那行永久占位。
-                if on_chunk_done and not from_cache:
-                    if checkpoint_ok:
+                # 命中的片不在此列（上面已并入 map_results），不重复写。
+                # 指纹在此算——只有这里能拿到 relevant[idx] 的原文。
+                if ok:
+                    if on_chunk_done:
                         on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
-                    else:
-                        # 静默的 checkpoint 失效是最贵的那种：点名该片本轮不入库、下轮重跑
-                        print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
-                              f"resume will re-run it")
-                yield {"status": "analyzing", "current": item[1], "total": total}
+                elif on_chunk_done:
+                    # 失败片不落 checkpoint：写进去的是空串 + 合法指纹，续跑时只有门 2
+                    # 拦得住。静默的 checkpoint 失效是最贵的那种 —— 点名该片本轮不入库、下轮重跑。
+                    print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
+                          f"resume will re-run it")
+                current += 1
+                yield {"status": "analyzing", "current": current, "total": total}
 
         t.join(timeout=5)
 
         map_results.sort(key=lambda x: x[0])
 
         # Failure rate check: if >50% chunks failed, bail
+        # 分母是「全书相关片数」，**不是**本轮未命中片数：命中片不进原语，但仍算总数 ——
+        # 否则续跑会让失败率虚高（命中越多越容易越线整批 bail）。
         total_chunks = len(relevant)
         failed = len(map_failures)
         if _map_failure_exceeds_tolerance(failed, total_chunks):
