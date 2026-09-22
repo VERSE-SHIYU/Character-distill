@@ -5,10 +5,12 @@ import { displayName } from '../utils/displayName'
 import Avatar from './common/Avatar'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import ImageCropModal from './common/ImageCropModal'
 import { Heart, Star, Theater, Book, Mic, Lock, Mail, Check, Camera } from './common/Icon'
 
 export default function ProfilePage() {
+  const canWrite = useCanWrite()
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const setUserAvatar = useAppStore((s) => s.setUserAvatar)
@@ -285,18 +287,24 @@ export default function ProfilePage() {
       {/* 个人资料卡 */}
       <div className="profile-card">
         <div className="profile-avatar-section">
-          <button
-            type="button"
-            className="profile-avatar-wrap avatar-shape"
-            onClick={() => avatarInputRef.current?.click()}
-            title="更换头像"
-            disabled={avatarSaving}
-          >
-            <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
-            <span className="profile-avatar-overlay avatar-shape">
-              {avatarSaving ? '…' : <Camera size={16} />}
+          {canWrite ? (
+            <button
+              type="button"
+              className="profile-avatar-wrap avatar-shape"
+              onClick={() => avatarInputRef.current?.click()}
+              title="更换头像"
+              disabled={avatarSaving}
+            >
+              <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
+              <span className="profile-avatar-overlay avatar-shape">
+                {avatarSaving ? '…' : <Camera size={16} />}
+              </span>
+            </button>
+          ) : (
+            <span className="profile-avatar-wrap avatar-shape">
+              <Avatar name={displayName(authUser) || '?'} src={userAvatar} size={96} />
             </span>
-          </button>
+          )}
           <input
             ref={avatarInputRef}
             type="file"
@@ -334,6 +342,7 @@ export default function ProfilePage() {
       </div>
 
       {/* 昵称设置 */}
+      {canWrite && (
       <div className="profile-card">
         <h2 className="profile-section-title">昵称</h2>
         <div className="profile-field">
@@ -366,8 +375,10 @@ export default function ProfilePage() {
           )}
         </div>
       </div>
+      )}
 
       {/* 3项网格：音色/密码/邮箱 */}
+      {canWrite && (
       <div className="profile-grid profile-grid-3">
         <button className="profile-grid-item" onClick={() => pushView('voice')}>
           <span className="profile-grid-icon"><Mic size={16} /></span>
@@ -383,6 +394,7 @@ export default function ProfilePage() {
           {emailVerified && <span className="profile-grid-badge-ok"><Check size={12} /></span>}
         </button>
       </div>
+      )}
 
       {/* 展开区域：修改密码 */}
       {showPasswordForm && (
@@ -497,6 +509,7 @@ export default function ProfilePage() {
       )}
 
       {/* 隐私设置 */}
+      {canWrite && (
       <div className="profile-card">
         <h2 className="profile-section-title">隐私设置</h2>
         {[
@@ -520,6 +533,7 @@ export default function ProfilePage() {
           <PresenceVisibilitySetting />
         </div>
       </div>
+      )}
 
       <ImageCropModal
         file={cropFile}

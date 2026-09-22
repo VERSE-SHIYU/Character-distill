@@ -39,7 +39,8 @@ export default function MessageReactions({
         </div>
       )}
 
-      {showQuickBar && onReact && (
+      {/* 表情回应是写操作、引用回复不是，两者各自判：游客要保留引用回复 */}
+      {showQuickBar && (onReact || onReply) && (
         <div className="msg-quick-reactions msg-reactions-bar" data-side={side}>
           {onReply && (
             <button type="button" className="msg-action-btn" title="引用回复"
@@ -47,7 +48,7 @@ export default function MessageReactions({
               <MessageSquare size={14} />
             </button>
           )}
-          {quickEmojis.map(e => (
+          {onReact && quickEmojis.map(e => (
             <button key={e} type="button" className="msg-quick-reaction-btn"
               onClick={() => onReact(e)}>{e}</button>
           ))}

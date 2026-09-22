@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
+import useCanWrite from '../hooks/useCanWrite'
 import { Check, Close, Clock, Play, RefreshCw, Settings, Zap } from './common/Icon'
 
 // 终态三态各自的展示表。查表而非散落按 status 判终态的谓词 —— 是否终态只读 done；
@@ -30,6 +31,7 @@ const TERMINAL_VIEW = {
 }
 
 function DistillTaskItem({ task }) {
+  const canWrite = useCanWrite()
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const loadCards = useAppStore((s) => s.loadCards)
@@ -109,13 +111,13 @@ function DistillTaskItem({ task }) {
           </span>
         </>
       )}
-      {actions.includes('cancel') && (
+      {canWrite && actions.includes('cancel') && (
         <span className="distill-task-close" onClick={handleCancel} title="取消蒸馏"><Close size={12} /></span>
       )}
-      {actions.includes('resume') && (
+      {canWrite && actions.includes('resume') && (
         <span className="distill-task-retry" onClick={handleRestart} title="继续蒸馏"><Play size={12} /></span>
       )}
-      {actions.includes('retry') && (
+      {canWrite && actions.includes('retry') && (
         <span className="distill-task-retry" onClick={handleRestart} title="重新蒸馏"><RefreshCw size={12} /></span>
       )}
       {done && (

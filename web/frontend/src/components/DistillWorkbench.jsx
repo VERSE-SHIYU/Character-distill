@@ -3,6 +3,7 @@ import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useIsMobile from '../hooks/useIsMobile'
+import useCanWrite from '../hooks/useCanWrite'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
 import { AlertTriangle, Check, Clock, CornerUpLeft, Download, Play, RefreshCw, Sparkles } from './common/Icon'
@@ -267,6 +268,7 @@ function DetailPane({ sel, onBack }) {
 }
 
 function TaskDetail({ task, onBack }) {
+  const canWrite = useCanWrite()
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
   const pushView = useAppStore((s) => s.pushView)
@@ -368,9 +370,9 @@ function TaskDetail({ task, onBack }) {
       </div>
 
       <div className="dw-cta">
-        {actions.includes('cancel') && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
-        {actions.includes('resume') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><Play size={15} /> 继续蒸馏</button>}
-        {actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
+        {canWrite && actions.includes('cancel') && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
+        {canWrite && actions.includes('resume') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><Play size={15} /> 继续蒸馏</button>}
+        {canWrite && actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
         {view?.canChat && (
           <>
             <button type="button" className="dw-cta-btn dw-cta-primary" onClick={tryChat}><Sparkles size={15} /> 试聊当前版本</button>
@@ -384,6 +386,7 @@ function TaskDetail({ task, onBack }) {
 }
 
 function CardDetail({ card, onBack }) {
+  const canWrite = useCanWrite()
   const startChat = useAppStore((s) => s.startChat)
   const viewCard = useAppStore((s) => s.viewCard)
   const pushView = useAppStore((s) => s.pushView)
@@ -435,8 +438,8 @@ function CardDetail({ card, onBack }) {
       <div className="dw-cta">
         <button type="button" className="dw-cta-btn dw-cta-primary" onClick={() => startChat(card)}><Sparkles size={15} /> 试聊</button>
         <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(card)}><Download size={15} /> 导出</button>
-        <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>
-        {card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}
+        {canWrite && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>}
+        {canWrite && card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}
       </div>
     </div>
   )
