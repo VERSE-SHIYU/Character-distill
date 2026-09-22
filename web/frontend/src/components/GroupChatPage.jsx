@@ -1129,8 +1129,8 @@ export default function GroupChatPage() {
                                 side="right"
                                 reactions={reactions}
                                 showQuickBar={true}
-                                onReact={(emoji) => reactToMessage(m.id, emoji)}
-                                onReply={() => { setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                onReact={m.unsaved ? undefined : (emoji) => reactToMessage(m.id, emoji)}
+                                onReply={m.unsaved ? undefined : () => { setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
                                 authUserId={authUser?.id}
                                 renderUserLabel={reactionUsersLabel}
                               />
@@ -1191,8 +1191,8 @@ export default function GroupChatPage() {
                                   side="left"
                                   reactions={reactions}
                                   showQuickBar={true}
-                                  onReact={(emoji) => reactToMessage(m.id, emoji)}
-                                  onReply={() => { setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                  onReact={m.unsaved ? undefined : (emoji) => reactToMessage(m.id, emoji)}
+                                  onReply={m.unsaved ? undefined : () => { setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
                                   authUserId={authUser?.id}
                                   renderUserLabel={reactionUsersLabel}
                                 />

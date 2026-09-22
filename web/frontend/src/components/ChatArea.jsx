@@ -732,7 +732,9 @@ function ChatView() {
                     reactions={reactions[msg.id] || []}
                     replyToPreview={msg.reply_to_preview}
                     replyToId={msg.reply_to_id}
-                    onReact={canWrite ? async (emoji) => {
+                    // 未保存的那条留着临时 id：引用/反应都会 422。不给入口（MessageReactions 的
+                    // 约定是「没传 handler 就不渲染」）。
+                    onReact={canWrite && !msg.unsaved ? async (emoji) => {
                       if (!msg.id) return
                       try {
                         await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
@@ -745,7 +747,7 @@ function ChatView() {
                         setReactions(data.reactions || {})
                       } catch {}
                     } : undefined}
-                    onReply={() => {
+                    onReply={msg.unsaved ? undefined : () => {
                       const preview = isUser
                         ? `我: ${(msg.content || '').slice(0, 60)}`
                         : `${charName}: ${(msg.content || '').slice(0, 60)}`
