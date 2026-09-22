@@ -453,21 +453,22 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
 
 
-def user_facing_error(exc: BaseException, *, preserve_unknown: bool = False) -> str:
+def user_facing_error(exc: BaseException) -> str:
     """异常 → 用户可见文案的**唯一出口**。内部标识一律不上屏。
 
     取值优先级（先具体后笼统）：
       1. ``llm_error_payload`` —— LLM 侧已知失败，取 ``_INCOMPLETE_USER_MESSAGES`` 上屏表
-      2. ``exc.user_message`` —— 自带已审上屏口径的异常（``core.distiller.DistillError``）
-      3. ``preserve_unknown`` 为真 → ``str(exc)``；否则通用文案
+      2. ``exc.user_message`` —— 自带已审上屏口径的异常（``core.distiller.DistillError``、
+         ``adapters.llm_adapter.UpstreamFailure``）
+      3. 通用文案
 
     **绝不使用 ``type(exc).__name__``**：异常类名是内部标识（缺陷 17 的旧实现在
     兜底分支上打了它）。也绝不把运维口径（finish_reason / max_tokens / 分片计数 /
     ``where``）带上屏——那些留在异常自己的 ``str()`` 里进日志。
 
-    ``preserve_unknown`` 只给 chat 的 SSE 帧用：那条契约显式锁定「未登记的异常保持原样」
-    以便排障（tests/test_chat_stream_error.py::test_other_errors_keep_original_shape）。
-    **蒸馏路径一律不传** —— 角色卡页上出现 max_tokens 或异常类名就是缺陷 17 本身。
+    未登记的异常**一律**落通用文案：这里曾经有个可选开关，给 chat 的 SSE 帧原样透出
+    ``str(exc)`` 以便排障。但那条路把上游报错原文直接送到了用户面前（缺陷 94 的泄漏
+    那半），开关已删 —— 排障靠日志里那句原文，不靠上屏。
     """
     payload = llm_error_payload(exc)
     if payload is not None:
@@ -475,8 +476,6 @@ def user_facing_error(exc: BaseException, *, preserve_unknown: bool = False) -> 
     declared = getattr(exc, "user_message", None)
     if isinstance(declared, str) and declared.strip():
         return declared.strip()
-    if preserve_unknown:
-        return str(exc)
     return _GENERIC_USER_ERROR
 
 
