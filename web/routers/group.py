@@ -606,6 +606,7 @@ async def broadcast_message(
                     if s:
                         # auto_mode 下本就没有「沉默」这条要记（改前也是不发帧的）—— 保持不变。
                         if not req.auto_mode:
+                            msg_id = None
                             async with nonfatal("group", "save silent message") as silent_out:
                                 msg_id = await storage.save_group_message(
                                     group_id, r["speaker"], "silent", "", r["card_id"],
