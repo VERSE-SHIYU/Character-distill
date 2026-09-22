@@ -544,6 +544,13 @@ def light_rag(monkeypatch):
     monkeypatch.setattr("core.rag.RAGEngine", lambda *_a, **_kw: _NoopRAG())
 
 
+class _OrphanEngine:
+    """T6 那个漏登记属主的条目里放的 engine 替身。
+
+    只需是一个对象：属主门在 engine 被碰之前就判完了，所以它不需要任何真方法。
+    """
+
+
 class TestOneToOneSessionOwnership:
     """独立卡片会话（`/start_session` 不带 text_id）的内存条目必须记属主。"""
 
@@ -576,6 +583,35 @@ class TestOneToOneSessionOwnership:
         assert r.status_code == 200, (
             f"属主被自己的会话当外人：{r.status_code} {r.text[:200]}")
         assert r.json().get("reply") == "固定回复", r.text[:200]
+
+    def test_T6_unregistered_entry_fails_closed(
+        self, store, owner, intruder_client, chat_capable_llm
+    ):
+        """条目**压根没登记**属主时也必须判「不是你的」。
+
+        T1 测的是「登记了别人的属主」，这条测的是「没登记」—— 两种失效形态不同。
+        本仓的构造点若又漏写 `user_id`，而属主门还带 `session.get("user_id") and` 前缀，
+        条目就静默变成「谁都能进」。这条用例守的就是 `_ensure_session` 那句注释里的承诺：
+        漏登记 → 属主本人 404（响亮），而不是放行（静默）。
+        """
+        import deps
+
+        sid = f"orphan_{uuid.uuid4().hex[:12]}"
+        # 最小形态：只有 engine，没有 user_id —— 就是「忘了登记」的样子。
+        deps.get_sessions()[sid] = {"engine": _OrphanEngine()}
+        try:
+            foreign = intruder_client.post(
+                "/api/chat/send", json={"session_id": sid, "message": "hi"})
+            assert foreign.status_code == 404, (
+                f"漏登记属主的会话条目被放行了：{foreign.status_code} {foreign.text[:200]}")
+
+            missing = intruder_client.post(
+                "/api/chat/send", json={"session_id": f"nope_{uuid.uuid4().hex}", "message": "hi"})
+            assert foreign.status_code == missing.status_code
+            assert _detail(foreign) == _detail(missing), "非属主与不存在同码但不同文案"
+        finally:
+            # 会话表是模块级全局，不清理会把条目泄给后面的用例。
+            deps.get_sessions().pop(sid, None)
 
 
 class TestGroupSessionOwnership:
