@@ -96,11 +96,18 @@ _MIGRATIONS_BEFORE_USER_REBUILD = (
     "070_data_residency.sql", "071_cross_border_consent.sql", "072_card_sync.sql",
     "073_remote_cards.sql", "074_delete_outbox.sql", "075_dm_retracted.sql",
     "077_nickname.sql",
+    # 编号跳出 077 是有意的：见下面对 AFTER 段的说明。
+    "091_users_role.sql",
 )
 
 # 必须排在 users 表重建之后 —— 重建会把 idx_users_username_lower 一起丢掉。
 # 079 建的是独立表（无外键、不碰 users），重建边界对它没有约束；放在这里是为了保住
 # 「≤077 在重建前 / ≥078 在重建后」这条分段不变量，编号在段内仍单调。
+#
+# 091 是这条不变量的**有意例外**，所以它登记在上面的 BEFORE 段而不是这里：它的回填要读
+# `users.is_admin`，而 is_admin 由退役列块删除，退役列块又排在 BEFORE 段之后、本段之前
+# （实测）。放进本段 = 回填时 is_admin 已不在，`no such column: is_admin`。
+# 编号在段内不单调，换来的是「回填先跑、删列后跑」这条更强的不变量。
 _MIGRATIONS_AFTER_USER_REBUILD = (
     "078_username_lower.sql", "079_remote_user_profiles.sql", "080_group_user_avatar.sql",
     "081_refresh_token_grace.sql", "082_affinity_state.sql", "083_card_reports.sql",
@@ -557,6 +564,7 @@ class SQLiteStore(StorageBase):
                             "id": "TEXT PRIMARY KEY",
                             "username": "TEXT NOT NULL UNIQUE",
                             "is_admin": "INTEGER DEFAULT 0",
+                            "role": "TEXT NOT NULL DEFAULT 'user'",
                             "is_disabled": "INTEGER DEFAULT 0",
                             "avatar_data": "TEXT DEFAULT ''",
                             "banner_data": "TEXT DEFAULT ''",
