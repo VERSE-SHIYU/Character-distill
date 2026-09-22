@@ -1263,7 +1263,7 @@ PROBE_IMAGE         false
   - **2026-09-22 补记：主动告警已上线**（与缺陷 98 同轮做，不在本条的修法内）。新增 `core/alerting.AlertHandler`：ERROR 级日志按 `(logger 名, 异常类型)` 节流后投递到 `ALERT_EMAIL`（同键 1 小时一封，窗口后那封附上被压下的次数），在 `web/server.py` 的 lifespan 里与 `install_log_collector()` 同处挂到 root logger。本条要的其实是**两跳**：`print` → 面板（可见）是缺陷 93 修的那一跳，「面板 → 人」是这一跳 —— 面板得有人打开才看得见，SG 的「数月无人察觉」正卡在后一跳。上面「仍未定的那半」里的「计数告警」至此**机制已具备、口径仍未定**：要不要让用量写库失败真的发信仍是产品决策，现在只是有了通道（`ALERT_EMAIL` 为空时整条不安装，见 `core/alerting.py`）。
 - **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
-**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、泄漏那半已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口 → 2026-09-22 泄漏那半收口）
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**已修**（口径统一，2026-09-22；可见性 2026-09-22 收口 → 泄漏那半 2026-09-22 收口 → 口径统一 2026-09-22 收口）。**覆盖范围：一对一聊天（非流式 + 流式）与群聊广播** —— 另有两处角色消息保存点（开场白、重逢问候）不在本口径内，见缺陷 122。
 - **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
 - **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
 - **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
@@ -1275,8 +1275,24 @@ PROBE_IMAGE         false
   - 另加 `UpstreamFailure`（`2205b12`）：重试耗尽时抛的异常自带 `user_message`，上游已知状态码（401/403 key、402 余额、429 限流）给出能指导下一步的中文提示，未登记的状态码落通用文案；`str()` 逐字不变，日志与 core 侧既有的 `failed after N attempts` / `rate limited (429)` 判据继续命中。
   - **这三处不新开台账号**：它们与 94 是同判据、同一个决定面（§四「理由要升格成判据」），一并收口才自洽；**可见性那半原样未动**（群聊流式仍把保存失败当 error 事件发出去，只是帧里的值换了）。
 - **判据命令（泄漏那半，2026-09-22 现跑）**：`git grep -n "preserve_unknown" -- ':!AGENTS.md'` → **空**（开关已删；AGENTS.md 里那句是历史快照，故排除）；`git grep -nE "'error': str\(exc\)|\"message\": str\(exc\)" -- web/routers/chat.py web/routers/group.py web/routers/text.py` → **空**。**上面那条「判据命令」（可见性那半）不变**。
+- **同轮例外（2026-09-22，`9dc4118`）**：`web/routers/auth.py::test_embedding` 是**连通性测试**，用户点它就是为了查自己的 key 哪里不通，故**有意**把上游原话（`detail`）连同中文提示一并返回。判定只按 `status_code` / `code` / 异常类型（`core/embeddings.py::describe_embedding_failure`），不匹配报错文本。它**不在本条「一律通用文案」的口径内** —— 与上面三处（日常路径，原文只算泄漏面）性质不同，审计时不算漏修。
 - **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
 - **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
+- **口径统一已修（2026-09-22，分支 `worktree-session-cred`，commit `fc18018` / `e17b6aa` / `60fec7e` / `bf6a50b` / `6c042d5` / `38c8428` / `09818fe`）**：产品口径定为四条 ——
+  1. 聊天**不因保存失败中断**；存失败的那一条旁标「未保存，刷新后会丢失」。
+  2. 摘要存失败**不提示**，只记日志。
+  3. 一对一与群聊的**用户可见行为一致**（不要求共用代码路径）。
+  4. **不自动重试、不弹窗**；连续多条失败也**不**升级为弹窗或汇总提示。
+- **机制（`fc18018`）**：`core/nonfatal.py::nonfatal` 改为 `yield` 一个只有 `failed: bool` 的 `NonFatalOutcome`，调用方逐笔拿到「这一步成没成」（不带 `as` 的旧写法不受影响，上游仍只记一条 ERROR）。`web/routers/chat.py` 非流式与流式的用户 / 角色 / 摘要**各一个块**（摘要块把 `get_messages` 也包进去 —— 改前它裸露在块外，读失败会打断已流完的回复），返回体 / done 帧新增 `user_saved` / `char_saved`；`hidden` 时 `user_saved=true`（没有要标的消息，**不许**用 `msg_id is None` 反推）。`web/routers/group.py::broadcast` 三类保存各一个块，`user` / `reply` 帧**不论成败都发**并带 `saved`，失败时 `msg_id=null`；用户消息没存上时 `user_msg_id` 为 `None`，反应写入按既有判断自然跳过。`bf6a50b` 修回一处自造偏差：`auto_mode` 下 `[SILENT]` 本来就不发帧，拆块时一度把 silent 帧移出了 `if not req.auto_mode` 守卫，已复原。`09818fe` 把广播里的 `toggle_reaction` 也包进 `nonfatal("group", "save character reaction")`：反应不是消息、没有「未保存」可标，但写失败同样不能把整轮带走（改前它裸露在循环里，一次写库失败就把已流完的话变成一条 error 帧）。`6c042d5` 修 silent 分支的 `msg_id`：它只在 `nonfatal` 块内赋值，存失败被吞掉后变量未绑定，紧随其后的 `yield` 抛 `UnboundLocalError`、整轮广播退化成一条 error 帧 —— 与本次要修的缺陷同一形态，已与 assistant 分支一样先置 `None`（这也是「帧不论成败都发」在失败路径上真正成立的前提）。LLM 失败仍走原 error 帧，本轮未动。
+- **前端（`60fec7e`）**：判定只写一份 `web/frontend/src/utils/withSaveResult.js`（`saved === false` 才产生 `unsaved: true`；`true` 与缺字段原样返回 —— 拿 falsy 当失败会把 `hidden` 消息、摘要帧、旧接口全标成「未保存」），提示只写一份 `web/frontend/src/components/common/UnsavedHint.jsx`（文案固定「未保存，刷新后会丢失」，小号次要色）。四处落点（非流式发送、流式 done、撤回提示 `_sendRevokeNotice`、群聊帧）全走它。失败时 `msg_id` 为 `null`，落点保留乐观 id（`?? prev.id`）—— 撤回与反应都拿 `msg.id` 当参数。
+- **未保存消息不提供需要 id 的操作（2026-09-22 补，commit `38c8428`）**：保留乐观 id 的代价是它会被当成服务端 id 用出去 —— 引用回复它时下一条消息带 `reply_to_id: "optimistic-…"`，后端 `int` 校验 422，**用户下一条就发不出去**；点反应同样 422，只在控制台报错。四个调用点（`ChatArea.jsx` 一对一、`GroupChatPage.jsx` 用户气泡与角色气泡）在 `m.unsaved` 时不传 `onReact` / `onReply`，复用 `MessageReactions` 既有约定（没传 handler 就不渲染对应入口，组件本身没改）。一对一的 `if (!msg.id) return` 保留不动。判据：`UnsavedNoActions.test.jsx`（V4 群聊两处气泡、V5 一对一），各自有独立红源（逐个调用点去掉条件都会红）。
+- **订正（2026-09-22）**：本条 S0 原写「无 id 的消息前端本来就有（流式途中），反应已有 `if (!msg.id) return` 兜底」—— 实读该守卫**只在一对一 `ChatArea.jsx` 里有**，群聊 `reactToMessage` 没有，是 spec 描述有误；据此删去的「未保存条不给操作入口」一步已按上面补回。
+- **残留风险（`e17b6aa`，第 2 步）**：`storage/sqlite_store.py::save_message` 的读回 `SELECT` 已挪到 `commit()` **之前**、同一连接同一事务，故本地库上「异常 ⇔ 没入库」成立。**唯一无法区分的是 COMMIT 应答在网络上丢失**（事务其实已提交，调用方却收到异常）—— 不处理，只在此记录。PG 侧本就在事务内读回，不涉及。
+- **判据命令（2026-09-22 现跑）**：
+  - `git grep -n "nonfatal(" -- web/routers/chat.py web/routers/group.py` → 一对一 **6** 处（`chat.py:368/377/392` 非流式、`:491/538/554` 流式，逐条为 `save user message` / `save assistant message` / `save summary`，无一条是复数名）；群聊 **5** 处（`group.py:585` user、`:612` silent、`:627` assistant、`:603` character reaction 为逐笔；`:522` 的 `"save messages"` 是**非流式 `/send`** 的共用块，见缺陷 121）。
+  - `git grep -n "save_group_message" web/routers/group.py` → `broadcast` 内（`:586` / `:613` / `:628`）三条**各自**在自己那个 `nonfatal` 块里，不再有裸露调用；剩下两条（`:523` / `:527`）在非流式 `/send` 的共用块内。`broadcast` 内唯一另一处写库 `toggle_reaction`（`:604`）也在 `nonfatal` 块里（`09818fe`）。
+  - `git grep -n "unsaved: true" -- web/frontend/src ':!*.test.*'` → **2** 处，都在 `web/frontend/src/utils/withSaveResult.js`（`:2` 注释、`:13` 代码）—— 没有任何落点手写这个字段。锁在 `withSaveResult.test.js` 的 V2（扫全部产品源码，任何第二份 `unsaved:` 判断或第二份文案都判红）。
+- **不做的事（口径第 4 条，无行为可变异故不设锁）**：不重试、不弹窗、不汇总、不改操作入口。
 
 **95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
 - **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
@@ -1503,6 +1519,45 @@ PROBE_IMAGE         false
 - **为什么记而不修**：修法不是把这两处收窄（那是治症状）—— 要拿掉的是**回退到新建 loop** 这条路本身（`core/scheduling.py` 在没有注册 submitter 时 `asyncio.run`），而它服务于 `TestClient` 无 lifespan 这一整套测试装配。改动面超出 117 的修复范围，117 已用「让库只有一个来源」把这条路径从生产测试里**绕开**（不再有跨 loop 的真库调用）。**收窄 `except` 单独做没有意义**：不新建 loop 了，这两处自然不再撞；新建 loop，收窄了也只是把静默挂死换成显式报错 —— 那是**另一件事**（「失败可见」），要单独立项。
 - **与 112 的分工**：112 是 aiosqlite 侧的同类形态（`Event loop is closed`，抛了但继续），本条是 asyncpg 侧（被吞掉）。**同源不同落点**，两条都还在。
 - **判据命令**：`git grep -n "non-fatal" -- core/chat_engine.py`（应给 2 行 —— `:638` 的 `[Affinity] Fetch reactions failed` 与另一条 save state 的；本条的 `:655` 那处是裸 `pass`，不带这个串，须按行号读）。收窄后本条应改为**在跨 loop 错误上显式抛 / 记成 ERROR**，判据也随之改成「跨 loop 的异常不再走这两条路」。
+
+**118. `importlib.reload` 替换异常类对象 —— 按「retry → error → chat」的文件顺序跑，三个文件红 4 条** —— 状态：**已修**（2026-09-22，`6c8d805`，分支 `worktree-session-cred`）
+- **归属**：72 线（94 泄漏那半的收尾）。
+- **形态**：`tests/test_llm_adapter_retry.py::test_timeout_family_constants_consume_env` 用 `importlib.reload(adapters.llm_adapter)` 读「六个超时常量确由 env 派生」，以证明「改 env 真的改行为」。`reload` 把模块属性**整体换新**，`IncompleteResponseError` 等异常**类对象**也跟着换了一份新类 —— 别的测试文件在**收集期** import 到的是旧类，此后它的 `pytest.raises(旧类)` 抓不到新抛的类。
+- **引入**：`3d1d171`（该用例本身）。
+- **触发面**：只有文件顺序落到「retry → error → chat」才显形（pytest-randomly 打乱时常绿），故长期未被发现。现跑：`pytest -p no:randomly tests/test_llm_adapter_retry.py tests/test_error_user_facing.py tests/test_chat_stream_error.py` 红 **4** 条 —— `test_error_user_facing.py::test_known_failures_screen_exact_text_and_no_internals` / `::test_known_failures_keep_ops_detail_out_of_screen`、`test_chat_stream_error.py::test_incomplete_payload_is_identifiable` / `::test_boundary_maps_known_failure_and_rejects_others`。
+- **修法**：不再 reload `sys.modules` 里那一份。改为 `importlib.util.spec_from_file_location` 以**另一个模块名**（`_llm_adapter_env_probe`）加载一份**私有副本**读常量；副本**不写进 `sys.modules`**（注册了等于又替了一份全局单例，别处再 `import adapters.llm_adapter` 会拿到带 env 的版本）。测试命题（常量确由 env 派生）不变。
+- **变异（现跑，2026-09-22）**：把 `_load_env_probe()` 改回 `return importlib.reload(M)` → 上面那条三文件命令**红 4 条**，与修前逐条同集；还原后 28 passed。
+- **判据命令**：`git grep -n "importlib.reload" tests/test_llm_adapter_retry.py` → **0**（本条没有「应为 0」以外的验收值）。
+
+**119. 全站没有「`print` 型失败」的告警 —— 失败只到容器 stdout，owner 不翻 `docker logs` 就无从得知** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（第 3 步的失败日志正好落在这一格的盲区里，顺手记账）。
+- **形态**：`core/alerting.AlertHandler`（`3fb3dbf`）挂的是 **root logger** 的 ERROR 级 handler，投递到 `ALERT_EMAIL`；后台日志面板（`core/log_collector.install_log_collector`）同样只收 **logging 记录**。而路线里大量失败处理是 `print(f"[xxx] ... failed ...")` 形态 —— `print` 写 fd 1，**不进 logging 管道**，于是既不上面板、也不进告警。
+- **本轮落点**：第 3 步给 `web/routers/auth.py::test_embedding` 加的失败日志正是 `print` 形态（与其余路由同风格，spec 明确点名），所以它**看得见但不会告警** —— 这条日志的可见性止于容器输出。
+- **读数（2026-09-22 现跑）**：`git grep -nE "^\s*print\(f?\"\[[a-z_]+\][^\"]*[Ff]ail" -- web core storage` → **115** 行。这些处**没有一处**会被 `AlertHandler` 收到。
+- **为什么只记不修**：把 `print` 改判 `logging` 是**全站面的口径变更**（哪些失败该 ERROR、哪些本就是 INFO），牵动面板噪声与节流键 `(logger 名, 异常类型)`，属产品决策；本轮范围外（spec §5「不做告警与监控」）。
+
+**120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（S0 第 3 条查实）。
+- **形态**：`web/routers/auth.py:145` 的 `ApiConfigRequest.embedding_region: str = ""` **无取值校验**，`update_user_api_config`（`:619`）原样落库。该值随后被 `core/rag.py:176` 读作 `region=config.get("embedding_region", "cn")` → `core/embeddings.py:390` `DashScopeEmbedding(api_key, region, ...)` → `DASHSCOPE_BASE_URLS[region]`。
+- **后果**：保存一个未知地域（如 `"us"`）后，该用户此后**所有**走嵌入的路径（RAG 检索、索引、蒸馏建会话）都在构造客户端那一刻 `KeyError`，而保存那一刻毫无提示、返回 `{"ok": True}`。
+- **本轮只修了另一面**：第 3 步只给**连通性测试端点**加了前置校验（不在 `DASHSCOPE_BASE_URLS` 里就返回「地域只能选 cn 或 intl」，commit `9dc4118`）。**保存路径未动** —— 两者不是同一处，别把本条的修当成已做。
+- **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-22 修后）：`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS` **1** 处；`ApiConfigRequest` 定义（`:150`）与 `update_api_config` 落库（`:619`）**各 0** 处。
+
+**121. 群聊非流式 `/send` 的两笔保存共用一个 `nonfatal` —— 用户那笔失败时助手那笔整条不执行** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线 · 94 口径统一（S0 第 5 条查实）。
+- **形态**：`web/routers/group.py:522` 的 `async with nonfatal("group", "save messages")` 块内连出两条 `save_group_message`（`:523` 用户、`:527` 助手）。
+- **后果**：用户那笔抛错时块内后续（助手那笔）整条不执行，而调用方只拿到一个 `failed` —— 与非流式一对一改前的「三笔共用一个块」是**同一形态**（那半边已在 `fc18018` 拆掉），同样分不出是哪条没存上。
+- **为什么只记不修**：前端只调用流式的 `/broadcast`，该端点在本仓**没有调用方**；本轮范围外（spec 第 5 步）。将来谁接上它，按 94 的同一口径拆成逐笔 `nonfatal` 即可 —— 拆法已有先例，不需要新口径。
+- **判据命令**：`git grep -n "nonfatal(" web/routers/group.py` —— 数「有几个块是复数名」。读数（2026-09-23 现跑）：**1** 处（`:522` 的 `"save messages"`，正是共用块）；其余四处（`:585` / `:603` / `:612` / `:627`）均为逐笔名，属 `broadcast`（`:603` 是补 2 新加的角色反应写入）。
+
+**122. 两处角色消息保存点未纳入 94 口径 —— 开场白与重逢问候存失败时无标记、无提示** —— 状态：**记账**（不修，2026-09-23）
+- **归属**：72 线 · 94 口径统一（2026-09-23 审计复查时查出的范围缺口；94 的「已修」只覆盖一对一聊天与群聊广播）。
+- **形态一**：`web/routers/distill.py:1467` 的 `async with nonfatal("start_session", "save opening message")` 块内含三件事 —— 开场白落库、`engine_obj.history` 追加、`message_ids` 登记。
+- **后果一**：存失败被吞掉后，`opening` 仍作为 `result["first_message"]` 返回（同文件 `:1478`），前端**照常显示**这条开场白，但它不带任何「未保存」标记（该接口没有对应字段，94 只给一对一 chat 与群聊 broadcast 的返回体加了 `*_saved` / `saved`），也不会进 `engine.history` —— 角色下一轮不记得自己说过这句。
+- **形态二**：`web/routers/history.py:323` 的 `async with nonfatal("history", "reunion greeting")` 把**生成**（`engine.generate_reunion_greeting`）与**保存**两件事包在同一块里。
+- **后果二**：存失败时 `greeting_data` 保持 `None`，整条问候从返回体里消失 —— 用户看不到问候，也看不到任何提示，只当今天没有重逢问候。附带一处：同文件 `:338` 的 `_visit_count >= 3 and not greeting_data` 会把「存失败」读成「没生成」，于是转而走按到访次数觉察那条路。
+- **为什么只记不修**：两处都不在 94 已定的四条口径内 —— 口径管的是「聊天里逐条消息」，开场白是会话种子、重逢问候是进场的额外一句。要不要给它们也标「未保存」，先得定这两条消息在前端有没有落脚点（开场白有气泡、问候目前只在返回体里）。**待产品拍板**，不自行扩口径。
+- **判据命令**：`git grep -n "nonfatal(" -- web/routers/distill.py web/routers/history.py` —— 逐条看「块内除了保存还包了什么」。读数（2026-09-23 现跑）：两文件**各 1** 处（`distill.py:1467`、`history.py:323`），且两处的块内都不止保存一笔（前者含 `engine.history` 追加与 `message_ids` 登记，后者含问候**生成**）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

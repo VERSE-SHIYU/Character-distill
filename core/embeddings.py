@@ -156,6 +156,41 @@ def _shared_cache_put(text: str, embedding: list[float]) -> None:
             _SHARED_CACHE.popitem(last=False)
 
 
+# 地域 → DashScope 兼容模式端点。**唯一一份**：构造函数与连通性测试的地域校验都查它，
+# 免得校验放行一个构造函数不认的地域（改前是构造里 KeyError 上屏）。
+DASHSCOPE_BASE_URLS: dict[str, str] = {
+    "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+}
+
+# 连通性测试的中文提示。只按 status_code / code / 异常**类型**判定，不匹配报错文本 ——
+# 文本上游可随时改写，拿它当判据会在上游换文案时静默失效。
+_EMBED_FAILURE_HINTS: dict[int, str] = {
+    # 地域不匹配在百炼同样返 401 invalid_api_key，与 key 本身无效同码，故一句里都提。
+    401: "API Key 无效，或与所选地域不匹配（中国站的 Key 选 cn，国际站的 Key 选 intl）",
+    403: "该 API Key 无权访问嵌入服务，请到百炼控制台检查",
+    429: "请求过于频繁，请稍后再试",
+}
+_EMBED_FALLBACK_HINT = "连接失败，请检查 API Key 和地域"
+
+
+def describe_embedding_failure(exc: Exception) -> str:
+    """把嵌入连通性测试的异常翻成一句能指导用户下一步的中文。
+
+    与 chat / 群聊 / 上传任务那三处的 `user_facing_error` **不合并**：那是日常路径，
+    原文只算泄漏面；这里是排障工具，调用方会把 `str(exc)` 原话一并给用户，故只出提示。
+    上游也不同（嵌入出站不经 `adapters/llm_adapter.py`）。
+    """
+    from openai import APIConnectionError
+
+    if isinstance(exc, APIConnectionError):
+        return "连不上 DashScope 服务器，请检查网络后重试"
+    status = getattr(exc, "status_code", None)
+    if status == 400 and getattr(exc, "code", None) == "Arrearage":
+        return "阿里云账户欠费，请充值后重试"
+    return _EMBED_FAILURE_HINTS.get(status, _EMBED_FALLBACK_HINT)
+
+
 class DashScopeEmbedding(EmbeddingFunction):
     """Aliyun Bailian text-embedding-v4 via OpenAI-compatible API.
 
@@ -178,11 +213,8 @@ class DashScopeEmbedding(EmbeddingFunction):
         from openai import OpenAI
 
         # EMBEDDING_BASE_URL 覆盖（②④ Step 2：本地压测剥离 DashScope 网络延迟）；
-        # 未设置时行为与 region 硬编码表逐字节一致。
-        base_url = os.environ.get("EMBEDDING_BASE_URL") or {
-            "cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        }[region]
+        # 未设置时取 DASHSCOPE_BASE_URLS，与改前内联的那两个字面量逐字节一致。
+        base_url = os.environ.get("EMBEDDING_BASE_URL") or DASHSCOPE_BASE_URLS[region]
         self._client = OpenAI(
             api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2
         )

@@ -30,18 +30,39 @@ _logger = logging.getLogger(__name__)
 _PASS_THROUGH = (KeyboardInterrupt, SystemExit, asyncio.CancelledError)
 
 
+class NonFatalOutcome:
+    """`nonfatal` 交给调用方的失败信号 —— 块内异常被吞掉后 `failed` 为 True。
+
+    只有这一个字段：调用方要回答的是「这一步成没成」，不是「为什么没成」（那是日志
+    的事）。**不提供异常对象**，免得调用方又把上游原文端到用户面前 —— 屏幕上的文案
+    统一走 `adapters.llm_adapter.user_facing_error`。
+    """
+
+    __slots__ = ("failed",)
+
+    def __init__(self) -> None:
+        self.failed = False
+
+
 @asynccontextmanager
-async def nonfatal(source: str, what: str) -> AsyncIterator[None]:
-    """吞掉块内异常，并以一条 ERROR 上报到日志面板。
+async def nonfatal(source: str, what: str) -> AsyncIterator[NonFatalOutcome]:
+    """吞掉块内异常，并以一条 ERROR 上报到日志面板；结果对象告知调用方成没成。
+
+    不带 `as` 的写法（`async with nonfatal(...)`）照旧可用 —— 不关心结果的就别接。
 
     **异常只在最终吞掉它的地方记录一次。** 上游若还会重抛（例如 storage 层的
     `print + raise`），不要在那里再包一层本构造 —— 同一次失败会记成两条。
+
+    **一个块只放一件「失败也不该连坐别件」的事**：共用块时前一件失败会让后一件整个不
+    执行，而调用方拿到的只有一个 `failed`，分不出是哪件没成。
     """
+    outcome = NonFatalOutcome()
     try:
-        yield
+        yield outcome
     except _PASS_THROUGH:
         raise
     except Exception as exc:
+        outcome.failed = True
         _logger.error(
             "[%s] %s failed (non-fatal): %s: %s",
             source, what, type(exc).__name__, exc,

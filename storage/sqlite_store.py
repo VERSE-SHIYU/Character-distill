@@ -2185,7 +2185,14 @@ class SQLiteStore(StorageBase):
         reply_to_id: int | None = None, reply_to_preview: str = "",
         retracted: bool = False, evidence: str | None = None,
     ) -> dict:
-        """Save one message and touch session updated_at."""
+        """Save one message and touch session updated_at.
+
+        读回必须在 `commit()` **之前**、与写入同事务：放在提交之后时，读回失败意味着
+        「消息已落盘，调用方却收到异常」—— 前端据此标「未保存，刷新后会丢失」，而刷新
+        后它又出现。挪进事务后读回失败随事务回滚，**异常 ⇔ 没入库**才成立。
+        （pg 侧本就在事务内读回；残留风险只剩「COMMIT 应答在网络上丢失」，那一步无法
+        与「没提交」区分，见 AGENTS.md 台账。）
+        """
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
@@ -2199,7 +2206,6 @@ class SQLiteStore(StorageBase):
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (session_id,),
                 )
-                await conn.commit()
                 message_id = int(cursor.lastrowid)
 
                 row_cursor = await conn.execute(
@@ -2211,6 +2217,7 @@ class SQLiteStore(StorageBase):
                     (message_id,),
                 )
                 row = await row_cursor.fetchone()
+                await conn.commit()
             return self._row_to_dict(row) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Save message failed: {exc}")

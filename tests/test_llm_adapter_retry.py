@@ -338,7 +338,7 @@ def test_chat_stream_create_storm_capped():
 # ── 缺陷 8：超时族全走 env（口径统一）──────────────────────────────────
 # 三个 ceiling 早已 env 化，三个 deadline 漏网 → 「超时可调」名不副实。这里锁：
 #   1. _env_timeout_s 缺变量取默认、有变量取变量、0/负被 floor 夹回（防静默关超时）；
-#   2. 六个模块常量真的消费 env（reload 实跑，而非只看 helper 行为）；
+#   2. 六个模块常量真的消费 env（真跑模块顶层，而非只看 helper 行为）；
 #   3. 无 env 时默认值一字不变（决策 6/60/8、ceiling 5/45/7）。
 
 
@@ -357,20 +357,38 @@ def test_timeout_family_defaults_unchanged():
     assert (M._DECISION_ATTEMPT_S, M._GEN_ATTEMPT_S, M._STREAM_ATTEMPT_S) == (5.0, 45.0, 7.0)
 
 
-def test_timeout_family_constants_consume_env(monkeypatch):
-    """reload 实跑：证明六个常量确由 env 派生，堵住「只测 helper、常量没用它」的假绿。"""
-    import importlib
+def _load_env_probe():
+    """按另一个模块名加载 `adapters/llm_adapter.py` 的一份**私有副本**，读它顶层算出的常量。
 
+    **不 reload `sys.modules` 里那一份**：`importlib.reload(M)` 把模块属性整体换新，异常类
+    对象也跟着换 —— 别的测试文件在收集期 import 到的旧类引用（`pytest.raises(
+    IncompleteResponseError)`）随即抓不到新类，按「retry → error → chat」的文件顺序跑就红 4 条
+    （既有污染，`3d1d171` 引入）。
+
+    副本**不写进 `sys.modules`**：注册了就等于又替了一份全局单例，别处再 `import
+    adapters.llm_adapter` 会拿到这份带 env 的版本。命题（常量确由 env 派生）不变 ——
+    它判的是模块顶层那几行 `_env_timeout_s(...)`，与是哪一份实例无关。
+    """
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "_llm_adapter_env_probe", pathlib.Path(M.__file__))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_timeout_family_constants_consume_env(monkeypatch):
+    """真跑模块顶层：证明六个常量确由 env 派生，堵住「只测 helper、常量没用它」的假绿。"""
     monkeypatch.setenv("LLM_GEN_DEADLINE_S", "120")
     monkeypatch.setenv("LLM_STREAM_DEADLINE_S", "0")     # → floor
     monkeypatch.setenv("LLM_DECISION_DEADLINE_S", "-1")  # → floor
     monkeypatch.setenv("LLM_GEN_ATTEMPT_S", "0")         # → floor
-    try:
-        importlib.reload(M)
-        assert M._GEN_DEADLINE_S == 120.0
-        assert M._STREAM_DEADLINE_S == M._ATTEMPT_WINDOW_S
-        assert M._DECISION_DEADLINE_S == M._ATTEMPT_WINDOW_S
-        assert M._GEN_ATTEMPT_S == M._ATTEMPT_MIN_S
-    finally:
-        monkeypatch.undo()
-        importlib.reload(M)  # 复原无 env 的模块常量，避免污染后续用例
+
+    probe = _load_env_probe()
+
+    assert probe._GEN_DEADLINE_S == 120.0
+    assert probe._STREAM_DEADLINE_S == probe._ATTEMPT_WINDOW_S
+    assert probe._DECISION_DEADLINE_S == probe._ATTEMPT_WINDOW_S
+    assert probe._GEN_ATTEMPT_S == probe._ATTEMPT_MIN_S
