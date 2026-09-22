@@ -7,6 +7,7 @@ import ThemeDrawer from './common/ThemeDrawer'
 import ConfirmModal from './common/ConfirmModal'
 import { SETTINGS_ENTRIES } from '../config/mineEntries'
 import { isAdmin } from '../utils/role'
+import useCanWrite from '../hooks/useCanWrite'
 import { LogIn, ChevronRight } from './common/Icon'
 
 export default function SettingsPanel() {
@@ -14,6 +15,7 @@ export default function SettingsPanel() {
   const pushView = useAppStore((s) => s.pushView)
   const authUser = useAppStore((s) => s.authUser)
   const logout = useAppStore((s) => s.logout)
+  const canWrite = useCanWrite()
   const [themeOpen, setThemeOpen] = useState(false)
   const [logoutConfirm, setLogoutConfirm] = useState(false)
 
@@ -30,7 +32,7 @@ export default function SettingsPanel() {
         <PageHeader title="设置" onBack={popView} />
       </header>
 
-      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: isAdmin(authUser) }} onAction={handleAction} />
+      <EntryList entries={SETTINGS_ENTRIES} flags={{ isAdmin: isAdmin(authUser), canWrite }} onAction={handleAction} />
       <div className="entry-group-gap" />
 
       <button type="button" className="entry-list-item settings-logout-btn" onClick={() => setLogoutConfirm(true)}>

@@ -15,6 +15,7 @@ import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -116,7 +117,7 @@ export default function MinePage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const unreadTotal = useAppStore((s) => s.unreadTotal)
-
+  const canWrite = useCanWrite()
 
   const handleEntryAction = useCallback((_key, view) => {
     if (view) pushView(view)
@@ -667,7 +668,7 @@ export default function MinePage() {
 
       {isMobile && (
         <div className="mine-profile-entries">
-          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={6} />
+          <EntryGrid entries={QUICK_ENTRIES} flags={{ canWrite }} badge={unreadTotal} onAction={handleEntryAction} compact columns={6} />
         </div>
       )}
 
