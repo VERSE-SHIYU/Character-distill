@@ -370,53 +370,6 @@ class TextManager:
             raise
         return {"text_id": text_id, "original_chars": original_chars, "cleaned_chars": cleaned_chars}
 
-    async def distill_all(self, text_id: str, user_id: str) -> list[dict[str, Any]]:
-        """Identify every character in a stored text and distill each one.
-
-        user_id 必需：读取原文走属主过滤，缺失即 TypeError 而不是静默读到他人文本。
-
-        Skips characters that fail distillation rather than aborting the batch.
-        """
-        text_rec = await self._storage.get_text_owned(text_id, user_id)
-        if not text_rec:
-            raise ValueError(_MSG["text_not_found"])
-        content = text_rec.get("content", "")
-
-        try:
-            chars = await resolve_characters(
-                self._storage, self._distiller, text_id, user_id, content)
-        except Exception as exc:
-            print(f"[TextManager] Identify characters failed: {exc}")
-            raise
-
-        results: list[dict[str, Any]] = []
-        for char_info in chars:
-            name = char_info.get("name", "")
-            if not name:
-                continue
-            try:
-                card = await asyncio.to_thread(
-                    self._distiller.distill_incremental, content, name, char_info.get("aliases", [])
-                )
-            except Exception as exc:
-                print(f"[TextManager] Distill '{name}' failed, skipping: {exc}")
-                continue
-
-            card_id = uuid.uuid4().hex[:12]
-            try:
-                await self._storage.save_card(
-                    card_id, text_id, card.name, card.model_dump_json(), user_id
-                )
-            except Exception as exc:
-                print(f"[TextManager] Save card '{name}' failed, skipping: {exc}")
-                continue
-
-            result = card.model_dump()
-            result["card_id"] = card_id
-            results.append(result)
-
-        return results
-
     async def get_or_distill(
         self, text_id: str, character_name: str, user_id: str, force: bool = False,
         embedding_key: str = "", embedding_region: str = "",
@@ -597,16 +550,6 @@ class TextManager:
             )
         return result
 
-    async def switch_character(
-        self, text_id: str, character_name: str, user_id: str,
-    ) -> dict[str, Any]:
-        """Switch to another character from the same text.
-
-        Reuses the cached card if it exists, otherwise distills on the fly.
-        Always creates a fresh session with a new RAG index.
-        """
-        return await self.get_or_distill(text_id, character_name, user_id=user_id)
-
     # ---- Internal helpers ----
 
     async def _build_all_characters(self, text_id: str, existing_cards: list[dict], user_id: str) -> list[dict[str, Any]]:
@@ -616,13 +559,13 @@ class TextManager:
         （与 get_or_distill 同口径）。
         """
         all_characters = [{"name": c["name"], "aliases": []} for c in existing_cards]
-        try:
-            cached = await cached_characters(self._storage, text_id, user_id)
-            if cached:
-                for char in all_characters:
-                    char["aliases"] = aliases_for(cached, char["name"])
-        except Exception as exc:
-            print(f"[TextManager] Alias cache merge failed: {exc}")
+        # **不设就地捕获**：别名缓存的读失败（存储 / 序列化）必须冒泡 —— 原先的宽捕获
+        # 把它降级成「没有别名」，会话照常建起来，用户只看到别名缺失、故障无声。
+        # 与 `get_or_distill` 取别名那段同口径（86 的 §H 第 1 项）。
+        cached = await cached_characters(self._storage, text_id, user_id)
+        if cached:
+            for char in all_characters:
+                char["aliases"] = aliases_for(cached, char["name"])
         return all_characters
 
     def _create_session(

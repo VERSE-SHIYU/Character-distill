@@ -15,10 +15,11 @@
 请求的属性 —— 所以它不参与会话状态。
 
 为什么要有一个入口：这段「读缓存 → 没命中就跑识别 → 写回」原先只在 `/identify`
-一处，而 `/start`、`/run_stream`、`/reindex`、`TextManager.distill_all` 各自**只跑
-识别、不读缓存也不写回** —— 同一份名单被反复重算。缓存键是（text_id、属主、**识别
-算法版本**），版本不符即当无缓存（见 `Distiller.IDENTIFY_VERSION`）：口径一改，旧
-名单必须自己失效，否则残缺的旧名单会被一直当全书名单用。
+一处，而 `/start`、`/run_stream`、`/reindex`、`TextManager.distill_all`（已于
+2026-09-22 删除，见 86）各自**只跑识别、不读缓存也不写回** —— 同一份名单被反复重算。
+缓存键是（text_id、属主、**识别算法版本**），版本不符即当无缓存（见
+`Distiller.IDENTIFY_VERSION`）：口径一改，旧名单必须自己失效，否则残缺的旧名单会被
+一直当全书名单用。
 """
 
 from __future__ import annotations
