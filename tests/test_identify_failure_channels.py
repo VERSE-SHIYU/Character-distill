@@ -142,7 +142,7 @@ def _run_bg(store, user_id, text_id, distiller, monkeypatch):
     """
     task_id = f"dt_{uuid.uuid4().hex}"
     _run_async(store.create_distill_task(
-        task_id, user_id, text_id, "", status="running", progress_pct=0,
+        task_id, user_id, text_id, character="", status="running", progress_pct=0,
         message="进行中", card_id="", awakening="",
     ))
     with D._task_lock:
@@ -363,7 +363,7 @@ class TestNamedRunKeepsIdentifyFailure:
     def test_named_run_identify_failure_is_400(self, store, user_id, monkeypatch):
         tid = _seed_text(store, user_id)
         distiller = _RaisingDistiller(DistillError(FAILURE_TEXT, "API 429"))
-        tm = TextManager(store, distiller, object(), {}, memory_manager=None)
+        tm = TextManager(lambda: store, distiller, object(), {}, memory_manager=None)
         client = _build_client(
             store, user_id, monkeypatch, distiller=distiller, tm=tm)
 

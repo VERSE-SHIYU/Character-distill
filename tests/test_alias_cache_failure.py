@@ -39,7 +39,7 @@ async def test_alias_cache_read_failure_propagates(monkeypatch):
         raise RuntimeError("storage exploded")
 
     monkeypatch.setattr(TM, "cached_characters", _boom)
-    tm = TextManager(_Boom(), None, None, {}, memory_manager=None)
+    tm = TextManager(lambda: _Boom(), None, None, {}, memory_manager=None)
 
     with pytest.raises(RuntimeError, match="storage exploded"):
         await tm._build_all_characters("t1", [{"name": "甲"}], "u1")
