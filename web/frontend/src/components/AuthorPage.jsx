@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import { MessageSquare, Theater, Book, Lock, Close, Heart } from './common/Icon'
@@ -14,6 +15,7 @@ import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 
 export default function AuthorPage({ embedded = false }) {
+  const canWrite = useCanWrite()
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
@@ -282,14 +284,16 @@ export default function AuthorPage({ embedded = false }) {
                                     <button type="button" className="btn-sm" onClick={() => goToMessages(f.id || f.user_id, f.username)}>
                                       私信
                                     </button>
-                                    <button
-                                      type="button"
-                                      className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
-                                      onClick={() => toggleFollowUser(f.id || f.user_id)}
-                                      disabled={followState[f.id || f.user_id]}
-                                    >
-                                      {f.is_following ? '取消关注' : '关注'}
-                                    </button>
+                                    {canWrite && (
+                                      <button
+                                        type="button"
+                                        className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
+                                        onClick={() => toggleFollowUser(f.id || f.user_id)}
+                                        disabled={followState[f.id || f.user_id]}
+                                      >
+                                        {f.is_following ? '取消关注' : '关注'}
+                                      </button>
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -329,14 +333,16 @@ export default function AuthorPage({ embedded = false }) {
                                     <button type="button" className="btn-sm" onClick={() => goToMessages(f.id || f.user_id, f.username)}>
                                       私信
                                     </button>
-                                    <button
-                                      type="button"
-                                      className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
-                                      onClick={() => toggleFollowUser(f.id || f.user_id)}
-                                      disabled={followState[f.id || f.user_id]}
-                                    >
-                                      {f.is_following ? '取消关注' : '关注'}
-                                    </button>
+                                    {canWrite && (
+                                      <button
+                                        type="button"
+                                        className={`btn-sm ${f.is_following ? 'btn-secondary' : 'btn-primary'}`}
+                                        onClick={() => toggleFollowUser(f.id || f.user_id)}
+                                        disabled={followState[f.id || f.user_id]}
+                                      >
+                                        {f.is_following ? '取消关注' : '关注'}
+                                      </button>
+                                    )}
                                   </>
                                 )}
                               </div>
@@ -357,13 +363,15 @@ export default function AuthorPage({ embedded = false }) {
                     >
                       发私信
                     </button>
-                    <button
-                      type="button"
-                      className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
-                      onClick={handleFollow}
-                    >
-                      {isFollowing ? '已关注' : '关注'}
-                    </button>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        className={`btn-primary${isFollowing ? ' btn-secondary' : ''}`}
+                        onClick={handleFollow}
+                      >
+                        {isFollowing ? '已关注' : '关注'}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -437,17 +445,19 @@ export default function AuthorPage({ embedded = false }) {
                           )}
                           <div className="author-char-footer">
                             <span className="author-char-likes"><Heart size={12} /> {card.likes || 0}</span>
-                            <button type="button" className="btn-primary btn-sm" onClick={async () => {
-                              const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                                body: JSON.stringify({ text_id: '' }),
-                              })
-                              const data = await res.json()
-                              if (data.card) startChat(data.card)
-                            }}>
-                              使用
-                            </button>
+                            {canWrite && (
+                              <button type="button" className="btn-primary btn-sm" onClick={async () => {
+                                const res = await fetchWithTimeout(`/api/market/${card.id}/fork`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                                  body: JSON.stringify({ text_id: '' }),
+                                })
+                                const data = await res.json()
+                                if (data.card) startChat(data.card)
+                              }}>
+                                使用
+                              </button>
+                            )}
                           </div>
                         </div>
                       )

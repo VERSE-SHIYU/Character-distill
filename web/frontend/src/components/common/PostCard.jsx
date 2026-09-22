@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
+import useCanWrite from '../../hooks/useCanWrite'
 import Avatar from './Avatar'
 import { Heart, MessageSquare, Trash2, Close, Lock, MapPin } from './Icon'
 import { parseCardJson } from '../../utils/card'
@@ -65,6 +66,7 @@ function ImageGrid({ images, onImageClick }) {
 
 /* ── PostCard ── */
 export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDelete = false, showAuthor = true }) {
+  const canWrite = useCanWrite()
   const pushView = useAppStore((s) => s.pushView)
   const setAuthorUserId = useAppStore((s) => s.setAuthorUserId)
   const [showComments, setShowComments] = useState(false)
@@ -170,13 +172,15 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
 
       {/* Action bar */}
       <div className="post-card-actions">
-        <button
-          type="button"
-          className={'post-card-action-btn' + (post.liked_by_me ? ' liked' : '') + (animating ? ' animating' : '')}
-          onClick={handleLikeClick}
-        >
-          {post.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {post.likes || 0}
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            className={'post-card-action-btn' + (post.liked_by_me ? ' liked' : '') + (animating ? ' animating' : '')}
+            onClick={handleLikeClick}
+          >
+            {post.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />} {post.likes || 0}
+          </button>
+        )}
         <button
           type="button"
           className="post-card-action-btn"
@@ -184,7 +188,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
         >
           <MessageSquare size={14} /> {post.comment_count || 0}
         </button>
-        {showDelete && (
+        {canWrite && showDelete && (
           <button type="button" className="post-card-delete" onClick={() => onDelete?.(post.id)}>
             <Trash2 size={13} /> 删除
           </button>
@@ -225,23 +229,25 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
               </div>
             ))
           )}
-          <div className="post-card-comment-input-row">
-            <input
-              className="post-card-comment-input"
-              placeholder="写下你的评论…"
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
-              disabled={commentSending}
-            />
-            <button
-              className="post-card-comment-send"
-              onClick={handleSendComment}
-              disabled={!commentText.trim() || commentSending}
-            >
-              {commentSending ? '…' : '发送'}
-            </button>
-          </div>
+          {canWrite && (
+            <div className="post-card-comment-input-row">
+              <input
+                className="post-card-comment-input"
+                placeholder="写下你的评论…"
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
+                disabled={commentSending}
+              />
+              <button
+                className="post-card-comment-send"
+                onClick={handleSendComment}
+                disabled={!commentText.trim() || commentSending}
+              >
+                {commentSending ? '…' : '发送'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

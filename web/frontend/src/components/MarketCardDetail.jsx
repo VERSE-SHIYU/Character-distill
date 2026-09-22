@@ -5,6 +5,7 @@ import Avatar from './common/Avatar'
 import useIsMobile from '../hooks/useIsMobile'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import { Eye, Heart, MessageSquare, Edit, Trash2, Clipboard, Sprout, CornerUpLeft, Book, Flag, Globe, Camera, Share, Sparkles, Clock, Lightbulb, Lock } from './common/Icon'
 import Loading from './common/Loading'
 import ErrorBox from './common/ErrorBox'
@@ -18,6 +19,7 @@ import EmojiPicker from './common/EmojiPicker'
 import { formatRelativeTime } from '../utils/time'
 
 export default function MarketCardDetail() {
+  const canWrite = useCanWrite()
   const setView = useAppStore((s) => s.setView)
   const pushView = useAppStore((s) => s.pushView)
   const navigateTo = useAppStore((s) => s.navigateTo)
@@ -507,17 +509,17 @@ export default function MarketCardDetail() {
               <button type="button" className="btn-icon" onClick={() => { navigator.clipboard.writeText(window.location.href) }} title="复制链接">
                 <Share size={16} />
               </button>
-              {card.user_id !== authUser?.id && authUser?.id && (
+              {canWrite && card.user_id !== authUser?.id && authUser?.id && (
                 <button type="button" className="btn-icon" onClick={() => setShowReportCardModal(true)} title="举报">
                   <Flag size={16} />
                 </button>
               )}
-              {card.user_id === authUser?.id && (
+              {canWrite && card.user_id === authUser?.id && (
                 <button type="button" className="btn-icon" onClick={() => setShowEditModal(true)} title="编辑">
                   <Edit size={16} />
                 </button>
               )}
-              {(isAdmin(authUser) || card.user_id === authUser?.id) && (
+              {canWrite && (isAdmin(authUser) || card.user_id === authUser?.id) && (
                 <button type="button" className="btn-icon danger" onClick={() => setDeleteConfirmId(card.id)} title="删除">
                   <Trash2 size={16} />
                 </button>
@@ -533,14 +535,16 @@ export default function MarketCardDetail() {
         <div className="version-preview-banner">
           <span>正在查看 <strong>v{viewVersion.version_num}</strong> 版本快照</span>
           <div className="version-preview-actions">
-            <button
-              type="button"
-              className="btn-sm btn-primary"
-              onClick={() => handleRestoreVersion(viewVersion)}
-              disabled={restoring}
-            >
-              恢复到此版本
-            </button>
+            {canWrite && (
+              <button
+                type="button"
+                className="btn-sm btn-primary"
+                onClick={() => handleRestoreVersion(viewVersion)}
+                disabled={restoring}
+              >
+                恢复到此版本
+              </button>
+            )}
             <button
               type="button"
               className="btn-sm btn-ghost"
@@ -558,7 +562,7 @@ export default function MarketCardDetail() {
           <aside className="market-detail-sidebar">
             {/* Hero */}
             <div className="market-detail-hero">
-              {card.user_id === authUser?.id ? (
+              {canWrite && card.user_id === authUser?.id ? (
                 <>
                   <button type="button" className="card-avatar-btn avatar-shape" onClick={() => avatarInputRef.current?.click()} title="点击更换封面" disabled={avatarSaving}>
                     {card.avatar_data
@@ -619,7 +623,7 @@ export default function MarketCardDetail() {
 
             {/* Stats + use button */}
             <div className="market-detail-stats">
-              {isMarketCard && (
+              {canWrite && isMarketCard && (
                 <button
                   type="button"
                   className={`market-detail-like-btn${liked ? ' liked' : ''}`}
@@ -631,9 +635,11 @@ export default function MarketCardDetail() {
               {isMarketCard && <span className="market-detail-comment-count"><MessageSquare size={16} /> <span className="market-detail-stat-num">{comments.length}</span></span>}
             </div>
             {isMarketCard ? (
-              <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
-                {forking ? '添加中…' : '使用角色'}
-              </button>
+              canWrite && (
+                <button type="button" className="btn-primary market-detail-use-btn" onClick={handleFork} disabled={forking}>
+                  {forking ? '添加中…' : '使用角色'}
+                </button>
+              )
             ) : (
               <div className="market-detail-private-note">
                 <Lock size={14} /> 仅作者可见，暂未公开
@@ -754,7 +760,7 @@ export default function MarketCardDetail() {
               {commentsLoading ? <Loading text="加载评论…" /> : comments.length === 0 ? (
                 <p className="market-detail-empty">暂无评论，来写第一条吧</p>
               ) : (
-                <>{card.user_id === authUser?.id && (
+                <>{canWrite && card.user_id === authUser?.id && (
                   <div className="market-detail-batch-bar">
                     <button type="button" className="btn-sm btn-outline" onClick={() => { setBatchMode(!batchMode); if (batchMode) setSelectedCommentIds(new Set()) }}>
                       {batchMode ? '退出批量' : '批量删除'}
@@ -785,14 +791,16 @@ export default function MarketCardDetail() {
                           <span className="market-detail-comment-time">{formatRelativeTime(c.created_at)}</span>
                         </div>
                         <p className="market-detail-comment-text">{c.content}</p>
-                        <div className="market-detail-comment-actions">
-                          {(card.user_id === authUser?.id || c.user_id === authUser?.id || isAdmin(authUser)) && (
-                            <button type="button" className="comment-action-btn danger" onClick={() => setDeleteCommentId(c.id)}>删除</button>
-                          )}
-                          {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !isAdmin(authUser) && (
-                            <button type="button" className="comment-action-btn" onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}>举报</button>
-                          )}
-                        </div>
+                        {canWrite && (
+                          <div className="market-detail-comment-actions">
+                            {(card.user_id === authUser?.id || c.user_id === authUser?.id || isAdmin(authUser)) && (
+                              <button type="button" className="comment-action-btn danger" onClick={() => setDeleteCommentId(c.id)}>删除</button>
+                            )}
+                            {c.user_id !== authUser?.id && card.user_id !== authUser?.id && !isAdmin(authUser) && (
+                              <button type="button" className="comment-action-btn" onClick={() => { setReportCommentId(c.id); setReportReason(''); setReportError('') }}>举报</button>
+                            )}
+                          </div>
+                        )}
                       </div>
                       </>)}
                     </div>
@@ -821,11 +829,15 @@ export default function MarketCardDetail() {
                             {card.user_id === authUser?.id && (
                               <>
                                 <button type="button" className="version-action-btn" onClick={() => setViewVersion(v)} title="查看此版本详情"><Eye size={16} /></button>
-                                <button type="button" className="version-action-btn" onClick={() => handleRestoreVersion(v)} disabled={restoring} title="恢复到此版本"><CornerUpLeft size={14} /></button>
-                                <button type="button" className="version-action-btn" onClick={() => startEditVersion(v)} title="编辑"><Edit size={14} /></button>
+                                {canWrite && (
+                                  <button type="button" className="version-action-btn" onClick={() => handleRestoreVersion(v)} disabled={restoring} title="恢复到此版本"><CornerUpLeft size={14} /></button>
+                                )}
+                                {canWrite && (
+                                  <button type="button" className="version-action-btn" onClick={() => startEditVersion(v)} title="编辑"><Edit size={14} /></button>
+                                )}
                               </>
                             )}
-                            {isAdmin(authUser) && (
+                            {canWrite && isAdmin(authUser) && (
                               <button type="button" className="version-action-btn version-action-btn-danger" onClick={() => setDeleteVersionId(v.id)} title="删除"><Trash2 size={14} /></button>
                             )}
                           </div>
@@ -870,78 +882,80 @@ export default function MarketCardDetail() {
       </div>
 
       {/* Fixed bottom: comment input */}
-      <div className="market-detail-fixed-input">
-        <div className="market-detail-comment-emoji-wrap" ref={commentEmojiRef}>
+      {canWrite && (
+        <div className="market-detail-fixed-input">
+          <div className="market-detail-comment-emoji-wrap" ref={commentEmojiRef}>
+            <button
+              type="button"
+              className="market-detail-comment-emoji-btn"
+              data-emoji-btn
+              onClick={() => setShowCommentEmoji(prev => !prev)}
+              title="表情"
+            >😊</button>
+            {showCommentEmoji && (
+              <EmojiPicker
+                textareaRef={commentInputRef}
+                controlled
+                onEmojiSelect={(emoji) => {
+                  setCommentText(prev => prev + emoji)
+                  setShowCommentEmoji(false)
+                  commentInputRef.current?.focus()
+                }}
+              />
+            )}
+          </div>
+          <div className="market-detail-at-wrap" ref={atPickerRef}>
+            <button
+              type="button"
+              className={`market-detail-at-btn${atCardId ? ' active' : ''}`}
+              onClick={() => setShowAtPicker(p => !p)}
+              title="@角色"
+            >@</button>
+            {showAtPicker && (
+              <div className="market-detail-at-picker">
+                <div className="market-detail-at-tip"><Lightbulb size={14} /> 想问他其他看法？把那些评论内容转述给他即可</div>
+                {atVersions.length === 0
+                  ? <div className="market-detail-at-empty">本书暂无其他公开版本</div>
+                  : atVersions.map(v => (
+                      <button
+                        key={v.card_id}
+                        type="button"
+                        className="market-detail-at-item"
+                        onClick={() => {
+                          setAtCardId(v.card_id)
+                          setCommentText(prev => prev + `@${v.name}【${v.author_username}】`)
+                          setShowAtPicker(false)
+                          commentInputRef.current?.focus()
+                        }}
+                      >
+                        <span className="at-item-name">{v.name}</span>
+                        <span className="at-item-author">@{v.author_username}</span>
+                      </button>
+                    ))
+                }
+              </div>
+            )}
+          </div>
+          <input
+            ref={commentInputRef}
+            type="text"
+            className="market-detail-comment-field"
+            placeholder="写下你的评论…"
+            value={commentText}
+            onChange={(e) => setCommentText(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleComment()}
+            disabled={commentSending}
+          />
           <button
             type="button"
-            className="market-detail-comment-emoji-btn"
-            data-emoji-btn
-            onClick={() => setShowCommentEmoji(prev => !prev)}
-            title="表情"
-          >😊</button>
-          {showCommentEmoji && (
-            <EmojiPicker
-              textareaRef={commentInputRef}
-              controlled
-              onEmojiSelect={(emoji) => {
-                setCommentText(prev => prev + emoji)
-                setShowCommentEmoji(false)
-                commentInputRef.current?.focus()
-              }}
-            />
-          )}
+            className="btn-primary btn-sm"
+            onClick={handleComment}
+            disabled={!commentText.trim() || commentSending}
+          >
+            {commentSending ? '…' : '发送'}
+          </button>
         </div>
-        <div className="market-detail-at-wrap" ref={atPickerRef}>
-          <button
-            type="button"
-            className={`market-detail-at-btn${atCardId ? ' active' : ''}`}
-            onClick={() => setShowAtPicker(p => !p)}
-            title="@角色"
-          >@</button>
-          {showAtPicker && (
-            <div className="market-detail-at-picker">
-              <div className="market-detail-at-tip"><Lightbulb size={14} /> 想问他其他看法？把那些评论内容转述给他即可</div>
-              {atVersions.length === 0
-                ? <div className="market-detail-at-empty">本书暂无其他公开版本</div>
-                : atVersions.map(v => (
-                    <button
-                      key={v.card_id}
-                      type="button"
-                      className="market-detail-at-item"
-                      onClick={() => {
-                        setAtCardId(v.card_id)
-                        setCommentText(prev => prev + `@${v.name}【${v.author_username}】`)
-                        setShowAtPicker(false)
-                        commentInputRef.current?.focus()
-                      }}
-                    >
-                      <span className="at-item-name">{v.name}</span>
-                      <span className="at-item-author">@{v.author_username}</span>
-                    </button>
-                  ))
-              }
-            </div>
-          )}
-        </div>
-        <input
-          ref={commentInputRef}
-          type="text"
-          className="market-detail-comment-field"
-          placeholder="写下你的评论…"
-          value={commentText}
-          onChange={(e) => setCommentText(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleComment()}
-          disabled={commentSending}
-        />
-        <button
-          type="button"
-          className="btn-primary btn-sm"
-          onClick={handleComment}
-          disabled={!commentText.trim() || commentSending}
-        >
-          {commentSending ? '…' : '发送'}
-        </button>
-      </div>
+      )}
 
       <ConfirmModal
         isOpen={!!deleteConfirmId}

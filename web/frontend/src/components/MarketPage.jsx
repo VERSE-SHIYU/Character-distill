@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { getAuthHeaders, fetchWithTimeout } from '../api/client'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import { SkeletonCard } from './common/Skeleton'
@@ -16,6 +17,7 @@ import { formatShortTime } from '../utils/time'
 const PAGE_SIZE = 20
 
 export default function MarketPage() {
+  const canWrite = useCanWrite()
   const startChat = useAppStore((s) => s.startChat)
   const loadCards = useAppStore((s) => s.loadCards)
   const loadStandaloneCards = useAppStore((s) => s.loadStandaloneCards)
@@ -345,14 +347,16 @@ export default function MarketPage() {
                         <span className="market-card-v2-author">{c.author_name || '匿名'}</span>
                       </div>
                       <span className="market-card-v2-stats">
-                        <button
-                          type="button"
-                          className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
-                          onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
-                        >
-                          {c.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />}
-                          <span>{c.likes || 0}</span>
-                        </button>
+                        {canWrite && (
+                          <button
+                            type="button"
+                            className={`market-like-btn${c.liked_by_me ? ' liked' : ''}`}
+                            onClick={(e) => { e.stopPropagation(); handleLike(c.id) }}
+                          >
+                            {c.liked_by_me ? <Heart size={14} fill="currentColor" /> : <Heart size={14} />}
+                            <span>{c.likes || 0}</span>
+                          </button>
+                        )}
                       </span>
                     </div>
                   </div>
@@ -395,26 +399,28 @@ export default function MarketPage() {
                 ))
               )}
             </div>
-            <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--glass-border)' }}>
-              <input
-                className="modal-input"
-                style={{ flex: 1 }}
-                placeholder="写下你的评论…"
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
-                disabled={commentSending}
-              />
-              <button className="btn-primary" onClick={handleSendComment} disabled={!commentText.trim() || commentSending}>
-                {commentSending ? '发送中…' : '发送'}
-              </button>
-            </div>
+            {canWrite && (
+              <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: '1px solid var(--glass-border)' }}>
+                <input
+                  className="modal-input"
+                  style={{ flex: 1 }}
+                  placeholder="写下你的评论…"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendComment()}
+                  disabled={commentSending}
+                />
+                <button className="btn-primary" onClick={handleSendComment} disabled={!commentText.trim() || commentSending}>
+                  {commentSending ? '发送中…' : '发送'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
       {/* Fork type selection modal */}
-      {forkCard && (
+      {forkCard && canWrite && (
         <div className="modal-overlay modal-sheet" onClick={() => setForkCard(null)}>
           <div className="modal-card" style={{ maxWidth: 400 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">选择使用方式</h3>

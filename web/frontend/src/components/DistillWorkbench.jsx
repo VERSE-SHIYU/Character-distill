@@ -3,8 +3,10 @@ import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useIsMobile from '../hooks/useIsMobile'
+import useCanWrite from '../hooks/useCanWrite'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
+import ErrorBox from './common/ErrorBox'
 import { AlertTriangle, Check, Clock, CornerUpLeft, Download, Play, RefreshCw, Sparkles } from './common/Icon'
 
 // 5 步视觉状态机：非终态阶段由服务端 stage（内存细化）驱动，回落 status
@@ -267,9 +269,12 @@ function DetailPane({ sel, onBack }) {
 }
 
 function TaskDetail({ task, onBack }) {
+  const canWrite = useCanWrite()
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
+  const cancelDistillTask = useAppStore((s) => s.cancelDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
   const pushView = useAppStore((s) => s.pushView)
+  const [cancelError, setCancelError] = useState('')
   const done = isTerminal(task)
   const actions = taskActions(task)
   const displayPct = useSmoothProgress(task.progress_pct, done)
@@ -296,9 +301,14 @@ function TaskDetail({ task, onBack }) {
     setLogs((l) => [...l.slice(-6), { t: nowHM(), text, state }])
   }, [task, task?.stage, task?.status, task?.done])
 
-  const cancelTask = () => {
-    if (actions.includes('cancel')) fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' }).catch(() => {})
-    removeDistillTask(task.id)
+  // 取消失败时任务留在列表里，把 detail 显示出来（106）
+  const cancelTask = async () => {
+    setCancelError('')
+    try {
+      await cancelDistillTask(task)
+    } catch (err) {
+      setCancelError(err.message || '取消失败')
+    }
   }
   // resume 与 retry 打同一端点，续跑 vs 整批重跑由后端任务级门裁决；前端只差文案。
   const restartTask = () => {
@@ -367,10 +377,12 @@ function TaskDetail({ task, onBack }) {
         {logs.length === 0 && <div className="dw-log-line"><span className="dw-dot dw-dot-wait" /><span className="dw-log-text">等待任务状态…</span></div>}
       </div>
 
+      <ErrorBox message={cancelError} onDismiss={() => setCancelError('')} />
+
       <div className="dw-cta">
-        {actions.includes('cancel') && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
-        {actions.includes('resume') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><Play size={15} /> 继续蒸馏</button>}
-        {actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
+        {canWrite && actions.includes('cancel') && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={cancelTask}>暂停任务</button>}
+        {canWrite && actions.includes('resume') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><Play size={15} /> 继续蒸馏</button>}
+        {canWrite && actions.includes('retry') && task.textId && <button type="button" className="dw-cta-btn dw-cta-primary" onClick={restartTask}><RefreshCw size={15} /> 重新蒸馏</button>}
         {view?.canChat && (
           <>
             <button type="button" className="dw-cta-btn dw-cta-primary" onClick={tryChat}><Sparkles size={15} /> 试聊当前版本</button>
@@ -384,6 +396,7 @@ function TaskDetail({ task, onBack }) {
 }
 
 function CardDetail({ card, onBack }) {
+  const canWrite = useCanWrite()
   const startChat = useAppStore((s) => s.startChat)
   const viewCard = useAppStore((s) => s.viewCard)
   const pushView = useAppStore((s) => s.pushView)
@@ -435,8 +448,8 @@ function CardDetail({ card, onBack }) {
       <div className="dw-cta">
         <button type="button" className="dw-cta-btn dw-cta-primary" onClick={() => startChat(card)}><Sparkles size={15} /> 试聊</button>
         <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={() => exportCard(card)}><Download size={15} /> 导出</button>
-        <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>
-        {card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}
+        {canWrite && <button type="button" className="dw-cta-btn dw-cta-secondary" onClick={editCard}>编辑</button>}
+        {canWrite && card.text_id && <button type="button" className="dw-cta-btn dw-cta-ghost" onClick={redistill}><RefreshCw size={15} /> 重新蒸馏</button>}
       </div>
     </div>
   )

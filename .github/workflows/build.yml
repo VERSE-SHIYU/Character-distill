@@ -39,6 +39,14 @@ jobs:
   test:
     name: "gate / 本仓回归（依赖按锁）— 红 = 你写错了"
     runs-on: ubuntu-latest
+
+    # 挂死不算失败 —— 没有这个上限时，卡住的 pytest 会一直占着 runner，整条 build 要拖到撞
+    # 360 分钟上限才收场（2026-09-22 实发：本步挂死 2h19m 被 cancel，见 117）。到点即失败，
+    # 「挂住」从此落进「红」这一类，走正常的失败流程。
+    # 取值 40 分钟的依据（最近 46 次成功 run 的本步耗时）：p50 = 235s，最大 = 714s
+    #   （11m54s），其余全落在 169–321s 一条带上。40 分钟 = p50 的 10.2 倍、最大值的 3.4 倍，
+    #   正常抖动留足余量，挂死也收得住。
+    timeout-minutes: 40
     services:
       postgres: &pg_service
         image: postgres:16-alpine
@@ -151,6 +159,9 @@ jobs:
     name: "sentinel / 上游漂移（依赖不锁）— 红 = 世界变了，不挡合并"
     runs-on: ubuntu-latest
     continue-on-error: true
+    # 与 gate 同一条理由、同一个取值（依据见 test job），只是这里到点即失败会被
+    # 上面的 continue-on-error 接住 —— 哨兵挂死不该挡合并，但也不该白占 runner。
+    timeout-minutes: 40
     services:
       postgres: *pg_service
     steps:

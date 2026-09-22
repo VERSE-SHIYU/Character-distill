@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import useTypewriter from '../hooks/useTypewriter'
 import useIsMobile from '../hooks/useIsMobile'
+import useCanWrite from '../hooks/useCanWrite'
 import { moodCharInterval } from '../utils/moodTypingSpeed'
 import useAppStore from '../store/useAppStore'
 import { Globe, Speaker, SpeakerOff, RefreshCw, User, FontDecrease, FontIncrease, MessageSquare, Book, File, Heart, Zap, Check, Shield, Edit, Close, Clipboard, Clock, ArrowLeft, MessageCircle, MoreHorizontal } from './common/Icon'
@@ -113,6 +114,7 @@ export default function ChatArea() {
 }
 
 function ChatView() {
+  const canWrite = useCanWrite()
   const messages = useAppStore((s) => s.messages)
   const sending = useAppStore((s) => s.sending)
   const currentCard = useAppStore((s) => s.currentCard)
@@ -491,14 +493,20 @@ function ChatView() {
           <ArrowLeft size={20} />
         </button>
         <div className="dm-peer chat-topbar-peer">
-          <button
-            type="button"
-            className="dm-peer-avatar avatar-shape"
-            onClick={() => avatarInputRef.current?.click()}
-            title="更换头像"
-          >
-            <Avatar name={charName} src={avatarUrl} size={38} />
-          </button>
+          {canWrite ? (
+            <button
+              type="button"
+              className="dm-peer-avatar avatar-shape"
+              onClick={() => avatarInputRef.current?.click()}
+              title="更换头像"
+            >
+              <Avatar name={charName} src={avatarUrl} size={38} />
+            </button>
+          ) : (
+            <span className="dm-peer-avatar avatar-shape">
+              <Avatar name={charName} src={avatarUrl} size={38} />
+            </span>
+          )}
           <input ref={avatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleAvatarChange} />
           <input ref={userAvatarInputRef} type="file" accept="image/*" className="sr-only" onChange={handleUserAvatarChange} />
           <div className="dm-peer-meta">
@@ -598,14 +606,18 @@ function ChatView() {
             <User size={16} />
             <span>角色列表</span>
           </button>
-          <button type="button" className="chat-more-item" onClick={() => { setShowMemoryPanel(true); loadMemories(); setShowMore(false) }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7.5L12 22l-3-5.5C7 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
-            <span>角色记忆</span>
-          </button>
-          <button type="button" className="chat-more-item chat-more-item-danger" onClick={() => { handleReset(); setShowMore(false) }}>
-            <RefreshCw size={16} />
-            <span>重置对话</span>
-          </button>
+          {canWrite && (
+            <button type="button" className="chat-more-item" onClick={() => { setShowMemoryPanel(true); loadMemories(); setShowMore(false) }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-2 5.5-4 7.5L12 22l-3-5.5C7 14.5 5 12 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>
+              <span>角色记忆</span>
+            </button>
+          )}
+          {canWrite && (
+            <button type="button" className="chat-more-item chat-more-item-danger" onClick={() => { handleReset(); setShowMore(false) }}>
+              <RefreshCw size={16} />
+              <span>重置对话</span>
+            </button>
+          )}
         </div>
       )}
       </div>
@@ -705,7 +717,7 @@ function ChatView() {
                     avatarUrl={avatarUrl}
                     userRole={userRole}
                     isStreaming={isStreaming}
-                    onRevoke={isUser ? handleRevoke : null}
+                    onRevoke={isUser && canWrite ? handleRevoke : null}
                     revokeCooldown={revokeCooldown}
                     playTTS={playTTS}
                     isPlaying={ttsPlayingId === i}
@@ -713,12 +725,12 @@ function ChatView() {
                     isAudioPlaying={playingMsgId === msg.id || playingMsgId === i}
                     onPlayAudio={playAudio}
                     userAvatarUrl={userAvatarUrl}
-                    onUserAvatarClick={() => userAvatarInputRef.current?.click()}
+                    onUserAvatarClick={canWrite ? () => userAvatarInputRef.current?.click() : undefined}
                     timestamp={msg.timestamp}
                     reactions={reactions[msg.id] || []}
                     replyToPreview={msg.reply_to_preview}
                     replyToId={msg.reply_to_id}
-                    onReact={async (emoji) => {
+                    onReact={canWrite ? async (emoji) => {
                       if (!msg.id) return
                       try {
                         await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
@@ -730,7 +742,7 @@ function ChatView() {
                         const data = await res.json()
                         setReactions(data.reactions || {})
                       } catch {}
-                    }}
+                    } : undefined}
                     onReply={() => {
                       const preview = isUser
                         ? `我: ${(msg.content || '').slice(0, 60)}`
@@ -1005,6 +1017,7 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evide
       name={userRole || '我'}
       src={userAvatarUrl}
       size={isMobile ? 40 : 68}
+      className="chat-user-avatar"
       onClick={onUserAvatarClick}
     />
   )

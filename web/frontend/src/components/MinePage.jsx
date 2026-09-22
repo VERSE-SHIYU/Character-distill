@@ -15,6 +15,7 @@ import EntryGrid from './common/EntryGrid'
 import { QUICK_ENTRIES } from '../config/mineEntries'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import { parseCardJson } from '../utils/card'
 import { formatChatTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
@@ -116,7 +117,7 @@ export default function MinePage() {
   const setMessageTargetUserId = useAppStore((s) => s.setMessageTargetUserId)
   const setMessageTargetUsername = useAppStore((s) => s.setMessageTargetUsername)
   const unreadTotal = useAppStore((s) => s.unreadTotal)
-
+  const canWrite = useCanWrite()
 
   const handleEntryAction = useCallback((_key, view) => {
     if (view) pushView(view)
@@ -547,7 +548,7 @@ export default function MinePage() {
           <div className="mine-banner-fallback" />
         )}
         <div className="mine-banner-overlay" />
-        {isMe && (
+        {isMe && canWrite && (
           <button type="button" className="mine-banner-upload" onClick={() => bannerInputRef.current?.click()} title="更换封面">
             <Camera size={18} /> 更换封面
           </button>
@@ -562,8 +563,8 @@ export default function MinePage() {
         <div className="mine-profile-row">
           <div className="mine-profile-left">
             <div className="mine-avatar-wrap" style={isMobile ? { marginTop: -40 } : undefined}>
-              <Avatar name={username} src={avatarSrc} size={isMobile ? 56 : 60} onClick={isMe ? () => avatarInputRef.current?.click() : undefined} />
-              {isMe && (
+              <Avatar name={username} src={avatarSrc} size={isMobile ? 56 : 60} onClick={isMe && canWrite ? () => avatarInputRef.current?.click() : undefined} />
+              {isMe && canWrite && (
                 <>
                   <div className="mine-avatar-overlay avatar-shape" onClick={() => avatarInputRef.current?.click()}>
                     <Camera size={18} />
@@ -620,7 +621,7 @@ export default function MinePage() {
                   maxLength={200}
                 />
               ) : (
-                <div className="mine-bio-display" onClick={() => { setBioDraft(authUser?.bio || ''); setBioEditing(true) }}>
+                <div className="mine-bio-display" onClick={canWrite ? () => { setBioDraft(authUser?.bio || ''); setBioEditing(true) } : undefined}>
                   {authUser?.bio ? authUser.bio : <span className="mine-bio-placeholder">点击添加个人简介</span>}
                 </div>
               )
@@ -639,13 +640,15 @@ export default function MinePage() {
               >
                 发私信
               </button>
-              <button
-                type="button"
-                className={`btn-sm ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}
-                onClick={handleFollow}
-              >
-                {followLabel}
-              </button>
+              {canWrite && (
+                <button
+                  type="button"
+                  className={`btn-sm ${isFollowing ? 'btn-secondary' : 'btn-primary'}`}
+                  onClick={handleFollow}
+                >
+                  {followLabel}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -667,7 +670,7 @@ export default function MinePage() {
 
       {isMobile && (
         <div className="mine-profile-entries">
-          <EntryGrid entries={QUICK_ENTRIES} badge={unreadTotal} onAction={handleEntryAction} compact columns={6} />
+          <EntryGrid entries={QUICK_ENTRIES} flags={{ canWrite }} badge={unreadTotal} onAction={handleEntryAction} compact columns={6} />
         </div>
       )}
 
@@ -768,7 +771,7 @@ export default function MinePage() {
                         <div className="market-card-v2-source">来自《{card.text_title}》</div>
                       )}
                     </div>
-                    {isMe && <MineCardMenu card={card} onRefresh={handleRefresh} />}
+                    {isMe && canWrite && <MineCardMenu card={card} onRefresh={handleRefresh} />}
                   </div>
                 )
               })}
@@ -808,7 +811,7 @@ export default function MinePage() {
                         <div className="mine-book-cover-gradient" style={{ background: `linear-gradient(135deg, ${g1}, ${g2})` }} />
                       )}
                       <span className="mine-book-cover-title">{title}</span>
-                      {isMe && (
+                      {isMe && canWrite && (
                         <button
                           type="button"
                           className="mine-book-cover-edit"
@@ -840,7 +843,7 @@ export default function MinePage() {
         {/* 动态 tab */}
         {tab === 'posts' && (
           <>
-            {isMe && (
+            {isMe && canWrite && (
               <div className="mine-composer">
                 <textarea
                   ref={textareaRef}
@@ -976,7 +979,7 @@ export default function MinePage() {
               <div className="mine-onboard-card">
                 <h3 className="mine-onboard-title">{isMe ? '还没有动态' : '暂无动态'}</h3>
                 <p className="mine-onboard-desc">{isMe ? '发一条让别人认识你' : '该用户还没有发布动态'}</p>
-                {isMe && <button type="button" className="btn-primary" onClick={() => document.querySelector('.mine-composer-input')?.focus()}>
+                {isMe && canWrite && <button type="button" className="btn-primary" onClick={() => document.querySelector('.mine-composer-input')?.focus()}>
                   发动态
                 </button>}
               </div>
@@ -1098,20 +1101,22 @@ export default function MinePage() {
                           >
                             私信
                           </button>
-                          <button
-                            type="button"
-                            className="btn-sm btn-secondary"
-                            onClick={async () => {
-                              await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
-                                method: 'POST',
-                                headers: getAuthHeaders(),
-                              })
-                              setFollowing(prev => prev.filter(f => f.id !== u.id))
-                              setFollowingCount(prev => Math.max(0, prev - 1))
-                            }}
-                          >
-                            取消关注
-                          </button>
+                          {canWrite && (
+                            <button
+                              type="button"
+                              className="btn-sm btn-secondary"
+                              onClick={async () => {
+                                await fetchWithTimeout(`/api/market/author/${u.id}/follow`, {
+                                  method: 'POST',
+                                  headers: getAuthHeaders(),
+                                })
+                                setFollowing(prev => prev.filter(f => f.id !== u.id))
+                                setFollowingCount(prev => Math.max(0, prev - 1))
+                              }}
+                            >
+                              取消关注
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
