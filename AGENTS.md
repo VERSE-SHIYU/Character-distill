@@ -590,7 +590,7 @@ config.yaml 现值（现读，非转述）：
 - **它自己的那层缓存不是 `characters_json`**：`identify_characters` 用的是**进程内 TTL memo**（`core/distiller.py:28-32`，`IDENTIFY_CACHE_TTL_SECONDS = 600`），键 = `sha256(前 10000 字) + model`。寿命是**进程**，不是库。
 - **实测**：本次 `/start` 之前该文本的 `characters_json` 已存 8 个角色（早先 `/identify` 的产物），流水线仍在 12:30:07 真发了 identify 调用（`action=distill_identify`）；日志里 `[distill] identify cache hit` **零命中** —— 因为本次 rebuild 刚重启过容器，进程内 memo 是冷的。
 - **意义（解释了上一轮的一个推理为什么只在一条路上成立）**：上一轮判定「再点一次不可能复现，因为 `characters_json` 已缓存 8 个角色、命中即返回」—— 该推理**只在 `/identify` 上成立**。`/start` 不等价。
-- **收口（2026-09-21）**：按**产品语义**裁，不是补一行 cache 读取 —— 名单是**作品的属性**，所以「读缓存 → 识别 → 落库」收敛成唯一入口 `core/character_roster.py`（S4 `5088c29`），所有**有 `text_id`** 的调用方（`/identify` `/run` `/run_stream` `/reindex`、`TextManager.distill_all` / `get_or_distill` / `_build_all_characters`、`/start` 的 bg 线程）一律走它（S5 `ef43b38`）；`refresh=True` 保留「用户显式点重新识别」这条语义，不再靠「调另一条路由」表达重跑。legacy 的 `/api/identify`、`/api/distill` 与 `web/app.py:85`（Gradio）保持现场识别 —— 只有原文、没有 `text_id`，读不到也落不了这份缓存。
+- **收口（2026-09-21）**：按**产品语义**裁，不是补一行 cache 读取 —— 名单是**作品的属性**，所以「读缓存 → 识别 → 落库」收敛成唯一入口 `core/character_roster.py`（S4 `5088c29`），所有**有 `text_id`** 的调用方（`/identify` `/run` `/run_stream` `/reindex`、`TextManager.distill_all` / `get_or_distill` / `_build_all_characters`、`/start` 的 bg 线程）一律走它（S5 `ef43b38`）；`refresh=True` 保留「用户显式点重新识别」这条语义，不再靠「调另一条路由」表达重跑（**2026-09-22 订正**：该参数无生产调用方、前端无入口，且真调用也会被进程内 memo 吃掉 —— 已删除，见 89）。legacy 的 `/api/identify`、`/api/distill` 与 `web/app.py:85`（Gradio）保持现场识别 —— 只有原文、没有 `text_id`，读不到也落不了这份缓存。
 - **同轮一起落地的两处前提**：① 原 `identify_characters` 取 `text[:10000]`，红楼梦只覆盖头两章，残缺名单被当全书名单落库 —— 改为按 `_chunk_size` 全片识别再合并（S2 `00e0710`；合并输出上限另提 `d5bdbc3`）。② `characters_json` 没有版本，口径一改旧名单不会失效 —— 加 `texts.characters_version`（SQLite 087 / PG 020，S3 `592cc28`），版本号的唯一定义是 `Distiller.IDENTIFY_VERSION`，读回时版本不符即当无缓存。
 - **判据命令**：`git grep -n 'get_characters_owned\|save_characters' -- web/ core/`（应**只剩** `core/character_roster.py`）、`git grep -n 'identify_characters' -- web/ core/`（应只剩 `core/distiller.py` 的定义、`core/character_roster.py` 的调用、`_do_identify` / `_resolve_character_name` 两条 legacy 纯文本路径、`web/app.py:85`）
 - **同轮另记的观察（各自单列，均未修）**：见 86–90。
@@ -1230,12 +1230,15 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/`（现为 **2** 处；并成 1 处即已收口）
 - **处置方向**：把 Map 抽成 async 生成器（`async for ev in _map_events(...)`），同步侧用 `asyncio.run` + 收集、流式侧直接转发。**先不动**：会碰 `resume_candidates` 与 checkpoint 的既有语义，超出本案范围。
 
-**89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**记账**（不修，2026-09-21；S4 建唯一入口时确认）
-- **两份的键不同**：进程内 memo（`core/distiller.py:846`）键 = `text_fingerprint(text) + ":" + model`，TTL 600s、上限 100 条、寿命是**进程**；库缓存键 = (text_id, 属主, `IDENTIFY_VERSION`)，寿命是**库**。
-- **两者的失效条件不一致**：`characters_version` 一改，库缓存立刻当无缓存重算；而 memo 不认版本号 —— `identify_characters` 的注释（`core/distiller.py:836-837`）明写「版本判定在 `core/character_roster.py` 那一层，这里不管版本」。于是版本变更后 roster 会调一次识别、**拿到 memo 里的旧口径名单**、再以**新版本号**写回库 —— 旧名单被洗成新名单，S3 的版本门形同虚设。
-- **当前不可达（判据不是推论）**：`IDENTIFY_VERSION` 是类常量（`core/distiller.py:322`），改它必改代码，改代码必重启进程，重启则 memo 为空。窗口要打开需要**一个不改代码就能变版本号的入口**（读 env / config）。
+**89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**已修**（`e1d3cbc`，2026-09-22；2026-09-21 首记，原状态「记账（不修）」）
+- **两份的键不同**：进程内 memo（`core/distiller.py:884`）键 = `text_fingerprint(text) + ":" + model`，TTL 600s、上限 100 条、寿命是**进程**；库缓存键 = (text_id, 属主, `IDENTIFY_VERSION`)，寿命是**库**。
+- **两者的失效条件不一致**：`characters_version` 一改，库缓存立刻当无缓存重算；而 memo 原先不认版本号 —— `identify_characters` 的注释（`core/distiller.py:870-871`）明写「版本判定在 `core/character_roster.py` 那一层，这里不管版本」。于是版本变更后 roster 会调一次识别、**拿到 memo 里的旧口径名单**、再以**新版本号**写回库 —— 旧名单被洗成新名单，S3 的版本门形同虚设。
+- **当前不可达（判据不是推论，2026-09-22 S0 复核现跑）**：`IDENTIFY_VERSION` 是类常量（`core/distiller.py:321`，唯一定义），改它必改代码，改代码必重启进程，重启则 memo 为空。复核命令与读数：`git grep -n "IDENTIFY_VERSION" -- .` → 生产命中只有 `core/distiller.py:321`（定义）+ `core/character_roster.py:92/:115`（唯二读取处），`CONFIG*` / `docs/` 零命中；`git grep -n "os.environ\|getenv" -- core/distiller.py` → 零命中。窗口要打开需要**一个不改代码就能变版本号的入口**（读 env / config），现无。
 - **判据命令**：`git grep -n "IDENTIFY_CACHE" -- core/`、`git grep -n "IDENTIFY_VERSION" -- core/ CONFIG* docs/ 2>/dev/null`（版本号若出现在 env/config 读取处，窗口即已打开）
-- **处置方向**：把 `IDENTIFY_VERSION` 并进 memo 的键（两行），或让 `identify_characters` 不自带缓存、缓存统一归 roster 层。**先不动**：窗口不可达时改它拿不到红源，变异打不红的判据没有分辨力。
+- **修法（2026-09-22）**：版本号并进 memo 的键 —— `core/distiller.py::identify_characters` 的 `key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"`，并把「这里不管版本」那段 docstring 按事实改写为「键必须覆盖全部决定输入」。库缓存的版本判定仍在 `core/character_roster.py` 那一层（两道缓存各守各的版本）。
+- **锁与红源（形态锁，不是缺陷复现）**：`tests/test_character_roster.py::TestMemoKeyCoversIdentifyVersion::test_version_change_is_a_memo_miss` —— 灌 memo → `monkeypatch Distiller.IDENTIFY_VERSION` → 再 `resolve_characters`，断言 LLM 被再调一次、落库的是新名单且版本号是新的。**变异 = 从键里去掉版本号 → 该用例红（1 failed, 6 passed）**。它复现的是**生产当前不存在的时序**（常量变更必经重启），故锁的是**「缓存键覆盖全部决定输入」这一形态**，不是可达缺陷 —— 交付里已显式声明。
+- **随修收口的一条**：`resolve_characters` 的 `refresh` 参数已删除（生产零调用方、前端无入口，且真调用也会被 memo 吃掉 ⇒ 原先 docstring 说的「用户显式点重新识别」不成立）；`tests/test_character_roster.py` 里对应用例一并删除。
+- **未做（有意为之，非残留）**：`/reindex` 走 `resolve_characters` 不强制重识别（缓存命中即不发 LLM）—— 这是 S4 统一入口时的**设计选择**，docstring 已显式写明。
 
 **90. 两个后端每次启动都重跑全部迁移，且没有「已应用」记录表** —— 状态：**记账**（不修，2026-09-21；S3 加 087/020 时确认口径）
 - **事实**：全仓无 `schema_migrations` 一类记录表。SQLite 的幂等靠**读现状**（`storage/sqlite_store.py:97` / `:195` / `:249` 的 `PRAGMA table_info`，逐列比对后再决定加不加）；PG 靠 `ADD COLUMN IF NOT EXISTS` / `DROP COLUMN IF EXISTS`。启动时**每一份** `.sql` 都会被解析并执行一遍。
