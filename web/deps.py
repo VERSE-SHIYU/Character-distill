@@ -48,6 +48,9 @@ _rag_config: dict[str, Any] = _config["rag"]
 # Transitional: kept until chat_engine migrates to storage-backed history
 _sessions: dict[str, dict[str, Any]] = {}
 
+# {group_id: GroupSession}
+_group_sessions: dict[str, Any] = {}
+
 _indexing_service: IndexingService | None = None
 
 _memory_config: dict[str, Any] = _config.get("memory", {})
@@ -223,6 +226,11 @@ def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[
 def get_sessions() -> dict[str, dict[str, Any]]:
     """Return the in-memory session store."""
     return _sessions
+
+
+def get_group_sessions() -> dict[str, Any]:
+    """Return the in-memory group session store."""
+    return _group_sessions
 
 
 def touch_session(session: dict) -> None:

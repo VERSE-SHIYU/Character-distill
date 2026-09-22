@@ -44,6 +44,11 @@ _REGISTRY = {
         "adapters.llm_adapter",
         lambda cls: cls("境内不支持境外模型", "https://api.other.com"),
     ),
+    ("adapters/llm_adapter.py", "UpstreamFailure"): (
+        "adapters.llm_adapter",
+        lambda cls: cls("LLM API failed after 3 attempts: 401",
+                        user_message="API Key 无效或无权限，请到设置页检查"),
+    ),
     ("core/distiller.py", "DistillError"): (
         "core.distiller",
         lambda cls: cls("用户可读消息", "ops 细节"),

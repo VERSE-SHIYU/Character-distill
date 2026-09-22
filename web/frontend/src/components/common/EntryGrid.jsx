@@ -1,9 +1,10 @@
 import { getIcon } from './Icon'
+import { visibleEntries } from './visibleEntries'
 
-export default function EntryGrid({ entries, columns = 4, badge, onAction, compact }) {
+export default function EntryGrid({ entries, flags = {}, columns = 4, badge, onAction, compact }) {
   return (
     <div className={`entry-grid${compact ? ' entry-grid-compact' : ''}`} style={{ gridTemplateColumns: `repeat(${columns}, 1fr)` }}>
-      {entries.map((entry) => {
+      {visibleEntries(entries, flags).map((entry) => {
         const IconComp = getIcon(entry.icon)
         const count = entry.badge && badge ? badge : null
         return (

@@ -6,6 +6,7 @@ import { saveAvatar, getAvatar, loadCardAvatar } from '../store/db'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import useSmoothProgress from '../hooks/useSmoothProgress'
+import useCanWrite from '../hooks/useCanWrite'
 import ErrorBox from './common/ErrorBox'
 import useIsMobile from '../hooks/useIsMobile'
 import useSwipeBack from '../hooks/useSwipeBack'
@@ -149,6 +150,7 @@ function CharPanelBody({ textId, goBack }) {
 // ---- Left: character list + identify/distill flow ----
 
 function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
+  const canWrite = useCanWrite()
   const identifiedChars = useAppStore((s) => s.identifiedChars)
   const identifying = useAppStore((s) => s.identifying)
   const distilling = useAppStore((s) => s.distilling)
@@ -313,34 +315,40 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                 <li key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px' }}>
                   <Avatar name={name} size={30} />
                   <span style={{ flex: 1, fontSize: 13 }}>{name}</span>
-                  <button
-                    type="button"
-                    className="btn-primary btn-sm"
-                    style={{ height: 30, fontSize: 12, padding: '0 10px' }}
-                    onClick={() => handleRestoreCard(c.id)}
-                  >
-                    恢复
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-danger-sm"
-                    onClick={() => setPurgeConfirmTarget(c.id)}
-                  >
-                    彻底删除
-                  </button>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      className="btn-primary btn-sm"
+                      style={{ height: 30, fontSize: 12, padding: '0 10px' }}
+                      onClick={() => handleRestoreCard(c.id)}
+                    >
+                      恢复
+                    </button>
+                  )}
+                  {canWrite && (
+                    <button
+                      type="button"
+                      className="btn-danger-sm"
+                      onClick={() => setPurgeConfirmTarget(c.id)}
+                    >
+                      彻底删除
+                    </button>
+                  )}
                 </li>
               )
             })}
-            <li style={{ padding: '8px 10px' }}>
-              <button
-                type="button"
-                className="btn-danger-sm"
-                style={{ width: '100%' }}
-                onClick={() => setPurgeAllConfirm(true)}
-              >
-                清空回收站
-              </button>
-            </li>
+            {canWrite && (
+              <li style={{ padding: '8px 10px' }}>
+                <button
+                  type="button"
+                  className="btn-danger-sm"
+                  style={{ width: '100%' }}
+                  onClick={() => setPurgeAllConfirm(true)}
+                >
+                  清空回收站
+                </button>
+              </li>
+            )}
           </ul>
         )
       ) : (
@@ -465,21 +473,23 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
                   {ch.reason && (
                     <p className="char-identified-reason">{ch.reason}</p>
                   )}
-                  <button
-                    type="button"
-                    className={`btn-primary char-identified-btn${already ? ' char-btn-redist' : ''}`}
-                    disabled={distilling}
-                    onClick={() => handleDistill(name, already)}
-                  >
-                    {distillingName === name
-                      ? [
-                          distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
-                          distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
-                        ].filter(Boolean).join(' | ') || '蒸馏中…'
-                      : already
-                        ? '重新蒸馏'
-                        : '蒸馏角色'}
-                  </button>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      className={`btn-primary char-identified-btn${already ? ' char-btn-redist' : ''}`}
+                      disabled={distilling}
+                      onClick={() => handleDistill(name, already)}
+                    >
+                      {distillingName === name
+                        ? [
+                            distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
+                            distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
+                          ].filter(Boolean).join(' | ') || '蒸馏中…'
+                        : already
+                          ? '重新蒸馏'
+                          : '蒸馏角色'}
+                    </button>
+                  )}
                 </li>
               )
             })}
@@ -488,35 +498,37 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
       )}
 
       {/* Action buttons */}
-      <div className="char-sidebar-actions">
-        {!hasCards && !hasIdentified && !identifying && (
-          <button
-            type="button"
-            className="btn-primary char-action-btn-full"
-            onClick={handleIdentify}
-          >
-            开始蒸馏
-          </button>
-        )}
-        {identifying && <IdentifyProgress active={identifying} />}
-        {distilling && distillingName && (
-          <Loading text={[
-            `正在蒸馏 ${distillingName}…`,
-            distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
-            distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
-          ].filter(Boolean).join(' | ')} />
-        )}
-        {(hasCards || hasIdentified) && !identifying && (
-          <button
-            type="button"
-            className="char-reidentify-btn"
-            onClick={handleIdentify}
-            disabled={identifying}
-          >
-            重新识别
-          </button>
-        )}
-      </div>
+      {canWrite && (
+        <div className="char-sidebar-actions">
+          {!hasCards && !hasIdentified && !identifying && (
+            <button
+              type="button"
+              className="btn-primary char-action-btn-full"
+              onClick={handleIdentify}
+            >
+              开始蒸馏
+            </button>
+          )}
+          {identifying && <IdentifyProgress active={identifying} />}
+          {distilling && distillingName && (
+            <Loading text={[
+              `正在蒸馏 ${distillingName}…`,
+              distillTokenCount > 0 ? `${(distillTokenCount / 1000).toFixed(1)}k字符` : '',
+              distillStatus && distillStatus !== '正在蒸馏…' ? distillStatus : '',
+            ].filter(Boolean).join(' | ')} />
+          )}
+          {(hasCards || hasIdentified) && !identifying && (
+            <button
+              type="button"
+              className="char-reidentify-btn"
+              onClick={handleIdentify}
+              disabled={identifying}
+            >
+              重新识别
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Delete confirm modal — portal to body */}
       {deleteTarget && createPortal(
@@ -607,6 +619,7 @@ function CharSidebar({ textId, cards, currentCard, onSelectCard }) {
 
 function CardDetail({ card, textId, goBack }) {
   const isMobile = useIsMobile()
+  const canWrite = useCanWrite()
   const startChat = useAppStore((s) => s.startChat)
   const pushView = useAppStore((s) => s.pushView)
   const userRolesByCard = useAppStore((s) => s.userRolesByCard)
@@ -623,6 +636,7 @@ function CardDetail({ card, textId, goBack }) {
   const [publishTags, setPublishTags] = useState(card.market_tags || '')
   const [publishMessage, setPublishMessage] = useState('')
   const [publishSending, setPublishSending] = useState(false)
+  const [publishError, setPublishError] = useState('')
 
   // 挂载时触发一次性迁移：把旧全局 user_role 搬进 userRolesByCard[cardId]
   const _cardId = card.id || card.card_id
@@ -630,6 +644,8 @@ function CardDetail({ card, textId, goBack }) {
 
   const data = parseCardJson(card)
   const name = data.name || card.name || '?'
+  // 游客没有头像上传入口，用非 button 标签渲染，读写一致
+  const AvatarTrigger = canWrite ? 'button' : 'div'
   const style = data.speaking_style || {}
   const rels = data.relationships || []
 
@@ -715,15 +731,15 @@ function CardDetail({ card, textId, goBack }) {
         {/* Header: avatar + name + identity */}
         <div className="card-hero">
           <div className="stage-glow" />
-          <button
-            type="button"
+          <AvatarTrigger
+            type={canWrite ? 'button' : undefined}
             className="card-avatar-btn avatar-shape"
-            onClick={() => avatarInputRef.current?.click()}
-            title="点击上传头像"
+            onClick={canWrite ? () => avatarInputRef.current?.click() : undefined}
+            title={canWrite ? '点击上传头像' : undefined}
           >
             <Avatar name={name} src={avatarUrl} size={84} />
-            <div className="card-avatar-overlay avatar-shape"><Camera size={16} /></div>
-          </button>
+            {canWrite && <div className="card-avatar-overlay avatar-shape"><Camera size={16} /></div>}
+          </AvatarTrigger>
           <input
             ref={avatarInputRef}
             type="file"
@@ -867,13 +883,15 @@ function CardDetail({ card, textId, goBack }) {
           <ArrowLeft size={16} />
           返回文本列表
         </button>}
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => setShowEditModal(true)}
-        >
-          <Edit size={16} /> 编辑
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowEditModal(true)}
+          >
+            <Edit size={16} /> 编辑
+          </button>
+        )}
         <button
           type="button"
           className="btn-secondary card-export-btn"
@@ -895,19 +913,22 @@ function CardDetail({ card, textId, goBack }) {
         >
           <><Download size={14} /> 导出角色卡</>
         </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          id="card-share-btn"
-          onClick={() => {
-            setPublishDescription(card.market_description || '')
-            setPublishTags(card.market_tags || '')
-            setPublishMessage('')
-            setShowShareConfirm(true)
-          }}
-        >
-          {shared ? <><Globe size={14} /> 已分享</> : <><Lock size={14} /> 分享到市场</>}
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            className="btn-secondary"
+            id="card-share-btn"
+            onClick={() => {
+              setPublishDescription(card.market_description || '')
+              setPublishTags(card.market_tags || '')
+              setPublishMessage('')
+              setPublishError('')
+              setShowShareConfirm(true)
+            }}
+          >
+            {shared ? <><Globe size={14} /> 已分享</> : <><Lock size={14} /> 分享到市场</>}
+          </button>
+        )}
         <button
           type="button"
           className="btn-primary card-chat-btn"
@@ -946,6 +967,7 @@ function CardDetail({ card, textId, goBack }) {
           <div className="modal-card" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
             <div className="modal-body publish-form-body">
+              <ErrorBox message={publishError} onDismiss={() => setPublishError('')} />
               <div className="publish-field">
                 <label className="publish-label">角色描述</label>
                 <textarea
@@ -997,14 +1019,16 @@ function CardDetail({ card, textId, goBack }) {
                       }),
                     })
                     const data = await res.json()
-                    if (data.card_id) setPublishedCardId(data.card_id)
+                    // 成功判据是拿到 card_id；拿不到按失败处理，走同一个 catch
+                    if (!data.card_id) throw new Error(data.detail || '发布失败：服务端未返回 card_id')
+                    setPublishedCardId(data.card_id)
                     setShared(true)
                     setShowShareConfirm(false)
                     setPublishDescription('')
                     setPublishTags('')
                     setPublishMessage('')
                   } catch (err) {
-                    console.error('Publish failed:', err)
+                    setPublishError(err.message || '发布失败')
                   } finally {
                     setPublishSending(false)
                   }

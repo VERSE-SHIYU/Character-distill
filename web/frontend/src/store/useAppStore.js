@@ -1002,6 +1002,16 @@ const useAppStore = create((set, get) => {
     get()._persistTasks()
   },
 
+  // 取消蒸馏 = 服务端动作（actions 含 cancel 才发 DELETE）+ 本地移出列表。
+  // DELETE 成功才移出；失败保持任务原样并把 detail 抛给调用方渲染 —— 不许静默吞（106）。
+  // 无 cancel 动作（如已终结、或刚建还没拿到第一次响应）纯本地移除，不发请求。
+  cancelDistillTask: async (task) => {
+    if (taskActions(task).includes('cancel')) {
+      await fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' })
+    }
+    get().removeDistillTask(task.id)
+  },
+
   setLastDistilledCardId: (id) => set({ lastDistilledCardId: id }),
 
   restoreDistillTasks: () => {

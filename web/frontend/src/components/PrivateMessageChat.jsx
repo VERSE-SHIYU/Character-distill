@@ -13,6 +13,7 @@ import { displayName } from '../utils/displayName'
 import { mergeMessages } from '../utils/mergeMessages'
 import ChatInputBar from './common/ChatInputBar'
 import useIsMobile from '../hooks/useIsMobile'
+import useCanWrite from '../hooks/useCanWrite'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 const GROUP_GAP = 5 * 60 * 1000
@@ -54,6 +55,7 @@ const CheckDouble = ({ size = 12 }) => (
 )
 
 export default function PrivateMessageChat({ otherUserId, otherUsername }) {
+  const canWrite = useCanWrite()
   const authUser = useAppStore((s) => s.authUser)
   const userAvatar = useAppStore((s) => s.userAvatar)
   const currentCard = useAppStore((s) => s.currentCard)
@@ -179,7 +181,8 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
 
   // Mark messages as read
   const markRead = useCallback(async () => {
-    if (!otherUserId) return
+    // 游客必然 403，且这个请求是打开会话自动发的、失败被吞掉 —— 干脆不发。
+    if (!otherUserId || !canWrite) return
     try {
       await fetchWithTimeout(`/api/messages/read/${otherUserId}`, {
         method: 'POST',
@@ -189,7 +192,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     } catch {
       // ignore
     }
-  }, [otherUserId, refreshUnread])
+  }, [otherUserId, refreshUnread, canWrite])
 
   // ── Send (handles cross-border 409 consent) ──
   // Uses plain fetch (not fetchWithTimeout) because the 409 consent response must
@@ -579,9 +582,13 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                                     </div>
                                     {row.isMe && msg._status !== 'consent' && (
                                       <div className="dm-bubble-actions">
-                                        <button type="button" className="dm-mini-btn" onClick={() => setEmojiPickerId(emojiPickerId === msg.id ? null : msg.id)}>😊</button>
+                                        {canWrite && (
+                                          <button type="button" className="dm-mini-btn" onClick={() => setEmojiPickerId(emojiPickerId === msg.id ? null : msg.id)}>😊</button>
+                                        )}
                                         <button type="button" className="dm-mini-btn" onClick={() => handleCopy(msg)}>{copiedId === msg.id ? '已复制' : '复制'}</button>
-                                        <button type="button" className="dm-mini-btn danger" onClick={() => handleRetract(msg)}>撤回</button>
+                                        {canWrite && (
+                                          <button type="button" className="dm-mini-btn danger" onClick={() => handleRetract(msg)}>撤回</button>
+                                        )}
                                       </div>
                                     )}
                                   </>
@@ -596,7 +603,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
                                     ))}
                                   </div>
                                 )}
-                                {rxs.length > 0 && (
+                                {canWrite && rxs.length > 0 && (
                                   <div className="dm-reactions">
                                     {rxs.map((r) => (
                                       <button key={r.emoji} type="button"
@@ -632,15 +639,17 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
               )}
 
               {/* Input */}
-              <div className="dm-composer">
-                <ChatInputBar
-                  value={inputText}
-                  onChange={setInputText}
-                  onSend={handleSend}
-                  placeholder="输入消息…"
-                  variant="dm"
-                />
-              </div>
+              {canWrite && (
+                <div className="dm-composer">
+                  <ChatInputBar
+                    value={inputText}
+                    onChange={setInputText}
+                    onSend={handleSend}
+                    placeholder="输入消息…"
+                    variant="dm"
+                  />
+                </div>
+              )}
             </div>
           </div>
         }

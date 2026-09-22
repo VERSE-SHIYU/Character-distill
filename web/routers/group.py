@@ -15,7 +15,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from core.trash_service import hard_delete, restore, soft_delete
-from deps import get_storage, get_user_llm, get_sessions
+from deps import get_storage, get_user_llm, get_sessions, get_group_sessions
+from adapters.llm_adapter import user_facing_error
 from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -23,9 +24,6 @@ from core.chat_engine import calc_stage
 from core.nonfatal import nonfatal
 
 router = APIRouter(prefix="/api/group", tags=["group"])
-
-# In-memory group sessions: group_id → GroupSession
-_group_sessions: dict[str, Any] = {}
 
 # 群聊已消化点赞游标: group_id → 最大 reaction_id
 _group_last_reaction_id: dict[str, int] = {}
@@ -169,7 +167,7 @@ async def _rebuild_group_session(
         storage=storage,
         user_id=user_id,
     )
-    _group_sessions[group_id] = group
+    get_group_sessions()[group_id] = group
 
     # Restore message history from DB
     try:
@@ -200,7 +198,7 @@ async def _get_owned_group(
     任何登录用户拿别人的 group_id 就能以群主身份发言。非属主与「群不存在」在这里都收敛到
     `None`，调用方同判 404（同码同文案，不给存在性枚举留信道）。
     """
-    group = _group_sessions.get(group_id)
+    group = get_group_sessions().get(group_id)
     if group is not None and group.user_id == user_id:
         return group
     return await _rebuild_group_session(group_id, user_id, storage)
@@ -243,10 +241,6 @@ async def _run_group_affinity(
             for r in signals
         ])
         await asyncio.to_thread(engine._evaluate_affinity, user_message, "")
-
-
-def _get_group_sessions() -> dict[str, Any]:
-    return _group_sessions
 
 
 @router.post("/create")
@@ -381,7 +375,7 @@ async def create_group(
         storage=storage,
         user_id=user_id,
     )
-    _group_sessions[group_id] = group
+    get_group_sessions()[group_id] = group
 
     # Persist to DB
     await storage.create_group_session(
@@ -645,7 +639,8 @@ async def broadcast_message(
         except HTTPException:
             raise
         except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
+            print(f"[group] Broadcast stream failed: {exc}")
+            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -772,7 +767,7 @@ async def delete_group(
 ) -> dict:
     """软删除群聊会话（移入回收站）。"""
     await soft_delete("group", group_id, user, storage)
-    _group_sessions.pop(group_id, None)
+    get_group_sessions().pop(group_id, None)
     return {"ok": True}
 
 
@@ -811,5 +806,5 @@ async def permanent_delete_group(
 ) -> dict:
     """永久删除群聊及其所有消息。"""
     await hard_delete("group", group_id, user, storage)
-    _group_sessions.pop(group_id, None)
+    get_group_sessions().pop(group_id, None)
     return {"ok": True}

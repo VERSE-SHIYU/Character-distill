@@ -10,6 +10,7 @@ import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
 import EditCardModal from './EditCardModal'
 import useSmoothProgress from '../hooks/useSmoothProgress'
+import useCanWrite from '../hooks/useCanWrite'
 import { formatDateTime } from '../utils/time'
 
 const ALLOWED_EXT = ['.txt', '.md', '.json', '.csv', '.log', '.pdf', '.docx']
@@ -60,6 +61,7 @@ function charCountClass(n) {
 }
 
 export default function TextPanel() {
+  const canWrite = useCanWrite()
   const texts = useAppStore((s) => s.texts)
   const loading = useAppStore((s) => s.loading)
   const error = useAppStore((s) => s.error)
@@ -233,6 +235,7 @@ export default function TextPanel() {
         <ErrorBox message={displayError} onDismiss={() => setLocalError(null)} />
       )}
 
+      {canWrite && (
       <section
         className={`text-upload-zone${dragOver ? ' drag-over' : ''}${isUploading ? ' uploading' : ''}`}
         onDragEnter={(e) => { e.preventDefault(); setDragOver(true) }}
@@ -261,6 +264,7 @@ export default function TextPanel() {
           {`支持 ${ALLOWED_EXT.join(' ')} · 小说上限 100 万字 · 聊天记录上限 200 万字 · 单文件最大 100MB`}
         </p>
       </section>
+      )}
 
       {uploadProgress !== null && (
         <div className="upload-progress">
@@ -509,6 +513,7 @@ export default function TextPanel() {
    ============================== */
 
 function CharacterManagement({ setView, selectText, startChat, pushView, setCurrentMarketCardId }) {
+  const canWrite = useCanWrite()
   const texts = useAppStore((s) => s.texts)
   const loadTexts = useAppStore((s) => s.loadTexts)
   const [allCards, setAllCards] = useState([])
@@ -682,9 +687,11 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                     </button>
                     {menuOpen === c.id && (
                       <div className="creation-char-dropdown" ref={menuRef}>
-                        <button type="button" onClick={() => { setMenuOpen(null); setEditCard(c) }}>
-                          编辑
-                        </button>
+                        {canWrite && (
+                          <button type="button" onClick={() => { setMenuOpen(null); setEditCard(c) }}>
+                            编辑
+                          </button>
+                        )}
                         <button type="button" onClick={async () => {
                           setMenuOpen(null)
                           pushView('chat')
@@ -694,19 +701,23 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                         }}>
                           聊天
                         </button>
-                        <button type="button" onClick={() => {
-                          setMenuOpen(null)
-                          setCurrentMarketCardId(c.id)
-                          pushView('marketCardDetail')
-                        }}>
-                          发布到市场
-                        </button>
-                        <button type="button" className="danger" onClick={() => {
-                          setMenuOpen(null)
-                          setDeleteTarget(c.id)
-                        }}>
-                          删除
-                        </button>
+                        {canWrite && (
+                          <button type="button" onClick={() => {
+                            setMenuOpen(null)
+                            setCurrentMarketCardId(c.id)
+                            pushView('marketCardDetail')
+                          }}>
+                            发布到市场
+                          </button>
+                        )}
+                        {canWrite && (
+                          <button type="button" className="danger" onClick={() => {
+                            setMenuOpen(null)
+                            setDeleteTarget(c.id)
+                          }}>
+                            删除
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -746,9 +757,11 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                             </button>
                             {menuOpen === vc.id && (
                               <div className="creation-char-dropdown" ref={menuRef}>
-                                <button type="button" onClick={() => { setMenuOpen(null); setEditCard(vc) }}>
-                                  编辑
-                                </button>
+                                {canWrite && (
+                                  <button type="button" onClick={() => { setMenuOpen(null); setEditCard(vc) }}>
+                                    编辑
+                                  </button>
+                                )}
                                 <button type="button" onClick={async () => {
                                   setMenuOpen(null)
                                   pushView('chat')
@@ -756,19 +769,23 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                                 }}>
                                   聊天
                                 </button>
-                                <button type="button" onClick={() => {
-                                  setMenuOpen(null)
-                                  setCurrentMarketCardId(vc.id)
-                                  pushView('marketCardDetail')
-                                }}>
-                                  发布到市场
-                                </button>
-                                <button type="button" className="danger" onClick={() => {
-                                  setMenuOpen(null)
-                                  setDeleteTarget(vc.id)
-                                }}>
-                                  删除
-                                </button>
+                                {canWrite && (
+                                  <button type="button" onClick={() => {
+                                    setMenuOpen(null)
+                                    setCurrentMarketCardId(vc.id)
+                                    pushView('marketCardDetail')
+                                  }}>
+                                    发布到市场
+                                  </button>
+                                )}
+                                {canWrite && (
+                                  <button type="button" className="danger" onClick={() => {
+                                    setMenuOpen(null)
+                                    setDeleteTarget(vc.id)
+                                  }}>
+                                    删除
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>

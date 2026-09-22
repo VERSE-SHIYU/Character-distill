@@ -1,10 +1,10 @@
 import { getIcon, ChevronRight } from './Icon'
+import { visibleEntries } from './visibleEntries'
 
 export default function EntryList({ entries, flags = {}, badge, onAction }) {
   return (
     <div className="entry-list">
-      {entries
-        .filter((entry) => !entry.requires || flags[entry.requires])
+      {visibleEntries(entries, flags)
         .map((entry) => {
           const IconComp = getIcon(entry.icon)
           const count = entry.badge && badge ? badge : null

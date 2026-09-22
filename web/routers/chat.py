@@ -31,16 +31,14 @@ MAX_MESSAGE_LENGTH = 5000
 
 def _stream_error_payload(exc: Exception) -> dict[str, Any]:
     """SSE 错误帧。LLM 侧已知失败（经 adapter 边界映射）带 code / finish_reason，前端据此
-    区分「被截断 / 被过滤 / 资源不足」与网络故障（只给一句 str(exc) 时前端无从分辨）；
-    其余异常保持原样。
+    区分「被截断 / 被过滤 / 资源不足」与网络故障；其余异常只给通用文案。
 
-    文案统一走 ``user_facing_error`` 这一唯一出口（与蒸馏路径同一份口径链）；
-    ``preserve_unknown=True`` 保住既有契约——未登记的异常原样透出以便排障
-    （tests/test_chat_stream_error.py::test_other_errors_keep_original_shape）。"""
+    文案统一走 ``user_facing_error`` 这一唯一出口（与蒸馏路径同一份口径链）。上游原文
+    与内部标识都不上屏，只留在日志里（缺陷 94 的泄漏那半）。"""
     payload = llm_error_payload(exc)
     if payload is not None:
         return payload
-    return {"error": user_facing_error(exc, preserve_unknown=True)}
+    return {"error": user_facing_error(exc)}
 
 
 # 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，

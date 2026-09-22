@@ -114,11 +114,13 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-22 现跑现数）**：1–98 共 98 条 —— **已修 65**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**）/ **记账 23**（47、56、57、58、64、66、67、68、69、80、81、82、86、87、88、89、90、93、94、95、96、97、98）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）。**待办 = 记账 23**。
-> **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
+> **全表状态口径（2026-09-22 现跑现数）**：1–98 共 98 条 —— **已修 68**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**）/ **记账 19**（47、56、57、58、64、66、67、68、69、80、81、82、86、87、88、89、90、95、96）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）/ **可见性已修、口径待定 1**（94）。**待办 = 记账 19**。
+> **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**同轮还有 93 / 97 / 98 移入「已修」、94 单列「可见性已修、口径待定」**（上一次重算漏了这四条，桶数因此虚记 —— 与「83–85」同形，一并销账）。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
 > **99–104 是 `published_from` 一案（本分支）并入 main 时按 main 现有最大号**顺延**过来的六条**（并线时本线原编 86–91，与 main 的 86–91 撞号 —— 撞的是编号不是内容，按「按 main 上现有最大编号顺延」改号，两边条目都留）。状态：**已修 5**（100–104）/ **记账 1**（99，PG 无迁移账本，不修）—— **不重算上面那行的桶**：那条口径标着 2026-09-22 现跑现数、只覆盖 1–98，这六条产生在同一天但并入更晚，整行重算留到下次收口（此处只写顺延、不改数）。**注意本分支已推送的 commit message 里仍写着旧号 86–91**（`d17ee54` / `ef6deb6` / `04dc4ef` / `b86b1fd`）：推送后不改写历史，故那几处是历史坐标，以台账现号为准。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > **105–107 是 2026-09-22 新记的三条**（`users.role` 一案并入 main 后、合并前补齐项里顺带读出的），按 main 现有最大号顺延：**105 归 Spec 2、106 归蒸馏线、107 归 D 组**。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。**订正（2026-09-22，72 线收尾）**：原写「状态全部『记账』」已过期 —— **107 已修**（`dbdbf9c` + `7a5992a`，由 72 线第 1 步的 503 门收口）；105 / 106 仍为记账。**同轮还按 main 现最大号顺延补记了 108–113 六条**（§三 末，72 线第 1 步收尾）—— 原拟 75–80，与 main 现有的 75–80 **撞号**，按「按 main 上现有最大编号顺延」改号（撞的是编号不是内容）。**判据是编号而非行序**：本文件编号跨小节、**与行序不同调**，按行尾取 max 只会取到 74 而漏掉真正最大的 107。
+> **本分支（`users.role` 一案）并入时补记的三条，按 main 现最大号顺延为 114–116**（原编 108 / 109 / 110，与 main 已在 §三 末占用的 108–110 **撞号** —— 撞的是编号不是内容，两边条目都留）：**114 归 Spec 3（紧接本份）、115 归前端通用组件、116 归蒸馏线**；状态**全部记账**（只报告不修）。**105 / 106 订正**：上面那条「105 / 106 仍为记账」已过期 —— 两条随本分支修完，**105 已修**（`9fae212`）、**106 已修**（`de49658`），见 §三 对应条目。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。
+> **117 是 2026-09-22 按 main 现最大号顺延新记的一条**（CI 挂死，见 §三 末），归属 CI / 测试基础设施，状态**记账**。**同轮订正两条**：**115 已修**（`bd685e2` —— 只报告不修的例外，本份用户明确要求「修到根上」）、**116 的归属改判为 Spec 3**（原记蒸馏线）。同样**不重算**上面那条 1–98 口径行。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
@@ -664,6 +666,7 @@ config.yaml 现值（现读，非转述）：
   - **真泄漏、活代码 4 处**：`text_manager.py` ×3（本批收）、**`web/routers/voice.py` 的 ASR 转码 ×1**（本批收）。
     - `voice.py` 那处**不在任何名单上** —— 它**不是异常对象，是子进程 stderr**，「异常对象被格式化」类的扫法扫不到。同文件同形态的另两处（`:111`/`:382`）已由缺陷 38 收口，**`:460` 是判据找出来的第三个**。漏它就是「改了两处、第三处记账」。
   - **同判据、但决定面不同 → 单独立项，不塞进本批（2 处）**：`web/routers/group.py` 的 SSE 错误帧、`web/routers/text.py` 的后台任务状态行，都直接 `str(exc)`（可能是 `StoreError` → `storage operation '<op>' failed: <驱动原文>`）。**为什么不顺手收**：它们的「正确形态」`web/routers/chat.py::_stream_error_payload` 本身用 `user_facing_error(exc, preserve_unknown=True)` —— **故意把未登记异常的 `str()` 原样透出**（契约锁 `tests/test_chat_stream_error.py::test_other_errors_keep_original_shape`）。改 group/text 就等于动 `chat.py` 那条契约（三处一起的决定），属于另一个面。
+    **订正（2026-09-22）**：上面这段「**不顺手收**」的结论**作废** —— 这三处已随缺陷 94 的**泄漏那半**一并修掉（`group.py` 的 SSE 帧 `36c81c0`、`text.py` 的任务状态行 `c3972ff`），而当时被当作「正确形态」的 `chat.py::_stream_error_payload` 自己那条「故意原样透出」的契约也一并收掉（`393debe` 删了 `preserve_unknown` 开关）。**当时判「另一个面」是误判**：三处的决定面其实是**同一个**（未登记异常的原文该不该上屏），同判据就该同批改。原文保留，仅作当时的判断快照。
   - **原文给「人」看、但读者是管理员 / 对端运维 → 保留（14 处）**：`inter_node.py` ×8（对端运维）、`web/server.py` 的 GPT-SoVITS / FunASR 连通性测试 ×2（admin 自点「测试连接」，原文就是他要的答案）、`web/routers/auth.py` 的 embedding key 自测 ×1、写 `review_log` 的 ×3（`market.py` + `card_guard.py` ×2 + `text_manager.py` 的开卡守卫）。
   - **到不了用户眼前 → 安全（其余 ≈ 245 处）**，机制三类：① 原文进 `ops_detail` 位、出口只取 `user_message`（`DistillError` 各处，缺陷 38 的设计）；② 被 catch 后只 print / 进内部线程队列 / **只做谓词**（`"locked" not in str(exc).lower()` 这类，看着像格式其实是判断）；③ 全局 `Exception` 处理器统一回固定文案 + `traceback.print_exc()`（`StoreError` ×176）。
   - **死代码（记一笔，不修）**：`web/app.py` ×8（Gradio，docstring 标 `.. deprecated::`）。已核 `Dockerfile` / `docker-compose*.yml` / `start_all.bat` / `.github/workflows/` **零引用**。是雷，但今天不可达 —— 记下来免得下次普查重新花时间。
@@ -1295,11 +1298,19 @@ PROBE_IMAGE         false
   - **2026-09-22 补记：主动告警已上线**（与缺陷 98 同轮做，不在本条的修法内）。新增 `core/alerting.AlertHandler`：ERROR 级日志按 `(logger 名, 异常类型)` 节流后投递到 `ALERT_EMAIL`（同键 1 小时一封，窗口后那封附上被压下的次数），在 `web/server.py` 的 lifespan 里与 `install_log_collector()` 同处挂到 root logger。本条要的其实是**两跳**：`print` → 面板（可见）是缺陷 93 修的那一跳，「面板 → 人」是这一跳 —— 面板得有人打开才看得见，SG 的「数月无人察觉」正卡在后一跳。上面「仍未定的那半」里的「计数告警」至此**机制已具备、口径仍未定**：要不要让用量写库失败真的发信仍是产品决策，现在只是有了通道（`ALERT_EMAIL` 为空时整条不安装，见 `core/alerting.py`）。
 - **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
-**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口）
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、泄漏那半已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口 → 2026-09-22 泄漏那半收口）
 - **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
 - **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
 - **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
 - **仍未定的那半（要产品决定）**：群的**流式**那条把 `str(exc)` 当 SSE 事件摊给用户（`group.py:632` 的 `except Exception as exc` → `:633` 的 `yield ... {'error': str(exc)}`）—— 本轮**没动**。它与一对一的「吞」是两套口径，而要统一就得先答「群里为什么该看见、一对一为什么不该」（说不出就是遗留，§四）。另外把内部异常文本直接回给前端本身还是一条信息泄漏面。
+- **泄漏那半已修（2026-09-22，分支 `worktree-session-cred`）**：**同根三处**一起收口 —— 上屏文案一律走 `adapters/llm_adapter.py` 的 `user_facing_error` 唯一出口，上游原文只进日志：
+  - 群聊 SSE 错误帧 `web/routers/group.py`（`36c81c0`）。
+  - 一对一 chat SSE 错误帧 `web/routers/chat.py::_stream_error_payload`（`393debe`）—— **它当时正是「故意原样透出」的那处契约**，`user_facing_error` 的 `preserve_unknown` 开关就是为它设的；本轮把开关**删掉**（全仓唯一调用方就是它）。
+  - 上传任务状态行 `web/routers/text.py::_run_upload_task`（`c3972ff`）。
+  - 另加 `UpstreamFailure`（`2205b12`）：重试耗尽时抛的异常自带 `user_message`，上游已知状态码（401/403 key、402 余额、429 限流）给出能指导下一步的中文提示，未登记的状态码落通用文案；`str()` 逐字不变，日志与 core 侧既有的 `failed after N attempts` / `rate limited (429)` 判据继续命中。
+  - **这三处不新开台账号**：它们与 94 是同判据、同一个决定面（§四「理由要升格成判据」），一并收口才自洽；**可见性那半原样未动**（群聊流式仍把保存失败当 error 事件发出去，只是帧里的值换了）。
+- **判据命令（泄漏那半，2026-09-22 现跑）**：`git grep -n "preserve_unknown" -- ':!AGENTS.md'` → **空**（开关已删；AGENTS.md 里那句是历史快照，故排除）；`git grep -nE "'error': str\(exc\)|\"message\": str\(exc\)" -- web/routers/chat.py web/routers/group.py web/routers/text.py` → **空**。**上面那条「判据命令」（可见性那半）不变**。
+- **同轮例外（2026-09-22，`9dc4118`）**：`web/routers/auth.py::test_embedding` 是**连通性测试**，用户点它就是为了查自己的 key 哪里不通，故**有意**把上游原话（`detail`）连同中文提示一并返回。判定只按 `status_code` / `code` / 异常类型（`core/embeddings.py::describe_embedding_failure`），不匹配报错文本。它**不在本条「一律通用文案」的口径内** —— 与上面三处（日常路径，原文只算泄漏面）性质不同，审计时不算漏修。
 - **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
 - **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
 
@@ -1428,17 +1439,23 @@ PROBE_IMAGE         false
 - **变异（实测红，验后已还原；各条红因不同）**：① 拆成独立文件 → 只有 T2 红（`assert '' == 'card_…'`）；② SQLite 去收敛 → T3 红（`UNIQUE constraint failed: cards.published_from`）；③ 整段去掉回填 → 4 条全红；④ PG 回填脱出 `IF` → 新库上 T2 红；⑤ PG 去收敛 → T3 红（`could not create unique index … Key (published_from)=(t3_draft) is duplicated`）。**前两版不忠实已换掉**：`if False` 去掉整份跳过 → 红在别的数据迁移（`no such column: u.password_hash`）；拆文件第一版忘了把 088 截断 → 回填写两遍撞唯一索引。判据按「修复前的代码长什么样」改，不按「哪里能动」改。
 - **判据命令**：`ls storage/migrations | grep published_from`（两条）、`ls storage/migrations_pg | grep published_from`（两条）；`git grep -c "rn = 1" -- storage/migrations/088_published_from.sql storage/migrations_pg/021_published_from.sql`（各 1 = 收敛只在一处）。
 
-**105. 发布到市场失败只 `console.error` —— 对所有用户静默，403 也不例外** —— 状态：**记账**
+**105. 发布到市场失败只 `console.error` —— 对所有用户静默，403 也不例外** —— 状态：**已修**（commit `9fae212`，2026-09-22）
 - **归属**：Spec 2（用户身份统一为 `users.role`）—— 游客点「确认发布」会被门禁 403，而这条路径把 403 一并吞掉，正是「拒绝文案有没有上屏」那一问的另一半。
-- **形态**：`web/frontend/src/components/CharCard.jsx:1007` 的 `catch (err) { console.error('Publish failed:', err) }`。`POST|PUT /api/market/{card_id}/publish` 的响应**从不查 `res.ok`**，只 `const data = await res.json()` 再看 `if (data.card_id)`；4xx/5xx 的正文是 `{detail}`，没有 `card_id`，于是客户端表现是「按钮从『发布中…』变回原文案、什么都没发生、也没有任何提示」。**不是游客专有**：任何用户的任何失败都走这条路。
+- **形态（修复前）**：`web/frontend/src/components/CharCard.jsx:1007` 的 `catch (err) { console.error('Publish failed:', err) }`。`POST|PUT /api/market/{card_id}/publish` 的响应**从不查 `res.ok`**，只 `const data = await res.json()` 再看 `if (data.card_id)`；4xx/5xx 的正文是 `{detail}`，没有 `card_id`，于是客户端表现是「按钮从『发布中…』变回原文案、什么都没发生、也没有任何提示」。**不是游客专有**：任何用户的任何失败都走这条路。
 - **发现于**：2026-09-22 补报「游客点非白名单写操作，前端是否显示拒绝文案」时顺带读出的（distill 那两条入口有 `.error-box`，这条没有）。
-- **判据命令**：`git grep -n "Publish failed" -- web/frontend/src/components/CharCard.jsx`（应给 1007 一行）；`git grep -n "res\.ok" -- web/frontend/src/components/CharCard.jsx`（**零命中** —— 整个文件没有把失败转成提示的分支）。
+- **修法**：成功判据定为**响应里拿到 `card_id`**（原先只是「没抛异常」，而这条路径从不抛）—— 拿不到就 `throw new Error(data.detail || '发布失败：服务端未返回 card_id')`，与网络错误**走同一个 `catch`**，不另开分支。`catch` 把 `err.message`（即后端 `detail`）写进新增的 `publishError` 状态，由发布弹窗内的 `<ErrorBox>` 上屏；失败时弹窗**保持打开**、按钮文案**不回退成「已分享」**。修的是**所有用户**的这条路径，不是给游客单开一条。
+- **回归锁**：`web/frontend/src/components/__tests__/CharCardPublishError.test.jsx`（3 条）：① `fetchWithTimeout` reject 403 → `.error-box` 含 detail、弹窗仍在、按钮仍为「分享到市场」；② 200 但正文无 `card_id` → 同样上屏（这条锁的是「成功判据是 `card_id` 而不是 HTTP 码」）；③ 有 `card_id` → 弹窗关闭、按钮变「已分享」。
+- **变异（实测红，验后已还原）**：把 catch 改回 `console.error` + 去掉 `card_id` 守卫（即**修复前的代码形态**）→ ①② 同时红，③ 仍绿。
+- **判据命令**：`git grep -n "Publish failed" -- web/frontend/src/components/CharCard.jsx`（**零命中**）；`git grep -n "!data.card_id" -- web/frontend/src/components/CharCard.jsx`（应给 1023 一行 —— 成功判据的唯一落点）。
 
-**106. 取消蒸馏任务 `.catch(() => {})` —— 服务端没删成，本地列表照样把它移走** —— 状态：**记账**
+**106. 取消蒸馏任务 `.catch(() => {})` —— 服务端没删成，本地列表照样把它移走** —— 状态：**已修**（commit `de49658`，2026-09-22）
 - **归属**：蒸馏线。
-- **形态**：`web/frontend/src/components/DistillTaskBar.jsx:69` 的 `fetchWithTimeout('/api/distill/task/{id}', { method: 'DELETE' }).catch(() => {})`，紧接第 71 行 `removeDistillTask(task.id)` **无条件**执行 —— DELETE 失败（403 / 404 / 500）也把任务从本地列表移走，界面与后端分叉，且无任何提示。
+- **形态（修复前）**：`web/frontend/src/components/DistillTaskBar.jsx:69` 的 `fetchWithTimeout('/api/distill/task/{id}', { method: 'DELETE' }).catch(() => {})`，紧接第 71 行 `removeDistillTask(task.id)` **无条件**执行 —— DELETE 失败（403 / 404 / 500）也把任务从本地列表移走，界面与后端分叉，且无任何提示。同一段逻辑在 `web/frontend/src/components/DistillWorkbench.jsx` 里**逐字重复了第二份**。
 - **与缺陷 105 的差别（本条更重一档）**：105 是「失败了没人告诉用户」；本条在失败之外还**改了本地状态**，用户以为取消成功（下次拉取任务时它可能又回来，或后台仍在跑）。
-- **判据命令**：`git grep -n "catch(() => {})" -- web/frontend/src/components/DistillTaskBar.jsx`（应给 69 一行）。
+- **修法**：`await` DELETE，**成功才** `removeDistillTask`；失败把 `err.message` 抛给调用方。两份逐字重复的代码收敛成 store 里一个 action `cancelDistillTask(task)`（`web/frontend/src/store/useAppStore.js:1008`，就放在 `removeDistillTask` 旁边）：`actions` 含 `cancel` 才发 DELETE，**没有 `cancel` 动作**（已终结 / 刚建还没拿到第一次响应）走纯本地移除、一个请求都不发。两个组件各自 `try/catch` 该 action 并把 detail 交给 `<ErrorBox>`；`catch(() => {})` 删除。
+- **回归锁**：`web/frontend/src/store/cancelDistillTask.test.js`（3 条，锁 store 层：成功移出且请求为 `DELETE /api/distill/task/t1` / 失败上抛且任务**仍在列表** / 无 `cancel` 动作不发请求）；`web/frontend/src/components/__tests__/DistillCancelError.test.jsx`（4 条，锁两个**落点**各自绑定到了这个 action：任务条与工作台各一组「失败留任务 + `.error-box` 含 detail / 成功移出」）。**两个落点分开测是有意的** —— 只测一份，另一份以后再把 DELETE 吞掉也不会红。
+- **变异（实测红，验后已还原；2026-09-22 现跑现数）**：把 store action 改回 `.catch(() => {})` + 无条件移除（即**修复前的代码形态**）→ `DistillCancelError` 4 条里红 2 条（任务条 / 工作台各自的「失败留任务」那条）、`cancelDistillTask.test.js` 3 条里红 1 条（「失败上抛且任务仍在列表」）—— 3 红 4 绿，正好是各自断言里负责失败路径的那几条；单独把工作台的 `<ErrorBox>` 摘掉（其余不动）→ `DistillCancelError` **只红 1 条**（工作台那条），另 3 条仍绿，证明两个落点各有一条独立的锁、不共用。
+- **判据命令**：`git grep -n "catch(() => {})" -- web/frontend/src/components/DistillTaskBar.jsx`（**零命中**）；`git grep -n "cancelDistillTask" -- web/frontend/src/store/useAppStore.js web/frontend/src/components/DistillTaskBar.jsx web/frontend/src/components/DistillWorkbench.jsx`（三个文件各 1 处定义/绑定 —— 写法只剩一种）。
 
 **107. LLM 全不可用时 `/api/distill/start_session` 回 500「操作失败，请稍后重试」—— 兄弟端点早就回 503 并说清原因** —— 状态：**已修**（`dbdbf9c` + `7a5992a`）
 - **归属**：D 组。
@@ -1449,6 +1466,66 @@ PROBE_IMAGE         false
 - **为什么算缺陷而不是「配置错了活该」**：同一文件的兄弟端点（`text_manager is None` → 503「请先在设置页配置 API Key」）有正解；且本端点开场白那一段原先自己就用 `if per_user_llm is not None:` 表达过「LLM 可以缺席」。缺席是被预期的状态，只是早退那一步没跟上。**500 把「没配 key」说成「服务端故障」**：用户据此会去重试，而正确的下一步是去设置页配 key。**（该 `if per_user_llm is not None:` 已于 `926d870` 删除**：有了 503 门它恒真、else 不可达，留着只是死分支。）
 - **触发面（不是「游客必然中招」）**：`deps.get_user_llm` 在用户没配 key 时**回落全局**（`web/deps.py:107` 的 `resolve_llm(config, build_user=…, get_global=get_llm)`），故配了全局 key 的生产不触发；触发条件是**两份都缺**（自托管未配、或本机开发环境）。
 - **判据命令**：`git grep -n "text_manager is None" -- web/routers/distill.py` → **4 行**：`bare` 形式两处（`/run` 的 :685 与 `start_session` 的 :1354，正是本条要的两处），另两处是 `or` 组合形态（`text_manager is None or distiller is None` / `distiller is None or text_manager is None`）被同一子串顺带匹配到。判据要的是**裸形式两处**，不是子串命中数。
+
+**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**记账**
+- **归属**：Spec 3（紧接本份）。**说明（spec 补充 5）**：记 **114** 时，在条目里注明：「Spec 3 的 S0 普查把 105、106 两处也纳入，与其余 9 处统一迁移到同一套写失败处理机制，全仓只留一种写法。」（补充 5 原文写的是「记 108 时」—— 该编号与本条一起按 main 现最大号顺延为 114。）
+- **坐标（按 spec 补充 3 #7 记录）**：`MinePage.jsx:37`（改可见性，PATCH）、`:413`（关注，POST）、`:611`（改简介）、`:963`（发动态）、`AuthorPage.jsx:197`（给帖子点赞，POST）、`MarketCardDetail.jsx:189`（给角色卡点赞，POST）、`PostCard.jsx:106`（发评论，POST）、`PrivateMessageChat.jsx:254`（撤回消息，POST）、`GroupChatPage.jsx:1358`。
+- **形态**：写请求（POST/PUT/PATCH/DELETE）后面接一个静默 `catch {}`（或 `catch {} finally { … }`）—— 失败（含门禁 403）被吞掉，界面既不提示也不回滚，用户以为成功。**与 105 / 106 同形**，105 / 106 是其中被点名先修的两处。
+- **复核附注（2026-09-22，现跑现数，**未改**本条目按 spec 定下的范围）**：按「写调用后 25 行内出现静默 catch」重扫 `web/frontend/src/**/*.jsx`，得 16 处原始命中。与上面 9 处逐一对：
+  - **1 处复核为误判**：`GroupChatPage.jsx:1358` 是 `parseCardJson` 的 **JSON 解析兜底**，不是写调用 —— 该文件所有静默 catch 只覆盖 `GET /api/distill/cards/by-text/*` 与 `JSON.parse`，**没有写路径**。
+  - **7 处同形态未在这 9 处内**：`MarketCardDetail.jsx:229`（发评论）、`:248`（使用角色 / fork）、`FeedPage.jsx:119`（给帖子点赞）、`PrivateMessageChat.jsx:276`（同意 consent 后重发）、`ChatArea.jsx:744`（给消息加表情）、`TextPanel.jsx:821`（编辑角色卡，PUT）、`BookReader.jsx:305`（阅读进度，POST —— 这一条在门禁白名单里，对游客不触发 403，但网络失败同样被吞）。另有 `PrivateMessageChat.jsx:265` 是剪贴板 `catch {}`，**不是网络写**，已排除。
+  - **口径**：本条目正文仍按 spec 记录的 9 个坐标为准；上述偏差**只作复核留痕**，Spec 3 立项时按「重扫一遍再定坐标」而非照抄本条目。
+- **判据命令**：`git grep -n "catch {}" -- web/frontend/src/components/MinePage.jsx web/frontend/src/components/AuthorPage.jsx web/frontend/src/components/MarketCardDetail.jsx web/frontend/src/components/common/PostCard.jsx web/frontend/src/components/PrivateMessageChat.jsx`（上面 8 处坐标都在输出里；**同一个正则也会带出同文件里读请求 / `JSON.parse` 的 `catch {}`**，所以命中数多于 8 属正常，逐条按上下文定案，不按命中数定案）；复核用的重扫以「写方法 + 静默 catch 出现在 25 行窗口内」做初筛，再逐条读上下文。
+
+**115. `ErrorBox` 渲染出字面 `??` 与 `?` —— 图标字形丢在了文件里** —— 状态：**已修**（`bd685e2`，2026-09-22）
+- **归属**：前端通用组件（不分线）。
+- **形态（修复前）**：`web/frontend/src/components/common/ErrorBox.jsx:6` 是 `<span style={{ flex: 1 }}>?? {message}</span>`，第 19 行关闭按钮的内容是一个 `?`。按 `ErrorBox` 的用途（错误提示条）推断，原意应是 ⚠️ 与 ✕，写进文件时丢成了 `?`。**是文件里的字面 `?`，不是终端编码或字体显示问题**（读源码即可见）。
+- **根因（2026-09-22 查清）**：字形**从未进过仓库**。`git log --follow` 显示该文件**只有过一次提交** `ae47a216`，那一次的 blob 里就已经是 `??`；`LC_ALL=C` 数非 ASCII 字符得 **0**（全文件纯 ASCII），而同目录 / 同批的组件里 ⚠️ / ✕ / 中文都在。即：字符是在**写文件的那一刻**被替换掉的（ASCII 化），不是入库后编码损坏、也不是终端字体显示不出。**所以「找回」找回不了 —— 没有可找回的原物，只能重画**。
+- **影响面**：所有用 `ErrorBox` 的界面都会带上这个前缀与关闭按钮，**本份新做的 105 / 106 两处上屏也在这条路径上**（拒绝文案本身完整，前缀是多余的 `??`）。功能不受影响 —— `.error-box` 与文案都在 —— 属观感 / 可读性缺陷。
+- **修法（已做，`bd685e2`）**：改用本仓自绘的图标集 `web/frontend/src/components/common/Icon.jsx` —— 前缀 `<AlertTriangle size={14} />`、关闭按钮 `<Close size={12} />`，并给按钮补 `aria-label="关闭"`（SVG 自身没有可读名称，只画不给名等于把按钮变成哑的）。**选 SVG 而不是补一个真字形字符，是冲根因去的**：画出来的图形是代码，不是码位，同一种「作者端 ASCII 化」的丢失不可能重演。
+- **回归锁**：`web/frontend/src/components/__tests__/ErrorBox.test.jsx`（3 条）。断言写成**渲染出的文案不含单个 `?`** 而非只查 `??` —— 变异只把一处换回 `?` 时，只查 `??` 的断言不会红（实测：还原缺陷原形 M1 → 3/3 红；只把前缀换成单个 `?` 的 M2 → 相关 2 条红）。
+- **判据命令（修复后）**：`git grep -c '?' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 **0** —— 全文件不含字面 `?`）；`git grep -n 'AlertTriangle\|Close size' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 3 行）。修复前那条 `git grep -n '?? {message}' …（应给 1 行）` 已失效（现给 0 行），此处替换而非并列保留。
+- **改前核过的耦合**：11 个调用方都不依赖这个前缀；两处既有断言（`CharCardPublishError.test.jsx`、`DistillCancelError.test.jsx`）用的是 `textContent` + `toContain('…detail…')`，前缀无关，未受影响。
+
+**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**记账**
+- **归属**：**Spec 3**（2026-09-22 改判 —— 原记「蒸馏线」，用户把它划给 Spec 3 承接）。
+- **形态**：`web/frontend/src/components/DistillWorkbench.jsx:110` 的 effect 依赖 `[texts, loadTexts]`，函数体第 91 行是 `if (texts.length === 0) { loadTexts(); return }`。而 `web/frontend/src/store/useAppStore.js:656` 的 `loadTexts` 每次都执行 `set({ texts: data })`（第 661 行）—— **不论 `data` 是不是空数组都换一个新引用**，`texts` 的引用必然变化 → effect 重跑 → 仍然是空 → 再调 `loadTexts()`。闭环成立，**与网络是否失败无关**，触发条件只是「文本列表为空」。
+- **实测**：2026-09-22 的 S4 浏览器点检与写 106 的组件测试时都撞到。vitest 侧的表现是该用例文件**挂住不退出**（需手动 kill；那次留下过 3 个挂死的 vitest 进程，清掉后全量才恢复正常）。测试侧的规避写法是别给空列表 —— `web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 的 `beforeEach` 就为此塞了 `texts: [{ id: 'x1', filename: 'a.txt' }]`。
+- **为什么算缺陷**：空文本列表是**正常状态**（新注册账号、清空之后），不该引发请求风暴；而且触发条件是「数据为空」不是「出错」，用户看不到任何提示，只会觉得页面卡。
+- **判据命令**：`git grep -n "texts.length === 0" -- web/frontend/src/components/DistillWorkbench.jsx`（应给 91 一行）；`git grep -n "set({ texts: data" -- web/frontend/src/store/useAppStore.js`（应给 661 一行）。两处同时成立才构成本条。
+- **修法（留待，未做；方向待定，不在本条裁定）**：可选的干净做法是让 `loadTexts` 有一个「已在加载中就不重入」的门，或把「列表为空就回填」从渲染期 effect 挪到挂载时只做一次。**要避免**用「给 effect 加一个长度判断」这类绕法 —— 那会一起挡掉「第二次确实需要重拉」的正常场景。**本条只记账，不定修法**。
+
+**117. main 的 CI 在 `Run tests` 这一步挂死 2h19m（不是失败，是挂着不动）** —— 状态：**记账**
+- **归属**：CI / 测试基础设施（不分线）。
+- **形态**：main @ `842f3e0` 的 build run [`35703112463`](https://github.com/VERSE-SHIYU/Character-distill/actions/runs/35703112463)（2026-09-22T08:07:36Z 触发）里，**`gate` 与 `sentinel` 两个 job 的 `Run tests` 都挂住**，各占用 runner **8360s / 8362s**（≈ 2h19m），最终**由人手工 cancel 收场**（conclusion = `cancelled`）。**挂死不等于失败** —— pytest 进程一直活着，只是不往前走了，所以既不会自己报红、也不会自己退出。
+- **停在哪**：最后一条**带终态百分比**的输出落在 **54%**，位置在 `tests/test_pg_identity_sync.py` 附近；取消时 runner 仍在收拾 pytest（`Terminate orphan process: pid (2935) (pytest)`）。**读挂点只认带 `[ NN%]` 的行**：pytest 用 `-v` 时在 `logstart` 就写节点 id 但**不带换行**，重定向日志的最后一行是「写了一半的行」，它既不是挂点也不能当进度 —— 拿它定位会指向一个其实已经跑过去的用例（本条的第一次误判就是这么来的）。
+- **本地不可复现（2026-09-22 当天现跑）**：进程内单跑那条最近的用例，带 `.env` / 不带 `.env` 分别 2.04s / 0.37s，**都是绿的**；按 CI 口径整跑全量得 **1685 passed / 3 failed / 997s（0:16:36）**，**没有挂住**。即：同一天、同一个 commit、同一套依赖，本地走完、CI 停死，**差异不在代码而在环境**。
+- **嫌疑**：**112 那一族**（全量里约 20 条 `PytestUnhandledThreadExceptionWarning`、aiosqlite `Event loop is closed`，条数与命中用例每次不同）。它同样表现为「全量里随机位置的线程/事件循环异常」。**但这是嫌疑不是结论 —— 没有任何证据把 117 钉到 112 上**：117 是「停住」，112 是「抛异常后继续」，形态不同；且 117 只发生过一次，单次样本不足以归因。**本条不裁定根因。**
+- **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即失败，「挂住」从此落进「红」这一类，能被正常的失败流程接住，不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。取值依据（最近 46 次成功 run 的本步耗时）：p50 = 235s、最大 = 714s，40 分钟 = p50 的 10.2 倍。**这个防护只让挂死可见，不消除挂死** —— 根因仍是记账状态。
+- **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（本仓 CI 不出产物，run id 就是证据坐标）。
+
+**118. `importlib.reload` 替换异常类对象 —— 按「retry → error → chat」的文件顺序跑，三个文件红 4 条** —— 状态：**已修**（2026-09-22，`6c8d805`，分支 `worktree-session-cred`）
+- **归属**：72 线（94 泄漏那半的收尾）。
+- **形态**：`tests/test_llm_adapter_retry.py::test_timeout_family_constants_consume_env` 用 `importlib.reload(adapters.llm_adapter)` 读「六个超时常量确由 env 派生」，以证明「改 env 真的改行为」。`reload` 把模块属性**整体换新**，`IncompleteResponseError` 等异常**类对象**也跟着换了一份新类 —— 别的测试文件在**收集期** import 到的是旧类，此后它的 `pytest.raises(旧类)` 抓不到新抛的类。
+- **引入**：`3d1d171`（该用例本身）。
+- **触发面**：只有文件顺序落到「retry → error → chat」才显形（pytest-randomly 打乱时常绿），故长期未被发现。现跑：`pytest -p no:randomly tests/test_llm_adapter_retry.py tests/test_error_user_facing.py tests/test_chat_stream_error.py` 红 **4** 条 —— `test_error_user_facing.py::test_known_failures_screen_exact_text_and_no_internals` / `::test_known_failures_keep_ops_detail_out_of_screen`、`test_chat_stream_error.py::test_incomplete_payload_is_identifiable` / `::test_boundary_maps_known_failure_and_rejects_others`。
+- **修法**：不再 reload `sys.modules` 里那一份。改为 `importlib.util.spec_from_file_location` 以**另一个模块名**（`_llm_adapter_env_probe`）加载一份**私有副本**读常量；副本**不写进 `sys.modules`**（注册了等于又替了一份全局单例，别处再 `import adapters.llm_adapter` 会拿到带 env 的版本）。测试命题（常量确由 env 派生）不变。
+- **变异（现跑，2026-09-22）**：把 `_load_env_probe()` 改回 `return importlib.reload(M)` → 上面那条三文件命令**红 4 条**，与修前逐条同集；还原后 28 passed。
+- **判据命令**：`git grep -n "importlib.reload" tests/test_llm_adapter_retry.py` → **0**（本条没有「应为 0」以外的验收值）。
+
+**119. 全站没有「`print` 型失败」的告警 —— 失败只到容器 stdout，owner 不翻 `docker logs` 就无从得知** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（第 3 步的失败日志正好落在这一格的盲区里，顺手记账）。
+- **形态**：`core/alerting.AlertHandler`（`3fb3dbf`）挂的是 **root logger** 的 ERROR 级 handler，投递到 `ALERT_EMAIL`；后台日志面板（`core/log_collector.install_log_collector`）同样只收 **logging 记录**。而路线里大量失败处理是 `print(f"[xxx] ... failed ...")` 形态 —— `print` 写 fd 1，**不进 logging 管道**，于是既不上面板、也不进告警。
+- **本轮落点**：第 3 步给 `web/routers/auth.py::test_embedding` 加的失败日志正是 `print` 形态（与其余路由同风格，spec 明确点名），所以它**看得见但不会告警** —— 这条日志的可见性止于容器输出。
+- **读数（2026-09-22 现跑）**：`git grep -nE "^\s*print\(f?\"\[[a-z_]+\][^\"]*[Ff]ail" -- web core storage` → **115** 行。这些处**没有一处**会被 `AlertHandler` 收到。
+- **为什么只记不修**：把 `print` 改判 `logging` 是**全站面的口径变更**（哪些失败该 ERROR、哪些本就是 INFO），牵动面板噪声与节流键 `(logger 名, 异常类型)`，属产品决策；本轮范围外（spec §5「不做告警与监控」）。
+
+**120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（S0 第 3 条查实）。
+- **形态**：`web/routers/auth.py:145` 的 `ApiConfigRequest.embedding_region: str = ""` **无取值校验**，`update_user_api_config`（`:619`）原样落库。该值随后被 `core/rag.py:176` 读作 `region=config.get("embedding_region", "cn")` → `core/embeddings.py:390` `DashScopeEmbedding(api_key, region, ...)` → `DASHSCOPE_BASE_URLS[region]`。
+- **后果**：保存一个未知地域（如 `"us"`）后，该用户此后**所有**走嵌入的路径（RAG 检索、索引、蒸馏建会话）都在构造客户端那一刻 `KeyError`，而保存那一刻毫无提示、返回 `{"ok": True}`。
+- **本轮只修了另一面**：第 3 步只给**连通性测试端点**加了前置校验（不在 `DASHSCOPE_BASE_URLS` 里就返回「地域只能选 cn 或 intl」，commit `9dc4118`）。**保存路径未动** —— 两者不是同一处，别把本条的修当成已做。
+- **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-22 修后）：`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS` **1** 处；`ApiConfigRequest` 定义（`:150`）与 `update_api_config` 落库（`:619`）**各 0** 处。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

@@ -6,6 +6,7 @@ import ErrorBox from './common/ErrorBox'
 import { AlertTriangle, ExternalLink } from './common/Icon'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import { formatEmbeddingTestError } from '../utils/formatEmbeddingTestError'
 
 const MASKED_KEY = '••••••••'
 
@@ -27,6 +28,7 @@ export default function ApiConfigPanel() {
   const [testingEmbedding, setTestingEmbedding] = useState(false)
   const [testResult, setTestResult] = useState(null)
   const [testMsg, setTestMsg] = useState('')
+  const [testDetail, setTestDetail] = useState('')
   const [summaryThreshold, setSummaryThreshold] = useState(50)
   const affinityEnabled = useAppStore((s) => s.affinityEnabled)
   const setAffinityEnabled = useAppStore((s) => s.setAffinityEnabled)
@@ -311,6 +313,7 @@ export default function ApiConfigPanel() {
               setTestingEmbedding(true)
               setTestResult(null)
               setTestMsg('')
+              setTestDetail('')
               let succeeded = false
               try {
                 const sentKey = embeddingKey === MASKED_KEY ? '' : embeddingKey
@@ -325,8 +328,10 @@ export default function ApiConfigPanel() {
                   setTestResult('ok')
                   setTestMsg('✓ 连接正常 — 请点击上方「保存 RAG 配置」以持久化配置')
                 } else {
+                  const { hint, detail } = formatEmbeddingTestError(data)
                   setTestResult('error')
-                  setTestMsg('✗ ' + (data.error || '未知错误'))
+                  setTestMsg('✗ ' + hint)
+                  setTestDetail(detail)
                 }
               } catch (err) {
                 setTestResult('error')
@@ -334,7 +339,9 @@ export default function ApiConfigPanel() {
               } finally {
                 setTestingEmbedding(false)
                 if (!succeeded) {
-                  setTimeout(() => { setTestResult(null); setTestMsg('') }, 5000)
+                  setTimeout(() => {
+                    setTestResult(null); setTestMsg(''); setTestDetail('')
+                  }, 5000)
                 }
               }
             }}
@@ -344,13 +351,26 @@ export default function ApiConfigPanel() {
         </div>
 
         {testResult && (
-          <p className="settings-hint" style={{
-            color: testResult === 'ok' ? 'var(--success)' : 'var(--danger)',
-            fontWeight: 600,
-            marginTop: 8,
-          }}>
-            {testMsg}
-          </p>
+          <>
+            <p className="settings-hint" style={{
+              color: testResult === 'ok' ? 'var(--success)' : 'var(--danger)',
+              fontWeight: 600,
+              marginTop: 8,
+            }}>
+              {testMsg}
+            </p>
+            {testDetail && (
+              <p className="settings-hint" style={{
+                color: 'var(--text-secondary)',
+                fontSize: '0.85em',
+                marginTop: 2,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+              }}>
+                详细信息：{testDetail}
+              </p>
+            )}
+          </>
         )}
       </section>
 

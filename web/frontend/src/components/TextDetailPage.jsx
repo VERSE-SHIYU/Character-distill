@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import useCanWrite from '../hooks/useCanWrite'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
@@ -12,6 +13,7 @@ import { formatRelativeTime } from '../utils/time'
 import { displayName } from '../utils/displayName'
 
 export default function TextDetailPage() {
+  const canWrite = useCanWrite()
   const setView = useAppStore((s) => s.setView)
   const navigateBack = useAppStore((s) => s.navigateBack)
   const currentTextDetailId = useAppStore((s) => s.currentTextDetailId)
@@ -225,26 +227,28 @@ export default function TextDetailPage() {
           </div>
 
           {/* Comment input */}
-          <div className="modal-body" style={{ padding: 0, marginBottom: 16 }}>
-            <textarea
-              className="modal-textarea"
-              placeholder="写下你的评论…"
-              rows={3}
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              style={{ marginBottom: 8 }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn-primary btn-sm"
-                disabled={!newComment.trim() || submitting}
-                onClick={handleSubmitComment}
-              >
-                {submitting ? '发送中…' : '发送'}
-              </button>
+          {canWrite && (
+            <div className="modal-body" style={{ padding: 0, marginBottom: 16 }}>
+              <textarea
+                className="modal-textarea"
+                placeholder="写下你的评论…"
+                rows={3}
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                style={{ marginBottom: 8 }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  className="btn-primary btn-sm"
+                  disabled={!newComment.trim() || submitting}
+                  onClick={handleSubmitComment}
+                >
+                  {submitting ? '发送中…' : '发送'}
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Comments list */}
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
@@ -321,6 +325,7 @@ function CommentItem({
   onDelete,
   onToggleExpand,
 }) {
+  const canWrite = useCanWrite()
   const replies = comment.replies || []
   const isExpanded = expandedReplies[comment.id]
   const displayReplies = isExpanded ? replies : replies.slice(0, 2)
@@ -338,39 +343,41 @@ function CommentItem({
           <p style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 6 }}>
             {comment.content}
           </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
-              onClick={() => onLike(comment.id)}
-            >
-              {comment.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {comment.likes || 0}
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ padding: '2px 6px', fontSize: 12, color: 'var(--text-dim)' }}
-              onClick={() => onSetReplyTo(replyTo === comment.id ? null : comment.id)}
-            >
-              回复
-            </button>
-            {authUser?.id === comment.user_id && (
+          {canWrite && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ padding: '2px 6px', fontSize: 12, color: comment.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
+                onClick={() => onLike(comment.id)}
+              >
+                {comment.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {comment.likes || 0}
+              </button>
               <button
                 type="button"
                 className="btn-ghost"
                 style={{ padding: '2px 6px', fontSize: 12, color: 'var(--text-dim)' }}
-                onClick={() => onDelete(comment.id)}
+                onClick={() => onSetReplyTo(replyTo === comment.id ? null : comment.id)}
               >
-                删除
+                回复
               </button>
-            )}
-          </div>
+              {authUser?.id === comment.user_id && (
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  style={{ padding: '2px 6px', fontSize: 12, color: 'var(--text-dim)' }}
+                  onClick={() => onDelete(comment.id)}
+                >
+                  删除
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Reply input */}
-      {replyTo === comment.id && (
+      {canWrite && replyTo === comment.id && (
         <div style={{ marginLeft: 46, marginTop: 8, width: '100%' }}>
           <textarea
             className="modal-textarea"
@@ -411,26 +418,28 @@ function CommentItem({
                   <p style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
                     {reply.content}
                   </p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      style={{ padding: '1px 4px', fontSize: 12, color: reply.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
-                      onClick={() => onLike(reply.id)}
-                    >
-                      {reply.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {reply.likes || 0}
-                    </button>
-                    {authUser?.id === reply.user_id && (
+                  {canWrite && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                       <button
                         type="button"
                         className="btn-ghost"
-                        style={{ padding: '1px 4px', fontSize: 12, color: 'var(--text-dim)' }}
-                        onClick={() => onDelete(reply.id)}
+                        style={{ padding: '1px 4px', fontSize: 12, color: reply.liked_by_me ? 'var(--danger)' : 'var(--text-dim)' }}
+                        onClick={() => onLike(reply.id)}
                       >
-                        删除
+                        {reply.liked_by_me ? <Heart size={12} fill="currentColor" /> : <Heart size={12} />} {reply.likes || 0}
                       </button>
-                    )}
-                  </div>
+                      {authUser?.id === reply.user_id && (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          style={{ padding: '1px 4px', fontSize: 12, color: 'var(--text-dim)' }}
+                          onClick={() => onDelete(reply.id)}
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

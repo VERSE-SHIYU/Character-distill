@@ -21,7 +21,7 @@ import pytest
 from openai import BadRequestError
 
 import adapters.llm_adapter as M
-from adapters.llm_adapter import LLMAdapter, ToolsNotSupportedError
+from adapters.llm_adapter import LLMAdapter, ToolsNotSupportedError, user_facing_error
 
 
 class _Msg:
@@ -226,6 +226,40 @@ def test_decision_429_has_own_attempt_cap(monkeypatch):
     assert elapsed < 5.0
 
 
+def _status_error(code: int) -> Exception:
+    """带状态码的假上游异常：驱动 _classify_retry 与 _UPSTREAM_USER_MESSAGES。
+
+    状态码挂**类属性**、不写自定义 `__init__` —— 免得本文件多一个带自定义状态的异常类，
+    去惊动 tests/test_exception_pickle_lock.py 的全仓普查。
+    """
+    return type("_StatusError", (RuntimeError,), {"status_code": code})(f"upstream {code}")
+
+
+@pytest.mark.parametrize("code,expected", [
+    (401, "API Key 无效或无权限，请到设置页检查"),
+    (402, "账户余额不足，请充值后重试"),
+    (429, "请求过于频繁，请稍后再试"),
+    (500, "服务暂时不可用，请稍后重试"),  # 未登记 → 通用文案，原文绝不因此上屏
+])
+def test_exhausted_upstream_failure_carries_user_message(code, expected, monkeypatch):
+    """缺陷 94（泄漏那半）：次数耗尽时抛 UpstreamFailure，上屏口径由 adapters 这张表统一给。
+
+    未登记的状态码落通用文案 —— 路由层据此上屏，内部原文（含状态码与上游报错）只留在
+    str(exc) 里进日志。str() 逐字不变：core 侧既有的 "failed after N attempts" /
+    "rate limited (429)" 判据继续命中。
+    """
+    monkeypatch.setattr(M, "_DECISION_ATTEMPTS", 1)
+    monkeypatch.setattr(M, "_RATE_LIMIT_ATTEMPTS", 1)
+    llm = _make_llm()
+    fake = _SyncClient(_storm(_status_error(code)))
+    llm._client = fake
+    with pytest.raises(RuntimeError) as ei:
+        llm.chat_with_tools("sys", [{"role": "user", "content": "hi"}], tools=[{"type": "function"}])
+    exc = ei.value
+    assert user_facing_error(exc) == expected
+    assert f"upstream {code}" in str(exc), "原文必须留在 str() 里进日志，不上屏"
+
+
 def test_with_tools_400_no_retry_preserved():
     llm = _make_llm()
     resp = SimpleNamespace(status_code=400, headers={}, request=SimpleNamespace(url="http://x"))
@@ -304,7 +338,7 @@ def test_chat_stream_create_storm_capped():
 # ── 缺陷 8：超时族全走 env（口径统一）──────────────────────────────────
 # 三个 ceiling 早已 env 化，三个 deadline 漏网 → 「超时可调」名不副实。这里锁：
 #   1. _env_timeout_s 缺变量取默认、有变量取变量、0/负被 floor 夹回（防静默关超时）；
-#   2. 六个模块常量真的消费 env（reload 实跑，而非只看 helper 行为）；
+#   2. 六个模块常量真的消费 env（真跑模块顶层，而非只看 helper 行为）；
 #   3. 无 env 时默认值一字不变（决策 6/60/8、ceiling 5/45/7）。
 
 
@@ -323,20 +357,38 @@ def test_timeout_family_defaults_unchanged():
     assert (M._DECISION_ATTEMPT_S, M._GEN_ATTEMPT_S, M._STREAM_ATTEMPT_S) == (5.0, 45.0, 7.0)
 
 
-def test_timeout_family_constants_consume_env(monkeypatch):
-    """reload 实跑：证明六个常量确由 env 派生，堵住「只测 helper、常量没用它」的假绿。"""
-    import importlib
+def _load_env_probe():
+    """按另一个模块名加载 `adapters/llm_adapter.py` 的一份**私有副本**，读它顶层算出的常量。
 
+    **不 reload `sys.modules` 里那一份**：`importlib.reload(M)` 把模块属性整体换新，异常类
+    对象也跟着换 —— 别的测试文件在收集期 import 到的旧类引用（`pytest.raises(
+    IncompleteResponseError)`）随即抓不到新类，按「retry → error → chat」的文件顺序跑就红 4 条
+    （既有污染，`3d1d171` 引入）。
+
+    副本**不写进 `sys.modules`**：注册了就等于又替了一份全局单例，别处再 `import
+    adapters.llm_adapter` 会拿到这份带 env 的版本。命题（常量确由 env 派生）不变 ——
+    它判的是模块顶层那几行 `_env_timeout_s(...)`，与是哪一份实例无关。
+    """
+    import importlib.util
+    import pathlib
+
+    spec = importlib.util.spec_from_file_location(
+        "_llm_adapter_env_probe", pathlib.Path(M.__file__))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_timeout_family_constants_consume_env(monkeypatch):
+    """真跑模块顶层：证明六个常量确由 env 派生，堵住「只测 helper、常量没用它」的假绿。"""
     monkeypatch.setenv("LLM_GEN_DEADLINE_S", "120")
     monkeypatch.setenv("LLM_STREAM_DEADLINE_S", "0")     # → floor
     monkeypatch.setenv("LLM_DECISION_DEADLINE_S", "-1")  # → floor
     monkeypatch.setenv("LLM_GEN_ATTEMPT_S", "0")         # → floor
-    try:
-        importlib.reload(M)
-        assert M._GEN_DEADLINE_S == 120.0
-        assert M._STREAM_DEADLINE_S == M._ATTEMPT_WINDOW_S
-        assert M._DECISION_DEADLINE_S == M._ATTEMPT_WINDOW_S
-        assert M._GEN_ATTEMPT_S == M._ATTEMPT_MIN_S
-    finally:
-        monkeypatch.undo()
-        importlib.reload(M)  # 复原无 env 的模块常量，避免污染后续用例
+
+    probe = _load_env_probe()
+
+    assert probe._GEN_DEADLINE_S == 120.0
+    assert probe._STREAM_DEADLINE_S == probe._ATTEMPT_WINDOW_S
+    assert probe._DECISION_DEADLINE_S == probe._ATTEMPT_WINDOW_S
+    assert probe._GEN_ATTEMPT_S == probe._ATTEMPT_MIN_S

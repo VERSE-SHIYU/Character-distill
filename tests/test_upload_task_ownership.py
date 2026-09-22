@@ -71,3 +71,26 @@ def test_foreign_and_missing_are_indistinguishable():
         asyncio.run(M.get_upload_task_status("nope", user={"id": "u2"}))
     assert ei_foreign.value.status_code == ei_missing.value.status_code == 404
     assert ei_foreign.value.detail == ei_missing.value.detail
+
+
+def test_failure_message_is_generic_and_the_log_keeps_the_raw_text(monkeypatch, capsys):
+    """缺陷 94（泄漏那半）：任务状态给通用文案，上游原文只留 print 那句日志。
+
+    收走原文 ≠ 扔掉原文 —— 上屏那句不许含内部标识，日志里必须还有。
+    """
+    raw = "RuntimeError: upstream 500 boom at adapters/llm_adapter.py:200"
+
+    def _boom(coro):
+        coro.close()          # 别留一个从未 await 的协程（RuntimeWarning 会污染别的用例）
+        raise RuntimeError(raw)
+
+    monkeypatch.setattr(M, "submit_to_main_loop", _boom)
+
+    M._run_upload_task("t-94", "text-1", "u1")
+
+    with M._upload_task_lock:
+        task = dict(M._upload_tasks["t-94"])
+    assert task["status"] == "error"
+    assert task["message"] == "服务暂时不可用，请稍后重试"
+    assert raw not in task["message"]
+    assert raw in capsys.readouterr().out, "原文被收走的同时也从日志里丢了"

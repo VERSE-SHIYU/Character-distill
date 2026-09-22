@@ -4,6 +4,8 @@ import Avatar from './common/Avatar'
 import GlobalSearchBox from './common/GlobalSearchBox'
 import { displayName } from '../utils/displayName'
 import { isAdmin } from '../utils/role'
+import { visibleEntries } from './common/visibleEntries'
+import useCanWrite from '../hooks/useCanWrite'
 import { THEMES } from '../utils/themes'
 import { applyTheme, getTheme, applyFontDisplay, getFontDisplay } from '../utils/theme'
 import { Check, Home, Edit3, Users, Clock, Globe, Trash2, Heart, User, Shield, MessageSquare, Palette, Mic, Settings, LogIn, Book, Close } from './common/Icon'
@@ -23,6 +25,7 @@ const NAV_ITEMS = [
     id: 'groupChat',
     icon: <Users size={20} />,
     label: '群聊',
+    requires: 'canWrite',
   },
   {
     id: 'history',
@@ -38,6 +41,7 @@ const NAV_ITEMS = [
     id: 'trash',
     icon: <Trash2 size={20} />,
     label: '回收站',
+    requires: 'canWrite',
   },
   {
     id: 'feed',
@@ -61,6 +65,7 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
   const currentCard = useAppStore((s) => s.currentCard)
   const sessionId = useAppStore((s) => s.sessionId)
   const unreadTotal = useAppStore((s) => s.unreadTotal)
+  const canWrite = useCanWrite()
   const [showTheme, setShowTheme] = useState(false)
 
   const isVisible = open || pinned
@@ -85,9 +90,12 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
     }
   }, [setView])
 
-  const navItems = isAdmin(authUser)
-    ? [...NAV_ITEMS, { id: 'admin', icon: <Shield size={20} />, label: '管理' }]
-    : NAV_ITEMS
+  const navItems = visibleEntries(
+    isAdmin(authUser)
+      ? [...NAV_ITEMS, { id: 'admin', icon: <Shield size={20} />, label: '管理' }]
+      : NAV_ITEMS,
+    { canWrite },
+  )
 
   let sidebarClass = 'sidebar'
   if (open && !pinned) sidebarClass += ' open'
@@ -158,14 +166,16 @@ export default function Sidebar({ open, pinned, onShow, onHide, onTogglePin }) {
               </button>
               {showTheme && <ThemePopup onClose={() => setShowTheme(false)} />}
             </div>
-            <button
-              type="button"
-              className="sidebar-action-btn"
-              onClick={() => navigateTo('voice')}
-              title="音色管理"
-            >
-              <Mic size={16} /> 音色
-            </button>
+            {canWrite && (
+              <button
+                type="button"
+                className="sidebar-action-btn"
+                onClick={() => navigateTo('voice')}
+                title="音色管理"
+              >
+                <Mic size={16} /> 音色
+              </button>
+            )}
             <button
               type="button"
               className="sidebar-action-btn"

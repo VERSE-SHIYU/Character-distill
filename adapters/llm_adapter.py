@@ -192,11 +192,18 @@ class _RetryBudget:
             # remaining−wait−margin ≥ min（因 remaining−wait ≥ window）→ 超时不受过冲影响。
             self._next_to = min(self._ceiling, remaining - wait - _ATTEMPT_TIMEOUT_MARGIN_S)
         if cap_hit:
+            # 只是换抛出类型/带上屏文案：f-string 与现在逐字相同，core 侧既有的
+            # "failed after N attempts" / "rate limited (429)" 判据继续命中。
+            user_message = _upstream_user_message(exc)
             if is_429:
                 print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
-                raise RuntimeError(f"{self._err} rate limited (429) after {self._total} attempts: {exc}")
+                raise UpstreamFailure(
+                    f"{self._err} rate limited (429) after {self._total} attempts: {exc}",
+                    user_message=user_message)
             print(f"{self._tag}All {self._total} attempts failed: {exc}")
-            raise RuntimeError(f"{self._err} failed after {self._total} attempts: {exc}")
+            raise UpstreamFailure(
+                f"{self._err} failed after {self._total} attempts: {exc}",
+                user_message=user_message)
         if is_429:
             print(f"{self._tag}Rate limited (429), attempt {self._total}, waiting {wait:.1f}s")
         else:
@@ -345,6 +352,41 @@ _INCOMPLETE_USER_MESSAGES: dict[str, str] = {
 }
 _OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
 
+# 上游已知失败 → 能指导下一步的中文文案（缺陷 94 的泄漏那半）。这三条是可判定的处置：
+# key 无效去设置页、余额不足去充值、限流等一会儿 —— 通用文案给不了这些下一步。
+# 未登记的状态码不在这里（落 "" → 出口通用文案）：宁可口径笼统，也不把上游报错原文上屏。
+_UPSTREAM_USER_MESSAGES: dict[int, str] = {
+    401: "API Key 无效或无权限，请到设置页检查",
+    403: "API Key 无效或无权限，请到设置页检查",
+    402: "账户余额不足，请充值后重试",
+    429: "请求过于频繁，请稍后再试",
+}
+
+
+class UpstreamFailure(RuntimeError):
+    """上游已知失败重试耗尽 —— 带能指导用户下一步的上屏文案。
+
+    ``user_message`` 走 keyword、有默认值 ""：空串即「未登记的状态码」，出口
+    （``user_facing_error``）据它落通用文案。默认值也让 ``cls(*args)`` 仍能重建 ——
+    不必自定义 ``__reduce__``（同 ``core.distiller.DistillError`` 先例）。
+    """
+
+    def __init__(self, message: str, user_message: str = "") -> None:
+        self.user_message = user_message
+        super().__init__(message)
+
+
+def _upstream_user_message(exc: Exception) -> str:
+    """上游异常 → 上屏文案；未登记的状态码 → ""（由出口落通用文案）。
+
+    识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本里的
+    429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    """
+    code = getattr(exc, "status_code", None)
+    if code is None and "429" in str(exc):
+        code = 429
+    return _UPSTREAM_USER_MESSAGES.get(code, "")
+
 
 class IncompleteResponseError(RuntimeError):
     """finish_reason 属 _INCOMPLETE_FINISH_REASONS —— 内容不完整，不可当成功落库。
@@ -411,21 +453,22 @@ def llm_error_types() -> tuple[type[BaseException], ...]:
 _GENERIC_USER_ERROR = "服务暂时不可用，请稍后重试"
 
 
-def user_facing_error(exc: BaseException, *, preserve_unknown: bool = False) -> str:
+def user_facing_error(exc: BaseException) -> str:
     """异常 → 用户可见文案的**唯一出口**。内部标识一律不上屏。
 
     取值优先级（先具体后笼统）：
       1. ``llm_error_payload`` —— LLM 侧已知失败，取 ``_INCOMPLETE_USER_MESSAGES`` 上屏表
-      2. ``exc.user_message`` —— 自带已审上屏口径的异常（``core.distiller.DistillError``）
-      3. ``preserve_unknown`` 为真 → ``str(exc)``；否则通用文案
+      2. ``exc.user_message`` —— 自带已审上屏口径的异常（``core.distiller.DistillError``、
+         ``adapters.llm_adapter.UpstreamFailure``）
+      3. 通用文案
 
     **绝不使用 ``type(exc).__name__``**：异常类名是内部标识（缺陷 17 的旧实现在
     兜底分支上打了它）。也绝不把运维口径（finish_reason / max_tokens / 分片计数 /
     ``where``）带上屏——那些留在异常自己的 ``str()`` 里进日志。
 
-    ``preserve_unknown`` 只给 chat 的 SSE 帧用：那条契约显式锁定「未登记的异常保持原样」
-    以便排障（tests/test_chat_stream_error.py::test_other_errors_keep_original_shape）。
-    **蒸馏路径一律不传** —— 角色卡页上出现 max_tokens 或异常类名就是缺陷 17 本身。
+    未登记的异常**一律**落通用文案：这里曾经有个可选开关，给 chat 的 SSE 帧原样透出
+    ``str(exc)`` 以便排障。但那条路把上游报错原文直接送到了用户面前（缺陷 94 的泄漏
+    那半），开关已删 —— 排障靠日志里那句原文，不靠上屏。
     """
     payload = llm_error_payload(exc)
     if payload is not None:
@@ -433,8 +476,6 @@ def user_facing_error(exc: BaseException, *, preserve_unknown: bool = False) -> 
     declared = getattr(exc, "user_message", None)
     if isinstance(declared, str) and declared.strip():
         return declared.strip()
-    if preserve_unknown:
-        return str(exc)
     return _GENERIC_USER_ERROR
 
 
