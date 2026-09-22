@@ -252,7 +252,7 @@ def _build_app(store, uid):
     app.include_router(D.router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": uid, "username": "testuser", "is_admin": False,
+        "id": uid, "username": "testuser", "role": "user",
     }
     return app
 

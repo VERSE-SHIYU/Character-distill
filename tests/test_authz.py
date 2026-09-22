@@ -12,9 +12,9 @@ import pytest
 
 from core.authz import fetch_for_actor
 
-OWNER = {"id": "u_owner", "is_admin": False}
-ADMIN = {"id": "u_admin", "is_admin": True}
-# 缺 is_admin 键的调用方（如内部构造的 user dict）—— 必须按「不是管理员」处理。
+OWNER = {"id": "u_owner", "role": "user"}
+ADMIN = {"id": "u_admin", "role": "admin"}
+# 缺 role 键的调用方（如内部构造的 user dict）—— 必须按「不是管理员」处理。
 BARE = {"id": "u_bare"}
 
 RECORD = {"id": "e1", "user_id": "u_owner"}
@@ -70,9 +70,9 @@ def test_owned_miss_non_admin_returns_none(owned_miss, unscoped):
     assert unscoped.calls == []
 
 
-@pytest.mark.parametrize("user", [ADMIN, BARE], ids=["admin", "no_is_admin_key"])
+@pytest.mark.parametrize("user", [ADMIN, BARE], ids=["admin", "no_role_key"])
 def test_owned_miss_admin_falls_through_to_unscoped(owned_miss, unscoped, user):
-    """管理员落 unscoped；缺 is_admin 键的按非管理员处理，仍不落。"""
+    """管理员落 unscoped；缺 role 键的按非管理员处理，仍不落。"""
     out = _run(fetch_for_actor(owned_miss, unscoped, "e1", user, allow_admin=True))
     if user is ADMIN:
         assert out == RECORD

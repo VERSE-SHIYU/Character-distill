@@ -93,7 +93,7 @@ def _make_app(monkeypatch, store, *, tm=None, distiller=None, with_handlers: boo
     app.include_router(distill_router)
     app.include_router(history_router)
     app.dependency_overrides[get_storage] = lambda: store
-    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "username": "t", "is_admin": False}
+    app.dependency_overrides[get_current_user] = lambda: {"id": "u1", "username": "t", "role": "user"}
 
     async def _fake_user_llm(*args, **kwargs):
         return object()

@@ -326,7 +326,7 @@ async def get_text_deletion_impact(
     storage: StorageBase = Depends(get_storage),
 ) -> dict:
     """Get impact stats before deleting a text (cards, sessions, messages)."""
-    # admin 跨属主查看删除影响：显式逃生口，受 is_admin 保护（由 fetch_for_actor 裁决）。
+    # admin 跨属主查看删除影响：显式逃生口，受 roles.is_admin 保护（由 fetch_for_actor 裁决）。
     text = await fetch_for_actor(
         storage.get_text_owned, storage.get_text_unscoped, text_id, user, allow_admin=True)
     if not text:

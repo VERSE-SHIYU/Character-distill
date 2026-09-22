@@ -126,7 +126,7 @@ def _make_client(store, user_id):
         app.include_router(r)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": user_id, "username": "testuser", "is_admin": False,
+        "id": user_id, "username": "testuser", "role": "user",
     }
     app.dependency_overrides[get_memory_manager] = lambda: _MemMgr()
     app.dependency_overrides[get_voice_client] = lambda: _VoiceClient()
@@ -389,7 +389,7 @@ class TestPermission403StillCoversAdminOnly:
         app.include_router(admin_router)
         app.dependency_overrides[get_storage] = lambda: store
         app.dependency_overrides[get_current_user] = lambda: {
-            "id": intruder, "username": "testuser", "is_admin": False,
+            "id": intruder, "username": "testuser", "role": "user",
         }
         client = TestClient(app)
         r = client.get("/api/admin/users")

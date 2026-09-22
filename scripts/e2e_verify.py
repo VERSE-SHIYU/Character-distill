@@ -21,7 +21,7 @@ resp = urllib.request.urlopen(req)
 body = json.loads(resp.read())
 token = body["access_token"]
 user = body["user"]
-print(f"[1] Login: {user['username']} (admin={user['is_admin']}) ✅")
+print(f"[1] Login: {user['username']} (role={user.get('role')}) ✅")
 
 headers = {"Authorization": f"Bearer {token}"}
 

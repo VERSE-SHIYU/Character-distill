@@ -40,7 +40,7 @@ class _SpyStore:
         self.delete_calls: list[str] = []
 
     async def get_user_by_id(self, user_id):
-        return {"id": user_id, "username": user_id, "is_admin": False}
+        return {"id": user_id, "username": user_id, "role": "user"}
 
     async def get_user_card_ids(self, user_id):
         return []
@@ -57,7 +57,7 @@ def client( ):
     store = _SpyStore()
     app = FastAPI()
     app.include_router(A.router)
-    app.dependency_overrides[require_admin] = lambda: {"id": "admin1", "is_admin": True}
+    app.dependency_overrides[require_admin] = lambda: {"id": "admin1", "role": "admin"}
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_memory_manager] = lambda: None
     with TestClient(app) as c:
