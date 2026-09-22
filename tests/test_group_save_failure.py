@@ -56,16 +56,18 @@ class _ReplyLLM:
     """
 
     reply = "固定回复"
+    # 非空时按序取值（G5 要「先来一条 [REACT:…]，再来一条正常回复」）。类属性，实例共享。
+    replies: list[str] = []
     last_usage: dict = {}
 
     def preflight(self) -> None:
         return None
 
     def chat(self, *a, **kw) -> str:
-        return type(self).reply
+        return type(self).replies.pop(0) if type(self).replies else type(self).reply
 
     async def achat(self, *a, **kw) -> str:
-        return type(self).reply
+        return type(self).replies.pop(0) if type(self).replies else type(self).reply
 
 
 class _MemMgr:
@@ -125,10 +127,12 @@ class _FailingGroupSave:
     整体失败的话，改前改后都是同一个 500，看不出差别。
     """
 
-    def __init__(self, inner: SQLiteStore, fail_roles: set[str]) -> None:
+    def __init__(self, inner: SQLiteStore, fail_roles: set[str], fail_reaction: bool = False) -> None:
         self._inner = inner
         self._fail_roles = fail_roles
+        self._fail_reaction = fail_reaction
         self.saved: list[str] = []
+        self.reaction_attempts = 0
 
     async def save_group_message(
         self, group_id, speaker, role, content, speaker_card_id="", **kw
@@ -139,6 +143,13 @@ class _FailingGroupSave:
         return await self._inner.save_group_message(
             group_id, speaker, role, content, speaker_card_id, **kw
         )
+
+    async def toggle_reaction(self, *a, **kw):
+        # 先记「确实被调到」再决定失败 —— 只看失败与否，分不出「没走到这条路」与「走到了」。
+        self.reaction_attempts += 1
+        if self._fail_reaction:
+            raise RuntimeError("reaction down")
+        return await self._inner.toggle_reaction(*a, **kw)
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
@@ -170,9 +181,28 @@ def _make_owned_group(client, store, uid) -> tuple[str, str]:
     return r.json()["group_id"], cid
 
 
+def _make_two_card_group(client, store, uid) -> tuple[str, list[str]]:
+    """两个角色的群 —— 反应是**一条回复**（走完就 continue，不发帧），要另有一条正常回复
+    才能同时验「反应失败」与「本轮照常收尾」。"""
+    tid = f"txt_{uuid.uuid4().hex}"
+    c1, c2 = f"card_{uuid.uuid4().hex}", f"card_{uuid.uuid4().hex}"
+    _run_async(store.save_text(tid, "src.txt", "content", user_id=uid))
+    _run_async(store.save_card(c1, tid, "张三", '{"name": "张三"}', user_id=uid))
+    _run_async(store.save_card(c2, tid, "李四", '{"name": "李四"}', user_id=uid))
+    r = client.post("/api/group/create", json={
+        "card_ids": [c1, c2],
+        "user_persona_type": "stranger",
+        "user_persona_name": "路人",
+    })
+    assert r.status_code == 200, (
+        f"建群这一步就失败了，后面的帧断言无从谈起：{r.status_code} {r.text[:200]}")
+    return r.json()["group_id"], [c1, c2]
+
+
 def _broadcast(client, gid, cid) -> list[dict]:
+    ids = cid if isinstance(cid, list) else [cid]
     r = client.post(f"/api/group/{gid}/broadcast",
-                    json={"target_card_ids": [cid], "message": "hi"})
+                    json={"target_card_ids": ids, "message": "hi"})
     assert r.status_code == 200, f"广播这一层就失败了：{r.status_code} {r.text[:200]}"
     frames = []
     for line in r.text.splitlines():
@@ -253,3 +283,28 @@ def test_G3_silent_save_failure_still_delivers_the_silent_mark(store, user_id):
     assert reply["msg_id"] is None
     assert _one(frames, "done")
     assert failing.saved == ["user"], f"实际写进库的 role 不对：{failing.saved}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# G5：角色反应写入失败 —— 反应不是消息，没有「未保存」可标，但也不能把整轮带走
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_G5_reaction_save_failure_still_finishes_the_round(store, user_id):
+    """角色点了赞但写库失败 → 本轮照常把回复发完并 `done`，无 error 帧。"""
+    _ReplyLLM.replies = ["[REACT:👍]", "固定回复"]
+    try:
+        failing = _FailingGroupSave(store, set(), fail_reaction=True)
+        client = _client(failing, user_id)
+        gid, cids = _make_two_card_group(client, store, user_id)
+
+        frames = _broadcast(client, gid, cids)
+    finally:
+        _ReplyLLM.replies = []
+
+    assert failing.reaction_attempts == 1, (
+        f"没走到写反应那条路，本用例没验到东西：attempts={failing.reaction_attempts}，frames={frames}")
+    _assert_no_error_frame(frames)
+    assert _one(frames, "done"), f"反应写失败把本轮收尾带走了：{frames}"
+    replies = [f for f in frames if f.get("type") == "reply"]
+    assert len(replies) == 1 and replies[0]["reply"] == "固定回复", (
+        f"反应写失败影响了同一轮里其他角色的回复：{frames}")

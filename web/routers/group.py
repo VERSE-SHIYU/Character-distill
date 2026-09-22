@@ -599,7 +599,9 @@ async def broadcast_message(
                     if m:
                         # 用户那条没存上时 user_msg_id 为 None，反应自然跳过（既有判断照旧）。
                         if not req.auto_mode and user_msg_id is not None:
-                            await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
+                            # 反应不是消息，没有「未保存」可标；写失败只记日志，不能带走本轮。
+                            async with nonfatal("group", "save character reaction"):
+                                await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
                         continue
 
                     s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
