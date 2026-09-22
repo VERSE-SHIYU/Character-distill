@@ -22,7 +22,8 @@ from pydantic import BaseModel
 
 from core import roles
 from core.email_service import send_verification_code
-from deps import clear_user_llm_cache, get_config, get_storage
+from core.nonfatal import nonfatal
+from deps import get_config, get_storage, refresh_user_llm
 from storage.base import StorageBase
 from limiter import limiter
 from web.llm_gate import emit_geo_block_audit, geo_refusal
@@ -618,7 +619,10 @@ async def update_api_config(
             user["id"], req.api_key, req.base_url, req.model,
             req.embedding_key, req.embedding_region,
         )
-        clear_user_llm_cache(user["id"])
+        # 换活会话手里的连接（含清缓存）。换失败**不改写**这次保存的结果：配置已经落库，
+        # 下个请求自己会取到新实例（缓存已经清掉了），活会话只是晚一轮生效。
+        async with nonfatal("auth", "refresh live sessions"):
+            await refresh_user_llm(user["id"], storage)
         return {"ok": True}
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
