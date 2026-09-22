@@ -100,7 +100,7 @@ def _route_reads_credentials(route) -> bool:
 
     判据取自**路由对象本身**（与 `route.path` 同一类事实），不是一份要与
     `PUBLIC_PATHS` 同步维护的路径名单 —— 名单漏一条就是静默放行。取不到 route 时
-    恒为 False：拿不准就**不进门禁的射程**，与 `is_demo` 对空 user 的处置同一口径。
+    恒为 False：拿不准就**不进门禁的射程**，与身份判定对空 user 的处置同一口径。
     """
     def _walk(dep) -> bool:
         for sub in getattr(dep, "dependencies", None) or ():
