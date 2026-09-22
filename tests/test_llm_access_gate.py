@@ -1014,13 +1014,22 @@ def test_l11_app_installs_the_production_guard():
     la = _adapter()
     getter = getattr(la, "get_call_guard", None)
     assert getter is not None, "adapters.llm_adapter 没发布与 set_call_guard 配对的读取口"
+    S = _mod("core.scheduling")
     # 从「未注册」起步：守卫是进程级全局，同会话里别的用例可能已经装过 —— 不清空的话
     # 这里读到的是**别人留下的**注册，删掉 lifespan 那一行也照样绿（恒真的假锁）。
     with _snapshot(la.get_call_guard, la.set_call_guard, None):
         assert getter() is None, "起点不是未注册 —— 前面有用例装过守卫"
-        with TestClient(server.app):
-            assert getter() is gate.geo_call_guard, (
-                "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
+        # lifespan 注册的**投递器**也要一并还原：本用例退出后 TestClient 关掉的 loop 已经死了，
+        # 注册却还指着它。不还原的话，同会话后面任何走 `submit_to_main_loop` 的用例都会把协程
+        # 投到死 loop 上 —— `chat_engine` 的宽 except 吞掉异常，表现为
+        # 「coroutine ... was never awaited」飘在**别的**用例头上（最难查的那种串味）。
+        before = S.get_loop_submitter()
+        with _snapshot(S.get_loop_submitter, S.set_loop_submitter, before):
+            with TestClient(server.app):
+                assert getter() is gate.geo_call_guard, (
+                    "生产 app 启动后守卫不是策略层那一个 —— lifespan 没装门")
+        assert S.get_loop_submitter() is before, (
+            "lifespan 注册的投递器没被还原 —— 退出后 loop 已关，注册还在")
 
 
 # ── L12：策略单点（②层） ──────────────────────────────────────────────────
