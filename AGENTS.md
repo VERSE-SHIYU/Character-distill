@@ -1572,9 +1572,20 @@ PROBE_IMAGE         false
 - 修法：扫描面改用工作区事实 `git ls-files --cached --others --exclude-standard '*.py'`，L10 / L12 / L13 **共用一个构造函数** `_production_py`（原先各写一份，其中 L10 用 `rglob`、L12/L13 用 `git ls-files`）。未跟踪文件的处置是**显式的**：`--others` 一律纳入，要排除就得写进 `.gitignore`（与全仓其他工具同一份声明），而不是在锁里悄悄跳过一个「git 不认」的文件。**不用 rglob 全盘**的理由也写进了 docstring：那会把 `.venv/`（11 964 个 `.py`）连同 `services/` 一起当生产代码扫。
 - 判据：`test_scan_face_sees_untracked_workspace_files`（用例自带一个真的未跟踪 `.py`，`finally` 清掉）—— 这条不能靠读实现代替：`--others` 一旦被删回去，L10 的**主断言照样绿**（它只数已入库的两处）。**变异**：在 `web/` 放一个未跟踪的 `.py` 写 `LLMAdapter(api_key=...)` → L10 红（实测：命中 `('web/_stray_untracked.py', 3, '<module>')`）。
 
-**66. retry 与 `finish_reason` 之间的 8 条序依赖** —— 状态：**记账（不修）**（2026-09-19 记）
-- `_parse_json_with_retry` 的截断自愈环（缺陷 2 的接回）里，「重修触发」「`truncated` 初值」「上限计数」「环内 `except` 的前置分支」之间靠**行序**成立，共 8 条；改任何一处的顺序都不报错，只改变行为（例如把 `truncated` 初值的那行提到环外，自愈会静默失效）。
-- 不建锁的理由：8 条序依赖要做成判据，只能锁**实现的行序**（打桩形状），那是测试命题不是生产命题（同本条 ⑦ 的处置）。
+**66. retry 与 `finish_reason` 之间的 8 条序依赖** —— 状态：**已修**（2026-09-22，范围 B）
+- 形态：`_parse_json_with_retry` 的截断自愈环（缺陷 2 的接回）里，「重修触发」「`truncated` 初值」「上限计数」「环内 `except` 的前置分支」之间靠**行序**成立，共 8 条；改任何一处的顺序都不报错，只改变行为（例如把 `truncated` 初值的那行提到环外，自愈会静默失效）。
+- 原先不建锁的理由是「只能锁实现的行序（打桩形状）」。**本步订正这条理由的适用范围**：8 条里只有 O7 真的只有行序可锁，其余 7 条都有**可观测后果**（调用次数、第 2 次的 prompt 文案、最终异常类型与分档）—— 锁后果即可，不必锁行序。
+- 修法（判据收口）：新增 `Distiller._truncation_evidence(exc, partial="") -> str | None`，全仓唯一一处判「是不是截断」（**`length` 且正文非空**，两个条件都必要），`_collect_stream` / `_chat_accounted` 两处改调它；环内两处 `except` 从「任何未完成终态都吞成截断」改成「确定性终态**原样上抛**」，配码与上屏交给 `web/server.py` 既有的 finish_reason 分档表（分档不在 core 里判）。收口顺带解决 `_collect_stream`（允许空正文）与 `_chat_accounted`（要求非空）的口径不一，取「`length` 且正文非空」—— 空正文没有可修的东西。
+- 8 条的去向：
+  - **O1** `truncated = upstream_truncated` 预置（Attempt 1 之前）→ `test_upstream_length_signal_heals_and_calls_llm_twice`：不预置则第 2 次退化成通用 prompt，红。
+  - **O2** `_looks_truncated` 兜底（Attempt 1 的 `except` 内）先于 Attempt 2 的 prompt 选择 → `test_no_signal_still_guesses_from_text_shape`。
+  - **O3**「合法 JSON 缺字段」支先于「截断」支 → **本步补锁** `test_shape_branch_beats_truncation_branch_when_both_signals_present`（上游 length + 合法 JSON 缺字段时，第 2 次必须是 schema 支）；变异「给前一支加 `and not truncated`」→ 该锁红，既有用例无一红。
+  - **O4 / O5** `fix_truncated` / `retry_truncated` 先于解析 → `test_repair_cap_raises_truncation_error_not_format_error`（「超长」不能被退化成「格式异常」）。
+  - **O6** 环内 `except` 的 incomplete 前置分支 → **随判据收口消除**：这一支原先自己判「是不是截断」并写 `truncated` / `last_error`，与 O4/O5 抢顺序；收口后它只做「确定性终态原样上抛」的早退，不再参与截断记账，序依赖消失。剩下的可观测后果（不白烧 Attempt 3、错误按 `content_filter` 分档）由本步新增的 `test_non_length_terminal_state_is_not_swallowed_as_truncation` 看住；变异「改回 `info is not None` + 吞成截断」→ 该锁红。
+  - **O7** `set_current_attr("repair_stage", N)` 先于 return → **裁定不锁**：该值只进遥测，没有任何生产分支读它，锁它只能锁打桩形状（同条目 70 的裁定：没有专属红源就不造锁）。
+  - **O8** 每次 try 前 `attempts += 1` → 同 `test_repair_cap_raises_truncation_error_not_format_error`（上限仍 3 次尝试、不多烧第 4 次）。
+- 收口带来的**行为差**（非缺陷）：`_collect_stream` 原先「`length` 但累积正文为空」返回 `("", True)`，环内归到「超长被截断」→ `DistillError` **400**；现在按失败原样上抛 → 统一出口 `incomplete:length` → **502**。受影响调用方是全部走 `stream=True` 的 `_chat_accounted`（环内 `_repair` 与长输出合并支）；现有测试无覆盖该格（`test_distill_usage_accounting.py::TestStreamChannelAccounting::test_truncated_stream_records_one_estimated_entry` 喂的是非空片段，不受影响）。
+- 「首调 502 / 环内 400」**保留**的理由：分档按**结论的来源**而不是文案关键词配码。首调上抛的是上游自己的终态（`kind=incomplete:length`），属上游档 502；环内是**本域**跑完 3 次后的结论（这份输入 + 这份配置就是装不下），抛 `DistillError` 走域档 400，文案是给用户的处置。两者不合并。
 
 **67. `install_log_collector` 的守卫与 3.12 `addHandler` 的去重重复** —— 状态：**记账（不修）**（2026-09-19 记）
 - `core/log_collector.py` 的 `if _handler not in root.handlers: root.addHandler(_handler)` —— 本机实测（Python 3.12.10）`logging.Logger.addHandler` 自身的实现就是 `if not (hdlr in self.handlers)`，**守卫是多余的**，删掉行为不变。

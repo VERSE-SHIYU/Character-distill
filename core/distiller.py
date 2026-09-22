@@ -542,6 +542,31 @@ class Distiller:
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
     @staticmethod
+    def _truncation_evidence(exc: BaseException, partial: str = "") -> str | None:
+        """截断证据：上游以 ``length`` 终态结束**且**有非空正文时，返回那半截正文。
+
+        这里是全仓唯一一处判「是不是截断」——`_collect_stream` 与 `_chat_accounted`
+        两处的 ``except`` 都调它。重修环两处 ``except`` 问的**不是**这个问题（是
+        「确定性终态还是瞬时硬失败」：硬失败要留给下一次尝试），故不调它、直接
+        `raise`。两个条件都必要：
+
+        - 不是 ``length`` 的未完成终态（``content_filter`` 要改输入、资源不足可稍后
+          重试）不是截断，重修无用；
+        - ``length`` 但一个字都没生成时**没有可修的东西**（空正文喂回去只会再截一次）。
+
+        两者都返回 ``None``，调用方据此把异常**原样上抛**，交给 `web/server.py` 那张
+        finish_reason 分档表去配码与上屏（分档不在 core 里判）。返回非空时调用方拿它
+        当重修的证据，并据此把文案归到「超长」那一档。
+
+        ``partial`` 是本级手里已收到的正文：流式支的正文在 ``_collect_stream`` 的累积
+        里（异常上的 content 反而是空的），非流式支挂在异常上（传空串即可）。
+        """
+        info = incomplete_response_info(exc)
+        if info is None or info[0] != "length":
+            return None
+        return info[1] or partial or None
+
+    @staticmethod
     def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
         """一次调用实际喂进去的字符总数 —— 估算账的输入（两侧字符 → token 估算）。
 
@@ -564,6 +589,8 @@ class Distiller:
         finish_reason（校验不过那片不交付），异常里的 content 是空的，但累积到此刻的
         部分正文还在本函数手里 —— 半截正文是重修的证据，不是要丢掉的东西。这也是本
         函数与 `_chat_accounted` 非流式那支的唯一差别：那支的正文挂在异常上（``info[1]``）。
+        两支都按同一处判据决定「算不算截断」（`_truncation_evidence`，累积正文作为
+        ``partial`` 传进去）。
 
         **记账落在发起调用的这一级**（形态锁的判据）：谁消费响应谁把账记进唯一出口
         （`_try_record_usage`），调用方不必记得补一笔 —— 靠调用方代记是约定不是机制，
@@ -582,14 +609,14 @@ class Distiller:
                 parts.append(piece)
         except Exception as exc:
             text = "".join(parts)
-            info = incomplete_response_info(exc)
             self._try_record_usage(
                 usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
             )
-            if info is None or info[0] != "length":
+            evidence = self._truncation_evidence(exc, text)
+            if evidence is None:
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            return text, True
+            return evidence, True
         self._try_record_usage(usage_action)
         return "".join(parts), False
 
@@ -605,6 +632,8 @@ class Distiller:
         ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
         `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
         其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
+        「是不是截断」的判据只有一处，见 `_truncation_evidence`（``length`` 且有非空
+        正文；空正文无可修，按失败上抛）。
 
         ``stream=True`` 走 `_collect_stream`（长输出用），截断口径完全相同，记账落在
         那个原语里（同样是发起调用的那一级）。
@@ -628,15 +657,16 @@ class Distiller:
         try:
             reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is None or info[0] != "length" or not info[1]:
-                # 硬失败照样烧了 token（重试墙下正是空烧）—— 与截断支、流式支同口径：
-                # 先记一条估算账再原样上抛。只记成功会让统计系统性偏低（缺陷 91 同形）。
+            evidence = self._truncation_evidence(exc)
+            if evidence is None:
+                # 非截断（硬失败 / content_filter / 空正文）照样烧了 token（重试墙下正是
+                # 空烧）—— 与截断支、流式支同口径：先记一条估算账再原样上抛。只记成功
+                # 会让统计系统性偏低（缺陷 91 同形）。
                 self._try_record_usage(action, estimate_usage_from_chars(
                     self._prompt_chars(system_prompt, messages)))
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            reply, truncated = info[1], True
+            reply, truncated = evidence, True
             usage = estimate_usage_from_chars(
                 self._prompt_chars(system_prompt, messages), len(reply))
         self._try_record_usage(action, usage)
@@ -801,12 +831,14 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is not None:
-                truncated = True
-                last_error = f"fix_reply 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
-            else:
-                last_error = f"fix_reply LLM call failed: {exc}"
+            if incomplete_response_info(exc) is not None:
+                # **未完成终态原样上抛**：上游的确定性结论（content_filter 要改输入、
+                # 资源不足可稍后重试），重修无用。按它的 finish_reason 在
+                # `web/server.py` 那张表里配码与上屏 —— 不能在这里吞成「也被截断」，
+                # 那会让用户看到「超长，请重试」而真实原因是内容被过滤。
+                raise
+            # 瞬时硬失败（网络 / 超时）：留给 Attempt 3 再试一次。
+            last_error = f"fix_reply LLM call failed: {exc}"
 
         # Attempt 3: full retry — re-invoke LLM with original prompt.
         # 仅仅重发同样的 messages 大概率重现同一次"跑题"，因为触发漂移的成因
@@ -837,12 +869,10 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is not None:
-                truncated = True
-                last_error = f"full retry 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
-            else:
-                last_error = f"full retry LLM call failed: {exc}"
+            if incomplete_response_info(exc) is not None:
+                # 同 Attempt 2：未完成终态是确定性结论，原样上抛给统一出口分档。
+                raise
+            last_error = f"full retry LLM call failed: {exc}"
 
         # All attempts exhausted — log raw output and raise readable error
         raw_preview = reply.strip()[:500]
