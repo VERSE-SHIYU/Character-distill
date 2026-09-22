@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from fastapi.responses import Response
 from urllib.parse import quote
 
+from adapters.llm_adapter import user_facing_error
 from core.authz import fetch_for_actor
 from core.trash_service import hard_delete, restore, soft_delete
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
@@ -83,7 +84,8 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
     except Exception as exc:
         print(f"[text] Upload task {task_id} failed: {exc}")
         with _upload_task_lock:
-            _upload_tasks[task_id] = {"status": "error", "message": str(exc), "user_id": user_id}
+            _upload_tasks[task_id] = {
+                "status": "error", "message": user_facing_error(exc), "user_id": user_id}
 
 
 class CommentCreate(BaseModel):

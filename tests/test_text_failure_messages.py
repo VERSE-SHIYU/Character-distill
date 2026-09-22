@@ -669,3 +669,33 @@ def test_l3_wording_has_a_single_source():
 @pytest.mark.parametrize("key", sorted(TEXT_FAILURE_MESSAGES))
 def test_table_entries_are_nonempty_prose(key):
     assert TEXT_FAILURE_MESSAGES[key].strip(), f"{key} 是空文案"
+
+
+# ── 缺陷 94（泄漏那半）：上传任务失败时上屏通用文案，原文只进日志 ──────────────
+
+
+def test_upload_task_failure_message_is_generic_and_log_keeps_raw(monkeypatch, capsys):
+    """后台任务挂在 except 上时，任务状态给通用文案；原文只留 print 那句日志。
+
+    收走原文 ≠ 扔掉原文：上屏那句不许含内部标识，日志里必须还有。
+    """
+    import routers.text as text_module
+
+    raw = "RuntimeError: upstream 500 boom at adapters/llm_adapter.py:200"
+
+    def _boom(coro):
+        coro.close()          # 别留一个从未 await 的协程（RuntimeWarning 会污染别的用例）
+        raise RuntimeError(raw)
+
+    monkeypatch.setattr(text_module, "submit_to_main_loop", _boom)
+    with text_module._upload_task_lock:
+        text_module._upload_tasks.clear()
+
+    text_module._run_upload_task("t-94", "text-1", "u1")
+
+    with text_module._upload_task_lock:
+        task = dict(text_module._upload_tasks["t-94"])
+    assert task["status"] == "error"
+    assert task["message"] == "服务暂时不可用，请稍后重试"
+    assert raw not in task["message"]
+    assert raw in capsys.readouterr().out, "原文被收走的同时也从日志里丢了"
