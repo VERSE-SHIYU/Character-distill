@@ -120,6 +120,10 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 索引必须排在它之后 —— 存量库里同一草稿可能有多张存活副本，回填不加收敛就撞唯一索引，
     # 两个顺序都让 init 失败（实测）。
     "090_published_from_live_uniq.sql",
+    # 092 必须排在 056 之后 —— 056（BEFORE 段）每轮都 ADD 这两列，092 每轮再删掉，
+    # 净效果「列不存在」才是重启态的不变量（判据见 tests/test_sqlite_fresh_schema.py）。
+    # BEFORE 段整段都在本段之前，故登记在这里即满足「晚于 056」。
+    "092_retire_coref_columns.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -135,9 +139,14 @@ _MIGRATIONS_NOT_APPLIED: dict[str, str] = {
     "037_placeholder.sql": "占位编号，内容只有 SELECT 1，无 schema 变更",
 }
 
-# `ALTER TABLE t ADD COLUMN c ...;` —— 迁移里唯一「重复执行即报错」的形态。
+# `ALTER TABLE t ADD COLUMN c ...;` / `ALTER TABLE t DROP COLUMN c;` —— 迁移里两种
+# 「重复执行即报错」的列改写形态（SQLite 没有 `IF NOT EXISTS` / `IF EXISTS` 后缀）。
 _ADD_COLUMN_RE = re.compile(
     r"ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
+    re.IGNORECASE,
+)
+_DROP_COLUMN_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<table>\w+)\s+DROP\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
     re.IGNORECASE,
 )
 
@@ -423,28 +432,37 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
-    SQLite 没有 `ADD COLUMN IF NOT EXISTS`（PG 才有），`ALTER TABLE ... ADD COLUMN` 是迁移
-    脚本里唯一「重复执行即报错」的形态。规则：
+    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），两种列改写在脚本里都
+    「重复执行即报错」——方向相反，所以「已生效」的判据也相反：
 
-    - 脚本里每个 ADD COLUMN 的列都已存在 → 这份脚本早已应用过，**整份跳过**
+    - `ADD COLUMN`：列**已在** ⇒ 这句早已生效
+    - `DROP COLUMN`：列**已不在** ⇒ 这句早已生效
+
+    规则（两种形态共用同一套「读现状」）：
+
+    - 每句 ADD 的列都在、且每句 DROP 的列都不在 → 这份脚本早已应用过，**整份跳过**
       （这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只属于首次应用）
-    - 有列缺失 → 剥掉那些**已存在**的 ADD COLUMN，其余照常执行
+    - 否则剥掉那些**已生效**的列改写（ADD 列已在 / DROP 列已不在），其余照常执行
 
     **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
     「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
     """
     sql = path.read_text(encoding="utf-8")
     add_cols = list(_ADD_COLUMN_RE.finditer(sql))
-    if add_cols:
+    drop_cols = list(_DROP_COLUMN_RE.finditer(sql))
+    if add_cols or drop_cols:
         present: dict[str, set[str]] = {}
-        for m in add_cols:
+        for m in (*add_cols, *drop_cols):
             table = m.group("table")
             if table not in present:
                 present[table] = await _existing_columns(conn, table)
-        if all(m.group("column") in present[m.group("table")] for m in add_cols):
+        if (all(m.group("column") in present[m.group("table")] for m in add_cols)
+                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)):
             return
         sql = _ADD_COLUMN_RE.sub(
             lambda m: "" if m.group("column") in present[m.group("table")] else m.group(0), sql)
+        sql = _DROP_COLUMN_RE.sub(
+            lambda m: "" if m.group("column") not in present[m.group("table")] else m.group(0), sql)
     await conn.executescript(sql)
     await conn.commit()
 
@@ -790,15 +808,15 @@ class SQLiteStore(StorageBase):
             row = await cursor.fetchone()
             return self._row_to_dict(row)
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
@@ -807,29 +825,14 @@ class SQLiteStore(StorageBase):
                         description = excluded.description,
                         text_type = excluded.text_type,
                         original_char_count = excluded.original_char_count,
-                        user_id = excluded.user_id,
-                        content_resolved = excluded.content_resolved,
-                        coref_resolved = excluded.coref_resolved
+                        user_id = excluded.user_id
                     """,
-                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved),
+                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id),
                 )
                 await conn.commit()
             return await self.get_text_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Save text failed: {exc}")
-            raise
-
-    async def update_text_resolved(self, text_id: str, content_resolved: str) -> None:
-        """Write back coref-resolved content and mark coref_resolved=1."""
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE texts SET content_resolved=?, coref_resolved=1 WHERE id=?",
-                    (content_resolved, text_id),
-                )
-                await conn.commit()
-        except Exception as exc:
-            print(f"[SQLiteStore] update_text_resolved failed: {exc}")
             raise
 
     async def update_text_cover(self, text_id: str, cover_data: str) -> None:
@@ -850,7 +853,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -864,7 +867,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ? AND user_id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ? AND user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()

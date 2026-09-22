@@ -24,6 +24,10 @@ PG_DIR = ROOT / "storage" / "migrations_pg"
 
 EMBEDDING_COLS = ("embedding_key", "embedding_region")
 
+# texts 上**必须一直不存在**的退役列（缺陷 87）。056 每轮加回来、092 每轮删掉，
+# 判据是「两次 init 之间列集相等」——见 test_retired_texts_columns_stay_retired_after_restart。
+RETIRED_TEXT_COLS = ("content_resolved", "coref_resolved")
+
 # SQLite 自建、不出现在任何迁移文件里的内部表
 _SQLITE_INTERNAL_TABLES = frozenset({"sqlite_sequence"})
 _CREATE_TABLE_RE = re.compile(
@@ -162,6 +166,34 @@ class TestFreshSqliteSchema:
         for col in EMBEDDING_COLS:
             assert col in cols, f"半成品库 init 后缺 {col}；实际列={sorted(cols)}"
 
+    async def test_retired_texts_columns_stay_retired_after_restart(self, tmp_path, capsys):
+        """(f) texts 的退役列（缺陷 87）：新库没有，**第二次 init 后仍然没有**。
+
+        为什么两段都要：056（BEFORE 段）每轮都 `ADD COLUMN` 把两列加回来，092（AFTER 段）
+        每轮再删。**首轮**的「净效果 = 列不存在」在顺序写反时也照样成立（056 先加、092
+        后删），看不出登记是否合理；**第二次 init** 才是判据 —— 只有在「092 确实排在 056
+        之后且确实被登记」时，两轮之间才会回到同一个「列不存在」的态。这条与 users 退役列
+        （`_USERS_RETIRED_COLUMNS`）是同一个不变量，两条列集相等断言同理。
+
+        **变异（实测）**：把 `"092_retire_coref_columns.sql"` 从 `_MIGRATIONS_AFTER_USER_REBUILD`
+        摘掉 → 056 加的列没人删 → 首次 init 后列就在 → 红。
+        ⚠ **不是**「抽掉执行器的 DROP 支」—— 那条变异对本用例**打不红**（没有 DROP 支时
+        092 的裸 DROP 照样执行成功，因为 056 每轮已先把列加回来）。DROP 支自己的判别力
+        由 `tests/test_migration_dispatch.py::test_already_satisfied_drop_column_is_stripped`
+        承担，两条锁各锁一半，别把红源挂错地方。
+        """
+        db_path = str(tmp_path / "retired.db")
+        await _init(SQLiteStore(db_path), capsys)
+        first = _columns(db_path, "texts")
+        await _init(SQLiteStore(db_path), capsys)
+        second = _columns(db_path, "texts")
+        for cols, when in ((first, "首次 init 后"), (second, "第二次 init 后")):
+            for col in RETIRED_TEXT_COLS:
+                assert col not in cols, f"{when} texts 仍有退役列 {col}；实际列={sorted(cols)}"
+        assert first == second, (
+            f"第二次 init 改动了 texts 列集 —— 「全新库」与「重启过的库」不是同一个 schema。"
+            f"新加={sorted(second - first)} 少了={sorted(first - second)}")
+
 
 class TestExemptionClosedLoop:
     """豁免出口的闭环（缺陷 21）。
@@ -194,9 +226,10 @@ class TestExemptionClosedLoop:
 
     **列级**在 `TestPgFreshSchemaClosure::test_fresh_sqlite_and_fresh_pg_have_the_same_columns`，
     但它**故意不用上面这个「真库 ⊇ 文本声明」的形状**：`DROP TABLE` 0 处而 `DROP COLUMN`
-    4 处，本仓真的删过列（PG 声明式 DROP + SQLite 的 Python 表重建），而文本提取器两个
-    都看不见 → 套用本形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧
-    真库」。**别把两处统一成同一个形状**，理由是写在代码里的。
+    9 处（2026-09-23 现跑现数），本仓真的删过列（PG 声明式 DROP + SQLite 的裸 DROP 与
+    Python 表重建），而文本提取器只认 CREATE TABLE + ADD COLUMN、DROP 看不见 → 套用本
+    形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧真库」。
+    **别把两处统一成同一个形状**，理由是写在代码里的。
     """
 
     async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):

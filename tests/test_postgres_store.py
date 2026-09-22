@@ -104,20 +104,28 @@ def _referenced_tables(src: str, vocabulary: set[str]) -> set[str]:
 # **为什么不复用表级那个形状**（「真库 ⊇ 文本声明」）：那个形状在表级成立，靠的是一个
 # 从没被写下来过的前提 —— **没有任何东西删过表**。本仓实测这个前提的边界：
 #
+# （2026-09-23 现跑现数，只数真语句、不数注释）
 #     DROP TABLE   0 处        （两侧迁移目录全扫）
-#     DROP COLUMN  4 处        （migrations_pg/005_data_residency.sql 删 users 的
-#                              password_hash / api_key / base_url / model）
+#     DROP COLUMN  9 处        （migrations_pg/005_data_residency.sql 4：users 的
+#                              password_hash / api_key / base_url / model；
+#                              migrations_pg/025_retire_is_admin.sql 1：users.is_admin；
+#                              migrations_pg/026_retire_coref_columns.sql 2 +
+#                              migrations/092_retire_coref_columns.sql 2：texts 的两列）
 #
-# 而且同一个删除在两侧由**两套完全不同的机制**完成：PG 是那四条声明式
-# `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是 `storage/sqlite_store.py` 里
-# 的 Python 表重建（`if "password_hash" in all_cols` 触发），`.sql` 文本里**根本没有
-# 这条语句**。
+# 而且同一个删除在两侧可以由**两套完全不同的机制**完成，`users` 的四列就是范例：
+# PG 是那四条声明式 `ALTER TABLE users DROP COLUMN IF EXISTS`；SQLite 是
+# `storage/sqlite_store.py` 里的 Python 表重建（`if "password_hash" in all_cols` 触发），
+# `.sql` 文本里**根本没有这条语句**。**但这不是通则** —— 092 就是反例：它也走 SQLite，
+# 却是 .sql 里的裸 `DROP COLUMN`，因为执行器（`_apply_migration`）对 DROP 支也做了
+# 「读现状判已生效」的剥除，不需要靠 Python 重建。故断言不能建立在「SQLite 侧一定没有
+# .sql DROP」这个前提上。
 #
 # 把表级形状套到列级会这样断：`test_schema_parity` 的提取器只认 CREATE TABLE +
-# `ALTER ... ADD COLUMN` —— DROP 不认、Python 更不认，于是 `users` 的**声明列**比真库
-# 多这 4 个 → 锁当场红；要它绿只剩加豁免清单一条路，而「豁免即永久放行」（§四），
-# 且豁免理由（「运行期被删」）没有任何第二条断言闭环。两个盲区（PG 的 DROP、SQLite 的
-# Python 重建）在两侧**互相抵消**，这正是一直没人发现的原因 —— 文本 parity 是绿的。
+# `ALTER ... ADD COLUMN` —— **DROP 不认**、Python 更不认，于是被删过的列仍留在「声明列」
+# 标尺里、比真库多（`users` 那 5 列、`texts` 那 2 列都算数）→ 锁当场红；要它绿只剩加
+# 豁免清单一条路，而「豁免即永久放行」（§四），且豁免理由（「运行期被删」）没有任何
+# 第二条断言闭环。**PG 与 SQLite 两侧的盲区互相抵消**（一边 DROP 语句不认、一边 Python
+# 重建不认），这正是一直没人发现的原因 —— 文本 parity 是绿的。
 #
 # 所以列级不比文本，比**另一侧真库**：两侧都是事实，直接对事实。不需要声明列标尺、
 # 不需要 SQL 解析器、不需要任何豁免清单。将来谁想「顺手统一成表级那个形状」，
@@ -1096,9 +1104,10 @@ class TestPgFreshSchemaClosure:
     **列级是另一种粒度，用的是另一种形状**：上面两条（以及 SQLite 侧的镜像
     `tests/test_sqlite_fresh_schema.py::TestExemptionClosedLoop`）都是「真库 ⊇ **文本声明**」。
     列级**不能**套这个形状 —— 全文理由写在下面 `_sqlite_columns` / `_pg_columns` 那段
-    注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 4 处，删列在本仓是既有事实，
-    而声明列提取器看不见 DROP（PG 的声明式 DROP 不认，SQLite 的 Python 表重建更是
-    `.sql` 里没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
+    注释里，一句话版：`DROP TABLE` 0 处、`DROP COLUMN` 9 处（2026-09-23 现跑现数），
+    删列在本仓是既有事实，而声明列提取器**只认 CREATE TABLE + ADD COLUMN**、DROP 不认
+    （PG 的 DROP 语句不认，SQLite 除了 092 那种裸 DROP 之外还有 Python 表重建、`.sql`
+    里根本没有），两侧盲区互相抵消。故列级改比**另一侧真库**：
     `test_fresh_sqlite_and_fresh_pg_have_the_same_columns`。
     """
 

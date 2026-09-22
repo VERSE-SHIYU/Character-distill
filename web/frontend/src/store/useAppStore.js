@@ -698,7 +698,7 @@ const useAppStore = create((set, get) => {
           const data = JSON.parse(xhr.responseText)
           get().loadTexts()
 
-          // Start polling upload task if present (story/classic coref)
+          // Start polling upload task if present (story/classic)
           const uploadTaskId = data.upload_task_id
           if (uploadTaskId) {
             const poll = () => {

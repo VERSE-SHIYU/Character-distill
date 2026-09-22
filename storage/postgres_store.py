@@ -204,15 +204,15 @@ class PostgresStore(StorageBase):
 
     # ── Texts ────────────────────────────────────────────────────
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
+    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "") -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = EXCLUDED.filename,
                         content = EXCLUDED.content,
@@ -221,27 +221,13 @@ class PostgresStore(StorageBase):
                         description = EXCLUDED.description,
                         text_type = EXCLUDED.text_type,
                         original_char_count = EXCLUDED.original_char_count,
-                        user_id = EXCLUDED.user_id,
-                        content_resolved = EXCLUDED.content_resolved,
-                        coref_resolved = EXCLUDED.coref_resolved
+                        user_id = EXCLUDED.user_id
                     """,
-                    id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved,
+                    id, filename, content, char_count, title, description, text_type, original_char_count, user_id,
                 )
             return await self.get_text_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[PostgresStore] Save text failed: {exc}")
-            raise
-
-    async def update_text_resolved(self, text_id: str, content_resolved: str) -> None:
-        """Write back coref-resolved content and mark coref_resolved=1."""
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE texts SET content_resolved=$1, coref_resolved=1 WHERE id=$2",
-                    content_resolved, text_id,
-                )
-        except Exception as exc:
-            print(f"[PostgresStore] update_text_resolved failed: {exc}")
             raise
 
     async def update_text_cover(self, text_id: str, cover_data: str) -> None:
@@ -261,7 +247,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = $1",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = $1",
                     id,
                 )
             return self._row_to_dict(row)
@@ -274,7 +260,7 @@ class PostgresStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 row = await conn.fetchrow(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = $1 AND user_id = $2",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = $1 AND user_id = $2",
                     id, user_id,
                 )
             return self._row_to_dict(row)

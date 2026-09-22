@@ -67,7 +67,7 @@ class SceneIndexer:
         挡不住第二次。而重建要付两笔代价：一次全量 embedding，以及
         `delete_collection` 先于 `create_collection` 的那段空窗 —— 正在读这个
         集合的会话在空窗里查询恒空。故先按正文指纹复用；正文变了
-        （重解析、`DISTILL_USE_COREF` 开关换了）才重建。
+        （重解析）才重建。
         """
         scenes = self._split_scenes(text)
         if not scenes:

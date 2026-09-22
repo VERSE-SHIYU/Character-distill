@@ -1227,12 +1227,25 @@ PROBE_IMAGE         false
   - **锁与红源**：`tests/test_alias_cache_failure.py::test_alias_cache_read_failure_propagates`（打桩 `core.text_manager.cached_characters` 抛错 → 断言 `_build_all_characters` 抛出）。**变异 = 把 `except Exception: print(...)` 加回 `_build_all_characters` → 该用例红（1 failed，`DID NOT RAISE RuntimeError`，stdout 里出现被吞的那句 `Alias cache merge failed: storage exploded`）**，且只红它自己那条。
   - **判据现跑**：`git grep -n "Alias cache merge failed" -- .` → **零命中**；`git grep -n "distill_all\|switch_character" -- '*.py'` → 生产代码零命中（余 1 处是 `core/character_roster.py:18` 的历史叙述，已带删除日期）。
 
-**87. 名著模式的「深度预处理」整条支线从没接线 —— `coref_resolve` 与 `update_text_resolved` 零调用点** —— 状态：**记账**（不修，2026-09-21；缺陷 36 收口时普查发现的存量）
-- **事实（现跑）**：`core/distiller.py:1037` `coref_resolve` 有定义、**全仓零生产调用点**；`update_text_resolved`（`storage/sqlite_store.py:627` / `storage/postgres_store.py:186`）同样零调用点。写侧唯一入口是 `save_text(..., content_resolved="", coref_resolved=0)`，两个调用点（`core/text_manager.py:247` / `:367`）都没传 → 两列恒为 `''` / `0`。
-- **读侧唯一消费者**：`web/routers/distill.py:34-40` `_get_distill_content` —— 仅当 `DISTILL_USE_COREF=1` 时取 `content_resolved`，而它恒空，`if resolved and ...` 恒假 → 与 `=0` 逐字等价。
-- **性质**：不是「坏了」（没有正确行为可对照），是**整条支线从没接线**。按「三之二」的口径它本属「立项」；留在缺陷表是因为它**以可用特性的形态存在**（`DISTILL_USE_COREF` 开关 + `.env.example:51` 的有注释条目 + 两列 schema：SQLite `storage/migrations/056_coref_resolved.sql`、PG 内联在 `storage/migrations_pg/001_init.sql`），读代码的人会以为它可以打开。
-- **判据命令**：`git grep -n "coref_resolve\|update_text_resolved" -- '*.py'`（除定义与 tests 外应零命中）、`git grep -n "DISTILL_USE_COREF" -- .`（现仅 `web/routers/distill.py:36` 一处读）
-- **处置方向**：要么删（函数 + 两列 + 分支 + 环境变量），要么接线（上传时跑一次并写回）。**先不删**：`content_resolved` / `coref_resolved` 在 `save_text` 的公开签名与 `tests/test_storage_contract_shape.py` 的契约里，删列要新写 DROP 迁移并改契约。裁定归用户。
+**87. 名著模式的「深度预处理」整条支线从没接线 —— `coref_resolve` 与 `update_text_resolved` 零调用点** —— 状态：**已修**（2026-09-23；2026-09-21 首记，原状态「记账（不修）」）
+- **事实（修复前，现跑）**：`core/distiller.py` `coref_resolve` 有定义、**全仓零生产调用点**；`update_text_resolved`（SQLite / PG 两个 store）同样零调用点。写侧唯一入口是 `save_text(..., content_resolved="", coref_resolved=0)`，两个调用点（`core/text_manager.py`）都没传 → 两列恒为 `''` / `0`。
+- **读侧唯一消费者**：`web/routers/distill.py` `_get_distill_content` —— 仅当 `DISTILL_USE_COREF=1` 时取 `content_resolved`，而它恒空，`if resolved and ...` 恒假 → 与 `=0` 逐字等价。
+- **性质**：不是「坏了」（没有正确行为可对照），是**整条支线从没接线**。按「三之二」的口径它本属「立项」；留在缺陷表是因为它**以可用特性的形态存在**（`DISTILL_USE_COREF` 开关 + `.env.example` 的有注释条目 + 两列 schema：SQLite `056_coref_resolved.sql`、PG 内联在 `001_init.sql`），读代码的人会以为它可以打开。
+- **裁定（2026-09-23）**：**删，不接线**。设计 A —— 迁移执行器补一条与 ADD 对称的 DROP 支；不带 < 3.35 回退（老 SQLite 在启动时响亮失败）。
+- **修法（净删，不新增捕获 / 映射 / helper）**：
+  - **删函数与方法**：`core/distiller.py::coref_resolve` 整条（含它的 `ctx_submit` 派生点与 `distill_coref` 记账）；`web/routers/distill.py::_get_distill_content`（5 个调用点改回 `text_rec["content"]`）；两个 store 的 `update_text_resolved`。
+  - **删字段**：`save_text` 的两个尾部参数从两侧实现删净（INSERT 列 / `ON CONFLICT SET` / `EXCLUDED` / SELECT 列表全部同步）；`storage/base.py` 本就只声明到 `user_id` —— 删完两侧实现与 base **逐格相同**，故 `tests/test_storage_contract_shape.py` 的 `PRE_EXISTING_GAPS["save_text"]` 出册（册子恢复为空，机制留在原地）。
+  - **两条新迁移**：SQLite `storage/migrations/092_retire_coref_columns.sql`（两条裸 `DROP COLUMN`，登记在 AFTER 段 —— 必须晚于 BEFORE 段的 056）+ PG `storage/migrations_pg/026_retire_coref_columns.sql`（`DROP COLUMN IF EXISTS` ×2，与 025 同形）。**056 与 PG `001_init.sql` 是历史文件，一个字没动**：056 每轮把列加回来、092 每轮删掉，净效果「列不存在」才是重启态的不变量。
+  - **执行器补对称支**：`_apply_migration` 新增 `_DROP_COLUMN_RE`，与 ADD 支**共用同一套 PRAGMA 读现状**；「已生效」的判据相反（ADD 列已在 / DROP 列已不在）；整份跳过的条件是两种形态**同时**满足。docstring 里「`ADD COLUMN` 是迁移脚本里唯一「重复执行即报错」的形态」随之改写成两种形态。前提已写进 092 头部注释：`DROP COLUMN` 要 SQLite ≥ 3.35，更老的版本启动即**响亮失败**（执行器没有 except，不会静默留列）。
+  - **残留清扫**：`core/scene_indexer.py` 幂等段 docstring、`.env.example` 的开关条目、`web/frontend/src/store/useAppStore.js` 注释、`web/routers/text.py` 四处注释（`_run_upload_task` 早已不跑 coref，注释是历史残留）、`tests/census_llm_call_contexts.py`（`ctx_submit` 4 行 / 3 处 → **3 行 / 2 处**，删 `Distiller.coref_resolve` 那一行）、`tests/test_migrate_sqlite_to_pg.py` fixture 的两列、`docs/specs/llm-access-gate.md` F7（**原文保留**，表下追加带日期的订正行）。
+- **行为变化**：蒸馏正文一律取 `texts.content`。原先的默认路径也是原文（开关与消解列恒空），故这是**净删，不是语义变更**。
+- **锁与红源（两条，各锁一半）**：
+  - `tests/test_sqlite_fresh_schema.py::TestFreshSqliteSchema::test_retired_texts_columns_stay_retired_after_restart` —— 新库 + 第二次 init 后 `texts` 都无这两列，且两次列集相等。**变异 = 把 092 从 `_MIGRATIONS_AFTER_USER_REBUILD` 摘掉 → 红**（实测红三条：本条 + `test_every_migration_file_is_dispatched` + 依附它的 `test_exemption_has_one_source_in_the_executor`，后两条是「文件在盘上没人应用」的既有判据）。
+  - `tests/test_migration_dispatch.py::test_already_satisfied_drop_column_is_stripped` —— 执行器级：造一份**两句 DROP、其中一句已生效**的脚本，已生效那句必须被剥、未生效那句必须真跑，连跑两次都不抛。**变异 = 删掉 `_apply_migration` 里 `_DROP_COLUMN_RE.sub(...)` 那一句 → 红**（`no such column: gone_col`，实测只红它自己）。
+  - ⚠ **红源挂错了地方会假绿（S0 计划在此处偏了，当场改）**：计划写「1 条锁，变异抽掉 DROP 支 → 红」。实测抽掉 DROP 支**打不红**端到端那条 —— 没有 DROP 支时 092 的裸 DROP 照样执行成功，因为 056 每轮已先把列加回来。故拆成两条，DROP 支自己的判别力由执行器级那条承担。
+- **判据现跑**：`git grep -n "coref_resolve\|update_text_resolved" -- '*.py'` → 除**迁移文件名**（`"056_coref_resolved.sql"` 这个登记项，056 仍在跑）与三处**说明性注释**（092/026 头部、census 的新读数段、contract_shape 的出册说明）外零命中；`git grep -n "DISTILL_USE_COREF" -- .` → 仅 AGENTS.md 本条 + 092/026 的注释。`content_resolved` / `coref_resolved` 在**可执行代码**里零命中（`storage/sqlite_store.py` 那一处是迁移文件名，不是列引用）。
+- **验收**：干净形态全量 + 一次性 `postgres:16-alpine` 容器跑 `TestPgFreshSchemaClosure` 与重启态闭环（口令 / 端口只在运行期，不写 `.env`，跑完 `docker rm -fv`）。读数见交付报告。
+- **台账口径行未动**：§三 的「全表状态口径」行仍写 `已修 68 / 记账 19`（87 在记账名单里），按你的裁定本线不改该行、合 main 时统一重算 —— 故本条状态与那行的名单**暂时不一致**，是有意留的，不是漏改。
 
 **88. `distill_incremental_stream` 内联了一份 Map 循环的副本** —— 状态：**已修**（2026-09-22；2026-09-21 首记，原状态「记账（不修）」）
 - **形态（修复前）**：`core/distiller.py:1820-1879` 的 `_map_with_progress` 自己重写了一遍 semaphore / `done_count` / `lock` / `failures` / `usages` / `_one` / `gather` / `aggregate_usage`，与 `_run_map_concurrent`（`:1407-`）同形。S1（`0605bdf`）已把 Map 参数化成 `build_prompt` + `usage_action`，**识别侧复用了它，流式蒸馏侧没有**；连「建 client → 跑 → 关」那一段的清理语义也是第二份手抄。

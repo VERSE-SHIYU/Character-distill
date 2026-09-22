@@ -32,15 +32,6 @@ from limiter import limiter
 from routers.auth import get_current_user
 
 
-def _get_distill_content(text_rec: dict) -> str:
-    """默认返回原文蒸馏，仅当 DISTILL_USE_COREF=1 时走共指消解版。"""
-    if os.getenv("DISTILL_USE_COREF") == "1":
-        resolved = text_rec.get("content_resolved", "")
-        if resolved and text_rec.get("coref_resolved"):
-            return resolved
-    return text_rec["content"]
-
-
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
 
@@ -677,7 +668,7 @@ async def distill_by_text_id(
     _ek = (_api_config or {}).get("embedding_key", "")
     _er = (_api_config or {}).get("embedding_region", "")
 
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     # 空 character_name 才需要名单；非空时用户已点名，不必读名单。
     char_name = req.character_name.strip()
     if not char_name:
@@ -779,7 +770,7 @@ async def _distill_start_impl(
         raise HTTPException(404, "Text not found")
 
     text_type = text_rec.get("text_type", "story")
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     text_fp = text_fingerprint(content)
     chunk_size = distiller.effective_chunk_size(text_type)
 
@@ -1039,7 +1030,7 @@ async def distill_stream(
     if not text_rec:
         raise HTTPException(404, "Text not found")
 
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
     text_type = text_rec.get("text_type", "story")
     char_name = req.character_name.strip()
 
@@ -1178,7 +1169,7 @@ async def reindex_rag(
     text_rec = await storage.get_text_owned(text_id, user_id)
     if not text_rec:
         raise HTTPException(404, "Text not found")
-    content = _get_distill_content(text_rec)
+    content = text_rec["content"]
 
     # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
     chars = await resolve_characters(storage, distiller, text_id, user_id, content)
@@ -1350,7 +1341,7 @@ async def start_session(
             text_rec = await storage.get_text_owned(req.text_id, user_id)
             if not text_rec:
                 raise HTTPException(404, "Text not found")
-            content = _get_distill_content(text_rec)
+            content = text_rec["content"]
             existing_cards = await storage.list_cards(req.text_id, user_id)
             all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
             emb_key = ""

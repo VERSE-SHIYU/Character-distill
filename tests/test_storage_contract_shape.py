@@ -54,16 +54,11 @@ def _impls() -> list[type]:
     return subs
 
 # 建立本判据时**已经存在**的契约缺口。判据：(a) 建立时刻就已存在，(b) 补上后被强制出册。
-# `save_text` 的 base 少声明两个尾部参数，两个实现多出来 —— **纯尾部追加**，
-# 前缀逐格相同，所以 base 派调用点能到的位置没有一个改变含义（不像 `save_message`
-# 的互换、`create_user` 的中间插入）。**是契约不完整，不是契约漂移**，会响不会哑，
-# 故本轮记册不修（见 AGENTS.md 条目 58 重核段）。
-PRE_EXISTING_GAPS = {
-    "save_text": (
-        "base 少声明 content_resolved / coref_resolved 两个尾部参数（两个实现都有）。"
-        "纯尾部追加，前缀逐格相同，无静默错位风险 —— 补齐 base 声明即可出册。"
-    ),
-}
+# 唯一一条曾是 `save_text`：base 少声明 content_resolved / coref_resolved 两个尾部参数，
+# 两个实现多出来。87 退役这两列时两个实现同步删掉，base 与实现逐格相同，缺口随之出册 ——
+# 册子恢复为空不是「暂时没人踩」，是那处不对称已从代码里消失。机制留在原地：
+# 下一个真实缺口照旧登记在这里，`test_the_gap_registry_holds_only_real_gaps` 负责清册。
+PRE_EXISTING_GAPS: dict[str, str] = {}
 
 _ABSTRACT_NAMES = sorted(StorageBase.__abstractmethods__)
 

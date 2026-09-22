@@ -32,6 +32,10 @@
 | F10 | `_do_chat` 只放行 `llm_error_payload` 能识别的异常；web 自定义的拒绝异常会被吞成 500 |
 | F11 | 边界锁 `test_no_exception_class_leaks_into_core_web_storage` 禁止 core/web/storage 出现 LLM 异常类名 |
 
+> **F7 订正（2026-09-23）**：`ctx_submit` 现为 **2 处**、其中**1 处**到达 adapter —— 共指消解
+> 那条链路（`Distiller.coref_resolve` → `ctx_submit`）整条已删除（AGENTS.md 缺陷 87），
+> 只剩 agent `web_search` 的角色过滤器。上表的 F7 是当时的读数，保留原样。
+
 ### 1.1 执行期实测订正（C1′ 现跑现数）
 
 - **F9 的函数名**：`core/utils.py` 里的符号是 `try_record_usage`（不是 `record_usage`）——

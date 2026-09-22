@@ -50,13 +50,12 @@
 | 8 | 蒸馏后台线程（`web/routers/distill.py`） | 整条蒸馏链 | **是** | 是（`/start`） | 继承，无需声明 |
 | 9 | 上传解析线程（`web/routers/text.py`） | 解析 + 落库 | **否**（纯 DB） | 是 | 无需声明 |
 
-`ctx_submit` **4 行 / 3 处**（`ContextEngine.build_ex` 一个 `with` 里两次派生，占两行）：
+`ctx_submit` **3 行 / 2 处**（`ContextEngine.build_ex` 一个 `with` 里两次派生，占两行）：
 
 | 位置 | 派生体内的实际路径 | 到得出站？ |
 |---|---|---|
 | `ContextEngine.build_ex` ×2 行 | `_retrieve_scenes_ex` → `_scene_items`（RAG）/ `_retrieve_memories_ex` → `_memory_items`（mem0 `search`，embedding） | 否 |
 | `AgentToolkit.execute` | `web_search` 工具 → `_call_web_search` → `_search_web_ex` → `_web_items` 的**第二步「角色过滤器」`self._llm.chat(...)`** | **是** |
-| `Distiller.coref_resolve` | `lambda: asyncio.run(_resolve_all())` → `self._llm.async_chat` | **是** |
 
 ⚠ **v2 订正**：本模块首版把 `AgentToolkit.execute` 一律写作「检索 / embed，不经 adapter」，
 **是错的** —— agent 的 `web_search` 工具链上挂着一次真实出站（角色过滤器）。v1 spec 更早
@@ -69,6 +68,9 @@
 `create_task` 那段停在 C2a 之前的形态 —— 漏了 `core/scheduling.py`，`to_thread` 整个
 没枚举）。总 **64 处**：`to_thread` 36、`create_task` 12、`ctx_thread` 8、`ctx_submit` 4、
 `run_in_executor` 4（全在 `scripts/run_agent_eval.py`）。
+
+⚠ 本节是**日期快照**（2026-09-19）：下面的逐类细分此后随主线漂移，不是当前值。
+当前值见本节末「四、现跑现数（2026-09-23）」。
 
 `create_task` **12 处**：`Distiller` ×3（出站）、`group_session` ×2 与
 `web/routers/group.py` ×2（`_run_group_affinity` → `evaluation_pipeline` 的
@@ -103,6 +105,18 @@ reconcile（`_reconcile_distill_tasks`，纯 DB）、定时任务（全仓无调
 adapter。`mcp_server/` 与 `scripts/` 是独立进程、不注册守卫，保持现状。
 故 `system_llm_context()` 在生产**零调用点** —— 它是给「将来出现请求外入口」留的
 唯一正确出口，测试里必须有正控（L7），否则它是一条没人走的死路。
+
+## 四、现跑现数（2026-09-23）
+
+87 删掉 `Distiller.coref_resolve`（一处 `ctx_submit`）后重跑，逐类读数：
+
+总 **59 处** —— `to_thread` 33、`create_task` 11、`ctx_thread` 8、`ctx_submit` 3、
+`run_in_executor` 4。
+
+与 §三 的 2026-09-19 快照相比，`to_thread` 36→33、`create_task` 12→11 是**主线自身的
+漂移**（`core/text_manager.py` 10→7、`web/routers/distill.py` 8→7、`core/character_roster.py`
+新进 1；`Distiller` 的 `create_task` 3→2），不是 87 动的 —— 87 只减掉 `ctx_submit` 那 1 处。
+**归属结论不变**：生产代码里没有「请求之外」的 LLM 入口。
 
 ## 用法
 
