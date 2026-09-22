@@ -867,8 +867,10 @@ class Distiller:
         多分片逐片识别后合并。原先只取前 10000 字 —— 红楼梦这类长篇只覆盖头两章，
         名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。
 
-        ``IDENTIFY_VERSION`` 是识别口径的版本号，但**这里不管版本**：进程内 TTL 缓存
-        是本进程自己刚算出来的，落库的版本判定在 `core/character_roster.py` 那一层。
+        memo 的键**含** ``IDENTIFY_VERSION``：版本号是决定识别结果的输入之一，键漏了它
+        就会把旧口径算出来的名单当成当前版本的答案交出去，而落库那一层认版本号 —— 旧
+        名单会被洗成新版本号。库缓存（`characters_json`）的版本判定另在
+        `core/character_roster.py` 那一层。
 
         Args:
             text: 原始叙事文本（全文）。
@@ -881,7 +883,8 @@ class Distiller:
             DistillError: 识别失败 —— 单分片两次解析均失败，或多分片失败率越过容忍线。
                 失败走异常，因此**天然不会进缓存**，无需调用方额外判断。
         """
-        key = text_fingerprint(text) + ":" + self._llm.model
+        # 键必须覆盖全部决定输入：文本、模型、**识别口径版本**。少一个，命中就是错的。
+        key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"
 
         # Check cache
         with _IDENTIFY_CACHE_LOCK:
