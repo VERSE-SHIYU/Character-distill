@@ -1447,7 +1447,7 @@ PROBE_IMAGE         false
 - **触发面（不是「游客必然中招」）**：`deps.get_user_llm` 在用户没配 key 时**回落全局**（`web/deps.py:107` 的 `resolve_llm(config, build_user=…, get_global=get_llm)`），故配了全局 key 的生产不触发；触发条件是**两份都缺**（自托管未配、或本机开发环境）。
 - **判据命令**：`git grep -n "text_manager is None" -- web/routers/distill.py` → **4 行**：`bare` 形式两处（`/run` 的 :685 与 `start_session` 的 :1354，正是本条要的两处），另两处是 `or` 组合形态（`text_manager is None or distiller is None` / `distiller is None or text_manager is None`）被同一子串顺带匹配到。判据要的是**裸形式两处**，不是子串命中数。
 
-**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**记账**
+**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**已修**（`841b113`，2026-09-23）
 - **归属**：Spec 3（紧接本份）。**说明（spec 补充 5）**：记 **114** 时，在条目里注明：「Spec 3 的 S0 普查把 105、106 两处也纳入，与其余 9 处统一迁移到同一套写失败处理机制，全仓只留一种写法。」（补充 5 原文写的是「记 108 时」—— 该编号与本条一起按 main 现最大号顺延为 114。）
 - **坐标（按 spec 补充 3 #7 记录）**：`MinePage.jsx:37`（改可见性，PATCH）、`:413`（关注，POST）、`:611`（改简介）、`:963`（发动态）、`AuthorPage.jsx:197`（给帖子点赞，POST）、`MarketCardDetail.jsx:189`（给角色卡点赞，POST）、`PostCard.jsx:106`（发评论，POST）、`PrivateMessageChat.jsx:254`（撤回消息，POST）、`GroupChatPage.jsx:1358`。
 - **形态**：写请求（POST/PUT/PATCH/DELETE）后面接一个静默 `catch {}`（或 `catch {} finally { … }`）—— 失败（含门禁 403）被吞掉，界面既不提示也不回滚，用户以为成功。**与 105 / 106 同形**，105 / 106 是其中被点名先修的两处。
@@ -1455,7 +1455,16 @@ PROBE_IMAGE         false
   - **1 处复核为误判**：`GroupChatPage.jsx:1358` 是 `parseCardJson` 的 **JSON 解析兜底**，不是写调用 —— 该文件所有静默 catch 只覆盖 `GET /api/distill/cards/by-text/*` 与 `JSON.parse`，**没有写路径**。
   - **7 处同形态未在这 9 处内**：`MarketCardDetail.jsx:229`（发评论）、`:248`（使用角色 / fork）、`FeedPage.jsx:119`（给帖子点赞）、`PrivateMessageChat.jsx:276`（同意 consent 后重发）、`ChatArea.jsx:744`（给消息加表情）、`TextPanel.jsx:821`（编辑角色卡，PUT）、`BookReader.jsx:305`（阅读进度，POST —— 这一条在门禁白名单里，对游客不触发 403，但网络失败同样被吞）。另有 `PrivateMessageChat.jsx:265` 是剪贴板 `catch {}`，**不是网络写**，已排除。
   - **口径**：本条目正文仍按 spec 记录的 9 个坐标为准；上述偏差**只作复核留痕**，Spec 3 立项时按「重扫一遍再定坐标」而非照抄本条目。
-- **判据命令**：`git grep -n "catch {}" -- web/frontend/src/components/MinePage.jsx web/frontend/src/components/AuthorPage.jsx web/frontend/src/components/MarketCardDetail.jsx web/frontend/src/components/common/PostCard.jsx web/frontend/src/components/PrivateMessageChat.jsx`（上面 8 处坐标都在输出里；**同一个正则也会带出同文件里读请求 / `JSON.parse` 的 `catch {}`**，所以命中数多于 8 属正常，逐条按上下文定案，不按命中数定案）；复核用的重扫以「写方法 + 静默 catch 出现在 25 行窗口内」做初筛，再逐条读上下文。
+- **收口（Spec 3 · S2，`841b113`）**：S0 按「写方法 + 静默 catch 出现在 25 行窗口内」重扫（80 文件 / 123 处静默或仅 console 的 catch / 49 处在窗口内），逐条读上下文定案后接线。规则（spec §2 + 补充 1 的裁定）：
+  - **错误落在动作发生的那个组件**的本地 `error` + 既有 `ErrorBox`，**不借 store 的全局 `error`**（`CharPanelBody:98/:120`、`TextPanel:67` 会读它，借了就会串页）；`FeedPage` 手写的错误条换成 `ErrorBox`（全仓只留一种错误展示）。
+  - **乐观更新的失败要回滚**：`HistoryPanel` 批量删除只摘掉真正删掉的 id，失败的留在列表里并报错；`PrivateMessageChat` 的表情回应失败回滚到服务端真值。
+  - **弹窗自持错误**：`EditCardModal` 自己的本地 error + ErrorBox，保存失败**不关窗**（用户改的内容不能丢）；三个调用点（`TextPanel.jsx:804`、`CharCard.jsx:950`、`MarketCardDetail.jsx:1120`）原先各自的错误处理已删除，免得报两遍。
+  - **两处例外**（spec §2.5：「自动发出、幂等的后台写，失败只留痕」）：`BookReader.jsx` 的翻页进度自动保存、`PrivateMessageChat.jsx` 的 markRead —— 均 `console.warn`，不出错误条。
+  - 本份额外收进的两处（补充 1 #5）：`MinePage` 的取关（`:1109`）与删动态（`:1156`）原先**连 catch 都没有**，现同样接线；状态更新一律挪到 await 成功之后。
+  - **例外清单之外、仍未接线的同类落点（S0 复扫发现，不在本份范围，未修，待裁定）**：`VoicePanel.jsx:134/216/590/607` 的注释写着「store handles」，但 `useAppStore.js` 的 `deleteCustomVoice`（`:497`）与 `deleteVoiceRef`（`:441`）**没有任何错误处理** —— 用户点删除失败是静默的；`TextPanel.jsx:700/768` 的 `startChat`（进聊天的前置写）与 `ChatArea.jsx:895/933` 的 `alert('添加失败'/'更新失败')` 同理。`HomePage.jsx:152` 的 `resumeSession` 经查**合规**（store 里 `set({ error: err.message })` 后 rethrow）。**此处只作留痕**，是否立项由用户定。
+- **红源**：`web/frontend/src/components/__tests__/WriteFailureSurfacing.test.jsx`（3 条，各守一种形态）：① 非回滚落点 —— `PostCard` 发评论失败，文案可见且输入框内容不丢；② 回滚落点 —— `HistoryPanel` 批量删除部分失败，成功的走掉、失败的原位留着并报错；③ 弹窗落点 —— `EditCardModal` 的 `onSave` 抛错时错误在弹窗内、弹窗不关、按钮回到「保存」。**变异已验**：① 还原静默 `catch {}` → ①**红**；② 把「只摘真正删掉的」改回「按选中集合摘」 → ②**红**；③ 去掉弹窗内的 try/catch → ③**红**；还原后 3/3 绿。
+  - **偏差（须声明）**：对账表第 2 行写的「选一个点赞类落点」，实际**全仓没有乐观更新的点赞**（点赞都用响应回填 state），故改用真正的回滚落点 `HistoryPanel` 批量删除 + `PrivateMessageChat` 表情回应。
+- **判据命令（修复后）**：`git grep -nE "catch \{\}|\.catch\(\(\) => \{\}\)" --` 上列 16 个改过的组件文件 —— 剩余的每一处都要读上下文确认是**读请求 / `JSON.parse` / 剪贴板**（`PrivateMessageChat.jsx:271` 的剪贴板按本条原口径排除）；两个写路径例外就是上面点名的 `BookReader` / `PrivateMessageChat` markRead，形态是 `console.warn` 而非空块。**同上，命中数多于 0 属正常，逐条按上下文定案，不按命中数定案。**
 
 **115. `ErrorBox` 渲染出字面 `??` 与 `?` —— 图标字形丢在了文件里** —— 状态：**已修**（`bd685e2`，2026-09-22）
 - **归属**：前端通用组件（不分线）。
@@ -1467,13 +1476,19 @@ PROBE_IMAGE         false
 - **判据命令（修复后）**：`git grep -c '?' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 **0** —— 全文件不含字面 `?`）；`git grep -n 'AlertTriangle\|Close size' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 3 行）。修复前那条 `git grep -n '?? {message}' …（应给 1 行）` 已失效（现给 0 行），此处替换而非并列保留。
 - **改前核过的耦合**：11 个调用方都不依赖这个前缀；两处既有断言（`CharCardPublishError.test.jsx`、`DistillCancelError.test.jsx`）用的是 `textContent` + `toContain('…detail…')`，前缀无关，未受影响。
 
-**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**记账**
+**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**已修**（`4950936`，2026-09-23）
 - **归属**：**Spec 3**（2026-09-22 改判 —— 原记「蒸馏线」，用户把它划给 Spec 3 承接）。
 - **形态**：`web/frontend/src/components/DistillWorkbench.jsx:110` 的 effect 依赖 `[texts, loadTexts]`，函数体第 91 行是 `if (texts.length === 0) { loadTexts(); return }`。而 `web/frontend/src/store/useAppStore.js:656` 的 `loadTexts` 每次都执行 `set({ texts: data })`（第 661 行）—— **不论 `data` 是不是空数组都换一个新引用**，`texts` 的引用必然变化 → effect 重跑 → 仍然是空 → 再调 `loadTexts()`。闭环成立，**与网络是否失败无关**，触发条件只是「文本列表为空」。
 - **实测**：2026-09-22 的 S4 浏览器点检与写 106 的组件测试时都撞到。vitest 侧的表现是该用例文件**挂住不退出**（需手动 kill；那次留下过 3 个挂死的 vitest 进程，清掉后全量才恢复正常）。测试侧的规避写法是别给空列表 —— `web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 的 `beforeEach` 就为此塞了 `texts: [{ id: 'x1', filename: 'a.txt' }]`。
 - **为什么算缺陷**：空文本列表是**正常状态**（新注册账号、清空之后），不该引发请求风暴；而且触发条件是「数据为空」不是「出错」，用户看不到任何提示，只会觉得页面卡。
-- **判据命令**：`git grep -n "texts.length === 0" -- web/frontend/src/components/DistillWorkbench.jsx`（应给 91 一行）；`git grep -n "set({ texts: data" -- web/frontend/src/store/useAppStore.js`（应给 661 一行）。两处同时成立才构成本条。
-- **修法（留待，未做；方向待定，不在本条裁定）**：可选的干净做法是让 `loadTexts` 有一个「已在加载中就不重入」的门，或把「列表为空就回填」从渲染期 effect 挪到挂载时只做一次。**要避免**用「给 effect 加一个长度判断」这类绕法 —— 那会一起挡掉「第二次确实需要重拉」的正常场景。**本条只记账，不定修法**。
+- **落点比记账时多一处（Spec 3 · S0 重扫）**：同一段代码在 **两个**地方各有一份 —— `DistillWorkbench.jsx` 与 `TextPanel.jsx` 的 `CharacterManagement` 子组件。记账时只点了前者。
+- **修法（Spec 3 · S3，`4950936`）**：按本条留的方向走「挪到挂载时只做一次」，两处同修 ——
+  - 文本列表改成**挂载时拉一次**（`DistillWorkbench` 新加 `useEffect(() => { if (texts.length === 0) loadTexts() }, [])`；`TextPanel` 的父组件本来就有这一个，只是删掉了子组件里那次），卡片 effect 只依赖 `[texts]`，**不再调 `loadTexts`**。
+  - 两份逐字重复的「逐文本 + 独立卡片」聚合抽到 `web/frontend/src/api/cards.js` 的 `fetchAllCards(texts)`（`_textInfo` / `_source` 只在那里挂一次）；端点字符串也收进该模块，组件不再手写 URL。
+  - **没有**按本条「要避免」的那条走：不加长度判断绕，也没给 `loadTexts` 加重入门（`loadTexts` 的语义不变，其它调用点不受影响）。
+- **连带影响（必须说清）**：修前「文本列表为空」会在卡片 effect 里**早返回**，于是**独立卡片（`/api/distill/cards/standalone`）根本没被拉** —— 只有市场卡、没有上传过文本的用户，角色管理页与工作台的「已验收」区是**空的**。修后独立卡片照常返回，这类用户第一次看到自己的卡。**这是行为变化，不是纯内部重构。**
+- **红源**：`web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 新增 3 条 —— ① 蒸馏工作台、② 创作页角色管理，在 `texts: []` 下断言 `/api/text/list` **恰好被调一次**（原先该文件的 `beforeEach` 是为了躲这个 bug 才硬塞了一条假文本，现已改回空数组并注明）；③ `fetchAllCards([])` 直接返回独立卡片（连带项的单元锁）。**变异已验**：把 `loadTexts()` 放回卡片 effect → ① ② **红**（worker 在无界请求循环里被拖死，不是断言失败）；在 `fetchAllCards` 里加回 `if (texts.length === 0) return []` → ③**红**；还原后 7/7 绿。
+- **判据命令（修复后）**：`git grep -n "cards/by-text/" -- web/frontend/src/components`（应给 **0 行** —— 端点字符串只剩 `web/frontend/src/api/cards.js` 一处与 `store/useAppStore.js` 三处）；`git grep -n "loadTexts()" -- web/frontend/src/components/DistillWorkbench.jsx web/frontend/src/components/TextPanel.jsx`（应**各给 1 行**：`DistillWorkbench.jsx:91` 与 `TextPanel.jsx:106`，且两处都在**依赖为空数组的挂载效应**里——`DistillWorkbench.jsx:92` / `TextPanel.jsx:107` 的 `}, [])` 是行内第二段证据；修复前两处的调用点在**依赖含 `texts` 的卡片效应**里）。只数 `loadTexts` 子串不行：注释里也提到它，命中数会虚高。
 
 **117. main 的 CI 在 `Run tests` 这一步挂死（不是失败，是挂着不动）—— 已发生四次** —— 状态：**已修**（`70cdba1` + `23ac407`，2026-09-23）
 - **归属**：CI / 测试基础设施（不分线）。
