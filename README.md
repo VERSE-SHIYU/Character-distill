@@ -384,13 +384,14 @@ Fail2Ban 监听 OpenResty 日志，自动封禁高频攻击 IP
 | `/api/auth/avatar` | PUT / GET | 上传/获取账号头像 |
 | `/api/auth/password` | PUT | 修改密码（需验证旧密码） |
 
-### 管理员（`/api/admin`，需 is_admin）
+### 管理员（`/api/admin`，需用户角色为 admin）
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/api/admin/users` | GET | 用户列表 |
 | `/api/admin/users/{id}/disable` | POST | 禁用用户 |
 | `/api/admin/users/{id}/enable` | POST | 启用用户 |
+| `/api/admin/users/{id}/role` | PATCH | 改角色（admin / user / guest），不能改自己 |
 | `/api/admin/users/{id}/reset-password` | PATCH | 重置密码 |
 | `/api/admin/users/{id}` | DELETE | 删除用户（级联清除所有数据） |
 | `/api/admin/invite/generate` | POST | 生成邀请码 |

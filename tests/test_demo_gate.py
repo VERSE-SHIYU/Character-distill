@@ -12,8 +12,12 @@
 语义 —— 门禁的射程就是「到没到」，测它的业务返回是越界。同理，白名单里的
 `/api/voice/synthesize` 只喂空 body：喂真文本会真去调 TTS，而本文件不测 TTS。
 
-**边界（写清楚免得被当成漏洞）**：不锁 `is_demo` 有没有被挂在 user 字典上（那是
+**边界（写清楚免得被当成漏洞）**：不锁 `roles.is_guest` 有没有被挂在 user 字典上（那是
 实现），不锁门禁用了哪种解析器（那是 `routers/auth.py` 的账），也不测并发/时序。
+
+**「谁是演示账号」现在由数据库回答**（`users.role`），所以下面造账号时改的是库里的列，
+不是环境变量 —— 环境变量那套名单已整条删除，锁 3 从「名单只许读一次」换成「角色字面值
+判定只许写一处」。
 
 Run: pytest tests/test_demo_gate.py -v
 """
@@ -35,17 +39,15 @@ from pwdlib import PasswordHash
 import deps
 import route_facts
 import server
+from core import roles
 from routers.auth import JWT_ALGORITHM, _create_access_token, get_jwt_secret, security_scheme
 from server import AuthMiddleware
 from storage.sqlite_store import SQLiteStore
 from web.demo_gate import (
     DEMO_REFUSAL,
-    DEMO_USERNAMES_ENV,
     DEMO_WRITE_ALLOWLIST,
     READ_METHODS,
-    demo_usernames,
     install_demo_gate,
-    is_demo,
     is_demo_write_allowed,
 )
 
@@ -70,9 +72,13 @@ def _run(coro):
 _PW_HASH = PasswordHash.recommended().hash("Pass1234")
 
 
-def _mk_user(store, username: str) -> dict:
+def _mk_user(store, username: str, role: str = roles.USER) -> dict:
     uid = f"usr_{uuid.uuid4().hex[:16]}"
-    return _run(store.create_user(uid, username, _PW_HASH))
+    user = _run(store.create_user(uid, username, _PW_HASH))
+    if role != roles.USER:
+        _run(store.set_user_role(uid, role))
+        user = _run(store.get_user_by_id(uid)) or user
+    return user
 
 
 def _headers(user: dict) -> dict:
@@ -115,19 +121,15 @@ def store(tmp_path):
 
 
 @pytest.fixture
-def demo_username():
-    """**混合大小写**建号，env 里写小写 —— 顺带把「大小写不敏感」钉在真实链路上。
+def accounts(store):
+    """一个 guest、一个普通用户。
 
-    `is_demo` 的大小写口径不是装饰：写进 env 的大小写若决定门禁管不管得住，那就是
-    同一个账号有两个身份。
+    身份来自**库里的 role 列**（经 `set_user_role` 落库），不是环境变量：门禁读的是
+    中间件每请求解析出来的身份，所以这里必须真的写进库，否则测的是别的东西。
     """
-    return "OfferPass_" + uuid.uuid4().hex[:6]
-
-
-@pytest.fixture
-def accounts(store, demo_username, monkeypatch):
-    monkeypatch.setenv(DEMO_USERNAMES_ENV, demo_username.lower())
-    return _mk_user(store, demo_username), _mk_user(store, "Plain_" + uuid.uuid4().hex[:6])
+    guest = _mk_user(store, "Guest_" + uuid.uuid4().hex[:6], role=roles.GUEST)
+    plain = _mk_user(store, "Plain_" + uuid.uuid4().hex[:6])
+    return guest, plain
 
 
 @pytest.fixture
@@ -163,31 +165,6 @@ def client(app):
 # ═══════════════════════════════════════════════════════════════════════════════
 # 纯函数层：身份判定与白名单判定
 # ═══════════════════════════════════════════════════════════════════════════════
-
-class TestIsDemo:
-    def test_unset_env_makes_nobody_a_demo(self, monkeypatch):
-        monkeypatch.delenv(DEMO_USERNAMES_ENV, raising=False)
-        assert demo_usernames() == frozenset()
-        assert is_demo({"username": "anyone"}) is False
-
-    def test_case_and_whitespace_insensitive(self, monkeypatch):
-        monkeypatch.setenv(DEMO_USERNAMES_ENV, " Aa , bb ,, ")
-        assert demo_usernames() == frozenset({"aa", "bb"})
-        assert is_demo({"username": "Aa"}) is True
-        assert is_demo({"username": "  aa  "}) is True
-        assert is_demo({"username": "cc"}) is False
-
-    def test_empty_identity_is_never_a_demo(self, monkeypatch):
-        """空 user 恒判 False —— **门禁不是鉴权**，没登录的人不由它管（那是 401 的账）。
-
-        这条是「公开路径放行」这个前提本身：`AuthMiddleware` 对公开路径把身份置空，
-        而公开读接口与 5 条公开鉴权路由都不该被本门碰。空 user 若判 True（如恒真的
-        「无身份也算演示」写法），上面那批就全被拦死。
-        """
-        monkeypatch.setenv(DEMO_USERNAMES_ENV, "demo")
-        for empty in (None, {}, {"username": ""}, {"username": "   "}, {"username": None}):
-            assert is_demo(empty) is False, f"{empty!r} 被判成了演示账号"
-
 
 class TestIsDemoWriteAllowed:
     def test_read_methods_pass_without_lookup(self):
@@ -549,10 +526,19 @@ def test_install_after_route_registration_is_a_silent_no_op(store, accounts, mon
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 锁 3：DEMO_USERNAMES 只在一个地方被读
+# 锁 3：角色字面值判定只许写一处
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _GATE_MODULE = "web/demo_gate.py"
+
+#: 角色语义的唯一定义处 —— 只有这里允许拿字面值比角色。
+_ROLES_MODULE = "core/roles.py"
+
+#: 「拿角色字面值做判定」的形态。**故意**只认 `admin` / `guest`：消息列表里的
+#: `role == "user"` 是 LLM 对话角色（`chat_engine.py` / `chat.py`），同名不同物，
+#: 一并扫会逼着人给锁加例外，例外一多锁就没人看。
+_ROLE_LITERAL_JUDGEMENT = re.compile(
+    r"""(?:==|!=)\s*['"](?:admin|guest)['"]|['"](?:admin|guest)['"]\s*(?:==|!=)""")
 
 
 def _production_sources() -> list[str]:
@@ -575,22 +561,29 @@ def test_gate_scan_face_is_not_empty():
     assert len(files) > 50, f"生产 .py 只扫到 {len(files)} 个 —— 扫描面坏了"
 
 
-def test_demo_usernames_env_name_is_read_only_inside_the_gate_module():
-    """`DEMO_USERNAMES` 这个名字只许在门禁模块里出现。
+def test_role_literal_is_judged_only_in_core_roles():
+    """拿角色字面值做判定，只许出现在 `core/roles.py`；别处一律走 `roles.is_admin` /
+    `roles.is_guest`。
 
-    门禁的**唯一性**就落在这一点上：口径若在别处再读一次（第二个 env 名、第二份
-    名单、路由里的 `os.getenv`），「谁是演示账号」就有两个答案，而两边不一致时不报错，
-    只是静默放行或静默拒绝。
+    **为什么锁这个。** 「谁是管理员」「谁是演示账号」此前各有一套判据散落在路由与门禁里
+    （布尔列一处、环境变量名单一处），两边不一致时不报错，只是静默放行或静默拒绝。
+    收敛成 `users.role` 单列之后，判据只剩一处；这条锁就是那句「只剩一处」的机器判据 ——
+    谁将来在路由里手写一次比较，这里立刻红。
 
-    按**文本**扫而不是只认 `os.getenv("DEMO_USERNAMES")` 这一种写法：`from
-    web.demo_gate import DEMO_USERNAMES_ENV` 在别处用，同样是把口径分出去了。
-    注释里提到这个名字也算命中 —— 描述机制与被机制引用在这里不需要分家，
-    漏报的代价（静默放行）远大于误报的代价（把注释改个写法）。
+    **扫的是判定形态不是标识符**：`tags=["admin"]`、`prefix="/api/admin"` 里的
+    `admin` 是别的意思，禁掉只会逼人给锁加例外。所以判据取 `==` / `!=` 两侧的字面值。
+
+    **注释也算**（与前任同一口径）：文字里写一次字面值判定，读的人就多一个「原来可以
+    这么比」的例子，而漏报的代价（静默放行）远大于把文档改个写法。
     """
     root = pathlib.Path(__file__).resolve().parent.parent
     hits = [
         rel for rel in _production_sources()
-        if rel != _GATE_MODULE
-        and "DEMO_USERNAMES" in (root / rel).read_text(encoding="utf-8")
+        if rel != _ROLES_MODULE
+        and _ROLE_LITERAL_JUDGEMENT.search(
+            (root / rel).read_text(encoding="utf-8"))
     ]
-    assert not hits, f"`DEMO_USERNAMES` 在门禁模块之外也被提到了：{hits}"
+    assert not hits, (
+        f"角色字面值判定出现在了 `{_ROLES_MODULE}` 之外：{hits}\n"
+        "改用 core/roles.py 的 roles.is_admin / roles.is_guest。"
+    )
