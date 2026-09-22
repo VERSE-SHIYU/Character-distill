@@ -6,6 +6,7 @@ import ErrorBox from './common/ErrorBox'
 import { AlertTriangle, ExternalLink } from './common/Icon'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
+import { formatEmbeddingTestError } from '../utils/formatEmbeddingTestError'
 
 const MASKED_KEY = '••••••••'
 
@@ -326,7 +327,7 @@ export default function ApiConfigPanel() {
                   setTestMsg('✓ 连接正常 — 请点击上方「保存 RAG 配置」以持久化配置')
                 } else {
                   setTestResult('error')
-                  setTestMsg('✗ ' + (data.error || '未知错误'))
+                  setTestMsg('✗ ' + formatEmbeddingTestError(data))
                 }
               } catch (err) {
                 setTestResult('error')
@@ -344,13 +345,24 @@ export default function ApiConfigPanel() {
         </div>
 
         {testResult && (
-          <p className="settings-hint" style={{
-            color: testResult === 'ok' ? 'var(--success)' : 'var(--danger)',
-            fontWeight: 600,
-            marginTop: 8,
-          }}>
-            {testMsg}
-          </p>
+          <>
+            <p className="settings-hint" style={{
+              color: testResult === 'ok' ? 'var(--success)' : 'var(--danger)',
+              fontWeight: 600,
+              marginTop: 8,
+            }}>
+              {testMsg.split('\n')[0]}
+            </p>
+            {testMsg.split('\n')[1] && (
+              <p className="settings-hint" style={{
+                color: 'var(--text-secondary)',
+                fontSize: '0.85em',
+                marginTop: 2,
+              }}>
+                {testMsg.split('\n')[1]}
+              </p>
+            )}
+          </>
         )}
       </section>
 
