@@ -267,9 +267,9 @@ describe('创作页：游客没有上传区、卡片「编辑」「删除」', (
     expect(renderAs('user', <TextPanel />).container.querySelector('.text-upload-zone')).toBeInTheDocument()
   })
 
-  it('角色卡菜单：guest 只剩「聊天」「发布到市场」，user 四个都在', async () => {
+  it('角色卡菜单：guest 只剩「聊天」，user 四个都在', async () => {
     const guest = await renderCardMenu('guest')
-    expect(guest).toEqual(['聊天', '发布到市场'])
+    expect(guest).toEqual(['聊天'])
 
     const user = await renderCardMenu('user')
     expect(user).toEqual(['编辑', '聊天', '发布到市场', '删除'])

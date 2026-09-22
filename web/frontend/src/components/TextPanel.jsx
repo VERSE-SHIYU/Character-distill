@@ -701,13 +701,15 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                         }}>
                           聊天
                         </button>
-                        <button type="button" onClick={() => {
-                          setMenuOpen(null)
-                          setCurrentMarketCardId(c.id)
-                          pushView('marketCardDetail')
-                        }}>
-                          发布到市场
-                        </button>
+                        {canWrite && (
+                          <button type="button" onClick={() => {
+                            setMenuOpen(null)
+                            setCurrentMarketCardId(c.id)
+                            pushView('marketCardDetail')
+                          }}>
+                            发布到市场
+                          </button>
+                        )}
                         {canWrite && (
                           <button type="button" className="danger" onClick={() => {
                             setMenuOpen(null)
@@ -767,13 +769,15 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                                 }}>
                                   聊天
                                 </button>
-                                <button type="button" onClick={() => {
-                                  setMenuOpen(null)
-                                  setCurrentMarketCardId(vc.id)
-                                  pushView('marketCardDetail')
-                                }}>
-                                  发布到市场
-                                </button>
+                                {canWrite && (
+                                  <button type="button" onClick={() => {
+                                    setMenuOpen(null)
+                                    setCurrentMarketCardId(vc.id)
+                                    pushView('marketCardDetail')
+                                  }}>
+                                    发布到市场
+                                  </button>
+                                )}
                                 {canWrite && (
                                   <button type="button" className="danger" onClick={() => {
                                     setMenuOpen(null)
