@@ -603,15 +603,19 @@ async def _do_identify(text: str, distiller: Distiller) -> dict[str, Any]:
     """Core identify logic shared by new and legacy routes."""
     if not text.strip():
         raise HTTPException(400, "Text cannot be empty")
-    try:
-        chars = await asyncio.to_thread(distiller.identify_characters, text)
-    except Exception as exc:
-        print(f"[distill] Identify characters failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    chars = await asyncio.to_thread(distiller.identify_characters, text)
     return {"characters": chars}
 
 
-# 「挑不出目标角色」不在这里渲染：`NoTargetCharacter` 是 `DistillError` 的子类，
+# 识别族的三条 HTTP 路由（本函数、`_resolve_character_name`、`reindex_rag`）**不设
+# 就地捕获**：`web/server.py` 那三条统一出口已覆盖全部情形 —— `DistillError` 及子类
+# 走 `_domain_error_status`（400 + `user_message`）、LLM 侧已知失败走 `_llm_error_handler`、
+# 其余意外异常走全局处理器（500 + traceback）。就地包 `HTTPException(500)` 会**拦下
+# `DistillError`**：用户看不到「上游限流 / 名单无法解析」这类真实原因，单分片解析失败
+# 也从 400 变成 500（缺陷 38 同族）。同文件的 `/identify`（带 text_id）本来就没 try，
+# 是现成先例。原先那两行 `print` 也不必留 —— 全局出口会打 traceback。
+#
+# 「挑不出目标角色」同理不在这里渲染：`NoTargetCharacter` 是 `DistillError` 的子类，
 # 文案在 core/character_roster.py 一处定义，上行出口与本文件的识别失败同一条
 # （HTTP 走 web/server.py 的领域异常出口、bg 与 SSE 走 user_facing_error）。
 
@@ -627,11 +631,8 @@ async def _resolve_character_name(
     name = character_name.strip()
     if name:
         return name
-    try:
-        chars = await asyncio.to_thread(distiller.identify_characters, text)
-    except Exception as exc:
-        print(f"[distill] Auto-identify failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await asyncio.to_thread(distiller.identify_characters, text)
     # 挑不出角色就抛 NoTargetCharacter（DistillError 子类）→ 400，不再在这里配码。
     return target_character_name(chars)
 
@@ -1057,7 +1058,7 @@ async def distill_stream(
         nonlocal char_name
         # 识别失败与「挑不出目标角色」两类结果都在这一个 except 里渲染：本生成器
         # 在下面 chat 那圈 try 之外，靠冒泡会变成未处理的生成器异常而不是错误帧，
-        # 故就地 yield —— 与 :1095 同形、共用 user_facing_error 这一份口径链。
+        # 故就地 yield —— 与本生成器蒸馏段的 except 同形、共用 user_facing_error 这一份口径链。
         try:
             chars = await resolve_characters(
                 storage, distiller, req.text_id, user_id, content)
@@ -1187,11 +1188,8 @@ async def reindex_rag(
         raise HTTPException(404, "Text not found")
     content = _get_distill_content(text_rec)
 
-    try:
-        chars = await resolve_characters(storage, distiller, text_id, user_id, content)
-    except Exception as exc:
-        print(f"[distill] Reindex identify failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    # 不设就地捕获（理由见 `_do_identify` 上方的块注释）：识别失败冒泡到统一出口。
+    chars = await resolve_characters(storage, distiller, text_id, user_id, content)
 
     count = 0
     for sid, session in sessions.items():

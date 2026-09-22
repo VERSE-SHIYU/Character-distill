@@ -33,7 +33,7 @@ from fastapi.testclient import TestClient
 
 import deps
 import server
-from core.distiller import DistillError
+from core.distiller import DistillError, Distiller
 from deps import get_storage
 from routers import distill as D
 from routers.auth import get_current_user
@@ -112,10 +112,14 @@ def _seed_text(store, uid, body="角色说的话"):
 def _build_client(store, uid, monkeypatch, *, distiller, tm=None):
     app = FastAPI()
     app.include_router(D.router)
+    # legacy 两条（`POST /api/identify` / `POST /api/distill`）也挂上：它们的依赖是
+    # 函数体里 late-import 的，上面的 monkeypatch 一样管用。
+    app.include_router(D.legacy_router)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
         "id": uid, "username": "testuser", "is_admin": False,
     }
+    app.dependency_overrides[D.get_sessions] = lambda: {}
     server.register_domain_error_handlers(app)   # 与生产装配同一处
 
     async def _llm(*a, **kw):
@@ -254,3 +258,86 @@ class TestNoTargetCharacterHasASingleSource:
 
         assert r.status_code == 400, r.text
         assert r.json()["detail"] == EMPTY_ROSTER_TEXT
+
+
+# ── 4. 识别族 HTTP 路由不吞 DistillError（同一缺陷的 HTTP 侧收尾） ────────
+
+# `_identify_single_call` 两次解析均失败时抛的那个 DistillError 的上屏文案。
+# 同上面的口径：复制字面量，不从源码 import（import 就自证自明，变异杀不掉）。
+PARSE_FAIL_TEXT = "识别失败：模型返回的角色名单无法解析，请重试"
+
+
+class _NonJSONLLM:
+    """两次都回非 JSON —— `_identify_single_call` 的首次与重试解析都会失败。
+
+    刻意用**真 `Distiller`** 而不是桩：本组判的正是「识别层抛出的 `DistillError`
+    能不能穿过路由层到达统一出口」，桩掉识别层就把被测的那一段换掉了。
+    """
+
+    model = "fake-model-identify-parse-fail"
+
+    def __init__(self) -> None:
+        self.last_usage = None
+        self.calls = 0
+
+    def chat(self, system, messages):
+        self.calls += 1
+        return "这不是一个 JSON 数组"
+
+
+class _StubTextManager:
+    """只让 legacy `/api/distill` 走过 `upload_text` 那一跳 —— 本文件不考上传。"""
+
+    async def upload_text(self, filename, content, **kw):
+        return {"text_id": f"txt_{uuid.uuid4().hex}"}
+
+
+def _failing_distiller() -> Distiller:
+    return Distiller(llm=_NonJSONLLM(), config_path=None)
+
+
+class TestIdentifyFamilyRoutesKeepDistillError:
+    """三条识别族 HTTP 路由不再就地包 `HTTPException(500, "操作失败，请稍后重试")`。
+
+    原先那条宽捕获拦下 `DistillError`：单分片解析失败从 400 变 500，用户也看不到
+    「名单无法解析」这个真实原因。删掉捕获后，异常冒泡到 `web/server.py` 的
+    `_domain_error_handler`（400 + `user_message`）—— 同文件的 `/identify`（带
+    text_id）本来就是这个形状。
+
+    变异对象 = 在任一处加回 `except Exception: raise HTTPException(500, ...)`
+    → 该用例状态码 500、detail 变「操作失败，请稍后重试」，红。
+    """
+
+    def test_legacy_identify_parse_failure_is_400(self, store, user_id, monkeypatch):
+        """`POST /api/identify`（`_do_identify`）→ 400 + 真实原因。"""
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=_failing_distiller())
+
+        r = client.post("/api/identify", json={"text": f"甲说了一句话。{uuid.uuid4().hex}"})
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == PARSE_FAIL_TEXT
+
+    def test_legacy_distill_auto_identify_failure_is_400(self, store, user_id, monkeypatch):
+        """`POST /api/distill` 不点名 → `_resolve_character_name` → 400 + 真实原因。"""
+        client = _build_client(
+            store, user_id, monkeypatch,
+            distiller=_failing_distiller(), tm=_StubTextManager())
+
+        r = client.post(
+            "/api/distill",
+            json={"text": f"甲说了一句话。{uuid.uuid4().hex}", "character_name": ""})
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == PARSE_FAIL_TEXT
+
+    def test_reindex_identify_failure_is_400(self, store, user_id, monkeypatch):
+        """`POST /api/distill/reindex/{id}` 的名单段 → 400 + 真实原因。"""
+        tid = _seed_text(store, user_id, body=f"角色说的话{uuid.uuid4().hex}")
+        client = _build_client(
+            store, user_id, monkeypatch, distiller=_failing_distiller())
+
+        r = client.post(f"/api/distill/reindex/{tid}")
+
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == PARSE_FAIL_TEXT
