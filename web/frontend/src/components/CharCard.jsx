@@ -636,6 +636,7 @@ function CardDetail({ card, textId, goBack }) {
   const [publishTags, setPublishTags] = useState(card.market_tags || '')
   const [publishMessage, setPublishMessage] = useState('')
   const [publishSending, setPublishSending] = useState(false)
+  const [publishError, setPublishError] = useState('')
 
   // 挂载时触发一次性迁移：把旧全局 user_role 搬进 userRolesByCard[cardId]
   const _cardId = card.id || card.card_id
@@ -921,6 +922,7 @@ function CardDetail({ card, textId, goBack }) {
               setPublishDescription(card.market_description || '')
               setPublishTags(card.market_tags || '')
               setPublishMessage('')
+              setPublishError('')
               setShowShareConfirm(true)
             }}
           >
@@ -965,6 +967,7 @@ function CardDetail({ card, textId, goBack }) {
           <div className="modal-card" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
             <h3 className="modal-title">分享到市场</h3>
             <div className="modal-body publish-form-body">
+              <ErrorBox message={publishError} onDismiss={() => setPublishError('')} />
               <div className="publish-field">
                 <label className="publish-label">角色描述</label>
                 <textarea
@@ -1016,14 +1019,16 @@ function CardDetail({ card, textId, goBack }) {
                       }),
                     })
                     const data = await res.json()
-                    if (data.card_id) setPublishedCardId(data.card_id)
+                    // 成功判据是拿到 card_id；拿不到按失败处理，走同一个 catch
+                    if (!data.card_id) throw new Error(data.detail || '发布失败：服务端未返回 card_id')
+                    setPublishedCardId(data.card_id)
                     setShared(true)
                     setShowShareConfirm(false)
                     setPublishDescription('')
                     setPublishTags('')
                     setPublishMessage('')
                   } catch (err) {
-                    console.error('Publish failed:', err)
+                    setPublishError(err.message || '发布失败')
                   } finally {
                     setPublishSending(false)
                   }
