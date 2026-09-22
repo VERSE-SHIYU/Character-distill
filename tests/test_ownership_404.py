@@ -105,8 +105,8 @@ class _StubLLM:
 
 
 @pytest.fixture(autouse=True)
-def _no_ambient_state(monkeypatch):
-    """钉死两条 ambient 依赖，让用例结果只取决于被测代码，不取决于测试机。
+def _no_ambient_state(monkeypatch, store):
+    """钉死三条 ambient 依赖，让用例结果只取决于被测代码，不取决于测试机。
 
     1. `deps.get_llm`：`deps.get_user_llm` 在用户没配 key 时 fallback 到 `get_llm()`
        （读 .env / config.yaml）。有 key 的机器上这道门开着、用例能走到属主判定；没 key
@@ -116,6 +116,12 @@ def _no_ambient_state(monkeypatch):
        get_memory_manager`，不走 `Depends`，故 `dependency_overrides` 管不到它 —— 不钉住
        就会构造真 MemoryManager（chroma → fastembed → onnxruntime），本机直接打
        `Windows fatal exception: access violation`，且结果依赖测试机 `data/` 状态。
+    3. `deps._storage`（存储**单例**，不是 `dependency_overrides`）：本文件是非 PG 用例，
+       而要连库的不止 `Depends(get_storage)` 那一条路 —— `TextManager`/`Distiller` 都直接调
+       `get_storage()`，`dependency_overrides` 管不到。只 override 依赖时，引擎会被
+       装配成真库（CI 里是 postgres），用例发一条消息就在真库上留一笔没结算的事务，
+       锁住 `cards` 让后面的迁移重放整段挂死（缺陷 117）。换单例一处，两条路同时覆盖，
+       与 `tests/test_health_probe_targets.py` / `test_demo_gate.py` 同一口径。
 
     注意必须是 `import deps`（web/ 在 sys.path 上），**不是** `import web.deps`：本仓 web/
     无 `__init__.py`，两者虽是同一文件却是两个不同的模块对象，patch 后者打不到 router
@@ -124,6 +130,7 @@ def _no_ambient_state(monkeypatch):
     import deps
     monkeypatch.setattr(deps, "get_llm", _StubLLM)
     monkeypatch.setattr(deps, "get_memory_manager", lambda: _MemMgr())
+    monkeypatch.setattr(deps, "_storage", store)
 
 
 def _make_client(store, user_id):
@@ -700,3 +707,51 @@ class TestGroupSessionOwnership:
         assert r.status_code == 200, (
             f"属主被自己的群当外人：{r.status_code} {r.text[:200]}")
         assert r.json().get("reply") == "固定回复", r.text[:200]
+
+
+class TestStorageSingleSource:
+    """缺陷 117：库只许有一个来源。
+
+    `Depends(get_storage)` 与 `TextManager` 内部那条 `get_storage()` 是**两条路**，必须读到
+    同一个对象。分叉的代价不是「读错几行」—— 引擎攥着的那份是**真库**（CI 里 postgres），
+    用例发一条消息就在真库上留一笔没结算的事务，锁住 `cards`，后一个用例的迁移重放整段
+    挂死（实测：`test_pg_identity_sync.py::test_store_startup_runs_the_alignment`）。
+    """
+
+    def test_text_manager_resolves_the_store_at_use_time(self, monkeypatch, tmp_path):
+        """装配时给的是「取库的方式」，不是库 —— 装配后换单例，用的时候必须取到新的那份。
+
+        变异：`_assemble_text_manager` 改回 `TextManager(get_storage(), ...)`、`__init__`
+        改回 `self._storage = storage`，本用例拿到的是 `first`，这条断言变红。
+        """
+        import deps
+
+        first = SQLiteStore(str(tmp_path / "first.db"))
+        second = SQLiteStore(str(tmp_path / "second.db"))
+        # `get_indexing_service` 是**进程级**单例，建一次就缓存住当刻那份库，且不受
+        # monkeypatch 撤销 —— 让它拿 tmp_path 里的库会把后面所有用例指到已删除的文件上。
+        monkeypatch.setattr(deps, "get_indexing_service", lambda: None)
+        monkeypatch.setattr(deps, "_storage", first)
+        tm = deps._assemble_text_manager(object(), object())
+        monkeypatch.setattr(deps, "_storage", second)
+        assert tm._storage is second, (
+            "TextManager 在构造时把库钉死了：之后换单例，它仍拿旧的那份 —— 请求注入的那条路"
+            "换了、引擎装配的那条没换，正是缺陷 117 的形态")
+
+    def test_independent_card_session_binds_the_single_source(
+        self, store, owner, owner_client, chat_capable_llm
+    ):
+        """端到端：独立卡片建会话这条路建出的引擎，必须绑在**本次用例**那份库上。"""
+        import deps
+
+        cid = _card(store, owner)
+        r = owner_client.post("/api/distill/start_session", json={"card_id": cid})
+        assert r.status_code == 200, r.text[:200]
+        sid = r.json()["session_id"]
+        try:
+            engine = deps.get_sessions()[sid]["engine"]
+            assert engine._storage is store, (
+                f"引擎绑的不是请求那份库，而是 {type(engine._storage).__name__}")
+        finally:
+            # 会话表是模块级全局，不清理会把引擎（及它攥着的库）泄给后面的用例。
+            deps.get_sessions().pop(sid, None)
