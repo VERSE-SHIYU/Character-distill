@@ -1421,43 +1421,42 @@ async def start_session(
     except Exception as exc:
         print(f"[distill] Persist session failed (non-fatal): {exc}")
 
-    # ── Inject opening line (always generate when LLM is available) ──
+    # ── Inject opening line ──
+    # 上面 :1354 的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
+    # None），故原先这里那层 `if per_user_llm is not None:` 恒真、它的 else 不可达。
     opening = ""
-    if per_user_llm is not None:
-        try:
-            style = card.speaking_style
-            traits = "，".join(card.personality_traits[:3])
-            seed = card.first_message or ""
-            user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
-            from core.clock import UserClock, describe_time_period
-            _now = UserClock.now(req.client_tz)
-            _period = describe_time_period(_now.hour)
-            seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
-            prompt = (
-                f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
-                f"身份：{card.identity}\n"
-                f"性格：{traits}\n"
-                f"语气：{style.tone}\n"
-                f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
-                f"{seed_line}"
-                f"当前时段：{_period}（{_now.hour}点）\n\n"
-                f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
-                f"时间藏在语气里不点明。\n"
-                f"(动作)台词，台词不超过50字。"
-            )
-            opening = await asyncio.to_thread(
-                per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
-            )
-            try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
-            opening = opening.strip().strip('"').strip("'").strip("「」")
-            if opening and len(opening) <= 100:
-                print(f"[start_session] Generated opening: {opening}")
-            else:
-                opening = card.first_message or ""
-        except Exception as exc:
-            print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+    try:
+        style = card.speaking_style
+        traits = "，".join(card.personality_traits[:3])
+        seed = card.first_message or ""
+        user_context = f"对「{req.user_role}」" if req.user_role else "对初次见面的陌生人"
+        from core.clock import UserClock, describe_time_period
+        _now = UserClock.now(req.client_tz)
+        _period = describe_time_period(_now.hour)
+        seed_line = f"惯常开场白参考：「{seed}」\n" if seed else ""
+        prompt = (
+            f"以「{card.name}」的口吻，{user_context}说此刻的第一句话。\n"
+            f"身份：{card.identity}\n"
+            f"性格：{traits}\n"
+            f"语气：{style.tone}\n"
+            f"口癖：{', '.join(style.catchphrases) if style.catchphrases else '无'}\n"
+            f"{seed_line}"
+            f"当前时段：{_period}（{_now.hour}点）\n\n"
+            f"先用不超过15字的括号动作把自己放进当下场景，再说话。"
+            f"时间藏在语气里不点明。\n"
+            f"(动作)台词，台词不超过50字。"
+        )
+        opening = await asyncio.to_thread(
+            per_user_llm.chat, prompt, [{"role": "user", "content": "请说开场白"}]
+        )
+        try_record_usage(storage, per_user_llm, "chat_session_opening", source="distill")
+        opening = opening.strip().strip('"').strip("'").strip("「」")
+        if opening and len(opening) <= 100:
+            print(f"[start_session] Generated opening: {opening}")
+        else:
             opening = card.first_message or ""
-    else:
+    except Exception as exc:
+        print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
         opening = card.first_message or ""
 
     # Save opening to DB + engine.history (seed only, no backfill to card)
