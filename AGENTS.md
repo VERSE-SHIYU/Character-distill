@@ -1244,13 +1244,12 @@ PROBE_IMAGE         false
   - 失败率**分母不变**，仍是全书相关片数 `total_chunks = len(relevant)`（流式 `:1952`、同步 `:1712`）—— 命中片不进原语但仍计入分母，否则续跑会让失败率虚高、越线整批 bail。该口径已补注释锁在 `:1950-1951`。
   - 文档陈旧行号随本步修正：`_resume_hit` docstring（`:237`）改述主屏障在流式侧（失败 Map 片不落 checkpoint，`ok=False` 即不回调落库）。
 - **判据命令**：`git grep -n "Semaphore(self._map_concurrency)" -- core/` → **1** 处（`core/distiller.py:1478`；修复前 2 处）；`git grep -n "_map_with_progress" -- core/` → 零命中（余 1 处在本条「形态（修复前）」的叙述里）。
-- **锁与红源（本步零新增锁）**：按「现有测试能打红的变异不新增锁」逐条实打（每条跑完按字节还原，`还原核验: 全部字节一致 = True`）——
-  - **L1** 直通形态（命中片也送原语）：红 **7** 条，全在 `tests/test_distill_resume.py`；代表读数 `assert 12 == 0`「全命中不该再发任何 Map 调用」（`:174`）。
-  - **L2** `ok` 恒真：红 **1** 条 —— `TestFailedChunkNotCheckpointed::test_failed_chunk_is_not_checkpointed`。
-  - **L3** 生成器里加回整阶段落账：红 **1** 条 —— `test_usage_identity_context.py::test_start_route_lands_usage_rows`，读数 `assert 6 == 5`（多落一行 `distill_map`，与出口 5 笔对不上）。
-  - **L4** 分母改成未命中片数：红 **4** 条，全在 `tests/test_distill_resume.py`。
-  - 四条**均已被现有测试打红** ⇒ 本步不新增任何锁（与预判相反：L3、L4 也已被覆盖）。
-- **残留覆盖缺口（如实记）**：L4 那 4 条红**全部**来自全命中退化路径的 `ZeroDivisionError`（`core/distiller.py:266` 的 `failed / total`，`total == 0`），**没有**一条现有用例断言「本轮有命中、也有失败」时失败率的分母口径。该性质（分母是全书相关片数）目前只由 `:1950-1951` 的注释与本条判据命令守着；要真锁住需新写一条「有命中 + 有失败」的用例，本步按「只为打不红的补锁」规则未加。
+- **锁与红源**：先按「现有测试能打红的变异不新增锁」把 L1–L4 逐条打到既有用例上，每条变异跑完把 `core/distiller.py` 按字节还原（逐字节回到原状，无半改残留）。各条变异**改了什么**与读数：
+  - **L1｜预扫直通**：把预扫改成命中片也进 `miss_indices`（先 append 再判 `hit is None` 才 continue），即整条 `relevant` 交给原语 → 红 **8** 条，全在 `tests/test_distill_resume.py`；代表读数 `assert 12 == 0`「全命中不该再发任何 Map 调用」。
+  - **L2｜回调 `ok` 恒真**：`on_chunk_done(i, result, ok)` → `on_chunk_done(i, result, True)`，失败片被当成功 → 红 **2** 条：`TestFailedChunkNotCheckpointed::test_failed_chunk_is_not_checkpointed`（失败片落了 checkpoint）、新锁 `TestFailureRateDenominator::test_hits_still_count_in_the_denominator`。
+  - **L3｜生成器里加回整阶段落账**：在 `_thread_run` 调完原语后补一句 `self._try_record_usage("distill_map", aggregate_usage([...], 1))`（重构前那份内联记账的形态）→ 红 **1** 条：`tests/test_usage_identity_context.py::test_start_route_lands_usage_rows`，读数 `assert 6 == 5`（多落一行 `distill_map`，与出口 5 笔对不上）。
+  - **L4｜分母改成未命中片数**：`total_chunks = len(relevant)` → `len(miss_indices)`，以及带保护的 `max(1, len(miss_indices))` 形态 → 红 **5** 条，含下面的新锁；其余 4 条**全部**来自全命中退化路径的 `ZeroDivisionError`（`core/distiller.py:266` 的 `failed / total`，`total == 0`）—— 退化解，钉不住口径本身，故必须补锁。
+- **L4 专属锁（本步新增，补上后已删去上版台账的「残留覆盖缺口」）**：`tests/test_distill_resume.py::TestFailureRateDenominator::test_hits_still_count_in_the_denominator` —— 12 片里 9 片命中（不进原语）、3 片未命中且其中 2 片失败：`2/12 ≤ 1/2` 在容忍内，`2/3 > 1/2` 越线。断言：不中止（无 `error` 事件、有 format token）+ 打印 `2/12 map chunks failed (within tolerance), continuing`（一行同钉分子与分母）+ 3 片未命中里只有活下的那 1 片落 checkpoint。分母换成未命中片数时走 bail 分支、该行根本不打印 → 必红 —— **`len(miss_indices)` 与 `max(1, len(miss_indices))` 两种形态实测均红**。
 - **不加 L5（显式声明）**：进度事件的**顺序**（命中片是否仍早于未命中片上屏）**不是契约** —— 它只影响进度条抖动，不改变任何落库 / 计费 / 续跑结果，故不为它立锁。
 
 **89. 同一份「识别结果」存了两遍：进程内 TTL memo + 库里的 `characters_json`** —— 状态：**已修**（`e1d3cbc`，2026-09-22；2026-09-21 首记，原状态「记账（不修）」）

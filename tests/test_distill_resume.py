@@ -8,6 +8,7 @@
 4 主路径零回归：resume_candidates=None 时与不续跑行为完全一致
 5 失败片不落 checkpoint：Map 分片抛异常 → 不进 on_chunk_done，门 2 不再是唯一屏障
 6 改原文后旧片收敛（缺陷 4）：落库是 upsert 而非 DO NOTHING → 第二次续跑命中复用
+7 失败率分母是全书相关片数：续跑命中片不进 Map 但仍计入分母（缺陷 88）
 
 任务级门（改 chunk_size / 改原文 → 整批重跑）落在 /start，见
 tests/test_distill_task_api.py::TestEResumeGate（同一提交）。
@@ -338,3 +339,62 @@ class TestChangedChunkConverges:
         assert done3 == [], "命中的片不该重复落库"
         out_full = _run(_FakeLLM(), None, text=changed)[1]
         assert out3 == out_full, "收敛后产出应与「直接全量跑改后原文」逐字节一致"
+
+
+# ── 7 失败率分母是全书相关片数（缺陷 88 的分母口径）─────────────────────────
+#
+# 续跑时命中片不进 Map 原语，但**仍算总数**：分母取 len(relevant)，不是本轮未命中
+# 片数。取错了，续跑会让失败率虚高 —— 命中越多越容易被判成「>50% 失败」而整批 bail，
+# 于是「越续越跑不动」。本类构造「有命中 + 有失败」的局面把分母钉住。
+
+class _FailFirstN(_FakeLLM):
+    """前 N 次 Map 调用抛异常，其余照旧 —— 与片内容无关，失败数确定。"""
+
+    def __init__(self, n: int):
+        super().__init__()
+        self._remaining = n
+
+    async def async_chat(self, system, messages, client=None):
+        if self._remaining > 0:
+            self._remaining -= 1      # 判减之间无 await，单线程 asyncio 下不可分割
+            self.map_calls += 1
+            raise RuntimeError("simulated upstream failure")
+        return await super().async_chat(system, messages, client=client)
+
+
+class TestFailureRateDenominator:
+    def test_hits_still_count_in_the_denominator(self, capsys):
+        done1, _out1 = _run(_FakeLLM(), None)
+        n = len(done1)
+        assert n >= 6, f"分片太少，用例无判别力（{n}）"
+        cands = _candidates(done1)
+
+        # 摘掉 3 片候选 → 本轮 3 片未命中，其中 2 片注定失败。
+        # 2/n ≤ 1/2（在容忍内 → 继续）而 2/3 > 1/2（越线 → 整批 bail）：分母的口径
+        # 决定这一局是跑完还是中止。
+        misses = sorted(cands)[:3]
+        for i in misses:
+            del cands[i]
+        llm2 = _FailFirstN(2)
+
+        d = _make_distiller(llm2)
+        done2: list[tuple[int, str, str]] = []
+        events: list[dict] = []
+        tokens: list[str] = []
+        for piece in d.distill_incremental_stream(
+            TEXT, "角色", [], "story",
+            on_chunk_done=lambda i, r, fp: done2.append((i, r, fp)),
+            resume_candidates=cands,
+        ):
+            if isinstance(piece, str):
+                tokens.append(piece)
+            else:
+                events.append(piece)
+
+        assert llm2.map_calls == len(misses), "只该重跑未命中的那 3 片"
+        assert not [e for e in events if "error" in e], f"不该中止整批：{events}"
+        assert tokens, "跑到底应产出 format token"
+        # 一行同时钉住分子（2）与分母（n=全书相关片数）；分母取未命中片数时这里是
+        # 2/3 → 走 bail 分支，这行根本不打印。
+        assert f"{2}/{n} map chunks failed (within tolerance), continuing" in capsys.readouterr().out
+        assert len(done2) == 1, "3 片未命中里只活下 1 片 → 只该 1 片落 checkpoint"
