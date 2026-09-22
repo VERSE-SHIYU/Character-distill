@@ -167,6 +167,7 @@ async def _rebuild_group_session(
         user_persona_name=persona_name,
         user_persona_desc=session.get("user_persona_desc", ""),
         storage=storage,
+        user_id=user_id,
     )
     _group_sessions[group_id] = group
 
@@ -186,6 +187,23 @@ async def _rebuild_group_session(
         print(f"[Group] Session rebuild failed: {exc}")
 
     return group
+
+
+async def _get_owned_group(
+    group_id: str,
+    user_id: str,
+    storage: StorageBase,
+) -> Any | None:
+    """取**这个用户**的群聊会话：内存命中也要判属主，取不到再按属主重建。
+
+    内存命中这条路原来只判「删没删」，不判「是不是你的」—— `_group_sessions` 是全局表，
+    任何登录用户拿别人的 group_id 就能以群主身份发言。非属主与「群不存在」在这里都收敛到
+    `None`，调用方同判 404（同码同文案，不给存在性枚举留信道）。
+    """
+    group = _group_sessions.get(group_id)
+    if group is not None and group.user_id == user_id:
+        return group
+    return await _rebuild_group_session(group_id, user_id, storage)
 
 
 async def _run_group_affinity(
@@ -361,6 +379,7 @@ async def create_group(
         user_persona_name=persona_name.strip() if persona_name else "",
         user_persona_desc=persona_desc.strip(),
         storage=storage,
+        user_id=user_id,
     )
     _group_sessions[group_id] = group
 
@@ -472,9 +491,7 @@ async def send_message(
 ) -> dict:
     """导演模式下向指定角色发消息。"""
     user_id = user["id"]
-    group = _group_sessions.get(group_id)
-    if group is None:
-        group = await _rebuild_group_session(group_id, user_id, storage)
+    group = await _get_owned_group(group_id, user_id, storage)
     if group is None:
         raise HTTPException(404, "群聊会话已过期，请重新创建")
 
@@ -537,9 +554,7 @@ async def broadcast_message(
 ):
     """导演发一条消息，多个角色并行回复。SSE 流式返回，每个角色回复完成即推送。"""
     user_id = user["id"]
-    group = _group_sessions.get(group_id)
-    if group is None:
-        group = await _rebuild_group_session(group_id, user_id, storage)
+    group = await _get_owned_group(group_id, user_id, storage)
     if group is None:
         raise HTTPException(404, "群聊会话已过期，请重新创建")
 

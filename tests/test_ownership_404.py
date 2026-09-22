@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from deps import get_memory_manager, get_storage, get_tts_engine, get_voice_client
 from routers.auth import get_current_user
 from routers.card import router as card_router
+from routers.chat import router as chat_router
 from routers.distill import router as distill_router
 from routers.group import router as group_router
 from routers.market import router as market_router
@@ -67,6 +68,12 @@ class _MemMgr:
 
     def get_all(self, card_id):
         return []
+
+    def search(self, query, card_id, current_mood=None):
+        return []
+
+    def add(self, messages, card_id, metadata=None):
+        return True
 
     def add_manual(self, text, card_id):
         return True
@@ -121,7 +128,7 @@ def _no_ambient_state(monkeypatch):
 
 def _make_client(store, user_id):
     app = FastAPI()
-    for r in (card_router, group_router, market_router, memory_router,
+    for r in (card_router, chat_router, group_router, market_router, memory_router,
               message_router, voice_router, distill_router):
         app.include_router(r)
     app.dependency_overrides[get_storage] = lambda: store
@@ -457,3 +464,167 @@ class TestMessageParity:
         missing = self._detail(
             intruder_client.post(f"/api/messages/nope_{uuid.uuid4().hex}/react", json={"emoji": "👍"}))
         assert foreign == missing
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. 会话属主：一对一的独立卡片会话 + 群聊内存命中（spec 72 第 1 步）
+#
+# 前 3 节测的是「storage 取不到行 → 404」，属主门在 SQL 里。本节的洞不一样：
+# 会话**已在内存里**，取得到，于是属主门整个被跳过。所以夹具必须把会话造成
+# 「内存命中」的形态（真调建会话端点 / 真建群），不能只塞 DB 行 —— 只塞 DB 行
+# 时内存未命中，会走回 DB 那条已被 guard 的路，用例恒绿，测不出本步修的东西。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _detail(r):
+    return r.json().get("detail")
+
+
+class _ChatLLM:
+    """假 LLM：非 None 且真能出文本。
+
+    T2/T5 是正向对照——只证「属主不被 404 挡下」不够：把整条会话建崩成 500 时
+    用例照样绿。得让属主真聊到底才分得清。
+    `preflight()` 与 `_StubLLM` 同因：`deps.get_user_llm` 返回前必调它（§2.8）。
+    """
+
+    last_usage: dict = {}
+
+    def preflight(self) -> None:
+        return None
+
+    def chat(self, system_prompt, messages, *a, **kw) -> str:
+        return "固定回复"
+
+    async def achat(self, system_prompt, messages, *a, **kw) -> str:
+        return "固定回复"
+
+
+@pytest.fixture
+def owner_client(store, owner):
+    return _make_client(store, owner)
+
+
+@pytest.fixture
+def chat_capable_llm(monkeypatch):
+    """让建会话/发消息这条链拿到 `_ChatLLM`。
+
+    两处都要打：distill 与 chat 在**函数内** import `deps.get_user_llm`，打 deps
+    那份即可；group.py 是**模块级** import，绑死在自己的命名空间里，打 deps 打不到。
+    """
+    import deps
+    import routers.group as group_mod
+
+    async def _fake_user_llm(*_a, **_kw):
+        return _ChatLLM()
+
+    monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
+    monkeypatch.setattr(group_mod, "get_user_llm", _fake_user_llm)
+
+
+@pytest.fixture
+def light_rag(monkeypatch):
+    """把建群那条路上的 RAG 换成不碰 embedder 的空壳。
+
+    真 RAGEngine 会 load_existing / index，落到 onnxruntime（本机 Windows 直接崩）。
+    本步不测检索，让开这条下游。
+    """
+    import deps
+
+    class _NoopRAG:
+        def load_existing(self, *_a, **_kw):
+            return None
+
+        def index(self, *_a, **_kw):
+            return None
+
+    monkeypatch.setattr(
+        deps, "get_rag_config",
+        lambda: {"chunk_size": 500, "chunk_overlap": 50, "top_k": 3},
+    )
+    monkeypatch.setattr("core.rag.RAGEngine", lambda *_a, **_kw: _NoopRAG())
+
+
+class TestOneToOneSessionOwnership:
+    """独立卡片会话（`/start_session` 不带 text_id）的内存条目必须记属主。"""
+
+    def _start_independent_session(self, client, store, owner):
+        cid = _card(store, owner)
+        r = client.post("/api/distill/start_session", json={"card_id": cid})
+        assert r.status_code == 200, (
+            f"建会话这一步就失败了，后面的属主断言无从谈起：{r.status_code} {r.text[:200]}")
+        return r.json()["session_id"]
+
+    def test_T1_independent_session_non_owner_404(
+        self, store, owner, owner_client, intruder_client, chat_capable_llm
+    ):
+        sid = self._start_independent_session(owner_client, store, owner)
+        payload = {"session_id": sid, "message": "hi"}
+        foreign = intruder_client.post("/api/chat/send", json=payload)
+        assert foreign.status_code == 404, (
+            f"非属主用他人的独立卡片会话发了消息：{foreign.status_code} {foreign.text[:200]}")
+
+        missing = intruder_client.post(
+            "/api/chat/send", json={"session_id": f"nope_{uuid.uuid4().hex}", "message": "hi"})
+        assert foreign.status_code == missing.status_code
+        assert _detail(foreign) == _detail(missing), "非属主与不存在同码但不同文案"
+
+    def test_T2_independent_session_owner_can_chat(
+        self, store, owner, owner_client, chat_capable_llm
+    ):
+        sid = self._start_independent_session(owner_client, store, owner)
+        r = owner_client.post("/api/chat/send", json={"session_id": sid, "message": "hi"})
+        assert r.status_code == 200, (
+            f"属主被自己的会话当外人：{r.status_code} {r.text[:200]}")
+        assert r.json().get("reply") == "固定回复", r.text[:200]
+
+
+class TestGroupSessionOwnership:
+    """群聊：内存命中也得判「是不是你的」，不只看删没删。"""
+
+    def _create_owned_group(self, client, store, owner):
+        cid = _card(store, owner)
+        r = client.post("/api/group/create", json={
+            "card_ids": [cid],
+            "user_persona_type": "stranger",
+            "user_persona_name": "路人",
+        })
+        assert r.status_code == 200, (
+            f"建群这一步就失败了，后面的属主断言无从谈起：{r.status_code} {r.text[:200]}")
+        return r.json()["group_id"], cid
+
+    def test_T3_group_send_non_owner_404(
+        self, store, owner, owner_client, intruder_client, chat_capable_llm, light_rag
+    ):
+        gid, cid = self._create_owned_group(owner_client, store, owner)
+        payload = {"target_card_id": cid, "message": "hi"}
+        foreign = intruder_client.post(f"/api/group/{gid}/send", json=payload)
+        assert foreign.status_code == 404, (
+            f"非属主往他人的群里发了消息：{foreign.status_code} {foreign.text[:200]}")
+
+        missing = intruder_client.post(
+            f"/api/group/nope_{uuid.uuid4().hex}/send", json=payload)
+        assert foreign.status_code == missing.status_code
+        assert _detail(foreign) == _detail(missing), "非属主与不存在同码但不同文案"
+
+    def test_T4_group_broadcast_non_owner_404(
+        self, store, owner, owner_client, intruder_client, chat_capable_llm, light_rag
+    ):
+        gid, cid = self._create_owned_group(owner_client, store, owner)
+        payload = {"target_card_ids": [cid], "message": "hi"}
+        foreign = intruder_client.post(f"/api/group/{gid}/broadcast", json=payload)
+        assert foreign.status_code == 404, (
+            f"非属主往他人的群广播：{foreign.status_code} {foreign.text[:200]}")
+
+        missing = intruder_client.post(
+            f"/api/group/nope_{uuid.uuid4().hex}/broadcast", json=payload)
+        assert foreign.status_code == missing.status_code
+        assert _detail(foreign) == _detail(missing), "非属主与不存在同码但不同文案"
+
+    def test_T5_group_send_owner_ok(
+        self, store, owner, owner_client, chat_capable_llm, light_rag
+    ):
+        gid, cid = self._create_owned_group(owner_client, store, owner)
+        r = owner_client.post(f"/api/group/{gid}/send", json={"target_card_id": cid, "message": "hi"})
+        assert r.status_code == 200, (
+            f"属主被自己的群当外人：{r.status_code} {r.text[:200]}")
+        assert r.json().get("reply") == "固定回复", r.text[:200]

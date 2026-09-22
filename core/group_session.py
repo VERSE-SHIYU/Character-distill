@@ -25,10 +25,15 @@ class GroupSession:
         user_persona_name: str = "",
         user_persona_desc: str = "",
         storage = None,
+        *,
+        user_id: str,
     ) -> None:
         self.id = id
         self.engines = engines  # card_id → ChatEngine
         self._storage = storage
+        # 属主。keyword-only 且**不给默认值**：漏传要当场 TypeError，而不是静默装个空串 ——
+        # 空串会让属主判定变成「谁都是外人」或「谁都能进」，两种都是静默错误。
+        self.user_id = user_id
         self.group_history: list[dict[str, Any]] = []
         self.lock = asyncio.Lock()
         self.user_persona_type = user_persona_type

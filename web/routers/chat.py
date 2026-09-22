@@ -139,7 +139,12 @@ async def _ensure_session(
         # SECURITY: verify session ownership even on memory hit.
         # 与下面的 DB 分支同判 404（含同一条文案）：命中/未命中的状态码若不同，
         # 反复请求就能靠差异推断资源是否存在——内存路径会把 DB 路径的防枚举漏掉。
-        if session.get("user_id") and session["user_id"] != user_id:
+        #
+        # 这里**故意**不写 `session.get("user_id") and ...` 那种前置短路：条目没登记属主时
+        # `None != user_id`，判「不是你的」。失败即关 —— 将来若又冒出一个忘了登记的构造点，
+        # 后果是属主本人 404（响亮，当场暴露），而不是所有人都能进（静默）。所以不需要再为
+        # 「构造点有没有登记」另建一把清单锁。
+        if session.get("user_id") != user_id:
             raise HTTPException(404, "Session not found")
         touch_session(session)
         return session

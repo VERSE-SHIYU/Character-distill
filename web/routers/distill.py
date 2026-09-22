@@ -1349,6 +1349,10 @@ async def start_session(
     from deps import get_text_manager, get_user_llm
     per_user_llm = await get_user_llm(user_id, storage)
     text_manager = get_text_manager(llm=per_user_llm)
+    # 没配 key 就建不出能用的会话（`_create_session` 挂在 text_manager 上，且引擎拿着 None
+    # 也聊不了）。与同文件其它端点同判 503；原先独立卡片分支会 200 建出一个 llm=None 的死会话。
+    if text_manager is None:
+        raise HTTPException(503, "请先在设置页配置 API Key")
 
     card_rec = await storage.get_card_owned(req.card_id, user_id)
     if not card_rec:
@@ -1393,18 +1397,15 @@ async def start_session(
                     embedding_key=emb_key, embedding_region=emb_region,
                 )
         else:
-            # 独立卡片模式：不加载原文，不构建 RAG，直接创建 ChatEngine
-            from core.chat_engine import ChatEngine
-            from deps import get_rag_config, get_memory_manager
-            engine = ChatEngine(
-                per_user_llm, None, card,
-                memory_manager=get_memory_manager(),
-                card_id=req.card_id,
+            # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
+            # 卡片 prompt）—— 这里原先手搓 ChatEngine 并直接写 sessions[id]，漏了 user_id，
+            # 于是 `_ensure_session` 的属主门整段被跳过（谁拿到 session_id 谁都能用）。
+            session_id = await asyncio.to_thread(
+                text_manager._create_session, "", card,
+                all_characters=[], rag=None,
+                card_id=req.card_id, user_id=user_id,
                 user_role=req.user_role,
-                storage=storage,
             )
-            session_id = _uuid.uuid4().hex[:12]
-            sessions[session_id] = {"engine": engine, "lock": asyncio.Lock(), "message_ids": []}
             all_characters = []
     except HTTPException:
         # 属主门的 404 这类有语义的拒绝不能被下面的宽 except 重抛成 500：
