@@ -516,7 +516,7 @@ class TextManager:
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards, user_id)
             session_id = await asyncio.to_thread(
-                self._create_session, content, card,
+                self._create_session, card,
                 all_characters=all_characters, rag=None,
                 card_id=card_id, user_id=user_id,
             )
@@ -579,7 +579,7 @@ class TextManager:
         all_chars = await self._build_all_characters(text_id, existing_cards, user_id)
 
         session_id = await asyncio.to_thread(
-            self._create_session, content, card,
+            self._create_session, card,
             all_characters=all_chars, rag=None,
             card_id=actual_card_id, user_id=user_id,
         )
@@ -627,7 +627,6 @@ class TextManager:
 
     def _create_session(
         self,
-        text: str,
         card: CharacterCard,
         *,
         all_characters: list[dict[str, Any]] | None = None,
@@ -637,6 +636,10 @@ class TextManager:
         user_role: str = "",
     ) -> str:
         """Build ChatEngine in memory; rag=None means no retrieval (pure card prompt). (sync)
+
+        `text` 曾是本函数的第一个位置参数，函数体里从未引用 —— 正文经由 `card` 与
+        调用方的 RAG 进入引擎。**死参数为错位留出空间**：留着它，调用点按位置多传一个
+        实参就有地方可落，静默装错值；删掉后同样的调用点当场 `TypeError`。
 
         `*` 之后全 keyword-only：可选参数有 5 个且类型都是 str，按位置传来错位不会报错，
         只会静默把值装进邻近的参数。曾发生过一次 —— 调用点多传两个实参，用户配置里的
