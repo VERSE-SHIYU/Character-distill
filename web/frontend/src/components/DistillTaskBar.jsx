@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
-import { fetchWithTimeout } from '../api/client'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useCanWrite from '../hooks/useCanWrite'
+import ErrorBox from './common/ErrorBox'
 import { Check, Close, Clock, Play, RefreshCw, Settings, Zap } from './common/Icon'
 
 // 终态三态各自的展示表。查表而非散落按 status 判终态的谓词 —— 是否终态只读 done；
@@ -36,7 +36,9 @@ function DistillTaskItem({ task }) {
   const pushView = useAppStore((s) => s.pushView)
   const loadCards = useAppStore((s) => s.loadCards)
   const removeDistillTask = useAppStore((s) => s.removeDistillTask)
+  const cancelDistillTask = useAppStore((s) => s.cancelDistillTask)
   const distillCharacter = useAppStore((s) => s.distillCharacter)
+  const [cancelError, setCancelError] = useState('')
   const done = isTerminal(task)
   const actions = taskActions(task)
   const displayPct = useSmoothProgress(task.progress_pct, done)
@@ -64,13 +66,16 @@ function DistillTaskItem({ task }) {
     }
   }
 
-  // 取消 = 服务端动作（actions 含 cancel 才发 DELETE）+ 本地移出列表
-  const handleCancel = (e) => {
+  // 取消 = 服务端动作（actions 含 cancel 才发 DELETE）+ 本地移出列表。
+  // 失败时任务留在列表里，把 detail 显示出来（106）。
+  const handleCancel = async (e) => {
     e.stopPropagation()
-    if (actions.includes('cancel')) {
-      fetchWithTimeout(`/api/distill/task/${task.id}`, { method: 'DELETE' }).catch(() => {})
+    setCancelError('')
+    try {
+      await cancelDistillTask(task)
+    } catch (err) {
+      setCancelError(err.message || '取消失败')
     }
-    removeDistillTask(task.id)
   }
 
   // resume 与 retry 打同一个端点（POST /api/distill/start），续跑 vs 整批重跑由后端
@@ -102,6 +107,7 @@ function DistillTaskItem({ task }) {
             {task.character}：「{task.awakening}」
           </div>
         )}
+        <ErrorBox message={cancelError} onDismiss={() => setCancelError('')} />
       </div>
       {!done && (
         <>
