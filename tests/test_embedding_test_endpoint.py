@@ -26,11 +26,7 @@ from fastapi.testclient import TestClient
 from deps import get_storage
 from storage.sqlite_store import SQLiteStore
 
-# 慢速限流器在 import 路由前换成 no-op（与 test_auth_tokens.py 同法）。
-import limiter as _lim_  # noqa: E402  (web/limiter.py)
-_lim_.limiter.limit = lambda *a, **kw: lambda f: f
-
-from routers.auth import get_current_user, router as auth_router  # noqa: E402
+from routers.auth import get_current_user, router as auth_router
 
 TEST_KEY = "sk-test-embedding-key-must-never-be-logged"
 USER_ID = "u_embed_probe"
@@ -56,6 +52,22 @@ def _error_body(code: str, message: str = "boom") -> dict:
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
+
+@pytest.fixture(autouse=True)
+def _rate_limit_off(monkeypatch):
+    """关掉慢速限流器（`5/minute`）—— 本文件要发 10 个请求。
+
+    **不能**照 `test_auth_tokens.py` 在 import 期把 `limiter.limit` 换成 no-op：那只在
+    「本文件是第一个 import `routers.auth` 的模块」时成立。全量跑时别的文件先 import 了
+    `routers.auth`，`@limiter.limit("5/minute")` 早已被真限流器装饰完，之后再改
+    `limiter.limit` 不回头 —— 第 6 个请求起 429，本文件红 5 条（现跑复现：
+    `pytest -p no:randomly tests/test_ownership_404.py tests/test_embedding_test_endpoint.py`）。
+    改关 `enabled`：slowapi 在**每次请求**的校验里读它，与 import 顺序无关。
+    """
+    import limiter as _lim_
+
+    monkeypatch.setattr(_lim_.limiter, "enabled", False)
+
 
 @pytest.fixture
 def store(tmp_path):
