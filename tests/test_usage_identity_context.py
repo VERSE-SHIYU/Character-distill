@@ -462,7 +462,7 @@ def test_start_route_lands_usage_rows(monkeypatch):
     app.add_middleware(server.AuthMiddleware)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": uid, "username": "t", "is_admin": False,
+        "id": uid, "username": "t", "role": "user",
     }
 
     from core.distiller import _IDENTIFY_CACHE
@@ -713,7 +713,7 @@ def test_chat_sse_lands_usage_row_with_request_identity(monkeypatch):
     app.add_middleware(server.AuthMiddleware)
     app.dependency_overrides[get_storage] = lambda: store
     app.dependency_overrides[get_current_user] = lambda: {
-        "id": uid, "username": "t", "is_admin": False,
+        "id": uid, "username": "t", "role": "user",
     }
 
     try:
