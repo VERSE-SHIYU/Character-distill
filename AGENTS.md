@@ -1263,7 +1263,7 @@ PROBE_IMAGE         false
   - **2026-09-22 补记：主动告警已上线**（与缺陷 98 同轮做，不在本条的修法内）。新增 `core/alerting.AlertHandler`：ERROR 级日志按 `(logger 名, 异常类型)` 节流后投递到 `ALERT_EMAIL`（同键 1 小时一封，窗口后那封附上被压下的次数），在 `web/server.py` 的 lifespan 里与 `install_log_collector()` 同处挂到 root logger。本条要的其实是**两跳**：`print` → 面板（可见）是缺陷 93 修的那一跳，「面板 → 人」是这一跳 —— 面板得有人打开才看得见，SG 的「数月无人察觉」正卡在后一跳。上面「仍未定的那半」里的「计数告警」至此**机制已具备、口径仍未定**：要不要让用量写库失败真的发信仍是产品决策，现在只是有了通道（`ALERT_EMAIL` 为空时整条不安装，见 `core/alerting.py`）。
 - **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
-**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**已修**（口径统一，2026-09-22；可见性 2026-09-22 收口 → 泄漏那半 2026-09-22 收口 → 口径统一 2026-09-22 收口）
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**已修**（口径统一，2026-09-22；可见性 2026-09-22 收口 → 泄漏那半 2026-09-22 收口 → 口径统一 2026-09-22 收口）。**覆盖范围：一对一聊天（非流式 + 流式）与群聊广播** —— 另有两处角色消息保存点（开场白、重逢问候）不在本口径内，见缺陷 122。
 - **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
 - **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
 - **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
@@ -1512,7 +1512,16 @@ PROBE_IMAGE         false
 - **形态**：`web/routers/group.py:522` 的 `async with nonfatal("group", "save messages")` 块内连出两条 `save_group_message`（`:523` 用户、`:527` 助手）。
 - **后果**：用户那笔抛错时块内后续（助手那笔）整条不执行，而调用方只拿到一个 `failed` —— 与非流式一对一改前的「三笔共用一个块」是**同一形态**（那半边已在 `fc18018` 拆掉），同样分不出是哪条没存上。
 - **为什么只记不修**：前端只调用流式的 `/broadcast`，该端点在本仓**没有调用方**；本轮范围外（spec 第 5 步）。将来谁接上它，按 94 的同一口径拆成逐笔 `nonfatal` 即可 —— 拆法已有先例，不需要新口径。
-- **判据命令**：`git grep -n "nonfatal(" web/routers/group.py` —— 数「有几个块是复数名」。读数（2026-09-22 现跑）：**1** 处（`:522` 的 `"save messages"`，正是共用块）；其余三处（`:585` / `:610` / `:626`）均为逐笔名，属 `broadcast`。
+- **判据命令**：`git grep -n "nonfatal(" web/routers/group.py` —— 数「有几个块是复数名」。读数（2026-09-23 现跑）：**1** 处（`:522` 的 `"save messages"`，正是共用块）；其余四处（`:585` / `:603` / `:612` / `:627`）均为逐笔名，属 `broadcast`（`:603` 是补 2 新加的角色反应写入）。
+
+**122. 两处角色消息保存点未纳入 94 口径 —— 开场白与重逢问候存失败时无标记、无提示** —— 状态：**记账**（不修，2026-09-23）
+- **归属**：72 线 · 94 口径统一（2026-09-23 审计复查时查出的范围缺口；94 的「已修」只覆盖一对一聊天与群聊广播）。
+- **形态一**：`web/routers/distill.py:1467` 的 `async with nonfatal("start_session", "save opening message")` 块内含三件事 —— 开场白落库、`engine_obj.history` 追加、`message_ids` 登记。
+- **后果一**：存失败被吞掉后，`opening` 仍作为 `result["first_message"]` 返回（同文件 `:1478`），前端**照常显示**这条开场白，但它不带任何「未保存」标记（该接口没有对应字段，94 只给一对一 chat 与群聊 broadcast 的返回体加了 `*_saved` / `saved`），也不会进 `engine.history` —— 角色下一轮不记得自己说过这句。
+- **形态二**：`web/routers/history.py:323` 的 `async with nonfatal("history", "reunion greeting")` 把**生成**（`engine.generate_reunion_greeting`）与**保存**两件事包在同一块里。
+- **后果二**：存失败时 `greeting_data` 保持 `None`，整条问候从返回体里消失 —— 用户看不到问候，也看不到任何提示，只当今天没有重逢问候。附带一处：同文件 `:338` 的 `_visit_count >= 3 and not greeting_data` 会把「存失败」读成「没生成」，于是转而走按到访次数觉察那条路。
+- **为什么只记不修**：两处都不在 94 已定的四条口径内 —— 口径管的是「聊天里逐条消息」，开场白是会话种子、重逢问候是进场的额外一句。要不要给它们也标「未保存」，先得定这两条消息在前端有没有落脚点（开场白有气泡、问候目前只在返回体里）。**待产品拍板**，不自行扩口径。
+- **判据命令**：`git grep -n "nonfatal(" -- web/routers/distill.py web/routers/history.py` —— 逐条看「块内除了保存还包了什么」。读数（2026-09-23 现跑）：两文件**各 1** 处（`distill.py:1467`、`history.py:323`），且两处的块内都不止保存一笔（前者含 `engine.history` 追加与 `message_ids` 登记，后者含问候**生成**）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 
