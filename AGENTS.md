@@ -1275,6 +1275,7 @@ PROBE_IMAGE         false
   - 另加 `UpstreamFailure`（`2205b12`）：重试耗尽时抛的异常自带 `user_message`，上游已知状态码（401/403 key、402 余额、429 限流）给出能指导下一步的中文提示，未登记的状态码落通用文案；`str()` 逐字不变，日志与 core 侧既有的 `failed after N attempts` / `rate limited (429)` 判据继续命中。
   - **这三处不新开台账号**：它们与 94 是同判据、同一个决定面（§四「理由要升格成判据」），一并收口才自洽；**可见性那半原样未动**（群聊流式仍把保存失败当 error 事件发出去，只是帧里的值换了）。
 - **判据命令（泄漏那半，2026-09-22 现跑）**：`git grep -n "preserve_unknown" -- ':!AGENTS.md'` → **空**（开关已删；AGENTS.md 里那句是历史快照，故排除）；`git grep -nE "'error': str\(exc\)|\"message\": str\(exc\)" -- web/routers/chat.py web/routers/group.py web/routers/text.py` → **空**。**上面那条「判据命令」（可见性那半）不变**。
+- **同轮例外（2026-09-22，`9dc4118`）**：`web/routers/auth.py::test_embedding` 是**连通性测试**，用户点它就是为了查自己的 key 哪里不通，故**有意**把上游原话（`detail`）连同中文提示一并返回。判定只按 `status_code` / `code` / 异常类型（`core/embeddings.py::describe_embedding_failure`），不匹配报错文本。它**不在本条「一律通用文案」的口径内** —— 与上面三处（日常路径，原文只算泄漏面）性质不同，审计时不算漏修。
 - **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
 - **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
 
@@ -1467,6 +1468,29 @@ PROBE_IMAGE         false
 - **嫌疑**：**112 那一族**（全量里约 20 条 `PytestUnhandledThreadExceptionWarning`、aiosqlite `Event loop is closed`，条数与命中用例每次不同）。它同样表现为「全量里随机位置的线程/事件循环异常」。**但这是嫌疑不是结论 —— 没有任何证据把 117 钉到 112 上**：117 是「停住」，112 是「抛异常后继续」，形态不同；且 117 只发生过一次，单次样本不足以归因。**本条不裁定根因。**
 - **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即失败，「挂住」从此落进「红」这一类，能被正常的失败流程接住，不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。取值依据（最近 46 次成功 run 的本步耗时）：p50 = 235s、最大 = 714s，40 分钟 = p50 的 10.2 倍。**这个防护只让挂死可见，不消除挂死** —— 根因仍是记账状态。
 - **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（本仓 CI 不出产物，run id 就是证据坐标）。
+
+**118. `importlib.reload` 替换异常类对象 —— 按「retry → error → chat」的文件顺序跑，三个文件红 4 条** —— 状态：**已修**（2026-09-22，`6c8d805`，分支 `worktree-session-cred`）
+- **归属**：72 线（94 泄漏那半的收尾）。
+- **形态**：`tests/test_llm_adapter_retry.py::test_timeout_family_constants_consume_env` 用 `importlib.reload(adapters.llm_adapter)` 读「六个超时常量确由 env 派生」，以证明「改 env 真的改行为」。`reload` 把模块属性**整体换新**，`IncompleteResponseError` 等异常**类对象**也跟着换了一份新类 —— 别的测试文件在**收集期** import 到的是旧类，此后它的 `pytest.raises(旧类)` 抓不到新抛的类。
+- **引入**：`3d1d171`（该用例本身）。
+- **触发面**：只有文件顺序落到「retry → error → chat」才显形（pytest-randomly 打乱时常绿），故长期未被发现。现跑：`pytest -p no:randomly tests/test_llm_adapter_retry.py tests/test_error_user_facing.py tests/test_chat_stream_error.py` 红 **4** 条 —— `test_error_user_facing.py::test_known_failures_screen_exact_text_and_no_internals` / `::test_known_failures_keep_ops_detail_out_of_screen`、`test_chat_stream_error.py::test_incomplete_payload_is_identifiable` / `::test_boundary_maps_known_failure_and_rejects_others`。
+- **修法**：不再 reload `sys.modules` 里那一份。改为 `importlib.util.spec_from_file_location` 以**另一个模块名**（`_llm_adapter_env_probe`）加载一份**私有副本**读常量；副本**不写进 `sys.modules`**（注册了等于又替了一份全局单例，别处再 `import adapters.llm_adapter` 会拿到带 env 的版本）。测试命题（常量确由 env 派生）不变。
+- **变异（现跑，2026-09-22）**：把 `_load_env_probe()` 改回 `return importlib.reload(M)` → 上面那条三文件命令**红 4 条**，与修前逐条同集；还原后 28 passed。
+- **判据命令**：`git grep -n "importlib.reload" tests/test_llm_adapter_retry.py` → **0**（本条没有「应为 0」以外的验收值）。
+
+**119. 全站没有「`print` 型失败」的告警 —— 失败只到容器 stdout，owner 不翻 `docker logs` 就无从得知** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（第 3 步的失败日志正好落在这一格的盲区里，顺手记账）。
+- **形态**：`core/alerting.AlertHandler`（`3fb3dbf`）挂的是 **root logger** 的 ERROR 级 handler，投递到 `ALERT_EMAIL`；后台日志面板（`core/log_collector.install_log_collector`）同样只收 **logging 记录**。而路线里大量失败处理是 `print(f"[xxx] ... failed ...")` 形态 —— `print` 写 fd 1，**不进 logging 管道**，于是既不上面板、也不进告警。
+- **本轮落点**：第 3 步给 `web/routers/auth.py::test_embedding` 加的失败日志正是 `print` 形态（与其余路由同风格，spec 明确点名），所以它**看得见但不会告警** —— 这条日志的可见性止于容器输出。
+- **读数（2026-09-22 现跑）**：`git grep -nE "^\s*print\(f?\"\[[a-z_]+\][^\"]*[Ff]ail" -- web core storage` → **115** 行。这些处**没有一处**会被 `AlertHandler` 收到。
+- **为什么只记不修**：把 `print` 改判 `logging` 是**全站面的口径变更**（哪些失败该 ERROR、哪些本就是 INFO），牵动面板噪声与节流键 `(logger 名, 异常类型)`，属产品决策；本轮范围外（spec §5「不做告警与监控」）。
+
+**120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线（S0 第 3 条查实）。
+- **形态**：`web/routers/auth.py:145` 的 `ApiConfigRequest.embedding_region: str = ""` **无取值校验**，`update_user_api_config`（`:619`）原样落库。该值随后被 `core/rag.py:176` 读作 `region=config.get("embedding_region", "cn")` → `core/embeddings.py:390` `DashScopeEmbedding(api_key, region, ...)` → `DASHSCOPE_BASE_URLS[region]`。
+- **后果**：保存一个未知地域（如 `"us"`）后，该用户此后**所有**走嵌入的路径（RAG 检索、索引、蒸馏建会话）都在构造客户端那一刻 `KeyError`，而保存那一刻毫无提示、返回 `{"ok": True}`。
+- **本轮只修了另一面**：第 3 步只给**连通性测试端点**加了前置校验（不在 `DASHSCOPE_BASE_URLS` 里就返回「地域只能选 cn 或 intl」，commit `9dc4118`）。**保存路径未动** —— 两者不是同一处，别把本条的修当成已做。
+- **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-22 修后）：`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS` **1** 处；`ApiConfigRequest` 定义（`:150`）与 `update_api_config` 落库（`:619`）**各 0** 处。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

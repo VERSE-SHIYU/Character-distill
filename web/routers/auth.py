@@ -633,7 +633,12 @@ async def test_embedding(
     user: dict[str, Any] = Depends(get_current_user),
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
-    """Test DashScope embedding connectivity with the user's key and region."""
+    """Test DashScope embedding connectivity with the user's key and region.
+
+    这是**排障**端点，不是用户的日常路径：失败时除中文提示外**有意**把上游原话
+    （`detail`）一并返回给用户 —— 用户来这里就是为了看 key 哪里不通。故它不在
+    台账 94「一律通用文案」的口径内。
+    """
     key = req.embedding_key.strip()
     region = req.embedding_region.strip() or "cn"
 
@@ -647,13 +652,25 @@ async def test_embedding(
     if not key:
         return {"ok": False, "error": "未提供 API Key，请先填写并保存"}
 
+    from core.embeddings import (
+        DASHSCOPE_BASE_URLS,
+        DashScopeEmbedding,
+        describe_embedding_failure,
+    )
+
+    # 先在构造客户端之前拦下非法地域（改前是 `DASHSCOPE_BASE_URLS[region]` 抛 KeyError 上屏）。
+    # 校验与构造函数查**同一张表**，不另写一份 {"cn", "intl"}。
+    if region not in DASHSCOPE_BASE_URLS:
+        return {"ok": False, "error": "地域只能选 cn 或 intl"}
+
     try:
-        from core.embeddings import DashScopeEmbedding
         emb = DashScopeEmbedding(api_key=key, region=region)
         emb(["测试"])
         return {"ok": True}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        # 日志只放 user id 与异常，绝不放 key。
+        print(f"[auth] Embedding test failed for user {user['id']}: {exc!r}")
+        return {"ok": False, "error": describe_embedding_failure(exc), "detail": str(exc)}
 
 
 @router.get("/usage")
