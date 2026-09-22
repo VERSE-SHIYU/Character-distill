@@ -19,6 +19,7 @@ import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
+import UnsavedHint from './common/UnsavedHint'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import PageHeader from './PageHeader'
@@ -713,6 +714,7 @@ function ChatView() {
                     content={msg.content}
                     retracted={msg.retracted}
                     evidence={msg.evidence}
+                    unsaved={msg.unsaved}
                     charName={charName}
                     avatarUrl={avatarUrl}
                     userRole={userRole}
@@ -966,7 +968,7 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, unsaved, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
   const isMobile = useIsMobile()
   const [showRetracted, setShowRetracted] = useState(false)
 
@@ -1060,6 +1062,9 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evide
             )}
           </span>
         )}
+        {/* 入库失败的那条自己声明：不拦、不弹窗、不改发送入口，只在原地标一句 */}
+        {unsaved && <UnsavedHint />}
+
         {/* Voice bubble */}
         {!isUser && audioUrl && (
           <div

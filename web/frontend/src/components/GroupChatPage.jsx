@@ -12,10 +12,12 @@ import { Check, Theater, Users, Trash2, ChevronDown, Square, Play, Clock, MoreHo
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
+import { withSaveResult } from '../utils/withSaveResult'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
+import UnsavedHint from './common/UnsavedHint'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import { Calendar } from './common/ChatHistoryPanel'
 import { loadCardAvatar } from '../store/db'
@@ -687,12 +689,16 @@ export default function GroupChatPage() {
         // onEvent: user/reply SSE events
         if (currentGroupRef.current !== sendGroupId) return
         if (payload.type === 'user') {
-          // Replace this optimistic user message ID with the real one from server
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: payload.msg_id } : m))
+          // Replace this optimistic user message ID with the real one from server.
+          // 存失败时后端给 msg_id: null —— 保留临时 id（`?? m.id`），只把 saved 翻成 unsaved；
+          // 拿 msg_id 当门闩会让「没存上」这条消息连「未保存」都标不出来。
+          setMessages(prev => prev.map(m => m.id === tempId
+            ? withSaveResult({ ...m, id: payload.msg_id ?? m.id }, payload.saved)
+            : m))
         } else if (payload.type === 'reply') {
           // Append character reply as it comes in
           const role = payload.role || 'assistant'
-          setMessages(prev => [...prev, {
+          setMessages(prev => [...prev, withSaveResult({
             id: payload.msg_id,
             role,
             speaker: payload.speaker,
@@ -700,7 +706,7 @@ export default function GroupChatPage() {
             speaker_card_id: payload.card_id,
             created_at: new Date().toISOString(),
             _typing: role === 'assistant', // typewriter: only for normal text replies
-          }])
+          }, payload.saved)])
         }
       },
     )
@@ -1100,7 +1106,10 @@ export default function GroupChatPage() {
                         <div className={`messages-row${isUser ? ' mine' : ' other'}`}>
                           {isUser ? (
                             currentGroup?.user_persona_type === 'director' ? (
-                              <div className="narration-note">{m.content}</div>
+                              <div className="narration-note">
+                                {m.content}
+                                {m.unsaved && <UnsavedHint />}
+                              </div>
                             ) : (
                             <ChatBubble
                               side="right"
@@ -1115,6 +1124,7 @@ export default function GroupChatPage() {
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                               <span className="messages-msg-text">{m.content}</span>
+                              {m.unsaved && <UnsavedHint />}
                               <MessageReactions
                                 side="right"
                                 reactions={reactions}
@@ -1127,9 +1137,12 @@ export default function GroupChatPage() {
                             </ChatBubble>
                           )
                           ) : m.role === 'silent' ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0' }}>
-                              <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
-                              <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px 0' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
+                                <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
+                              </div>
+                              {m.unsaved && <UnsavedHint />}
                             </div>
                           ) : (
                             <>
@@ -1173,6 +1186,7 @@ export default function GroupChatPage() {
                               >
                                 <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                                 <GroupMessageText content={m.content} typing={!!m._typing} onTypingDone={() => clearTyping(m.id)} />
+                                {m.unsaved && <UnsavedHint />}
                                 <MessageReactions
                                   side="left"
                                   reactions={reactions}
