@@ -4,6 +4,7 @@ import { parseCardJson } from '../utils/card'
 import { resolveOpeningMessages } from './openingMessage'
 import { TERMS_VERSION, PRIVACY_VERSION } from '../legal/versions'
 import { checkRepeat } from '../utils/repeatGuard'
+import { withSaveResult } from '../utils/withSaveResult'
 import { FALLBACK } from '../config/navigation'
 import { scoped, bumpScope } from './scope'
 
@@ -1399,7 +1400,18 @@ const useAppStore = create((set, get) => {
         client_tz: clientTz(),
       })
       setScoped((s) => {
-        const msgs = [...s.messages]; msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: data.user_msg_id, timestamp: data.user_created_at }; msgs.push(withCid({ role: 'char', content: data.reply, id: data.char_msg_id, retracted: data.retracted || false, timestamp: data.char_created_at }))
+        const msgs = [...s.messages]
+        // `?? prev.id`：存失败时后端给 null，别把 id 抹成 null（_cid 保住了 React key，
+        // 但撤回/反应都拿 msg.id 当参数，抹掉就是真的丢了）。
+        const prevUser = msgs[msgs.length - 1]
+        msgs[msgs.length - 1] = withSaveResult(
+          { ...prevUser, id: data.user_msg_id ?? prevUser.id, timestamp: data.user_created_at },
+          data.user_saved,
+        )
+        msgs.push(withSaveResult(withCid({
+          role: 'char', content: data.reply, id: data.char_msg_id,
+          retracted: data.retracted || false, timestamp: data.char_created_at,
+        }), data.char_saved))
         if (data.summary) {
           msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: data.summary }))
         }
@@ -1463,11 +1475,19 @@ const useAppStore = create((set, get) => {
         if (get().sessionId !== streamSessionId) return
         set((s) => {
           const msgs = [...s.messages]
-          if (payload.user_msg_id && msgs.length >= 2) {
-            msgs[msgs.length - 2] = { ...msgs[msgs.length - 2], id: payload.user_msg_id, timestamp: payload.user_created_at }
-          }
-          if (payload.char_msg_id) {
-            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id, timestamp: payload.char_created_at }
+          if (msgs.length >= 2) {
+            // 存失败时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
+            // 要不要标「未保存」只由 user_saved/char_saved 说了算。
+            const prevUser = msgs[msgs.length - 2]
+            msgs[msgs.length - 2] = withSaveResult(
+              { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
+              payload.user_saved,
+            )
+            const prevChar = msgs[msgs.length - 1]
+            msgs[msgs.length - 1] = withSaveResult(
+              { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
+              payload.char_saved,
+            )
           }
           if (payload.summary) {
             const userIdx = msgs.length - 2
@@ -1575,7 +1595,10 @@ const useAppStore = create((set, get) => {
         if (get().sessionId !== streamSessionId) return
         set((s) => {
           const msgs = [...s.messages]
-          if (payload.char_msg_id) msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], id: payload.char_msg_id }
+          const prev = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = withSaveResult(
+            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_saved,
+          )
           return { messages: msgs, sending: false }
         })
         if (voiceEnabled && fullReply) {
