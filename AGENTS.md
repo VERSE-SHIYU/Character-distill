@@ -1407,7 +1407,8 @@ PROBE_IMAGE         false
 
 **107. LLM 全不可用时 `/api/distill/start_session` 回 500「操作失败，请稍后重试」—— 兄弟端点早就回 503 并说清原因** —— 状态：**已修**（`dbdbf9c` + `7a5992a`）
 - **归属**：D 组。
-- **收口**：由 72 线第 1 步的 **503 门**收口 —— `start_session` 在建会话之前统一判 `text_manager is None` → `503 请先在设置页配置 API Key`，与同文件兄弟端点同码同文案。该门同时消掉了「独立卡片分支 200 建出一个 llm=None 的死会话」这一半（见缺陷 108–110）。测试见 `tests/test_ownership_404.py::TestStartSessionApiKeyGate` 的 T7 / T8（`7a5992a`），`no_api_key` 夹具把 `deps.get_user_llm` 钉成返 `None`。
+- **收口**：由 72 线第 1 步的 **503 门**收口 —— `start_session` 在建会话之前统一判 `text_manager is None` → `503 请先在设置页配置 API Key`，与同文件兄弟端点同码同文案。该门同时消掉了「独立卡片分支 200 建出一个 llm=None 的死会话」这一半（见缺陷 108–109）。测试见 `tests/test_ownership_404.py::TestStartSessionApiKeyGate` 的 T7 / T8（`7a5992a`），`no_api_key` 夹具把 `deps.get_user_llm` 钉成返 `None`。
+- **两条分支两种状态码（原 110 的内容，2026-09-22 并入）**：没配 key 时 `get_text_manager(llm=None)` 返 `None`（`web/deps.py:290` 的 `llm is None ⟺ None`）。**独立卡片分支**手搓的引擎拿 `llm=None` 照样 200，**建出一个聊不了的会话**；**文本分支**撞上 `NoneType` 才 500。同一个前置条件、两条分支两种码 —— 门槛提到两条分支之前后，两种码归一为 503。红源：T7 / T8。
 - **形态（修前）**：`web/routers/distill.py` 的 `text_manager = get_text_manager(llm=per_user_llm)`，而 `get_text_manager` 在 `llm is None` 时**返回 None**（`web/deps.py:290`）。`start_session` 不查 None，`text_manager._build_all_characters(...)` 直接 `AttributeError`，被宽 `except Exception` 兜成 `HTTPException(500, "操作失败，请稍后重试")`。
 - **实测（修前）**：2026-09-22 本机把后端起在「无任何 LLM 凭据」下（既无用户 key 也无全局 key），客户端点「+ 新建存档」→ `POST /api/distill/start_session -> 500`；服务端日志 `[deps] LLMAdapter init failed (API not configured?): missing API key …` + `[distill] Create session for card … failed: 'NoneType' object has no attribute '_build_all_characters'`。
 - **为什么算缺陷而不是「配置错了活该」**：同一文件的兄弟端点（`text_manager is None` → 503「请先在设置页配置 API Key」）有正解；且本端点开场白那一段原先自己就用 `if per_user_llm is not None:` 表达过「LLM 可以缺席」。缺席是被预期的状态，只是早退那一步没跟上。**500 把「没配 key」说成「服务端故障」**：用户据此会去重试，而正确的下一步是去设置页配 key。**（该 `if per_user_llm is not None:` 已于 `926d870` 删除**：有了 503 门它恒真、else 不可达，留着只是死分支。）
@@ -1584,10 +1585,8 @@ PROBE_IMAGE         false
 - 修法：`GroupSession` 增加 **keyword-only、无默认值**的 `user_id`；两处读取合成一个 `_get_owned_group(group_id, user_id, storage)`（内存命中也要 `group.user_id == user_id`，否则按属主重建）。非属主与「不存在」因此**同码同文案**（`群聊会话已过期，请重新创建`）。`deleted_at` → 410 的判断不动（管的是「已删除」，与属主无关）。
 - 红源：`tests/test_ownership_404.py::TestGroupSessionOwnership` 的 T3（`/send`）与 T4（`/broadcast`）。
 
-**110. `start_session` 无 key：独立卡片 200 建出一个死会话、文本分支 500** —— 状态：**已修**（`dbdbf9c` + `7a5992a`）
-- 没配 key 时 `get_user_llm` 返 `None` → `get_text_manager(llm=None)` 也是 `None`（`web/deps.py:290` 的 `llm is None ⟺ None`）。独立卡片分支手搓的引擎拿 `llm=None` 照样 200，**建出一个聊不了的会话**；文本分支撞上 `NoneType` 才 500。同一个前置条件在两条分支上是两种状态码。
-- 修法：在调用两条分支之前统一判 `per_user_llm is None` → 503（与同文件 `:685` 的兄弟端点同码同文案）。`7a5992a` 补测试。**该门同时是缺陷 107 的收口**。
-- 红源：`TestStartSessionApiKeyGate` 的 T7 / T8（`no_api_key` 夹具把 `deps.get_user_llm` 钉成返 `None`）。
+**110. `start_session` 无 key：独立卡片 200 建出一个死会话、文本分支 500** —— 状态：**并入 107**
+- 同一事实（没配 key 时 `start_session` 的行为）、同一修复提交（`dbdbf9c` + `7a5992a`），内容已整体并入 **107**，此处不再单独维护 —— 同一个事实记两条，改状态必然只改到一处。
 
 **111. `_create_session` 死参数 `text`** —— 状态：**已修**（`5947d18`）
 - `text` 是**第一个位置参数**，函数体从未引用（正文经 `card` 与调用方的 RAG 进引擎）。**死参数为错位留出空间** —— 与缺陷 G 那次的落脚点同形：调用点按位置多传一个实参就有地方可落、静默装错值。删掉后 `card` 成为唯一的位置参数，多传的位置实参当场 `TypeError`。
@@ -1602,6 +1601,8 @@ PROBE_IMAGE         false
 - 之后第一个走 `submit_to_main_loop` 的用例把协程投到死 loop 上；`core/chat_engine.py` 的宽 `except` 吞掉异常，于是它以 `coroutine ... was never awaited` 的形式飘在**别的**用例头上（最难查的那种串味）。
 - 修法：把启动那一段包进本文件既有的 `_snapshot(S.get_loop_submitter, S.set_loop_submitter, before)` 惯用法，并在块后断言已还原。**不新建全局夹具** —— 还原责任归泄漏用例自己（与 `_Restored` docstring 的「还原，而不是置 None」同理由）。
 - 红源：撤掉那层 `_snapshot` 包装 → `test_l11_app_installs_the_production_guard` 的最后一条断言红。
+- **已知边界（2026-09-22 审计）**：**lifespan 注册的守卫与投递器没有配对注销** —— 生产关停路径不撤销这两处注册。目前全仓**只有 `test_l11` 会启动生产 lifespan**，两个注册都由测试侧的 `_snapshot` 隔离，故影响面就这一处；测试侧隔离进程级注册也正是本仓既定机制。
+- **收敛时机**：**出现第二个启动 lifespan 的用例时**，再把这套还原收敛成统一机制。在那之前不动 —— 为一个假想的用例去给 `deps` 加注销接口、改生产关停流程，规模不相称；且「关停后仍在跑的线程再投递，该走死 loop 报错还是走 `core.scheduling` 的回退语义」需要单独调研，不能夹在收尾里。
 
 ### 四、验证纪律
 
