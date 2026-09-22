@@ -192,11 +192,18 @@ class _RetryBudget:
             # remaining−wait−margin ≥ min（因 remaining−wait ≥ window）→ 超时不受过冲影响。
             self._next_to = min(self._ceiling, remaining - wait - _ATTEMPT_TIMEOUT_MARGIN_S)
         if cap_hit:
+            # 只是换抛出类型/带上屏文案：f-string 与现在逐字相同，core 侧既有的
+            # "failed after N attempts" / "rate limited (429)" 判据继续命中。
+            user_message = _upstream_user_message(exc)
             if is_429:
                 print(f"{self._tag}Rate limited (429), all {self._total} attempts exhausted")
-                raise RuntimeError(f"{self._err} rate limited (429) after {self._total} attempts: {exc}")
+                raise UpstreamFailure(
+                    f"{self._err} rate limited (429) after {self._total} attempts: {exc}",
+                    user_message=user_message)
             print(f"{self._tag}All {self._total} attempts failed: {exc}")
-            raise RuntimeError(f"{self._err} failed after {self._total} attempts: {exc}")
+            raise UpstreamFailure(
+                f"{self._err} failed after {self._total} attempts: {exc}",
+                user_message=user_message)
         if is_429:
             print(f"{self._tag}Rate limited (429), attempt {self._total}, waiting {wait:.1f}s")
         else:
@@ -344,6 +351,41 @@ _INCOMPLETE_USER_MESSAGES: dict[str, str] = {
     "insufficient_system_resource": "服务繁忙，请稍后重试",
 }
 _OK_FINISH_REASONS = frozenset({"stop", "tool_calls"})
+
+# 上游已知失败 → 能指导下一步的中文文案（缺陷 94 的泄漏那半）。这三条是可判定的处置：
+# key 无效去设置页、余额不足去充值、限流等一会儿 —— 通用文案给不了这些下一步。
+# 未登记的状态码不在这里（落 "" → 出口通用文案）：宁可口径笼统，也不把上游报错原文上屏。
+_UPSTREAM_USER_MESSAGES: dict[int, str] = {
+    401: "API Key 无效或无权限，请到设置页检查",
+    403: "API Key 无效或无权限，请到设置页检查",
+    402: "账户余额不足，请充值后重试",
+    429: "请求过于频繁，请稍后再试",
+}
+
+
+class UpstreamFailure(RuntimeError):
+    """上游已知失败重试耗尽 —— 带能指导用户下一步的上屏文案。
+
+    ``user_message`` 走 keyword、有默认值 ""：空串即「未登记的状态码」，出口
+    （``user_facing_error``）据它落通用文案。默认值也让 ``cls(*args)`` 仍能重建 ——
+    不必自定义 ``__reduce__``（同 ``core.distiller.DistillError`` 先例）。
+    """
+
+    def __init__(self, message: str, user_message: str = "") -> None:
+        self.user_message = user_message
+        super().__init__(message)
+
+
+def _upstream_user_message(exc: Exception) -> str:
+    """上游异常 → 上屏文案；未登记的状态码 → ""（由出口落通用文案）。
+
+    识别口径与 ``_classify_retry`` 的 429 判定一致（先看 ``status_code``，其次报错文本里的
+    429）—— 免得同一次失败在「算不算限流」和「该说什么」两处各判出一个答案。
+    """
+    code = getattr(exc, "status_code", None)
+    if code is None and "429" in str(exc):
+        code = 429
+    return _UPSTREAM_USER_MESSAGES.get(code, "")
 
 
 class IncompleteResponseError(RuntimeError):
