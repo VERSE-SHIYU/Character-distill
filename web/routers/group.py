@@ -577,14 +577,17 @@ async def broadcast_message(
             user_speaker = req.speaker or group.speaker_name
             user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
-            # Save user message and yield event
+            # 三类保存各自一个 nonfatal：共用一个块时前一笔失败会让后面整段不执行，而调用
+            # 方只拿到一个 failed。**帧不论成败都发** —— 角色已经说完的话不该因为写库失败
+            # 从用户眼前消失；`saved` 是逐条上报的「未保存」依据，`msg_id` 在失败时为 null。
             user_msg_id = None
             if not req.auto_mode:
-                user_msg_id = await storage.save_group_message(
-                    group_id, user_speaker, "user", req.message, user_speaker_card_id,
-                    reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
-                )
-                yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id}, ensure_ascii=False)}\n\n"
+                async with nonfatal("group", "save user message") as user_out:
+                    user_msg_id = await storage.save_group_message(
+                        group_id, user_speaker, "user", req.message, user_speaker_card_id,
+                        reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
+                    )
+                yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id, 'saved': not user_out.failed}, ensure_ascii=False)}\n\n"
 
             # Stream character replies one by one
             async with group.lock:
@@ -592,41 +595,47 @@ async def broadcast_message(
                     if not r["reply"]:
                         continue
 
-                    msg_rec = None
                     m = re.fullmatch(r'\s*\[REACT:(.+?)\]\s*', r["reply"])
                     if m:
+                        # 用户那条没存上时 user_msg_id 为 None，反应自然跳过（既有判断照旧）。
                         if not req.auto_mode and user_msg_id is not None:
                             await storage.toggle_reaction(user_msg_id, f"char:{r['card_id']}", m.group(1))
                         continue
 
                     s = re.fullmatch(r'\s*\[SILENT\]\s*', r["reply"])
                     if s:
+                        msg_id = None
+                        saved = True
                         if not req.auto_mode:
-                            msg_rec = await storage.save_group_message(
-                                group_id, r["speaker"], "silent", "", r["card_id"],
-                            )
-                            if msg_rec:
-                                yield f"data: {json.dumps({
-                                    'type': 'reply',
-                                    'card_id': r['card_id'],
-                                    'speaker': r['speaker'],
-                                    'reply': '',
-                                    'role': 'silent',
-                                    'msg_id': msg_rec,
-                                }, ensure_ascii=False)}\n\n"
+                            async with nonfatal("group", "save silent message") as silent_out:
+                                msg_id = await storage.save_group_message(
+                                    group_id, r["speaker"], "silent", "", r["card_id"],
+                                )
+                            saved = not silent_out.failed
+                        yield f"data: {json.dumps({
+                            'type': 'reply',
+                            'card_id': r['card_id'],
+                            'speaker': r['speaker'],
+                            'reply': '',
+                            'role': 'silent',
+                            'msg_id': msg_id,
+                            'saved': saved,
+                        }, ensure_ascii=False)}\n\n"
                     else:
-                        msg_rec = await storage.save_group_message(
-                            group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
-                        )
-                        if msg_rec:
-                            yield f"data: {json.dumps({
-                                'type': 'reply',
-                                'card_id': r['card_id'],
-                                'speaker': r['speaker'],
-                                'reply': r['reply'],
-                                'role': 'assistant',
-                                'msg_id': msg_rec,
-                            }, ensure_ascii=False)}\n\n"
+                        msg_id = None
+                        async with nonfatal("group", "save assistant message") as char_out:
+                            msg_id = await storage.save_group_message(
+                                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+                            )
+                        yield f"data: {json.dumps({
+                            'type': 'reply',
+                            'card_id': r['card_id'],
+                            'speaker': r['speaker'],
+                            'reply': r['reply'],
+                            'role': 'assistant',
+                            'msg_id': msg_id,
+                            'saved': not char_out.failed,
+                        }, ensure_ascii=False)}\n\n"
 
             # Done — all replies sent
             yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
