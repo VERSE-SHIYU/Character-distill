@@ -9,7 +9,7 @@ import json
 import os
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from adapters.llm_adapter import LLMAdapter
 from core.character_roster import aliases_for, cached_characters, resolve_characters
@@ -32,7 +32,7 @@ class TextManager:
 
     def __init__(
         self,
-        storage: StorageBase,
+        get_storage: Callable[[], StorageBase],
         distiller: Distiller,
         llm: LLMAdapter,
         sessions: dict[str, dict[str, Any]],
@@ -40,7 +40,11 @@ class TextManager:
         indexing_service=None,
         memory_manager,
     ) -> None:
-        self._storage = storage
+        # 收的是「取库的方式」，不是库本身。构造时捕获实例会让本对象与 `deps._storage`
+        # 那个单例分叉：之后任何一次替换（测试把存储换成 sqlite）只落到 `Depends(get_storage)`
+        # 那条路，本对象建出的引擎仍攥着旧库，于是非 PG 的用例照样连真库（缺陷 117）。
+        # 谁都不能替调用方决定生命周期，故用得到时现取。
+        self._get_storage = get_storage
         self._guard_enabled = os.getenv("CARD_GUARD_ENABLED", "").strip().lower() in (
             "1", "true", "yes", "on",
         )
@@ -49,6 +53,11 @@ class TextManager:
         self._sessions = sessions
         self._indexing_service = indexing_service
         self._memory_manager = memory_manager
+
+    @property
+    def _storage(self) -> StorageBase:
+        """现取现用；绝不缓存（缓存就等于回到构造时捕获）。"""
+        return self._get_storage()
 
     # ── Prompt-injection field guard (2.1/2.6) ─────────────
     # Runs on every freshly distilled card before persistence. Flagged leaves

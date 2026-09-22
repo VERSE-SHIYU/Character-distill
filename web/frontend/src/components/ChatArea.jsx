@@ -19,6 +19,7 @@ import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
 import ReplyQuote from './common/ReplyQuote'
+import UnsavedHint from './common/UnsavedHint'
 import SplitOrFullscreen from './common/SplitOrFullscreen'
 import ChatHistoryPanel from './common/ChatHistoryPanel'
 import PageHeader from './PageHeader'
@@ -713,6 +714,7 @@ function ChatView() {
                     content={msg.content}
                     retracted={msg.retracted}
                     evidence={msg.evidence}
+                    unsaved={msg.unsaved}
                     charName={charName}
                     avatarUrl={avatarUrl}
                     userRole={userRole}
@@ -730,7 +732,9 @@ function ChatView() {
                     reactions={reactions[msg.id] || []}
                     replyToPreview={msg.reply_to_preview}
                     replyToId={msg.reply_to_id}
-                    onReact={canWrite ? async (emoji) => {
+                    // 未保存的那条留着临时 id：引用/反应都会 422。不给入口（MessageReactions 的
+                    // 约定是「没传 handler 就不渲染」）。
+                    onReact={canWrite && !msg.unsaved ? async (emoji) => {
                       if (!msg.id) return
                       try {
                         await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
@@ -743,7 +747,7 @@ function ChatView() {
                         setReactions(data.reactions || {})
                       } catch {}
                     } : undefined}
-                    onReply={() => {
+                    onReply={msg.unsaved ? undefined : () => {
                       const preview = isUser
                         ? `我: ${(msg.content || '').slice(0, 60)}`
                         : `${charName}: ${(msg.content || '').slice(0, 60)}`
@@ -966,7 +970,7 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, unsaved, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
   const isMobile = useIsMobile()
   const [showRetracted, setShowRetracted] = useState(false)
 
@@ -1060,6 +1064,9 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evide
             )}
           </span>
         )}
+        {/* 入库失败的那条自己声明：不拦、不弹窗、不改发送入口，只在原地标一句 */}
+        {unsaved && <UnsavedHint />}
+
         {/* Voice bubble */}
         {!isUser && audioUrl && (
           <div

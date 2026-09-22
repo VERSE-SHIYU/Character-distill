@@ -362,13 +362,19 @@ async def _do_chat(
     char_rec = None
     user_created_at = ""
     char_created_at = ""
-    async with nonfatal("chat", "dual-write messages"):
+    ids_to_add: list[Any] = []
+    # 三笔各自一个 nonfatal：共用一个块时，用户那笔失败会让角色那笔整个不执行，而调用方
+    # 只拿到一个 failed，分不出是哪一条没存上。`*_saved` 就是逐条上报给前端的「未保存」依据。
+    async with nonfatal("chat", "save user message") as user_out:
         if not hidden:
             user_rec = await storage.save_message(
                 session_id, "user", msg, "",
                 reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
             )
             user_msg_id, user_created_at = _msg_fields(user_rec)
+    user_saved = not user_out.failed
+
+    async with nonfatal("chat", "save assistant message") as char_out:
         # 检索来源快照落库（evidence_to_json 是唯一编码出口）。读的是本轮 chat 刚写下的
         # engine.last_traces —— 必须在 post_stream_process 之前取，那是另一轮。
         char_rec = await storage.save_message(
@@ -376,11 +382,14 @@ async def _do_chat(
             evidence=evidence_to_json(getattr(engine, "last_traces", [])),
         )
         char_msg_id, char_created_at = _msg_fields(char_rec)
-        ids_to_add = [user_msg_id, char_msg_id]
+    char_saved = not char_out.failed
+    ids_to_add.extend([user_msg_id, char_msg_id])
 
-        # Save summary if newly generated
-        engine = session.get("engine")
-        if engine and engine.last_summary:
+    # Save summary if newly generated
+    engine = session.get("engine")
+    if engine and engine.last_summary:
+        # 读也包进块里：摘要只是个附赠品，读它失败不该把本轮回复打断。
+        async with nonfatal("chat", "save summary"):
             existing_summaries = [
                 m for m in await storage.get_messages(session_id)
                 if m["role"] == "summary"
@@ -388,19 +397,19 @@ async def _do_chat(
             last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
             new_summary = f"历史摘要：{engine.last_summary}"
             if new_summary != last_saved:
-                async with nonfatal("chat", "save summary"):
-                    sum_rec = await storage.save_message(
-                        session_id, "summary", new_summary, "",
-                    )
-                    ids_to_add.append(sum_rec["id"])
+                sum_rec = await storage.save_message(
+                    session_id, "summary", new_summary, "",
+                )
+                ids_to_add.append(sum_rec["id"])
 
-        session.setdefault("message_ids", []).extend(ids_to_add)
+    session.setdefault("message_ids", []).extend(ids_to_add)
 
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
         "user_created_at": user_created_at,
         "char_created_at": char_created_at,
+        "user_saved": user_saved, "char_saved": char_saved,
         "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
     }
     if engine and engine.last_summary:
@@ -475,13 +484,18 @@ async def _do_chat_stream(
         char_rec = None
         user_created_at = ""
         char_created_at = ""
-        async with nonfatal("chat", "save user message"):
+        # 三笔各自一个 nonfatal（同 `_do_chat`）：共用一个块时前一笔失败会让后一笔整个不
+        # 执行，而调用方只拿到一个 failed，分不出是哪条没存上。`*_saved` 是逐条上报给前
+        # 端的「未保存」依据 —— 只有这个字段说了算，不由 `msg_id is None` 反推（hidden
+        # 消息本来就没有 id，却是存成功的）。
+        async with nonfatal("chat", "save user message") as user_out:
             if not hidden:
                 user_rec = await storage.save_message(
                     session_id, "user", msg, "",
                     reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
                 )
                 user_msg_id, user_created_at = _msg_fields(user_rec)
+        user_saved = not user_out.failed
 
         try:
             engine = session["engine"]
@@ -521,7 +535,7 @@ async def _do_chat_stream(
             if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
                 engine.history[-1]["retracted"] = True
 
-            async with nonfatal("chat", "save assistant message"):
+            async with nonfatal("chat", "save assistant message") as char_out:
                 # 同 _do_chat：证据在本轮流式生成期间写入 engine.last_traces，
                 # 后面的 post_stream_process 是另一轮，取早了/晚了都是错的那一轮。
                 char_rec = await storage.save_message(
@@ -529,20 +543,22 @@ async def _do_chat_stream(
                     evidence=evidence_to_json(getattr(engine, "last_traces", [])),
                 )
                 char_msg_id, char_created_at = _msg_fields(char_rec)
+            char_saved = not char_out.failed
 
             msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
             if msg_ids:
                 session.setdefault("message_ids", []).extend(msg_ids)
 
             if engine and engine.last_summary:
-                existing_summaries = [
-                    m for m in await storage.get_messages(session_id)
-                    if m["role"] == "summary"
-                ]
-                last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
-                new_summary = f"历史摘要：{engine.last_summary}"
-                if new_summary != last_saved:
-                    async with nonfatal("chat", "save summary"):
+                # 读也包进块里（同 `_do_chat`）：摘要只是附赠品，读它失败不该把本轮打断。
+                async with nonfatal("chat", "save summary"):
+                    existing_summaries = [
+                        m for m in await storage.get_messages(session_id)
+                        if m["role"] == "summary"
+                    ]
+                    last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
+                    new_summary = f"历史摘要：{engine.last_summary}"
+                    if new_summary != last_saved:
                         sum_rec = await storage.save_message(
                             session_id, "summary", new_summary, "",
                         )
@@ -554,6 +570,7 @@ async def _do_chat_stream(
                 "char_msg_id": char_msg_id,
                 "user_created_at": user_created_at,
                 "char_created_at": char_created_at,
+                "user_saved": user_saved, "char_saved": char_saved,
                 "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
             }
             if engine and engine.last_summary:

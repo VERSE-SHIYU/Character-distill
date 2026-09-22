@@ -77,8 +77,20 @@ class _PoolContext:
                 await self.pool.release(self.conn)
             except Exception as release_exc:
                 # store-empty-ok: 归还失败不改变本次操作的结果 —— 同 sqlite 侧 __aexit__：
-                # 上抛会顶替调用方真正的异常。池的泄漏风险由这行 print 可见。
+                # 上抛会顶替调用方真正的异常。
                 print(f"[PostgresStore] Release connection failed: {release_exc}")
+                # 但**只记一行日志就放手**会把池一格一格吃光：归还失败的连接既不会自己
+                # 消失，也不会被复用 —— 它卡在「另一个操作进行中」那类状态里（SQL 已写进
+                # socket、服务端那笔事务没人结算），`_release` 永远等不到它。槽位不回收，
+                # 池耗尽后所有请求一起挂住。故必须 terminate：asyncpg 侧那是「不等收尾、
+                # 直接断连」的原语，且它会走 `_release_on_close()` 把 holder 交还池 ——
+                # 连接本身弃掉（池按需再建），槽位不泄漏。
+                try:
+                    self.conn.terminate()
+                except Exception as term_exc:
+                    # store-empty-ok: 断开也失败同样不改变本次操作的结果（连接已被判死，
+                    # 最坏情况是 socket 随对象被 GC 收掉）；上抛仍会顶替调用方的真异常。
+                    print(f"[PostgresStore] Terminate connection failed: {term_exc}")
             self.conn = None
 
 

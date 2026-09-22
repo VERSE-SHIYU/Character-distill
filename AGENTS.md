@@ -120,7 +120,7 @@ config.yaml 现值（现读，非转述）：
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > **105–107 是 2026-09-22 新记的三条**（`users.role` 一案并入 main 后、合并前补齐项里顺带读出的），按 main 现有最大号顺延：**105 归 Spec 2、106 归蒸馏线、107 归 D 组**。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。**订正（2026-09-22，72 线收尾）**：原写「状态全部『记账』」已过期 —— **107 已修**（`dbdbf9c` + `7a5992a`，由 72 线第 1 步的 503 门收口）；105 / 106 仍为记账。**同轮还按 main 现最大号顺延补记了 108–113 六条**（§三 末，72 线第 1 步收尾）—— 原拟 75–80，与 main 现有的 75–80 **撞号**，按「按 main 上现有最大编号顺延」改号（撞的是编号不是内容）。**判据是编号而非行序**：本文件编号跨小节、**与行序不同调**，按行尾取 max 只会取到 74 而漏掉真正最大的 107。
 > **本分支（`users.role` 一案）并入时补记的三条，按 main 现最大号顺延为 114–116**（原编 108 / 109 / 110，与 main 已在 §三 末占用的 108–110 **撞号** —— 撞的是编号不是内容，两边条目都留）：**114 归 Spec 3（紧接本份）、115 归前端通用组件、116 归蒸馏线**；状态**全部记账**（只报告不修）。**105 / 106 订正**：上面那条「105 / 106 仍为记账」已过期 —— 两条随本分支修完，**105 已修**（`9fae212`）、**106 已修**（`de49658`），见 §三 对应条目。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。
-> **117 是 2026-09-22 按 main 现最大号顺延新记的一条**（CI 挂死，见 §三 末），归属 CI / 测试基础设施，状态**记账**。**同轮订正两条**：**115 已修**（`bd685e2` —— 只报告不修的例外，本份用户明确要求「修到根上」）、**116 的归属改判为 Spec 3**（原记蒸馏线）。同样**不重算**上面那条 1–98 口径行。
+> **117 是 2026-09-22 按 main 现最大号顺延新记的一条**（CI 在 `Run tests` 挂死，**当天已发生两次**，见 §三 末），归属 CI / 测试基础设施，状态**记账**。**同轮订正两条**：**115 已修**（`bd685e2` —— 只报告不修的例外，本份用户明确要求「修到根上」）、**116 的归属改判为 Spec 3**（原记蒸馏线）。同样**不重算**上面那条 1–98 口径行。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
@@ -1315,7 +1315,7 @@ PROBE_IMAGE         false
   - **2026-09-22 补记：主动告警已上线**（与缺陷 98 同轮做，不在本条的修法内）。新增 `core/alerting.AlertHandler`：ERROR 级日志按 `(logger 名, 异常类型)` 节流后投递到 `ALERT_EMAIL`（同键 1 小时一封，窗口后那封附上被压下的次数），在 `web/server.py` 的 lifespan 里与 `install_log_collector()` 同处挂到 root logger。本条要的其实是**两跳**：`print` → 面板（可见）是缺陷 93 修的那一跳，「面板 → 人」是这一跳 —— 面板得有人打开才看得见，SG 的「数月无人察觉」正卡在后一跳。上面「仍未定的那半」里的「计数告警」至此**机制已具备、口径仍未定**：要不要让用量写库失败真的发信仍是产品决策，现在只是有了通道（`ALERT_EMAIL` 为空时整条不安装，见 `core/alerting.py`）。
 - **判据命令**：`git grep -n "Record usage failed" core/utils.py storage/postgres_store.py` —— 现为 **1** 处（`storage/postgres_store.py:3022`，`print + raise`，异常还没到终点、在那里记会重复）。`core/utils.py` 那侧**应为 0**：它已改为 `async with nonfatal("usage", ...)`。可见性的锁在 `tests/test_nonfatal.py::test_try_record_usage_reports_write_failure`（断言面板收到恰好 1 条 ERROR 且含异常消息）。
 
-**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**可见性已修、泄漏那半已修、口径统一待产品决定**（2026-09-21 记账 → 2026-09-22 可见性收口 → 2026-09-22 泄漏那半收口）
+**94. 同一个消息保存失败，群里摊给用户、一对一静默丢** —— 状态：**已修**（口径统一，2026-09-22；可见性 2026-09-22 收口 → 泄漏那半 2026-09-22 收口 → 口径统一 2026-09-22 收口）。**覆盖范围：一对一聊天（非流式 + 流式）与群聊广播** —— 另有两处角色消息保存点（开场白、重逢问候）不在本口径内，见缺陷 122。
 - **事实**：一对一路径**全部吞** —— 非流式三笔（用户 / 角色 / 摘要）共用一个 try（`web/routers/chat.py:339-375`，except 只 print `Dual-write messages failed (non-fatal)`）；流式三笔各自 try + print（`:449-456` / `:459-505` / `:520-525`）。群聊非流式同样吞（`web/routers/group.py:509-520`），但**流式**把整个生成器包在一个 try 里（`:558`），`except Exception as exc`（`:633`）把异常当 SSE 事件发给用户（`:634`，`{'error': str(exc)}`）；三条保存点（用户 `:575`、助手 `:597` / `:610`）都在那个 try 之内且各自没有兜底 —— 保存失败会中断本轮回复，并把内部异常文本摊到用户面前。
 - **为什么这是缺陷而不是设计**：两边各自都说得通，但**同一件事**（PG 拒绝写入）在两处给出相反的可见性，而判据（该不该让用户看见）从没被写下来过。真要在两边做不同选择，就得同时说清「群里为什么该看见、一对一为什么不该」—— 说不出就是遗留（§四「理由要升格成判据」）。另外把 `str(exc)` 直接回给前端，本身还是一条信息泄漏面。
 - **已做的（可见性，2026-09-22）**：一对一那侧**每一条吞错点**（非流式三笔共用的一个 `except`、非流式的摘要一笔、流式的用户 / 助手 / 摘要三笔）连同 `group.py` 非流式的两笔保存、`web/routers/distill.py` 的开场白保存、`web/routers/history.py` 的重逢问候，全部改为 `async with nonfatal(source, what)` —— 失败从「一行 stdout」变成「后台日志面板一条 ERROR」。**行为不变，仍是吞**。
@@ -1330,6 +1330,21 @@ PROBE_IMAGE         false
 - **同轮例外（2026-09-22，`9dc4118`）**：`web/routers/auth.py::test_embedding` 是**连通性测试**，用户点它就是为了查自己的 key 哪里不通，故**有意**把上游原话（`detail`）连同中文提示一并返回。判定只按 `status_code` / `code` / 异常类型（`core/embeddings.py::describe_embedding_failure`），不匹配报错文本。它**不在本条「一律通用文案」的口径内** —— 与上面三处（日常路径，原文只算泄漏面）性质不同，审计时不算漏修。
 - **判据命令**：`git grep -n "save_group_message" web/routers/group.py` 与 `git grep -n "save_message" web/routers/chat.py`，逐个数「这个保存点的最近一层 except 是 `nonfatal` 还是 `yield` 一条 error 事件」。读数（2026-09-22 现跑）：`group.py:574/596/609` 三条的最近一层 except 仍是 `:632`（yield error，未动）；`chat.py` 的每一条都已是 `nonfatal` 包裹（`:340` / `:366` / `:446` / `:492` / `:513`），`Save user message failed` / `Save assistant message failed` / `Save summary failed` / `Dual-write messages failed` 那四行 print 全部应为 0 命中。
 - **行号漂移**：上面正文里 2026-09-21 的读数是**改动前**的坐标（`chat.py:339-375` 等）。本轮把 9 处吞错点换成 `async with nonfatal(...)` 后，`group.py` 现存段上移 2 行、`chat.py` 上移若干 —— 现读以「判据命令」那条为准，别照抄正文里的旧行号。
+- **口径统一已修（2026-09-22，分支 `worktree-session-cred`，commit `fc18018` / `e17b6aa` / `60fec7e` / `bf6a50b` / `6c042d5` / `38c8428` / `09818fe`）**：产品口径定为四条 ——
+  1. 聊天**不因保存失败中断**；存失败的那一条旁标「未保存，刷新后会丢失」。
+  2. 摘要存失败**不提示**，只记日志。
+  3. 一对一与群聊的**用户可见行为一致**（不要求共用代码路径）。
+  4. **不自动重试、不弹窗**；连续多条失败也**不**升级为弹窗或汇总提示。
+- **机制（`fc18018`）**：`core/nonfatal.py::nonfatal` 改为 `yield` 一个只有 `failed: bool` 的 `NonFatalOutcome`，调用方逐笔拿到「这一步成没成」（不带 `as` 的旧写法不受影响，上游仍只记一条 ERROR）。`web/routers/chat.py` 非流式与流式的用户 / 角色 / 摘要**各一个块**（摘要块把 `get_messages` 也包进去 —— 改前它裸露在块外，读失败会打断已流完的回复），返回体 / done 帧新增 `user_saved` / `char_saved`；`hidden` 时 `user_saved=true`（没有要标的消息，**不许**用 `msg_id is None` 反推）。`web/routers/group.py::broadcast` 三类保存各一个块，`user` / `reply` 帧**不论成败都发**并带 `saved`，失败时 `msg_id=null`；用户消息没存上时 `user_msg_id` 为 `None`，反应写入按既有判断自然跳过。`bf6a50b` 修回一处自造偏差：`auto_mode` 下 `[SILENT]` 本来就不发帧，拆块时一度把 silent 帧移出了 `if not req.auto_mode` 守卫，已复原。`09818fe` 把广播里的 `toggle_reaction` 也包进 `nonfatal("group", "save character reaction")`：反应不是消息、没有「未保存」可标，但写失败同样不能把整轮带走（改前它裸露在循环里，一次写库失败就把已流完的话变成一条 error 帧）。`6c042d5` 修 silent 分支的 `msg_id`：它只在 `nonfatal` 块内赋值，存失败被吞掉后变量未绑定，紧随其后的 `yield` 抛 `UnboundLocalError`、整轮广播退化成一条 error 帧 —— 与本次要修的缺陷同一形态，已与 assistant 分支一样先置 `None`（这也是「帧不论成败都发」在失败路径上真正成立的前提）。LLM 失败仍走原 error 帧，本轮未动。
+- **前端（`60fec7e`）**：判定只写一份 `web/frontend/src/utils/withSaveResult.js`（`saved === false` 才产生 `unsaved: true`；`true` 与缺字段原样返回 —— 拿 falsy 当失败会把 `hidden` 消息、摘要帧、旧接口全标成「未保存」），提示只写一份 `web/frontend/src/components/common/UnsavedHint.jsx`（文案固定「未保存，刷新后会丢失」，小号次要色）。四处落点（非流式发送、流式 done、撤回提示 `_sendRevokeNotice`、群聊帧）全走它。失败时 `msg_id` 为 `null`，落点保留乐观 id（`?? prev.id`）—— 撤回与反应都拿 `msg.id` 当参数。
+- **未保存消息不提供需要 id 的操作（2026-09-22 补，commit `38c8428`）**：保留乐观 id 的代价是它会被当成服务端 id 用出去 —— 引用回复它时下一条消息带 `reply_to_id: "optimistic-…"`，后端 `int` 校验 422，**用户下一条就发不出去**；点反应同样 422，只在控制台报错。四个调用点（`ChatArea.jsx` 一对一、`GroupChatPage.jsx` 用户气泡与角色气泡）在 `m.unsaved` 时不传 `onReact` / `onReply`，复用 `MessageReactions` 既有约定（没传 handler 就不渲染对应入口，组件本身没改）。一对一的 `if (!msg.id) return` 保留不动。判据：`UnsavedNoActions.test.jsx`（V4 群聊两处气泡、V5 一对一），各自有独立红源（逐个调用点去掉条件都会红）。
+- **订正（2026-09-22）**：本条 S0 原写「无 id 的消息前端本来就有（流式途中），反应已有 `if (!msg.id) return` 兜底」—— 实读该守卫**只在一对一 `ChatArea.jsx` 里有**，群聊 `reactToMessage` 没有，是 spec 描述有误；据此删去的「未保存条不给操作入口」一步已按上面补回。
+- **残留风险（`e17b6aa`，第 2 步）**：`storage/sqlite_store.py::save_message` 的读回 `SELECT` 已挪到 `commit()` **之前**、同一连接同一事务，故本地库上「异常 ⇔ 没入库」成立。**唯一无法区分的是 COMMIT 应答在网络上丢失**（事务其实已提交，调用方却收到异常）—— 不处理，只在此记录。PG 侧本就在事务内读回，不涉及。
+- **判据命令（2026-09-22 现跑）**：
+  - `git grep -n "nonfatal(" -- web/routers/chat.py web/routers/group.py` → 一对一 **6** 处（`chat.py:368/377/392` 非流式、`:491/538/554` 流式，逐条为 `save user message` / `save assistant message` / `save summary`，无一条是复数名）；群聊 **5** 处（`group.py:585` user、`:612` silent、`:627` assistant、`:603` character reaction 为逐笔；`:522` 的 `"save messages"` 是**非流式 `/send`** 的共用块，见缺陷 121）。
+  - `git grep -n "save_group_message" web/routers/group.py` → `broadcast` 内（`:586` / `:613` / `:628`）三条**各自**在自己那个 `nonfatal` 块里，不再有裸露调用；剩下两条（`:523` / `:527`）在非流式 `/send` 的共用块内。`broadcast` 内唯一另一处写库 `toggle_reaction`（`:604`）也在 `nonfatal` 块里（`09818fe`）。
+  - `git grep -n "unsaved: true" -- web/frontend/src ':!*.test.*'` → **2** 处，都在 `web/frontend/src/utils/withSaveResult.js`（`:2` 注释、`:13` 代码）—— 没有任何落点手写这个字段。锁在 `withSaveResult.test.js` 的 V2（扫全部产品源码，任何第二份 `unsaved:` 判断或第二份文案都判红）。
+- **不做的事（口径第 4 条，无行为可变异故不设锁）**：不重试、不弹窗、不汇总、不改操作入口。
 
 **95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
 - **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
@@ -1512,14 +1527,50 @@ PROBE_IMAGE         false
 - **判据命令**：`git grep -n "texts.length === 0" -- web/frontend/src/components/DistillWorkbench.jsx`（应给 91 一行）；`git grep -n "set({ texts: data" -- web/frontend/src/store/useAppStore.js`（应给 661 一行）。两处同时成立才构成本条。
 - **修法（留待，未做；方向待定，不在本条裁定）**：可选的干净做法是让 `loadTexts` 有一个「已在加载中就不重入」的门，或把「列表为空就回填」从渲染期 effect 挪到挂载时只做一次。**要避免**用「给 effect 加一个长度判断」这类绕法 —— 那会一起挡掉「第二次确实需要重拉」的正常场景。**本条只记账，不定修法**。
 
-**117. main 的 CI 在 `Run tests` 这一步挂死 2h19m（不是失败，是挂着不动）** —— 状态：**记账**
+**117. main 的 CI 在 `Run tests` 这一步挂死（不是失败，是挂着不动）—— 已发生两次** —— 状态：**已修**（`70cdba1`，2026-09-23）
 - **归属**：CI / 测试基础设施（不分线）。
-- **形态**：main @ `842f3e0` 的 build run [`35703112463`](https://github.com/VERSE-SHIYU/Character-distill/actions/runs/35703112463)（2026-09-22T08:07:36Z 触发）里，**`gate` 与 `sentinel` 两个 job 的 `Run tests` 都挂住**，各占用 runner **8360s / 8362s**（≈ 2h19m），最终**由人手工 cancel 收场**（conclusion = `cancelled`）。**挂死不等于失败** —— pytest 进程一直活着，只是不往前走了，所以既不会自己报红、也不会自己退出。
-- **停在哪**：最后一条**带终态百分比**的输出落在 **54%**，位置在 `tests/test_pg_identity_sync.py` 附近；取消时 runner 仍在收拾 pytest（`Terminate orphan process: pid (2935) (pytest)`）。**读挂点只认带 `[ NN%]` 的行**：pytest 用 `-v` 时在 `logstart` 就写节点 id 但**不带换行**，重定向日志的最后一行是「写了一半的行」，它既不是挂点也不能当进度 —— 拿它定位会指向一个其实已经跑过去的用例（本条的第一次误判就是这么来的）。
+- **根因（2026-09-23 定位并修复）**：两个成因叠加，缺一不成——
+  - **① 库有了两个来源（`dbdbf9c` 引入）**。那个提交把独立卡片分支的 `ChatEngine` 指到 `TextManager` **构造时捕获**的那份库上，而那份是 `deps.get_storage()` —— **进程级单例**（`web/deps.py:130`）。**测试换库走的是 `app.dependency_overrides[get_storage]`，只覆盖 `Depends(get_storage)` 那条路**，`TextManager` / `Distiller` 内部都是直接调 `get_storage()`，override 管不到。于是同一场测试里两条路读**两个库**：请求路径读 sqlite（被测的那份），引擎攥着的是**真库**（CI 里是 postgres）。
+  - **② 跨事件循环的报错被静默吞掉（见新条目 123）**。真库那份在 `TestClient` 下还叠了一层：没有 app lifespan ⇒ `core.scheduling` 的 loop submitter 从未注册 ⇒ `submit_to_main_loop(..., wait=True)` 走回退 `asyncio.run(coro)` **新建一个 loop**，而全局 `PostgresStore` 的连接池绑在另一个 loop 上 ⇒ asyncpg 抛 `got Future <Future pending> attached to a different loop`。SQL 已经写进 socket，服务端那笔事务留着不结算，连接既回不了池也关不掉（`Release connection failed: cannot perform operation: another operation is in progress`）。这条异常被 `core/chat_engine.py:637/655` 的宽 `except Exception` 当「非致命」打一行日志 —— **用例照样 PASSED，没有任何东西变红**。
+  - **挂死的链条**：那笔没结算的事务持 `cards` 上的 `AccessShareLock`（`migrations_pg/007_card_sync.sql` 的 `ALTER TABLE cards ADD COLUMN` 要 `AccessExclusive`，两者冲突）→ 下一个建 store 的用例（`tests/test_pg_identity_sync.py::test_store_startup_runs_the_alignment`）经 `_ensure_initialized` 重放全部迁移 → **永远等下去**。挂点因此落在那条用例上，但**它只是受害者不是元凶**（与本条下面「二分定位」的弱推论一致：它及其被测代码在区间内零改动）。
+  - **为什么本地绿、CI 挂**：本地 `.env` 是 `STORAGE_BACKEND=sqlite`，两个来源**指向同一个文件**，分叉看不出来；CI 是 postgres，「请求路径 sqlite vs 引擎真 PG」才显形。**差异确实在环境，但根因在代码** —— 本条下面那句「差异不在代码而在环境」是当时的判断，现按实测订正。
+  - **生产侧的同一处（`storage/postgres_store.py` 的 `_PoolContext.__aexit__`）**：那条卡住的连接 `pool.release()` 会抛，而原先的实现**只打一行 `Release connection failed` 就放手**（`self.conn = None`），槽位从此不回收 —— 池被一格一格吃光，之后**所有**请求一起挂住。这是「连接卡住」这条路上真正的生产风险，与测试能不能跑无关。修法与红源另见下面「同一处的生产修复」。
+- **生产未受影响（用户要求查清，2026-09-23 现读代码）**：`get_storage()` 返回的就是 `deps._storage` 这个模块级单例，由 `get_store()` 在 `web/deps.py:130-135` 建一次、此后一直缓存；生产是单进程单 loop，且 `set_main_loop(loop)` 在 lifespan 里跑（`web/server.py:118-119`）。**修复前 TextManager 捕获的那份与 `Depends(get_storage)` 返的是同一个对象** —— 生产只有**一个**来源，也不存在跨 loop。分叉只在「一处换、一处不换」的消费者上发生，实际就是测试。
+- **修复（单一来源，`70cdba1`）**：`TextManager` 不在构造时捕获 store，改收 `get_storage` 这个**取库方式**，用到处现取（`_storage` 成了只读 property，不缓存）；装配点 `web/deps.py::_assemble_text_manager` 传**函数**不传返回值。**不给 `_create_session` 加 `storage` 参数**（那是把两个来源写进签名，正好是要消除的东西）。换 `deps._storage` 一处，两条路同时覆盖。
+- **改测试的一处（超出字面指令，须声明）**：`tests/test_ownership_404.py` 的 autouse 夹具 `_no_ambient_state` 增加 `monkeypatch.setattr(deps, "_storage", store)`。**这不是随手加的**：只做 TextManager 侧的修复、不动这个夹具，在复现环境里**照样挂死**（`e6b05e8` + 仅 TextManager 改动 → `test_store_startup_runs_the_alignment` 被 `timeout 900` 杀掉，exit 124）—— 因为这个文件里的用例仍只 override `Depends` 那条路，引擎照样拿到真库。两处**同轮**才闭环。
+- **同一处的生产修复（`postgres_store.py` 的 `_PoolContext.__aexit__`）**：归还失败时改为 `self.conn.terminate()` —— asyncpg 侧那是「不等收尾、直接断连」的原语，且它会走 `_release_on_close()` 把 holder 交还池，故代价是**重建一条连接**，不是**丢一个槽位**。红源 `tests/test_postgres_store.py::TestReleaseFailureDoesNotLeakTheSlot`（3 条，全桩不碰 PG，故在没跑 PG 的机器上也真跑）：① 归还失败必须 terminate；② 正控 —— 归还成功**不得**断连（否则每个请求都在重建连接）；③ 归还失败不许顶替调用方真正的异常（原有语义）。**变异已验**：删掉 `terminate()` → ①**红**、②③仍绿。
+- **红源**：`tests/test_ownership_404.py::TestStorageSingleSource` 两条 —— ① `test_text_manager_resolves_the_store_at_use_time`（装配后换单例，用的时候必须取到新的那份）；② `test_independent_card_session_binds_the_single_source`（端到端：独立卡片建出的引擎必须绑本次用例那份库）。**变异已验**：`__init__` 改回构造时捕获 → ①**红**；② 仍绿（引擎的库在引擎构造时就定了，这条不具分辨力，**如实记**）。
+- **证伪（用户指定的前置实验，验后已撤）**：把独立卡片会话的 storage 换回注入的那份 → `e6b05e8 + falsify.patch` 在复现环境跑 `tests/test_ownership_404.py tests/test_pg_identity_sync.py` **56 passed / 165s**，那条用例 `PASSED [100%]`，挂起消失。
+- **两次挂起的 sha 与时间**（落笔时仍未定位，现已定：见上「根因」）：
+  - **第一次**：main @ **`842f3e0`**，run [`35703112463`](https://github.com/VERSE-SHIYU/Character-distill/actions/runs/35703112463)，**2026-09-22T08:07:36Z** 触发。`gate` 的 `Run tests` 自 `08:08:48Z` 起挂住，`gate` / `sentinel` 各占 runner **8360s / 8362s**（≈ 2h19m），最终**由人手工 cancel 收场**（conclusion = `cancelled`）。
+  - **第二次**：main @ **`da497b1`**，run **`35716206496`**，**2026-09-22T10:28:52Z** 触发（**紧接在第一次被 cancel 之后**，不是同日稍后的偶发）。`gate` 的 `Run tests` 自 **`10:30:08Z`**、`sentinel` 自 **`10:30:01Z`** 起一直是 `in_progress`，**到落笔时已 >1h17m 仍无终态**；两个 job 的后续步骤（`红的时候说清楚…` / `upload-artifact` / `Stop containers`）全部 `pending`。
+- **形态**：两次都是**两个 job 同时挂住、停在同一步骤 `Run tests`**。**挂死不等于失败** —— pytest 进程一直活着，只是不往前走了，所以既不会自己报红、也不会自己退出；**唯一能让它收场的是人工 cancel**（第一次就是这么结束的）。这也正是它能挡住镜像构建的原因：`build` job `needs` 这两个 job，挂住 = 永远不开始。
+- **两次之间没有共同改动**：`842f3e0` → `da497b1` 隔了 7 个提交（后端 + 测试 + 台账），**共同项只剩「main 的 CI 环境」本身**。这把归因从「某个 commit 引入」推向「环境 / 测试基础设施」，但**仍未定位**。
+- **停在哪（第一次）**：最后一条**带终态百分比**的输出落在 **54%**，位置在 `tests/test_pg_identity_sync.py` 附近；取消时 runner 仍在收拾 pytest（`Terminate orphan process: pid (2935) (pytest)`）。**读挂点只认带 `[ NN%]` 的行**：pytest 用 `-v` 时在 `logstart` 就写节点 id 但**不带换行**，重定向日志的最后一行是「写了一半的行」，它既不是挂点也不能当进度 —— 拿它定位会指向一个其实已经跑过去的用例（本条的第一次误判就是这么来的）。第二次的 `Run tests` 日志**在步骤结束前取不到**，所以第二次连「停在哪」都不知道。
 - **本地不可复现（2026-09-22 当天现跑）**：进程内单跑那条最近的用例，带 `.env` / 不带 `.env` 分别 2.04s / 0.37s，**都是绿的**；按 CI 口径整跑全量得 **1685 passed / 3 failed / 997s（0:16:36）**，**没有挂住**。即：同一天、同一个 commit、同一套依赖，本地走完、CI 停死，**差异不在代码而在环境**。
-- **嫌疑**：**112 那一族**（全量里约 20 条 `PytestUnhandledThreadExceptionWarning`、aiosqlite `Event loop is closed`，条数与命中用例每次不同）。它同样表现为「全量里随机位置的线程/事件循环异常」。**但这是嫌疑不是结论 —— 没有任何证据把 117 钉到 112 上**：117 是「停住」，112 是「抛异常后继续」，形态不同；且 117 只发生过一次，单次样本不足以归因。**本条不裁定根因。**
-- **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即失败，「挂住」从此落进「红」这一类，能被正常的失败流程接住，不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。取值依据（最近 46 次成功 run 的本步耗时）：p50 = 235s、最大 = 714s，40 分钟 = p50 的 10.2 倍。**这个防护只让挂死可见，不消除挂死** —— 根因仍是记账状态。
-- **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（本仓 CI 不出产物，run id 就是证据坐标）。
+- **当时的嫌疑（已排除）**：**112 那一族**（全量里约 20 条 `PytestUnhandledThreadExceptionWarning`、aiosqlite `Event loop is closed`，条数与命中用例每次不同）。当时的理由是没有证据把 117 钉到 112 上（117 是「停住」，112 是「抛异常后继续」）。**2026-09-23 定位后确认：确实不是 112 —— 112 是 aiosqlite 侧，本条是 asyncpg 侧；两者都源于「跨 loop」，但不是同一处代码。**
+- **二分定位（2026-09-22，只报告不修）**：按「main 上最后一次 `Run tests` 成功」到「第一次挂起」取区间。
+  - 最后一次**成功**的 run = `35690413574`，sha **`e1cd661`**（2026-09-22T05:21:55Z 触发，`gate` 的 `Run tests` 263s `success`）；第一次**挂起**的 run = `35703112463`，sha **`842f3e0`**（08:07:36Z 触发）。两者**相邻**，中间没有别的 main run。
+  - 区间内 `e1cd661..842f3e0` 共 **11 个提交**，改了 **10 个文件**：`AGENTS.md`、`core/group_session.py`、`core/text_manager.py`、`web/routers/{chat,distill,group,history}.py`、`tests/test_create_session_kwonly_lock.py`、`tests/test_llm_access_gate.py`、`tests/test_ownership_404.py`。
+  - **重点核查结论**：`tests/test_pg_identity_sync.py` **在区间内零改动**；它的被测代码也**零改动** —— 整个 `storage/` 目录在区间内**一个文件都没动**（`git diff --stat e1cd661 842f3e0 -- storage/` 为空；`storage/postgres_store.py` 与 `storage/pg_identity_sync.py` 最后一次改动都是 `100fae67`，**在 `e1cd661` 之前**）。`tests/` 目录也没有增删文件（两端各 158 个）。
+  - **推论（弱）**：既然那条用例及其被测代码在区间内根本没动，「停在 54% / 近 `test_pg_identity_sync.py`」**大概率是上面那条「未刷新的半行」读法造成的假信号，不是真定位**；本条不把它当作指向该用例的证据。区间内真正可能碰并发的改动只有 `core/group_session.py`（新增 keyword-only 的 `user_id`）、`core/text_manager.py`（删掉 `_create_session` 的死参数 `text`）与 `web/routers/chat.py` 的 `_ensure_session` 属主收紧（`session.get("user_id") != user_id`，未登记即 404）—— **这三处是「嫌疑范围」不是「已定位」，没有任何证据把它们钉上。**
+- **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即失败，「挂住」从此落进「红」这一类，能被正常的失败流程接住，不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。**这个防护只让挂死可见，不消除挂死** —— 挂死本身由 `70cdba1` 消除（根因见上）。防护保留：它是「再挂一次也落进红」的底线，与本条是否是根因无关。
+- **统计 p50 / max 的原样命令**（取值依据 = 最近 **46 次**成功 run 的本步耗时：p50 = **235s**、最大 = **714s**，其余落在 169–321s；**40 分钟 = p50 的 10.2 倍、最大值的 3.4 倍**）：
+  ```
+  gh run list --workflow=build.yml --branch=main --limit 25 --json databaseId,conclusion,createdAt
+  gh run view <run-id> --json jobs
+  ```
+  第二条取每个 job 的 `steps[]` 里 `name == "Run tests"` 的 `startedAt` / `completedAt` 相减；`completedAt` 为 `0001-01-01T00:00:00Z` 的表示该步没跑完（**这次统计就靠这条把两个挂起 run 摘出去的**）。**只点名命令、不入库数据文件** —— 样本随时可用上面两条重取。
+- **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（第一次）、`gh run view 35716206496`（第二次）—— 本仓 CI 不出产物，**run id 就是证据坐标**。
+
+**123. `chat_engine.py:637/655` 把「不同事件循环」的报错当非致命吞掉 —— 故障被静默掩盖** —— 状态：**记账**
+- **归属**：D 组。
+- **坐标**：`core/chat_engine.py:637`（`except Exception as exc: print(f"[Affinity] Fetch reactions failed (non-fatal): {exc}")`）与 `:655`（`except Exception: pass`，整条 `pass`）。
+- **形态**：两处都是**宽 `except Exception` + 只打日志 / 什么都不做**。这正是 117 那两个成因里 ② 的落点：`submit_to_main_loop` 回退 `asyncio.run` 建新 loop、asyncpg 报 `got Future <Future pending> attached to a different loop`，异常被这两处吃掉，**调用方看不到、用例照样 PASSED**。
+- **危害（比「少取了一次点赞」重得多）**：吞掉的不是「这次数据没拿到」，是「**这个库现在状态不对**」。SQL 已写进 socket、服务端那笔事务没人结算、连接既回不了池也关不掉 —— 这是个**会持续恶化**的故障（后续任何用该库的代码都受影响，117 就是这么挂住的），却被降级成一行 `non-fatal` 日志。**「非致命」这个判断在跨 loop 这类错误上不成立**：真正的可忽略错误是「这次读没读到」，跨 loop 是「连接坏了」。
+- **为什么记而不修**：修法不是把这两处收窄（那是治症状）—— 要拿掉的是**回退到新建 loop** 这条路本身（`core/scheduling.py` 在没有注册 submitter 时 `asyncio.run`），而它服务于 `TestClient` 无 lifespan 这一整套测试装配。改动面超出 117 的修复范围，117 已用「让库只有一个来源」把这条路径从生产测试里**绕开**（不再有跨 loop 的真库调用）。**收窄 `except` 单独做没有意义**：不新建 loop 了，这两处自然不再撞；新建 loop，收窄了也只是把静默挂死换成显式报错 —— 那是**另一件事**（「失败可见」），要单独立项。
+- **与 112 的分工**：112 是 aiosqlite 侧的同类形态（`Event loop is closed`，抛了但继续），本条是 asyncpg 侧（被吞掉）。**同源不同落点**，两条都还在。
+- **判据命令**：`git grep -n "non-fatal" -- core/chat_engine.py`（应给 2 行 —— `:638` 的 `[Affinity] Fetch reactions failed` 与另一条 save state 的；本条的 `:655` 那处是裸 `pass`，不带这个串，须按行号读）。收窄后本条应改为**在跨 loop 错误上显式抛 / 记成 ERROR**，判据也随之改成「跨 loop 的异常不再走这两条路」。
 
 **118. `importlib.reload` 替换异常类对象 —— 按「retry → error → chat」的文件顺序跑，三个文件红 4 条** —— 状态：**已修**（2026-09-22，`6c8d805`，分支 `worktree-session-cred`）
 - **归属**：72 线（94 泄漏那半的收尾）。
@@ -1543,6 +1594,22 @@ PROBE_IMAGE         false
 - **后果**：保存一个未知地域（如 `"us"`）后，该用户此后**所有**走嵌入的路径（RAG 检索、索引、蒸馏建会话）都在构造客户端那一刻 `KeyError`，而保存那一刻毫无提示、返回 `{"ok": True}`。
 - **本轮只修了另一面**：第 3 步只给**连通性测试端点**加了前置校验（不在 `DASHSCOPE_BASE_URLS` 里就返回「地域只能选 cn 或 intl」，commit `9dc4118`）。**保存路径未动** —— 两者不是同一处，别把本条的修当成已做。
 - **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-22 修后）：`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS` **1** 处；`ApiConfigRequest` 定义（`:150`）与 `update_api_config` 落库（`:619`）**各 0** 处。
+
+**121. 群聊非流式 `/send` 的两笔保存共用一个 `nonfatal` —— 用户那笔失败时助手那笔整条不执行** —— 状态：**记账**（不修，2026-09-22）
+- **归属**：72 线 · 94 口径统一（S0 第 5 条查实）。
+- **形态**：`web/routers/group.py:522` 的 `async with nonfatal("group", "save messages")` 块内连出两条 `save_group_message`（`:523` 用户、`:527` 助手）。
+- **后果**：用户那笔抛错时块内后续（助手那笔）整条不执行，而调用方只拿到一个 `failed` —— 与非流式一对一改前的「三笔共用一个块」是**同一形态**（那半边已在 `fc18018` 拆掉），同样分不出是哪条没存上。
+- **为什么只记不修**：前端只调用流式的 `/broadcast`，该端点在本仓**没有调用方**；本轮范围外（spec 第 5 步）。将来谁接上它，按 94 的同一口径拆成逐笔 `nonfatal` 即可 —— 拆法已有先例，不需要新口径。
+- **判据命令**：`git grep -n "nonfatal(" web/routers/group.py` —— 数「有几个块是复数名」。读数（2026-09-23 现跑）：**1** 处（`:522` 的 `"save messages"`，正是共用块）；其余四处（`:585` / `:603` / `:612` / `:627`）均为逐笔名，属 `broadcast`（`:603` 是补 2 新加的角色反应写入）。
+
+**122. 两处角色消息保存点未纳入 94 口径 —— 开场白与重逢问候存失败时无标记、无提示** —— 状态：**记账**（不修，2026-09-23）
+- **归属**：72 线 · 94 口径统一（2026-09-23 审计复查时查出的范围缺口；94 的「已修」只覆盖一对一聊天与群聊广播）。
+- **形态一**：`web/routers/distill.py:1467` 的 `async with nonfatal("start_session", "save opening message")` 块内含三件事 —— 开场白落库、`engine_obj.history` 追加、`message_ids` 登记。
+- **后果一**：存失败被吞掉后，`opening` 仍作为 `result["first_message"]` 返回（同文件 `:1478`），前端**照常显示**这条开场白，但它不带任何「未保存」标记（该接口没有对应字段，94 只给一对一 chat 与群聊 broadcast 的返回体加了 `*_saved` / `saved`），也不会进 `engine.history` —— 角色下一轮不记得自己说过这句。
+- **形态二**：`web/routers/history.py:323` 的 `async with nonfatal("history", "reunion greeting")` 把**生成**（`engine.generate_reunion_greeting`）与**保存**两件事包在同一块里。
+- **后果二**：存失败时 `greeting_data` 保持 `None`，整条问候从返回体里消失 —— 用户看不到问候，也看不到任何提示，只当今天没有重逢问候。附带一处：同文件 `:338` 的 `_visit_count >= 3 and not greeting_data` 会把「存失败」读成「没生成」，于是转而走按到访次数觉察那条路。
+- **为什么只记不修**：两处都不在 94 已定的四条口径内 —— 口径管的是「聊天里逐条消息」，开场白是会话种子、重逢问候是进场的额外一句。要不要给它们也标「未保存」，先得定这两条消息在前端有没有落脚点（开场白有气泡、问候目前只在返回体里）。**待产品拍板**，不自行扩口径。
+- **判据命令**：`git grep -n "nonfatal(" -- web/routers/distill.py web/routers/history.py` —— 逐条看「块内除了保存还包了什么」。读数（2026-09-23 现跑）：两文件**各 1** 处（`distill.py:1467`、`history.py:323`），且两处的块内都不止保存一笔（前者含 `engine.history` 追加与 `message_ids` 登记，后者含问候**生成**）。
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

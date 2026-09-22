@@ -522,7 +522,7 @@ def _client(monkeypatch) -> TestClient:
     monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
     monkeypatch.setattr(
         deps, "get_text_manager",
-        lambda *a, **kw: TextManager(_NullStore(), None, None, {}, memory_manager=None),
+        lambda *a, **kw: TextManager(lambda: _NullStore(), None, None, {}, memory_manager=None),
     )
     return TestClient(app, raise_server_exceptions=False)
 

@@ -1797,3 +1797,98 @@ class TestPgPublishedFromBackfill:
         diff = {k: (sqlite_reading[k], pg_reading[k])
                 for k in pg_reading if sqlite_reading[k] != pg_reading[k]}
         assert not diff, f"同一组夹具在两侧结果不一致（列 = SQLite / PG）：{diff}"
+
+
+# ── 归还失败的连接不许留在池里 ────────────────────────────────────────────────
+
+
+class _FakeConn:
+    """只记「有没有被断开」的连接桩。"""
+
+    def __init__(self) -> None:
+        self.terminated = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+class _BoomReleasePool:
+    """`acquire()` 发一条假连接，`release()` 恒抛 —— 复现「归还不了」那一类。
+
+    真实现场（2026-09-22/23 缺陷 117 取证）：asyncpg 报
+    `cannot perform operation: another operation is in progress`，因为 SQL 已写进
+    socket、服务端那笔事务没人结算，连接永远回不到归还态。
+    """
+
+    def __init__(self, conn: _FakeConn) -> None:
+        self._conn = conn
+        self.release_attempts = 0
+
+    async def acquire(self) -> _FakeConn:
+        return self._conn
+
+    async def release(self, conn: _FakeConn) -> None:
+        self.release_attempts += 1
+        raise RuntimeError("cannot perform operation: another operation is in progress")
+
+
+class _HealthyPool:
+    """正常池：归还成功并记账。"""
+
+    def __init__(self, conn: _FakeConn) -> None:
+        self._conn = conn
+        self.released = 0
+
+    async def acquire(self) -> _FakeConn:
+        return self._conn
+
+    async def release(self, conn: _FakeConn) -> None:
+        self.released += 1
+
+
+class TestReleaseFailureDoesNotLeakTheSlot:
+    """归还失败的连接必须被 `terminate()` —— 那是槽位回收的唯一出口。
+
+    连接一旦卡进「另一个操作进行中」，`pool.release()` 抛、连接既复用不了也关不掉；
+    只打一行日志就放手，那个槽位永远不回收，池被一格一格吃光，之后**所有**请求一起挂住。
+    `terminate()` 是 asyncpg 侧「不等收尾、直接断连」的原语，且它会走 `_release_on_close()`
+    把 holder 交还池，故断连的代价是重建一条连接，不是丢一个槽位。
+
+    变异：删掉 `_PoolContext.__aexit__` 里的 `self.conn.terminate()`，第 1 条变红。
+    本类不碰 PG（全桩），故没有 `@_pg` —— 它在没跑 PG 的机器上也要真跑。
+    """
+
+    async def test_release_failure_terminates_the_connection(self):
+        from storage.postgres_store import _PoolContext
+
+        conn = _FakeConn()
+        pool = _BoomReleasePool(conn)
+        async with _PoolContext(pool):  # type: ignore[arg-type]
+            pass
+
+        assert pool.release_attempts == 1, "没试过归还就断了？判据打错靶子"
+        assert conn.terminated, (
+            "归还失败后连接没被 terminate —— 它会一直挂在池里，槽位不回收；"
+            "池耗尽后所有请求一起挂住（缺陷 117 那条路）")
+
+    async def test_healthy_release_does_not_terminate(self):
+        """正控：归还成功时**不得**断连 —— 否则每个请求都在重建连接。"""
+        from storage.postgres_store import _PoolContext
+
+        conn = _FakeConn()
+        pool = _HealthyPool(conn)
+        async with _PoolContext(pool):  # type: ignore[arg-type]
+            pass
+
+        assert pool.released == 1, "正常路径没归还"
+        assert not conn.terminated, "正常归还也把连接断了 —— 池白白重建"
+
+    async def test_aexit_still_swallows_the_release_error(self):
+        """归还失败**不许**顶替调用方真正的异常（这是原有语义，别在修复里弄丢）。"""
+        from storage.postgres_store import _PoolContext
+
+        conn = _FakeConn()
+        pool = _BoomReleasePool(conn)
+        with pytest.raises(ValueError, match="真异常"):
+            async with _PoolContext(pool):  # type: ignore[arg-type]
+                raise ValueError("真异常")

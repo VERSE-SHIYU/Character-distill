@@ -205,6 +205,65 @@ class TestMultiWriteAtomicityPreserved:
             f"  前={before_b}\n  后={_row_counts(db_b)}")
 
 
+class _ReadbackBoomConn:
+    """包装真连接：拦下「读回刚写入那一行」的 SELECT，其余原样转发。
+
+    只认 `SELECT ... FROM messages`（save_message 的读回形态）—— INSERT 那条也提到
+    messages，但它是 INSERT，不会误中。commit / rollback / close 走 `__getattr__`，
+    被测的仍是真连接与真的 `_ConnectionContext.__aexit__`。
+    """
+
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    async def execute(self, sql, *a, **kw):
+        if sql.lstrip().upper().startswith("SELECT") and "FROM messages" in sql:
+            raise RuntimeError(_INJECTED)
+        return await self._conn.execute(sql, *a, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class TestSaveMessageReadbackSharesTheTransaction:
+    """`save_message` 的读回必须在 commit() **之前**，与写入同事务。
+
+    缺陷形态：读回原先是 commit() 之后的一次独立读，读失败时消息**已经落盘**，调用方却
+    收到异常 —— 于是「保存失败」被上屏（前端标「未保存，刷新后会丢失」），而库里其实有
+    这条，用户一刷新它又冒出来。pg 侧本就在事务内读回，无此问题。
+
+    判据落在**库的最终状态**上，不落在异常类型上：注入读回失败 → 这次调用抛异常，
+    且表里**没有**这一行。「异常 ⇔ 没入库」是前端那条「未保存」文案成立的前提。
+    """
+
+    async def _seed_session(self, store: SQLiteStore) -> None:
+        await store.save_text("t1", "f.txt", "content", user_id="u1")
+        await store.save_card("c1", "t1", "hero", "{}", user_id="u1")
+        await store.save_session("s1", "c1", "", "", "u1")
+
+    async def test_readback_failure_leaves_no_row(self, tmp_path: Path, monkeypatch):
+        store, db_path = _fresh_store(tmp_path)
+        await store._ensure_initialized()
+        await self._seed_session(store)
+
+        orig = SQLiteStore._connect
+
+        async def _patched():
+            ctx = await orig(store)
+            ctx.conn = _ReadbackBoomConn(ctx.conn)
+            return ctx
+
+        monkeypatch.setattr(store, "_connect", _patched)
+
+        with pytest.raises(Exception) as ei:
+            await store.save_message("s1", "user", "hi", "")
+        assert _INJECTED in _chain_text(ei.value), (
+            f"注入没生效（异常链里没有哨兵）：{_chain_text(ei.value)} —— 本用例没验到东西")
+
+        assert _count(db_path, "SELECT count(*) FROM messages") == 0, (
+            "读回失败却把消息留在了库里 —— 前端会报「未保存」，用户刷新后它又出现")
+
+
 class TestReadOnlyScopesUnaffected:
     """只读作用域上 commit/rollback 是 no-op —— 208 个读方法语义与开销都不该变。"""
 
