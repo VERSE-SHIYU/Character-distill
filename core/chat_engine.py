@@ -178,6 +178,19 @@ class ChatEngine:
         )
         self.agent_mode: bool = False
 
+    def set_llm(self, llm: LLMAdapter) -> None:
+        """换到新连接 —— 用户存完 model / base_url / key 后由 ``deps`` 调，不必踢会话。
+
+        **只影响下一次出站**：正在跑的那一轮已经把实例握在手里（调用点取本地变量），
+        这里换的只是「下一轮从哪儿取」。故不加锁、不等在飞的那一轮结束 —— 保存设置
+        不该被一次生成卡住。同一轮里 agent 阶段与最终生成是两次独立调用，可能各跨一边，
+        有意不处理（见 72 线台账）。
+
+        ContextEngine 必须一起换：它自己也要出站（web 过滤），且五档预算按模型算。
+        """
+        self.llm = llm
+        self._ctx_engine.set_llm(llm)
+
     # ── 11个情感字段透明转发（@property） ──────────────────────
     @property
     def _affinity(self) -> int:
@@ -381,15 +394,18 @@ class ChatEngine:
         if self.agent_mode:
             system_prompt, llm_messages = self._run_agent_phase(system_prompt, llm_messages, user_message, voice_mode)
 
+        # 出站与落账取**同一个**实例：中途 set_llm 换掉 self.llm 时，这一轮仍然归发起它的
+        # 那个连接 —— 否则回复来自旧连接、usage 记到新连接头上（用量面板按模型分档）。
+        llm = self.llm
         try:
-            response = self.llm.chat(system_prompt, llm_messages)
+            response = llm.chat(system_prompt, llm_messages)
         except Exception as exc:
             print(f"调用 LLM 对话失败：{exc}")
             if self.history and self.history[-1].get("role") == "user":
                 self.history.pop()
             raise
 
-        self._try_record_usage("chat", self.llm.last_usage)
+        self._try_record_usage("chat", llm=llm, usage=llm.last_usage)
 
         _scan_canary(response, "chat()")
         self.history.append({"role": "assistant", "content": response})
@@ -429,8 +445,11 @@ class ChatEngine:
 
         collected: list[str] = []
 
+        # 生成器在**这一行**就从 llm 取出来了，之后 self.llm 换了也不影响已经发出的这次调用；
+        # 落账要跟着一起走同一条路（见 chat() 同一处注释）。
+        llm = self.llm
         try:
-            for piece in self.llm.chat_stream(system_prompt, llm_messages):
+            for piece in llm.chat_stream(system_prompt, llm_messages):
                 collected.append(piece)
                 yield piece
         except Exception as exc:
@@ -439,7 +458,7 @@ class ChatEngine:
                 self.history.pop()
             raise
 
-        self._try_record_usage("chat", self.llm.last_usage)
+        self._try_record_usage("chat", llm=llm, usage=llm.last_usage)
 
         full_reply = "".join(collected)
         if not full_reply.strip():
@@ -532,10 +551,18 @@ class ChatEngine:
         self._affinity_service.affinity_reason = _json.dumps(extended, ensure_ascii=False)
         self._save_affinity_state()
 
-    def _try_record_usage(self, action: str = "chat", usage: dict | None = None) -> None:
+    def _try_record_usage(self, action: str, *, llm: LLMAdapter, usage: dict | None = None) -> None:
+        """把这一笔记到 **``llm``** 头上 —— 由调用方在出站之前取好，本函数不再读 ``self.llm``。
+
+        ``llm`` 必填且无默认值：有默认值的话，漏传就静默退回 ``self.llm``，而那正是要修掉的
+        写法（在飞的一轮被换到新连接上）。漏传当场 TypeError。
+
+        ``usage=None`` 时回落到 **``llm``**（同一个实例）的 ``last_usage`` —— 回落也要跟着
+        走调用方那一条路，否则回落本身又把归属换回去了。
+        """
         try_record_usage(
             storage=self._storage,
-            llm=self.llm,
+            llm=llm,
             action=action,
             usage=usage,
             source="ChatEngine",
@@ -1289,8 +1316,9 @@ class ChatEngine:
             f"只回答 true 或 false，不要解释。"
         )
         try:
-            result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
-            self._try_record_usage("chat_silence_gate")
+            llm = self.llm
+            result = llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            self._try_record_usage("chat_silence_gate", llm=llm)
             should = "true" in result.strip().lower()
         except Exception as exc:
             print(f"[Silence] LLM gate failed, falling back to normal reply: {exc}")
@@ -1320,8 +1348,9 @@ class ChatEngine:
             f"只回答 true 或 false，不要解释。"
         )
         try:
-            result = self.llm.chat(prompt, [{"role": "user", "content": "请判断"}])
-            self._try_record_usage("chat_retract_gate")
+            llm = self.llm
+            result = llm.chat(prompt, [{"role": "user", "content": "请判断"}])
+            self._try_record_usage("chat_retract_gate", llm=llm)
             return "true" in result.strip().lower()
         except Exception:
             return False
@@ -1432,8 +1461,9 @@ class ChatEngine:
                     "content": time_block + "\n\n" + instruction,
                 }
 
-            response = self.llm.chat(system_prompt, messages)
-            self._try_record_usage("chat_reunion_greeting")
+            llm = self.llm
+            response = llm.chat(system_prompt, messages)
+            self._try_record_usage("chat_reunion_greeting", llm=llm)
 
             greeting = response.strip().strip('"\'').strip('「」')
             if not greeting or len(greeting) > 130:
