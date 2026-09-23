@@ -340,8 +340,11 @@ def _assemble_text_manager(distiller: Distiller, llm: LLMAdapter) -> TextManager
     `distiller` / `llm` 必须由调用方传实例 —— 本函数不取单例、不缓存：per-user
     路径每次都要新实例（共享即跨请求错归，见缺陷 37）。请求级身份不再靠「往
     distiller 上写属性」传，改走 `core.request_context` 的上下文（缺陷 35）。
+
+    `get_storage` 传的是**函数**不是它的返回值：装配点在这里，取库的时机在 TextManager
+    用到时 —— 中间任何一次替换（测试换 sqlite）才盖得住本对象建出的引擎（缺陷 117）。
     """
-    return TextManager(get_storage(), distiller, llm, get_sessions(),
+    return TextManager(get_storage, distiller, llm, get_sessions(),
                        indexing_service=get_indexing_service(),
                        memory_manager=get_memory_manager())
 
