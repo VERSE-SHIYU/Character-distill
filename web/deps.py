@@ -297,6 +297,37 @@ def touch_session(session: dict) -> None:
 _SESSION_IDLE_TTL = int(os.getenv("SESSION_IDLE_TTL_SECONDS", "3600"))
 
 
+def _outbox_of(sess: Any) -> Any | None:
+    """会话条目上的补写队列 —— 一对一那张表是 dict，群聊那张表是 `GroupSession` 对象。
+
+    两种形状都认，是为了让空闲清理与关停**共用同一个出口**（下面那个函数）：各写一遍的
+    话，改了一处另一处会悄悄漏。没有队列的条目（老会话）返回 None，不为此发一次写。
+    """
+    if isinstance(sess, dict):
+        return sess.get("outbox")
+    return getattr(sess, "outbox", None)
+
+
+async def flush_outboxes(sessions: dict[str, Any]) -> int:
+    """把这张会话表里所有带队列的会话补写掉，返回补上的条数（只用于日志）。
+
+    **空闲清理与关停共用这一个出口**：会话一旦从内存里消失，队列跟着消失 —— 没补上的
+    消息就永久丢了。
+
+    存储**每次调用时才解析**（`get_storage()`），与 `_assemble_text_manager` 同口径：
+    队列不持有存储实例（缺陷 117）。
+    """
+    ping = get_storage().ping
+    flushed = 0
+    for sess in list(sessions.values()):
+        outbox = _outbox_of(sess)
+        if outbox is None or not outbox.has_pending:
+            continue
+        report = await outbox.flush(ping=ping)
+        flushed += len(report.flushed)
+    return flushed
+
+
 async def _session_cleanup_loop() -> None:
     """Periodically evict idle sessions from the in-memory cache.
 
@@ -315,6 +346,8 @@ async def _session_cleanup_loop() -> None:
             lk = sess.get("lock")
             if lk is not None and lk.locked():
                 continue
+            # 先补写再出队：出队之后队列就没了，没补上的消息永久丢。
+            await flush_outboxes({sid: sess})
             sessions.pop(sid, None)
             evicted += 1
         if evicted:

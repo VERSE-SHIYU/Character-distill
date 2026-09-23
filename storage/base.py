@@ -460,6 +460,7 @@ class StorageBase(ABC):
         reply_to_id: int | None = None, reply_to_preview: str = "",
         retracted: bool = False,
         evidence: str | None = None,
+        client_key: str | None = None,
     ) -> dict:
         """Save one message and return the stored record.
 
@@ -468,6 +469,11 @@ class StorageBase(ABC):
         结构，也就不引 storage → core 的反向依赖）。带默认值的关键字参数是本路径的开闭
         手法：老调用点（用户消息 / 摘要 / 群聊）零改动，老消息读回来是 ``None``，
         语义与加列前一致。
+
+        ``client_key`` 是幂等键：同一个 ``(session_id, client_key)`` 再来一次，返回
+        已有那行、不新增。补写队列（``core.message_outbox``）重复执行同一笔写时靠它收
+        敛成一行 —— 没有它，重试成功一次就会多出一条重复消息。``None`` 表示不做幂等
+        （老调用点原样）。
 
         ``*`` 之后全 keyword-only：这四个可选参数类型相近（一个 bool、一对 int/str、
         一个 JSON 文本），按位置传错位不会报错，只会静默把值装进邻近的参数。本条约束

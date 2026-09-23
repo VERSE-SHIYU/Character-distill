@@ -46,6 +46,22 @@ class SaveState:
     state: str          # "saved" | "pending" | "failed"
     id: int | None = None
 
+    def as_json(self) -> dict | None:
+        """已落库 → None（帧/响应体里**不带**这个字段，带个 `null` 会让「没有」出现两种写法）。"""
+        if self.state == "saved":
+            return None
+        return {"state": self.state, "key": self.key}
+
+
+def save_field(state: SaveState | None, name: str = "save") -> dict:
+    """帧/响应体里那一段：`{}`，或 `{name: {"state", "key"}}`。
+
+    `state=None` 表示「本轮压根没有这条消息」（`hidden` 时没有用户消息）—— 它与「存成功
+    了」在响应体里必须**同形**，否则前端会给上一条真消息误标「未保存」（缺陷 98）。
+    """
+    payload = None if state is None else state.as_json()
+    return {} if payload is None else {name: payload}
+
 
 @dataclass
 class FlushReport:
@@ -62,6 +78,11 @@ class FlushReport:
             "flushed": [{"key": key, "id": row_id} for key, row_id in self.flushed],
             "dropped": list(self.dropped),
         }
+
+    def merge(self, other: "FlushReport") -> None:
+        """并进另一次 flush 的读数 —— 一轮里有好几笔写，每笔各 flush 一次。"""
+        self.flushed += other.flushed
+        self.dropped += other.dropped
 
 
 class MessageOutbox:

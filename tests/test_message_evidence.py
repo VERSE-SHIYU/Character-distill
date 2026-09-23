@@ -435,6 +435,9 @@ class _RecordingStorage:
         self.saved.append({"role": role, "content": content, "evidence": kw.get("evidence")})
         return {"id": len(self.saved), "role": role, "created_at": ""}
 
+    async def ping(self):
+        """库可达 —— 于是消息当场落库、不留队（本文件断言的是「落库了什么」）。"""
+
     async def get_messages(self, session_id):
         return []
 

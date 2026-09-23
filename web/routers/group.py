@@ -21,6 +21,7 @@ from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
+from core.message_outbox import FlushReport, save_field
 from core.nonfatal import nonfatal
 
 router = APIRouter(prefix="/api/group", tags=["group"])
@@ -519,22 +520,60 @@ async def send_message(
     user_speaker = req.speaker or group.speaker_name
     user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
-    async with nonfatal("group", "save messages"):
-        await storage.save_group_message(
+    # 两笔各自入队（缺陷 121：原先共用一个 nonfatal，用户那条写失败会让角色那条整段不执行，
+    # 而调用方只拿到一个 failed，无从分辨缺的是哪一条）。写失败的那条留在队里等补写。
+    report = FlushReport()
+
+    async def _save_user_message(key: str) -> int:
+        return await storage.save_group_message(
             group_id, user_speaker, "user", req.message, user_speaker_card_id,
-            reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
+            reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
         )
-        await storage.save_group_message(
+
+    async def _save_char_message(key: str) -> int:
+        return await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
-            "assistant", resp, req.target_card_id,
+            "assistant", resp, req.target_card_id, client_key=key,
         )
+
+    user_save, rep = await group.outbox.write(_save_user_message, ping=storage.ping)
+    report.merge(rep)
+    char_save, rep = await group.outbox.write(_save_char_message, ping=storage.ping)
+    report.merge(rep)
 
     # 后台评估点赞触发的 affinity 变化（不阻塞回复）
     asyncio.create_task(
         _run_group_affinity(group, group_id, [req.target_card_id], req.message, storage)
     )
 
-    return {"reply": resp, "speaker": group.engines[req.target_card_id].card.name}
+    return {
+        "reply": resp,
+        "speaker": group.engines[req.target_card_id].card.name,
+        "user_msg_id": user_save.id,
+        "char_msg_id": char_save.id,
+        **save_field(user_save, "user_save"),
+        **save_field(char_save, "char_save"),
+        **report.as_json(),
+    }
+
+
+@router.post("/{group_id}/flush")
+@limiter.limit("30/minute")
+async def flush_group_messages(
+    group_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+) -> dict:
+    """把这条群聊里没落库的消息按原顺序补写一遍 —— 前端「重试」按钮打的就是这里。
+
+    属主校验走 `_get_owned_group`（与 `/send`、`/broadcast` 同一处、同一句 404）：非属主
+    与不存在的群聊同判 404，不给存在性枚举留信道。响应体与 broadcast 的 done 帧同形。
+    """
+    group = await _get_owned_group(group_id, user["id"], storage)
+    if group is None:
+        raise HTTPException(404, "群聊会话已过期，请重新创建")
+    return (await group.outbox.flush(ping=storage.ping)).as_json()
 
 
 @router.post("/{group_id}/broadcast")
@@ -577,17 +616,24 @@ async def broadcast_message(
             user_speaker = req.speaker or group.speaker_name
             user_speaker_card_id = group.user_persona_card_id if group.user_persona_type == "character" else ""
 
-            # 三类保存各自一个 nonfatal：共用一个块时前一笔失败会让后面整段不执行，而调用
-            # 方只拿到一个 failed。**帧不论成败都发** —— 角色已经说完的话不该因为写库失败
-            # 从用户眼前消失；`saved` 是逐条上报的「未保存」依据，`msg_id` 在失败时为 null。
+            # 三类保存各自入队：共用一个块时前一笔失败会让后面整段不执行，而调用方只拿到
+            # 一个 failed。**帧不论成败都发** —— 角色已经说完的话不该因为写库失败从用户
+            # 眼前消失；`save` 是逐条上报的「未落库」依据，`msg_id` 在没落库时为 null。
+            report = FlushReport()
+            outbox = group.outbox
+            ping = storage.ping
             user_msg_id = None
             if not req.auto_mode:
-                async with nonfatal("group", "save user message") as user_out:
-                    user_msg_id = await storage.save_group_message(
+                async def _save_user_message(key: str) -> int:
+                    return await storage.save_group_message(
                         group_id, user_speaker, "user", req.message, user_speaker_card_id,
-                        reply_to_id=req.reply_to_id, reply_to_preview=reply_preview,
+                        reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
                     )
-                yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id, 'saved': not user_out.failed}, ensure_ascii=False)}\n\n"
+
+                user_save, rep = await outbox.write(_save_user_message, ping=ping)
+                report.merge(rep)
+                user_msg_id = user_save.id
+                yield f"data: {json.dumps({'type': 'user', 'msg_id': user_msg_id, **save_field(user_save, 'save')}, ensure_ascii=False)}\n\n"
 
             # Stream character replies one by one
             async with group.lock:
@@ -609,10 +655,16 @@ async def broadcast_message(
                         # auto_mode 下本就没有「沉默」这条要记（改前也是不发帧的）—— 保持不变。
                         if not req.auto_mode:
                             msg_id = None
-                            async with nonfatal("group", "save silent message") as silent_out:
-                                msg_id = await storage.save_group_message(
-                                    group_id, r["speaker"], "silent", "", r["card_id"],
+                            # 闭包必须**绑住本轮**的 r（默认参数），不能读循环变量：写是
+                            # await 的，等它回来时 r 已经是下一轮那个角色了。
+                            async def _save_silent(key: str, r=r) -> int:
+                                return await storage.save_group_message(
+                                    group_id, r["speaker"], "silent", "", r["card_id"], client_key=key,
                                 )
+
+                            silent_save, rep = await outbox.write(_save_silent, ping=ping)
+                            report.merge(rep)
+                            msg_id = silent_save.id
                             yield f"data: {json.dumps({
                                 'type': 'reply',
                                 'card_id': r['card_id'],
@@ -620,14 +672,20 @@ async def broadcast_message(
                                 'reply': '',
                                 'role': 'silent',
                                 'msg_id': msg_id,
-                                'saved': not silent_out.failed,
+                                **save_field(silent_save, 'save'),
                             }, ensure_ascii=False)}\n\n"
                     else:
                         msg_id = None
-                        async with nonfatal("group", "save assistant message") as char_out:
-                            msg_id = await storage.save_group_message(
+
+                        async def _save_char(key: str, r=r) -> int:
+                            return await storage.save_group_message(
                                 group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
+                                client_key=key,
                             )
+
+                        char_save, rep = await outbox.write(_save_char, ping=ping)
+                        report.merge(rep)
+                        msg_id = char_save.id
                         yield f"data: {json.dumps({
                             'type': 'reply',
                             'card_id': r['card_id'],
@@ -635,11 +693,13 @@ async def broadcast_message(
                             'reply': r['reply'],
                             'role': 'assistant',
                             'msg_id': msg_id,
-                            'saved': not char_out.failed,
+                            **save_field(char_save, 'save'),
                         }, ensure_ascii=False)}\n\n"
 
-            # Done — all replies sent
-            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+            # Done — all replies sent。补上与丢掉的读数随 done 帧一起给前端：这一轮里
+            # 每一次写都会顺带补写队列头，前端据此把先前标了「未保存」的消息填回真 id。
+            done_payload = {'done': True, **report.as_json()}
+            yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
 
             # 后台评估点赞触发的 affinity 变化（不阻塞回复）
             asyncio.create_task(

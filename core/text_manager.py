@@ -16,6 +16,7 @@ from core.character_roster import aliases_for, cached_characters, resolve_charac
 from core.chat_engine import ChatEngine
 from core.chat_preprocessor import ChatPreprocessor
 from core.distiller import Distiller
+from core.message_outbox import MessageOutbox
 from core.moderation.card_guard import GuardVerdict, guard_card_obj
 from core.schema import CharacterCard
 from core.text_failure import TEXT_FAILURE_MESSAGES as _MSG
@@ -668,5 +669,10 @@ class TextManager:
             storage=self._storage,
         )
         session_id = uuid.uuid4().hex[:12]
-        self._sessions[session_id] = {"engine": engine, "card": card, "message_ids": [], "user_id": user_id}
+        # `outbox` 随条目走：`web/routers/chat.py`、`history.py` 挪条目时整份搬走，所以这里
+        # 建一次就够 —— 会话只有一个构造点，队列也只有一个。
+        self._sessions[session_id] = {
+            "engine": engine, "card": card, "message_ids": [], "user_id": user_id,
+            "outbox": MessageOutbox(),
+        }
         return session_id

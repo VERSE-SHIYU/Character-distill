@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
+from core.message_outbox import MessageOutbox, SaveState, save_field
 from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
@@ -1461,14 +1462,29 @@ async def start_session(
 
     # Save opening to DB + engine.history (seed only, no backfill to card)
     first_created_at = ""
+    first_message_save: SaveState | None = None
     if opening:
         engine_obj = sessions[session_id].get("engine") if sessions.get(session_id) else None
         if engine_obj:
-            async with nonfatal("start_session", "save opening message"):
-                rec = await storage.save_message(session_id, "char", opening, "", retracted=False)
+            # 开场白只是**第一笔**写入，和后面每一轮走同一条路：写失败就留在队里，
+            # 下一次写 / 重试 / 关停时补上。上报的 key 让前端在后续 `flushed` 里认领它。
+            session_rec = sessions[session_id]
+            outbox = session_rec.setdefault("outbox", MessageOutbox())
+            opening_rows: list[dict] = []
+
+            async def _save_opening(key: str) -> int:
+                rec = await storage.save_message(
+                    session_id, "char", opening, "", retracted=False, client_key=key,
+                )
+                opening_rows.append(rec)
+                return rec["id"]
+
+            first_message_save, _opening_report = await outbox.write(_save_opening, ping=storage.ping)
+            if opening_rows:
+                rec = opening_rows[0]
                 first_created_at = rec.get("created_at", "")
                 engine_obj.history.append({"role": "assistant", "content": opening})
-                sessions[session_id].setdefault("message_ids", []).append(rec["id"])
+                session_rec.setdefault("message_ids", []).append(rec["id"])
                 print(f"[start_session] Injected opening into session {session_id}")
 
     result = card.model_dump()
@@ -1477,6 +1493,7 @@ async def start_session(
     if opening:
         result["first_message"] = opening
         result["first_created_at"] = first_created_at
+        result.update(save_field(first_message_save, "first_message_save"))
     return result
 
 

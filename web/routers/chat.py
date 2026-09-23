@@ -18,6 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
+from core.message_outbox import FlushReport, MessageOutbox, SaveState, save_field
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
@@ -129,6 +130,7 @@ async def _ensure_session(
     session = sessions.get(session_id)
     if session is not None:
         session.setdefault("lock", asyncio.Lock())
+        session.setdefault("outbox", MessageOutbox())
         session.setdefault("retract_state", {
             "last_retract_turn": -999,
             "retract_count": 0,
@@ -353,42 +355,60 @@ async def _do_chat(
     if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
         engine.history[-1]["retracted"] = True
 
-    # Dual-write to SQLite (non-fatal on failure)
+    # 三笔各自入队：写失败的那条**留在队列里**，等下一次写 / 用户点重试 / 关停时按原顺序
+    # 补上 —— 不再各自包一个 nonfatal 就地丢掉。`*_save` 是逐条上报给前端的「没落库」依据。
+    outbox = session.setdefault("outbox", MessageOutbox())
+    ping = storage.ping
+
     user_msg_id = None
     char_msg_id = None
-    # `*_rec` 与 `*_created_at` 必须有初值：保存失败时 nonfatal 吞掉异常，块内赋值
-    # 整条不执行，下面按「没有这条记录」取值（缺陷 98）。
-    user_rec = None
-    char_rec = None
+    # `*_created_at` 必须有初值：没落库时这一轮就没有这条记录，下面按「没有」取值（缺陷 98）。
     user_created_at = ""
     char_created_at = ""
     ids_to_add: list[Any] = []
-    # 三笔各自一个 nonfatal：共用一个块时，用户那笔失败会让角色那笔整个不执行，而调用方
-    # 只拿到一个 failed，分不出是哪一条没存上。`*_saved` 就是逐条上报给前端的「未保存」依据。
-    async with nonfatal("chat", "save user message") as user_out:
-        if not hidden:
-            user_rec = await storage.save_message(
-                session_id, "user", msg, "",
-                reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
-            )
-            user_msg_id, user_created_at = _msg_fields(user_rec)
-    user_saved = not user_out.failed
+    report = FlushReport()
+    user_save: SaveState | None = None
+    char_save: SaveState | None = None
 
-    async with nonfatal("chat", "save assistant message") as char_out:
+    if not hidden:
+        # write_fn 只回行 id（队列的契约）；`created_at` 由这一笔自己记在闭包里 —— 队列不碰
+        # 存储的返回形状（`messages` 与 `group_messages` 两张表返回的根本不是同一种东西）。
+        user_rows: list[dict] = []
+
+        async def _save_user_message(key: str) -> int:
+            rec = await storage.save_message(
+                session_id, "user", msg, "",
+                reply_to_id=reply_to_id, reply_to_preview=reply_to_preview, client_key=key,
+            )
+            user_rows.append(rec)
+            return rec["id"]
+
+        user_save, rep = await outbox.write(_save_user_message, ping=ping)
+        report.merge(rep)
+        user_msg_id, user_created_at = _msg_fields(user_rows[0] if user_rows else None)
+
+    char_rows: list[dict] = []
+
+    async def _save_char_message(key: str) -> int:
         # 检索来源快照落库（evidence_to_json 是唯一编码出口）。读的是本轮 chat 刚写下的
         # engine.last_traces —— 必须在 post_stream_process 之前取，那是另一轮。
-        char_rec = await storage.save_message(
+        rec = await storage.save_message(
             session_id, "char", resp, rag_ctx[:500], retracted=retracted,
-            evidence=evidence_to_json(getattr(engine, "last_traces", [])),
+            evidence=evidence_to_json(getattr(engine, "last_traces", [])), client_key=key,
         )
-        char_msg_id, char_created_at = _msg_fields(char_rec)
-    char_saved = not char_out.failed
+        char_rows.append(rec)
+        return rec["id"]
+
+    char_save, rep = await outbox.write(_save_char_message, ping=ping)
+    report.merge(rep)
+    char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
     ids_to_add.extend([user_msg_id, char_msg_id])
 
     # Save summary if newly generated
     engine = session.get("engine")
     if engine and engine.last_summary:
         # 读也包进块里：摘要只是个附赠品，读它失败不该把本轮回复打断。
+        pending_summary = ""
         async with nonfatal("chat", "save summary"):
             existing_summaries = [
                 m for m in await storage.get_messages(session_id)
@@ -397,10 +417,19 @@ async def _do_chat(
             last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
             new_summary = f"历史摘要：{engine.last_summary}"
             if new_summary != last_saved:
-                sum_rec = await storage.save_message(
-                    session_id, "summary", new_summary, "",
-                )
-                ids_to_add.append(sum_rec["id"])
+                pending_summary = new_summary
+        if pending_summary:
+            # 摘要也走队列（写失败会补上），但**不**上报给前端：摘要不在界面上，
+            # 标「未保存」只会让人去找一条看不见的消息。
+            sum_save, rep = await outbox.write(
+                lambda key, text=pending_summary: storage.save_message(
+                    session_id, "summary", text, "", client_key=key,
+                ),
+                ping=ping,
+            )
+            report.merge(rep)
+            if sum_save.id is not None:
+                ids_to_add.append(sum_save.id)
 
     session.setdefault("message_ids", []).extend(ids_to_add)
 
@@ -409,8 +438,10 @@ async def _do_chat(
         "user_msg_id": user_msg_id, "char_msg_id": char_msg_id,
         "user_created_at": user_created_at,
         "char_created_at": char_created_at,
-        "user_saved": user_saved, "char_saved": char_saved,
         "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
+        **save_field(user_save, "user_save"),
+        **save_field(char_save, "char_save"),
+        **report.as_json(),
     }
     if engine and engine.last_summary:
         result["summary"] = engine.last_summary
@@ -477,25 +508,34 @@ async def _do_chat_stream(
         rag_context = ""
         user_msg_id: int | None = None
         char_msg_id: int | None = None
-        # 与 `_do_chat` 同因（缺陷 98）：保存失败时 nonfatal 吞掉异常，块内赋值整条
-        # 不执行。少了这些初值，末尾 done 帧的取值就是 UnboundLocalError —— 正文已
-        # 整段流给用户，却在收尾时把 done 帧换成 error 帧。
-        user_rec = None
-        char_rec = None
+        # 与 `_do_chat` 同因（缺陷 98）：没落库时这些取值就是「没有这条记录」。少了初值，
+        # 末尾 done 帧的取值就是 UnboundLocalError —— 正文已整段流给用户，却在收尾时把
+        # done 帧换成 error 帧。
         user_created_at = ""
         char_created_at = ""
-        # 三笔各自一个 nonfatal（同 `_do_chat`）：共用一个块时前一笔失败会让后一笔整个不
-        # 执行，而调用方只拿到一个 failed，分不出是哪条没存上。`*_saved` 是逐条上报给前
-        # 端的「未保存」依据 —— 只有这个字段说了算，不由 `msg_id is None` 反推（hidden
-        # 消息本来就没有 id，却是存成功的）。
-        async with nonfatal("chat", "save user message") as user_out:
-            if not hidden:
-                user_rec = await storage.save_message(
+        # 三笔各自入队（同 `_do_chat`）：一条写失败不再连坐别条，`*_save` 是逐条上报给前端
+        # 的「没落库」依据 —— 只有这个字段说了算，不由 `msg_id is None` 反推（hidden 消息
+        # 本来就没有 id，却是存成功的）。
+        outbox = session.setdefault("outbox", MessageOutbox())
+        ping = storage.ping
+        report = FlushReport()
+        user_save: SaveState | None = None
+        char_save: SaveState | None = None
+
+        if not hidden:
+            user_rows: list[dict] = []
+
+            async def _save_user_message(key: str) -> int:
+                rec = await storage.save_message(
                     session_id, "user", msg, "",
-                    reply_to_id=reply_to_id, reply_to_preview=reply_to_preview,
+                    reply_to_id=reply_to_id, reply_to_preview=reply_to_preview, client_key=key,
                 )
-                user_msg_id, user_created_at = _msg_fields(user_rec)
-        user_saved = not user_out.failed
+                user_rows.append(rec)
+                return rec["id"]
+
+            user_save, rep = await outbox.write(_save_user_message, ping=ping)
+            report.merge(rep)
+            user_msg_id, user_created_at = _msg_fields(user_rows[0] if user_rows else None)
 
         try:
             engine = session["engine"]
@@ -535,15 +575,21 @@ async def _do_chat_stream(
             if retracted and engine and engine.history and engine.history[-1].get("role") == "assistant":
                 engine.history[-1]["retracted"] = True
 
-            async with nonfatal("chat", "save assistant message") as char_out:
+            char_rows: list[dict] = []
+
+            async def _save_char_message(key: str) -> int:
                 # 同 _do_chat：证据在本轮流式生成期间写入 engine.last_traces，
                 # 后面的 post_stream_process 是另一轮，取早了/晚了都是错的那一轮。
-                char_rec = await storage.save_message(
+                rec = await storage.save_message(
                     session_id, "char", full_reply, rag_context[:500], retracted=retracted,
-                    evidence=evidence_to_json(getattr(engine, "last_traces", [])),
+                    evidence=evidence_to_json(getattr(engine, "last_traces", [])), client_key=key,
                 )
-                char_msg_id, char_created_at = _msg_fields(char_rec)
-            char_saved = not char_out.failed
+                char_rows.append(rec)
+                return rec["id"]
+
+            char_save, rep = await outbox.write(_save_char_message, ping=ping)
+            report.merge(rep)
+            char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
 
             msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
             if msg_ids:
@@ -551,6 +597,7 @@ async def _do_chat_stream(
 
             if engine and engine.last_summary:
                 # 读也包进块里（同 `_do_chat`）：摘要只是附赠品，读它失败不该把本轮打断。
+                pending_summary = ""
                 async with nonfatal("chat", "save summary"):
                     existing_summaries = [
                         m for m in await storage.get_messages(session_id)
@@ -559,10 +606,17 @@ async def _do_chat_stream(
                     last_saved = existing_summaries[-1]["content"] if existing_summaries else ""
                     new_summary = f"历史摘要：{engine.last_summary}"
                     if new_summary != last_saved:
-                        sum_rec = await storage.save_message(
-                            session_id, "summary", new_summary, "",
-                        )
-                        session.setdefault("message_ids", []).append(sum_rec["id"])
+                        pending_summary = new_summary
+                if pending_summary:
+                    sum_save, rep = await outbox.write(
+                        lambda key, text=pending_summary: storage.save_message(
+                            session_id, "summary", text, "", client_key=key,
+                        ),
+                        ping=ping,
+                    )
+                    report.merge(rep)
+                    if sum_save.id is not None:
+                        session.setdefault("message_ids", []).append(sum_save.id)
 
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
@@ -570,8 +624,10 @@ async def _do_chat_stream(
                 "char_msg_id": char_msg_id,
                 "user_created_at": user_created_at,
                 "char_created_at": char_created_at,
-                "user_saved": user_saved, "char_saved": char_saved,
                 "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
+                **save_field(user_save, "user_save"),
+                **save_field(char_save, "char_save"),
+                **report.as_json(),
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
@@ -591,11 +647,16 @@ async def _do_chat_stream(
             print(f"[chat] Traceback:\n{traceback.format_exc()}")
             # Only roll back when NOTHING was produced — if any token streamed out,
             # the user already saw partial content; keep their message + partial reply.
-            if user_msg_id is not None and not tokens:
-                try:
-                    await storage.delete_messages_after(session_id, user_msg_id)
-                except Exception as rollback_exc:
-                    print(f"[chat] Rollback user message failed (non-fatal): {rollback_exc}")
+            if not tokens:
+                # 两条路都要收：已落库的从库里删（`delete_messages_after`），还没落库的从
+                # 队里摘 —— 只删库不摘队的话，补写会把这条「用户看到失败了」的消息又写回来。
+                if user_save is not None:
+                    outbox.discard(user_save.key)
+                if user_msg_id is not None:
+                    try:
+                        await storage.delete_messages_after(session_id, user_msg_id)
+                    except Exception as rollback_exc:
+                        print(f"[chat] Rollback user message failed (non-fatal): {rollback_exc}")
             # Sync engine.history: pop phantom user message if chat_stream's own
             # except block didn't clean up (e.g. exception after generator exit)
             engine = session.get("engine")
@@ -664,6 +725,11 @@ async def revoke_messages(
     user_id = user["id"]
     session = await _ensure_session(req.session_id, storage, sessions, user_id)
 
+    # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉。不清队的话补写会把它们
+    # 又写回来，用户看到的是「撤回之后它自己又冒出来了」。**先清队再删库** —— 顺序反过来
+    # 时，两步之间插进来的补写，正好就是删完之后又出现的那条。
+    session.setdefault("outbox", MessageOutbox()).clear()
+
     # Delete from SQLite first
     try:
         count = await storage.delete_messages_after(req.session_id, req.message_id)
@@ -682,6 +748,26 @@ async def revoke_messages(
         print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
 
     return {"deleted": count}
+
+
+@router.post("/{session_id}/flush")
+@limiter.limit("30/minute")
+async def flush_session_messages(
+    session_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    storage: StorageBase = Depends(get_storage),
+    sessions: dict = Depends(get_sessions),
+) -> dict[str, Any]:
+    """把这条会话里没落库的消息按原顺序补写一遍 —— 前端「重试」按钮打的就是这里。
+
+    属主校验走 `_ensure_session`（与 `/send` 同一处）：非属主与不存在的会话同判 404，
+    不给存在性枚举留信道。响应体与 done 帧同形（`flushed` / `dropped`）。
+    """
+    session = await _ensure_session(session_id, storage, sessions, user["id"])
+    outbox = session.setdefault("outbox", MessageOutbox())
+    return (await outbox.flush(ping=storage.ping)).as_json()
+
 
 @router.get("/affinity/{session_id}", response_model=None)
 async def get_affinity(
