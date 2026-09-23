@@ -201,8 +201,10 @@ class ContextEngine:
         self._llm = llm
         self._storage = storage
         self.web_search_enabled = False
+        self._apply_budgets(model)
 
-        # Dynamic token budget based on model
+    def _apply_budgets(self, model: str) -> None:
+        """按模型重算五档 token 预算 —— 构造与换连接共用这一处，两条路不会分叉。"""
         budgets = _compute_budgets(model)
         self.TOTAL_BUDGET = budgets["total"]
         self.MAX_HISTORY = budgets["history"]
@@ -210,6 +212,19 @@ class ContextEngine:
         self.MAX_MEMORY = budgets["memory"]
         self.MAX_CARD_EXT = budgets["card_ext"]
         print(f"[ContextEngine] TOTAL_BUDGET={self.TOTAL_BUDGET} (model={model!r})")
+
+    def set_llm(self, llm: Any) -> None:
+        """换到新连接，并按**新模型**重算预算。
+
+        只影响**下一次**出站：已经在飞的那一轮由调用方在发起前把实例取到本地
+        （见 ``ChatEngine._try_record_usage`` 的 ``llm`` 形参），不在这里补。
+
+        预算是按模型算的，所以换模型必须重算 —— 否则 32k 换成 24k 之后上下文仍按 32k
+        装填，超出的部分被上游截断，表现为角色忽然健忘。这五档全挂 ``self``，读者是
+        ``ChatEngine``（``_build_llm_messages``）与本类自己的 ``build_ex``，就地重算即全站生效。
+        """
+        self._llm = llm
+        self._apply_budgets(getattr(llm, "model", ""))
 
     # ── 公开接口 ──────────────────────────────────────────────
 
