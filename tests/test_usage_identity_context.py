@@ -700,10 +700,9 @@ def test_chat_sse_lands_usage_row_with_request_identity(monkeypatch):
         storage=store,
     )
     sessions = deps.get_sessions()
-    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）；`lock` 不在它里面，
-    # 那由 `_ensure_session` 每次命中 setdefault，本用例自己补上。
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
     sessions[sid] = new_session_entry(engine, None, uid)
-    sessions[sid]["lock"] = asyncio.Lock()
 
     async def _resolve(user_id, storage=None):
         return llm

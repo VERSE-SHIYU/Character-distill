@@ -45,7 +45,8 @@ _main_loop: asyncio.AbstractEventLoop | None = None
 _llm: LLMAdapter | None = None
 _rag_config: dict[str, Any] = _config["rag"]
 
-# {session_id: {"engine": ChatEngine, "card": CharacterCard}}
+# {session_id: 一对一会话条目} —— 条目的字段清单只在 `core.text_manager.new_session_entry`
+# 一处定义，别处不许手搓 dict（漏字段的后果见该工厂的 docstring）
 # Transitional: kept until chat_engine migrates to storage-backed history
 _sessions: dict[str, dict[str, Any]] = {}
 

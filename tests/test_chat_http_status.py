@@ -39,10 +39,9 @@ class _Engine:
 
 
 def _wire(monkeypatch, exc):
-    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）：`_ensure_session` 换成直接返回
-    # 条目，没人再替它补 `outbox` 了。
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
     session = new_session_entry(_Engine(exc), None, "u1")
-    session["lock"] = asyncio.Lock()
 
     async def _fake_ensure(session_id, storage, sessions, user_id=""):
         return session

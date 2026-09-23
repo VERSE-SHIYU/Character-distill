@@ -99,11 +99,9 @@ async def _decide_retraction(engine, session: dict, reply: str) -> bool:
 
     On hit, updates last_retract_turn / retract_count / turn_index.
     """
-    state = session.setdefault("retract_state", {
-        "last_retract_turn": -999,
-        "retract_count": 0,
-        "turn_index": 0,
-    })
+    # 条目自带这个字段（`core/text_manager.new_session_entry`）—— 这里不 `setdefault`：
+    # 补默认值只会把「建会话那条路没带上它」盖住。
+    state = session["retract_state"]
     state["turn_index"] += 1
 
     if not engine:
@@ -139,12 +137,9 @@ async def _ensure_session(
     """Return in-memory session dict, auto-resuming from DB if server restarted."""
     session = sessions.get(session_id)
     if session is not None:
-        session.setdefault("lock", asyncio.Lock())
-        session.setdefault("retract_state", {
-            "last_retract_turn": -999,
-            "retract_count": 0,
-            "turn_index": 0,
-        })
+        # 不在这里 `setdefault("lock")` / `setdefault("retract_state")`：两者都是条目的一部分，
+        # 由 `core/text_manager.new_session_entry` 一处定义。补默认值会把「建会话那条路没带上」
+        # 盖成静默可用的样子。
         # SECURITY: verify session ownership even on memory hit.
         # 与下面的 DB 分支同判 404（含同一条文案）：命中/未命中的状态码若不同，
         # 反复请求就能靠差异推断资源是否存在——内存路径会把 DB 路径的防枚举漏掉。
@@ -235,13 +230,8 @@ async def _ensure_session(
             engine.load_affinity(data)
     except Exception as exc:
         print(f"[chat] Restore affinity failed (non-fatal): {exc}")
-    sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
-    sessions[session_id].setdefault("lock", asyncio.Lock())
-    sessions[session_id].setdefault("retract_state", {
-        "last_retract_turn": -999,
-        "retract_count": 0,
-        "turn_index": 0,
-    })
+    # 条目整份来自 `new_session_entry`（上面那句把新 id 下的条目搬到原 id 名下），
+    # `lock` / `retract_state` / `outbox` 都随条目一起过来 —— 不在这里补默认值。
 
     print(f"[chat] Auto-resumed session {session_id}: history={len(engine.history) if engine else 0} messages")
     touch_session(sessions[session_id])
@@ -376,7 +366,6 @@ async def _do_chat(
     # `*_created_at` 必须有初值：没落库时这一轮就没有这条记录，下面按「没有」取值（缺陷 98）。
     user_created_at = ""
     char_created_at = ""
-    ids_to_add: list[Any] = []
     report = FlushReport()
     user_save: SaveState | None = None
     char_save: SaveState | None = None
@@ -413,7 +402,6 @@ async def _do_chat(
     char_save, rep = await outbox.write(_save_char_message, ping=ping)
     report.merge(rep)
     char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
-    ids_to_add.extend([user_msg_id, char_msg_id])
 
     # Save summary if newly generated
     engine = session.get("engine")
@@ -439,10 +427,6 @@ async def _do_chat(
                 ping=ping,
             )
             report.merge(rep)
-            if sum_save.id is not None:
-                ids_to_add.append(sum_save.id)
-
-    session.setdefault("message_ids", []).extend(ids_to_add)
 
     result: dict[str, Any] = {
         "reply": resp, "retracted": retracted, "rag_context": rag_ctx[:200],
@@ -602,10 +586,6 @@ async def _do_chat_stream(
             report.merge(rep)
             char_msg_id, char_created_at = _msg_fields(char_rows[0] if char_rows else None)
 
-            msg_ids = [uid for uid in (user_msg_id, char_msg_id) if uid is not None]
-            if msg_ids:
-                session.setdefault("message_ids", []).extend(msg_ids)
-
             if engine and engine.last_summary:
                 # 读也包进块里（同 `_do_chat`）：摘要只是附赠品，读它失败不该把本轮打断。
                 pending_summary = ""
@@ -626,8 +606,6 @@ async def _do_chat_stream(
                         ping=ping,
                     )
                     report.merge(rep)
-                    if sum_save.id is not None:
-                        session.setdefault("message_ids", []).append(sum_save.id)
 
             done_payload: dict[str, Any] = {
                 "done": True, "retracted": retracted, "rag_context": rag_context[:200],
@@ -729,8 +707,8 @@ async def revoke_messages(
     """Delete messages starting from the given DB message id.
 
     ``req.message_id`` is a real SQLite message row id (NOT a positional index).
-    After DB deletion, rebuild ``engine.history`` from remaining messages to keep
-    the in-memory context and ``message_ids`` tracking precisely in sync.
+    After DB deletion, rebuild ``engine.history`` from remaining messages so the
+    in-memory context matches the DB.
     """
     user_id = user["id"]
     session = await _ensure_session(req.session_id, storage, sessions, user_id)
@@ -747,13 +725,12 @@ async def revoke_messages(
         print(f"[chat] Revoke messages failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
-    # Rebuild in-memory engine.history and message_ids from remaining DB rows
+    # Rebuild in-memory engine.history from remaining DB rows
     try:
         messages = await storage.get_messages(req.session_id)
         engine = session.get("engine")
         if engine:
             engine.history = _rebuild_history_from_db(messages)
-        session["message_ids"] = [m["id"] for m in messages]
     except Exception as exc:
         print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
 
@@ -849,7 +826,7 @@ async def get_session_reactions(
     if not db_session:
         raise HTTPException(404, "Session not found")
 
-    # 反应按会话读取，属主谓词在 SQL 里（JOIN sessions）：不再由调用方拼 message_ids
+    # 反应按会话读取，属主谓词在 SQL 里（JOIN sessions）：不再由调用方自拼一组消息 id
     reactions = await storage.get_session_reactions_owned(session_id, user["id"])
     return {"reactions": reactions}
 

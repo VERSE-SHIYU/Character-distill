@@ -24,6 +24,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.text_manager import new_session_entry
 from deps import get_sessions, get_storage
 from routers.auth import get_current_user
 from routers.chat import _ensure_session
@@ -104,7 +105,7 @@ def _stub_text_manager(sessions, engine, rebuilt_id) -> object:
             return [{"name": "张三", "aliases": []}]
 
         def _create_session(self, *_a, **_kw):
-            sessions[rebuilt_id] = {"engine": engine, "user_id": ""}
+            sessions[rebuilt_id] = new_session_entry(engine, None, "")
             return rebuilt_id
 
     return _StubTextManager()

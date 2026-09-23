@@ -43,6 +43,7 @@ import deps
 import server
 from adapters.llm_adapter import LLMAdapter
 from conftest import TEST_JWT_SECRET
+from core.text_manager import new_session_entry
 from deps import get_storage
 from routers.auth import get_current_user
 from routers.chat import router as chat_router
@@ -481,10 +482,7 @@ def test_l4_live_session_is_blocked_before_outbound(store, seed_user, monkeypatc
 
     llm = _poison(LLMAdapter(api_key="k", base_url="https://api.other.com"))
     sid = f"s_live_{uuid.uuid4().hex[:8]}"
-    deps.get_sessions()[sid] = {
-        "engine": _SessionEngine(llm), "user_id": uid,
-        "lock": asyncio.Lock(), "message_ids": [],
-    }
+    deps.get_sessions()[sid] = new_session_entry(_SessionEngine(llm), None, uid)
     try:
         app = FastAPI()
         app.include_router(chat_router)

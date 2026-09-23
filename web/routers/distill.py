@@ -1487,7 +1487,6 @@ async def start_session(
             if opening_rows:
                 rec = opening_rows[0]
                 first_created_at = rec.get("created_at", "")
-                session_rec.setdefault("message_ids", []).append(rec["id"])
                 print(f"[start_session] Injected opening into session {session_id}")
 
     result = card.model_dump()

@@ -351,7 +351,6 @@ async def resume_session(
             rec = greeting_rows[0]
             greeting_id = rec["id"]
             greeting_created_at = rec["created_at"]
-            sessions[session_id].setdefault("message_ids", []).append(rec["id"])
 
     # ── 今日到访觉察：count>=3 且当次未触发重逢问候 → 传给 engine ──
     if _visit_count >= 3 and not greeting:
@@ -383,11 +382,6 @@ async def resume_session(
         result["reunion_greeting"] = greeting
         result["reunion_greeting_id"] = greeting_id
         result["reunion_greeting_created_at"] = greeting_created_at
-
-    # 11. Rebuild message_ids so revoke works after resume
-    sessions[session_id]["message_ids"] = [m["id"] for m in db_messages]
-    if greeting_id is not None:
-        sessions[session_id]["message_ids"].append(greeting_id)
 
     return result
 

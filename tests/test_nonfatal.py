@@ -200,10 +200,9 @@ class _FailingSaveStorage:
 
 
 def _wire(monkeypatch, **engine_kwargs):
-    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）：本用例把 `_ensure_session` 换掉了，
-    # 于是没人再替条目兜底补 `outbox`，形状必须在这里就是全的。
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
+    # 在调用点补等于把「条目长什么样」又拆成两处定义。
     session = new_session_entry(_Engine(**engine_kwargs), None, "u1")
-    session["lock"] = asyncio.Lock()
 
     async def _fake_ensure(session_id, storage, sessions, user_id=""):
         return session

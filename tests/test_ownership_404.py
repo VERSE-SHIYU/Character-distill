@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from core.text_manager import new_session_entry
 from deps import get_memory_manager, get_storage, get_tts_engine, get_voice_client
 from routers.auth import get_current_user
 from routers.card import router as card_router
@@ -604,8 +605,11 @@ class TestOneToOneSessionOwnership:
         import deps
 
         sid = f"orphan_{uuid.uuid4().hex[:12]}"
-        # 最小形态：只有 engine，没有 user_id —— 就是「忘了登记」的样子。
-        deps.get_sessions()[sid] = {"engine": _OrphanEngine()}
+        # 从工厂拿一份完整条目，再摘掉属主 —— 「建会话那条路忘了登记」的形态。
+        # 不手搓 dict：手搓出来的条目漏的不止 user_id，测到的是别的东西。
+        entry = new_session_entry(_OrphanEngine(), None, "")
+        del entry["user_id"]
+        deps.get_sessions()[sid] = entry
         try:
             foreign = intruder_client.post(
                 "/api/chat/send", json={"session_id": sid, "message": "hi"})
