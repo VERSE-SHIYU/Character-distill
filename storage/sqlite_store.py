@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import sqlite3
 import uuid
@@ -21,6 +20,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import StorageBase, StoreError
+from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -3086,20 +3086,6 @@ class SQLiteStore(StorageBase):
 
     # ---- User API config ----
 
-    @staticmethod
-    def _get_fernet():
-        from cryptography.fernet import Fernet
-        import base64
-        from hashlib import sha256
-        key = os.getenv("FERNET_KEY")
-        if not key:
-            secret = os.getenv("JWT_SECRET")
-            if not secret:
-                raise RuntimeError("FERNET_KEY 或 JWT_SECRET 必须设置才能加解密 API key，拒绝使用不安全默认值")
-            raw = secret.encode()
-            key = base64.urlsafe_b64encode(sha256(raw).digest())
-        return Fernet(key)
-
     async def get_user_api_config(self, user_id: str) -> dict:
         """Get a user's API config. api_key and embedding_key are returned decrypted."""
         try:
@@ -3120,7 +3106,7 @@ class SQLiteStore(StorageBase):
                 if not val:
                     return ""
                 try:
-                    return self._get_fernet().decrypt(val.encode()).decode()
+                    return decrypt_secret(val)
                 except Exception as exc:
                     print(f"[SQLiteStore] decrypt failed: {exc}")
                     raise StoreError("_decrypt", exc) from exc
@@ -3155,7 +3141,7 @@ class SQLiteStore(StorageBase):
             secret_params = []
 
             if api_key:
-                encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                encrypted = encrypt_secret(api_key)
                 secret_parts.append("api_key = ?")
                 secret_params.append(encrypted)
 
@@ -3181,7 +3167,7 @@ class SQLiteStore(StorageBase):
             user_params = []
 
             if embedding_key:
-                enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                enc_emb = encrypt_secret(embedding_key)
                 user_parts.append("embedding_key = ?")
                 user_params.append(enc_emb)
 

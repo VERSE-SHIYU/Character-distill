@@ -241,8 +241,8 @@ def test_E9b_region_validation_reads_the_same_table(client, embedder, monkeypatc
 def fernet_key(monkeypatch):
     """给 SQLiteStore 的加解密一个当场生成的 key。
 
-    不读环境、不写文件：有 `.env` 与没 `.env` 的机器上结果必须一样（`_get_fernet` 在
-    两者都没有时是拒绝而不是回落的）。
+    不读环境、不写文件：有 `.env` 与没 `.env` 的机器上结果必须一样（密钥派生在
+    两者都没有时是拒绝而不是回落的，见 storage/secret_box.py）。
     """
     from cryptography.fernet import Fernet
 
