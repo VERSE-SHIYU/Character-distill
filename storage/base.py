@@ -713,8 +713,12 @@ class StorageBase(ABC):
         """Return unsynced (synced=0) delete propagations, oldest first."""
 
     @abstractmethod
-    async def mark_delete_propagated(self, id: int) -> None:
-        """Mark a delete propagation outbox row as synced (synced=1)."""
+    async def remove_delete_propagation(self, id: int) -> None:
+        """Delete an outbox row once the peer acknowledged it.
+
+        Delete, not mark: nothing reads a finished row (`get_pending_...` only
+        looks at `synced = 0`), so keeping it would grow the table forever.
+        """
 
     @abstractmethod
     async def delete_remote_card(self, card_id: str) -> None:
