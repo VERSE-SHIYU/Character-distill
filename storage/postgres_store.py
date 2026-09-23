@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timezone
@@ -14,7 +15,22 @@ import asyncpg  # type: ignore[import-not-found]
 
 from core.roles import ROLES
 from .base import StorageBase, StoreError
+from .migration_ledger import file_sha256, pending_files
 from .pg_identity_sync import align_identity_sequences
+
+logger = logging.getLogger(__name__)
+
+_MIGRATIONS_DIR = Path(__file__).with_name("migrations_pg")
+
+# 账本表**就地建**（不是一份迁移文件）：要记「哪份迁移跑过」，得先有这张表 —— 表本身写成
+# 迁移文件就成了先有鸡还是先有蛋。`IF NOT EXISTS` 让这句每轮启动都幂等。
+_LEDGER_DDL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    filename   TEXT PRIMARY KEY,
+    sha256     TEXT NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
+"""
 
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
@@ -137,12 +153,8 @@ class PostgresStore(StorageBase):
                     min_size=2,
                     max_size=30,
                 )
-                # Run migrations
-                migrations_dir = Path(__file__).with_name("migrations_pg")
                 async with self._pool.acquire() as conn:
-                    for migration_path in sorted(migrations_dir.glob("*.sql")):
-                        sql = migration_path.read_text(encoding="utf-8")
-                        await conn.execute(sql)
+                    await self._run_migrations(conn)
                     # 迁移只管结构；identity 序列与表数据的对齐是数据侧的事，结构就绪之后
                     # 单独跑一次。放在这里而不是 `migrations_pg/` 里：对齐要读表里的 max(id)，
                     # 每张空表的读数都不同，写成迁移文件就成了对存量数据的假设。
@@ -152,6 +164,49 @@ class PostgresStore(StorageBase):
             except Exception as exc:
                 print(f"[PostgresStore] Initialize database failed: {exc}")
                 raise
+
+    async def _run_migrations(self, conn: asyncpg.Connection) -> None:
+        """把 `migrations_pg/` 里没记过账的文件跑掉，逐份记账（缺陷 90/99）。
+
+        账本回答「哪些文件跑过」，执行器不再靠「正文写得幂等」去猜 —— 那是假设，不是
+        判据：`CREATE TABLE IF NOT EXISTS` 幂等，但 `024_users_role.sql` 那种
+        `DO $$ ... $$` 加回填、`021_published_from.sql` 那种约束变更都不保证重跑无害。
+
+        每份文件跑在**自己的事务**里，正文与记账同一事务：正文中途失败时账本不留该行，
+        库也回到执行前（PG 简单查询协议的多语句本就在隐式事务里，显式包一层是让「记账
+        一行」也在同一个事务内）。下次启动重跑这一份。
+
+        账本表为空 = 存量库首次上账本：没有 skip，全量跑一遍并逐份记账。这正是想要的
+        —— 迁移正文对已有库幂等（`IF NOT EXISTS` / `IF EXISTS` / information_schema
+        判断），跑一遍不改变什么，只为把账补齐。
+        """
+        await conn.execute(_LEDGER_DDL)
+        rows = await conn.fetch("SELECT filename, sha256 FROM schema_migrations")
+        recorded = {r["filename"]: r["sha256"] for r in rows}
+
+        bodies = {p.name: p.read_text(encoding="utf-8")
+                  for p in sorted(_MIGRATIONS_DIR.glob("*.sql"))}
+        order = sorted(bodies)
+        for name in pending_files(recorded, bodies, order):
+            sql = bodies[name]
+            async with conn.transaction():
+                await conn.execute(sql)
+                await conn.execute(
+                    "INSERT INTO schema_migrations (filename, sha256) VALUES ($1, $2)",
+                    name, file_sha256(sql),
+                )
+
+        # 记过账的文件又被改了内容：**不重跑**（存量库里它已经生效，重跑未必无害），
+        # 只报一声。ERROR 级是为了复用现有 ERROR 邮件告警 —— 这是「有人动了已应用的
+        # 迁移」这件事的唯一出口，静默就等于没有判据。
+        for name in order:
+            digest = file_sha256(bodies[name])
+            if name in recorded and recorded[name] != digest:
+                logger.error(
+                    "[PostgresStore] 迁移文件已记账但内容不符，跳过不重跑: %s"
+                    "（记账 %s ≠ 磁盘 %s）",
+                    name, recorded[name], digest,
+                )
 
     async def _connect(self):
         """Acquire a pool connection and return a managed context wrapper."""

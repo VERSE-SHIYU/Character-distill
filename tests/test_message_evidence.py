@@ -325,8 +325,8 @@ async def _pg_session(store) -> str:
 class TestPgEvidenceColumn:
     """生产后端那一面：列真在（且是 jsonb）、往返真通、**已建库重跑迁移**真幂等。
 
-    「已建库」不是假想状态：``PostgresStore._ensure_initialized`` 每次构造都把
-    ``migrations_pg/*.sql`` 全部重放，所以第二个 store 走的正是生产重启时走的那条路。
+    「已建库重跑迁移」走的正是**存量库首次上账本**那条路（缺陷 90/99）：账本为空 →
+    全量重放一遍。夹具先把账本表删掉来复现它 —— 账本存在时已记账的文件不会再跑。
     019 写成 `ADD COLUMN IF NOT EXISTS`（而非仓库既有的「改 001_init」惯例）就是为了这一刻 ——
     正是缺陷 21/23 的病灶：改一条已应用的迁移，在新库上看着生效，在老库上是空操作。
 
@@ -356,7 +356,7 @@ class TestPgEvidenceColumn:
         _run_async(_body())
 
     def test_second_init_keeps_the_column_and_the_rows(self):
-        """第二个 store 重放全部迁移：列不丢、带证据的行不丢、无证据的行仍是 NULL。"""
+        """账本清空后重放全部迁移（= 存量库首次上账本）：列不丢、带证据的行不丢、无证据的行仍是 NULL。"""
         async def _body():
             dsn = _dsn()
             store = PostgresStore(dsn)
@@ -366,10 +366,13 @@ class TestPgEvidenceColumn:
                 raw = evidence_to_json([make_trace("scene", "hit", text="屋顶上的旧事。")])
                 await store.save_message(sid, "char", "回复", "rag", evidence=raw)
                 await store.save_message(sid, "user", "你好", "")  # 没发生检索 → NULL
+                # 删账本表 = 回到「账本还不存在」的那版库；下一个实例于是全量重放一遍。
+                async with await store._connect() as conn:
+                    await conn.execute("DROP TABLE IF EXISTS schema_migrations")
             finally:
                 await store.close()
 
-            store2 = PostgresStore(dsn)  # 全新对象 → 把 migrations_pg/*.sql 全部重放
+            store2 = PostgresStore(dsn)  # 账本为空 → 把 migrations_pg/*.sql 全部重放
             await store2._ensure_initialized()
             try:
                 async with await store2._connect() as conn:
