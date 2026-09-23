@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from adapters.llm_adapter import set_call_guard
+from adapters.llm_adapter import OutboundRefused, set_call_guard
 from core.scheduling import submit_to_main_loop
 from deps import get_storage
 from web.geo_guard import check_api_allowed
@@ -25,13 +25,15 @@ from core.request_context import LLM_CALLER, SYSTEM
 logger = logging.getLogger("charsim.llm_gate")
 
 
-class LLMCallerMissing(RuntimeError):
+class LLMCallerMissing(OutboundRefused):
     """出站时上下文里没有调用方身份 —— fail-closed。
 
     「读不到 = 放行」会让请求之外的线程/任务拿到一条无人看守的出站路。真要在
     请求之外调用，唯一合法的写法是显式声明 `with system_llm_context():`，
     而不是让门猜。
 
+    基类是 `OutboundRefused`（与 `LLMCallRefused` 同宗）：两者都是「请求没发出去」，
+    下游批处理放行门拦下的调用时用的是**同一句** `except`（见 core/embeddings.py）。
     不带自定义字段（文案在抛出点拼）：这类异常 `cls(*args)` 本就重建得回来，
     无需 `__reduce__`，也不必进序列化登记表。
     """

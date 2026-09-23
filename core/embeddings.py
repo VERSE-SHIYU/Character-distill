@@ -7,6 +7,10 @@ from contextvars import ContextVar
 
 from chromadb.api.types import EmbeddingFunction
 
+from adapters.llm_adapter import (  # 出站门（缺陷 73）：与 LLM 出站同一处判定
+    OutboundRefused,
+    check_outbound_guard,
+)
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
 
 # ── Active embed deadline（D2：线程/上下文级，杜绝跨请求污染）────────────────
@@ -215,6 +219,9 @@ class DashScopeEmbedding(EmbeddingFunction):
         # EMBEDDING_BASE_URL 覆盖（②④ Step 2：本地压测剥离 DashScope 网络延迟）；
         # 未设置时取 DASHSCOPE_BASE_URLS，与改前内联的那两个字面量逐字节一致。
         base_url = os.environ.get("EMBEDDING_BASE_URL") or DASHSCOPE_BASE_URLS[region]
+        # 门的判定对象是**这个生效的** URL（含上面的 env 覆盖），与 LLM 侧判用户配置里
+        # 那个 base_url 同一口径：判的是真出门的东西，不是「本该是什么」。
+        self._base_url = base_url
         self._client = OpenAI(
             api_key=api_key, base_url=base_url, timeout=8.0, max_retries=2
         )
@@ -239,7 +246,11 @@ class DashScopeEmbedding(EmbeddingFunction):
         (deadline)二维先到先弃；429(可 honor Retry-After)/5xx/连接与读超时在窗口内显式重试，
         400/401/403 立即抛。deadline=None 且无活跃 embed_deadline scope → 走 _client
         (timeout=8.0, max_retries=2)，行为与 D2 前逐字节一致（非工具路径 ~24s 上限保留）。
+
+        出站门在**这里**判、不挪进 `__init__`（缺陷 73）：实例是被缓存的，缓存的是实例、
+        不是这一次的判定 —— 与适配器 `preflight()`「缓存命中也判」同一条口径。
         """
+        check_outbound_guard(self._base_url)
         effective = deadline if deadline is not None else _EMBED_DEADLINE.get()
         if effective is None:
             resp = self._client.embeddings.create(
@@ -323,6 +334,13 @@ class DashScopeEmbedding(EmbeddingFunction):
                 for (orig_idx, orig_text), emb in zip(batch, embeddings):
                     _shared_cache_put(orig_text, emb)
                     all_results.append((orig_idx, emb))
+            except OutboundRefused:
+                # 门拦下的不是「嵌入失败」：请求根本没出网，包成下面的
+                # RuntimeError("百炼 embedding 失败") 会把类型吃掉 —— `/test-embedding`
+                # 正是靠它回 403 + 理由，MCP／脚本里少写 `system_llm_context()` 的
+                # `LLMCallerMissing` 也靠它保持可辨。排在宽 except 前，与 `/test-embedding`
+                # 那条放行同一个写法。
+                raise
             except Exception as exc:
                 exc_str = str(exc)
                 if _is_moderation_error(exc_str):

@@ -1855,10 +1855,19 @@ PROBE_IMAGE         false
 - 与缺陷 61（F6）是同一形态的两半：61 修的是「geo 判定不跟着会话走」，这条修的是「**凭据**不跟着会话走」。`ChatEngine` 构造后由外部写入的会话状态字段另记 **96**（不属本条，见该条）。
 - 红源：`tests/test_live_llm_swap.py` 的 T1 / T2 / T3a / T3b（换连接与在飞记账）与 `tests/test_live_llm_refresh.py` 的 T4–T10（缓存口径、活会话、群聊、保存失败不撤销、保存不过 preflight、热重载只换全局用户）。每条断言各有一条专属变异（逐条真跑、跑完还原，逐条打红了它点名的那条用例）。
 
-**73. `core/embeddings.py` 与 mem0 的出站不经过 adapter，是否需要 geo 约束待定** —— 状态：**另开议题**
+**73. `core/embeddings.py` 与 mem0 的出站不经过 adapter，是否需要 geo 约束待定** —— 状态：**已修**（与代码/测试同属一个 commit，2026-09-23）
 - 这些出站拿的是 `base_url` 之外的嵌入端点（DashScope），**没有**经过 `adapters/llm_adapter.py`，故**不受调用点门约束**。D3 说「请求内所有 LLM 使用都受 geo 门约束」，实现在 adapter 上 ⇒ 这类出站落在门的射程外。
 - 是「门该不该覆盖嵌入」还是「嵌入另有一套策略」，是**决策**不是修法，故另开议题。
-- **2026-09-23 查实的事实（缺陷 74 的 S0 交付，供本条决策，不改本条状态）**：
+- **本次处置（2026-09-23，用户裁定「修机制不修实例」）**：
+  - **不把嵌入搬进 adapter**（那要造第二套 client / 会话），而是让它走**同一个判定**：`core/embeddings.py::_call_api` 出站前调 `adapters.llm_adapter.check_outbound_guard(self._base_url)` —— 与 `LLMAdapter._before_call` 共用的**唯一**一处实现。门没注册（独立进程）就放行，行为与改前一致。
+  - **判的是「生效的 base_url」**（含 `EMBEDDING_BASE_URL` 覆盖），与 LLM 侧判「用户配置里那个 URL」同口径：判真出门的东西，不是「本该是什么」。故判定放在 `_call_api` 而**不是** `__init__` —— 实例是被缓存的，缓存的是实例、不是这一次的判定（同 `preflight()`「缓存命中也判」）。
+  - **保存侧同判**：`update_api_config`（`web/routers/auth.py`）现在也把 `DASHSCOPE_BASE_URLS[req.embedding_region]` 加进判定目标，用的是**同一个** `geo_refusal` + `emit_geo_block_audit`（不另写策略）。空串 = 「这次不改这个字段」，不判。只堵出站不堵保存，用户会「存得下、跑不通」，在保存那一刻看不到理由。
+  - **请求外的两处显式声明**：`mcp_server/server.py` 的 `call_tool`、`scripts/rebuild_384_collections.py` 的重建循环各包一层 `with system_llm_context():` —— 这两处没有请求身份，不声明就 fail-closed。
+  - **类型不可被吞**（同一步的机制修补）：`_embed_impl` 原本把 `_call_api` 的一切非审核类异常包成 `RuntimeError("百炼 embedding 失败…")`，门拦下的会被**吃掉类型** —— `/test-embedding` 的 403 路径与 MCP 的 fail-closed 都会失真。故在宽 except 前加一句放行。放行用的是新基类 `adapters.llm_adapter.OutboundRefused`（`LLMCallRefused` 与 `web.llm_gate.LLMCallerMissing` 的共同父类，理由是两者同属「这不是一次失败的请求，是一次没发生的请求」）—— 单一基类是为了让 core 用一句 except 覆盖两种拦法**而不 import web**（L13）。`/test-embedding` 的宽 except 前同理放行 `LLMCallRefused`。
+  - **红源**：`tests/test_embeddings.py::TestOutboundCallGuard` 两条（① 每次判 + 判的是生效 URL；② 无身份 fail-closed + `system_llm_context()` 放行）、`tests/test_embedding_test_endpoint.py::test_T13_saving_intl_is_judged_by_the_same_geo_rule`（保存 intl：境内 403 + 一条审计、境外放行）。
+  - **变异（逐条真跑、跑完按字节还原）**：① 删 `_call_api` 的门调用；② 门挪回 `__init__`；③ 判定改看 region 表；④ `_embed_impl` 恢复宽 except；⑤ 保存侧关掉整段 geo 检查；⑥ 保存侧只判 `base_url`、不判 `embedding_region`；⑦ 保存侧被拦不记审计 —— 7 条全部打红，无幸存。③ 只由「判的是哪个 URL」那条钉（`system_llm_context()` 在 `geo_refusal` 之前就 return，选哪个 URL 都不影响身份的两种走向）。
+  - **未做/边界**：`AGENTS.md` 旧条目 26 里的常量名（`:446`）是历史记录，不改；`tests/census_llm_call_contexts.py` 的归属结论已随本条反转，就地加 v4 订正（不改 §二/§三 的日期快照表）。
+- **2026-09-23 查实的事实（缺陷 74 的 S0 交付，供本条决策；判定依据已被上面的「本次处置」收编，此处保留作引用出处）**：
   - 嵌入端点**可以**被配成国际站：`core/embeddings.py` 的 `DASHSCOPE_BASE_URLS` 里 `"intl"` → `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`，由 per-user 的 `users.embedding_region`（默认 `'cn'`）选；另有一条全局 env 覆盖 `EMBEDDING_BASE_URL`（`core/embeddings.py`，优先于地域）。出处：阿里云 Model Studio 文档「OpenAI compatible - Embedding」与「错误码」—— 国际站 key 与中国站 key **不能跨地域混用**，配错返 401 `invalid_api_key`（正是 `_EMBED_FAILURE_HINTS[401]` 那句「或与所选地域不匹配」的出处）。
   - **门看不见这条路**，三处可核：① 该出站在 `core/embeddings.py` 自建 OpenAI client，不经 `adapters/llm_adapter.py`，`geo_call_guard` / `geo_refusal` 都不在链上；② `_DOMESTIC_LLM_HOSTS`（`web/geo_guard.py`）只列 `dashscope.aliyuncs.com`，**不含** `dashscope-intl.aliyuncs.com`，而白名单是后缀匹配、`intl` 那条配不上；③ `update_api_config`（`web/routers/auth.py`）只 geo 检查 `req.base_url`，`req.embedding_region` **原样落库**，`/test-embedding` 连 geo 检查都没有（只校验 `region in DASHSCOPE_BASE_URLS`）。
   - 即：国内用户把 `embedding_region` 存成 `intl`，嵌入出站即到新加坡，门的任何一层都不拦。

@@ -38,6 +38,7 @@ from mcp.server.stdio import stdio_server
 
 from core.agent.tools import AgentToolkit
 from core.context_engine import ContextEngine  # import 连带 core.rag → chromadb（启动即 fail-fast）
+from core.request_context import system_llm_context
 
 SERVER_NAME = "character-distill-tools"
 SERVER_VERSION = "0.1.0"
@@ -253,10 +254,14 @@ def main() -> None:
         if not card_id:
             raise ValueError("缺少 card_id 参数")
         async with exec_lock:
-            # _toolkit_for：取/建该卡 toolkit（进程内缓存）。卡不存在/解析失败 → _NoCardError。
-            # ValueError / _NoCardError 都被 SDK call_tool 的 except 转 isError，绝不返回空结果。
-            toolkit = await _toolkit_for(card_id)
-            result = await asyncio.to_thread(_execute_silent, toolkit, name, args)
+            # 请求之外的出口：本进程没有请求身份，检索里的嵌入出站（core/rag → 门）需要
+            # 一处**显式**声明，否则门 fail-closed（`LLMCallerMissing`）。覆盖构建与执行
+            # 两段（`asyncio.to_thread` 会带着这个 context 走）。
+            with system_llm_context():
+                # _toolkit_for：取/建该卡 toolkit（进程内缓存）。卡不存在/解析失败 → _NoCardError。
+                # ValueError / _NoCardError 都被 SDK call_tool 的 except 转 isError，绝不返回空结果。
+                toolkit = await _toolkit_for(card_id)
+                result = await asyncio.to_thread(_execute_silent, toolkit, name, args)
         return [types.TextContent(type="text", text=result.content)]
 
     async def _serve() -> None:

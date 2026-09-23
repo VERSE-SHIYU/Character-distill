@@ -50,6 +50,7 @@ if str(_REPO) not in sys.path:
 
 from core.embeddings import DashScopeEmbedding, get_embed_stats, reset_embed_stats  # noqa: E402
 from core.rag import RAGEngine  # noqa: E402
+from core.request_context import system_llm_context  # noqa: E402
 from web.llm_resolution import EmbeddingResolution, resolve_embedding  # noqa: E402
 
 DIM_NOW = 1024  # DashScope text-embedding-v4 默认维度；load_existing 比对基准
@@ -388,7 +389,10 @@ def rebuild(text_ids: list[str], chroma_path: Path, db: Path) -> int:
     n_ok = n_fail = 0
     tot_chunks = tot_api = tot_http = 0.0
     for text_id in text_ids:
-        rec = rebuild_one(db, chroma_path, cfg, text_id, emb)
+        # 请求之外的出口：本脚本没有请求身份，重建里的嵌入出站（core/rag → 门）需要一处
+        # **显式**声明，否则门 fail-closed（`LLMCallerMissing`）。
+        with system_llm_context():
+            rec = rebuild_one(db, chroma_path, cfg, text_id, emb)
         with logf.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         if rec["ok"]:

@@ -118,6 +118,19 @@ adapter。`mcp_server/` 与 `scripts/` 是独立进程、不注册守卫，保�
 新进 1；`Distiller` 的 `create_task` 3→2），不是 87 动的 —— 87 只减掉 `ctx_submit` 那 1 处。
 **归属结论不变**：生产代码里没有「请求之外」的 LLM 入口。
 
+**v4 订正（缺陷 73 修复后，2026-09-23）**：本命题原先只在「到不到 `LLMAdapter`」这一维上
+判，现**加上第二维**：嵌入出站也过调用点门（`core/embeddings.py::_call_api` →
+`check_outbound_guard`，与 adapter 同一处判定）。于是：
+
+- 表里那两格写「**否**（embedding，不经 adapter）」的（`MemoryManager` 入库、`build_ex`
+  的场景/记忆检索）要读成「不经 adapter，但**经门**」—— 结论「父来自请求 ⇒ 继承、无需声明」
+  不变，变的是**理由**：它们不再是「门照不到」，而是「身份随 `ctx_thread` / `ctx_submit`
+  带过去了」。
+- 下面「`system_llm_context()` 在生产**零调用点**」**不再成立**：现为 2 处，都在请求之外的
+  独立出口 —— `mcp_server/server.py` 的 `call_tool`、`scripts/rebuild_384_collections.py`
+  的重建循环。少了它，那两处的嵌入出站会以 `LLMCallerMissing` fail-closed。
+- §二、§三 的读数表是**日期快照**，上面两条不改表，只作订正。
+
 ## 用法
 
 `python tests/census_llm_call_contexts.py` 打印读数；pytest 侧取数用裸模块名
