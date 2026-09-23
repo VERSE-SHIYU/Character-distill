@@ -42,6 +42,16 @@ def _stream_error_payload(exc: Exception) -> dict[str, Any]:
     return {"error": user_facing_error(exc)}
 
 
+def _terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
+    """本轮结束帧（done / error **同一个出口**）—— 都并上这轮的补写报告。
+
+    错误帧也必须带：这一轮里顺路补写成功的更早消息，后端已经给了它们真实行 id，不送到
+    前端那条消息就永远停在「未保存」（刷新才恢复）。两处各拼一次的话，改了一处漏另一处。
+    """
+    merged = {**payload, **report.as_json()}
+    return f"data: {json.dumps(merged, ensure_ascii=False, default=str)}\n\n"
+
+
 # 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，
 # 用 500 会让用户当 bug 反复重试。
 #
@@ -628,11 +638,10 @@ async def _do_chat_stream(
                 "reply_to_id": reply_to_id, "reply_to_preview": reply_to_preview,
                 **save_field(user_save, "user_save"),
                 **save_field(char_save, "char_save"),
-                **report.as_json(),
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
-            yield f"data: {json.dumps(done_payload, ensure_ascii=False, default=str)}\n\n"
+            yield _terminal_frame(done_payload, report)
 
             # ── Post-done housekeeping (does NOT block UI unlock) ──
             try:
@@ -663,7 +672,7 @@ async def _do_chat_stream(
             engine = session.get("engine")
             if engine and engine.history and engine.history[-1].get("role") == "user":
                 engine.history.pop()
-            yield f"data: {json.dumps(_stream_error_payload(exc), ensure_ascii=False, default=str)}\n\n"
+            yield _terminal_frame(_stream_error_payload(exc), report)
 
     # OTel context 传播点：invoke_agent 根 span 包住整个 SSE（TTFT→首 token），
     # 子链路在 to_thread / ctx_submit 线程里经 context 拷贝自动挂到本根下。

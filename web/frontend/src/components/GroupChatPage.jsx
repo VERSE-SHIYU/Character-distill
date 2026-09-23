@@ -659,6 +659,26 @@ export default function GroupChatPage() {
       created_at: new Date().toISOString(),
     }])
     setMessageText('')
+
+    // done 与 error 两种帧共用一个收尾函数：后端两种帧都由 `_terminal_frame` 构造、都带
+    // 本轮的 `flushed` / `dropped`。这一轮里每一次写都顺带补写了队头，先前标了「未保存」
+    // 的消息据此填回真 id、被判死的翻成「保存失败」。error 那条路漏掉它 = 永远停在未保存。
+    const settle = (payload, err) => {
+      if (currentGroupRef.current !== sendGroupId) return
+      if (err) {
+        // mark this send's optimistic message as failed so the draft isn't
+        // silently lost; retry restores it into the input bar.
+        setError(err.message)
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
+      } else {
+        setTargetCardIds([])
+        setReplyTo(null)
+      }
+      setMessages(prev => applyFlushReport(prev, payload))
+      setSending(false)
+      if (!err) fetchAffinities(sendGroupId)
+    }
+
     // SSE: characters appear one by one as they finish
     streamSSE(
       `/api/group/${currentGroup.id}/broadcast`,
@@ -669,24 +689,8 @@ export default function GroupChatPage() {
         reply_to_id: replyTo?.id || null,
       },
       null, // onToken — not used (whole-reply per event)
-      (payload) => {
-        // onDone —— 这一轮里每一次写都顺带补写了队头，`flushed` / `dropped` 是那次的读数：
-        // 先前标了「未保存」的消息据此填回真 id，或被判死翻成「保存失败」。
-        if (currentGroupRef.current !== sendGroupId) return
-        setMessages(prev => applyFlushReport(prev, payload))
-        setSending(false)
-        setTargetCardIds([])
-        setReplyTo(null)
-        fetchAffinities(sendGroupId)
-      },
-      (err) => {
-        // onError — mark this send's optimistic message as failed so the
-        // draft isn't silently lost; retry restores it into the input bar.
-        if (currentGroupRef.current !== sendGroupId) return
-        setError(err.message)
-        setSending(false)
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _status: 'failed' } : m))
-      },
+      (payload) => settle(payload, undefined),
+      (err, payload) => settle(payload, err),
       null, // onStatus
       (payload) => {
         // onEvent: user/reply SSE events

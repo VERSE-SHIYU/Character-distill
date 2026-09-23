@@ -30,6 +30,16 @@ router = APIRouter(prefix="/api/group", tags=["group"])
 _group_last_reaction_id: dict[str, int] = {}
 
 
+def _terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
+    """本轮结束帧（done / error **同一个出口**）—— 都并上这轮的补写报告。
+
+    错误帧也必须带：这一轮里顺路补写成功的更早消息，后端已经给了它们真实行 id，不送到
+    前端那条消息就永远停在「未保存」（刷新才恢复）。两处各拼一次的话，改了一处漏另一处。
+    """
+    merged = {**payload, **report.as_json()}
+    return f"data: {json.dumps(merged, ensure_ascii=False)}\n\n"
+
+
 class CreateGroupRequest(BaseModel):
     name: str = ""
     card_ids: list[str]
@@ -602,6 +612,9 @@ async def broadcast_message(
         raise HTTPException(410, "群聊已被删除")
 
     async def event_generator():
+        # 建在 try 之外：错误帧也要带它，放在 try 里会有一个「异常发生在这行之前 →
+        # except 里读它 UnboundLocalError → 连错误帧都发不出去」的窗口。
+        report = FlushReport()
         try:
             reply_preview = ""
             if req.reply_to_id:
@@ -619,7 +632,6 @@ async def broadcast_message(
             # 三类保存各自入队：共用一个块时前一笔失败会让后面整段不执行，而调用方只拿到
             # 一个 failed。**帧不论成败都发** —— 角色已经说完的话不该因为写库失败从用户
             # 眼前消失；`save` 是逐条上报的「未落库」依据，`msg_id` 在没落库时为 null。
-            report = FlushReport()
             outbox = group.outbox
             ping = storage.ping
             user_msg_id = None
@@ -698,8 +710,7 @@ async def broadcast_message(
 
             # Done — all replies sent。补上与丢掉的读数随 done 帧一起给前端：这一轮里
             # 每一次写都会顺带补写队列头，前端据此把先前标了「未保存」的消息填回真 id。
-            done_payload = {'done': True, **report.as_json()}
-            yield f"data: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            yield _terminal_frame({'done': True}, report)
 
             # 后台评估点赞触发的 affinity 变化（不阻塞回复）
             asyncio.create_task(
@@ -710,7 +721,7 @@ async def broadcast_message(
             raise
         except Exception as exc:
             print(f"[group] Broadcast stream failed: {exc}")
-            yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False)}\n\n"
+            yield _terminal_frame({'error': user_facing_error(exc)}, report)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

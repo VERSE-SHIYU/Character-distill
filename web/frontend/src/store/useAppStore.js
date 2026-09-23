@@ -1464,6 +1464,49 @@ const useAppStore = create((set, get) => {
 
     let fullReply = ''
 
+    // done 与 error 两种帧的**唯一**收尾函数。`err` 有值 = 错误帧：它不带 user_msg_id /
+    // summary / retracted 这些只有成功一轮才有的字段，只走两帧共用的那一段（补写报告 +
+    // 解锁）。两帧分开写的话，error 那条路会漏掉 `applyFlushReport`。
+    const settle = (payload, err) => {
+      if (get().sessionId !== streamSessionId) return
+      if (err) console.error('[store] stream failed:', err)
+      set((s) => {
+        const msgs = [...s.messages]
+        if (!err && msgs.length >= 2) {
+          // 没落库时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
+          // 要不要标「未保存」只由 user_save/char_save 说了算。
+          const prevUser = msgs[msgs.length - 2]
+          msgs[msgs.length - 2] = withSaveResult(
+            { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
+            payload.user_save,
+          )
+          const prevChar = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = withSaveResult(
+            { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
+            payload.char_save,
+          )
+        }
+        if (!err && payload.summary) {
+          msgs.splice(msgs.length - 2, 0, withCid({ role: 'summary', content: payload.summary }))
+        }
+        if (!err && payload.retracted) {
+          msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
+        }
+        // 两种帧都走到这里：本轮补写成功的消息据此填回真 id、翻成「已保存」
+        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        if (err) next.error = err.message
+        return next
+      })
+      if (err) return
+
+      if (voiceEnabled && fullReply) {
+        const { messages: currentMsgs } = get()
+        get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
+      }
+
+      get().fetchAffinity()
+    }
+
     const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, agent_mode: get().agentMode, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
@@ -1480,46 +1523,11 @@ const useAppStore = create((set, get) => {
           return { messages: msgs }
         })
       },
-      async (payload) => {
-        if (get().sessionId !== streamSessionId) return
-        set((s) => {
-          const msgs = [...s.messages]
-          if (msgs.length >= 2) {
-            // 没落库时后端给的 msg_id 是 null，这里不再拿它当「有没有这段」的门闩 ——
-            // 要不要标「未保存」只由 user_save/char_save 说了算。
-            const prevUser = msgs[msgs.length - 2]
-            msgs[msgs.length - 2] = withSaveResult(
-              { ...prevUser, id: payload.user_msg_id ?? prevUser.id, timestamp: payload.user_created_at },
-              payload.user_save,
-            )
-            const prevChar = msgs[msgs.length - 1]
-            msgs[msgs.length - 1] = withSaveResult(
-              { ...prevChar, id: payload.char_msg_id ?? prevChar.id, timestamp: payload.char_created_at },
-              payload.char_save,
-            )
-          }
-          if (payload.summary) {
-            const userIdx = msgs.length - 2
-            msgs.splice(userIdx, 0, withCid({ role: 'summary', content: payload.summary }))
-          }
-          if (payload.retracted) {
-            msgs[msgs.length - 1] = { ...msgs[msgs.length - 1], retracted: true }
-          }
-          return { messages: applyFlushReport(msgs, payload), sending: false }
-        })
-
-        if (voiceEnabled && fullReply) {
-          const { messages: currentMsgs } = get()
-          get()._synthesizeVoiceReply(fullReply, currentMsgs.length - 1)
-        }
-
-        get().fetchAffinity()
-      },
-      (err) => {
-        if (get().sessionId !== streamSessionId) return
-        console.error('[store] stream failed:', err)
-        set({ sending: false, error: err.message })
-      },
+      // done 帧与 error 帧走**同一个**收尾函数：两种帧由后端同一个出口构造，都带本轮
+      // 的 `flushed` / `dropped`。分开两处处理时 error 那条路漏了 `applyFlushReport`，
+      // 这一轮里顺路补写成功的消息就永远停在「未保存」。
+      async (payload) => settle(payload, undefined),
+      (err, payload) => settle(payload, err),
       undefined,
       // evidence 帧先于 token 流到达（后端在首个 token 前发），此刻末条仍是本轮 char 占位。
       // 认 type 不认字段存在性：未知 type 一律忽略（后端将来加事件不该让前端出意外）。
@@ -1601,6 +1609,29 @@ const useAppStore = create((set, get) => {
 
     let fullReply = ''
 
+    // 与 `sendMessageStream` 同一条规矩：done 与 error 帧共用一个收尾函数，
+    // 本轮补写报告两种帧都带（撤回通知这一轮同样会把队里积压的消息顺路补上）。
+    const settle = (payload, err) => {
+      if (get().sessionId !== streamSessionId) return
+      if (err) console.error('[store] revoke notice failed:', err)
+      set((s) => {
+        const msgs = [...s.messages]
+        if (!err) {
+          const prev = msgs[msgs.length - 1]
+          msgs[msgs.length - 1] = withSaveResult(
+            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_save,
+          )
+        }
+        const next = { messages: applyFlushReport(msgs, payload), sending: false }
+        if (err) next.error = err.message
+        return next
+      })
+      if (err) return
+      if (voiceEnabled && fullReply) {
+        get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
+      }
+    }
+
     const cancel = streamSSE(
       '/api/chat/send',
       { session_id: sessionId, message: hiddenMsg, stream: true, hidden: true, user_role: get().sessionUserRole },
@@ -1614,25 +1645,8 @@ const useAppStore = create((set, get) => {
           return { messages: msgs }
         })
       },
-      (payload) => {
-        if (get().sessionId !== streamSessionId) return
-        set((s) => {
-          const msgs = [...s.messages]
-          const prev = msgs[msgs.length - 1]
-          msgs[msgs.length - 1] = withSaveResult(
-            { ...prev, id: payload.char_msg_id ?? prev?.id }, payload.char_save,
-          )
-          return { messages: applyFlushReport(msgs, payload), sending: false }
-        })
-        if (voiceEnabled && fullReply) {
-          get()._synthesizeVoiceReply(fullReply, get().messages.length - 1)
-        }
-      },
-      (err) => {
-        if (get().sessionId !== streamSessionId) return
-        console.error('[store] revoke notice failed:', err)
-        set({ sending: false, error: err.message })
-      },
+      (payload) => settle(payload, undefined),
+      (err, payload) => settle(payload, err),
     )
 
     set({ _chatStreamCancel: cancel })

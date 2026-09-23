@@ -328,6 +328,14 @@ def _group_send(client: TestClient, gid: str, cid: str, message: str) -> dict:
     return r.json()
 
 
+def _group_frames(client: TestClient, gid: str, message: str, cards: list[str]) -> list[dict]:
+    """打 `/api/group/{gid}/broadcast` 的流式分支，按到达顺序返回帧。"""
+    r = client.post(f"/api/group/{gid}/broadcast",
+                    json={"message": message, "target_card_ids": cards})
+    assert r.status_code == 200, f"广播这一步就失败了：{r.status_code} {r.text[:300]}"
+    return [json.loads(line[6:]) for line in r.text.splitlines() if line.startswith("data: ")]
+
+
 def _run_cleanup_once(monkeypatch) -> None:
     """把空闲清理循环跑完**一轮**就停（它是 `while True` + `sleep(300)`）。"""
     import deps
@@ -720,6 +728,77 @@ def test_G2_group_flush_endpoint_backfills_in_order(flaky, owner, intruder):
 # ═══════════════════════════════════════════════════════════════════════════════
 # O6：队列不持有存储实例（缺陷 117 的教训）—— 补写问的是**当下**的库
 # ═══════════════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# E1–E2：一轮以**错误帧**收尾时，本轮的补写报告照样送到前端
+#
+# done 帧带报告已经由 C1 / G1 锁住；错误帧原先只带 `error`。于是这一轮里顺路补写成功的
+# 更早消息（后端已经给了它们真实行 id）在前端永远翻不成「已保存」—— 用户刷新才恢复。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_E1_error_frame_carries_this_rounds_backfill_report(flaky, owner):
+    """一对一：这一轮以错误帧收尾时，本轮补写的读数不许丢。
+
+    变异：错误帧只发 `_stream_error_payload(exc)`、不并 `report.as_json()` → 本条红。
+    """
+    sid = _new_sid()
+    engine = _Engine()
+    _install_session(flaky, sid, owner, engine)
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"char"}
+    flaky.ping_ok = False
+    done = _done(_stream(client, sid, "第一句"))
+    key = done["char_save"]["key"]
+    assert done["char_save"]["state"] == "pending"
+
+    # 本轮：库回来了 —— 写用户消息那一步顺路把上一轮那条补上；随后 LLM 抛错收尾。
+    flaky.fail_roles = set()
+    flaky.ping_ok = True
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("stream down")
+
+    engine.chat_stream = _boom
+
+    frames = _stream(client, sid, "第二句")
+    err = [f for f in frames if "error" in f]
+    assert len(err) == 1, f"没出错误帧，本用例没验到东西：{frames}"
+
+    flushed = {f["key"]: f["id"] for f in err[0].get("flushed", [])}
+    assert key in flushed, (
+        f"错误帧没带本轮补写的报告 —— 那条已经落库，前端却永远停在未保存：{err[0]}")
+
+
+def test_E2_group_error_frame_carries_this_rounds_backfill_report(flaky, owner):
+    """群聊：同上，走广播那条流。"""
+    gid, cards = _make_group(flaky, owner)
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"assistant"}
+    flaky.ping_ok = False
+    body1 = _group_send(client, gid, cards[0], "第一句")
+    key = body1["char_save"]["key"]
+    assert body1["char_save"]["state"] == "pending", body1
+
+    flaky.fail_roles = set()
+    flaky.ping_ok = True
+
+    import deps
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("broadcast down")
+
+    deps.get_group_sessions()[gid].broadcast_stream = _boom
+
+    frames = _group_frames(client, gid, "第二句", cards)
+    err = [f for f in frames if "error" in f]
+    assert len(err) == 1, f"没出错误帧，本用例没验到东西：{frames}"
+
+    flushed = {f["key"]: f["id"] for f in err[0].get("flushed", [])}
+    assert key in flushed, (
+        f"广播的错误帧没带本轮补写的报告 —— 那条已经落库，前端却永远停在未保存：{err[0]}")
+
 
 def test_O6_cleanup_flush_pings_the_storage_of_the_moment(flaky, store, owner, monkeypatch):
     """清理补写解析的是**调用时**的存储，不是入队时那个。
