@@ -12,6 +12,7 @@ seam 是 `MessageOutbox` 的四个方法（`write` / `flush` / `discard` / `clea
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 
@@ -38,16 +39,32 @@ class _DB:
 
 
 class _Writer:
-    """假 `write_fn`：每次调用记一笔，成功则从假表里领一个递增行 id。"""
+    """假 `write_fn`：每次调用记一笔，成功则从假表里领一个递增行 id。
 
-    def __init__(self, db: _DB, fail_all: bool = False) -> None:
+    `started` / `gate` 只给并发用例用：进了写入就举手，然后等闸门放行 —— 用来复现
+    「慢写入占着锁」那个状态。
+    """
+
+    def __init__(
+        self,
+        db: _DB,
+        fail_all: bool = False,
+        gate: asyncio.Event | None = None,
+        started: asyncio.Event | None = None,
+    ) -> None:
         self.db = db
         self.fail_all = fail_all
+        self.gate = gate
+        self.started = started
         self.calls: list[str] = []
         self.rows: list[tuple[str, int]] = []
 
     async def __call__(self, key: str) -> int:
         self.calls.append(key)
+        if self.started is not None:
+            self.started.set()
+        if self.gate is not None:
+            await self.gate.wait()
         if not self.db.up:
             raise RuntimeError(f"write {key}: db down")
         if self.fail_all:
@@ -114,6 +131,41 @@ async def test_one_bad_message_is_retried_once_then_dropped_and_the_rest_still_g
     assert state_good.state == "saved"
     assert state_good.id == 1
     assert good.rows == [(state_good.key, 1)]
+
+
+async def test_write_still_reports_its_own_message_when_a_retry_flush_races_it():
+    """并发：慢写入占着锁时，`write(第二句)` 与一次「重试」flush 依次排在它后面。
+
+    排在前面的那次 flush 会顺路把第二句也补写掉；于是 `write` 自己的报告里没有自己的
+    key，`_state_of` 判成 `pending` —— 消息**已经落库**，前端却会永久停在未保存。
+
+    变异：`write` 入队后就把锁放掉、`flush` 再重新加锁（修复前的写法）→ 本条红。
+    此时 `fast.rows` 里**有**那一行（它被别人的 flush 写掉了），状态却是 `pending`。
+    """
+    db = _DB(up=True)
+    outbox = MessageOutbox()
+    gate, started = asyncio.Event(), asyncio.Event()
+    slow = _Writer(db, gate=gate, started=started)
+    fast = _Writer(db)
+
+    t_slow = asyncio.create_task(outbox.write(slow, ping=db.ping))
+    await started.wait()  # 慢写入已经进了写入、占着锁
+    t_fast = asyncio.create_task(outbox.write(fast, ping=db.ping))
+    await asyncio.sleep(0)  # 排队等锁
+    t_retry = asyncio.create_task(outbox.flush(ping=db.ping))
+    await asyncio.sleep(0)  # 也排队等锁
+
+    gate.set()
+    (state_slow, _), (state_fast, _), _ = await asyncio.wait_for(
+        asyncio.gather(t_slow, t_fast, t_retry), timeout=5,
+    )
+
+    assert state_slow.state == "saved"
+    assert fast.rows == [(state_fast.key, 2)], "第二句确实落库了（行序：慢的在前，id=2）"
+    assert state_fast.state == "saved", (
+        "消息已经落库，`write` 却报 `pending` —— 前端会一直显示未保存"
+    )
+    assert state_fast.id == 2
 
 
 async def test_unreachable_db_drops_nothing_however_many_flushes():

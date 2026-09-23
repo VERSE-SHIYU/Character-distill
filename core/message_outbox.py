@@ -105,15 +105,24 @@ class MessageOutbox:
 
         入队即尝试：正常路径下（库健康）这就是一次普通写入，调用方拿到 `saved` 与真实行 id；
         只有在写失败时才留下 `pending` / `failed`。
+
+        **入队与补写必须同一次持锁**：分开的话（入队 → 放锁 → `flush()` 重新加锁）中间这一段
+        里排进来的「重试」flush 会先跑，顺路把这一条也写掉；于是它自己的报告里没有自己的
+        key，`_state_of` 判成 `pending`，而消息其实已经落库 —— 前端永久显示未保存。
         """
         key = uuid4().hex
         async with self._lock:
             self._queue.append((key, write_fn))
-        report = await self.flush(ping=ping)
+            report = await self._flush_locked(ping=ping)
         return self._state_of(key, report), report
 
     async def flush(self, *, ping: Callable[[], Awaitable[None]]) -> FlushReport:
-        """从队头按顺序补写，直到队空、或探到库不可达为止。
+        """从队头按顺序补写，直到队空、或探到库不可达为止。见 `_flush_locked`。"""
+        async with self._lock:
+            return await self._flush_locked(ping=ping)
+
+    async def _flush_locked(self, *, ping: Callable[[], Awaitable[None]]) -> FlushReport:
+        """补写的主体 —— **调用方须已持锁**（`write` / `flush` 各自在同一把锁内调它）。
 
         失败要分辨两类（这是本模块唯一的判断分支，别压成一类）：
 
@@ -123,28 +132,27 @@ class MessageOutbox:
           不该把整队堵死。
         """
         report = FlushReport()
-        async with self._lock:
-            while self._queue:
-                key, write_fn = self._queue[0]
-                async with nonfatal("outbox", "write queued message") as attempt:
-                    row_id = await write_fn(key)
-                if not attempt.failed:
-                    self._drop_head(key)
-                    report.flushed.append((key, row_id))
-                    continue
-
-                async with nonfatal("outbox", "ping storage") as probe:
-                    await ping()
-                if probe.failed:
-                    break
-                async with nonfatal("outbox", "retry queued message") as retry:
-                    row_id = await write_fn(key)
-                if retry.failed:
-                    self._drop_head(key)
-                    report.dropped.append(key)
-                    continue
+        while self._queue:
+            key, write_fn = self._queue[0]
+            async with nonfatal("outbox", "write queued message") as attempt:
+                row_id = await write_fn(key)
+            if not attempt.failed:
                 self._drop_head(key)
                 report.flushed.append((key, row_id))
+                continue
+
+            async with nonfatal("outbox", "ping storage") as probe:
+                await ping()
+            if probe.failed:
+                break
+            async with nonfatal("outbox", "retry queued message") as retry:
+                row_id = await write_fn(key)
+            if retry.failed:
+                self._drop_head(key)
+                report.dropped.append(key)
+                continue
+            self._drop_head(key)
+            report.flushed.append((key, row_id))
         return report
 
     def discard(self, key: str) -> None:
