@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from core.message_outbox import MessageOutbox, SaveState, save_field
+from core.message_outbox import SaveState, save_field
 from core.nonfatal import nonfatal
 from core.scheduling import submit_to_main_loop
 from deps import get_indexing_service, get_sessions, get_storage
@@ -1469,7 +1469,7 @@ async def start_session(
             # 开场白只是**第一笔**写入，和后面每一轮走同一条路：写失败就留在队里，
             # 下一次写 / 重试 / 关停时补上。上报的 key 让前端在后续 `flushed` 里认领它。
             session_rec = sessions[session_id]
-            outbox = session_rec.setdefault("outbox", MessageOutbox())
+            outbox = session_rec["outbox"]
             opening_rows: list[dict] = []
 
             async def _save_opening(key: str) -> int:

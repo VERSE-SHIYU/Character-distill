@@ -18,7 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
-from core.message_outbox import FlushReport, MessageOutbox, SaveState, save_field
+from core.message_outbox import FlushReport, SaveState, save_field
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
@@ -130,7 +130,6 @@ async def _ensure_session(
     session = sessions.get(session_id)
     if session is not None:
         session.setdefault("lock", asyncio.Lock())
-        session.setdefault("outbox", MessageOutbox())
         session.setdefault("retract_state", {
             "last_retract_turn": -999,
             "retract_count": 0,
@@ -357,7 +356,7 @@ async def _do_chat(
 
     # 三笔各自入队：写失败的那条**留在队列里**，等下一次写 / 用户点重试 / 关停时按原顺序
     # 补上 —— 不再各自包一个 nonfatal 就地丢掉。`*_save` 是逐条上报给前端的「没落库」依据。
-    outbox = session.setdefault("outbox", MessageOutbox())
+    outbox = session["outbox"]
     ping = storage.ping
 
     user_msg_id = None
@@ -516,7 +515,7 @@ async def _do_chat_stream(
         # 三笔各自入队（同 `_do_chat`）：一条写失败不再连坐别条，`*_save` 是逐条上报给前端
         # 的「没落库」依据 —— 只有这个字段说了算，不由 `msg_id is None` 反推（hidden 消息
         # 本来就没有 id，却是存成功的）。
-        outbox = session.setdefault("outbox", MessageOutbox())
+        outbox = session["outbox"]
         ping = storage.ping
         report = FlushReport()
         user_save: SaveState | None = None
@@ -728,7 +727,7 @@ async def revoke_messages(
     # 撤回 = 这段历史整个不要了：队里还没落库的那几条也得摘掉。不清队的话补写会把它们
     # 又写回来，用户看到的是「撤回之后它自己又冒出来了」。**先清队再删库** —— 顺序反过来
     # 时，两步之间插进来的补写，正好就是删完之后又出现的那条。
-    session.setdefault("outbox", MessageOutbox()).clear()
+    session["outbox"].clear()
 
     # Delete from SQLite first
     try:
@@ -765,7 +764,7 @@ async def flush_session_messages(
     不给存在性枚举留信道。响应体与 done 帧同形（`flushed` / `dropped`）。
     """
     session = await _ensure_session(session_id, storage, sessions, user["id"])
-    outbox = session.setdefault("outbox", MessageOutbox())
+    outbox = session["outbox"]
     return (await outbox.flush(ping=storage.ping)).as_json()
 
 

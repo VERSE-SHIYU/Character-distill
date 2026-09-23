@@ -15,7 +15,7 @@ from core.affinity_service import read_persisted_affinity
 from deps import get_sessions, get_storage
 from core.schema import CharacterCard, parse_evidence
 from core.clock import UserClock
-from core.message_outbox import MessageOutbox, SaveState, save_field
+from core.message_outbox import SaveState, save_field
 from core.nonfatal import nonfatal
 from storage.base import StorageBase
 from routers.auth import get_current_user
@@ -332,7 +332,7 @@ async def resume_session(
         # 写完直接返回 `messages` 尾部，和**别处**的写入走同一条路：写失败就留在队里，
         # 下次写 / 重试 / 关停时补上，前端按 key 认领。所以「问候已生成」和「问候已落库」
         # 是两件事 —— 上面那个 `greeting` 才是「生成过」，后面的 id/时间戳可能还没有。
-        outbox = sessions[session_id].setdefault("outbox", MessageOutbox())
+        outbox = sessions[session_id]["outbox"]
         greeting_rows: list[dict] = []
 
         async def _save_greeting(key: str) -> int:

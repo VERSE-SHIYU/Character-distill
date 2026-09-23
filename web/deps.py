@@ -297,15 +297,19 @@ def touch_session(session: dict) -> None:
 _SESSION_IDLE_TTL = int(os.getenv("SESSION_IDLE_TTL_SECONDS", "3600"))
 
 
-def _outbox_of(sess: Any) -> Any | None:
+def _outbox_of(sess: Any) -> Any:
     """会话条目上的补写队列 —— 一对一那张表是 dict，群聊那张表是 `GroupSession` 对象。
 
     两种形状都认，是为了让空闲清理与关停**共用同一个出口**（下面那个函数）：各写一遍的
-    话，改了一处另一处会悄悄漏。没有队列的条目（老会话）返回 None，不为此发一次写。
+    话，改了一处另一处会悄悄漏。
+
+    不做「没有队列 → None」的兜底：两种条目都**定义**了 `outbox`（一对一在
+    `core/text_manager.new_session_entry`，群聊在 `GroupSession.__init__`），缺了就是
+    构造点漏了 —— 那要当场 `KeyError` 暴露，而不是静默跳过这一笔补写。
     """
     if isinstance(sess, dict):
-        return sess.get("outbox")
-    return getattr(sess, "outbox", None)
+        return sess["outbox"]
+    return sess.outbox
 
 
 async def flush_outboxes(sessions: dict[str, Any]) -> int:
@@ -321,7 +325,7 @@ async def flush_outboxes(sessions: dict[str, Any]) -> int:
     flushed = 0
     for sess in list(sessions.values()):
         outbox = _outbox_of(sess)
-        if outbox is None or not outbox.has_pending:
+        if not outbox.has_pending:
             continue
         report = await outbox.flush(ping=ping)
         flushed += len(report.flushed)
@@ -348,8 +352,7 @@ async def _session_cleanup_loop() -> None:
                 continue
             # 先补写再出队：出队之后队列就没了，没补上的消息永久丢。
             await flush_outboxes({sid: sess})
-            outbox = _outbox_of(sess)
-            if outbox is not None and outbox.has_pending:
+            if _outbox_of(sess).has_pending:
                 # 还是没补上（库不可达 → flush 有意整队保留，不是这条写不进去）：本轮跳过，
                 # 下一轮再看 —— 与上面「持锁就跳过」同形。出队 = 队列没了 = 这些消息永久丢。
                 continue

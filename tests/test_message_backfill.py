@@ -246,16 +246,13 @@ def _install_session(st, sid: str, user_id: str, engine) -> dict:
     """
     import deps
 
-    from core.message_outbox import MessageOutbox
+    from core.text_manager import new_session_entry
 
     _run(st.save_session(sid, _card(st, user_id), "stranger", "", user_id))
-    sess = {
-        "engine": engine,
-        "lock": asyncio.Lock(),
-        "user_id": user_id,
-        "outbox": MessageOutbox(),
-        "message_ids": [],
-    }
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）；`lock` 不在它里面 ——
+    # `_ensure_session` 每次命中都 setdefault，那是单独一条线，本用例自己补上。
+    sess = new_session_entry(engine, None, user_id)
+    sess["lock"] = asyncio.Lock()
     deps.get_sessions()[sid] = sess
     return sess
 

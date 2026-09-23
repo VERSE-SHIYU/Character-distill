@@ -24,6 +24,7 @@ import core.utils as utils
 import routers.chat as chat_router_mod
 from core.log_collector import get_recent_logs, install_log_collector
 from core.nonfatal import nonfatal
+from core.text_manager import new_session_entry
 
 
 @pytest.fixture(autouse=True)
@@ -199,7 +200,10 @@ class _FailingSaveStorage:
 
 
 def _wire(monkeypatch, **engine_kwargs):
-    session = {"engine": _Engine(**engine_kwargs), "lock": asyncio.Lock(), "user_id": "u1"}
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）：本用例把 `_ensure_session` 换掉了，
+    # 于是没人再替条目兜底补 `outbox`，形状必须在这里就是全的。
+    session = new_session_entry(_Engine(**engine_kwargs), None, "u1")
+    session["lock"] = asyncio.Lock()
 
     async def _fake_ensure(session_id, storage, sessions, user_id=""):
         return session

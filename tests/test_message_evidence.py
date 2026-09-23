@@ -51,6 +51,7 @@ from core.schema import (
     scene_evidence,
     web_evidence,
 )
+from core.text_manager import new_session_entry
 from deps import get_sessions, get_storage
 from routers.auth import get_current_user
 from routers.group import router as group_router
@@ -443,7 +444,10 @@ class _RecordingStorage:
 
 
 def _wire(monkeypatch, engine, storage):
-    session = {"engine": engine, "lock": asyncio.Lock(), "user_id": "u1"}
+    # 条目形状只从 `new_session_entry` 拿（不手搓 dict）：`_ensure_session` 在本文件里
+    # 被换成了直接返回条目，没人再替它补 `outbox`。
+    session = new_session_entry(engine, None, "u1")
+    session["lock"] = asyncio.Lock()
 
     async def _fake_ensure(session_id, storage_, sessions, user_id=""):
         return session
@@ -637,7 +641,7 @@ class TestResumeCarriesEvidence:
             _indexing_service = _StubIndexing()
 
             def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = {"engine": engine}
+                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
                 return "ses_rebuilt"
 
         async def _fake_user_llm(*_a, **_kw):
@@ -672,7 +676,7 @@ class TestResumeCarriesEvidence:
             _indexing_service = _StubIndexing()
 
             def _create_session(self, *_a, **_kw):
-                sessions["ses_rebuilt"] = {"engine": engine}
+                sessions["ses_rebuilt"] = new_session_entry(engine, None, "")
                 return "ses_rebuilt"
 
         async def _fake_user_llm(*_a, **_kw):

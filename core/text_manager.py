@@ -24,6 +24,21 @@ from core.utils import try_record_usage
 from storage.base import StorageBase, new_review_id
 
 
+def new_session_entry(engine: Any, card: Any, user_id: str) -> dict[str, Any]:
+    """一对一会话条目的**唯一**定义 —— 建会话和测试夹具都从这里拿，别处不许手搓 dict。
+
+    `outbox` 是条目的一部分，不是「谁用到谁 `setdefault`」：补写队列跟着会话走，`history.py`
+    与 `_ensure_session` 里「把引擎挪到原 session_id 名下」的那一步整份搬条目，队列一起搬。
+
+    `user_id` 与 `card` 没有默认值：漏登记属主的后果是**属主本人**被挡在门外（响亮，当场
+    暴露），而不是所有登录用户都能进来（静默）；`card` 同理，缺了会当场露出来。
+    """
+    return {
+        "engine": engine, "card": card, "message_ids": [], "user_id": user_id,
+        "outbox": MessageOutbox(),
+    }
+
+
 class TextManager:
     """Handles text upload with format parsing and cached character distillation.
 
@@ -669,10 +684,5 @@ class TextManager:
             storage=self._storage,
         )
         session_id = uuid.uuid4().hex[:12]
-        # `outbox` 随条目走：`web/routers/chat.py`、`history.py` 挪条目时整份搬走，所以这里
-        # 建一次就够 —— 会话只有一个构造点，队列也只有一个。
-        self._sessions[session_id] = {
-            "engine": engine, "card": card, "message_ids": [], "user_id": user_id,
-            "outbox": MessageOutbox(),
-        }
+        self._sessions[session_id] = new_session_entry(engine, card, user_id)
         return session_id
