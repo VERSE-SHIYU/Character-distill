@@ -580,6 +580,43 @@ def test_C8_idle_cleanup_backfills_before_evicting(flaky, owner, monkeypatch):
     assert "char" in flaky.roles(), f"出队前没补写，那条消息跟着队列一起没了：{flaky.wrote}"
 
 
+def test_C8b_idle_cleanup_keeps_a_session_whose_messages_have_not_landed(
+    flaky, owner, monkeypatch,
+):
+    """库不可达时补写补不上 → 会话**不能**出队；库回来后的那一轮才出队。
+
+    C8 走的是「清理跑到时库已经好了」那半边：补写成功、会话出队，两个断言都过。真正会丢
+    消息的是另一半 —— 清理跑到时库还不可达，`flush` 有意整队保留（不是这条写不进去，是
+    此刻问不着库），这时照样 `pop` 就是**把队列连同里面的消息一起扔掉**，用户那边只在
+    上一轮看到过一个「未保存」。
+    """
+    import deps
+
+    sid = _new_sid()
+    _install_session(flaky, sid, owner, _Engine())
+    client = _client(flaky, owner)
+
+    flaky.fail_roles = {"char"}
+    flaky.ping_ok = False
+    done = _done(_stream(client, sid, "第一句"))
+    assert done["char_save"]["state"] == "pending"
+
+    sessions = deps.get_sessions()
+    monkeypatch.setattr(deps, "get_sessions", lambda: sessions)
+
+    # 第一轮：库还没回来 → 补写补不上 → 会话留着、队列留着
+    _run_cleanup_once(monkeypatch)
+    assert sid in sessions, "库不可达时把会话清出去了 —— 队里那条消息跟着永久丢了"
+    assert sessions[sid]["outbox"].has_pending, "队列被清空了，没补上的消息丢了"
+
+    # 第二轮：库回来了 → 补上、出队
+    flaky.fail_roles = set()
+    flaky.ping_ok = True
+    _run_cleanup_once(monkeypatch)
+    assert sid not in sessions, "库好了这一轮该出队了，本用例没验到出队那一步"
+    assert "char" in flaky.roles(), f"出队前没补写：{flaky.wrote}"
+
+
 def test_C9_shutdown_backfills_the_queues(flaky, owner, monkeypatch):
     """关停时补写（在取消清理循环之后）—— 队列在内存里，进程一走就没了。"""
     import server as server_mod

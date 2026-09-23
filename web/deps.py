@@ -348,6 +348,11 @@ async def _session_cleanup_loop() -> None:
                 continue
             # 先补写再出队：出队之后队列就没了，没补上的消息永久丢。
             await flush_outboxes({sid: sess})
+            outbox = _outbox_of(sess)
+            if outbox is not None and outbox.has_pending:
+                # 还是没补上（库不可达 → flush 有意整队保留，不是这条写不进去）：本轮跳过，
+                # 下一轮再看 —— 与上面「持锁就跳过」同形。出队 = 队列没了 = 这些消息永久丢。
+                continue
             sessions.pop(sid, None)
             evicted += 1
         if evicted:
