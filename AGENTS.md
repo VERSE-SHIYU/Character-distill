@@ -114,7 +114,7 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-22 现跑现数）**：1–98 共 98 条 —— **已修 68**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**）/ **记账 19**（47、56、57、58、64、66、67、68、69、80、81、82、86、87、88、89、90、95、96）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）/ **可见性已修、口径待定 1**（94）。**待办 = 记账 19**。
+> **全表状态口径（2026-09-23 现跑现数）**：1–98 共 98 条 —— **已修 74**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**；**本轮 2026-09-23 收口（六条从「记账」移入「已修」）：Spec B 五条 —— 68：`f7fd0b6`、69：`17626d6`、95：`c417827`、56：`c826ed8`、57：`8580286`；Spec 82 一条 —— 82**）/ **记账 13**（47、58、64、66、67、80、81、86、87、88、89、90、96）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）/ **可见性已修、口径待定 1**（94）。**待办 = 记账 13**。
 > **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**同轮还有 93 / 97 / 98 移入「已修」、94 单列「可见性已修、口径待定」**（上一次重算漏了这四条，桶数因此虚记 —— 与「83–85」同形，一并销账）。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
 > **99–104 是 `published_from` 一案（本分支）并入 main 时按 main 现有最大号**顺延**过来的六条**（并线时本线原编 86–91，与 main 的 86–91 撞号 —— 撞的是编号不是内容，按「按 main 上现有最大编号顺延」改号，两边条目都留）。状态：**已修 5**（100–104）/ **记账 1**（99，PG 无迁移账本，不修）—— **不重算上面那行的桶**：那条口径标着 2026-09-22 现跑现数、只覆盖 1–98，这六条产生在同一天但并入更晚，整行重算留到下次收口（此处只写顺延、不改数）。**注意本分支已推送的 commit message 里仍写着旧号 86–91**（`d17ee54` / `ef6deb6` / `04dc4ef` / `b86b1fd`）：推送后不改写历史，故那几处是历史坐标，以台账现号为准。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
@@ -444,7 +444,7 @@ config.yaml 现值（现读，非转述）：
 - **为什么它是缺陷 23 的直接产物**：缺陷 23 的列级锁比的是 **fresh SQLite ⟷ fresh PG**（两侧都只跑一轮 init），于是它**今天绿** —— 而**生产上跑的恰恰是「重启过的库」**，那个状态从来没有任何锁看过。锁的输入状态本身也是判据的一部分（教训入 §四）。
 - **severity 低（不是数据丢失）**：那三列是**死列** —— `get_user_api_config` 读的是 `user_secrets` 的 `s.api_key`/`s.base_url`/`s.model`（JOIN 出来的），**从不读 users 上这三个**。危害只在 schema 漂移本身（两个后端列集不一致 → 任何「按表全列 SELECT/INSERT」的代码路径会炸 `no such column`）。
 - **修法**：删除判据收敛到模块常量 `_USERS_LEGACY_COLUMNS`（单一事实源），触发条件 = 「**四列任一存在**」（不变量是「users 不得有这四列」，触发条件就该是这四列的任一）。**没有引入第二份手工清单** —— 判据与删除对象读的是同一个常量。
-- **拉锯要不要消除的裁决：不消除，但把每轮代价从 O(数据量) 压到列删除**。018 **不能摘**（老库上没有这三列时，070 的 `INSERT ... SELECT u.api_key` 直接 `no such column` —— 而 070 靠 `_apply_migration` 的「home_region 已在 → 整份跳过」在新库上才不被重跑）；执行器又没有「已应用」账本，所以「018 照加、这里照删」每轮都会发生。**代价实测**（`e2e/scratch/time_users_rebuild.py`，全表拷贝口径）：4 行/180KB ≈ **20ms**、1000 行/200KB ≈ 2.7s、5000 行/200KB ≈ **18s** —— 每轮全表拷贝在生产体量上**不可忽略**，故 3.35+ 改走原生 `ALTER TABLE users DROP COLUMN`（省掉临时表 + `INSERT..SELECT` + 索引重建，且**不碰**其余列类型 —— 原重建的 `col_defs` 兜底会把未知列静默重定型为 `TEXT`），<3.35 回落原表重建并把这段 O(rows) 代价注明在该分支上。本机 3.49.1 走原生路径。
+- **拉锯要不要消除的裁决：不消除，但把每轮代价从 O(数据量) 压到列删除**。018 **不能摘**（老库上没有这三列时，070 的 `INSERT ... SELECT u.api_key` 直接 `no such column` —— 而 070 靠 `_apply_migration` 的「home_region 已在 → 整份跳过」在新库上才不被重跑）；执行器又没有「已应用」账本，所以「018 照加、这里照删」每轮都会发生。**代价实测**（`e2e/scratch/time_users_rebuild.py`，全表拷贝口径）：4 行/180KB ≈ **20ms**、1000 行/200KB ≈ 2.7s、5000 行/200KB ≈ **18s** —— 每轮全表拷贝在生产体量上**不可忽略**，故 3.35+ 改走原生 `ALTER TABLE users DROP COLUMN`（省掉临时表 + `INSERT..SELECT` + 索引重建，且**不碰**其余列类型 —— 原重建的 `col_defs` 兜底会把未知列静默重定型为 `TEXT`），<3.35 回落原表重建并把这段 O(rows) 代价注明在该分支上。本机 3.49.1 走原生路径。**（订正 2026-09-23，随缺陷 82）**：最低版本定为 SQLite 3.35 —— `<3.35` **不再回落原表重建**，改为在 `_ensure_initialized` 开头直接抛 `RuntimeError` 退出，那条既不幂等又会留残骸的回落分支已**整体删除**；上面「每轮 O(rows) 代价」的实测口径随之只作历史读数保留，「拉锯每轮只付列删除」现在是无条件成立的。
 - **验收锁（两把，都是新增）**：① `tests/test_sqlite_fresh_schema.py::test_second_init_adds_nothing_and_stays_silent` 补断言「**两次 init 后 users 列集相等**」—— 该用例名字里写着 "adds nothing"，此前只断言 embedding 两列 + 无失败输出；② `tests/test_postgres_store.py::TestPgFreshSchemaClosure::test_restarted_sqlite_matches_fresh_pg` —— **二次 init 后的 SQLite ⟷ fresh PG**（缺陷 23 的锁扩到「重启过的库」，这是本轮核心收益）。
 - **变异（实测，sha256 逐字节还原）**：把触发条件改回旧语义（`if "password_hash" in all_cols` 才删四列）→ ②红（`[users] 列 ['api_key','base_url','model'] 只在 SQLite 新库里，真 PG 缺这些列`）、①红（第二次 init 新增 `['api_key','base_url','model']`），而缺陷 23 那条 **fresh ⟷ fresh 的锁仍绿**（1 passed）—— 这条绿正是「只守理想初态」的实证。
 - **测试写法上的一处连带纠正**：`_sqlite_columns` 初版每次读都跑 `_ensure_initialized`，于是变异被「重跑又补回来」当场修复，变异永远红不了（红出来的反而是补列副作用）。拆成 `_build_fresh_sqlite`（建一次）+ `_sqlite_columns`（**只读，绝不重建**）—— 读事实的锁不许带写副作用。缺陷 26 正是这次拆分暴露出来的。
@@ -1040,17 +1040,23 @@ PROBE_IMAGE         false
 - **隔离（机械核）**：生产代码只动 `core/text_manager.py` + 三个 router，`git diff --stat` = 26 insertions / 13 deletions；`chat_engine` / `affinity_service` 一行未动。
 - **顺带发现（只记不改）**：`embedding_key` / `embedding_region` 在 `_create_session` **函数体里从未被使用** —— 死参数。它们存在的唯一效果是给位置传参多留两格错位空间（当年 `history.py` 正是多传了这两个）。删掉能进一步缩小表面，但那超出本条批准的范围，故只记。
 
-**56. 「哪些列该加密」在本仓没有守卫 —— 该加密的加了，泄漏的那份是明文** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 的同一事件）
+**56. 「哪些列该加密」在本仓没有守卫 —— 该加密的加了，泄漏的那份是明文** —— 状态：**已修**（`c826ed8`，2026-09-23）
 - **事实**：`users.embedding_key` 落库前过 Fernet（`storage/sqlite_store.py:2755`、`storage/postgres_store.py:2341`），而它泄漏出去的那一份落在 `sessions.affinity_state` —— 一个 **明文 TEXT 列**（`storage/migrations_pg/015_affinity_state.sql`；SQLite 侧同）。
 - **不是「忘了加密某一列」，是「没有任何东西规定哪些列该加密」**：加密与否只在每个写入口手写一次 `_get_fernet().encrypt(...)`，既没有敏感列的名单，也没有「新增敏感列必须登记」的判据。**今天是 `affinity_state` 撞上，明天可能是别的列。**
 - **与 55 的关系**：同一次事件的两个面 —— 55 是**值走错了格子**，56 是**正确的值落在没有保护的格子里**。只修 55 不会让 56 消失（下次凭据从别的路径进别的列，同样没人拦）。
-- **处置方向（留档，本轮不实现）**：该做的是「敏感列名单 + 写入路径的守卫」，**不是给 `affinity_state` 单独加一次加密** —— 后者只是补一个点，正是本条要避免的形态。真做的成本要先量（有哪些列、多少个写入口），不预估，本轮不启动。
-- **量尺草稿（2026-09-20，**本地存在、未入库**）**：`e2e/scratch/census_sensitive_columns.py`（原先落在 `tests/`，本轮移出 —— 一次性取数工具不入库，见 CLAUDE.md「调试脚本不入 main」）。它按值流摆五组读数，**但判据 (a)（「写入即加密列」）有两处已知缺陷，读数不可信，不要引用**：① **接收者名配错** —— 代码按 `secret_parts` / `user_parts` 取，而两个 store 里写列名的是 `*_parts`、装值的是 `*_params`，`zip` 的两侧根本不是一对（`storage/sqlite_store.py` 的 `update_user_api_config` 可核）；② **看不见局部变量** —— 它只认 `parts.append("<col> = …")` 的字面量与同一 `append` 实参子树里的 `encrypt(`，而真实写法是**先 `encrypted = …encrypt()` 再 `secret_params.append(encrypted)`**（`enc_emb` 同理）—— 值确实加过密，只是经了一层局部名，(a) 归零。**且它只扫 `update_user_api_config` 一个函数**，别处的加密写入不进 (a)。本轮移出时只修了路径（`parents[2]` + 把 `tests/` 挂上 `sys.path` 以复用 parity 那把解析器，不另写一份），**判据本身一行未动** —— 上述缺陷原样保留在草稿里，这正是它不该入库的原因。**启动 56 时按值流重写判据后再入库。**
+- **本条的处置方向被 spec 改写（对原方向的推翻）**：原文提的「敏感列名单 + 写入路径守卫」**被 spec §2.5 明确否决**（「**不建"敏感列名单"或注册表**」）。理由成立：名单是**第二份手工清单**，与它要守的对象之间就是漂移点 —— 与缺陷 21 的豁免名单、25 的命名代理、24 的调用点清单同谱系，本仓已有成堆先例。改为**直接守住结果**：一条金丝雀走完「保存配置 → 建会话 → 重建 → 评估落库」整条链路，扫**全库所有文本列**（SQLite 另扫文件字节）断言明文一次都没出现；漏了哪一列它就当场红，不需要任何人去名单里补一行。
+- **落地**：加解密的两份实现（两个 store 各自一份 `_get_fernet` + 各自的解密闭包）收进 `storage/secret_box.py`（`encrypt_secret` / `decrypt_secret`）。派生规则原样保留：`FERNET_KEY` 优先，否则由 `JWT_SECRET` 经 sha256 派生，两者都没有则**硬失败并点名变量**，不退到内置常量。
+- **判据（spec §5 行 56）**：`git grep -n "Fernet(" -- storage` **只命中共享模块** `storage/secret_box.py`（本文件自己的 docstring 里那处引用也在这个文件内，计数=2 行、文件集=1）。**变异**：在任一 store 里恢复自己的 Fernet 实例化 → grep 当场多出该 store 的命中。**已实测**（把一段 `_get_fernet` 塞回 `sqlite_store.py` → `storage/sqlite_store.py:6006: return Fernet(b"x")` 出现；恢复后回到只剩共享模块）。
+- **金丝雀红源（走值流，不是走名单）**：`tests/test_secret_never_plaintext.py`，SQLite / PG 各一条，同一个事件循环内直驱生产函数（**不经 HTTP** —— HTTP 链上那个跨事件循环用连接池的问题就是缺陷 123 的根因，不在本 spec 射程内）。**扫描前先断言 `affinity_state` 确实非空**：夹具哪一步没跑起来时「全绿」只说明没东西可泄漏，那是最难发现的假绿。**变异**：按 55 的形态把凭据塞进 `user_role`（`_create_session(..., user_role=emb_key)`）→ 两条同时红，且**红在 55 的那一列上**（SQLite 报 `表 sessions.affinity_state × 1` + `库文件字节`，PG 报 `表 sessions × 1`）。变不红就停下报告 —— 已实测两条都红。
+- **量尺草稿作废**：`e2e/scratch/census_sensitive_columns.py`（2026-09-20 的本地草稿，判据 (a) 有两处已知缺陷、读数本就不可信）随本条处置方向被推翻而**整体作废**，不再是任何后续工作的起点。那句「启动 56 时按值流重写判据后再入库」也随之失效 —— **值流判据已经以金丝雀测试的形态入库**（上一条），不必再回来写解析器。
 
-**57. `history.py:299-300` / `chat.py:205-206` 的 `user_role` 兜底：靠它才没漏，但没人知道它为什么存在** —— 状态：**记账（不修）**（2026-09-17）
+**57. `history.py:299-300` / `chat.py:205-206` 的 `user_role` 兜底：靠它才没漏，但没人知道它为什么存在** —— 状态：**已修**（`8580286`，2026-09-23）
 - **它承担什么**：会话重建走 `_create_session` 时 `user_role` 归一为空串，这两处**从 DB 行把它覆盖回来**（`if db_session.get("user_role"): engine.user_role = db_session["user_role"]`）。缺陷 55 的射程边界（「有角色的会话不漏」）**正是由它划出来的** —— 实测 `user_role="朋友"` 的会话 0 泄漏。
 - **为什么必须记账**：它长得像一句可有可无的冗余赋值，实际是**当前唯一挡在凭据泄漏前的东西**。这类「没人知道为什么存在的兜底」将来会被顺手删掉；删掉它，55 的射程当场从「空角色会话」扩到「所有会话」。**写明它现在承担什么，就是为了让它不至于变成那种没人敢动、也没人知道为什么在的代码。**
 - **处置**：不修、不动。55 修完后它是否仍必要是**另一个问题** —— 它现在还兼着「重建后角色不丢」的正常职责，不只是安全兜底，所以「55 已修 → 可以删它」是错的推论。
+- **本轮只做两件事（代码一行未改）**：① 两处兜底旁各加一句注释，写明它把角色从库里恢复回来、**同时是缺陷 55 射程的边界**（进程内的旧会话一没，脏角色值只能经这里流回引擎、再随 prompt 进模型）；② 各配一条专属测试。
+- **为什么两条而不是一条**：`_ensure_session`（发消息时懒重建）与 `resume_session`（显式重连）是**两条独立的重建路径**，触发入口不同、谁先跑取决于客户端行为，一条测试覆盖不了另一条。`tests/test_session_user_role_restore.py::TestEnsureSessionRestoresUserRole` 与 `::TestResumeRestoresUserRole`，断言都是「重建后 `engine.user_role` == 库里那一份」。
+- **变异 / 红源**：删掉任一处兜底 → 对应的那条红（引擎角色停在初值 `""`，不是库里的值）；**已实测两条同时删时两条都红**。另有 `::TestEmptyRoleStaysEmpty`（库里角色为空时不许把引擎既有值抹成空串）锁住 `if` 的真值判断那一半 —— 它守的是「判断」不是「赋值」，删赋值它不红、删判断它红。
 
 **58. 顺带查：还有哪些「多参数按位置传」的高风险函数** —— 状态：**记账（不修）**（2026-09-17，缺陷 55 同批普查；同日重核，其中的 `save_message` / `create_user` 两处**已修**，见「重核」段）
 - **判据（用户给的）**：可位置传的可选参数 ≥3 个，**且**有 ≥2 个调用点按位置传（位置实参数 > 必填形参数数）。
@@ -1157,7 +1163,7 @@ PROBE_IMAGE         false
 - **静默丢行臂（实测）**：CASCADE 子表有行、非 CASCADE 子表为空时 —— 造 users + 3 行 `refresh_tokens` + 1 行 `user_secrets`，跑回落重建 → **`refresh_tokens` 3 → 0、`user_secrets` 1 → 0**，且 **init 报成功**。`user_secrets` 存的是加密 API 凭据，**属数据丢失，不是普通记账项**。现场命令：`tests/test_sqlite_rebuild_cascade.py::test_users_rebuild_keeps_cascade_children`（修复前跑即红，报错行 `{'refresh_tokens': 0} != {'refresh_tokens': 3}`）。
 - **启动崩臂（实测）**：真实库形状 —— 活库 `usage_stats.user_id` 是 `NO ACTION` 且有 **502** 行，autocommit 下 `DROP TABLE users` 立即触发违例 → `IntegrityError: FOREIGN KEY constraint failed`，**应用直接起不来**。命令：活库副本 + 把 `sqlite3.sqlite_version_info` 按到 `(3, 34, 0)` 跑 `SQLiteStore._ensure_initialized()`。
 - **落点：两处重建共用 `_fk_disabled`**（`storage/sqlite_store.py`）—— `await conn.commit()`（开关必须发在**事务外**，事务内是 no-op，缺陷 75 实测）→ `PRAGMA foreign_keys = OFF` → `finally` 复位；异常路径先 `rollback()` 再上抛，否则 finally 那句复位同样是 no-op、外键会一直关到连接结束。病因 docstring **只写在这一处**，`_rebuild_cards_nullable_text_id` 与 users 回落分支各留一行指过去。**不是打补丁**：没有在 users 那块再补一行 `PRAGMA`；users 块原来的 `PRAGMA defer_foreign_keys = ON;` 已删。
-- **红源**（`tests/test_sqlite_rebuild_cascade.py`，2 条，各锁一个消费者）：`test_users_rebuild_keeps_cascade_children` 锁 users 回落分支 —— 真建库、插 user + 1 行 `user_secrets` + 3 行 `refresh_tokens`，再用 `monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 0))` **把回落分支逼出来**（本机 SQLite 3.49 走原生 `DROP COLUMN`，不按版本号进不去），断言两表行数不变；`test_cards_rebuild_keeps_cascade_children` 锁 cards 重建（直接调 `_rebuild_cards_nullable_text_id`，本机造不出 `text_id NOT NULL` 的老库），断言 `sessions` 行数不变 —— 这条**修复前后都绿**，它是给共用件第二个消费者留的判别面，保证共用件不退化成「只服务一处」。
+- **红源**（`tests/test_sqlite_rebuild_cascade.py`，2 条，各锁一个消费者）：`test_users_rebuild_keeps_cascade_children` 锁 users 回落分支 —— 真建库、插 user + 1 行 `user_secrets` + 3 行 `refresh_tokens`，再用 `monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 34, 0))` **把回落分支逼出来**（本机 SQLite 3.49 走原生 `DROP COLUMN`，不按版本号进不去），断言两表行数不变；`test_cards_rebuild_keeps_cascade_children` 锁 cards 重建（直接调 `_rebuild_cards_nullable_text_id`，本机造不出 `text_id NOT NULL` 的老库），断言 `sessions` 行数不变 —— 这条**修复前后都绿**，它是给共用件第二个消费者留的判别面，保证共用件不退化成「只服务一处」。**（订正 2026-09-23，随缺陷 82）**：`test_users_rebuild_keeps_cascade_children` 已删除 —— users 的回落重建整体不存在了，`_fk_disabled` 现存两个消费者都是 cards 那两条重建；本段其余内容是 `8adecf0` 当时的事实，保留存档。
 - **变异（驱动 `e2e/scratch/mutate_fk_disabled.py`，本轮现跑）**：① 去掉 `PRAGMA foreign_keys = OFF` → **2 failed**；② 把开关挪进事务内（先 `BEGIN` 再发）→ **2 failed**；两种坏法都把**两条**用例打红 —— 共用件在两个调用点上都吃劲。逐字节还原后 **2 passed**。
 - **真实库副本读数**（只读副本，活库未动）：`refresh_tokens` **926 → 926**、`user_secrets` **4 → 4**、`users` 4、`cards` 23、`sessions` 18 全部不变；重建后 `users` 残留 legacy 列 **0**、`users_mig` 残留 **0**。（副本上需先清掉下述 82 条的残骸，否则卡在 `table users_mig already exists`。）
 - **全量**：SQLite 形态 **1384 passed / 69 skipped / 1 xfailed = 1454 collected**；PG 形态（一次性 `postgres:16-alpine` 起在 127.0.0.1:5455，跑完即删）**1451 passed / 2 skipped / 1 xfailed = 1454 collected**。基线 `e41b6a6` 现跑 `--collect-only` = **1452**（worktree 现测，用后即删），差量 **+2 / 消失 0**（新文件恰 2 条）。
@@ -1172,11 +1178,13 @@ PROBE_IMAGE         false
 - **性质**：**机制缺口，不是单行脏数据** —— 全仓对这张表的应用侧触点只有两个：`get_pending_delete_propagations`（`SELECT ... WHERE synced = 0`）与 `mark_delete_propagated`（`UPDATE ... SET synced = 1`），**没有任何删除路径**（`grep -rn "cross_border_delete_outbox"` 的命中只落在 `storage/*_store.py` 与两份迁移里）。要清只能手写 `DELETE FROM`，而手写 SQL 正好绕过存储层的级联与断开（缺陷 75 / 78 修的就是那两条路）。所以这一行清不掉是结构性的：清掉它，下次删除还会再造一行。
 - **处置方向**：补一个「已上传 / 已过期 outbox 行」的回收入口，让这类清理走应用自己的路径，而不是手写 SQL。
 
-**82. 活库残留一张 `users_mig`（4 行，DDL 无 `nickname` / `username_lower`）—— 数据丢失风险** —— 状态：**记账**（不修，2026-09-21）
-- **读数（现跑）**：活库 `sqlite_master` 里 `users_mig` 存在、**4 行**，id 与 `users` 完全一致（`3996bd7f23a34311` / `f4b7650ba30e446c` / `f46432a6a92e4ae7` / `ebaaac2677c84e3d`）；其 DDL 的列清单**没有 `nickname` / `username_lower`**（而当前 `col_defs` 里有）→ 由 migration **077 之前**的代码版本创建，不是本轮产物。
-- **性质：数据丢失风险，与普通记账项区分开** —— 它是**某次 users 重建中途失败的现场**：成功路径会把 `users_mig` 改名回 `users`，不留残骸。而且它**当前反而挡住了丢数据** —— `CREATE TABLE users_mig` 排在 `DROP TABLE users` **之前**，表已存在就直接报错，`DROP` 那一步根本不执行（78 / 79 说的 CASCADE 清空因此没发生）。这是巧合，不是设计。
-- **它现在会让应用起不来**：在 SQLite < 3.35 上（**真正会进回落分支的环境**，本机 3.49 走原生 `DROP COLUMN`，进不到这一支）报 `table users_mig already exists` → init 失败 → 应用直接起不来。实测：活库副本上按 `(3, 34, 0)` 跑 `_ensure_initialized()` 即复现。
-- **处置方向**：先判它是不是缺陷 79 修复前那次失败的遗骸，是就清掉，并给回落分支补幂等（`DROP TABLE IF EXISTS users_mig`）—— 那属于加锁，不在本轮。
+**82. 活库残留一张 `users_mig`（4 行，DDL 无 `nickname` / `username_lower`）—— 数据丢失风险** —— 状态：**已修**（2026-09-23，Spec 82；与代码 / 测试同属一个 commit）
+- **根因**：`users_mig` **只可能**由 `sqlite_store.py` 里 SQLite < 3.35 的「原表重建」回落分支产生 —— 那段建表语句**没带 `IF NOT EXISTS`，不幂等**：中途失败一次即在库里留下残骸，此后每次启动都在这句上报 `table users_mig already exists`，init 失败、**应用直接起不来**（成功路径会把该表改名回 `users`，不留残骸）。3.35+ 走原生 `DROP COLUMN`，根本不产生这张表。
+- **处置：整条回落分支已删，不是给它补幂等。** 最低版本定为 SQLite 3.35，版本检查**只放一处** —— `_ensure_initialized` 开头，`< (3, 35)` 时抛 `RuntimeError`（消息点名所需版本与当前版本），**直接失败退出、不做任何降级**（全部表结构操作都从这个方法进，构造函数保持轻量）。同时删掉 `if sqlite3.sqlite_version_info >= (3, 25):` 那条已恒真的护栏（两条去重 DELETE 原样保留、缩进上提；去重本身改成一次性迁移是蒸馏线 90 / 99 的范围）。
+- **红源改写**：`tests/test_sqlite_rebuild_cascade.py` 里按 `(3, 34, 0)` 逼回落分支的 `test_users_rebuild_keeps_cascade_children` 删除，换成 `test_sqlite_below_minimum_version_fails_loudly`（断言 `RuntimeError` 且消息含 `3.35`）；同文件的 cards 重建用例保留。
+- **不写清理迁移**：分支删掉后这张表再也不会产生，现存残留只是**一张孤立表，不会再让启动失败**；那 4 行是不是别处没有的用户数据只能由人判断，故清理交 Shiyu 手动执行（SQL 见本轮交付报告，**不入库**）。
+- **残留读数（2026-09-21，只读副本）**：`users_mig` 存在、**4 行**，id 与 `users` 完全一致（`3996bd7f23a34311` / `f4b7650ba30e446c` / `f46432a6a92e4ae7` / `ebaaac2677c84e3d`）；其 DDL 的列清单没有 `nickname` / `username_lower` → 由 migration **077 之前**的代码版本创建。**它当时反而挡着丢数据**（建表语句排在 `DROP TABLE users` 之前，表已存在即报错、`DROP` 不执行，78 / 79 说的 CASCADE 清空因此没发生）—— 巧合，不是设计。
+- **原「处置方向」作废**：`DROP TABLE IF EXISTS users_mig` 那种「给回落分支补幂等」的写法，已被「整条分支删除」取代 —— 分支不存在了，无从补起。
 
 **83. 聊天族的身份与依赖全靠「往引擎实例上写属性」传 —— 同形 11 行散在 4 个文件，且写的字段集互不一致** —— 状态：**已修**（`15c6a6a` + `8efb67c` + `b259e82`，2026-09-22）
 - **病灶（与缺陷 35 修复前同形）**：`ChatEngine.__init__`（`core/chat_engine.py:123-124`）持有 `self._storage = None` / `self._user_id: str = ""`，路由在构造**之后**才逐个把值写上去。缺陷 35 已把**蒸馏族**从这条路上摘掉（身份走 `LLM_CALLER`），**聊天族没动**。
@@ -1302,7 +1310,7 @@ PROBE_IMAGE         false
   - 端到端锁：`tests/test_message_backfill.py`（C1–C9 一对一 / G1–G2 群聊 / O6 队列不持有存储）—— 每条都有一条自身的变异能把它打红（变异脚本与逐条读数见该轮交付报告）。
 - **不做的事（口径第 4 条，无行为可变异故不设锁）**：不重试、不弹窗、不汇总、不改操作入口。
 
-**95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**记账（不修）**（2026-09-21 合 main 时登记）
+**95. 适配器的 `Depends(get_jwt_secret)` 在无凭据路径照样取 secret** —— 状态：**已修**（`c417827`，2026-09-23）
 - **事实**：`web/routers/auth.py` 的 `get_current_user` / `get_optional_user` 都带 `secret: str = Depends(get_jwt_secret)`。FastAPI 在**进端点函数体之前**解析整棵依赖树，`Depends` 参数的求值与「这次请求带没带凭据」**无关** —— 一次**匿名**请求也会把 secret 读一遍。`get_jwt_secret()` 未配置 / 用默认值 / 短于 32 字符时抛 `RuntimeError`。
 - **后果**：一条**公开**且依赖树里挂着 `get_optional_user` 的路由（`web/routers/market.py` 的 `GET /api/market/card/{card_id}`、评论列表），在 `JWT_SECRET` 未配置时，一次本该正常的**匿名读**变成 **500**（异常从 `solve_dependencies` → `run_in_threadpool` 抛出）；secret 配好时同一请求是 **404「角色不存在」**（正常走到函数体）。即：**配置缺失把一个公开读变成了 500，而它既不是鉴权失败也不是业务失败**。
 - **与缺陷 46 的关系**：46 收敛了「**显式直接读环境**」的 5 处调用点（auth.py 4 + server.py 1）。本条是同一缺陷的**另一种形态** —— 没有显式调用，是框架按依赖树代劳；46 的判据命令（`git grep` 直接读环境）**看不见它**。所以它既不在 46 的修复面里，也不在 46 的判据覆盖里。
@@ -1312,7 +1320,9 @@ PROBE_IMAGE         false
   - `JWT_SECRET` 未配置：`GET /api/market/card/nope` → **500**、`GET /api/market/tags` → **200**、`GET /api/history/list` → **401**
   - 读法：`card/nope` 是「公开 + 依赖树里有适配器」→ 唯一随 secret 配置变色的那条；`tags` 无适配器 → 不受影响；`history/list` 受保护 → **中间件在路由前就拦下**（401），secret 根本轮不到读。三条缺一不可：只有第一条会红的话，无法排除「所有公开路由都 500」这种更宽的病灶。
 - **为什么只记不修**：修它要把适配器的 `secret` 从**值**改成**取值函数**（`secret_source`），与 `storage` 一并由解析器统一控制取值时机（有凭据才取 secret、解码成功才取 storage）。那是**接口变更**：牵动四个入口的调用形态与既有 `Depends(get_jwt_secret)` 注入契约（缺陷 46 的测试正是靠 `app.dependency_overrides[get_jwt_secret]` 显式给值）。本轮是合 main 的登记动作，不在范围内。
-- **判据命令**：`.venv/Scripts/python.exe scripts/probe_eager_jwt_secret.py` —— 期望 `== JWT_SECRET unset ==` 段出现 `GET  /api/market/card/nope    -> 500`，而同段 `tags -> 200`、`history/list -> 401`。（本条**没有** `git grep` 型判据：事实是行为差异，不是文本事实 —— 与 91 / 92 那两条靠 `git grep` 数命中不同，别照抄。）
+- **修法**：新增 `jwt_secret_source()` —— 它返回 `get_jwt_secret` **取值函数本身**（不取值），交给 `resolve_identity`，secret 只在身份判定给出 MISSING 之后才取。适配器不再挂 `Depends(get_jwt_secret)`，于是「这次请求带没带凭据」重新决定「要不要读 secret」。**签发侧**（`login` / `register` / `refresh`）确实需要值，保留 `Depends(get_jwt_secret)` 不动。
+- **判据命令（修后）**：`.venv/Scripts/python.exe scripts/probe_eager_jwt_secret.py` —— 两段读数必须**一致**：`card/nope` 两段都是 **404**、`tags` 都是 **200**、`history/list` 都是 **401**。**修复前**未配置段是 `card/nope -> 500`（已配置段 404），那次 500 的消失就是本条被修掉的唯一证据。（本条**没有** `git grep` 型判据：事实是行为差异，不是文本事实 —— 与 91 / 92 那两条靠 `git grep` 数命中不同，别照抄。）
+- **判据 / 红源（测试侧）**：`tests/test_jwt_secret_lazy.py` —— `TestNoSecretConfigured::test_public_read_in_an_adapter_dep_tree_is_404_not_500`（核心：未配置 secret 时匿名公开读是 404 不是 500）、`::test_public_read_without_an_adapter_is_unaffected`（`tags` 恒 200）、`::test_protected_path_without_credentials_is_401`（受保护路径仍 401），`TestWithSecretConfigured` 两条守「修完没有把正常鉴权弄坏」。**另有 1 个既有的 `dependency_overrides[get_jwt_secret]` 测试文件随之改为覆盖 `jwt_secret_source`**（不新增抽象，只是把打桩点挪到新的取值入口）。
 
 **96. `ChatEngine` 构造后由外部写入的会话状态字段（`_session_id` / `_group_id` / `_user_tz`）—— 是状态不是依赖，能否构造注入待调研** —— 状态：**记账**（不修，2026-09-22；83 收口时登记的残留）
 - **事实（现跑）**：`ChatEngine.__init__` 只给初值 —— `self._session_id: str = ""`（`core/chat_engine.py:131`）、`self._group_id: str = ""`（`:132`）、`self._user_tz: str = ""`（`:133`）；三个字段的**实际值全部由构造之后的外部写点给出**：`web/routers/chat.py` 5 处（`_session_id` `:211` / `:308` / `:431`，`_user_tz` `:303` / `:427`）、`web/routers/history.py` 2 处（`_session_id` `:301`，`_user_tz` `:314`）、`core/group_session.py` 2 处（`_group_id` `:163` / `:352`）、`scripts/run_agent_eval.py` 3 处（`_session_id` `:177` / `:331` / `:370`）—— 合计 **12 行 / 4 文件**（测试里的同形赋值另计）。
@@ -1742,13 +1752,18 @@ PROBE_IMAGE         false
 - `core/log_collector.py` 的 `if _handler not in root.handlers: root.addHandler(_handler)` —— 本机实测（Python 3.12.10）`logging.Logger.addHandler` 自身的实现就是 `if not (hdlr in self.handlers)`，**守卫是多余的**，删掉行为不变。
 - 不修的理由：纯冗余、零风险，删它属于「顺手改」，本轮不动。复算命令：打印 `inspect.getsource(logging.Logger.addHandler)`。
 
-**68. `update_user_api_config` 在无用户行时静默不写** —— 状态：**记账（不修）**（2026-09-19 记）
+**68. `update_user_api_config` 在无用户行时静默不写** —— 状态：**已修**（`f7fd0b6`，2026-09-23）
 - 形态：`storage/sqlite_store.py`（PG 侧同）里写的是 `UPDATE user_secrets SET ... WHERE user_id = ?` / `UPDATE users SET ... WHERE id = ?`，**不检查受影响行数**；用户行不存在时 0 行匹配，`await conn.execute` 不报错、函数正常返回，调用方 `update_api_config` 回 `{"ok": True}`。
 - **这是凭据路径上的「失败吞成成功」**：用户以保存成功为信号，而 key 从未落库（下一轮请求照旧回落全局 key 或 503）。当前的「空白字段不写」语义是**刻意的**，但「整行不存在也不写」不是 —— 两者共用同一个静默出口。
+- **修法**：照抄 `set_user_role` 的现成先例 —— **执行过、却匹配 0 行**的语句 `raise ValueError`，路由层把它翻成 **404**（不是泛化的 500：这是「资源不存在」，不是「服务出错」）。用户注册时必建 `user_secrets` 行，故 0 行 ⇔ 用户不存在，不需要额外查询。
+- **判据 / 红源**：`tests/test_api_config_unknown_user.py::test_unknown_user_raises`（store 层）与 `::test_unknown_user_is_404_not_ok`（接口层）；变异「去掉 0 行检查」→ 两条同时红。**「空白字段不写」的原语义由 `::test_blank_fields_write_nothing_and_do_not_raise` 与 `::test_blank_fields_on_unknown_user_also_do_not_raise` 反向锁住** —— 「语句没执行」与「执行了 0 行」的区别正是这次修复的落点，只锁前者会漏掉本条。
 
-**69. 管理员保存无 key 配置返回 200、全站转 503、响应无信号** —— 状态：**记账（不修）**（2026-09-19 记，C4 返工时记为「留了尾巴」）
+**69. 管理员保存无 key 配置返回 200、全站转 503、响应无信号** —— 状态：**已修**（`17626d6`，2026-09-23）
 - 形态：`reset_llm_and_dependents` 未配置时把 `_llm` 置 `None`（口径统一，是 C4 的裁定）—— 但保存接口照旧回 200，而**全站随后转 503**，响应体里没有任何提示。运维看到的是一次成功保存 + 随后一片 503。
 - 不处置的理由：本案射程是门与解析，这条属于**保存接口的可用性反馈**，另开议题（与 68 同一族：**失败/降级的信号没有传到调用方**）。
+- **修法**：保存响应体加 `llm_available: get_llm() is not None`（用 `deps.py` 里现成的 `get_llm()`，不新增抽象）。**保存本身不阻断** —— `None` 是 C4 已裁定的既定结局，管理员可能正是有意清空 key。
+- **判据 / 红源**：`tests/test_settings_config_llm_available.py::test_no_global_llm_reports_false_and_still_saves`（无 key → 200 且 `llm_available == false`）、`::test_global_llm_present_reports_true`（有 key → true）；变异「字段恒 `True`」→ 红。
+- **前端半作废（对 spec 的订正）**：spec §2.3 / §5 原要求前端也消费这个信号；实查 `POST /api/settings/config` **无前端调用方**（管理员直接调接口），用户裁定「不新增调用方」，故前端用例作废、只留后端锁。交付报告里已声明这是对 spec 的订正。
 
 **70. 门判据收敛（判 `llm` 不判 `distiller`）没有专属红源** —— 状态：**已裁定·不设锁**（2026-09-19）
 - C4 返工把 `/start` 的门从 `get_distiller(llm) is None` 改成 `llm is None`。这是**生产行为等价**的收敛（`get_distiller(None) is None`），它的价值是**消除分叉的可能**，不是修一个可观测的错。故没有变异能只打红它 —— 能打红它的变异（把 `get_distiller` 换掉）打红的是 L1/L2。

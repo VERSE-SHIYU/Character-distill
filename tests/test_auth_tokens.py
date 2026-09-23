@@ -23,7 +23,7 @@ from storage.sqlite_store import SQLiteStore
 import limiter as _lim_  # noqa: E402  (web/limiter.py)
 _lim_.limiter.limit = lambda *a, **kw: lambda f: f
 
-from routers.auth import get_jwt_secret, router as auth_router  # noqa: E402
+from routers.auth import get_jwt_secret, jwt_secret_source, router as auth_router  # noqa: E402
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -129,7 +129,8 @@ class TestLoginRefreshChain:
 
 
 def test_secret_is_injected_not_read_from_environment(store):
-    """`get_jwt_secret` 是**注入点**：覆盖之后，签发与验签两侧都必须用它。
+    """secret 的两个注入点都要被覆盖：签发侧的 `get_jwt_secret`、验签侧的
+    `jwt_secret_source`（缺陷 95 后的分工 —— 后者给的是取值函数，不是值）。
 
     覆盖值刻意**不等于** `conftest.py` 注入的那个环境值。于是任何一侧（`login` 签发 /
     `get_current_user` 验签）只要回去读环境，`/me` 就会拿另一个 secret 验签而 401。
@@ -140,6 +141,8 @@ def test_secret_is_injected_not_read_from_environment(store):
     _app.include_router(auth_router)
     _app.dependency_overrides[get_storage] = lambda: store
     _app.dependency_overrides[get_jwt_secret] = lambda: injected
+    # 验签侧收的是**取值函数**：给值时再包一层，别把 injected 当函数交出去。
+    _app.dependency_overrides[jwt_secret_source] = lambda: (lambda: injected)
     c = TestClient(_app)
 
     uid = f"tester_{uuid.uuid4().hex[:8]}"

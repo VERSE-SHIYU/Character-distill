@@ -1,6 +1,8 @@
 # ============================================================
-# Build — push 触发：test → build → push GHCR → 存 digest
+# Build — push 触发：test / lint 全分支跑；build → push GHCR → 存 digest 只在 main
 #
+# 分支上要能看见「我这次改动过不过门」，所以 test、upstream-drift、lint 对**所有分支**
+# 的 push 都触发；镜像构建与推送**只在 main**（`build` 的 `if`），分支上它显示 skipped。
 # 绝不包含部署逻辑。部署见 deploy.yml（workflow_dispatch 专用）。
 # ============================================================
 
@@ -8,7 +10,6 @@ name: Build
 
 on:
   push:
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
@@ -231,8 +232,35 @@ jobs:
           if-no-files-found: error
           path: pip-freeze-sentinel.txt
 
+  frontend-lint:
+    name: "lint / 前端 no-undef（分支也跑）— 红 = 你写错了"
+    runs-on: ubuntu-latest
+    # 与 test 同一条理由（见上）：挂死不算失败，没有上限就一直占着 runner。
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/frontend/package-lock.json
+
+      # 从 build job 里搬出来的：build 现在只在 main 上跑，lint 留在里面等于分支上
+      # 这条门根本不执行 —— 而分支上最需要的正是「lint 过没过」。拆成独立 job 而不是
+      # 塞进 test job：test 的命题是「本仓 Python 回归」（依赖按锁、证据是 pip freeze），
+      # 把 node 工具链混进去会污染那条证据；独立 job 还能与 test 并行，不占关键路径。
+      - name: Frontend lint (no-undef gate)
+        run: |
+          npm ci
+          npx eslint src -c eslint.ci.config.js --quiet
+        working-directory: web/frontend
+
   build:
-    needs: test
+    needs: [test, frontend-lint]
+    # 镜像只在 main 上构建与推送：分支 push 也要跑门，但不该产出可部署的 tag。
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -242,19 +270,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: web/frontend/package-lock.json
-
-      - name: Frontend lint (no-undef gate)
-        run: |
-          npm ci
-          npx eslint src -c eslint.ci.config.js --quiet
-        working-directory: web/frontend
 
       - name: Login to GHCR
         uses: docker/login-action@v4

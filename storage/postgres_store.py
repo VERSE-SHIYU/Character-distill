@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +14,7 @@ import asyncpg  # type: ignore[import-not-found]
 from core.roles import ROLES
 from .base import StorageBase, StoreError
 from .pg_identity_sync import align_identity_sequences
+from .secret_box import decrypt_secret, encrypt_secret
 
 # ── 「X 是草稿 D 的发布副本」的唯一权威定义 ─────────────────────────────────
 #
@@ -2405,20 +2405,6 @@ class PostgresStore(StorageBase):
 
     # ---- User API config ----
 
-    @staticmethod
-    def _get_fernet():
-        from cryptography.fernet import Fernet
-        import base64
-        from hashlib import sha256
-        key = os.getenv("FERNET_KEY")
-        if not key:
-            secret = os.getenv("JWT_SECRET")
-            if not secret:
-                raise RuntimeError("FERNET_KEY 或 JWT_SECRET 必须设置才能加解密 API key，拒绝使用不安全默认值")
-            raw = secret.encode()
-            key = base64.urlsafe_b64encode(sha256(raw).digest())
-        return Fernet(key)
-
     async def get_user_api_config(self, user_id: str) -> dict:
         """Get a user's API config. api_key and embedding_key are returned decrypted."""
         try:
@@ -2438,7 +2424,7 @@ class PostgresStore(StorageBase):
                 if not val:
                     return ""
                 try:
-                    return self._get_fernet().decrypt(val.encode()).decode()
+                    return decrypt_secret(val)
                 except Exception as exc:
                     print(f"[PostgresStore] decrypt failed: {exc}")
                     raise StoreError("_decrypt", exc) from exc
@@ -2462,6 +2448,10 @@ class PostgresStore(StorageBase):
 
         Secrets (api_key, base_url, model) go to user_secrets;
         embedding config (embedding_key, embedding_region) stays on users.
+
+        语句**执行了却没改到行** = 用户不存在 → 抛 ValueError（与 `set_user_role` 同形），
+        调用方据此回 404。原先这里静默成功，用户以为存下了、实际一行没写。
+        一条语句都没执行（全部字段为空）不算失败 —— 那是「这次什么都不改」。
         """
         try:
             # ---- user_secrets: api_key, base_url, model ----
@@ -2469,7 +2459,7 @@ class PostgresStore(StorageBase):
             secret_params = []
 
             if api_key:
-                encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                encrypted = encrypt_secret(api_key)
                 secret_parts.append(f"api_key = ${len(secret_params) + 1}")
                 secret_params.append(encrypted)
 
@@ -2485,14 +2475,16 @@ class PostgresStore(StorageBase):
                 secret_params.append(user_id)
                 sql = "UPDATE user_secrets SET " + ", ".join(secret_parts) + f" WHERE user_id = ${len(secret_params)}"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, *secret_params)
+                    tag = await conn.execute(sql, *secret_params)
+                if self._parse_rowcount(tag) == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
 
             # ---- users: embedding_key, embedding_region ----
             user_parts = []
             user_params = []
 
             if embedding_key:
-                enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                enc_emb = encrypt_secret(embedding_key)
                 user_parts.append(f"embedding_key = ${len(user_params) + 1}")
                 user_params.append(enc_emb)
 
@@ -2504,7 +2496,12 @@ class PostgresStore(StorageBase):
                 user_params.append(user_id)
                 sql = "UPDATE users SET " + ", ".join(user_parts) + f" WHERE id = ${len(user_params)}"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, *user_params)
+                    tag = await conn.execute(sql, *user_params)
+                if self._parse_rowcount(tag) == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
+
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[PostgresStore] Update user API config failed: {exc}")
             raise
