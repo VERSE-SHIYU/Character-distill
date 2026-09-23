@@ -80,8 +80,8 @@ UNSCOPED_ALLOWLIST = {
         "管理员复核任意用户被 flag 的卡 —— 跨属主就是该职责本身",
     "web/routers/inter_node.py:receive_dm":
         "跨节点 DM 同步信道：HMAC 鉴权无用户身份，按 msg_id 幂等去重",
-    "web/cross_border_sync.py:_cross_border_resync_loop":
-        "后台重同步循环（60s 扫全库未同步行推给对端节点），无用户身份 —— 跨属主正是该职责",
+    "web/cross_border_sync.py:_resync_once":
+        "后台重同步的单轮逻辑（60s 由 _cross_border_resync_loop 调一次，扫全库未同步行推给对端节点），无用户身份 —— 跨属主正是该职责",
     "web/routers/group.py:_run_group_affinity":
         "群聊流按 group_id 轮询反应：群会话属主校验在上游（_ensure_group 与各 handler 先 "
         "get_group_session_owned）；反应行按 speaker_card_id 分桶，无属主语义",

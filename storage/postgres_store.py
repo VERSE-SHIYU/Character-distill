@@ -4480,16 +4480,16 @@ class PostgresStore(StorageBase):
             print(f"[PostgresStore] Get pending delete propagations failed: {exc}")
             raise
 
-    async def mark_delete_propagated(self, id: int) -> None:
-        """Mark a delete propagation outbox row as synced."""
+    async def remove_delete_propagation(self, id: int) -> None:
+        """Delete a delete propagation outbox row the peer has acknowledged."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE cross_border_delete_outbox SET synced = 1 WHERE id = $1",
+                    "DELETE FROM cross_border_delete_outbox WHERE id = $1",
                     id,
                 )
         except Exception as exc:
-            print(f"[PostgresStore] Mark delete propagated failed: {exc}")
+            print(f"[PostgresStore] Remove delete propagation failed: {exc}")
             raise
 
     async def delete_remote_card(self, card_id: str) -> None:
