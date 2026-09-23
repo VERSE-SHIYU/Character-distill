@@ -30,6 +30,7 @@ from core import concurrency as C  # 派生与上下文传播
 from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
+from web.llm_resolution import resolve_embedding
 
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
@@ -665,9 +666,8 @@ async def distill_by_text_id(
         raise HTTPException(404, "Text not found")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
     content = text_rec["content"]
     # 空 character_name 才需要名单；非空时用户已点名，不必读名单。
@@ -680,14 +680,14 @@ async def distill_by_text_id(
     try:
         result = await text_manager.get_or_distill(
             req.text_id, char_name, force=req.force, user_id=user_id,
-            embedding_key=_ek, embedding_region=_er,
+            embedding_key=emb.key, embedding_region=emb.region,
         )
         # Fire-and-forget scene index via isolated service
         indexing_service = get_indexing_service()
         if indexing_service:
             indexing_service.schedule_scene_index(
                 req.text_id, result.get("card_id", ""), content, char_name,
-                all_characters=[], embedding_key=_ek, embedding_region=_er,
+                all_characters=[], embedding_key=emb.key, embedding_region=emb.region,
             )
         return result
     except DistillError:
@@ -758,11 +758,10 @@ async def _distill_start_impl(
         raise HTTPException(503, "请先在设置页配置 API Key")
     distiller = get_distiller(llm=llm)
 
-    # embedding 二元组在这里取**一次**，随线程入参传下去：后台线程不再回头读配置
-    # （它连 storage 都不该碰，那是请求线程的账）。
-    api_config = await storage.get_user_api_config(user_id)
-    embedding_key = (api_config or {}).get("embedding_key", "")
-    embedding_region = (api_config or {}).get("embedding_region", "")
+    # embedding 二元组在这里取**一次**（经唯一归一出口），随线程入参传下去：后台线程
+    # 不再回头读配置（它连 storage 都不该碰，那是请求线程的账）。
+    api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(api_config)
 
     # Read text content in the async endpoint so the background thread
     # doesn't need to call asyncio storage methods (cross-thread safe).
@@ -852,7 +851,7 @@ async def _distill_start_impl(
     thread = C.ctx_thread(  # context 传播点：蒸馏后台线程挂到发起请求 trace
         _run_distill_task,
         args=(task_id, req.text_id, req.character_name, req.force, user_id, content, text_type,
-              llm, embedding_key, embedding_region, resume_candidates),
+              llm, emb.key, emb.region, resume_candidates),
         daemon=True,
     )
     thread.start()
@@ -1023,9 +1022,8 @@ async def distill_stream(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
     text_rec = await storage.get_text_owned(req.text_id, user_id)
     if not text_rec:
@@ -1110,7 +1108,7 @@ async def distill_stream(
         try:
             result = await text_manager.save_distilled_card(
                 req.text_id, card, user_id,
-                embedding_key=_ek, embedding_region=_er,
+                embedding_key=emb.key, embedding_region=emb.region,
             )
         except Exception as exc:
             print(f"[distill] Save card failed: {exc}")
@@ -1346,15 +1344,11 @@ async def start_session(
             content = text_rec["content"]
             existing_cards = await storage.list_cards(req.text_id, user_id)
             all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
-            emb_key = ""
-            emb_region = ""
             try:
-                user_cfg = await storage.get_user_api_config(user_id)
-                if user_cfg.get("embedding_key"):
-                    emb_key = user_cfg["embedding_key"]
-                    emb_region = user_cfg.get("embedding_region", "cn")
+                user_cfg = await storage.get_user_api_config(user_id) or {}
             except Exception:
-                pass
+                user_cfg = {}
+            emb = resolve_embedding(user_cfg)
             session_id = await asyncio.to_thread(
                 text_manager._create_session, card,
                 all_characters=all_characters, rag=None,
@@ -1367,7 +1361,7 @@ async def start_session(
                 indexing_service.schedule_scene_index(
                     req.text_id, req.card_id, content, card.name,
                     all_characters=all_characters,
-                    embedding_key=emb_key, embedding_region=emb_region,
+                    embedding_key=emb.key, embedding_region=emb.region,
                 )
         else:
             # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
@@ -1488,9 +1482,8 @@ async def legacy_distill(
         raise HTTPException(503, "请先在设置页配置 API Key")
 
     # Fetch user's embedding key so RAGEngine can initialize DashScope embedding
-    _api_config = await storage.get_user_api_config(user_id)
-    _ek = (_api_config or {}).get("embedding_key", "")
-    _er = (_api_config or {}).get("embedding_region", "")
+    _api_config = await storage.get_user_api_config(user_id) or {}
+    emb = resolve_embedding(_api_config)
 
     text = req.text.strip()
     if not text:
@@ -1507,7 +1500,7 @@ async def legacy_distill(
     try:
         return await text_manager.get_or_distill(
             text_id, char_name, user_id=user_id,
-            embedding_key=_ek, embedding_region=_er,
+            embedding_key=emb.key, embedding_region=emb.region,
         )
     except DistillError:
         raise      # 放行到统一出口（web/server.py）：配码取文案，路由不碰（缺陷 38）

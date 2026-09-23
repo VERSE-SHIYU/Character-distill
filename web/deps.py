@@ -213,14 +213,15 @@ def get_distiller(llm: LLMAdapter | None = None) -> Distiller | None:
     return Distiller(llm, storage=get_storage())
 
 
-def get_rag_config(embedding_key: str = "", embedding_region: str = "") -> dict[str, Any]:
-    """Return RAG configuration dict with optional embedding overrides."""
-    cfg = dict(_rag_config)
-    if embedding_key:
-        cfg["embedding_key"] = embedding_key
-    if embedding_region:
-        cfg["embedding_region"] = embedding_region
-    return cfg
+def get_rag_config() -> dict[str, Any]:
+    """Return RAG configuration dict.
+
+    嵌入凭据**不从这里注入**：per-user 的 (key, region) 由调用方经
+    `web/llm_resolution.resolve_embedding` 归一后再并进来。原先这两个覆盖参数
+    （`embedding_key` / `embedding_region`）从加进来起就没有一个生产调用点传过值 ——
+    死参数，只给按位置传参多留两格错位空间（与缺陷 111 的 `text` 同形）。
+    """
+    return dict(_rag_config)
 
 
 def get_sessions() -> dict[str, dict[str, Any]]:

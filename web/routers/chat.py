@@ -22,6 +22,7 @@ from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
+from web.llm_resolution import resolve_embedding
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -175,19 +176,15 @@ async def _ensure_session(
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards, user_id)
 
-    emb_key = ""
-    emb_region = ""
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            emb_key = user_cfg["embedding_key"]
-            emb_region = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
 
     rag = text_manager._indexing_service.get_rag_for_session(
         card_rec["text_id"], text_rec["content"],
-        all_characters=all_characters, embedding_key=emb_key, embedding_region=emb_region,
+        all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
     )
     new_id = await asyncio.to_thread(
         text_manager._create_session, card,

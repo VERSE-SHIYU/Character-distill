@@ -589,9 +589,9 @@ class _ChunkEmittingDistiller:
     def identify_characters(self, content):
         return [{"name": "甲", "aliases": []}]
 
-    def distill_incremental_stream(self, text, character_name, aliases=None,
-                                   text_type="story", on_chunk_done=None,
-                                   resume_candidates=None):
+    def distill_incremental_stream(self, text, character_name, *,
+                                   aliases=None, text_type="story",
+                                   on_chunk_done=None, resume_candidates=None):
         for i in range(self.N):
             self.map_calls += 1
             if on_chunk_done:

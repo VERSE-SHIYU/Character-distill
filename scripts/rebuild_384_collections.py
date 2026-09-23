@@ -50,6 +50,7 @@ if str(_REPO) not in sys.path:
 
 from core.embeddings import DashScopeEmbedding, get_embed_stats, reset_embed_stats  # noqa: E402
 from core.rag import RAGEngine  # noqa: E402
+from web.llm_resolution import EmbeddingResolution, resolve_embedding  # noqa: E402
 
 DIM_NOW = 1024  # DashScope text-embedding-v4 默认维度；load_existing 比对基准
 BATCH = DashScopeEmbedding.MAX_BATCH  # 百炼单次最多 10 条 → HTTP ≈ ceil(chunks/10)
@@ -269,14 +270,17 @@ def print_manifest(chroma_path: Path, db: Path) -> None:
 # ── rebuild：交换式重建 + 验证 + 记录 ──────────────────────────────────────
 
 
-def _env_key() -> tuple[str, str]:
-    key = (os.getenv("EMBEDDING_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip()
-    region = (os.getenv("EMBEDDING_REGION") or "cn").strip()
-    return key, region
+def _env_key() -> EmbeddingResolution:
+    """环境里的服务级嵌入凭据 —— 经唯一归一出口取（缺陷 74），region 默认与其余路径同一份。"""
+    return resolve_embedding(
+        {},
+        env_key=(os.getenv("EMBEDDING_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "").strip(),
+        env_region=(os.getenv("EMBEDDING_REGION") or "cn").strip(),
+    )
 
 
 def rebuild_one(db: Path, chroma_path: Path, cfg: dict, text_id: str,
-                key: str, region: str) -> dict:
+                emb: EmbeddingResolution) -> dict:
     """重建单个 text_{text_id}（内存嵌入成功后才删旧建新交换）。返回记录 dict。"""
     name = f"text_{text_id}"
     rec = {"ts": time.strftime("%H:%M:%S"), "text_id": text_id}
@@ -286,9 +290,8 @@ def rebuild_one(db: Path, chroma_path: Path, cfg: dict, text_id: str,
         return {**rec, "ok": False, "status": "no-source", "detail": "texts 无此行/空内容"}
 
     rag_cfg = dict(cfg)
-    if key:
-        rag_cfg["embedding_key"] = key
-        rag_cfg["embedding_region"] = region
+    if emb.key:
+        rag_cfg["embedding_key"], rag_cfg["embedding_region"] = emb.key, emb.region
     rag = RAGEngine(rag_cfg, chroma_path=str(chroma_path))
     ef = rag._embedding_function
 
@@ -368,8 +371,8 @@ def rebuild_one(db: Path, chroma_path: Path, cfg: dict, text_id: str,
 
 def rebuild(text_ids: list[str], chroma_path: Path, db: Path) -> int:
     cfg = load_rag_cfg()
-    key, region = _env_key()
-    if not key:
+    emb = _env_key()
+    if not emb.key:
         print("[rebuild] 无 EMBEDDING_API_KEY / DASHSCOPE_API_KEY，拒绝执行", file=sys.stderr)
         return 2
     if not text_ids:
@@ -385,7 +388,7 @@ def rebuild(text_ids: list[str], chroma_path: Path, db: Path) -> int:
     n_ok = n_fail = 0
     tot_chunks = tot_api = tot_http = 0.0
     for text_id in text_ids:
-        rec = rebuild_one(db, chroma_path, cfg, text_id, key, region)
+        rec = rebuild_one(db, chroma_path, cfg, text_id, emb)
         with logf.open("a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         if rec["ok"]:

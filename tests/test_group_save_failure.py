@@ -135,7 +135,7 @@ class _FailingGroupSave:
         self.reaction_attempts = 0
 
     async def save_group_message(
-        self, group_id, speaker, role, content, speaker_card_id="", **kw
+        self, group_id, speaker, role, content, *, speaker_card_id="", **kw
     ):
         if role in self._fail_roles:
             raise RuntimeError(f"{role} save down")

@@ -81,13 +81,16 @@ def _embed_rag_config() -> dict:
     用环境里的服务级 DashScope key 兜底。仍无 key → RAGEngine 构造抛清晰错误（不静默空检索）。
     """
     from web.deps import get_rag_config
+    from web.llm_resolution import resolve_embedding
 
     cfg = get_rag_config()
-    if not cfg.get("embedding_key"):
-        key = os.getenv("EMBEDDING_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-        if key:
-            cfg["embedding_key"] = key
-            cfg["embedding_region"] = os.getenv("EMBEDDING_REGION", "cn")
+    emb = resolve_embedding(
+        cfg,
+        env_key=os.getenv("EMBEDDING_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or "",
+        env_region=os.getenv("EMBEDDING_REGION") or "cn",
+    )
+    if emb.key:
+        cfg["embedding_key"], cfg["embedding_region"] = emb.key, emb.region
     return cfg
 
 

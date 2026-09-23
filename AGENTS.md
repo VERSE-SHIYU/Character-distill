@@ -1794,9 +1794,20 @@ PROBE_IMAGE         false
 **73. `core/embeddings.py` 与 mem0 的出站不经过 adapter，是否需要 geo 约束待定** —— 状态：**另开议题**
 - 这些出站拿的是 `base_url` 之外的嵌入端点（DashScope），**没有**经过 `adapters/llm_adapter.py`，故**不受调用点门约束**。D3 说「请求内所有 LLM 使用都受 geo 门约束」，实现在 adapter 上 ⇒ 这类出站落在门的射程外。
 - 是「门该不该覆盖嵌入」还是「嵌入另有一套策略」，是**决策**不是修法，故另开议题。
+- **2026-09-23 查实的事实（缺陷 74 的 S0 交付，供本条决策，不改本条状态）**：
+  - 嵌入端点**可以**被配成国际站：`core/embeddings.py` 的 `DASHSCOPE_BASE_URLS` 里 `"intl"` → `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`，由 per-user 的 `users.embedding_region`（默认 `'cn'`）选；另有一条全局 env 覆盖 `EMBEDDING_BASE_URL`（`core/embeddings.py`，优先于地域）。出处：阿里云 Model Studio 文档「OpenAI compatible - Embedding」与「错误码」—— 国际站 key 与中国站 key **不能跨地域混用**，配错返 401 `invalid_api_key`（正是 `_EMBED_FAILURE_HINTS[401]` 那句「或与所选地域不匹配」的出处）。
+  - **门看不见这条路**，三处可核：① 该出站在 `core/embeddings.py` 自建 OpenAI client，不经 `adapters/llm_adapter.py`，`geo_call_guard` / `geo_refusal` 都不在链上；② `_DOMESTIC_LLM_HOSTS`（`web/geo_guard.py`）只列 `dashscope.aliyuncs.com`，**不含** `dashscope-intl.aliyuncs.com`，而白名单是后缀匹配、`intl` 那条配不上；③ `update_api_config`（`web/routers/auth.py`）只 geo 检查 `req.base_url`，`req.embedding_region` **原样落库**，`/test-embedding` 连 geo 检查都没有（只校验 `region in DASHSCOPE_BASE_URLS`）。
+  - 即：国内用户把 `embedding_region` 存成 `intl`，嵌入出站即到新加坡，门的任何一层都不拦。
 
-**74. embedding 配置读取有 5 处完全相同的写法（含变体约 8 处）** —— 状态：**另开议题**
+**74. embedding 配置读取有 5 处完全相同的写法（含变体约 8 处）** —— 状态：**已修**（2026-09-23，收敛成唯一出口 `resolve_embedding`，见「本次处置」段）
 - 同一份「读 `embedding_key` / `embedding_region` 并给默认值」的逻辑散在多处，与缺陷 35/62 同族（同一件事抄多遍，漏改一处是静默的）。本轮的解析出口收敛（`get_user_llm`）只覆盖了 LLM 那一条，**embedding 那条没并入**。
+- **本次处置（2026-09-23，用户）**：
+  - **普查更正**：逐处数下来是 **11 处**（不是标题里的 5 / 约 8），分三族 —— A 族 5 处（`chat.py`、`history.py`、`group.py` ×2、`distill.py` 的会话段；形态 `if key: … get(region, "cn")`）、B 族 4 处（`distill.py` 的四个蒸馏端点；形态 `.get(k, "")`）、C 族 2 处（`mcp_server/server.py`、`scripts/rebuild_384_collections.py`；走 env）。**判据**：`git grep -n 'embedding_key\|embedding_region'` 取「读配置并给默认值」的写法，排除写完就走的写入面。
+  - **出口**：`web/llm_resolution.py` 新增纯函数 `resolve_embedding(config, *, env_key="", env_region="cn") -> EmbeddingResolution`（`source` ∈ `USER` / `GLOBAL_ENV` / `UNAVAILABLE`）。与 `resolve_llm` **同一文件、同一套形状**：不缓存、不做 geo、不做 IO；进程环境由调用方以实参给（`resolve_llm` 的 `build_user`/`get_global` 同理），故该模块仍不 import `os`。不新建文件、不新建注册表。
+  - **默认值统一取 `"cn"`，不是 `""`**：`DASHSCOPE_BASE_URLS` 里没有空键（`""` → KeyError）；`DashScopeEmbedding.__init__(region="cn")`、两个 store 的读侧 `row[4] or "cn"`、建表默认 `users.embedding_region TEXT DEFAULT 'cn'` 都已经把 `"cn"` 当作这个字段的缺省。B 族那个 `""` 是**隐性不一致**、不是活缺陷 —— store 读侧先兜了一层，故平时打不响；一旦真流到 `core/rag.py` 的 `config.get("embedding_region", "cn")`（键**在**而值为空，`.get` 不给默认），就是 `DASHSCOPE_BASE_URLS[""]` 当场 KeyError。
+  - 同批删掉 `web/deps.py::get_rag_config` 的两个死参数（`embedding_key` / `embedding_region`）：从加进来起**没有一个生产调用点传过值**，三个调用点都裸调再自己手搓合并 —— 出口形同虚设，与缺陷 111 的 `text` 同形。现在它只回 `dict(_rag_config)`。
+  - **边界**：`core/rag.py` 的最终消费点、`web/routers/auth.py` 的 `/me` 展示 与 `/test-embedding` 排障面**未并入** —— 前者是消费不是分发；后者 region 以请求实参优先，语义不同。三者连同归一出口一起是锁的白名单。
+  - **红源**：`tests/test_embedding_config_single_exit.py`（源扫描「手搓取值只许落在三处角色位置」+ 出口契约表 + 变异自测）。**先跑变异再定锁**：把 `group.py` 的注入点改回手搓并给错默认值 `"intl"`，相关的 7 个测试文件 **204 passed**（含 `test_rag_unusable` / `test_ownership_404` / `test_group_save_failure` / `test_llm_access_gate` 等）—— 现有测试**打不红**，故补此锁；补后同变异下判据 1 红。
 
 **108. 独立卡片会话不登记属主，`_ensure_session` 的属主门整段被跳过** —— 状态：**已修**（`dbdbf9c` + `b728ca8`）
 - `/api/distill/start_session` 不带 `text_id` 的「独立卡片」分支原先手搓 `ChatEngine(...)` 并直接写 `sessions[session_id] = {...}`，条目里**没有 `user_id`**。而 `_ensure_session` 的命中校验写成 `if session.get("user_id") and session["user_id"] != user_id` —— 「没登记」使整段短路放行，**任何登录用户拿到该 `session_id` 都能用**。
