@@ -153,8 +153,11 @@ class GroupSession:
         llm_messages = [*converted, {"role": "user", "content": message}]
 
         # 直接调用 LLM，不走 engine.chat() 以免污染单聊历史
-        response = await engine.llm.achat(system_prompt, llm_messages)
-        engine._try_record_usage("chat")
+        # 出站与落账取同一个实例：await 期间保存设置可能把 engine.llm 换掉，
+        # 这一轮仍归发起它的那个连接（见 ChatEngine._try_record_usage）。
+        llm = engine.llm
+        response = await llm.achat(system_prompt, llm_messages)
+        engine._try_record_usage("chat", llm=llm)
 
         # 记录角色回复到群聊历史
         self.group_history.append({
@@ -315,7 +318,8 @@ class GroupSession:
             system_prompt += engine._build_all_enhancements()
 
             llm_messages = [*converted, {"role": "user", "content": ""}]
-            response = await engine.llm.achat(system_prompt, llm_messages)
+            llm = engine.llm
+            response = await llm.achat(system_prompt, llm_messages)
         else:
             converted = self._convert_history(card_id)
             system_prompt = engine._compose_context(message)
@@ -338,9 +342,10 @@ class GroupSession:
                     "表情和敷衍都是偶尔为之,不要每轮都用,也不要在该认真时敷衍。怎么回应,取决于你是谁、此刻什么心情。"
                 )
             llm_messages = [*converted, {"role": "user", "content": message}]
-            response = await engine.llm.achat(system_prompt, llm_messages)
+            llm = engine.llm
+            response = await llm.achat(system_prompt, llm_messages)
 
-        engine._try_record_usage("chat")
+        engine._try_record_usage("chat", llm=llm)
 
         # [SILENT] → 以 role='silent' 入历史，不进 LLM 上下文，不评好感
         import re as _re

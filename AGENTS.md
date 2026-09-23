@@ -1312,6 +1312,7 @@ PROBE_IMAGE         false
 - **与 `_unscoped` 读无耦合（现跑核实）**：引擎里那三处 `self._storage.get_session_unscoped(self._session_id)`（`core/chat_engine.py:651` / `:1017` / `:1358`）用的是字段的**值**，不是字段的**来法** —— 这三个字段将来无论改成构造注入还是保持构造后赋值，那三处的行为逐字不变。本条的处置因此**不牵动** ownership / 裁决那一族逻辑，别把它和 `_unscoped` 的归属议题绑在一起。
 - **判据命令**：`git grep -n "\._session_id = \|\._group_id = \|\._user_tz = " -- web/ core/ scripts/` —— 现为 **12 行 / 4 个文件**（分布见上）。**本条没有「应为 0」这种验收值**：它是**待调研**，不是待修 —— 先要判「能不能构造注入」，再谈写点该不该清零。
 - **处置方向**：先调研「引擎实例的生命周期与 session 的对应关系」—— 若一个 `ChatEngine` 实例确实只服务一个 session，则可构造注入；若确实要跨 session 复用（auto-resume 那条路已经这么用了），那这份状态本来就不该挂在实例上，得先定承载物。**不先改**。
+- **移出 72 线**（2026-09-23）：本条曾被挂在 72 线名下，但 72 线第 3 步（活会话换连接，`91c0a8b` + `df01bd2`）**不碰 `ChatEngine` 字段**（spec §3.4 明确划走）—— 换连接只动 `llm` 与预算，与「这三个会话状态字段该由谁注入」无关。故本条**不再归属 72 线**，留待独立调研，编号不变、状态不变。
 
 **97. `Login to Aliyun CR` 无 `continue-on-error` 且排在 GHCR 构建之前 —— 阿里云链路一断，GHCR 镜像也构建不出来** —— 状态：**已修**（2026-09-22，分支 `fix/registry-fallback`，commit `5525b46`）
 - **裁定（用户，2026-09-22）**：阿里云对 SZ **必需**、对 SG **只是加速**。同一条原则贯穿全程 —— **「部署用哪个镜像」只取自「实际拉取成功」的那个仓库**，不预设、不写死。据此：登录/推送的 `continue-on-error` 保留（阿里云断链不得阻塞 GHCR 产出与 digest），同时把它的挂死时长收紧。
@@ -1556,12 +1557,14 @@ PROBE_IMAGE         false
 - **读数（2026-09-22 现跑）**：`git grep -nE "^\s*print\(f?\"\[[a-z_]+\][^\"]*[Ff]ail" -- web core storage` → **115** 行。这些处**没有一处**会被 `AlertHandler` 收到。
 - **为什么只记不修**：把 `print` 改判 `logging` 是**全站面的口径变更**（哪些失败该 ERROR、哪些本就是 INFO），牵动面板噪声与节流键 `(logger 名, 异常类型)`，属产品决策；本轮范围外（spec §5「不做告警与监控」）。
 
-**120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**记账**（不修，2026-09-22）
+**120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**已修**（`2af4ee8`，第 3 步，2026-09-23）
 - **归属**：72 线（S0 第 3 条查实）。
-- **形态**：`web/routers/auth.py:145` 的 `ApiConfigRequest.embedding_region: str = ""` **无取值校验**，`update_user_api_config`（`:619`）原样落库。该值随后被 `core/rag.py:176` 读作 `region=config.get("embedding_region", "cn")` → `core/embeddings.py:390` `DashScopeEmbedding(api_key, region, ...)` → `DASHSCOPE_BASE_URLS[region]`。
+- **形态**：`web/routers/auth.py:151` 的 `ApiConfigRequest.embedding_region: str = ""` **无取值校验**，`update_user_api_config` 原样落库。该值随后被 `core/rag.py` 读作 `region=config.get("embedding_region", "cn")` → `core/embeddings.py` `DashScopeEmbedding(api_key, region, ...)` → `DASHSCOPE_BASE_URLS[region]`。
 - **后果**：保存一个未知地域（如 `"us"`）后，该用户此后**所有**走嵌入的路径（RAG 检索、索引、蒸馏建会话）都在构造客户端那一刻 `KeyError`，而保存那一刻毫无提示、返回 `{"ok": True}`。
-- **本轮只修了另一面**：第 3 步只给**连通性测试端点**加了前置校验（不在 `DASHSCOPE_BASE_URLS` 里就返回「地域只能选 cn 或 intl」，commit `9dc4118`）。**保存路径未动** —— 两者不是同一处，别把本条的修当成已做。
-- **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-22 修后）：`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS` **1** 处；`ApiConfigRequest` 定义（`:150`）与 `update_api_config` 落库（`:619`）**各 0** 处。
+- **修法**：给 `ApiConfigRequest.embedding_region` 加 `field_validator`（`_known_region_or_blank`）—— 空串或 `DASHSCOPE_BASE_URLS` 的键放行，其余抛 `ValueError` → FastAPI 422，**在落库之前**拦下。空串放行不是漏检：仓储层对空字段一律不写（`update_user_api_config`），放行空串 = 「这次不改这个字段」。校验**查同一张表** `DASHSCOPE_BASE_URLS`，不另写 `{"cn", "intl"}` 字面量（与已改的试连端点 `test_embedding` 同口径）。导入放在函数内 —— `core.embeddings` 顶层 import chromadb，路由模块不为一次字段校验背它。
+- **另一面（同族，早先已修）**：连通性测试端点 `test_embedding` 的前置校验（不在表里返回「地域只能选 cn 或 intl」，`9dc4118`）管的是**试连那一刻**；本条管的是**保存那一刻**。两处不是同一点，本条修的不是那条。
+- **判据命令**：`git grep -n "embedding_region" web/routers/auth.py` —— 数「取值处有没有集合判断」。读数（2026-09-23 修后）：`ApiConfigRequest` 的 `if v not in DASHSCOPE_BASE_URLS`（`:169`）**1** 处；`test_embedding` 的 `if region not in DASHSCOPE_BASE_URLS`（`:687`）**1** 处；`update_api_config` 落库**0** 处（校验已前移到模型层，落库点无需再判）。
+- **红源**：`tests/test_embedding_test_endpoint.py` 的 T11（空串 / cn / intl 放行）与 T11b（未知地域 422 且**不落库**）；T12 钉「查的是同一张表」（`monkeypatch.setitem(DASHSCOPE_BASE_URLS, "us", ...)` 后 `"us"` 变放行）。
 
 **121. 群聊非流式 `/send` 的两笔保存共用一个 `nonfatal` —— 用户那笔失败时助手那笔整条不执行** —— 状态：**记账**（不修，2026-09-22）
 - **归属**：72 线 · 94 口径统一（S0 第 5 条查实）。
@@ -1744,10 +1747,13 @@ PROBE_IMAGE         false
 - 其余路由里的拒绝会变成 **500**：调用照样被挡住（门在出站前），但状态码错。与缺陷 38 同族。
 - 复算命令：`git grep -c 'except Exception' web/routers/*.py`（合计口径按 §四「聚合统计必须写明口径」，此处是**文件计数之和**）。
 
-**72. 活会话持有旧 key 实例：`clear_user_llm_cache` 不重建会话** —— 状态：**另开议题**
-- 用户换 key 后，新请求解析到新实例，但**内存里已有的会话**仍拿着旧实例（`get_sessions()` 里的 engine 持 `llm`）。
-- **这不是安全缺口**（原状态行称「撤销场景下是安全缺口」，滞后，就地订正）：`update_user_api_config` 的 docstring 明写「空字段不写入」（`storage/sqlite_store.py`），即**用户根本没法通过 API 清掉 key**；「换 key」是把该用户的旧 key 换成他自己的新 key，旧实例拿的不是别人的凭据，也不存在「撤销」这个动作。真实后果是**功能性的**：换 key / 换 model 之后，已有的活会话**不生效**，要等会话重建才切过去。
-- 与缺陷 61（F6）是同一形态的两半：61 修的是「geo 判定不跟着会话走」，这条是「**凭据**不跟着会话走」。
+**72. 活会话持有旧 key 实例：`clear_user_llm_cache` 不重建会话** —— 状态：**已修**（`91c0a8b` + `df01bd2`，第 3 步，2026-09-23）
+- 形态：用户换 key / 换 model / 换 base_url 后，新请求解析到新实例，但**内存里已有的会话**仍拿着旧实例（`get_sessions()` 里的 engine 持 `llm`）。
+- **这不是安全缺口**（原状态行称「撤销场景下是安全缺口」，已就地订正）：`update_user_api_config` 的 docstring 明写「空字段不写入」（`storage/sqlite_store.py`），即**用户根本没法通过 API 清掉 key**；「换 key」是把该用户的旧 key 换成他自己的新 key，旧实例拿的不是别人的凭据，也不存在「撤销」这个动作。真实后果是**功能性的**：换 key / 换 model 之后，已有的活会话**不生效**，要等会话重建才切过去。
+- 修法三半：**（1）换连接要连预算一起换** —— `ContextEngine.set_llm(llm)` 按新模型重算预算（抽出 `_apply_budgets(model)`，构造与换 LLM 同一处口径），`ChatEngine.set_llm(llm)` 同时换 `self.llm` 与上下文引擎；**（2）保存即换活会话** —— `web/deps.py::refresh_user_llm(user_id)` 找出该用户在一对一 / 群聊两张内存表里的活引擎逐个 `set_llm`，`web/routers/auth.py::update_api_config` 存完库调它；不踢会话、不重建 RAG。换连接失败**不改写**这次保存的结果（配置已落库、缓存已清，下个请求自会取到新实例，活会话只晚一轮）；**（3）在飞的那一轮归发起它的连接** —— 出站与记账取同一个局部 `llm`（`_try_record_usage(action, *, llm)` 参数必填，调用点先绑 `llm = self.llm` / `engine.llm` 再 `await`），`await` 期间换了连接也不会把这轮的用量记到新实例头上。
+- **单进程前提**（写进 `refresh_user_llm` 的 docstring）：`_sessions` / `_group_sessions` 是本进程的内存表（`web/server.py` 的 `uvicorn.run` 不带 `workers`），故「活会话」就是这两张表。**将来要多 worker**，得改成「按配置版本号每轮重新解析」—— 跨进程换不了别人手里的实例。
+- 与缺陷 61（F6）是同一形态的两半：61 修的是「geo 判定不跟着会话走」，这条修的是「**凭据**不跟着会话走」。`ChatEngine` 构造后由外部写入的会话状态字段另记 **96**（不属本条，见该条）。
+- 红源：`tests/test_live_llm_swap.py` 的 T1 / T2 / T3a / T3b（换连接与在飞记账）与 `tests/test_live_llm_refresh.py` 的 T4–T10（缓存口径、活会话、群聊、保存失败不撤销、保存不过 preflight、热重载只换全局用户）。每条断言各有一条专属变异（逐条真跑、跑完还原，逐条打红了它点名的那条用例）。
 
 **73. `core/embeddings.py` 与 mem0 的出站不经过 adapter，是否需要 geo 约束待定** —— 状态：**另开议题**
 - 这些出站拿的是 `base_url` 之外的嵌入端点（DashScope），**没有**经过 `adapters/llm_adapter.py`，故**不受调用点门约束**。D3 说「请求内所有 LLM 使用都受 geo 门约束」，实现在 adapter 上 ⇒ 这类出站落在门的射程外。
