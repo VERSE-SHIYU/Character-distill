@@ -207,6 +207,8 @@ async def _ensure_session(
         if m["role"] == "summary":
             engine.last_summary = m["content"]
             break
+    # 重建会话时把角色从库里恢复回来。这句也是缺陷 55（凭据落进 `user_role`）射程的边界：
+    # 进程内的旧会话一没，脏角色值就只能经这里重新流回引擎、再随 prompt 进模型。
     if db_session.get("user_role"):
         engine.user_role = db_session["user_role"]
     # Restore affinity from DB

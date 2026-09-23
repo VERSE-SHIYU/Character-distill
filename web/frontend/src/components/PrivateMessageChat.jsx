@@ -14,6 +14,7 @@ import { mergeMessages } from '../utils/mergeMessages'
 import ChatInputBar from './common/ChatInputBar'
 import useIsMobile from '../hooks/useIsMobile'
 import useCanWrite from '../hooks/useCanWrite'
+import ErrorBox from './common/ErrorBox'
 const POLL_INTERVAL = 5000
 const PAGE_SIZE = 30
 const GROUP_GAP = 5 * 60 * 1000
@@ -87,6 +88,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
   const [historyOpen, setHistoryOpen] = useState(false)
   const [copiedId, setCopiedId] = useState(null)
   const [emojiPickerId, setEmojiPickerId] = useState(null)
+  const [error, setError] = useState(null)
   const isMobile = useIsMobile()
 
   const peerName = otherUsername || '对方'
@@ -147,7 +149,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
     } catch {}
   }, [otherUserId])
 
-  // React to a DM: optimistic local toggle, silent rollback to server truth on failure
+  // React to a DM: optimistic local toggle, rollback to server truth on failure
   const handleReact = useCallback(async (messageId, emoji) => {
     const uid = authUser?.id
     if (!uid) return
@@ -173,9 +175,10 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok || d.ok !== true) throw new Error('react rejected')
-    } catch {
-      // silent rollback: refetch authoritative state
+    } catch (err) {
+      // rollback: refetch authoritative state
       fetchReactions()
+      setError(err.message)
     }
   }, [otherUserId, authUser?.id, fetchReactions])
 
@@ -189,8 +192,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         headers: { ...getAuthHeaders() },
       })
       refreshUnread()
-    } catch {
-      // ignore
+    } catch (err) {
+      // 自动发出、幂等的后台写：失败了只在控制台留痕，不打断阅读
+      console.warn('[PrivateMessageChat] mark read failed:', err)
     }
   }, [otherUserId, refreshUnread, canWrite])
 
@@ -254,7 +258,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         headers: { ...getAuthHeaders() },
       })
       setMessages((prev) => prev.map((m) => m.id === msg.id ? { ...m, retracted: true } : m))
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handleCopy = async (msg) => {
@@ -273,7 +279,9 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify({ target_region: consent.target_region }),
       })
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
     setConsent(null)
     const pending = messages.find((m) => m._status === 'consent')
     if (pending) {
@@ -460,6 +468,7 @@ export default function PrivateMessageChat({ otherUserId, otherUsername }) {
           <div className="chat-main-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="dm">
               <div className="dm-bg-glow" />
+              {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
               <header className="dm-header">
                 <button type="button" className="dm-back" onClick={() => history.back()} title="返回会话列表">
                   <ArrowLeft size={20} />

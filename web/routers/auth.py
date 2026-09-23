@@ -18,11 +18,12 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pwdlib import PasswordHash
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core import roles
 from core.email_service import send_verification_code
-from deps import clear_user_llm_cache, get_config, get_storage
+from core.nonfatal import nonfatal
+from deps import get_config, get_storage, refresh_user_llm
 from storage.base import StorageBase
 from limiter import limiter
 from web.llm_gate import emit_geo_block_audit, geo_refusal
@@ -41,11 +42,15 @@ _DEFAULT_INSECURE_JWT_SECRET = "character-distill-dev-secret-key-change-in-prod"
 def get_jwt_secret() -> str:
     """JWT 签名/验签的 secret —— **唯一取值点，同时也是 FastAPI 的注入点**。
 
-    「是注入点」这件事是承重的（缺陷 46）：端点和依赖都用 `Depends(get_jwt_secret)`
-    拿它，测试才能用 `app.dependency_overrides[get_jwt_secret]` **显式**给值。不这样
-    收敛，用例的通过条件就变成「这台机器恰好有没有 .env」—— 换台干净检出结果就变，
-    而且签名里看不出「这里需要一个 secret」，下一个写用例的人照样隐式读 .env。
+    「是注入点」这件事是承重的（缺陷 46）：需要**值**的地方用 `Depends(get_jwt_secret)`
+    拿它（签发侧：`login` / `register` / `refresh`），测试才能用
+    `app.dependency_overrides[get_jwt_secret]` **显式**给值。不这样收敛，用例的通过
+    条件就变成「这台机器恰好有没有 .env」—— 换台干净检出结果就变，而且签名里看不出
+    「这里需要一个 secret」，下一个写用例的人照样隐式读 .env。
     校验语义不变：未设置 / 等于已知默认值 / 短于 32 字符，一律拒绝。
+
+    只需要**怎么取**的地方（验签侧的适配器）改用 `jwt_secret_source`：`Depends`
+    会在进端点前求值，匿名请求也会因此读一次 secret，未配置时直接 500（缺陷 95）。
     """
     secret = os.getenv("JWT_SECRET")
     if not secret or secret == _DEFAULT_INSECURE_JWT_SECRET:
@@ -59,6 +64,19 @@ def get_jwt_secret() -> str:
             "请用 openssl rand -hex 32 生成"
         )
     return secret
+
+
+def jwt_secret_source() -> Callable[[], str]:
+    """依赖：把 secret 的**取值函数**交给调用方，而不是在这里取值。
+
+    `Depends(get_jwt_secret)` 在进端点函数体之前就求值，与请求带不带凭据无关 —— 一条
+    匿名公开读也会因此把 secret 读一遍，`JWT_SECRET` 未配置时直接 500（缺陷 95）。
+    返回函数本身，取值时机留给 `resolve_identity`（它判完 MISSING 才调），
+    「不需要 secret 的路径根本不碰它」这条口径才成立。
+
+    要**值**的地方（签发侧）仍用 `Depends(get_jwt_secret)`：那里本来就需要它。
+    """
+    return get_jwt_secret
 
 
 def validate_jwt_secret() -> None:
@@ -148,6 +166,26 @@ class ApiConfigRequest(BaseModel):
     model: str = ""
     embedding_key: str = ""
     embedding_region: str = ""
+
+    @field_validator("embedding_region")
+    @classmethod
+    def _known_region_or_blank(cls, v: str) -> str:
+        """地域只能是空串或 `DASHSCOPE_BASE_URLS` 里的键（台账 120）。
+
+        空串是「这次不改这个字段」—— 仓储层对空字段一律不写（`update_user_api_config`），
+        所以放行空串与「不写」是同一件事，不是漏检。
+
+        查的是**同一张表**：另写一份 `{"cn", "intl"}` 会与构造函数分叉（试连端点已因此
+        改成查表，见 test_E9b）。导入放在函数内 —— `core.embeddings` 顶层 import chromadb，
+        路由模块不该为一次字段校验背上它。
+        """
+        if not v:
+            return v
+        from core.embeddings import DASHSCOPE_BASE_URLS
+
+        if v not in DASHSCOPE_BASE_URLS:
+            raise ValueError(f"地域只能是 {' / '.join(DASHSCOPE_BASE_URLS)}，或留空")
+        return v
 
 
 class EmbeddingTestRequest(BaseModel):
@@ -274,14 +312,16 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
-    secret: str = Depends(get_jwt_secret),
+    secret_source: Callable[[], str] = Depends(jwt_secret_source),
 ) -> dict[str, Any]:
     """Extract and verify JWT from Authorization header. Raises 401 if missing/invalid.
 
     `request` 由框架注入（`Depends` 一个不动），只为复用中间件算过的同一次判定。
+    secret 收的是**取值函数**：本依赖在公开路径上也挂着（`get_optional_user` 同理），
+    在这里取值会让匿名请求连带读一次 secret（缺陷 95）。
     """
     verdict, user = await resolve_request_identity(
-        request, credentials.credentials if credentials else None, lambda: secret, storage,
+        request, credentials.credentials if credentials else None, secret_source, storage,
     )
     if verdict is Verdict.OK and user is not None:
         return user
@@ -293,11 +333,11 @@ async def get_optional_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
     storage: StorageBase = Depends(get_storage),
-    secret: str = Depends(get_jwt_secret),
+    secret_source: Callable[[], str] = Depends(jwt_secret_source),
 ) -> dict[str, Any]:
     """Like get_current_user but returns empty dict for unauthenticated requests."""
     verdict, user = await resolve_request_identity(
-        request, credentials.credentials if credentials else None, lambda: secret, storage,
+        request, credentials.credentials if credentials else None, secret_source, storage,
     )
     return user if verdict is Verdict.OK and user is not None else {}
 
@@ -345,7 +385,7 @@ async def register(
     request: Request,
     req: AuthRequest,
     storage: StorageBase = Depends(get_storage),
-    secret: str = Depends(get_jwt_secret),
+    secret_source: Callable[[], str] = Depends(jwt_secret_source),
 ) -> dict[str, Any]:
     """Register a new user and return JWT + refresh token."""
     username = req.username.strip()
@@ -425,7 +465,7 @@ async def register(
         await storage.set_user_role(user["id"], roles.ADMIN)
         user["role"] = roles.ADMIN
 
-    access_token = _create_access_token(user["id"], user["username"], secret)
+    access_token = _create_access_token(user["id"], user["username"], secret_source())
     refresh_token, _ = await _create_refresh_token(user["id"], storage)
     return {
         "access_token": access_token,
@@ -618,8 +658,16 @@ async def update_api_config(
             user["id"], req.api_key, req.base_url, req.model,
             req.embedding_key, req.embedding_region,
         )
-        clear_user_llm_cache(user["id"])
+        # 换活会话手里的连接（含清缓存）。换失败**不改写**这次保存的结果：配置已经落库，
+        # 下个请求自己会取到新实例（缓存已经清掉了），活会话只是晚一轮生效。
+        async with nonfatal("auth", "refresh live sessions"):
+            await refresh_user_llm(user["id"], storage)
         return {"ok": True}
+    except ValueError as exc:
+        # 仓储层「语句执行了却没改到行」= 用户不存在（`update_user_api_config` 的契约）。
+        # 这跟写库失败不是一回事：500 会让人去查数据库，404 才说清是身份对不上。
+        # 必须排在下面那条通用 except 之前，否则被吞成 500。
+        raise HTTPException(404, "用户不存在") from exc
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc

@@ -171,7 +171,7 @@ def _call_current_user(credentials, store):
     try:
         return None, _run(get_current_user(
             request=_bare_request(), credentials=credentials, storage=store,
-            secret=get_jwt_secret(),
+            secret_source=get_jwt_secret,
         ))
     except HTTPException as exc:
         return exc, None
@@ -194,7 +194,7 @@ def test_every_state_maps_identically_across_the_three_exits(state, store, user,
     exc, got = _call_current_user(credentials, store)
     optional = _run(get_optional_user(
         request=_bare_request(), credentials=credentials, storage=store,
-        secret=get_jwt_secret(),
+        secret_source=get_jwt_secret,
     ))
     where = f"[{state}]"
 

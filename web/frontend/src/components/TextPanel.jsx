@@ -5,6 +5,7 @@ import ErrorBox from './common/ErrorBox'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
 import { fetchWithTimeout, getAuthHeaders } from '../api/client'
+import { fetchCardsByText, fetchAllCards } from '../api/cards'
 import { MessageSquare, Book, File } from './common/Icon'
 import { parseCardJson } from '../utils/card'
 import Avatar from './common/Avatar'
@@ -99,15 +100,17 @@ export default function TextPanel() {
   const [metaTitleError, setMetaTitleError] = useState('')
   const [textType, setTextType] = useState('story')
 
+  // 挂载时拉一次（和 HomePage 一样）：loadTexts 每次都 set 一个新数组，
+  // 放进依赖数组它就能靠空列表把自己再触发一遍。
   useEffect(() => {
     loadTexts()
-  }, [loadTexts])
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load card counts for each text
   useEffect(() => {
     texts.forEach(async (t) => {
       try {
-        const res = await fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
+        const res = await fetchCardsByText(t.id)
         if (res.ok) {
           const data = await res.json()
           setCardCounts((cc) => ({ ...cc, [t.id]: data.length }))
@@ -515,7 +518,6 @@ export default function TextPanel() {
 function CharacterManagement({ setView, selectText, startChat, pushView, setCurrentMarketCardId }) {
   const canWrite = useCanWrite()
   const texts = useAppStore((s) => s.texts)
-  const loadTexts = useAppStore((s) => s.loadTexts)
   const [allCards, setAllCards] = useState([])
   const [loading, setLoading] = useState(true)
   const [filterTextId, setFilterTextId] = useState('')
@@ -523,6 +525,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
   const [editCard, setEditCard] = useState(null)
   const [expandedGroups, setExpandedGroups] = useState({})
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [error, setError] = useState(null)
   const menuRef = useRef(null)
 
   // Close menu on outside click
@@ -536,40 +539,18 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  // Load all cards
+  // Load all cards。文本列表由外层 TextPanel 在挂载时拉一次，
+  // 这里不能再调 loadTexts —— loadTexts 每次都 set 一个新数组，
+  // 空列表时会把本 effect 自己再触发一次，转不出来。
   useEffect(() => {
-    if (texts.length === 0) { loadTexts(); return }
     let cancelled = false
     ;(async () => {
       setLoading(true)
-      const all = []
-      // Per-text cards
-      for (const t of texts) {
-        try {
-          const res = await fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
-          if (res.ok) {
-            const cards = await res.json()
-            for (const c of cards) {
-              all.push({ ...c, _textInfo: t, _source: t.title || t.filename })
-            }
-          }
-        } catch {}
-      }
-      // Standalone cards
-      try {
-        const res = await fetchWithTimeout('/api/distill/cards/standalone', { headers: { ...getAuthHeaders() } })
-        if (res.ok) {
-          const cards = await res.json()
-          for (const c of cards) {
-            all.push({ ...c, _source: '来自市场' })
-          }
-        }
-      } catch {}
-      if (!cancelled) setAllCards(all)
-      setLoading(false)
+      const all = await fetchAllCards(texts)
+      if (!cancelled) { setAllCards(all); setLoading(false) }
     })()
     return () => { cancelled = true }
-  }, [texts, loadTexts])
+  }, [texts])
 
   const filtered = filterTextId
     ? allCards.filter((c) => c.text_id === filterTextId)
@@ -604,6 +585,8 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
         </div>
         <button type="button" className="dw-entry-btn" onClick={() => pushView('distillWorkbench')}>蒸馏工作台</button>
       </header>
+
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       {/* Source filter */}
       {sourceOptions.length > 0 && (
@@ -697,7 +680,9 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                           pushView('chat')
                           try {
                             await startChat(c)
-                          } catch {}
+                          } catch (err) {
+                            setError(err.message)
+                          }
                         }}>
                           聊天
                         </button>
@@ -765,7 +750,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                                 <button type="button" onClick={async () => {
                                   setMenuOpen(null)
                                   pushView('chat')
-                                  try { await startChat(vc) } catch {}
+                                  try { await startChat(vc) } catch (err) { setError(err.message) }
                                 }}>
                                   聊天
                                 </button>
@@ -806,23 +791,22 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
           data={parseCardJson(editCard)}
           cardId={editCard.id || editCard.card_id}
           onSave={async (cardJson) => {
-            try {
-              await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-                body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
-              })
-              setEditCard(null)
-              // Refresh all cards
-              const res = await fetchWithTimeout(`/api/distill/cards/by-text/${editCard.text_id}`)
-              if (res.ok) {
-                const cards = await res.json()
-                setAllCards((prev) => prev.map((c) => c.text_id === editCard.text_id
-                  ? cards.find((nc) => nc.id === c.id) || c
-                  : c
-                ))
-              }
-            } catch {}
+            // 失败不在这里吞：错误抛给 EditCardModal，由弹窗自己呈现
+            await fetchWithTimeout(`/api/distill/card/${editCard.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+              body: JSON.stringify({ card_json: JSON.stringify(cardJson) }),
+            })
+            setEditCard(null)
+            // Refresh all cards
+            const res = await fetchCardsByText(editCard.text_id)
+            if (res.ok) {
+              const cards = await res.json()
+              setAllCards((prev) => prev.map((c) => c.text_id === editCard.text_id
+                ? cards.find((nc) => nc.id === c.id) || c
+                : c
+              ))
+            }
           }}
           onClose={() => setEditCard(null)}
         />
@@ -843,7 +827,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
             })
             setAllCards((prev) => prev.filter((x) => x.id !== id))
           } catch (err) {
-            console.error('Delete card failed:', err)
+            setError(err.message)
           }
         }}
         onCancel={() => setDeleteTarget(null)}

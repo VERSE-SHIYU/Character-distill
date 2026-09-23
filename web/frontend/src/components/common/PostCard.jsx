@@ -3,6 +3,7 @@ import { fetchWithTimeout, getAuthHeaders } from '../../api/client'
 import useAppStore from '../../store/useAppStore'
 import useCanWrite from '../../hooks/useCanWrite'
 import Avatar from './Avatar'
+import ErrorBox from './ErrorBox'
 import { Heart, MessageSquare, Trash2, Close, Lock, MapPin } from './Icon'
 import { parseCardJson } from '../../utils/card'
 import { formatRelativeTime } from '../../utils/time'
@@ -76,6 +77,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
   const [commentSending, setCommentSending] = useState(false)
   const [previewImg, setPreviewImg] = useState(null)
   const [animating, setAnimating] = useState(false)
+  const [error, setError] = useState(null)
 
   /* Escape key dismisses image preview */
   useEffect(() => {
@@ -105,7 +107,9 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       })
       setCommentText('')
       await loadComments()
-    } catch {} finally { setCommentSending(false) }
+    } catch (err) {
+      setError(err.message)
+    } finally { setCommentSending(false) }
   }
 
   const handleLikeClick = () => {
@@ -198,6 +202,7 @@ export default function PostCard({ post, onLike, onAuthorClick, onDelete, showDe
       {/* Comments section */}
       {showComments && (
         <div className="post-card-comments">
+          {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
           {commentsLoading ? (
             <div className="post-card-comments-status">加载中…</div>
           ) : comments.length === 0 ? (

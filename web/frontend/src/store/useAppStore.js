@@ -438,6 +438,8 @@ const useAppStore = create((set, get) => {
     }
   }),
 
+  // 删除失败必须抛出（fetchWithTimeout 对非 2xx 抛 AppError），调用方负责显示。
+  // 非乐观：本地状态只在 DELETE 成功后向服务端重拉，失败时无需回滚。
   deleteVoiceRef: async (cardId) => {
     await fetchWithTimeout(`/api/voice/ref-audio/${cardId}`, { method: 'DELETE' })
     await get().loadVoiceRef(cardId)
@@ -494,6 +496,7 @@ const useAppStore = create((set, get) => {
     })
   },
 
+  // 同 deleteVoiceRef：失败抛出、非乐观、无需回滚。
   deleteCustomVoice: async (voiceId) => {
     await fetchWithTimeout(`/api/voice/${voiceId}`, { method: 'DELETE' })
     await get().loadVoices()

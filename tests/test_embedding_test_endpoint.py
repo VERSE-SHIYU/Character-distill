@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import httpx
@@ -225,3 +226,69 @@ def test_E9b_region_validation_reads_the_same_table(client, embedder, monkeypatc
     r = _post(client, region="us")
     assert r.json() == {"ok": True}
     assert embedder.calls == [{"api_key": TEST_KEY, "region": "us"}]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# T11–T12（台账 120）：保存端点上的 embedding_region 也要过同一张表
+#
+# 上面 E7 是**试连**端点上的地域校验；保存端点（PATCH /api-auth/api-config）此前没有这道
+# 校验 —— 非法地域照样落库，真要出网的是别处的嵌入调用，那时才在构造函数里抛 KeyError。
+# 口径与试连端点一致：空串放行（仓储层「空字段不写」，见 update_user_api_config）、
+# 表里的键放行、其余 422 且一个字段都不落库。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def fernet_key(monkeypatch):
+    """给 SQLiteStore 的加解密一个当场生成的 key。
+
+    不读环境、不写文件：有 `.env` 与没 `.env` 的机器上结果必须一样（密钥派生在
+    两者都没有时是拒绝而不是回落的，见 storage/secret_box.py）。
+    """
+    from cryptography.fernet import Fernet
+
+    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
+
+
+def _save(client, region):
+    return client.patch("/api/auth/api-config",
+                        json={"embedding_key": TEST_KEY, "embedding_region": region})
+
+
+def _seed_user(store):
+    """没有 users 行时 `get_user_api_config` 查不出任何配置，「没写进去」就成了空断言。"""
+    asyncio.run(store.create_user(USER_ID, USER_ID, "x"))
+
+
+@pytest.mark.parametrize("region", ["", "cn", "intl"])
+def test_T11_save_accepts_blank_or_known_region(client, store, fernet_key, region):
+    """空串（不改动现有值）与表里的两个键都要放行 —— 校验不是「必填」。"""
+    _seed_user(store)
+    r = _save(client, region)
+    assert r.status_code == 200, f"region={region!r} 被拒了：{r.status_code} {r.text[:200]}"
+
+
+def test_T11b_save_rejects_unknown_region_without_writing(client, store, fernet_key):
+    """非法地域 422，且一个字段都不落库（改前是照单全收）。"""
+    _seed_user(store)
+    r = _save(client, "us")
+    assert r.status_code == 422, f"非法地域被收下了：{r.status_code} {r.text[:200]}"
+
+    stored = asyncio.run(store.get_user_api_config(USER_ID))
+    assert stored["embedding_region"] == "cn", "非法地域落库了"
+
+
+def test_T12_save_validates_against_the_same_table(client, store, fernet_key, monkeypatch):
+    """往表里加一个地域，保存端点就该跟着放行 —— 校验查的是同一张表。
+
+    另写一份 `{"cn", "intl"}` 字面量也能过 T11/T11b（两个合法值恰好就是这两个），
+    这条才分得出「同一张表」与「抄了一份恰好相同的字面量」。
+    """
+    import core.embeddings as E
+
+    monkeypatch.setitem(E.DASHSCOPE_BASE_URLS, "us", "http://us.invalid/v1")
+    _seed_user(store)
+    r = _save(client, "us")
+
+    assert r.status_code == 200, f"表里加了 us，保存端点仍报非法：{r.status_code} {r.text[:200]}"
+    stored = asyncio.run(store.get_user_api_config(USER_ID))
+    assert stored["embedding_region"] == "us"

@@ -43,6 +43,15 @@ vi.mock('../../api/client', () => ({
   getAuthHeaders: vi.fn(() => ({})),
   exportCard: vi.fn(),
 }))
+
+const { TEXT_CARD } = vi.hoisted(() => ({
+  TEXT_CARD: { id: 'card1', name: '角色甲', card_json: '{"name":"角色甲"}', text_id: 't1' },
+}))
+vi.mock('../../api/cards', () => ({
+  fetchCardsByText: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([TEXT_CARD]) })),
+  fetchStandaloneCards: vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) })),
+  fetchAllCards: vi.fn(() => Promise.resolve([TEXT_CARD])),
+}))
 vi.mock('../../store/db', () => ({
   saveAvatar: vi.fn(),
   getAvatar: vi.fn(() => Promise.resolve(null)),
@@ -246,14 +255,9 @@ describe('聊天页：游客看不到换头像 / 撤回 / 表情回应 / 角色�
 
 describe('创作页：游客没有上传区、卡片「编辑」「删除」', () => {
   const TEXT = { id: 't1', title: '文本1', filename: 'a.txt' }
-  const CARD = { id: 'card1', name: '角色甲', card_json: '{"name":"角色甲"}', text_id: 't1' }
 
   const renderCardMenu = async (role) => {
     mutate({ texts: [TEXT] })
-    vi.mocked(fetchWithTimeout).mockImplementation((url) => {
-      const body = url.startsWith('/api/distill/cards/by-text/') ? [CARD] : []
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) })
-    })
     const { container } = renderAs(role, <TextPanel />)
     fireEvent.click([...container.querySelectorAll('.creation-tab')].find((b) => b.textContent === '角色管理'))
     await waitFor(() => expect(container.querySelector('.creation-char-menu-btn')).toBeInTheDocument())

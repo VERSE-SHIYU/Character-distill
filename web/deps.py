@@ -6,6 +6,7 @@ import asyncio
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -82,14 +83,37 @@ def _make_user_llm(config: dict[str, Any]) -> LLMAdapter:
     )
 
 
-async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
-    """解析出口：这一次给 *user_id* 用的 LLMAdapter（没配 key 时回落全局）。
+async def _resolve_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
+    """解析出口**本体**：这一次给 *user_id* 用的 LLMAdapter（没配 key 时回落全局）。
 
     **选谁**是策略，在 `web/llm_resolution.resolve_llm`；本函数只做三件它不做的事：
-    读配置、按来源缓存、返回前过 `preflight()`。
+    读配置、按来源缓存、返回。**不判放行** —— `preflight()` 在 `get_user_llm` 那一层。
+
+    拆出这一层是为了保存设置那条路：用户存完自己的 key，要把活会话换到新实例上，而
+    「这次出站放不放行」是**另一码事**（判定用当前的 IP 与 base_url，与用户刚存进去的
+    配置无关）。保存路径跟着 `get_user_llm` 走，就会因为一个当下被拒的理由而整笔不写库。
 
     **只缓存 USER 结果**（§2.8）：回落与不可用都是「**当下**的事实」—— 管理员补上全局
     key、或用户刚存好自己的配置，下个请求就该生效；缓存住它们会把这件事实冻到进程重启。
+    """
+    if storage is None:
+        storage = get_storage()
+    cached = _user_llm_cache.get(user_id)
+    if cached is not None:
+        return cached
+
+    config = await storage.get_user_api_config(user_id)
+    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=get_llm)
+    if resolved.source is Source.USER:
+        # 先入缓存：用户实例本身没有变坏 —— 换个放行的 IP 再来，该命中的还是这条缓存。
+        _user_llm_cache[user_id] = resolved.llm
+    if resolved.reason:
+        print(f"[deps] {resolved.reason} (user_id={user_id})")
+    return resolved.llm
+
+
+async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMAdapter | None:
+    """出站用的解析出口 = `_resolve_user_llm` + 返回前过 `preflight()`。
 
     **缓存命中也过 `preflight()`**：调用方把返回的实例挂进长生命周期对象（会话、
     TextManager），而入站时解析过的实例到出站时可能已经换了 IP。判定放在**每次**返回
@@ -99,24 +123,56 @@ async def get_user_llm(user_id: str, storage: StorageBase | None = None) -> LLMA
     **不再收 `client_ip`**（§2.8）：geo 判定在调用点门上做（`web/llm_gate.py`）。
     两处各判一次就会分叉，而门那一处盖得住会话里那个陈旧实例。
     """
-    if storage is None:
-        storage = get_storage()
-    cached = _user_llm_cache.get(user_id)
-    if cached is not None:
-        cached.preflight()
-        return cached
+    llm = await _resolve_user_llm(user_id, storage)
+    if llm is not None:
+        llm.preflight()
+    return llm
 
-    config = await storage.get_user_api_config(user_id)
-    resolved = resolve_llm(config, build_user=_make_user_llm, get_global=get_llm)
-    if resolved.source is Source.USER:
-        # 先入缓存再 preflight：被拦是**这一次**的判定，用户实例本身没有变坏 ——
-        # 换个放行的 IP 再来，该命中的还是这条缓存。
-        _user_llm_cache[user_id] = resolved.llm
-    if resolved.reason:
-        print(f"[deps] {resolved.reason} (user_id={user_id})")
-    if resolved.llm is not None:
-        resolved.llm.preflight()
-    return resolved.llm
+
+def _live_engines(match: Callable[[str], bool]) -> list[Any]:
+    """内存里属主满足 *match* 的活引擎 —— 一对一与群聊两张表都看。
+
+    一对面：`_sessions` 每条 dict 的 `"engine"`，属主是条目自己的 `"user_id"`（第 1 步
+    起唯一构造点 `TextManager._create_session` 必写）。群聊面：`GroupSession.engines` 是
+    card_id → ChatEngine，属主在**会话**上（`GroupSession.user_id`）。
+
+    按 `id()` 去重：同一个实例若同时挂在两张表上，`set_llm` 幂等，但重复计数会让
+    「换了几个」这个返回值骗人。
+    """
+    seen: dict[int, Any] = {}
+    for session in _sessions.values():
+        engine = session.get("engine")
+        if engine is not None and match(session.get("user_id", "")):
+            seen[id(engine)] = engine
+    for group in _group_sessions.values():
+        if match(getattr(group, "user_id", "")):
+            for engine in group.engines.values():
+                seen[id(engine)] = engine
+    return list(seen.values())
+
+
+async def refresh_user_llm(user_id: str, storage: StorageBase | None = None) -> int:
+    """把 *user_id* 活会话手里的连接换成按新配置解析出来的那一个；返回换掉的引擎数。
+
+    存完设置后由 `update_api_config` 调 —— 不踢会话、不重建 RAG，只让**下一轮**出站
+    走新连接（在飞的那一轮归旧连接，见 `ChatEngine.set_llm`）。
+
+    解析结果 `None`（自己没配 key、全局兜底也没有）时记一笔日志、返回 0：这是「这次没得
+    换」，不是失败。
+
+    **单进程前提**：`_sessions` / `_group_sessions` 是本进程的内存表（`web/server.py` 的
+    `uvicorn.run` 不带 `workers`），故「活会话」就是这两张表。将来要多 worker，得改成
+    「按配置版本号每轮重新解析」—— 跨进程换不了别人手里的实例。
+    """
+    clear_user_llm_cache(user_id)
+    llm = await _resolve_user_llm(user_id, storage)
+    if llm is None:
+        print(f"[deps] refresh_user_llm: no usable LLM for user_id={user_id}, live sessions left as-is")
+        return 0
+    engines = _live_engines(lambda owner: owner == user_id)
+    for engine in engines:
+        engine.set_llm(llm)
+    return len(engines)
 
 
 def get_memory_manager() -> MemoryManager | None:
@@ -330,9 +386,18 @@ def patch_config(key: str, value: Any) -> dict[str, Any]:
 
 
 def reset_llm_and_dependents() -> None:
-    """Hot-reload: recreate LLM, IndexingService, and MemoryManager."""
+    """Hot-reload: recreate LLM, IndexingService, and MemoryManager.
+
+    **活会话也一起换**，判据是 `engine.llm is 旧全局`：自己配了 key 的用户不是在用这条
+    全局连接说话，不该被管理员的热重载波及。故先记住旧实例再构造新的 —— 不先记住，
+    换完之后就没法把「谁在用旧的」分辨出来了。
+
+    新全局构造不出来（`None`）时就**不换**：拿 `None` 去 `set_llm` 会让活会话下一轮
+    直接 `None.chat`。已经建起来的会话保持旧全局，直到用户自己存 key。
+    """
     global _llm, _indexing_service
     global _config, _rag_config, _memory_config, _memory_manager
+    old_global = _llm
     _llm = _make_global_llm()
     with open(_CFG_PATH, encoding="utf-8") as _f:
         _config = yaml.safe_load(_f)
@@ -340,6 +405,10 @@ def reset_llm_and_dependents() -> None:
     _indexing_service = _make_indexing_service()
     _memory_config = _config.get("memory", {})
     _memory_manager = MemoryManager(_memory_config)
+    if _llm is not None and old_global is not None:
+        for engine in _live_engines(lambda _owner: True):
+            if engine.llm is old_global:
+                engine.set_llm(_llm)
 
 
 _tts_engine = None

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import sqlite3
 import uuid
@@ -21,6 +20,7 @@ except ModuleNotFoundError:
 
 from core.roles import ROLES
 from .base import StorageBase, StoreError
+from .secret_box import decrypt_secret, encrypt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,11 @@ def _live_published_copy_of(copy_ref: str, draft_ref: str) -> str:
             f" AND {copy_ref}.visibility = 'public'")
 
 
-# 迁移应用次序（缺陷 15）。显式列出而不是 glob 整个目录：077 与 078 之间夹着 users 表
-# 重建，次序有意义。**新增迁移文件必须登记在这里** —— tests/test_migration_dispatch.py
+# 迁移应用次序（缺陷 15）。显式列出而不是 glob 整个目录：077 与 078 之间夹着 users 的
+# 退役列块，次序有意义。**新增迁移文件必须登记在这里** —— tests/test_migration_dispatch.py
 # 会扫目录求差集，漏登记即红（唯一豁免出口是下面的 `_MIGRATIONS_NOT_APPLIED`，必须带理由）。
+# （两个常量的名字沿用历史：它们夹着的那一段原先是 users 表重建，重建已随缺陷 82 删除，
+# 但分段本身照旧 —— 见下面 AFTER 段的说明。）
 _MIGRATIONS_BEFORE_USER_REBUILD = (
     "002_voice.sql", "003_wechat.sql", "004_title_desc.sql", "005_characters_cache.sql",
     "006_card_avatar.sql", "007_text_type.sql", "008_original_char_count.sql", "009_users.sql",
@@ -101,9 +103,11 @@ _MIGRATIONS_BEFORE_USER_REBUILD = (
     "091_users_role.sql",
 )
 
-# 必须排在 users 表重建之后 —— 重建会把 idx_users_username_lower 一起丢掉。
-# 079 建的是独立表（无外键、不碰 users），重建边界对它没有约束；放在这里是为了保住
-# 「≤077 在重建前 / ≥078 在重建后」这条分段不变量，编号在段内仍单调。
+# 必须排在退役列块之后。**订正（2026-09-23，随缺陷 82）**：原先的理由是「users 表重建会
+# 把 idx_users_username_lower 一起丢掉」，重建已随回落分支整体删除，这条理由不再成立；
+# 分段保留，边界现在就是那个退役列块。
+# 079 建的是独立表（无外键、不碰 users），该边界对它没有约束；放在这里是为了保住
+# 「≤077 在边界前 / ≥078 在边界后」这条分段不变量，编号在段内仍单调。
 #
 # 091 是这条不变量的**有意例外**，所以它登记在上面的 BEFORE 段而不是这里：它的回填要读
 # `users.is_admin`，而 is_admin 由退役列块删除，退役列块又排在 BEFORE 段之后、本段之前
@@ -550,6 +554,14 @@ class SQLiteStore(StorageBase):
 
     async def _ensure_initialized(self) -> None:
         """Create database file and run migration once."""
+        # 唯一一处版本检查。全部表结构操作都从这里进（`SQLiteStore` 只在
+        # `storage/__init__.py` 构造，构造函数保持轻量），所以门设在这里就够。
+        # 低于 3.35 时 `ALTER TABLE ... DROP COLUMN` 不存在 —— 此前靠「原表重建」回落，
+        # 那段 SQL 不幂等（临时表的建表语句没带 IF NOT EXISTS，中途失败即在库里留残骸，
+        # 下次启动必报 `already exists`，缺陷 82）。整条回落分支已删，这里直接失败退出。
+        _sqlite_ver = sqlite3.sqlite_version_info
+        if _sqlite_ver < (3, 35):
+            raise RuntimeError("需要 SQLite ≥ 3.35，当前为 " + ".".join(map(str, _sqlite_ver)))
         self._ensure_driver()
         if self._initialized:
             return
@@ -584,67 +596,14 @@ class SQLiteStore(StorageBase):
                     cursor = await conn.execute("PRAGMA table_info(users)")
                     all_cols = [row[1] for row in await cursor.fetchall()]
                     present = [c for c in _USERS_RETIRED_COLUMNS if c in all_cols]
-                    if present and sqlite3.sqlite_version_info >= (3, 35):
+                    if present:
                         # 每轮启动都会走一遍（018、013 照加，这里照删，拉锯是有意保留的 ——
-                        # 两处不能摘的理由见 `_USERS_RETIRED_COLUMNS`）。所以选原生
-                        # DROP COLUMN：O(rows) 但省掉临时表 + INSERT..SELECT + 索引重建，
-                        # 且**不碰**其余列的类型（重建的 col_defs 兜底会把未知列静默重定型
-                        # 成 TEXT，这里没这个副作用）。
+                        # 两处不能摘的理由见 `_USERS_RETIRED_COLUMNS`）。原生 DROP COLUMN
+                        # 要 SQLite ≥ 3.35，低于它在方法开头就报错退出（没有回落路径了）。
                         for col in present:
                             await conn.execute(f"ALTER TABLE users DROP COLUMN {col}")
                         await conn.commit()
-                    elif present:
-                        # SQLite < 3.35 没有 DROP COLUMN，回落到原表重建。代价实测（全表
-                        # 拷贝口径，e2e/scratch/time_users_rebuild.py）：4 行/180KB ≈ 20ms、
-                        # 1000 行/200KB ≈ 2.7s、5000 行/200KB ≈ 18s —— 每轮启动都付一次是
-                        # 这条回落路径**独有**的代价，3.35+ 上不存在。
-                        # Build the column list dynamically so that columns added by
-                        # later migrations survive the rebuild; col_defs supplies the
-                        # type for known ones (unknown ones fall back to TEXT).
-                        keep_cols = [c for c in all_cols
-                                     if c not in _USERS_RETIRED_COLUMNS]
-                        col_defs = {
-                            "id": "TEXT PRIMARY KEY",
-                            "username": "TEXT NOT NULL UNIQUE",
-                            "role": "TEXT NOT NULL DEFAULT 'user'",
-                            "is_disabled": "INTEGER DEFAULT 0",
-                            "avatar_data": "TEXT DEFAULT ''",
-                            "banner_data": "TEXT DEFAULT ''",
-                            "bio": "TEXT DEFAULT ''",
-                            "email": "TEXT DEFAULT ''",
-                            "email_verified": "INTEGER DEFAULT 0",
-                            "profile_stats_visible": "INTEGER DEFAULT 1",
-                            "cards_visible": "INTEGER NOT NULL DEFAULT 1",
-                            "books_visible": "INTEGER NOT NULL DEFAULT 1",
-                            "following_visible": "INTEGER NOT NULL DEFAULT 1",
-                            "presence_visibility": "TEXT NOT NULL DEFAULT 'mutual'",
-                            "last_login_at": "TEXT DEFAULT ''",
-                            "last_active_at": "TEXT DEFAULT ''",
-                            "embedding_key": "TEXT DEFAULT ''",
-                            "embedding_region": "TEXT DEFAULT 'cn'",
-                            "home_region": "TEXT NOT NULL DEFAULT 'cn-shenzhen'",
-                            "nickname": "TEXT DEFAULT ''",
-                            "username_lower": "TEXT",
-                            "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                        }
-                        col_list = ", ".join(keep_cols)
-                        create_defs = ", ".join(
-                            f"{c} {col_defs.get(c, 'TEXT DEFAULT \"\"')}"
-                            for c in keep_cols
-                        )
-                        # `DROP TABLE users` 会按 CASCADE 清空 refresh_tokens 与
-                        # user_secrets（后者存加密凭据）—— 必须走 _fk_disabled 关掉外键；
-                        # 原先那句 `PRAGMA defer_foreign_keys = ON` 挡不住 FK 动作。
-                        async with _fk_disabled(conn):
-                            await conn.executescript(f"""
-                                CREATE TABLE users_mig ({create_defs});
-                                INSERT INTO users_mig ({col_list}) SELECT {col_list} FROM users;
-                                DROP TABLE users;
-                                ALTER TABLE users_mig RENAME TO users;
-                            """)
-                            await conn.commit()
 
-                    # 078 起必须排在 users 表重建之后 —— 重建会丢掉 idx_users_username_lower。
                     # 原先这段额外内联做了一遍 ADD COLUMN/backfill/CREATE INDEX，与 078 文件重复；
                     # 内联那份已删 —— 索引创建失败（用户名重复）照样上抛，不再只 print。
                     for _name in _MIGRATIONS_AFTER_USER_REBUILD:
@@ -675,48 +634,47 @@ class SQLiteStore(StorageBase):
                     await conn.execute(_CARDS_CLEAR_PUBLISHED_FROM_TRIGGER)
                     await conn.commit()
 
-                    # 两个去重 DELETE 依赖窗口函数（SQLite >= 3.25）。此前靠 except 猜
-                    # "no such window function" 来兼容老库 —— 换成一次版本判断：能力不足时
-                    # 明确不发这两条语句，其余失败照常上抛。
-                    if sqlite3.sqlite_version_info >= (3, 25):
-                        # Auto-deduplicate: keep only the newest card per text_id+name
-                        # Exclude forked cards (forked_from != '') to preserve independent copies
-                        #
-                        # `published_from IS NULL` 是本条 DELETE 的第二个排除条件，二者缺一即
-                        # **删错东西**：发布副本的 `forked_from` 是 ''（它是作者自己的副本，
-                        # 不是他人 fork），又与作者的草稿同 text_id 同 name —— 只按 forked_from
-                        # 排除的话，副本会被当成「重复草稿」删掉，且删哪张取决于 rowid（通常
-                        # 删掉更早的那张，即草稿本身）。
-                        await conn.execute("""
-                            DELETE FROM cards
-                            WHERE forked_from = '' AND published_from IS NULL AND id NOT IN (
-                                SELECT id FROM (
-                                    SELECT id, ROW_NUMBER() OVER (
-                                        PARTITION BY text_id, name
-                                        ORDER BY rowid DESC
-                                    ) AS rn
-                                    FROM cards
-                                    WHERE forked_from = '' AND published_from IS NULL
-                                ) WHERE rn = 1
-                            )
-                        """)
-                        await conn.commit()
+                    # 两条去重 DELETE 依赖窗口函数（SQLite >= 3.25），这条能力由方法开头的
+                    # 3.35 门兜住，故不再单独判断版本。
+                    #
+                    # Auto-deduplicate: keep only the newest card per text_id+name
+                    # Exclude forked cards (forked_from != '') to preserve independent copies
+                    #
+                    # `published_from IS NULL` 是本条 DELETE 的第二个排除条件，二者缺一即
+                    # **删错东西**：发布副本的 `forked_from` 是 ''（它是作者自己的副本，
+                    # 不是他人 fork），又与作者的草稿同 text_id 同 name —— 只按 forked_from
+                    # 排除的话，副本会被当成「重复草稿」删掉，且删哪张取决于 rowid（通常
+                    # 删掉更早的那张，即草稿本身）。
+                    await conn.execute("""
+                        DELETE FROM cards
+                        WHERE forked_from = '' AND published_from IS NULL AND id NOT IN (
+                            SELECT id FROM (
+                                SELECT id, ROW_NUMBER() OVER (
+                                    PARTITION BY text_id, name
+                                    ORDER BY rowid DESC
+                                ) AS rn
+                                FROM cards
+                                WHERE forked_from = '' AND published_from IS NULL
+                            ) WHERE rn = 1
+                        )
+                    """)
+                    await conn.commit()
 
-                        # Auto-deduplicate forked cards: same forked_from+user_id+text_id, keep newest
-                        await conn.execute("""
-                            DELETE FROM cards
-                            WHERE forked_from != '' AND deleted_at IS NULL AND id NOT IN (
-                                SELECT id FROM (
-                                    SELECT id, ROW_NUMBER() OVER (
-                                        PARTITION BY forked_from, user_id, text_id
-                                        ORDER BY rowid DESC
-                                    ) AS rn
-                                    FROM cards
-                                    WHERE forked_from != '' AND deleted_at IS NULL
-                                ) WHERE rn = 1
-                            )
-                        """)
-                        await conn.commit()
+                    # Auto-deduplicate forked cards: same forked_from+user_id+text_id, keep newest
+                    await conn.execute("""
+                        DELETE FROM cards
+                        WHERE forked_from != '' AND deleted_at IS NULL AND id NOT IN (
+                            SELECT id FROM (
+                                SELECT id, ROW_NUMBER() OVER (
+                                    PARTITION BY forked_from, user_id, text_id
+                                    ORDER BY rowid DESC
+                                ) AS rn
+                                FROM cards
+                                WHERE forked_from != '' AND deleted_at IS NULL
+                            ) WHERE rn = 1
+                        )
+                    """)
+                    await conn.commit()
 
                 self._initialized = True
             except Exception as exc:
@@ -3099,20 +3057,6 @@ class SQLiteStore(StorageBase):
 
     # ---- User API config ----
 
-    @staticmethod
-    def _get_fernet():
-        from cryptography.fernet import Fernet
-        import base64
-        from hashlib import sha256
-        key = os.getenv("FERNET_KEY")
-        if not key:
-            secret = os.getenv("JWT_SECRET")
-            if not secret:
-                raise RuntimeError("FERNET_KEY 或 JWT_SECRET 必须设置才能加解密 API key，拒绝使用不安全默认值")
-            raw = secret.encode()
-            key = base64.urlsafe_b64encode(sha256(raw).digest())
-        return Fernet(key)
-
     async def get_user_api_config(self, user_id: str) -> dict:
         """Get a user's API config. api_key and embedding_key are returned decrypted."""
         try:
@@ -3133,7 +3077,7 @@ class SQLiteStore(StorageBase):
                 if not val:
                     return ""
                 try:
-                    return self._get_fernet().decrypt(val.encode()).decode()
+                    return decrypt_secret(val)
                 except Exception as exc:
                     print(f"[SQLiteStore] decrypt failed: {exc}")
                     raise StoreError("_decrypt", exc) from exc
@@ -3157,6 +3101,10 @@ class SQLiteStore(StorageBase):
 
         Secrets (api_key, base_url, model) go to user_secrets;
         embedding config (embedding_key, embedding_region) stays on users.
+
+        语句**执行了却没改到行** = 用户不存在 → 抛 ValueError（与 `set_user_role` 同形），
+        调用方据此回 404。原先这里静默成功，用户以为存下了、实际一行没写。
+        一条语句都没执行（全部字段为空）不算失败 —— 那是「这次什么都不改」。
         """
         try:
             # ---- user_secrets: api_key, base_url, model ----
@@ -3164,7 +3112,7 @@ class SQLiteStore(StorageBase):
             secret_params = []
 
             if api_key:
-                encrypted = self._get_fernet().encrypt(api_key.encode()).decode()
+                encrypted = encrypt_secret(api_key)
                 secret_parts.append("api_key = ?")
                 secret_params.append(encrypted)
 
@@ -3180,15 +3128,17 @@ class SQLiteStore(StorageBase):
                 secret_params.append(user_id)
                 sql = "UPDATE user_secrets SET " + ", ".join(secret_parts) + " WHERE user_id = ?"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, tuple(secret_params))
+                    cursor = await conn.execute(sql, tuple(secret_params))
                     await conn.commit()
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
 
             # ---- users: embedding_key, embedding_region ----
             user_parts = []
             user_params = []
 
             if embedding_key:
-                enc_emb = self._get_fernet().encrypt(embedding_key.encode()).decode()
+                enc_emb = encrypt_secret(embedding_key)
                 user_parts.append("embedding_key = ?")
                 user_params.append(enc_emb)
 
@@ -3200,9 +3150,13 @@ class SQLiteStore(StorageBase):
                 user_params.append(user_id)
                 sql = "UPDATE users SET " + ", ".join(user_parts) + " WHERE id = ?"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, tuple(user_params))
+                    cursor = await conn.execute(sql, tuple(user_params))
                     await conn.commit()
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
 
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Update user API config failed: {exc}")
             raise

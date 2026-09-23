@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import { fetchCardsByText } from '../api/cards'
 import Avatar from './common/Avatar'
 import { loadCardAvatar } from '../store/db'
 import { parseCardJson } from '../utils/card'
@@ -94,7 +95,7 @@ export default function HomePage() {
     try {
       const results = await Promise.all(
         texts.map((t) =>
-          fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
+          fetchCardsByText(t.id)
             .then((r) => r.json())
             .catch(() => []),
         ),

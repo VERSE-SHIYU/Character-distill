@@ -5,6 +5,7 @@ import HistoryPanel from './HistoryPanel'
 import Avatar from './common/Avatar'
 import Loading from './common/Loading'
 import ConfirmModal from './common/ConfirmModal'
+import ErrorBox from './common/ErrorBox'
 import { parseCardJson } from '../utils/card'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
@@ -15,6 +16,7 @@ export default function TrashPage() {
   const popView = useAppStore((s) => s.popView)
   const swipeBack = useSwipeBack(popView)
   const [tab, setTab] = useState('chat')
+  const [error, setError] = useState(null)
   const [cards, setCards] = useState([])
   const [cardsLoading, setCardsLoading] = useState(false)
   const [purgeId, setPurgeId] = useState(null)
@@ -63,7 +65,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/cards/${cardId}/restore`, { method: 'POST' })
       setCards((prev) => prev.filter((c) => c.id !== cardId))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handlePurge = async () => {
@@ -73,7 +77,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/cards/${id}/permanent`, { method: 'DELETE' })
       setCards((prev) => prev.filter((c) => c.id !== id))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handleRestoreGroup = async () => {
@@ -83,7 +89,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/group/${id}/restore`, { method: 'POST' })
       setGroups((prev) => prev.filter((g) => g.id !== id))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handlePurgeGroup = async () => {
@@ -93,7 +101,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/group/${id}/permanent`, { method: 'DELETE' })
       setGroups((prev) => prev.filter((g) => g.id !== id))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const loadTrashTexts = async () => {
@@ -114,7 +124,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/text/${id}/restore`, { method: 'POST' })
       setTexts((prev) => prev.filter((t) => t.id !== id))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const handlePurgeText = async () => {
@@ -124,7 +136,9 @@ export default function TrashPage() {
     try {
       await fetchWithTimeout(`/api/text/${id}/permanent`, { method: 'DELETE' })
       setTexts((prev) => prev.filter((t) => t.id !== id))
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   return (
@@ -133,6 +147,8 @@ export default function TrashPage() {
         <PageHeader title="回收站" onBack={popView} />
         <p className="panel-desc">管理已删除的对话、角色卡和群聊</p>
       </header>
+
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       <div className="history-tab-bar">
         <button
