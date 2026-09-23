@@ -3144,6 +3144,10 @@ class SQLiteStore(StorageBase):
 
         Secrets (api_key, base_url, model) go to user_secrets;
         embedding config (embedding_key, embedding_region) stays on users.
+
+        语句**执行了却没改到行** = 用户不存在 → 抛 ValueError（与 `set_user_role` 同形），
+        调用方据此回 404。原先这里静默成功，用户以为存下了、实际一行没写。
+        一条语句都没执行（全部字段为空）不算失败 —— 那是「这次什么都不改」。
         """
         try:
             # ---- user_secrets: api_key, base_url, model ----
@@ -3167,8 +3171,10 @@ class SQLiteStore(StorageBase):
                 secret_params.append(user_id)
                 sql = "UPDATE user_secrets SET " + ", ".join(secret_parts) + " WHERE user_id = ?"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, tuple(secret_params))
+                    cursor = await conn.execute(sql, tuple(secret_params))
                     await conn.commit()
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
 
             # ---- users: embedding_key, embedding_region ----
             user_parts = []
@@ -3187,9 +3193,13 @@ class SQLiteStore(StorageBase):
                 user_params.append(user_id)
                 sql = "UPDATE users SET " + ", ".join(user_parts) + " WHERE id = ?"
                 async with await self._connect() as conn:
-                    await conn.execute(sql, tuple(user_params))
+                    cursor = await conn.execute(sql, tuple(user_params))
                     await conn.commit()
+                if cursor.rowcount == 0:
+                    raise ValueError(f"用户不存在：{user_id}")
 
+        except ValueError:
+            raise
         except Exception as exc:
             print(f"[SQLiteStore] Update user API config failed: {exc}")
             raise

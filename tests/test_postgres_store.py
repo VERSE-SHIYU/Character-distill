@@ -1631,6 +1631,36 @@ class TestPgUnpublishIsWithdrawingTheRelease:
             )
 
 
+# ── 68：保存 API 配置到不存在的用户（PG 侧）──────────────────────────────────
+# 与 `tests/test_api_config_unknown_user.py`（SQLite 侧 + 路由侧）同判据、同契约。
+# 两侧的写路径不同：PG 这边不给显式 commit，行数只能从 asyncpg 的命令标签里解
+# （`_parse_rowcount`，解不出回 0 = 「行数未知」，按「可能没改到行」处理）。所以
+# SQLite 侧绿不代表这一侧也绿，必须各验一次。
+
+@_pg
+class TestPgUserApiConfigMissingUser:
+    async def test_unknown_user_raises(self, store):
+        with pytest.raises(ValueError, match="用户不存在"):
+            await store.update_user_api_config(
+                f"usr_nope_{uuid.uuid4().hex[:6]}", "sk-x", "https://api.deepseek.com", "m")
+
+    async def test_known_user_still_saves(self, store, user_id):
+        """正控：修成「一律抛」也能过上面那条，这条把口子收回来。"""
+        await store.create_user(user_id, f"u_{uuid.uuid4().hex[:6]}", "x")
+        await store.update_user_api_config(user_id, "sk-x", "https://api.deepseek.com", "m")
+
+        assert (await store.get_user_api_config(user_id))["api_key"] == "sk-x"
+
+    async def test_blank_fields_on_unknown_user_do_not_raise(self, store):
+        """一条 UPDATE 都没执行 → 不报错（「空白字段不写」语义不变）。
+
+        `embedding_region` 显式给空串：仓储层默认值是 "cn"（那会写 users 行），
+        「空请求体」是路由层的事（`ApiConfigRequest` 全字段默认空串）。
+        """
+        await store.update_user_api_config(
+            f"usr_nope_{uuid.uuid4().hex[:6]}", "", "", "", "", "")
+
+
 # ── 元断言：skip 不得成为静默通道（缺陷 21 同型）──────────────────────────────
 # 故意**不挂** `@_pg` —— 它是用来验「_pg 到底跳了没跳」的那把尺子，自己不能被同一把尺子量。
 

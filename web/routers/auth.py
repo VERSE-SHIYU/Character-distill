@@ -644,6 +644,11 @@ async def update_api_config(
         async with nonfatal("auth", "refresh live sessions"):
             await refresh_user_llm(user["id"], storage)
         return {"ok": True}
+    except ValueError as exc:
+        # 仓储层「语句执行了却没改到行」= 用户不存在（`update_user_api_config` 的契约）。
+        # 这跟写库失败不是一回事：500 会让人去查数据库，404 才说清是身份对不上。
+        # 必须排在下面那条通用 except 之前，否则被吞成 500。
+        raise HTTPException(404, "用户不存在") from exc
     except Exception as exc:
         print(f"[auth] Update API config failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
