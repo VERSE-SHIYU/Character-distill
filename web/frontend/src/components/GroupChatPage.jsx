@@ -13,7 +13,7 @@ import { Check, Theater, Users, Trash2, ChevronDown, Square, Play, Clock, MoreHo
 import ImageCropModal from './common/ImageCropModal'
 import { formatChatTime } from '../utils/time'
 import { checkRepeat } from '../utils/repeatGuard'
-import { withSaveResult } from '../utils/withSaveResult'
+import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
 import ChatInputBar from './common/ChatInputBar'
 import ChatBubble from './common/ChatBubble'
 import MessageReactions from './common/MessageReactions'
@@ -670,8 +670,10 @@ export default function GroupChatPage() {
       },
       null, // onToken — not used (whole-reply per event)
       (payload) => {
-        // onDone
+        // onDone —— 这一轮里每一次写都顺带补写了队头，`flushed` / `dropped` 是那次的读数：
+        // 先前标了「未保存」的消息据此填回真 id，或被判死翻成「保存失败」。
         if (currentGroupRef.current !== sendGroupId) return
+        setMessages(prev => applyFlushReport(prev, payload))
         setSending(false)
         setTargetCardIds([])
         setReplyTo(null)
@@ -691,10 +693,10 @@ export default function GroupChatPage() {
         if (currentGroupRef.current !== sendGroupId) return
         if (payload.type === 'user') {
           // Replace this optimistic user message ID with the real one from server.
-          // 存失败时后端给 msg_id: null —— 保留临时 id（`?? m.id`），只把 saved 翻成 unsaved；
+          // 存失败时后端给 msg_id: null —— 保留临时 id（`?? m.id`），只把 save 翻成「未保存」；
           // 拿 msg_id 当门闩会让「没存上」这条消息连「未保存」都标不出来。
           setMessages(prev => prev.map(m => m.id === tempId
-            ? withSaveResult({ ...m, id: payload.msg_id ?? m.id }, payload.saved)
+            ? withSaveResult({ ...m, id: payload.msg_id ?? m.id }, payload.save)
             : m))
         } else if (payload.type === 'reply') {
           // Append character reply as it comes in
@@ -707,7 +709,7 @@ export default function GroupChatPage() {
             speaker_card_id: payload.card_id,
             created_at: new Date().toISOString(),
             _typing: role === 'assistant', // typewriter: only for normal text replies
-          }, payload.saved)])
+          }, payload.save)])
         }
       },
     )
@@ -734,6 +736,18 @@ export default function GroupChatPage() {
         body: JSON.stringify({ emoji }),
       })
       await loadHistory(currentGroup.id)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  // 「重试」按的就是这个 —— 让后端把还留在队列里的消息补写进库，
+  // 读数回来把「未保存」填成真 id，或被判死的翻成「保存失败」。
+  async function flushGroupMessages() {
+    if (!currentGroup) return
+    try {
+      const data = await postJSON(`/api/group/${currentGroup.id}/flush`, {})
+      setMessages(prev => applyFlushReport(prev, data))
     } catch (err) {
       setError(err.message)
     }
@@ -1109,7 +1123,7 @@ export default function GroupChatPage() {
                             currentGroup?.user_persona_type === 'director' ? (
                               <div className="narration-note">
                                 {m.content}
-                                {m.unsaved && <UnsavedHint />}
+                                {m.saveState && <UnsavedHint state={m.saveState} onRetry={flushGroupMessages} />}
                               </div>
                             ) : (
                             <ChatBubble
@@ -1125,13 +1139,13 @@ export default function GroupChatPage() {
                             >
                               <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                               <span className="messages-msg-text">{m.content}</span>
-                              {m.unsaved && <UnsavedHint />}
+                              {m.saveState && <UnsavedHint state={m.saveState} onRetry={flushGroupMessages} />}
                               <MessageReactions
                                 side="right"
                                 reactions={reactions}
                                 showQuickBar={true}
-                                onReact={m.unsaved ? undefined : (emoji) => reactToMessage(m.id, emoji)}
-                                onReply={m.unsaved ? undefined : () => { setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                onReact={m.saveState ? undefined : (emoji) => reactToMessage(m.id, emoji)}
+                                onReply={m.saveState ? undefined : () => { setReplyTo({ id: m.id, speaker: replySpeaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
                                 authUserId={authUser?.id}
                                 renderUserLabel={reactionUsersLabel}
                               />
@@ -1143,7 +1157,7 @@ export default function GroupChatPage() {
                                 <Avatar name={m.speaker || '?'} size={32} src={cardAvatars[m.card_id || m.speaker_card_id]} />
                                 <span className="retracted-text" style={{ fontSize: '12px' }}>（{m.speaker || '?'} 暂时不想说话）</span>
                               </div>
-                              {m.unsaved && <UnsavedHint />}
+                              {m.saveState && <UnsavedHint state={m.saveState} onRetry={flushGroupMessages} />}
                             </div>
                           ) : (
                             <>
@@ -1187,13 +1201,13 @@ export default function GroupChatPage() {
                               >
                                 <ReplyQuote preview={m.reply_to_preview} messageId={m.reply_to_id} onScrollTo={scrollToMessage} />
                                 <GroupMessageText content={m.content} typing={!!m._typing} onTypingDone={() => clearTyping(m.id)} />
-                                {m.unsaved && <UnsavedHint />}
+                                {m.saveState && <UnsavedHint state={m.saveState} onRetry={flushGroupMessages} />}
                                 <MessageReactions
                                   side="left"
                                   reactions={reactions}
                                   showQuickBar={true}
-                                  onReact={m.unsaved ? undefined : (emoji) => reactToMessage(m.id, emoji)}
-                                  onReply={m.unsaved ? undefined : () => { setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
+                                  onReact={m.saveState ? undefined : (emoji) => reactToMessage(m.id, emoji)}
+                                  onReply={m.saveState ? undefined : () => { setReplyTo({ id: m.id, speaker: m.speaker, preview: m.content?.slice(0, 60) }); inputBarRef.current?.focus() }}
                                   authUserId={authUser?.id}
                                   renderUserLabel={reactionUsersLabel}
                                 />

@@ -11411,6 +11411,18 @@ select.settings-input {
   color: var(--text-secondary);
 }
 
+/* 「重试」只出现在 pending —— 还留在队里，点了真能补上。failed 不给按钮。 */
+.unsaved-retry {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .messages-status {
   flex-shrink: 0;
   font-size: 12px;

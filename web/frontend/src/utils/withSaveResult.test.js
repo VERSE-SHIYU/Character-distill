@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import { withSaveResult } from './withSaveResult'
+import { applyFlushReport, withSaveResult } from './withSaveResult'
 
 const SRC = path.join(__dirname, '..')
 
@@ -19,22 +19,21 @@ function walk(dir, out = []) {
 const rel = (p) => path.relative(SRC, p).split(path.sep).join('/')
 
 describe('withSaveResult', () => {
-  it('V1 只有 saved === false 才多出 unsaved: true，其余原样返回同一个引用', () => {
+  it('V1 有 save 才多出 saveState/saveKey，没有则原样返回同一个引用', () => {
     const msg = { id: 7, content: 'hi' }
 
-    const failed = withSaveResult(msg, false)
-    expect(failed).toEqual({ id: 7, content: 'hi', unsaved: true })
-    expect(failed).not.toBe(msg)
-    expect(msg.unsaved).toBeUndefined()
+    const pending = withSaveResult(msg, { state: 'pending', key: 'k1' })
+    expect(pending).toEqual({ id: 7, content: 'hi', saveState: 'pending', saveKey: 'k1' })
+    expect(pending).not.toBe(msg)
+    expect(msg.saveState).toBeUndefined()
 
-    // saved: true 与「没这个字段」都是「没问题」—— 拿 falsy 当失败会把 hidden 消息、
-    // summary 帧、旧接口全标成「未保存」。
-    expect(withSaveResult(msg, true)).toBe(msg)
+    // 落库了就不带 save —— 判「有没有」而不是「真不真」：hidden 用户消息、摘要帧、
+    // 旧接口都不会带它，拿 falsy 当失败会让用户看到满屏「未保存」。
     expect(withSaveResult(msg, undefined)).toBe(msg)
     expect(withSaveResult(msg, null)).toBe(msg)
   })
 
-  it('V2 四个落点都走这一处判断，且没有第二份 unsaved 判断/文案', () => {
+  it('V2 落点都走这一处判断，且没有第二份 saveState 判断/文案', () => {
     const store = fs.readFileSync(path.join(SRC, 'store/useAppStore.js'), 'utf8')
     const group = fs.readFileSync(path.join(SRC, 'components/GroupChatPage.jsx'), 'utf8')
 
@@ -48,7 +47,7 @@ describe('withSaveResult', () => {
     const offenders = []
     for (const p of walk(SRC)) {
       const text = fs.readFileSync(p, 'utf8')
-      if (rel(p) !== 'utils/withSaveResult.js' && /unsaved\s*:/.test(text)) {
+      if (rel(p) !== 'utils/withSaveResult.js' && /saveState\s*:/.test(text)) {
         offenders.push(rel(p))
       }
       if (rel(p) !== 'components/common/UnsavedHint.jsx' && text.includes('未保存，刷新后会丢失')) {
@@ -56,5 +55,32 @@ describe('withSaveResult', () => {
       }
     }
     expect(offenders).toEqual([])
+  })
+})
+
+describe('applyFlushReport', () => {
+  it('V1 补上的填回真 id 并清掉「未保存」，其余保持同一个引用', () => {
+    const queued = { id: 'tmp-1', content: 'a', saveState: 'pending', saveKey: 'k1' }
+    const other = { id: 9, content: 'b' }
+
+    const out = applyFlushReport([queued, other], {
+      flushed: [{ key: 'k1', id: 42 }],
+      dropped: [],
+    })
+
+    expect(out[0]).toEqual({ id: 42, content: 'a' })
+    expect(out[1]).toBe(other)
+  })
+
+  it('V2 判死的翻成 failed（不给重试），认不出的 key 原样跳过', () => {
+    const queued = { id: 'tmp-1', content: 'a', saveState: 'pending', saveKey: 'k1' }
+    const gone = { id: 'tmp-2', content: 'b', saveState: 'pending', saveKey: 'k2' }
+    const other = { id: 9, content: 'c' }
+
+    const out = applyFlushReport([queued, gone], { flushed: [], dropped: ['k1', 'kX'] })
+
+    expect(out[0]).toEqual({ id: 'tmp-1', content: 'a', saveState: 'failed', saveKey: 'k1' })
+    expect(out[1]).toBe(gone) // key 没被这次读数提到 —— 还是 pending
+    expect(applyFlushReport([other], { flushed: [], dropped: [] })).toEqual([other])
   })
 })

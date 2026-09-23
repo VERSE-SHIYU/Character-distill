@@ -133,6 +133,7 @@ function ChatView() {
   const sendMessageStream = useAppStore((s) => s.sendMessageStream)
   const sessionId = useAppStore((s) => s.sessionId)
   const revokeMessage = useAppStore((s) => s.revokeMessage)
+  const flushMessages = useAppStore((s) => s.flushMessages)
   const revokeCooldown = useAppStore((s) => s.revokeCooldown)
   const sendVoiceMessage = useAppStore((s) => s.sendVoiceMessage)
   const webSearchEnabled = useAppStore((s) => s.webSearchEnabled)
@@ -722,7 +723,8 @@ function ChatView() {
                     content={msg.content}
                     retracted={msg.retracted}
                     evidence={msg.evidence}
-                    unsaved={msg.unsaved}
+                    saveState={msg.saveState}
+                    onRetrySave={flushMessages}
                     charName={charName}
                     avatarUrl={avatarUrl}
                     userRole={userRole}
@@ -740,9 +742,9 @@ function ChatView() {
                     reactions={reactions[msg.id] || []}
                     replyToPreview={msg.reply_to_preview}
                     replyToId={msg.reply_to_id}
-                    // 未保存的那条留着临时 id：引用/反应都会 422。不给入口（MessageReactions 的
+                    // 没落库的那条留着临时 id：引用/反应都会 422。不给入口（MessageReactions 的
                     // 约定是「没传 handler 就不渲染」）。
-                    onReact={canWrite && !msg.unsaved ? async (emoji) => {
+                    onReact={canWrite && !msg.saveState ? async (emoji) => {
                       if (!msg.id) return
                       try {
                         await fetchWithTimeout(`/api/chat/message/${msg.id}/react`, {
@@ -757,7 +759,7 @@ function ChatView() {
                         setError(err.message)
                       }
                     } : undefined}
-                    onReply={msg.unsaved ? undefined : () => {
+                    onReply={msg.saveState ? undefined : () => {
                       const preview = isUser
                         ? `我: ${(msg.content || '').slice(0, 60)}`
                         : `${charName}: ${(msg.content || '').slice(0, 60)}`
@@ -987,7 +989,7 @@ function ChatView() {
 
 // ---- Message bubble ----
 
-function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, unsaved, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
+function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evidence, saveState, onRetrySave, charName, avatarUrl, userRole, isStreaming, onRevoke, revokeCooldown, playTTS, isPlaying, audioUrl, isAudioPlaying, onPlayAudio, userAvatarUrl, onUserAvatarClick, timestamp, reactions = [], replyToPreview, replyToId, onReact, onReply, msgId, authUser, onScrollToMessage, msgCid }) {
   const isMobile = useIsMobile()
   const [showRetracted, setShowRetracted] = useState(false)
 
@@ -1081,8 +1083,8 @@ function MessageBubble({ index, isUser, isLastUserMsg, content, retracted, evide
             )}
           </span>
         )}
-        {/* 入库失败的那条自己声明：不拦、不弹窗、不改发送入口，只在原地标一句 */}
-        {unsaved && <UnsavedHint />}
+        {/* 没落库的那条自己声明：不拦、不弹窗、不改发送入口，只在原地标一句 */}
+        {saveState && <UnsavedHint state={saveState} onRetry={onRetrySave} />}
 
         {/* Voice bubble */}
         {!isUser && audioUrl && (
