@@ -1480,10 +1480,13 @@ async def start_session(
                 return rec["id"]
 
             first_message_save, _opening_report = await outbox.write(_save_opening, ping=storage.ping)
+            # 记忆无条件追加：写库失败时这条要留在队里补写，但**本轮**用户就该看到它。
+            # 绑在 `if opening_rows:` 上的话，库一抖动开场白就从记忆里消失，刷新后用户
+            # 看到的第一句话自己没了 —— 而前端还什么都没提示。
+            engine_obj.history.append({"role": "assistant", "content": opening})
             if opening_rows:
                 rec = opening_rows[0]
                 first_created_at = rec.get("created_at", "")
-                engine_obj.history.append({"role": "assistant", "content": opening})
                 session_rec.setdefault("message_ids", []).append(rec["id"])
                 print(f"[start_session] Injected opening into session {session_id}")
 

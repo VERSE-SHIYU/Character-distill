@@ -341,11 +341,14 @@ async def resume_session(
             return rec["id"]
 
         greeting_save, _greeting_report = await outbox.write(_save_greeting, ping=storage.ping)
+        # 记忆无条件追加（同 start_session 的开场白）：写失败只是「没落库」，不是「没说过」。
+        # 绑在 `if greeting_rows:` 上，库一抖动这句问候就只出现在返回的 `messages` 里、
+        # 不在记忆里 —— 下一轮 LLM 不知道刚打过招呼，会再打一次。
+        engine.history.append({"role": "assistant", "content": greeting})
         if greeting_rows:
             rec = greeting_rows[0]
             greeting_id = rec["id"]
             greeting_created_at = rec["created_at"]
-            engine.history.append({"role": "assistant", "content": greeting})
             sessions[session_id].setdefault("message_ids", []).append(rec["id"])
 
     # ── 今日到访觉察：count>=3 且当次未触发重逢问候 → 传给 engine ──
