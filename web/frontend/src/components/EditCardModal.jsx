@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Close } from './common/Icon'
+import ErrorBox from './common/ErrorBox'
 
 function splitLines(val) {
   return (Array.isArray(val) ? val.join('\n') : val || '')
@@ -36,6 +37,7 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
 
   const [form, setForm] = useState({})
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [relationships, setRelationships] = useState([])
 
   // lazy init on open
@@ -145,8 +147,12 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
       dialogue_examples: joinLines(form.dialogue_examples.replace(/\n\n+/g, '\n\n')),
     }
     setSaving(true)
+    setSaveError(null)
     try {
       await onSave(cardJson)
+    } catch (err) {
+      // 弹窗不关：用户改写的内容不能因为一次失败就丢
+      setSaveError(err.message || '保存失败')
     } finally {
       setSaving(false)
     }
@@ -158,6 +164,8 @@ export default function EditCardModal({ isOpen, data, cardId, onSave, onClose, e
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-card edit-card-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">编辑角色卡 — {data.name}</div>
+
+        {saveError && <ErrorBox message={saveError} onDismiss={() => setSaveError(null)} />}
 
         <div className="edit-form-scroll">
           {editName && (

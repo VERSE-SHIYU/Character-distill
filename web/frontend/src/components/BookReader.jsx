@@ -298,11 +298,12 @@ export default function BookReader() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       const pct = totalPages > 1 ? currentPage / (totalPages - 1) : 0
+      // 自动发出、幂等的后台写：翻下一页就会覆盖重写，失败了只在控制台留痕，不打断阅读
       fetchWithTimeout(`/api/text/${readerTextId}/progress`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ progress: pct, scroll_position: currentPage }),
-      }).catch(() => {})
+      }).catch((err) => console.warn('[BookReader] save progress failed:', err))
     }, 300)
   }, [currentPage, content, totalPages])
 

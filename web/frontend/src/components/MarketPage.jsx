@@ -136,7 +136,7 @@ export default function MarketPage() {
         ),
       )
     } catch (err) {
-      console.error('[Market] Like failed:', err)
+      setError(err.message)
     }
   }
 
@@ -171,7 +171,7 @@ export default function MarketPage() {
       setCommentText('')
       await loadComments(commentCardId)
     } catch (err) {
-      console.error('[Market] Send comment failed:', err)
+      setError(err.message)
     } finally {
       setCommentSending(false)
     }
@@ -193,7 +193,7 @@ export default function MarketPage() {
       }
       startChat(data.card)
     } catch (err) {
-      console.error('[Market] Fork failed:', err)
+      setError(err.message)
     } finally {
       setForkingId(null)
     }

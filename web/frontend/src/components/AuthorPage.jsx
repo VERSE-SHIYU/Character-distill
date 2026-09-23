@@ -153,7 +153,7 @@ export default function AuthorPage({ embedded = false }) {
       const data = await res.json()
       setIsFollowing(data.following)
     } catch (err) {
-      console.error('Follow failed:', err)
+      setError(err.message)
     }
   }
 
@@ -169,7 +169,9 @@ export default function AuthorPage({ embedded = false }) {
         prev.map((u) => (u.id || u.user_id) === userId ? { ...u, is_following: data.following } : u)
       setFollowersList(updateFn)
       setFollowingList(updateFn)
-    } catch { /* ignore */ }
+    } catch (err) {
+      setError(err.message)
+    }
     setFollowState((prev) => ({ ...prev, [userId]: false }))
   }
 
@@ -183,7 +185,7 @@ export default function AuthorPage({ embedded = false }) {
       })
       setPosts((prev) => prev.filter((p) => p.id !== id))
     } catch (err) {
-      console.error('Delete post failed:', err)
+      setError(err.message)
     }
   }
 
@@ -196,7 +198,9 @@ export default function AuthorPage({ embedded = false }) {
           p.id === postId ? { ...p, liked_by_me: data.liked, likes: data.likes } : p,
         ),
       )
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const getCharName = (card) => {

@@ -121,18 +121,10 @@ export default function VoicePanel() {
     }
   }
 
-  const handleCustomDelete = async (voiceId) => {
+  // 只负责开确认框：删除动作唯一落点是下面的 ConfirmModal.onConfirm
+  const handleCustomDelete = (voiceId) => {
+    setCustomError('')
     setDeleteVoiceConfirm(voiceId)
-    setDeletingId(voiceId)
-    try {
-      await deleteCustomVoice(voiceId)
-      if (selectedVoice === voiceId) {
-        handleVoiceChange('xiaoxiao')
-      }
-      setCustomSuccess('音色已删除')
-      setTimeout(() => setCustomSuccess(''), 3000)
-    } catch { /* store handles */ }
-    setDeletingId(null)
   }
 
   // ---- Preview ----
@@ -206,14 +198,11 @@ export default function VoicePanel() {
     }
   }
 
-  const handleRefDelete = async () => {
+  // 同上：只开确认框，删除在 ConfirmModal.onConfirm 里做
+  const handleRefDelete = () => {
     if (!cardId) return
+    setRefError('')
     setDeleteRefConfirm(true)
-    try {
-      await deleteVoiceRef(cardId)
-      setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
-      setTimeout(() => setRefSuccess(''), 3000)
-    } catch { /* store handles */ }
   }
 
   const handleClonePreview = async () => {
@@ -580,6 +569,7 @@ export default function VoicePanel() {
           const voiceId = deleteVoiceConfirm
           setDeleteVoiceConfirm(null)
           setDeletingId(voiceId)
+          setCustomError('')
           try {
             await deleteCustomVoice(voiceId)
             if (selectedVoice === voiceId) {
@@ -587,7 +577,9 @@ export default function VoicePanel() {
             }
             setCustomSuccess('音色已删除')
             setTimeout(() => setCustomSuccess(''), 3000)
-          } catch { /* store handles */ }
+          } catch (err) {
+            setCustomError(err.message || '删除失败')
+          }
           setDeletingId(null)
         }}
         onCancel={() => setDeleteVoiceConfirm(null)}
@@ -600,11 +592,14 @@ export default function VoicePanel() {
         confirmText="确定"
         onConfirm={async () => {
           setDeleteRefConfirm(false)
+          setRefError('')
           try {
             await deleteVoiceRef(cardId)
             setRefSuccess(`「${currentCard?.name || cardId}」的参考音频已移除`)
             setTimeout(() => setRefSuccess(''), 3000)
-          } catch { /* store handles */ }
+          } catch (err) {
+            setRefError(err.message || '移除失败')
+          }
         }}
         onCancel={() => setDeleteRefConfirm(false)}
         danger

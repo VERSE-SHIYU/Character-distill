@@ -3,6 +3,7 @@ import useAppStore from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
 import PostCard from './common/PostCard'
 import Loading from './common/Loading'
+import ErrorBox from './common/ErrorBox'
 import PageHeader from './PageHeader'
 import useSwipeBack from '../hooks/useSwipeBack'
 
@@ -116,7 +117,9 @@ export default function FeedPage() {
           p.id === postId ? { ...p, liked_by_me: data.liked, likes: data.likes } : p,
         ),
       )
-    } catch {}
+    } catch (err) {
+      setError(err.message)
+    }
   }
 
   const swipeBack = useSwipeBack(popView)
@@ -147,7 +150,7 @@ export default function FeedPage() {
         />
       </header>
 
-      {error && <div className="error-box">{error}</div>}
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       {loading && posts.length === 0 && <Loading text="加载动态…" />}
 

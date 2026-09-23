@@ -120,7 +120,7 @@ config.yaml 现值（现读，非转述）：
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
 > **105–107 是 2026-09-22 新记的三条**（`users.role` 一案并入 main 后、合并前补齐项里顺带读出的），按 main 现有最大号顺延：**105 归 Spec 2、106 归蒸馏线、107 归 D 组**。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。**订正（2026-09-22，72 线收尾）**：原写「状态全部『记账』」已过期 —— **107 已修**（`dbdbf9c` + `7a5992a`，由 72 线第 1 步的 503 门收口）；105 / 106 仍为记账。**同轮还按 main 现最大号顺延补记了 108–113 六条**（§三 末，72 线第 1 步收尾）—— 原拟 75–80，与 main 现有的 75–80 **撞号**，按「按 main 上现有最大编号顺延」改号（撞的是编号不是内容）。**判据是编号而非行序**：本文件编号跨小节、**与行序不同调**，按行尾取 max 只会取到 74 而漏掉真正最大的 107。
 > **本分支（`users.role` 一案）并入时补记的三条，按 main 现最大号顺延为 114–116**（原编 108 / 109 / 110，与 main 已在 §三 末占用的 108–110 **撞号** —— 撞的是编号不是内容，两边条目都留）：**114 归 Spec 3（紧接本份）、115 归前端通用组件、116 归蒸馏线**；状态**全部记账**（只报告不修）。**105 / 106 订正**：上面那条「105 / 106 仍为记账」已过期 —— 两条随本分支修完，**105 已修**（`9fae212`）、**106 已修**（`de49658`），见 §三 对应条目。同样**不重算**上面那条口径行（它标着 1–98 现跑现数，这三条产生更晚）。
-> **117 是 2026-09-22 按 main 现最大号顺延新记的一条**（CI 在 `Run tests` 挂死，**当天已发生两次**，见 §三 末），归属 CI / 测试基础设施，状态**记账**。**同轮订正两条**：**115 已修**（`bd685e2` —— 只报告不修的例外，本份用户明确要求「修到根上」）、**116 的归属改判为 Spec 3**（原记蒸馏线）。同样**不重算**上面那条 1–98 口径行。
+> **117 是 2026-09-22 按 main 现最大号顺延新记的一条**（CI 在 `Run tests` 挂死，**当天已发生两次**，见 §三 末），归属 CI / 测试基础设施，状态**记账**。**同轮订正两条**：**115 已修**（`bd685e2` —— 只报告不修的例外，本份用户明确要求「修到根上」）、**116 的归属改判为 Spec 3**（原记蒸馏线）。同样**不重算**上面那条 1–98 口径行。**订正（2026-09-23）**：上面「当天已发生两次」与「状态记账」两句都已过期 —— 实际**四次**挂起（run `35703112463` / `35716206496` / `35747175886` / `35747536487`），已定位并在 `70cdba1` + `23ac407` 修复、经 `35750857228` 验收全绿，状态**已修**；详见 §三 该条。
 > 引用任何「还剩几条 / 某条什么状态」之前**现数一遍**：取所有 `^\*\*(\d+)\. ` 的标题行，抽出 `状态：\*\*(.+?)\*\*`。**分组按主词，不按字面值** —— 「已修（commit `x`）」「已修（2026-09-13）」属同一个「已修」桶，括号里的是附注不是类别；照字面值分组与头部声明的桶**不是一个口径**（`2026-09-17 现数：字面值 21 组、主词 7 桶`），那时先怀疑分组口径而不是台账。**格式不变式：每条标题行必须带 `状态：`、且状态值用 `**` 加粗、`N.` 后带空格** —— 否则该条会从这次统计里**静默消失**（字段缺失不报错，正是 §四 那条「缺口不会自己报错」）。**禁用「已修 1–33」这类区间表述** —— 30–33 全在记账桶里，一个区间就把整桶抹掉；**摘要与台账不一致比缺陷本身贵**：照摘要决定下一步，会直接漏掉四条。
 
 **1. thinking 参数写错（方言不对）** —— 状态：**已修**（commit `f2dfd23`，2026-09-10）
@@ -1448,7 +1448,7 @@ PROBE_IMAGE         false
 - **触发面（不是「游客必然中招」）**：`deps.get_user_llm` 在用户没配 key 时**回落全局**（`web/deps.py:107` 的 `resolve_llm(config, build_user=…, get_global=get_llm)`），故配了全局 key 的生产不触发；触发条件是**两份都缺**（自托管未配、或本机开发环境）。
 - **判据命令**：`git grep -n "text_manager is None" -- web/routers/distill.py` → **4 行**：`bare` 形式两处（`/run` 的 :685 与 `start_session` 的 :1354，正是本条要的两处），另两处是 `or` 组合形态（`text_manager is None or distiller is None` / `distiller is None or text_manager is None`）被同一子串顺带匹配到。判据要的是**裸形式两处**，不是子串命中数。
 
-**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**记账**
+**114. 写失败被静默吞掉 —— 105 / 106 修好后仍在的同类落点** —— 状态：**已修**（`841b113`，2026-09-23）
 - **归属**：Spec 3（紧接本份）。**说明（spec 补充 5）**：记 **114** 时，在条目里注明：「Spec 3 的 S0 普查把 105、106 两处也纳入，与其余 9 处统一迁移到同一套写失败处理机制，全仓只留一种写法。」（补充 5 原文写的是「记 108 时」—— 该编号与本条一起按 main 现最大号顺延为 114。）
 - **坐标（按 spec 补充 3 #7 记录）**：`MinePage.jsx:37`（改可见性，PATCH）、`:413`（关注，POST）、`:611`（改简介）、`:963`（发动态）、`AuthorPage.jsx:197`（给帖子点赞，POST）、`MarketCardDetail.jsx:189`（给角色卡点赞，POST）、`PostCard.jsx:106`（发评论，POST）、`PrivateMessageChat.jsx:254`（撤回消息，POST）、`GroupChatPage.jsx:1358`。
 - **形态**：写请求（POST/PUT/PATCH/DELETE）后面接一个静默 `catch {}`（或 `catch {} finally { … }`）—— 失败（含门禁 403）被吞掉，界面既不提示也不回滚，用户以为成功。**与 105 / 106 同形**，105 / 106 是其中被点名先修的两处。
@@ -1456,7 +1456,17 @@ PROBE_IMAGE         false
   - **1 处复核为误判**：`GroupChatPage.jsx:1358` 是 `parseCardJson` 的 **JSON 解析兜底**，不是写调用 —— 该文件所有静默 catch 只覆盖 `GET /api/distill/cards/by-text/*` 与 `JSON.parse`，**没有写路径**。
   - **7 处同形态未在这 9 处内**：`MarketCardDetail.jsx:229`（发评论）、`:248`（使用角色 / fork）、`FeedPage.jsx:119`（给帖子点赞）、`PrivateMessageChat.jsx:276`（同意 consent 后重发）、`ChatArea.jsx:744`（给消息加表情）、`TextPanel.jsx:821`（编辑角色卡，PUT）、`BookReader.jsx:305`（阅读进度，POST —— 这一条在门禁白名单里，对游客不触发 403，但网络失败同样被吞）。另有 `PrivateMessageChat.jsx:265` 是剪贴板 `catch {}`，**不是网络写**，已排除。
   - **口径**：本条目正文仍按 spec 记录的 9 个坐标为准；上述偏差**只作复核留痕**，Spec 3 立项时按「重扫一遍再定坐标」而非照抄本条目。
-- **判据命令**：`git grep -n "catch {}" -- web/frontend/src/components/MinePage.jsx web/frontend/src/components/AuthorPage.jsx web/frontend/src/components/MarketCardDetail.jsx web/frontend/src/components/common/PostCard.jsx web/frontend/src/components/PrivateMessageChat.jsx`（上面 8 处坐标都在输出里；**同一个正则也会带出同文件里读请求 / `JSON.parse` 的 `catch {}`**，所以命中数多于 8 属正常，逐条按上下文定案，不按命中数定案）；复核用的重扫以「写方法 + 静默 catch 出现在 25 行窗口内」做初筛，再逐条读上下文。
+- **收口（Spec 3 · S2，`841b113`）**：S0 按「写方法 + 静默 catch 出现在 25 行窗口内」重扫（80 文件 / 123 处静默或仅 console 的 catch / 49 处在窗口内），逐条读上下文定案后接线。规则（spec §2 + 补充 1 的裁定）：
+  - **错误落在动作发生的那个组件**的本地 `error` + 既有 `ErrorBox`，**不借 store 的全局 `error`**（`CharPanelBody:98/:120`、`TextPanel:67` 会读它，借了就会串页）；`FeedPage` 手写的错误条换成 `ErrorBox`（全仓只留一种错误展示）。
+  - **乐观更新的失败要回滚**：`HistoryPanel` 批量删除只摘掉真正删掉的 id，失败的留在列表里并报错；`PrivateMessageChat` 的表情回应失败回滚到服务端真值。
+  - **弹窗自持错误**：`EditCardModal` 自己的本地 error + ErrorBox，保存失败**不关窗**（用户改的内容不能丢）；三个调用点（`TextPanel.jsx:804`、`CharCard.jsx:950`、`MarketCardDetail.jsx:1120`）原先各自的错误处理已删除，免得报两遍。
+  - **两处例外**（spec §2.5：「自动发出、幂等的后台写，失败只留痕」）：`BookReader.jsx` 的翻页进度自动保存、`PrivateMessageChat.jsx` 的 markRead —— 均 `console.warn`，不出错误条。
+  - 本份额外收进的两处（补充 1 #5）：`MinePage` 的取关（`:1109`）与删动态（`:1156`）原先**连 catch 都没有**，现同样接线；状态更新一律挪到 await 成功之后。
+  - **例外清单之外、仍未接线的同类落点（S0 复扫发现，不在 S2 范围）**：`VoicePanel.jsx:134/216/590/607` 的注释写着「store handles」，但 `useAppStore.js` 的 `deleteCustomVoice`（`:497`）与 `deleteVoiceRef`（`:441`）**没有任何错误处理** —— 用户点删除失败是静默的；`TextPanel.jsx:700/768` 的 `startChat`（进聊天的前置写）与 `ChatArea.jsx:895/933` 的 `alert('添加失败'/'更新失败')` 同理。`HomePage.jsx:152` 的 `resumeSession` 经查**合规**（store 里 `set({ error: err.message })` 后 rethrow）。**用户裁定：除 `HomePage.jsx:152`（合规、不动）外全部并入 Spec 3 本份**，已在 S5（`015cae9`）接线；其中 VoicePanel 那四处读上下文时发现根因是**重复删除**（确认框形同虚设），另记 **124**。
+- **本 commit 自身引入又在本份修掉的一处（订正 2026-09-23）**：`841b113` 把 `TextPanel.jsx` 内层组件 `CharacterManagement` 的 `console.error('Delete card failed:', err)` 改成了 `setLocalError(err.message)`，而 `localError` 只声明在外层 `TextPanel` —— 删卡失败会抛 `ReferenceError: setLocalError is not defined`（错误既不显示、还以未捕获异常丢掉）。已在 S5 `015cae9` 修（内层组件自带 `error` + `ErrorBox`），红源与变异见 **124**。
+- **红源**：`web/frontend/src/components/__tests__/WriteFailureSurfacing.test.jsx`（3 条，各守一种形态）：① 非回滚落点 —— `PostCard` 发评论失败，文案可见且输入框内容不丢；② 回滚落点 —— `HistoryPanel` 批量删除部分失败，成功的走掉、失败的原位留着并报错；③ 弹窗落点 —— `EditCardModal` 的 `onSave` 抛错时错误在弹窗内、弹窗不关、按钮回到「保存」。**变异已验**：① 还原静默 `catch {}` → ①**红**；② 把「只摘真正删掉的」改回「按选中集合摘」 → ②**红**；③ 去掉弹窗内的 try/catch → ③**红**；还原后 3/3 绿。
+  - **偏差（须声明）**：对账表第 2 行写的「选一个点赞类落点」，实际**全仓没有乐观更新的点赞**（点赞都用响应回填 state），故改用真正的回滚落点 `HistoryPanel` 批量删除 + `PrivateMessageChat` 表情回应。
+- **判据命令（修复后）**：`git grep -nE "catch \{\}|\.catch\(\(\) => \{\}\)" --` 上列 16 个改过的组件文件 —— 剩余的每一处都要读上下文确认是**读请求 / `JSON.parse` / 剪贴板**（`PrivateMessageChat.jsx:271` 的剪贴板按本条原口径排除）；两个写路径例外就是上面点名的 `BookReader` / `PrivateMessageChat` markRead，形态是 `console.warn` 而非空块。**同上，命中数多于 0 属正常，逐条按上下文定案，不按命中数定案。**
 
 **115. `ErrorBox` 渲染出字面 `??` 与 `?` —— 图标字形丢在了文件里** —— 状态：**已修**（`bd685e2`，2026-09-22）
 - **归属**：前端通用组件（不分线）。
@@ -1468,15 +1478,21 @@ PROBE_IMAGE         false
 - **判据命令（修复后）**：`git grep -c '?' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 **0** —— 全文件不含字面 `?`）；`git grep -n 'AlertTriangle\|Close size' -- web/frontend/src/components/common/ErrorBox.jsx`（应给 3 行）。修复前那条 `git grep -n '?? {message}' …（应给 1 行）` 已失效（现给 0 行），此处替换而非并列保留。
 - **改前核过的耦合**：11 个调用方都不依赖这个前缀；两处既有断言（`CharCardPublishError.test.jsx`、`DistillCancelError.test.jsx`）用的是 `textContent` + `toContain('…detail…')`，前缀无关，未受影响。
 
-**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**记账**
+**116. `DistillWorkbench` 拉卡片的 effect 自激 —— text 列表为空时无限发请求** —— 状态：**已修**（`4950936`，2026-09-23）
 - **归属**：**Spec 3**（2026-09-22 改判 —— 原记「蒸馏线」，用户把它划给 Spec 3 承接）。
 - **形态**：`web/frontend/src/components/DistillWorkbench.jsx:110` 的 effect 依赖 `[texts, loadTexts]`，函数体第 91 行是 `if (texts.length === 0) { loadTexts(); return }`。而 `web/frontend/src/store/useAppStore.js:656` 的 `loadTexts` 每次都执行 `set({ texts: data })`（第 661 行）—— **不论 `data` 是不是空数组都换一个新引用**，`texts` 的引用必然变化 → effect 重跑 → 仍然是空 → 再调 `loadTexts()`。闭环成立，**与网络是否失败无关**，触发条件只是「文本列表为空」。
 - **实测**：2026-09-22 的 S4 浏览器点检与写 106 的组件测试时都撞到。vitest 侧的表现是该用例文件**挂住不退出**（需手动 kill；那次留下过 3 个挂死的 vitest 进程，清掉后全量才恢复正常）。测试侧的规避写法是别给空列表 —— `web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 的 `beforeEach` 就为此塞了 `texts: [{ id: 'x1', filename: 'a.txt' }]`。
 - **为什么算缺陷**：空文本列表是**正常状态**（新注册账号、清空之后），不该引发请求风暴；而且触发条件是「数据为空」不是「出错」，用户看不到任何提示，只会觉得页面卡。
-- **判据命令**：`git grep -n "texts.length === 0" -- web/frontend/src/components/DistillWorkbench.jsx`（应给 91 一行）；`git grep -n "set({ texts: data" -- web/frontend/src/store/useAppStore.js`（应给 661 一行）。两处同时成立才构成本条。
-- **修法（留待，未做；方向待定，不在本条裁定）**：可选的干净做法是让 `loadTexts` 有一个「已在加载中就不重入」的门，或把「列表为空就回填」从渲染期 effect 挪到挂载时只做一次。**要避免**用「给 effect 加一个长度判断」这类绕法 —— 那会一起挡掉「第二次确实需要重拉」的正常场景。**本条只记账，不定修法**。
+- **落点比记账时多一处（Spec 3 · S0 重扫）**：同一段代码在 **两个**地方各有一份 —— `DistillWorkbench.jsx` 与 `TextPanel.jsx` 的 `CharacterManagement` 子组件。记账时只点了前者。
+- **修法（Spec 3 · S3，`4950936`）**：按本条留的方向走「挪到挂载时只做一次」，两处同修 ——
+  - 文本列表改成**挂载时拉一次**（`DistillWorkbench` 新加 `useEffect(() => { if (texts.length === 0) loadTexts() }, [])`；`TextPanel` 的父组件本来就有这一个，只是删掉了子组件里那次），卡片 effect 只依赖 `[texts]`，**不再调 `loadTexts`**。
+  - 两份逐字重复的「逐文本 + 独立卡片」聚合抽到 `web/frontend/src/api/cards.js` 的 `fetchAllCards(texts)`（`_textInfo` / `_source` 只在那里挂一次）；端点字符串也收进该模块，组件不再手写 URL。
+  - **没有**按本条「要避免」的那条走：不加长度判断绕，也没给 `loadTexts` 加重入门（`loadTexts` 的语义不变，其它调用点不受影响）。
+- **连带影响（必须说清）**：修前「文本列表为空」会在卡片 effect 里**早返回**，于是**独立卡片（`/api/distill/cards/standalone`）根本没被拉** —— 只有市场卡、没有上传过文本的用户，角色管理页与工作台的「已验收」区是**空的**。修后独立卡片照常返回，这类用户第一次看到自己的卡。**这是行为变化，不是纯内部重构。**
+- **红源**：`web/frontend/src/components/__tests__/DistillCancelError.test.jsx` 新增 3 条 —— ① 蒸馏工作台、② 创作页角色管理，在 `texts: []` 下断言 `/api/text/list` **恰好被调一次**（原先该文件的 `beforeEach` 是为了躲这个 bug 才硬塞了一条假文本，现已改回空数组并注明）；③ `fetchAllCards([])` 直接返回独立卡片（连带项的单元锁）。**变异已验**：把 `loadTexts()` 放回卡片 effect → ① ② **红**（worker 在无界请求循环里被拖死，不是断言失败）；在 `fetchAllCards` 里加回 `if (texts.length === 0) return []` → ③**红**；还原后 7/7 绿。
+- **判据命令（修复后）**：`git grep -n "cards/by-text/" -- web/frontend/src/components`（应给 **0 行** —— 端点字符串只剩 `web/frontend/src/api/cards.js` 一处与 `store/useAppStore.js` 三处）；`git grep -n "loadTexts()" -- web/frontend/src/components/DistillWorkbench.jsx web/frontend/src/components/TextPanel.jsx`（应**各给 1 行**：`DistillWorkbench.jsx:91` 与 `TextPanel.jsx:106`，且两处都在**依赖为空数组的挂载效应**里——`DistillWorkbench.jsx:92` / `TextPanel.jsx:107` 的 `}, [])` 是行内第二段证据；修复前两处的调用点在**依赖含 `texts` 的卡片效应**里）。只数 `loadTexts` 子串不行：注释里也提到它，命中数会虚高。
 
-**117. main 的 CI 在 `Run tests` 这一步挂死（不是失败，是挂着不动）—— 已发生两次** —— 状态：**已修**（`70cdba1`，2026-09-23）
+**117. main 的 CI 在 `Run tests` 这一步挂死（不是失败，是挂着不动）—— 已发生四次** —— 状态：**已修**（`70cdba1` + `23ac407`，2026-09-23）
 - **归属**：CI / 测试基础设施（不分线）。
 - **根因（2026-09-23 定位并修复）**：两个成因叠加，缺一不成——
   - **① 库有了两个来源（`dbdbf9c` 引入）**。那个提交把独立卡片分支的 `ChatEngine` 指到 `TextManager` **构造时捕获**的那份库上，而那份是 `deps.get_storage()` —— **进程级单例**（`web/deps.py:130`）。**测试换库走的是 `app.dependency_overrides[get_storage]`，只覆盖 `Depends(get_storage)` 那条路**，`TextManager` / `Distiller` 内部都是直接调 `get_storage()`，override 管不到。于是同一场测试里两条路读**两个库**：请求路径读 sqlite（被测的那份），引擎攥着的是**真库**（CI 里是 postgres）。
@@ -1490,11 +1506,14 @@ PROBE_IMAGE         false
 - **同一处的生产修复（`postgres_store.py` 的 `_PoolContext.__aexit__`）**：归还失败时改为 `self.conn.terminate()` —— asyncpg 侧那是「不等收尾、直接断连」的原语，且它会走 `_release_on_close()` 把 holder 交还池，故代价是**重建一条连接**，不是**丢一个槽位**。红源 `tests/test_postgres_store.py::TestReleaseFailureDoesNotLeakTheSlot`（3 条，全桩不碰 PG，故在没跑 PG 的机器上也真跑）：① 归还失败必须 terminate；② 正控 —— 归还成功**不得**断连（否则每个请求都在重建连接）；③ 归还失败不许顶替调用方真正的异常（原有语义）。**变异已验**：删掉 `terminate()` → ①**红**、②③仍绿。
 - **红源**：`tests/test_ownership_404.py::TestStorageSingleSource` 两条 —— ① `test_text_manager_resolves_the_store_at_use_time`（装配后换单例，用的时候必须取到新的那份）；② `test_independent_card_session_binds_the_single_source`（端到端：独立卡片建出的引擎必须绑本次用例那份库）。**变异已验**：`__init__` 改回构造时捕获 → ①**红**；② 仍绿（引擎的库在引擎构造时就定了，这条不具分辨力，**如实记**）。
 - **证伪（用户指定的前置实验，验后已撤）**：把独立卡片会话的 storage 换回注入的那份 → `e6b05e8 + falsify.patch` 在复现环境跑 `tests/test_ownership_404.py tests/test_pg_identity_sync.py` **56 passed / 165s**，那条用例 `PASSED [100%]`，挂起消失。
-- **两次挂起的 sha 与时间**（落笔时仍未定位，现已定：见上「根因」）：
+- **四次挂起的 sha 与时间**（落笔时仍未定位，现已定：见上「根因」）：
   - **第一次**：main @ **`842f3e0`**，run [`35703112463`](https://github.com/VERSE-SHIYU/Character-distill/actions/runs/35703112463)，**2026-09-22T08:07:36Z** 触发。`gate` 的 `Run tests` 自 `08:08:48Z` 起挂住，`gate` / `sentinel` 各占 runner **8360s / 8362s**（≈ 2h19m），最终**由人手工 cancel 收场**（conclusion = `cancelled`）。
   - **第二次**：main @ **`da497b1`**，run **`35716206496`**，**2026-09-22T10:28:52Z** 触发（**紧接在第一次被 cancel 之后**，不是同日稍后的偶发）。`gate` 的 `Run tests` 自 **`10:30:08Z`**、`sentinel` 自 **`10:30:01Z`** 起一直是 `in_progress`，**到落笔时已 >1h17m 仍无终态**；两个 job 的后续步骤（`红的时候说清楚…` / `upload-artifact` / `Stop containers`）全部 `pending`。
-- **形态**：两次都是**两个 job 同时挂住、停在同一步骤 `Run tests`**。**挂死不等于失败** —— pytest 进程一直活着，只是不往前走了，所以既不会自己报红、也不会自己退出；**唯一能让它收场的是人工 cancel**（第一次就是这么结束的）。这也正是它能挡住镜像构建的原因：`build` job `needs` 这两个 job，挂住 = 永远不开始。
-- **两次之间没有共同改动**：`842f3e0` → `da497b1` 隔了 7 个提交（后端 + 测试 + 台账），**共同项只剩「main 的 CI 环境」本身**。这把归因从「某个 commit 引入」推向「环境 / 测试基础设施」，但**仍未定位**。
+  - **第三次**：main @ **`a19058d`**，run **`35747175886`**，**2026-09-22T15:24:58Z** 触发，`Run tests` 自 **`15:26:06Z`** 起挂，**16:05:19Z** 收场。
+  - **第四次**：main @ **`9aba202`**，run **`35747536487`**，**2026-09-22T15:27:57Z** 触发，`Run tests` 自 **`15:29:04Z`** 起挂，**16:08:21Z** 收场。
+  - **第三、四次是怎么收场的**：**不是人工 cancel，是被 `timeout-minutes: 40`（`776c733`）掐掉的** —— 两次 `Run tests` 各活 **39m10s**，conclusion 记 **`cancelled`**（不是 `failure`）。即**护栏按设计生效**：挂死不再烧满 runner。这一点还**反证了那是真挂起而非「跑得慢」** —— 若只是慢，40 分钟里进度会往前走、也不会两次都精确停在同一个时长上。
+- **形态**：四次都是**两个 job 同时挂住、停在同一步骤 `Run tests`**。**挂死不等于失败** —— pytest 进程一直活着，只是不往前走了，所以既不会自己报红、也不会自己退出；**唯一能让它收场的是人工 cancel**（第一次就是这么结束的）。这也正是它能挡住镜像构建的原因：`build` job `needs` 这两个 job，挂住 = 永远不开始。
+- **四次之间没有共同改动**：`842f3e0` → `da497b1` 隔了 7 个提交（后端 + 测试 + 台账），**共同项只剩「main 的 CI 环境」本身**；第 3、4 次同理（`a19058d` 与 `9aba202` 相隔 3 分钟、内容几乎同一批）。这把归因从「某个 commit 引入」推向「环境 / 测试基础设施」，但**仍未定位** —— 后来定位到的根因（单一来源被破坏 + 跨 loop 异常被吞）恰好落在**长期存在**的代码里，与「区间内某个 commit」无关，故此处当时的推论方向是对的。
 - **停在哪（第一次）**：最后一条**带终态百分比**的输出落在 **54%**，位置在 `tests/test_pg_identity_sync.py` 附近；取消时 runner 仍在收拾 pytest（`Terminate orphan process: pid (2935) (pytest)`）。**读挂点只认带 `[ NN%]` 的行**：pytest 用 `-v` 时在 `logstart` 就写节点 id 但**不带换行**，重定向日志的最后一行是「写了一半的行」，它既不是挂点也不能当进度 —— 拿它定位会指向一个其实已经跑过去的用例（本条的第一次误判就是这么来的）。第二次的 `Run tests` 日志**在步骤结束前取不到**，所以第二次连「停在哪」都不知道。
 - **本地不可复现（2026-09-22 当天现跑）**：进程内单跑那条最近的用例，带 `.env` / 不带 `.env` 分别 2.04s / 0.37s，**都是绿的**；按 CI 口径整跑全量得 **1685 passed / 3 failed / 997s（0:16:36）**，**没有挂住**。即：同一天、同一个 commit、同一套依赖，本地走完、CI 停死，**差异不在代码而在环境**。
 - **当时的嫌疑（已排除）**：**112 那一族**（全量里约 20 条 `PytestUnhandledThreadExceptionWarning`、aiosqlite `Event loop is closed`，条数与命中用例每次不同）。当时的理由是没有证据把 117 钉到 112 上（117 是「停住」，112 是「抛异常后继续」）。**2026-09-23 定位后确认：确实不是 112 —— 112 是 aiosqlite 侧，本条是 asyncpg 侧；两者都源于「跨 loop」，但不是同一处代码。**
@@ -1503,14 +1522,15 @@ PROBE_IMAGE         false
   - 区间内 `e1cd661..842f3e0` 共 **11 个提交**，改了 **10 个文件**：`AGENTS.md`、`core/group_session.py`、`core/text_manager.py`、`web/routers/{chat,distill,group,history}.py`、`tests/test_create_session_kwonly_lock.py`、`tests/test_llm_access_gate.py`、`tests/test_ownership_404.py`。
   - **重点核查结论**：`tests/test_pg_identity_sync.py` **在区间内零改动**；它的被测代码也**零改动** —— 整个 `storage/` 目录在区间内**一个文件都没动**（`git diff --stat e1cd661 842f3e0 -- storage/` 为空；`storage/postgres_store.py` 与 `storage/pg_identity_sync.py` 最后一次改动都是 `100fae67`，**在 `e1cd661` 之前**）。`tests/` 目录也没有增删文件（两端各 158 个）。
   - **推论（弱）**：既然那条用例及其被测代码在区间内根本没动，「停在 54% / 近 `test_pg_identity_sync.py`」**大概率是上面那条「未刷新的半行」读法造成的假信号，不是真定位**；本条不把它当作指向该用例的证据。区间内真正可能碰并发的改动只有 `core/group_session.py`（新增 keyword-only 的 `user_id`）、`core/text_manager.py`（删掉 `_create_session` 的死参数 `text`）与 `web/routers/chat.py` 的 `_ensure_session` 属主收紧（`session.get("user_id") != user_id`，未登记即 404）—— **这三处是「嫌疑范围」不是「已定位」，没有任何证据把它们钉上。**
-- **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即失败，「挂住」从此落进「红」这一类，能被正常的失败流程接住，不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。**这个防护只让挂死可见，不消除挂死** —— 挂死本身由 `70cdba1` 消除（根因见上）。防护保留：它是「再挂一次也落进红」的底线，与本条是否是根因无关。
+- **验收对照（2026-09-23，现跑现数）**：修复后的 run [`35750857228`](https://github.com/VERSE-SHIYU/Character-distill/actions/runs/35750857228) @ **`a73b476`**（= `9aba202` + 两项修复）**全绿**：`gate` 的 `Run tests` **284s**、`sentinel` **249s**，均落在历史 p50（235s）附近；`build` 成功，app + nginx 两个镜像已推 GHCR 与阿里云 CR。**同一条 main 线上「改前挂、改后 284s」，是干净的对照**（且这一次用的是与挂起时同一套 CI 环境，故能排除「环境变了」）。
+- **防护（已加，`776c733`）**：`timeout-minutes: 40` 加到 `gate` 与 `sentinel` 两个 job 上 —— 到点即收场（第 3、4 次就是这么结束的，conclusion 记 `cancelled`），「挂住」从此不再白占 runner 到撞 360 分钟上限（同形先例：`docker push` 那次挂死 2h40m）。**这个防护只让挂死可见，不消除挂死** —— 挂死本身由 `70cdba1` 消除（根因见上）。防护保留：它是「再挂一次也落进红」的底线，与本条是否是根因无关。
 - **统计 p50 / max 的原样命令**（取值依据 = 最近 **46 次**成功 run 的本步耗时：p50 = **235s**、最大 = **714s**，其余落在 169–321s；**40 分钟 = p50 的 10.2 倍、最大值的 3.4 倍**）：
   ```
   gh run list --workflow=build.yml --branch=main --limit 25 --json databaseId,conclusion,createdAt
   gh run view <run-id> --json jobs
   ```
   第二条取每个 job 的 `steps[]` 里 `name == "Run tests"` 的 `startedAt` / `completedAt` 相减；`completedAt` 为 `0001-01-01T00:00:00Z` 的表示该步没跑完（**这次统计就靠这条把两个挂起 run 摘出去的**）。**只点名命令、不入库数据文件** —— 样本随时可用上面两条重取。
-- **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（第一次）、`gh run view 35716206496`（第二次）—— 本仓 CI 不出产物，**run id 就是证据坐标**。
+- **判据命令**：`git grep -n 'timeout-minutes: 40' -- .github/workflows/build.yml`（应给 2 行，分别在 `test` 与 `upstream-drift` job 上）。复现证据走 CI 侧：`gh run view 35703112463`（第一次）、`gh run view 35716206496`（第二次）、`gh run view 35747175886`（第三次）、`gh run view 35747536487`（第四次）、`gh run view 35750857228`（修复后的对照，全绿）—— 本仓 CI 不出产物，**run id 就是证据坐标**。
 
 **123. `chat_engine.py:637/655` 把「不同事件循环」的报错当非致命吞掉 —— 故障被静默掩盖** —— 状态：**记账**
 - **归属**：D 组。
@@ -1561,6 +1581,23 @@ PROBE_IMAGE         false
 - **后果二**：存失败时 `greeting_data` 保持 `None`，整条问候从返回体里消失 —— 用户看不到问候，也看不到任何提示，只当今天没有重逢问候。附带一处：同文件 `:338` 的 `_visit_count >= 3 and not greeting_data` 会把「存失败」读成「没生成」，于是转而走按到访次数觉察那条路。
 - **为什么只记不修**：两处都不在 94 已定的四条口径内 —— 口径管的是「聊天里逐条消息」，开场白是会话种子、重逢问候是进场的额外一句。要不要给它们也标「未保存」，先得定这两条消息在前端有没有落脚点（开场白有气泡、问候目前只在返回体里）。**待产品拍板**，不自行扩口径。
 - **判据命令**：`git grep -n "nonfatal(" -- web/routers/distill.py web/routers/history.py` —— 逐条看「块内除了保存还包了什么」。读数（2026-09-23 现跑）：两文件**各 1** 处（`distill.py:1467`、`history.py:323`），且两处的块内都不止保存一笔（前者含 `engine.history` 追加与 `message_ids` 登记，后者含问候**生成**）。
+
+**124. VoicePanel 的删除是「删两次」—— 确认框形同虚设，第二次必 404** —— 状态：**已修**（`015cae9`，2026-09-23）
+- **归属**：Spec 3（S5）。记账缘由：114 的「例外清单之外、仍未接线」里点了这四个坐标（`VoicePanel.jsx:134/216/590/607`），读上下文时发现根因不只是「没接错误处理」。
+- **形态（修前）**：`handleCustomDelete`（`:124`）/ `handleRefDelete`（`:212`）**自己 await 了删除**，同时又 `setDeleteVoiceConfirm` / `setDeleteRefConfirm` 打开确认框；确认框的 `onConfirm`（`:585` / `:607`）**再删一次**。即：点一下按钮就删了（确认框出现在删除已经发出之后），用户再点「确定」是**第二次** DELETE。
+- **根因**：`5445431c`（「replace window.confirm with ConfirmModal across 3 files」）把 `if (!window.confirm(...)) return` 换成 `setDeleteVoiceConfirm(...)` 时，**只换了判断、没删掉紧随其后的删除调用** —— 确认从同步门变成了状态位，后面那段照旧执行。`git log -S "setDeleteVoiceConfirm(voiceId)"` 一条命中即可定位。
+- **为什么今天才看得见**：第二次 DELETE 打的是已经删掉的资源，后端不是幂等的 —— `voice.py:178` 对自定义音色回 404「音色不存在」、`voice.py:411` 对参考音频回 404「角色卡不存在」。原代码把这两处都 `catch { /* store handles */ }` 吞了（而 store 里根本没有那句注释所说的处理），所以**把错误接上屏的第一步，就会在正常删除路径上弹出一个假错误** —— 这才是本条必须与 114 的接线同时处理的理由。
+- **修法（`015cae9`）**：确认框成为**唯一**删除落点 —— 两个 handler 只留 `setXxxError('') + setDeleteXxxConfirm(...)`（`deletingId` 的置位/复位跟着落到 `onConfirm`），删除、成功文案、失败 `setCustomError` / `setRefError` 全在 `onConfirm` 里各做一次。四句 `/* store handles */` 假注释随之删净（全文件 `git grep -n "store handles"` → 0 行）。
+- **行为变化（不是纯内部重构）**：删自定义音色、删参考音频**现在真的需要点确认**。这正是确认框本来的意图，但用户此前感知不到（点下去就已经删了）。
+- **是不是乐观更新 / 要不要回滚**：**都不是、不需要**。两个 store action（`useAppStore.js` 的 `deleteVoiceRef:441` / `deleteCustomVoice:497`）结构是 `await fetchWithTimeout(DELETE)` → 再向服务端重拉（`loadVoiceRef` / `loadVoices`）；本地状态**没有任何先行删除**，失败时列表压根没动过，无物可回滚。改动只是把这个「失败抛出」的契约写成注释钉住（两处各一行），并且**没有**给它加重试或假默认值。
+- **本份同时接线（114 点名的其余坐标，同一 commit）**：`TextPanel.jsx` 的两个 `startChat` 落点（分组卡菜单 `:684`、版本行菜单 `:753`）改为 `setError(err.message)`；`ChatArea.jsx` 记忆面板的 `alert('添加失败'/'更新失败')` 改为面板自己的 `memoryError` + `ErrorBox`（**面板是 `position: fixed; z-index: 1000` 的覆盖层，ChatView 顶层那个 ErrorBox 会被它盖住，所以必须在面板内**）；`MinePage.jsx:91` 的 `exportCard(...).catch(alert)` 是最后一处「用 alert 报请求失败」，同改 `setError`。
+- **本份产生并当场修掉的问题（自我披露）**：S2（`841b113`）把 `TextPanel.jsx` 内层组件 `CharacterManagement` 的 `console.error('Delete card failed:', err)` 改成了 `setLocalError(err.message)`，**而 `localError` 只在外层 `TextPanel` 上声明** —— 删卡失败时抛 `ReferenceError: setLocalError is not defined`，错误既不显示、还以未捕获异常丢掉。S5 给内层组件加了自己的 `error` + `ErrorBox` 并改回本层状态（`015cae9`）。红源见下第 ② 条，变异正是**改回 `setLocalError`**（实测报文逐字为 `ReferenceError: setLocalError is not defined`）。
+- **红源（3 个新文件，10 条）**：
+  - `web/frontend/src/components/__tests__/VoicePanelDeleteConfirm.test.jsx`（6 条）：① 点删除只开确认框、**不发请求**；② 点确认后 DELETE **恰好 1 次**；③ 删除失败时 `customError` 上屏且音色仍在列表；④ 参考音频同形；⑤⑥ store 层 `deleteCustomVoice` / `deleteVoiceRef` 失败时 **reject**。
+  - `web/frontend/src/components/__tests__/TextPanelDeleteError.test.jsx`（3 条）：删卡失败错误上屏（②的锁）、分组卡 `startChat` 失败上屏、**版本行** `startChat` 失败上屏（两个落点分别锁，避免只锁一处的仪器假绿）。
+  - `web/frontend/src/components/__tests__/ChatAreaMemoryError.test.jsx`（1 条）：记忆「添加」失败 → 面板**内**出现 `.error-box`，且 `window.alert` **未被调用**。
+- **变异实测**：① 把 `await deleteCustomVoice(voiceId)` 放回 `handleCustomDelete` ⇒ 「不发请求」与「只 1 次」**双双红**（实测 0 vs 1、1 vs 2）；② 给 `deleteCustomVoice` 包回静默 try/catch ⇒ store 两条**红**（`promise resolved "undefined" instead of rejecting`）且「失败上屏」红；③ 改回外层 `setLocalError` ⇒ TextPanel 删卡用例**红**（`ReferenceError: setLocalError is not defined`）；④ 记忆「添加」的 catch 改回 `alert('添加失败')` ⇒ ChatArea 用例**红**（alert 被调用）。逐字节还原后 **10/10 绿**。
+- **判据命令（修复后）**：`git grep -n "store handles" -- web/frontend/src`（应给 **0 行**）；`git grep -n "deleteCustomVoice\|deleteVoiceRef" -- web/frontend/src/components/VoicePanel.jsx`（应给 **3 行/3 行**形态：handler 里已无调用，只剩 `useAppStore` 选取与 `onConfirm` 里那一次）；`git grep -n "alert(" -- web/frontend/src` 剩余 **6 行**，逐条读上下文全部是**提交前校验 / 浏览器能力提示**，没有一处报请求失败 —— `EditCardModal.jsx:109/115/122`（角色卡字段行数/字数/关系条数上限）、`GroupChatPage.jsx:222`（没 @ 到角色）、`MinePage.jsx:183/219`（浏览器不支持定位 / 定位权限被拒）。**命中数不是判据，「还有没有报请求失败的」才是。**
 
 ### 三之二、特性缺失 / 立项（非缺陷）
 

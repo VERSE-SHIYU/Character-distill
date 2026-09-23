@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import useAppStore, { isTerminal, taskActions } from '../store/useAppStore'
 import { fetchWithTimeout } from '../api/client'
+import { fetchAllCards } from '../api/cards'
 import useSmoothProgress from '../hooks/useSmoothProgress'
 import useIsMobile from '../hooks/useIsMobile'
 import useCanWrite from '../hooks/useCanWrite'
@@ -84,30 +85,21 @@ export default function DistillWorkbench() {
   const [cards, setCards] = useState([])
   const [selKey, setSelKey] = useState(null)
 
-  // 已验收区：逐文本 + 独立卡片（照 CharacterManagement 的数据源，card_json 是字符串）
+  // 文本列表只在挂载时拉一次：loadTexts 每次都 set 一个新数组，
+  // 放进下面那个 effect 的依赖里，空列表会让它自己把自己再触发一遍。
+  useEffect(() => {
+    if (texts.length === 0) loadTexts()
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 已验收区：逐文本 + 独立卡片（数据源和角色管理页同一个入口，card_json 是字符串）
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (texts.length === 0) { loadTexts(); return }
-      const all = []
-      for (const t of texts) {
-        try {
-          const res = await fetchWithTimeout(`/api/distill/cards/by-text/${t.id}`)
-          if (res.ok) {
-            for (const c of await res.json()) all.push(c)
-          }
-        } catch {}
-      }
-      try {
-        const res = await fetchWithTimeout('/api/distill/cards/standalone')
-        if (res.ok) {
-          for (const c of await res.json()) all.push(c)
-        }
-      } catch {}
+      const all = await fetchAllCards(texts)
       if (!cancelled) setCards(all)
     })()
     return () => { cancelled = true }
-  }, [texts, loadTexts])
+  }, [texts])
 
   const taskItems = tasks
   const cardItems = cards

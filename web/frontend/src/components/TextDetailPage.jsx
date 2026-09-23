@@ -105,7 +105,7 @@ export default function TextDetailPage() {
         setNewComment('')
       }
     } catch (err) {
-      console.error('Submit comment failed:', err)
+      setError(err.message)
     } finally {
       setSubmitting(false)
     }
@@ -134,7 +134,7 @@ export default function TextDetailPage() {
         setReplyTo(null)
       }
     } catch (err) {
-      console.error('Reply failed:', err)
+      setError(err.message)
     } finally {
       setReplySubmitting(false)
     }
@@ -160,7 +160,7 @@ export default function TextDetailPage() {
         })
       setComments((prev) => update(prev))
     } catch (err) {
-      console.error('Like failed:', err)
+      setError(err.message)
     }
   }
 
@@ -183,7 +183,7 @@ export default function TextDetailPage() {
       setComments((prev) => removeNested(prev))
       setTotalComments((c) => Math.max(0, c - 1))
     } catch (err) {
-      console.error('Delete comment failed:', err)
+      setError(err.message)
     }
   }
 
