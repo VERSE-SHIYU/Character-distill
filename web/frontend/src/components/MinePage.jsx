@@ -88,7 +88,7 @@ function MineCardMenu({ card, onRefresh }) {
             <button type="button" onClick={(e) => {
               e.stopPropagation()
               setOpen(false)
-              exportCard(card.id, 'raw').catch(err => alert('导出失败：' + err.message))
+              exportCard(card.id, 'raw').catch(err => setError('导出失败：' + err.message))
             }}>下载</button>
             <button type="button" className="mine-card-menu-danger" onClick={handleDelete}>删除</button>
           </div>

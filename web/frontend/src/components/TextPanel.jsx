@@ -525,6 +525,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
   const [editCard, setEditCard] = useState(null)
   const [expandedGroups, setExpandedGroups] = useState({})
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [error, setError] = useState(null)
   const menuRef = useRef(null)
 
   // Close menu on outside click
@@ -584,6 +585,8 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
         </div>
         <button type="button" className="dw-entry-btn" onClick={() => pushView('distillWorkbench')}>蒸馏工作台</button>
       </header>
+
+      {error && <ErrorBox message={error} onDismiss={() => setError(null)} />}
 
       {/* Source filter */}
       {sourceOptions.length > 0 && (
@@ -677,7 +680,9 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                           pushView('chat')
                           try {
                             await startChat(c)
-                          } catch {}
+                          } catch (err) {
+                            setError(err.message)
+                          }
                         }}>
                           聊天
                         </button>
@@ -745,7 +750,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
                                 <button type="button" onClick={async () => {
                                   setMenuOpen(null)
                                   pushView('chat')
-                                  try { await startChat(vc) } catch {}
+                                  try { await startChat(vc) } catch (err) { setError(err.message) }
                                 }}>
                                   聊天
                                 </button>
@@ -822,7 +827,7 @@ function CharacterManagement({ setView, selectText, startChat, pushView, setCurr
             })
             setAllCards((prev) => prev.filter((x) => x.id !== id))
           } catch (err) {
-            setLocalError(err.message)
+            setError(err.message)
           }
         }}
         onCancel={() => setDeleteTarget(null)}
