@@ -69,7 +69,7 @@ from routers.auth import (
 from inter_node_auth import validate_inter_node_secret
 from routers.admin import require_admin, router as admin_router
 from cross_border_sync import _cross_border_resync_loop
-from deps import get_config, get_storage, reset_llm_and_dependents, _session_cleanup_loop
+from deps import get_config, get_llm, get_storage, reset_llm_and_dependents, _session_cleanup_loop
 from adapters.llm_adapter import llm_error_payload, llm_error_types, user_facing_error
 from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
@@ -530,6 +530,9 @@ async def update_settings_config(
             "summary_threshold": int(llm.get("summary_threshold", 50)),
             "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
             "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
+            # 保存**不拦**：全局 LLM 置 None 是 C4 已定的口径，管理员可能就是有意清空。
+            # 但调用方得知道这件事发生了 —— 没有个人 key 的用户此后一律 503。
+            "llm_available": get_llm() is not None,
         }
     except Exception as exc:
         print(f"[server] Update config failed: {exc}")

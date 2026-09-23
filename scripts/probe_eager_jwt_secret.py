@@ -12,6 +12,10 @@ FastAPI 在**进端点函数体之前**解析依赖树，`Depends` 参数的求�
   - `GET /api/history/list`      受保护                   ⇒ 401（中间件在路由前拦下，
                                                              secret 轮不到读）
 
+**修后（`c417827`）的读数**：两段必须**一致** —— `card/nope` 两段都是 **404**、`tags` 都是
+**200**、`history/list` 都是 **401**。未配置段里的 500 消失，就是这条缺陷被修掉的唯一证据
+（上面那三条「⇒」描述的是修复前的形态，留作复现记录）。
+
 跑法（在仓根，用仓内 .venv）：
     .venv/Scripts/python.exe scripts/probe_eager_jwt_secret.py
 """
@@ -51,7 +55,7 @@ _run(store.create_user(
 deps._storage = store
 
 URLS = [
-    ("GET", "/api/market/card/nope", "公开+适配器(预期: 配置齐全时 404)"),
+    ("GET", "/api/market/card/nope", "公开+适配器(预期: 修后两段都 404)"),
     ("GET", "/api/market/tags", "公开无适配器"),
     ("GET", "/api/history/list", "受保护"),
 ]
