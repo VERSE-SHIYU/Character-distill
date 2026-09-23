@@ -524,6 +524,50 @@ class TestMessageCrud:
         assert len(msgs) == 1
         assert msgs[0]["content"] == "keep"
 
+    async def test_client_key_is_idempotent(self, store, text_id, card_id, session_id):
+        """K2：同 key 写两次 → 同一行（与 SQLite 侧
+        `tests/test_client_key_idempotency.py` 同形同判据）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        first = await store.save_message(session_id, "user", "第一条", "", client_key="k1")
+        second = await store.save_message(session_id, "user", "重放的内容", "", client_key="k1")
+
+        assert second["id"] == first["id"]
+        assert second["content"] == "第一条"
+        assert len(await store.get_messages(session_id)) == 1
+
+    async def test_client_key_unique_index_backstops(self, store, text_id, card_id, session_id):
+        """绕过查重直接插同 key，部分唯一索引必须拦下（SQLite 侧同形见
+        `tests/test_client_key_idempotency.py`）。"""
+        import asyncpg
+
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        async with await store._connect() as conn:
+            await conn.execute(
+                "INSERT INTO messages (session_id, role, content, client_key) VALUES ($1, $2, $3, $4)",
+                session_id, "user", "第一条", "k1",
+            )
+            with pytest.raises(asyncpg.UniqueViolationError):
+                await conn.execute(
+                    "INSERT INTO messages (session_id, role, content, client_key) VALUES ($1, $2, $3, $4)",
+                    session_id, "user", "重放的内容", "k1",
+                )
+
+    async def test_client_key_null_rows_are_unconstrained(self, store, text_id, card_id, session_id):
+        """partial index：NULL key 的行不受约束（老调用点连着写两条相同内容是对的）。"""
+        await store.save_text(text_id, "src.txt", "source")
+        await store.save_card(card_id, text_id, "Char", json.dumps({"name": "Char"}))
+        await store.save_session(session_id, card_id, "", "")
+
+        await store.save_message(session_id, "user", "同样的内容", "")
+        await store.save_message(session_id, "user", "同样的内容", "")
+        assert len(await store.get_messages(session_id)) == 2
+
 
 # ── User CRUD ────────────────────────────────────────────────────────────────
 
@@ -668,6 +712,18 @@ class TestGroupSessionCrud:
         await store.create_group_session(gid, "Group A", [], user_id=uid)
         sessions = await store.list_group_sessions(uid)
         assert any(s["id"] == gid for s in sessions)
+
+    async def test_group_message_client_key_is_idempotent(self, store):
+        gid = f"grp_{uuid.uuid4().hex}"
+        first = await store.save_group_message(
+            gid, "张三", "assistant", "第一条", client_key="k1")
+        second = await store.save_group_message(
+            gid, "张三", "assistant", "重放的内容", client_key="k1")
+
+        assert second == first
+        rows = await store.get_group_messages(gid)
+        assert len(rows) == 1
+        assert rows[0]["content"] == "第一条"
 
 
 # ── Follow / DM ──────────────────────────────────────────────────────────────

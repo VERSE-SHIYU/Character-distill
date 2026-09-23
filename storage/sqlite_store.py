@@ -120,6 +120,11 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 索引必须排在它之后 —— 存量库里同一草稿可能有多张存活副本，回填不加收敛就撞唯一索引，
     # 两个顺序都让 init 失败（实测）。
     "090_published_from_live_uniq.sql",
+    "092_message_client_key.sql",
+    # 加列与建唯一索引拆成两份、且索引排在后面：`_apply_migration` 的判据是「脚本里每个
+    # ADD COLUMN 的列都已存在 → 整份跳过」。索引若与 092 同文件，首轮之后那份脚本恒被跳过，
+    # 索引就只剩一次机会（那一轮失败便永远只有列、没有索引，且不报错）。先例 088 → 090。
+    "093_message_client_key_uniq.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -2184,6 +2189,7 @@ class SQLiteStore(StorageBase):
         *,
         reply_to_id: int | None = None, reply_to_preview: str = "",
         retracted: bool = False, evidence: str | None = None,
+        client_key: str | None = None,
     ) -> dict:
         """Save one message and touch session updated_at.
 
@@ -2192,15 +2198,32 @@ class SQLiteStore(StorageBase):
         后它又出现。挪进事务后读回失败随事务回滚，**异常 ⇔ 没入库**才成立。
         （pg 侧本就在事务内读回；残留风险只剩「COMMIT 应答在网络上丢失」，那一步无法
         与「没提交」区分，见 AGENTS.md 台账。）
+
+        `client_key` 非空时幂等：先在**同一事务内**按 `(session_id, client_key)` 查，命中
+        就原样返回那一行（含它原来的内容）、不再插入。补写队列
+        （`core/message_outbox.py`）靠它把「重放」收敛成一行；(session_id, client_key)
+        上的部分唯一索引是兜底（迁移 092/093），不是主路径。为 None 时行为与加它之前一字不差。
         """
         try:
             async with await self._connect() as conn:
+                if client_key is not None:
+                    dup_cursor = await conn.execute(
+                        """
+                        SELECT id, session_id, role, content, rag_context, created_at, reply_to_id, reply_to_preview, retracted, evidence
+                        FROM messages
+                        WHERE session_id = ? AND client_key = ?
+                        """,
+                        (session_id, client_key),
+                    )
+                    dup = await dup_cursor.fetchone()
+                    if dup is not None:
+                        return self._row_to_dict(dup) or {}
                 cursor = await conn.execute(
                     """
-                    INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO messages (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence, client_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence),
+                    (session_id, role, content, rag_context, reply_to_id, reply_to_preview, retracted, evidence, client_key),
                 )
                 await conn.execute(
                     "UPDATE sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -2382,14 +2405,26 @@ class SQLiteStore(StorageBase):
     async def save_group_message(
         self, group_id: str, speaker: str, role: str, content: str,
         speaker_card_id: str = "", reply_to_id: int | None = None,
-        reply_to_preview: str = "",
+        reply_to_preview: str = "", *, client_key: str | None = None,
     ) -> int:
+        """`client_key` 非空时幂等，语义与 `save_message` 同一份（见那里的 docstring）。
+
+        去重范围是 `(group_id, client_key)`：不同群用同一个 key 各写一行。
+        """
         try:
             async with await self._connect() as conn:
+                if client_key is not None:
+                    dup_cursor = await conn.execute(
+                        "SELECT id FROM group_messages WHERE group_id = ? AND client_key = ?",
+                        (group_id, client_key),
+                    )
+                    dup = await dup_cursor.fetchone()
+                    if dup is not None:
+                        return int(dup[0])
                 cursor = await conn.execute(
-                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview),
+                    """INSERT INTO group_messages (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview, client_key)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (group_id, speaker, role, content, speaker_card_id, reply_to_id, reply_to_preview, client_key),
                 )
                 await conn.commit()
                 return cursor.lastrowid
