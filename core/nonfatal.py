@@ -7,7 +7,8 @@
 在仓里被手写了十来遍，于是「沉默」也被手写了十来遍。
 
 **为什么不用 `contextlib.suppress`**：它按类型静默丢弃 —— 不记录，也不区分
-「控制流」与「失败」。这里要的恰好相反：吞掉，但以 ERROR 上报，并放行取消。
+「控制流」与「失败」。这里要的恰好相反：吞掉，但以 ERROR（或调用方点名的
+`level`）上报，并放行取消。
 
 **为什么带 `source` / `what`**：面板上只有一行文本。读的人需要知道是谁、在哪一步
 失败 —— `source` 是子系统名（`"chat"`），`what` 是动宾短语（`"save assistant message"`），
@@ -45,10 +46,17 @@ class NonFatalOutcome:
 
 
 @asynccontextmanager
-async def nonfatal(source: str, what: str) -> AsyncIterator[NonFatalOutcome]:
+async def nonfatal(
+    source: str, what: str, *, level: int = logging.ERROR,
+) -> AsyncIterator[NonFatalOutcome]:
     """吞掉块内异常，并以一条 ERROR 上报到日志面板；结果对象告知调用方成没成。
 
     不带 `as` 的写法（`async with nonfatal(...)`）照旧可用 —— 不关心结果的就别接。
+
+    **`level` 是关键字参数，默认不变（ERROR = 会发告警邮件）。** 口径只有两档：
+    「数据没存进去 / 用户的请求失败了」记 ERROR；「已经兜底、不影响结果的后台动作」
+    （好感度评估、阅读进度、预热、缓存）记 WARNING —— 后者仍上面板（面板收 WARNING+），
+    但不发信。写成 ERROR 的代价是真会给人发邮件，所以默认档必须留在「这次真的没成」上。
 
     **异常只在最终吞掉它的地方记录一次。** 上游若还会重抛（例如 storage 层的
     `print + raise`），不要在那里再包一层本构造 —— 同一次失败会记成两条。
@@ -63,7 +71,8 @@ async def nonfatal(source: str, what: str) -> AsyncIterator[NonFatalOutcome]:
         raise
     except Exception as exc:
         outcome.failed = True
-        _logger.error(
+        _logger.log(
+            level,
             "[%s] %s failed (non-fatal): %s: %s",
             source, what, type(exc).__name__, exc,
             exc_info=True,
