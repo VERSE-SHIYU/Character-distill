@@ -111,6 +111,29 @@ def _jwt_secret_for_tests(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", TEST_JWT_SECRET)
 
 
+@pytest.fixture
+def restore_app_lifespan_globals():
+    """还原生产 app 的 lifespan 装上的**进程级全局**。
+
+    `with TestClient(server.app)` 会真跑 lifespan，它注册 LLM 守卫（`set_call_guard`）
+    与主 loop 投递器（`set_main_loop`，见 `web/server.py` 的 `_lifespan`）。两者都是进程
+    级全局、退出时不注销，投递器还指着**已经关掉的 loop** —— 同会话后面任何直接调适配器
+    出站的用例会凭空被门管住，在**自己那条断言之前**就报 `LLMCallerMissing`。症状只在
+    跨文件跑时出现（单文件绿），最难查的那种。
+
+    用生产 app 跑 lifespan 的用例都该声明它。`tests/test_llm_access_gate.py` 里那处没
+    改用它 —— 那条自带 `_snapshot` 并**顺带断言**启动后的守卫身份，是它判据的一半。
+    """
+    from adapters import llm_adapter
+    from core import scheduling
+
+    guard = llm_adapter.get_call_guard()
+    submitter = scheduling.get_loop_submitter()
+    yield
+    llm_adapter.set_call_guard(guard)
+    scheduling.set_loop_submitter(submitter)
+
+
 class EnvironmentRequirement:
     """一条「本用例需要某个外部环境」的声明，把三件事绑在同一处：
 

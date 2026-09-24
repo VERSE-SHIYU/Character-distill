@@ -78,6 +78,7 @@ from storage.base import StorageBase
 from core.log_collector import install_log_collector
 from core.stdout_logging import install_stdout_logging
 from core.alerting import install_alert_handler
+from core.error_reporting import init_error_reporting
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,12 @@ else:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # 门在**启动动作的最前面**：守卫是进程级全局，装配期注册（与 `set_main_loop`
-    # 同一处形态）。放第一位是因为启动过程本身若出现 LLM 调用，门必须在那一刻已成立。
+    # 上报接在第一位：它不发 LLM 调用，放在门之前不破坏下面那条不变量；放最前是为了
+    # 收到**启动期自身**抛出的错 —— 排在后面的装配项一旦在启动时炸，这条出口还没接上。
+    init_error_reporting()
+
+    # 门必须在**任何可能发起 LLM 调用的装配项**之前成立：守卫是进程级全局，装配期
+    # 注册（与 `set_main_loop` 同一处形态）。
     #
     # **不放 import 期**：`import web.server` 改变进程级策略，会让同一进程里任何
     # 不启 app 的代码（适配器单测、脚本）凭空被门管住 —— 序依赖随之而来（谁先 import
