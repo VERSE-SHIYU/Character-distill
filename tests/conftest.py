@@ -71,7 +71,7 @@ def pytest_sessionstart(session):
     if name is None:
         pytest.exit(
             "测试库连不上（TEST_DATABASE_URL 指向的 PG 不可达）。"
-            "先运行 `docker compose -f docker-compose.test.yml up -d` 再跑测试。",
+            "先运行 `docker compose -f docker-compose.test.yml up -d --wait` 再跑测试。",
             returncode=1,
         )
     if not is_test_database(name):

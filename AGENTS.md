@@ -50,7 +50,7 @@
 - **调试脚本不入 main**：一次性复现/调试脚本必须留在 `.gitignore` 覆盖的本地目录（如 `scripts/` 或 `e2e/scratch/`），绝不 `git add` 入库。**但被正文引用数字的探针，其产物经 `tests/perf/evidence_writer.py` 写入 `docs/evidence/` 并登记清单；这不是例外，是该类产物的唯一路径** —— 落点固定、写时按白名单脱敏、登记在写入时完成，三件都由出口强制，不由作者记性保证。正文引用这类数字一律写 `ev:<id>`，契约见 `docs/evidence/README.md`
 - **发现 spec 外 bug 先报告**：执行过程中发现未纳入当前 spec 的 bug — 停下，口头报告根因与修复方案，经确认后才单独立项修复
 - **存储改动只保证 PG（2026-09-24 起）**：新的存储改动只保证 PG 正确；SQLite 只同步到「接口还能跑」为止，不为它写用例、不为它做迁移。SQLite 自 2026-09-24 起不再测试、不再维护，计划择期退役
-- **跑测试前先起测试库**：本地一律 `docker compose -f docker-compose.test.yml up -d`，测试连它的 `charsim_test`（55432）。`tests/conftest.py` 会话开始时核一次库名，不以 `_test` 结尾即整场中止 —— 开发库 `charsim` 不再有任何被测试碰到的路径
+- **跑测试前先起测试库**：本地一律 `docker compose -f docker-compose.test.yml up -d --wait`，测试连它的 `charsim_test`（55432）。`tests/conftest.py` 会话开始时核一次库名，不以 `_test` 结尾即整场中止 —— 开发库 `charsim` 不再有任何被测试碰到的路径
 
 ## 蒸馏管线
 

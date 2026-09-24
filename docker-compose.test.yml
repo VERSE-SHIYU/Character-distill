@@ -1,7 +1,7 @@
 # ============================================================
 # 测试专用 PG —— 测试一律连这个库，护住开发库
 #
-# 启动：docker compose -f docker-compose.test.yml up -d
+# 启动：docker compose -f docker-compose.test.yml up -d --wait
 # 关闭并清空：docker compose -f docker-compose.test.yml down
 #
 # 与 docker-compose.local.yml 的关键区别（不是「另一份开发编排」）：
