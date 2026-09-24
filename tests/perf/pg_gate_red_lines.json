@@ -101,7 +101,7 @@
         0
       ]
     ],
-    "G-9  只改 local 一份的 interval（两份定义漂移）": [
+    "G-9  只改 local 一份的 interval（多份定义漂移）": [
       [
         "tests/test_pg_gate.py",
         "assert len(by_hc) == 1, ( \"postgres 的 healthcheck 出现了多份不一致的定义（或一份都没有），\" f\"「改一处、另一处漂移」的代价已经发生：{by_hc}\")",
