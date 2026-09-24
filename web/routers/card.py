@@ -58,10 +58,7 @@ async def save_card_avatar(
         raise HTTPException(404, "Card not found")
     if not body.data or len(body.data) < 10:
         raise HTTPException(400, "Avatar data too short")
-    try:
-        await storage.save_card_avatar(card_id, user["id"], body.data)
-    except Exception as exc:
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    await storage.save_card_avatar(card_id, user["id"], body.data)
     return {"ok": True}
 
 

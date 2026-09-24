@@ -322,13 +322,7 @@ async def create_group(
         if not card_rec:
             raise HTTPException(404, f"角色卡 {card_id} 不存在")
 
-        try:
-            card = CharacterCard.model_validate_json(card_rec["card_json"])
-        except Exception as exc:
-            import traceback
-            print(f"[GroupCreate ERROR] card_id={card_id} model_validate_json: {exc}")
-            traceback.print_exc()
-            raise HTTPException(500, "操作失败，请稍后重试") from exc
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
 
         # Track played character name
         if persona_type == "character" and card_id == persona_card_id:
@@ -517,12 +511,7 @@ async def send_message(
         raise HTTPException(410, "群聊已被删除")
 
     async with group.lock:
-        try:
-            resp = await group.send(req.target_card_id, req.message)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(500, "操作失败，请稍后重试") from exc
+        resp = await group.send(req.target_card_id, req.message)
 
     # Persist to DB
     reply_preview = ""
