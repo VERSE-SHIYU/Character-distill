@@ -134,6 +134,15 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # ADD COLUMN 的列都已存在 → 整份跳过」。索引若与 092 同文件，首轮之后那份脚本恒被跳过，
     # 索引就只剩一次机会（那一轮失败便永远只有列、没有索引，且不报错）。先例 088 → 090。
     "093_message_client_key_uniq.sql",
+    # 本文件原编 092，与并线时 main 已占用的 092（message_client_key）撞号 —— 撞的是编号不是
+    # 内容，按「按 main 上现有最大编号顺延」改号为 094，两份都留。编号只在段内单调，
+    # 排在 AFTER 段末尾仍满足「晚于 056」。
+    # 094 的 DROP 只对**老库**真正执行一次：056 已空操作，新库从没建过这两列，于是
+    # `_apply_migration` 的「整份跳过」条件（每句 DROP 的列都已不在）当场成立，重启不再
+    # 重写整张 texts（它存的是全文）。老库仍靠这里的那一次 DROP 退役。
+    # 排在 AFTER 段即满足「晚于 056」—— 老库升级时必须先让 BEFORE 段整段跑完。
+    # 判据见 tests/test_sqlite_fresh_schema.py::test_retired_texts_columns_stay_retired_after_restart。
+    "094_retire_coref_columns.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -149,9 +158,14 @@ _MIGRATIONS_NOT_APPLIED: dict[str, str] = {
     "037_placeholder.sql": "占位编号，内容只有 SELECT 1，无 schema 变更",
 }
 
-# `ALTER TABLE t ADD COLUMN c ...;` —— 迁移里唯一「重复执行即报错」的形态。
+# `ALTER TABLE t ADD COLUMN c ...;` / `ALTER TABLE t DROP COLUMN c;` —— 迁移里两种
+# 「重复执行即报错」的列改写形态（SQLite 没有 `IF NOT EXISTS` / `IF EXISTS` 后缀）。
 _ADD_COLUMN_RE = re.compile(
     r"ALTER\s+TABLE\s+(?P<table>\w+)\s+ADD\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
+    re.IGNORECASE,
+)
+_DROP_COLUMN_RE = re.compile(
+    r"ALTER\s+TABLE\s+(?P<table>\w+)\s+DROP\s+COLUMN\s+(?!IF\b)(?P<column>\w+)[^;]*;",
     re.IGNORECASE,
 )
 
@@ -437,28 +451,37 @@ async def _rebuild_cards_published_from(conn: Any) -> None:
 async def _apply_migration(conn: Any, path: Path) -> None:
     """执行一份迁移脚本，幂等靠**读现状**（PRAGMA table_info），不靠猜错误串。
 
-    SQLite 没有 `ADD COLUMN IF NOT EXISTS`（PG 才有），`ALTER TABLE ... ADD COLUMN` 是迁移
-    脚本里唯一「重复执行即报错」的形态。规则：
+    SQLite 没有 `ADD/DROP COLUMN IF [NOT] EXISTS`（PG 才有），两种列改写在脚本里都
+    「重复执行即报错」——方向相反，所以「已生效」的判据也相反：
 
-    - 脚本里每个 ADD COLUMN 的列都已存在 → 这份脚本早已应用过，**整份跳过**
+    - `ADD COLUMN`：列**已在** ⇒ 这句早已生效
+    - `DROP COLUMN`：列**已不在** ⇒ 这句早已生效
+
+    规则（两种形态共用同一套「读现状」）：
+
+    - 每句 ADD 的列都在、且每句 DROP 的列都不在 → 这份脚本早已应用过，**整份跳过**
       （这类脚本尾部常跟一段数据回填 UPDATE/INSERT，语义上只属于首次应用）
-    - 有列缺失 → 剥掉那些**已存在**的 ADD COLUMN，其余照常执行
+    - 否则剥掉那些**已生效**的列改写（ADD 列已在 / DROP 列已不在），其余照常执行
 
     **没有 except**：真失败照常上抛。此前 74 个块各自 `except Exception: print` 把它吞成
     「初始化成功」——「已建库重跑」这一正常路径每次都打一行假失败，而真正跑错也只留一行 print。
     """
     sql = path.read_text(encoding="utf-8")
     add_cols = list(_ADD_COLUMN_RE.finditer(sql))
-    if add_cols:
+    drop_cols = list(_DROP_COLUMN_RE.finditer(sql))
+    if add_cols or drop_cols:
         present: dict[str, set[str]] = {}
-        for m in add_cols:
+        for m in (*add_cols, *drop_cols):
             table = m.group("table")
             if table not in present:
                 present[table] = await _existing_columns(conn, table)
-        if all(m.group("column") in present[m.group("table")] for m in add_cols):
+        if (all(m.group("column") in present[m.group("table")] for m in add_cols)
+                and all(m.group("column") not in present[m.group("table")] for m in drop_cols)):
             return
         sql = _ADD_COLUMN_RE.sub(
             lambda m: "" if m.group("column") in present[m.group("table")] else m.group(0), sql)
+        sql = _DROP_COLUMN_RE.sub(
+            lambda m: "" if m.group("column") not in present[m.group("table")] else m.group(0), sql)
     await conn.executescript(sql)
     await conn.commit()
 
@@ -478,7 +501,9 @@ class _ConnectionContext:
     为什么把提交收在这里、而不是「每个写方法自己 commit」（缺陷 24，第八次同族显形）：
     后者把正确性寄托在人的记忆上 —— 忘了不报错、不告警，只是数据不在。实测两处漏网：
     `add_post_comment` 漏 commit，函数照常返回构造好的 dict，前端把评论显示出来、刷新即消失；
-    `cleanup_empty_cards` 同形，返回真实的 `rowcount` 却什么都没写。收口后**新写方法完全
+    另一处同形（UPDATE 后无 commit，返回真实的 `rowcount` 却什么都没写）已在 2026-09-22 随
+    缺陷 86 收尾删除 —— 全仓 `save_card` 的写点都写 `card.model_dump_json()`，无空卡来源。
+    收口后**新写方法完全
     不知道这件事也不会错**；`delete_user`（单连接 12 条写）/ `hard_delete_text`（8 条）等 27 个
     多步写方法依赖的原子性也由此保留（它们本就在末尾显式 commit，这里是兜底而非替代）。
 
@@ -756,15 +781,20 @@ class SQLiteStore(StorageBase):
             row = await cursor.fetchone()
             return self._row_to_dict(row)
 
-    async def save_text(self, id: str, filename: str, content: str, title: str = "", description: str = "", text_type: str = "story", original_char_count: int | None = None, user_id: str = "", content_resolved: str = "", coref_resolved: int = 0) -> dict:
+    async def save_text(
+        self, id: str, filename: str, content: str,
+        *,
+        title: str = "", description: str = "", text_type: str = "story",
+        original_char_count: int | None = None, user_id: str = "",
+    ) -> dict:
         """Save or update one text record."""
         try:
             char_count = len(content)
             async with await self._connect() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO texts (id, filename, content, char_count, title, description, text_type, original_char_count, user_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         filename = excluded.filename,
                         content = excluded.content,
@@ -773,29 +803,14 @@ class SQLiteStore(StorageBase):
                         description = excluded.description,
                         text_type = excluded.text_type,
                         original_char_count = excluded.original_char_count,
-                        user_id = excluded.user_id,
-                        content_resolved = excluded.content_resolved,
-                        coref_resolved = excluded.coref_resolved
+                        user_id = excluded.user_id
                     """,
-                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id, content_resolved, coref_resolved),
+                    (id, filename, content, char_count, title, description, text_type, original_char_count, user_id),
                 )
                 await conn.commit()
             return await self.get_text_owned(id, user_id) or {}
         except Exception as exc:
             print(f"[SQLiteStore] Save text failed: {exc}")
-            raise
-
-    async def update_text_resolved(self, text_id: str, content_resolved: str) -> None:
-        """Write back coref-resolved content and mark coref_resolved=1."""
-        try:
-            async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE texts SET content_resolved=?, coref_resolved=1 WHERE id=?",
-                    (content_resolved, text_id),
-                )
-                await conn.commit()
-        except Exception as exc:
-            print(f"[SQLiteStore] update_text_resolved failed: {exc}")
             raise
 
     async def update_text_cover(self, text_id: str, cover_data: str) -> None:
@@ -816,7 +831,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ?",
                     (id,),
                 )
                 row = await cursor.fetchone()
@@ -830,7 +845,7 @@ class SQLiteStore(StorageBase):
         try:
             async with await self._connect() as conn:
                 cursor = await conn.execute(
-                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at, content_resolved, coref_resolved FROM texts WHERE id = ? AND user_id = ?",
+                    "SELECT id, filename, title, description, content, char_count, created_at, text_type, original_char_count, user_id, deleted_at FROM texts WHERE id = ? AND user_id = ?",
                     (id, user_id),
                 )
                 row = await cursor.fetchone()
@@ -2367,8 +2382,9 @@ class SQLiteStore(StorageBase):
 
     async def save_group_message(
         self, group_id: str, speaker: str, role: str, content: str,
+        *,
         speaker_card_id: str = "", reply_to_id: int | None = None,
-        reply_to_preview: str = "", *, client_key: str | None = None,
+        reply_to_preview: str = "", client_key: str | None = None,
     ) -> int:
         """`client_key` 非空时幂等，语义与 `save_message` 同一份（见那里的 docstring）。
 
@@ -3987,7 +4003,14 @@ class SQLiteStore(StorageBase):
 
     # ── Distill task persistence ────────────────
 
-    async def create_distill_task(self, task_id: str, user_id: str, text_id: str, character: str = "", status: str = "queued", progress_pct: int = 0, message: str = "", card_id: str = "", awakening: str = "", chunk_size: int | None = None, overlap: int | None = None, text_fingerprint: str = "") -> dict | None:
+    async def create_distill_task(
+        self, task_id: str, user_id: str, text_id: str,
+        *,
+        character: str = "", status: str = "queued", progress_pct: int = 0,
+        message: str = "", card_id: str = "", awakening: str = "",
+        chunk_size: int | None = None, overlap: int | None = None,
+        text_fingerprint: str = "",
+    ) -> dict | None:
         """Insert a NEW distillation task row (INSERT-only, no upsert). Returns the stored row.
 
         重复 task_id 抛异常：这里是新铸的 id，冲突是真 bug，不是"请更新已有行"。
@@ -5982,17 +6005,3 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Get all reading progress failed: {exc}")
             raise StoreError("get_all_reading_progress", exc) from exc
-
-    async def cleanup_empty_cards(self, text_id: str, user_id: str) -> int:
-        """Soft-delete cards with empty card_json (cleanup after failed distillation)."""
-        try:
-            now = datetime.now(timezone.utc).isoformat()
-            async with await self._connect() as conn:
-                cursor = await conn.execute(
-                    "UPDATE cards SET deleted_at = ? WHERE text_id = ? AND user_id = ? AND (card_json IS NULL OR card_json = '' OR card_json = '{}')",
-                    (now, text_id, user_id),
-                )
-                return cursor.rowcount
-        except Exception as exc:
-            print(f"[SQLiteStore] Cleanup empty cards failed: {exc}")
-            raise StoreError("cleanup_empty_cards", exc) from exc

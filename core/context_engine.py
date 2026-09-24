@@ -545,7 +545,7 @@ class ContextEngine:
         )
         try:
             filtered = self._llm.chat(filter_prompt, [{"role": "user", "content": "请过滤"}])
-            try_record_usage(self._storage, self._llm, "chat_web_filter", source="ContextEngine")
+            try_record_usage(self._storage, self._llm, action="chat_web_filter", source="ContextEngine")
         except Exception as exc:
             print(f"[ContextEngine] Character filter failed: {exc}")
             return items, ""

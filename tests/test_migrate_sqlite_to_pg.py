@@ -84,8 +84,6 @@ def make_test_sqlite() -> str:
             characters_json TEXT DEFAULT NULL,
             user_id         TEXT DEFAULT NULL,
             visibility      TEXT DEFAULT 'private',
-            content_resolved TEXT DEFAULT '',
-            coref_resolved  INTEGER DEFAULT 0,
             cover_data      TEXT DEFAULT '',
             deleted_at      TEXT DEFAULT '',
             created_at      TEXT DEFAULT CURRENT_TIMESTAMP

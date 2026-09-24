@@ -103,12 +103,12 @@ class _FlakyStore:
         self.wrote.append((role, rec["id"]))
         return rec
 
-    async def save_group_message(self, group_id, speaker, role, content, speaker_card_id="", **kw):
+    async def save_group_message(self, group_id, speaker, role, content, *, speaker_card_id="", **kw):
         if role in self.fail_roles:
             raise RuntimeError(f"{role} save down")
         # 与一对一的 `save_message` 不同：这一格返回的是行号（int），不是记录。
         row_id = await self._inner.save_group_message(
-            group_id, speaker, role, content, speaker_card_id, **kw,
+            group_id, speaker, role, content, speaker_card_id=speaker_card_id, **kw,
         )
         self.wrote.append((role, row_id))
         return row_id

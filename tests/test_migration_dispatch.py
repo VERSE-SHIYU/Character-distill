@@ -101,6 +101,43 @@ def test_live_published_uniq_index_has_one_unskippable_source():
         "回填并收敛必须排在它前面。")
 
 
+async def test_already_satisfied_drop_column_is_stripped(tmp_path):
+    """DROP 支的判据与 ADD 支**对称**：列已不在 ⇒ 这句已生效 ⇒ 剥掉，不是再发一次裸 DROP。
+
+    SQLite 没有 `DROP COLUMN IF EXISTS`，所以「已生效的那句」不剥掉就是一条会抛
+    `no such column` 的死脚本。剥除在**同一份脚本内逐句**生效，不是「整份跳过」——
+    整份跳过只在「每句 DROP 都已生效」时触发，而真实形态是**一份里有的已生效、有的没有**
+    （早先的迁移删过一列，后来这份文件又把它连同新列一起写了一遍）。本用例造的就是这个形态。
+
+    **变异 = 删掉 `_apply_migration` 里的 `_DROP_COLUMN_RE.sub(...)` 那一句 → 红**
+    （`sqlite3.OperationalError: no such column: gone_col`，因为 `present` 判据算出来了
+    却没用来剥）。删掉整个 `if add_cols or drop_cols:` 块也一样红。
+    """
+    store = sqlite_store.SQLiteStore(str(tmp_path / "drop.db"))
+    mig = tmp_path / "900_drop_probe.sql"
+    # `gone_col` 不在表里（已被早先的迁移删掉）—— 它这一句必须被剥；
+    # `legacy_col` 还在 —— 它这一句必须真执行。两句同处一份文件。
+    mig.write_text(
+        "ALTER TABLE probe DROP COLUMN gone_col;\n"
+        "ALTER TABLE probe DROP COLUMN legacy_col;\n",
+        encoding="utf-8")
+    assert sqlite_store._DROP_COLUMN_RE.findall(mig.read_text(encoding="utf-8")), \
+        "探针失效：正则没认出这两句 DROP，本用例什么也没锁住"
+
+    async with await store._connect() as conn:
+        await conn.execute(
+            "CREATE TABLE probe (id TEXT PRIMARY KEY, legacy_col TEXT DEFAULT '')")
+        await conn.commit()
+        await sqlite_store._apply_migration(conn, mig)
+        cols = await sqlite_store._existing_columns(conn, "probe")
+        assert "legacy_col" not in cols, (
+            f"已在表里的列没被删；实际列={sorted(cols)}")
+        # 再跑一次：这次两句都已生效 → 整份跳过，不得抛
+        await sqlite_store._apply_migration(conn, mig)
+        cols2 = await sqlite_store._existing_columns(conn, "probe")
+    assert "legacy_col" not in cols2, f"第二次跑把列加了回来；实际列={sorted(cols2)}"
+
+
 def test_migration_runner_never_swallows_a_failure():
     """迁移执行区不得有「只 print、从不重抛」的 except 块。
 

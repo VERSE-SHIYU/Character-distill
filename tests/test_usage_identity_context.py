@@ -64,6 +64,7 @@ from storage.sqlite_store import SQLiteStore
 from core import concurrency as C
 from core import scheduling as S
 from core.request_context import Caller, LLM_CALLER, current_user_id
+from core.distiller import IDENTIFY_SYSTEM_PROMPT
 
 _REPO = Path(__file__).resolve().parent.parent
 
@@ -385,7 +386,17 @@ class _FakeLLM:
         return _FakeClient()
 
     async def async_chat(self, system, messages, client=None):
-        return "甲很沉默，说了一句话。", {"prompt_tokens": 21, "completion_tokens": 5}
+        usage = {"prompt_tokens": 21, "completion_tokens": 5}
+        # 识别 Map 原样送的就是这个常量（`_identify_over_chunks` 的 `_build_prompt` 直接
+        # `return IDENTIFY_SYSTEM_PROMPT, chunk`）。**不能按「识别」二字筛** —— 那个词在
+        # 提示词里根本不存在（只在 `IDENTIFY_MERGE_PROMPT` 里，而合并走 chat_stream）。
+        if system == IDENTIFY_SYSTEM_PROMPT:
+            # 合法**空**名单（不是空串、不是失败）：分片全返回 `[]` → `parts` 为空 →
+            # 走 `_identify_over_chunks` 新增的 `if not parts: return []`，不合并、不抛。
+            # 于是「点名蒸馏 + 这本书没有具名角色」照常蒸馏下去，identify 恰好记 1 行；
+            # 若这里换成非空名单，合并会再记 1 行 → 全流程 6 行，与 expected=5 不符。
+            return "[]", usage
+        return "甲很沉默，说了一句话。", usage
 
 
 class _LoopSubmitter:

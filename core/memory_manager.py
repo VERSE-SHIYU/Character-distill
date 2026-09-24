@@ -401,7 +401,7 @@ class MemoryManager:
                     "你是一个善于反思和内省的AI角色。",
                     [{"role": "user", "content": prompt}],
                 )
-                try_record_usage(storage, llm, "memory_reflect", source="MemoryManager")
+                try_record_usage(storage, llm, action="memory_reflect", source="MemoryManager")
                 print(f"[Reflection] LLM reply ({len(reply)} chars): {reply[:300]}")
 
                 insights = [

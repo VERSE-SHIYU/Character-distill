@@ -851,7 +851,7 @@ async def at_reply(
         ai_text = await asyncio.to_thread(
             llm.chat, system_prompt, [{"role": "user", "content": user_content}]
         )
-        try_record_usage(storage, llm, "chat_ai_reply", source="market")
+        try_record_usage(storage, llm, action="chat_ai_reply", source="market")
     except Exception as exc:
         # 上屏不带 `{exc}`：上游/驱动原文只进日志（缺陷 38 同形态）。
         print(f"[market] AI reply failed: {exc}")

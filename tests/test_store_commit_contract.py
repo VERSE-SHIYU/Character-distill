@@ -139,7 +139,11 @@ class TestContextManagerContract:
 
 
 class TestOffendersPersistAcrossConnections:
-    """缺陷现场的两个方法：写入后**新开连接**必须读得到（同连接读会掩盖问题）。"""
+    """缺陷现场：写入后**新开连接**必须读得到（同连接读会掩盖问题）。
+
+    原有两个现场，另一处（UPDATE 后无 commit 的清理方法）已在 2026-09-22 随缺陷 86 收尾
+    整段删除 —— 生产无空卡来源，方法不存在了，锁也随之不存在。
+    """
 
     async def test_add_post_comment(self, tmp_path: Path):
         store, db_path = _fresh_store(tmp_path)
@@ -149,16 +153,6 @@ class TestOffendersPersistAcrossConnections:
         assert out["id"]
         assert _count(db_path, "SELECT count(*) FROM post_comments WHERE id=?", out["id"]) == 1, (
             "add_post_comment 返回了 dict 但没落盘 —— 前端会显示、刷新即消失（缺陷 24 原现场）")
-
-    async def test_cleanup_empty_cards(self, tmp_path: Path):
-        store, db_path = _fresh_store(tmp_path)
-        await store._ensure_initialized()
-        await store.save_text("t1", "f.txt", "content", user_id="u1")
-        await store.save_card("c1", "t1", "hero", "{}", user_id="u1")
-        affected = await store.cleanup_empty_cards("t1", "u1")
-        assert affected == 1, f"应命中 1 张空卡，实际 {affected}"
-        assert _count(db_path, "SELECT count(*) FROM cards WHERE id='c1' AND deleted_at IS NOT NULL") == 1, (
-            "cleanup_empty_cards 返回了真实 rowcount 却没落盘（缺陷 24 同形第二处）")
 
 
 class TestMultiWriteAtomicityPreserved:

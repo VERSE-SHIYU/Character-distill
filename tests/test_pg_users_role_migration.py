@@ -2,7 +2,7 @@
 
 SQLite 侧同一语义由 `tests/test_users_role_migration.py` 钉着，**两侧不能互相当证据**：
 实现机制不同 —— SQLite 靠 `_apply_migration` 的 ADD COLUMN 谓词整份跳过，删列在
-sqlite_store.py 的退役列块里（因为 013 每轮把 is_admin 加回来）；PG 没有账本，靠 024 的
+sqlite_store.py 的退役列块里（因为 013 每轮把 is_admin 加回来）；PG 靠 024 的
 DO 块现查 information_schema，删列由 025 的 `DROP COLUMN IF EXISTS` 承担。
 
 每个用例自建一个一次性数据库（跑完即 DROP），不碰 DATABASE_URL 指向的共享库 ——
@@ -67,7 +67,9 @@ async def _columns(dsn: str) -> set[str]:
 async def _legacy_shape(dsn: str) -> str:
     """把已迁移的库改回「pre-024 形态」：无 role，有 is_admin，且该用户 is_admin=true。
 
-    返回用户 id。等价于 024 落地前那一版生产库。
+    返回用户 id。等价于 024 落地前那一版生产库 —— 那一版**也没有迁移账本**（账本是
+    缺陷 90/99 才加的），故账本表一并删掉。留着的话「新实例启动」会因为 024/025 已记
+    账而整份跳过，role 再也加不回来，P2 与 P3 两条锁一起空转。
     """
     store = PostgresStore(dsn)
     await store._ensure_initialized()
@@ -77,6 +79,7 @@ async def _legacy_shape(dsn: str) -> str:
 
     conn = await asyncpg.connect(dsn)
     try:
+        await conn.execute("DROP TABLE IF EXISTS schema_migrations")
         await conn.execute("ALTER TABLE users DROP COLUMN role")
         # 001_init.sql 里 is_admin 是 SMALLINT（不是 BOOLEAN）：回填写的是 `= 1`，
         # 照 013_admin.sql 那行的 SQLite 声明（BOOLEAN）造会造出一个更严苛的库，

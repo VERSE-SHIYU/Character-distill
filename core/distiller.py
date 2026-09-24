@@ -235,7 +235,8 @@ def _resume_hit(index: int, chunk: str, candidates: dict | None) -> str | None:
     这一类错误，不承诺结构校验——非空但内容不完整（截断的自由文本）照过。
     Map 返回的是自由文本角色证据，不产 JSON，所以「半截 JSON」不是本门的场景。
     主屏障在上游：distill_incremental_stream 里失败的 Map 片不落 checkpoint
-    （抛异常即跳过 on_chunk_done），正常路径下这里根本不该出现空串候选。
+    （原语的回调带 ``ok`` 标志，``ok=False`` 即不回调落库），正常路径下这里根本
+    不该出现空串候选。
     上游截断另由 adapters/llm_adapter.py 的 finish_reason 裁决层在源头变显式失败。
     """
     if not candidates:
@@ -541,6 +542,31 @@ class Distiller:
         return t.count("{") != t.count("}") or t.count("[") != t.count("]")
 
     @staticmethod
+    def _truncation_evidence(exc: BaseException, partial: str = "") -> str | None:
+        """截断证据：上游以 ``length`` 终态结束**且**有非空正文时，返回那半截正文。
+
+        这里是全仓唯一一处判「是不是截断」——`_collect_stream` 与 `_chat_accounted`
+        两处的 ``except`` 都调它。重修环两处 ``except`` 问的**不是**这个问题（是
+        「确定性终态还是瞬时硬失败」：硬失败要留给下一次尝试），故不调它、直接
+        `raise`。两个条件都必要：
+
+        - 不是 ``length`` 的未完成终态（``content_filter`` 要改输入、资源不足可稍后
+          重试）不是截断，重修无用；
+        - ``length`` 但一个字都没生成时**没有可修的东西**（空正文喂回去只会再截一次）。
+
+        两者都返回 ``None``，调用方据此把异常**原样上抛**，交给 `web/server.py` 那张
+        finish_reason 分档表去配码与上屏（分档不在 core 里判）。返回非空时调用方拿它
+        当重修的证据，并据此把文案归到「超长」那一档。
+
+        ``partial`` 是本级手里已收到的正文：流式支的正文在 ``_collect_stream`` 的累积
+        里（异常上的 content 反而是空的），非流式支挂在异常上（传空串即可）。
+        """
+        info = incomplete_response_info(exc)
+        if info is None or info[0] != "length":
+            return None
+        return info[1] or partial or None
+
+    @staticmethod
     def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
         """一次调用实际喂进去的字符总数 —— 估算账的输入（两侧字符 → token 估算）。
 
@@ -563,6 +589,8 @@ class Distiller:
         finish_reason（校验不过那片不交付），异常里的 content 是空的，但累积到此刻的
         部分正文还在本函数手里 —— 半截正文是重修的证据，不是要丢掉的东西。这也是本
         函数与 `_chat_accounted` 非流式那支的唯一差别：那支的正文挂在异常上（``info[1]``）。
+        两支都按同一处判据决定「算不算截断」（`_truncation_evidence`，累积正文作为
+        ``partial`` 传进去）。
 
         **记账落在发起调用的这一级**（形态锁的判据）：谁消费响应谁把账记进唯一出口
         （`_try_record_usage`），调用方不必记得补一笔 —— 靠调用方代记是约定不是机制，
@@ -581,14 +609,14 @@ class Distiller:
                 parts.append(piece)
         except Exception as exc:
             text = "".join(parts)
-            info = incomplete_response_info(exc)
             self._try_record_usage(
                 usage_action, estimate_usage_from_chars(prompt_chars, len(text)),
             )
-            if info is None or info[0] != "length":
+            evidence = self._truncation_evidence(exc, text)
+            if evidence is None:
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            return text, True
+            return evidence, True
         self._try_record_usage(usage_action)
         return "".join(parts), False
 
@@ -604,6 +632,8 @@ class Distiller:
         ``length`` 截断是**上游确定信号**：不抛——把已生成的部分正文当截断证据交给
         `_parse_json_with_retry` 走重修环，比 `_looks_truncated` 从文本形状猜可靠。
         其余失败（网络、content_filter、资源不足）与截断无关、重修无用，原样上抛。
+        「是不是截断」的判据只有一处，见 `_truncation_evidence`（``length`` 且有非空
+        正文；空正文无可修，按失败上抛）。
 
         ``stream=True`` 走 `_collect_stream`（长输出用），截断口径完全相同，记账落在
         那个原语里（同样是发起调用的那一级）。
@@ -627,15 +657,16 @@ class Distiller:
         try:
             reply = self._llm.chat(system_prompt, messages, max_tokens=_mt)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is None or info[0] != "length" or not info[1]:
-                # 硬失败照样烧了 token（重试墙下正是空烧）—— 与截断支、流式支同口径：
-                # 先记一条估算账再原样上抛。只记成功会让统计系统性偏低（缺陷 91 同形）。
+            evidence = self._truncation_evidence(exc)
+            if evidence is None:
+                # 非截断（硬失败 / content_filter / 空正文）照样烧了 token（重试墙下正是
+                # 空烧）—— 与截断支、流式支同口径：先记一条估算账再原样上抛。只记成功
+                # 会让统计系统性偏低（缺陷 91 同形）。
                 self._try_record_usage(action, estimate_usage_from_chars(
                     self._prompt_chars(system_prompt, messages)))
                 print(f"调用 LLM 进行{label}失败：{exc}")
                 raise
-            reply, truncated = info[1], True
+            reply, truncated = evidence, True
             usage = estimate_usage_from_chars(
                 self._prompt_chars(system_prompt, messages), len(reply))
         self._try_record_usage(action, usage)
@@ -800,12 +831,14 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is not None:
-                truncated = True
-                last_error = f"fix_reply 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
-            else:
-                last_error = f"fix_reply LLM call failed: {exc}"
+            if incomplete_response_info(exc) is not None:
+                # **未完成终态原样上抛**：上游的确定性结论（content_filter 要改输入、
+                # 资源不足可稍后重试），重修无用。按它的 finish_reason 在
+                # `web/server.py` 那张表里配码与上屏 —— 不能在这里吞成「也被截断」，
+                # 那会让用户看到「超长，请重试」而真实原因是内容被过滤。
+                raise
+            # 瞬时硬失败（网络 / 超时）：留给 Attempt 3 再试一次。
+            last_error = f"fix_reply LLM call failed: {exc}"
 
         # Attempt 3: full retry — re-invoke LLM with original prompt.
         # 仅仅重发同样的 messages 大概率重现同一次"跑题"，因为触发漂移的成因
@@ -836,12 +869,10 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            info = incomplete_response_info(exc)
-            if info is not None:
-                truncated = True
-                last_error = f"full retry 也被截断（finish_reason={info[0]}，已生成 {len(info[1])} 字符）"
-            else:
-                last_error = f"full retry LLM call failed: {exc}"
+            if incomplete_response_info(exc) is not None:
+                # 同 Attempt 2：未完成终态是确定性结论，原样上抛给统一出口分档。
+                raise
+            last_error = f"full retry LLM call failed: {exc}"
 
         # All attempts exhausted — log raw output and raise readable error
         raw_preview = reply.strip()[:500]
@@ -867,17 +898,24 @@ class Distiller:
         多分片逐片识别后合并。原先只取前 10000 字 —— 红楼梦这类长篇只覆盖头两章，
         名单天然残缺，而残缺名单会被落库、被所有下游当成全书名单用。
 
-        ``IDENTIFY_VERSION`` 是识别口径的版本号，但**这里不管版本**：进程内 TTL 缓存
-        是本进程自己刚算出来的，落库的版本判定在 `core/character_roster.py` 那一层。
+        memo 的键**含** ``IDENTIFY_VERSION``：版本号是决定识别结果的输入之一，键漏了它
+        就会把旧口径算出来的名单当成当前版本的答案交出去，而落库那一层认版本号 —— 旧
+        名单会被洗成新版本号。库缓存（`characters_json`）的版本判定另在
+        `core/character_roster.py` 那一层。
 
         Args:
             text: 原始叙事文本（全文）。
 
         Returns:
-            角色信息字典列表；单分片解析反复失败时返回空列表并打印警告，且**不落缓存**
-            —— 缓存住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
+            角色信息字典列表，**名单可以为空**（全书真的没有具名角色）。空名单照样
+            落缓存：它是一次成功的识别结果。
+
+        Raises:
+            DistillError: 识别失败 —— 单分片两次解析均失败，或多分片失败率越过容忍线。
+                失败走异常，因此**天然不会进缓存**，无需调用方额外判断。
         """
-        key = text_fingerprint(text) + ":" + self._llm.model
+        # 键必须覆盖全部决定输入：文本、模型、**识别口径版本**。少一个，命中就是错的。
+        key = f"{text_fingerprint(text)}:{self._llm.model}:{self.IDENTIFY_VERSION}"
 
         # Check cache
         with _IDENTIFY_CACHE_LOCK:
@@ -893,14 +931,13 @@ class Distiller:
 
         chunks = self._split_chunks(text, self._chunk_size)
         if len(chunks) <= 1:
-            single = self._identify_single_call(text)
-            if single is None:
-                return []
-            result = single
+            result = self._identify_single_call(text)
         else:
             result = self._identify_over_chunks(chunks)
 
-        # Cache on success (deep copy to isolate from caller mutation)
+        # 只缓存成功结果（空名单也算成功）。失败在上面就抛了，走不到这里 —— 缓存
+        # 住一个「没有角色」的错误答案，十分钟内所有调用都跟着错。
+        # deep copy 隔离调用方的改动。
         with _IDENTIFY_CACHE_LOCK:
             _IDENTIFY_CACHE[key] = (json.loads(json.dumps(result)), time.time())
             if len(_IDENTIFY_CACHE) > IDENTIFY_CACHE_MAX_ENTRIES:
@@ -931,11 +968,15 @@ class Distiller:
             raise
         return cls._normalize_identify_items(parsed)
 
-    def _identify_single_call(self, text: str) -> list[dict[str, Any]] | None:
+    def _identify_single_call(self, text: str) -> list[dict[str, Any]]:
         """单分片的识别：一次调用 + 一次重试（与原实现逐行等价）。
 
         Returns:
-            角色列表；两次解析都失败时返回 ``None`` —— 调用方据此**不落缓存**。
+            角色列表，**可以为空**（这一段真的没有具名角色）。
+
+        Raises:
+            DistillError: 两次解析均失败。解析不出来是**失败**，不是「没有角色」——
+                返回空列表会让上游把它当成一份合法的空名单。
         """
         messages: list[dict[str, Any]] = [{"role": "user", "content": text}]
         try:
@@ -959,14 +1000,19 @@ class Distiller:
             try:
                 return self._parse_identify_list(reply_retry)
             except Exception as exc:
-                print(f"警告：角色识别 JSON 经一次重试后仍无法解析，返回空列表。原因：{exc}")
-                return None
+                raise DistillError(
+                    "识别失败：模型返回的角色名单无法解析，请重试",
+                    f"单分片两次解析均失败；最后错误：{exc}",
+                )
 
     def _identify_over_chunks(self, chunks: list[str]) -> list[dict[str, Any]]:
         """逐片识别 + 合并。
 
         失败率（调用失败 + 结果解析失败）越过 ``_map_failure_exceeds_tolerance`` 即抛：
         拿半本书的名单当全书名单，比报错更糟。未越线则继续 —— 合并那一步只看拿到的名单。
+
+        未越线、且每一片都解析成空名单 → 返回 ``[]``：这是**真的没有具名角色**，
+        不是识别失败。与单分片同口径 —— 空名单是合法结果，失败才抛。
         """
         def _build_prompt(chunk: str) -> tuple[str, str]:
             return IDENTIFY_SYSTEM_PROMPT, chunk
@@ -1007,7 +1053,9 @@ class Distiller:
             print(f"[distiller] {failed}/{total} identify chunks failed (within tolerance), continuing")
 
         if not parts:
-            raise DistillError("识别失败：未能从任何片段中识别到角色")
+            # 每一片都解析成空名单（且失败率未越线）→ 真空名单，不是失败。
+            # 原先这里抛 DistillError，把「这本书没有具名角色」当成了故障。
+            return []
         return self._identify_merge(parts)
 
     def _identify_merge(self, parts: list[str]) -> list[dict[str, Any]]:
@@ -1067,105 +1115,6 @@ class Distiller:
         if current:
             chunks.append(current)
         return chunks
-
-    def coref_resolve(
-        self, text: str, characters: list[dict[str, Any]], chunk_size: int = 6000,
-        progress_callback: collections.abc.Callable[[int, int], object] | None = None,
-    ) -> str:
-        """全文共指消解+说话人补全。
-
-        将文本分chunk（带重叠），对每个chunk调LLM替换代词/昵称/省略为角色名，
-        并为省略说话人的对话补全说话人标记。
-
-        Args:
-            text: 原始全文。
-            characters: identify_characters返回的角色列表（含aliases）。
-            chunk_size: 每chunk字符数。
-            overlap: chunk间重叠字符数。
-
-        Returns:
-            共指消解后的全文。
-        """
-        import asyncio
-
-        alias_lines = []
-        for c in characters:
-            name = c.get("name", "")
-            aliases = c.get("aliases", [])
-            if name:
-                if aliases:
-                    alias_lines.append(f"  {name} → 别名：{'、'.join(aliases)}")
-                else:
-                    alias_lines.append(f"  {name}")
-        alias_table = "\n".join(alias_lines) if alias_lines else "（无角色信息）"
-
-        system_prompt = (
-            "你是共指消解专家。对以下文本做两件事：\n"
-            "1. 将所有代词（他、她、我、你等）和别名/昵称替换为角色全名。\n"
-            "2. 为省略说话人的对话补全说话人标记（如 道：'...' 改为 某某道：'...'）。\n\n"
-            "角色及别名：\n" + alias_table + "\n\n"
-            "规则：\n"
-            "- 只替换能确定指代对象的。不确定的保持原样。\n"
-            "- 保持原文的段落结构、标点、格式完全不变。\n"
-            "- 不要添加、删除或改写任何内容，只做替换。\n"
-            "- 直接输出替换后的文本，不要任何解释或前缀。"
-        )
-
-        chunks = []
-        start = 0
-        while start < len(text):
-            end = min(start + chunk_size, len(text))
-            chunks.append((start, end, text[start:end]))
-            if end >= len(text):
-                break
-            start = end
-
-        usages: list[dict | None] = []
-
-        async def _resolve_chunk(chunk_text: str) -> str:
-            result, usage = await self._llm.async_chat(
-                system_prompt,
-                [{"role": "user", "content": chunk_text}],
-            )
-            usages.append(usage)
-            return result
-
-        async def _resolve_all():
-            total = len(chunks)
-            completed = 0
-
-            async def _tracked(chunk_text: str) -> str:
-                nonlocal completed
-                result = await _resolve_chunk(chunk_text)
-                completed += 1
-                if progress_callback is not None:
-                    progress_callback(completed, total)
-                return result
-
-            tasks = [_tracked(c[2]) for c in chunks]
-            return await asyncio.gather(*tasks)
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        try:
-            if loop and loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    # context 传播点：submit 不拷贝 contextvar → ctx_submit
-                    results = C.ctx_submit(pool, lambda: asyncio.run(_resolve_all())).result()
-            else:
-                results = asyncio.run(_resolve_all())
-        finally:
-            # 分片级并发调用整个烧掉的那段 token 在这里补记：整阶段汇总一条 + 调用次数。
-            # 放 finally —— gather 半途炸掉时已完成的分片也是花掉的钱，不记即系统性偏低。
-            merged = aggregate_usage(usages, len(usages))
-            if merged is not None:
-                self._try_record_usage("distill_coref", merged)
-
-        return "".join(results)
 
     @staticmethod
     def _split_chunks_chat(text: str, chunk_size: int) -> list[str]:
@@ -1453,8 +1402,9 @@ class Distiller:
         ``usage_action`` 是整阶段汇总落账的 action 名。
 
         Returns (ordered [(index, analysis_text), ...], [(index, exception), ...]).
-        ``on_chunk_done(index, result)`` is called synchronously within the
-        async loop each time a chunk finishes.
+        ``on_chunk_done(index, result, ok)`` is called synchronously within the
+        async loop each time a chunk finishes；``ok=False`` 的片结果是空串、且已计入
+        failures —— 调用方据此决定该片要不要落 checkpoint（流式侧不落）。
         """
         sem = asyncio.Semaphore(self._map_concurrency)
         done_count = [0]
@@ -1466,6 +1416,7 @@ class Distiller:
             async with sem:
                 system, user = build_prompt(chunk)
                 usage = None
+                ok = True
                 try:
                     result, usage = await self._llm.async_chat(
                         system, [{"role": "user", "content": user}], client=client
@@ -1478,11 +1429,12 @@ class Distiller:
                     async with lock:
                         failures.append((i, exc))
                     result = ""
+                    ok = False
             async with lock:
                 done_count[0] += 1
                 usages.append(usage)
             if on_chunk_done:
-                on_chunk_done(i, result)
+                on_chunk_done(i, result, ok)
             return (i, result)
 
         tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(chunks)]
@@ -1659,7 +1611,7 @@ class Distiller:
         completed = [0]
         lock = threading.Lock()
 
-        def _on_done(_idx: int, _result: str) -> None:
+        def _on_done(_idx: int, _result: str, _ok: bool) -> None:
             with lock:
                 completed[0] += 1
             if on_progress:
@@ -1784,6 +1736,7 @@ class Distiller:
         self,
         text: str,
         character_name: str,
+        *,
         aliases: list[str] | None = None,
         text_type: str = "story",
         on_chunk_done: "callable | None" = None,
@@ -1848,86 +1801,50 @@ class Distiller:
         map_system = self._map_system_prompt_chat if is_chat else self._map_system_prompt
         map_user = self._map_user_prompt_chat if is_chat else self._map_user_prompt
 
-        # ── Phase 1: Map — concurrent with per-chunk progress via thread+queue ──
+        # ── Phase 1: Map — 命中片先摘出，只把未命中片交给原语；进度经线程+队列 ──
+        # 续跑命中在**调原语之前**处理：命中片零 LLM 调用，直接并入 map_results 供
+        # reduce 消费；原语从此不认识 _resume_hit / checkpoint（它只跑给定的分片）。
+        # 命中片的进度事件在此补发，与原先「命中片早于未命中片完成」的次序一致。
+        map_results: list[tuple[int, str]] = []
+        miss_indices: list[int] = []
+        current = 0
+        for i, chunk in enumerate(relevant):
+            hit = _resume_hit(i, chunk, resume_candidates)
+            if hit is None:
+                miss_indices.append(i)
+                continue
+            map_results.append((i, hit))
+            current += 1
+            yield {"status": "analyzing", "current": current, "total": total}
+
         q: queue.Queue = queue.Queue()
 
-        async def _map_with_progress() -> None:
-            run_client = self._llm._make_async_client()
-            try:
-                sem = asyncio.Semaphore(self._map_concurrency)
-                done_count = [0]
-                lock = asyncio.Lock()
-                failures: list[tuple[int, Exception]] = []
-                usages: list[dict | None] = []
+        def _build_map_prompt(chunk: str) -> tuple[str, str]:
+            return map_system(character_name), map_user(chunk, character_name)
 
-                async def _one(i: int, chunk: str) -> tuple[int, str]:
-                    cached = _resume_hit(i, chunk, resume_candidates)
-                    if cached is not None:
-                        # 命中：零 LLM 调用，缓存结果照常并入 map_results 供 reduce 消费
-                        result, from_cache, checkpoint_ok = cached, True, True
-                    else:
-                        checkpoint_ok = True
-                        async with sem:
-                            system = map_system(character_name)
-                            user = map_user(chunk, character_name)
-                            usage = None
-                            try:
-                                result, usage = await self._llm.async_chat(
-                                    system, [{"role": "user", "content": user}], client=run_client
-                                )
-                            except Exception as exc:
-                                print(f"[distiller] Map chunk {i} failed: {exc}")
-                                async with lock:
-                                    failures.append((i, exc))
-                                # 失败片不落 checkpoint：空串配一个合法指纹写进去，续跑时
-                                # 只有 _resume_hit 的门 2（非空）拦得住它，而 ON CONFLICT
-                                # DO NOTHING 会让那行永久占位——重跑成功也写不进去。
-                                # 空串仍并入 map_results（统一 append，不特判），但这不是契约：
-                                # raw_analyses 按「非空且 != 无」过滤它，失败率判断用的是
-                                # map_failures —— 收或收不到都无观测差异，别据此写断言。
-                                # 已知残留（非进展循环）：该片下轮无候选 → 重发 → 同参数下
-                                # 可能再次失败 → 该片永不成功。兜底是本函数末尾的
-                                # `failed / total_chunks > 0.5` 整批 bail 分支；50% 以下会带着
-                                # 缺片继续产出。缓解手段是调 llm.max_tokens（LLM_MAX_TOKENS
-                                # 环境变量）或减小 chunk_size，不在适配器层解决。
-                                # 实测佐证：同一片两次调用一次 content=0 一次 content=2060，
-                                # 是随机饿死而非确定性截断，故重发有概率成功、不是死循环。
-                                result = ""
-                                checkpoint_ok = False
-                                # 失败片照样烧 token（重试墙下空烧 26–100s）——prompt 侧
-                                # 按字符估算补记，completion 未知记 0 并标 estimated。
-                                usage = estimate_usage_from_chars(len(system) + len(user))
-                            async with lock:
-                                usages.append(usage)
-                        from_cache = False
-                    async with lock:
-                        done_count[0] += 1
-                        current = done_count[0]
-                    q.put(("chunk", current, i, result, from_cache, checkpoint_ok))
-                    return (i, result)
-
-                tasks = [asyncio.create_task(_one(i, c)) for i, c in enumerate(relevant)]
-                await asyncio.gather(*tasks)
-                # 整阶段汇总一条：命中缓存的片零调用不进 usages，chunk_count 数的是真调用次数
-                merged = aggregate_usage(usages, len(usages))
-                if merged is not None:
-                    self._try_record_usage("distill_map", merged)
-                q.put(("done", failures))
-            finally:
-                await run_client.close()
+        def _on_chunk(j: int, result: str, ok: bool) -> None:
+            # 原语看到的是**未命中片列表**的下标 j —— 这里是全函数唯一一处把它映射回
+            # relevant 的原始下标（指纹与 checkpoint 用的都是原始下标）。miss_indices
+            # 与 relevant 在 t.start() 之后只读，故无需加锁。
+            q.put(("chunk", miss_indices[j], result, ok))
 
         def _thread_run() -> None:
             try:
-                asyncio.run(_map_with_progress())
+                # 返回值里的 results 不用：每片的 (原始下标, 结果) 已由 _on_chunk 经队列带回。
+                _results, failures = self._run_map_with_client(
+                    [relevant[i] for i in miss_indices],
+                    _build_map_prompt, "distill_map", _on_chunk,
+                )
             except Exception as exc:
                 # 传异常本体而非 str(exc)：这一支的下游是**上屏**（下面的 yield），
                 # 上屏文案必须经 user_facing_error 收敛，str() 会把内部标识带出去。
                 q.put(("error", exc, None, None))
+                return
+            q.put(("done", failures))
 
         t = C.ctx_thread(_thread_run, daemon=True)  # context 传播点
         t.start()
 
-        map_results: list[tuple[int, str]] = []
         map_failures: list[tuple[int, Exception]] = []
         while True:
             item = q.get()
@@ -1941,26 +1858,29 @@ class Distiller:
                 yield {"error": user_facing_error(item[1])}
                 return
             if kind == "chunk":
-                _k, _current, idx, result, from_cache, checkpoint_ok = item
+                _k, idx, result, ok = item
                 map_results.append((idx, result))
                 # 每片完成即回调落库（不攒批：攒批时 OOM 会丢掉一整批已付费的结果）。
-                # 缓存命中的片已在库里，不重复写。指纹在此算——只有这里能拿到 relevant[idx] 的原文。
-                # 失败片（checkpoint_ok=False）不回调：写进去的是空串 + 合法指纹，
-                # 续跑时只有门 2 拦得住，且 ON CONFLICT DO NOTHING 让那行永久占位。
-                if on_chunk_done and not from_cache:
-                    if checkpoint_ok:
+                # 命中的片不在此列（上面已并入 map_results），不重复写。
+                # 指纹在此算——只有这里能拿到 relevant[idx] 的原文。
+                if ok:
+                    if on_chunk_done:
                         on_chunk_done(idx, result, text_fingerprint(relevant[idx]))
-                    else:
-                        # 静默的 checkpoint 失效是最贵的那种：点名该片本轮不入库、下轮重跑
-                        print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
-                              f"resume will re-run it")
-                yield {"status": "analyzing", "current": item[1], "total": total}
+                elif on_chunk_done:
+                    # 失败片不落 checkpoint：写进去的是空串 + 合法指纹，续跑时只有门 2
+                    # 拦得住。静默的 checkpoint 失效是最贵的那种 —— 点名该片本轮不入库、下轮重跑。
+                    print(f"[distiller] Chunk {idx} not checkpointed (Map failed); "
+                          f"resume will re-run it")
+                current += 1
+                yield {"status": "analyzing", "current": current, "total": total}
 
         t.join(timeout=5)
 
         map_results.sort(key=lambda x: x[0])
 
         # Failure rate check: if >50% chunks failed, bail
+        # 分母是「全书相关片数」，**不是**本轮未命中片数：命中片不进原语，但仍算总数 ——
+        # 否则续跑会让失败率虚高（命中越多越容易越线整批 bail）。
         total_chunks = len(relevant)
         failed = len(map_failures)
         if _map_failure_exceeds_tolerance(failed, total_chunks):

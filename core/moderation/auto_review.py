@@ -43,7 +43,7 @@ async def auto_review_card(card_json: dict[str, Any], llm: LLMAdapter | None,
 
     try:
         result = await llm.achat(_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
-        try_record_usage(storage, llm, "moderation_card_review", source="auto_review")
+        try_record_usage(storage, llm, action="moderation_card_review", source="auto_review")
         import json as _json
         parsed = _json.loads(result.strip())
         return {
@@ -97,7 +97,7 @@ async def auto_review_split(card_json: dict[str, Any], llm: LLMAdapter | None,
     review_text = _flatten_card(card_json)
     try:
         result = await llm.achat(_SPLIT_REVIEW_SYSTEM_PROMPT, [{"role": "user", "content": review_text}])
-        try_record_usage(storage, llm, "moderation_publish_review", source="auto_review")
+        try_record_usage(storage, llm, action="moderation_publish_review", source="auto_review")
         import json as _json
 
         parsed = _json.loads(result.strip())

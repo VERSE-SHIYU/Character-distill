@@ -17,12 +17,19 @@ import sqlite3
 import uuid
 from pathlib import Path
 
+import aiosqlite
+
 from storage.sqlite_store import SQLiteStore
 
 ROOT = Path(__file__).resolve().parents[1]
 PG_DIR = ROOT / "storage" / "migrations_pg"
 
 EMBEDDING_COLS = ("embedding_key", "embedding_region")
+
+# texts 上**必须一直不存在**的退役列（缺陷 87）：056 已空操作，094 只在老库上真跑一次。
+# 判据是「重启后列集不变 **且** 重启时 094 没执行」——见
+# test_retired_texts_columns_stay_retired_after_restart。
+RETIRED_TEXT_COLS = ("content_resolved", "coref_resolved")
 
 # SQLite 自建、不出现在任何迁移文件里的内部表
 _SQLITE_INTERNAL_TABLES = frozenset({"sqlite_sequence"})
@@ -162,6 +169,54 @@ class TestFreshSqliteSchema:
         for col in EMBEDDING_COLS:
             assert col in cols, f"半成品库 init 后缺 {col}；实际列={sorted(cols)}"
 
+    async def test_retired_texts_columns_stay_retired_after_restart(self, tmp_path, capsys, monkeypatch):
+        """(f) texts 的退役列（缺陷 87）：新库没有，**重启后仍然没有**，且**重启不重写这张表**。
+
+        056 现在是空操作（两列已由 094 退役；无迁移账本时每轮都会执行它，故不再 `ADD`）。
+        于是：新库从没建过这两列 ⇒ 094 的每句 DROP 都已生效 ⇒ **整份跳过**；老库（列还在）
+        ⇒ 094 真正执行一次 DROP，之后再跑同样整份跳过。
+
+        故「二次 init 后列集不变」与「二次 init 时 094 整份跳过」是同一件事的两面，本用例
+        两条都断言：前者是结果，后者是机制。**必须两条都锁** —— 只比列集会漏掉「每轮把列
+        加回来又删掉」：那种形态下列集照样相等，但 `texts` 存的是全文，每次 init 都要把整张
+        表重写一遍（`DROP COLUMN` 在 SQLite 里是「建新表 + 拷数据 + 换名」）。
+
+        **变异（实测）**：把 056 恢复成两条 `ADD COLUMN` → 每轮先把列加回来 ⇒ 094 每轮都得
+        真发一次 DROP ⇒ 「整份跳过」断言红，而列集断言仍绿（094 又删回去了）。这正是加这条
+        断言的判别力所在。
+
+        ⚠ 与 `tests/test_migration_dispatch.py::test_already_satisfied_drop_column_is_stripped`
+        分工：那条锁执行器 DROP 支自身的剥除逻辑，本条锁端到端「重启态下 094 不再执行」。
+        """
+        db_path = str(tmp_path / "retired.db")
+        await _init(SQLiteStore(db_path), capsys)
+        first = _columns(db_path, "texts")
+
+        ran: list[str] = []
+        real_script = aiosqlite.Connection.executescript
+
+        async def _spy(conn, sql):
+            ran.append(sql)
+            return await real_script(conn, sql)
+
+        monkeypatch.setattr(aiosqlite.Connection, "executescript", _spy)
+        await _init(SQLiteStore(db_path), capsys)
+        monkeypatch.undo()
+        second = _columns(db_path, "texts")
+        for cols, when in ((first, "首次 init 后"), (second, "第二次 init 后")):
+            for col in RETIRED_TEXT_COLS:
+                assert col not in cols, f"{when} texts 仍有退役列 {col}；实际列={sorted(cols)}"
+        assert first == second, (
+            f"第二次 init 改动了 texts 列集 —— 「全新库」与「重启过的库」不是同一个 schema。"
+            f"新加={sorted(second - first)} 少了={sorted(first - second)}")
+
+        # SQLite 侧只有 094 是 `.sql` 里的 DROP COLUMN（其余退役走 Python 表重建），
+        # 故「有 DROP COLUMN 发给 SQLite」即「094 没被整份跳过」。
+        executed = [s for s in ran if "DROP COLUMN" in s.upper()]
+        assert not executed, (
+            f"重启时 094 把 DROP COLUMN 真的执行了（{len(executed)} 次）—— texts 的整张表"
+            f"因此被重写；每一次启动都白付这个代价。首条脚本片段={executed[0][:120]!r}")
+
 
 class TestExemptionClosedLoop:
     """豁免出口的闭环（缺陷 21）。
@@ -194,9 +249,10 @@ class TestExemptionClosedLoop:
 
     **列级**在 `TestPgFreshSchemaClosure::test_fresh_sqlite_and_fresh_pg_have_the_same_columns`，
     但它**故意不用上面这个「真库 ⊇ 文本声明」的形状**：`DROP TABLE` 0 处而 `DROP COLUMN`
-    4 处，本仓真的删过列（PG 声明式 DROP + SQLite 的 Python 表重建），而文本提取器两个
-    都看不见 → 套用本形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧
-    真库」。**别把两处统一成同一个形状**，理由是写在代码里的。
+    9 处（2026-09-23 现跑现数），本仓真的删过列（PG 声明式 DROP + SQLite 的裸 DROP 与
+    Python 表重建），而文本提取器只认 CREATE TABLE + ADD COLUMN、DROP 看不见 → 套用本
+    形状当场红，且只能靠豁免清单救，而豁免即永久放行。列级改比「另一侧真库」。
+    **别把两处统一成同一个形状**，理由是写在代码里的。
     """
 
     async def test_fresh_db_covers_every_table_pg_declares(self, tmp_path, capsys):

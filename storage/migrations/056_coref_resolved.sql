@@ -1,2 +1,1 @@
-ALTER TABLE texts ADD COLUMN content_resolved TEXT DEFAULT '';
-ALTER TABLE texts ADD COLUMN coref_resolved INTEGER DEFAULT 0;
+-- 056 — 已退役：两列由 094 删除，本文件不再 ADD（无迁移账本时每轮都会执行本文件，重复 ADD 会让 094 每轮真删一次、整张 texts 被重写）。

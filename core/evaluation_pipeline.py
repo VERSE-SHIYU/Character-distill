@@ -126,7 +126,7 @@ class EvaluationPipeline:
                         [{"role": "user", "content": prompt}],
                     )
                     try_record_usage(ctx.storage, ctx.llm,
-                                     "chat_affinity_eval", source="EvaluationPipeline")
+                                     action="chat_affinity_eval", source="EvaluationPipeline")
                     break
                 except Exception as exc:
                     if attempt == 0:

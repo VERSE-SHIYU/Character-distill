@@ -249,8 +249,9 @@ def fernet_key(monkeypatch):
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
 
 
-def _save(client, region):
-    return client.patch("/api/auth/api-config",
+def _save(client, region, ip=None):
+    headers = {"X-Real-IP": ip} if ip else {}
+    return client.patch("/api/auth/api-config", headers=headers,
                         json={"embedding_key": TEST_KEY, "embedding_region": region})
 
 
@@ -259,9 +260,13 @@ def _seed_user(store):
     asyncio.run(store.create_user(USER_ID, USER_ID, "x"))
 
 
-@pytest.mark.parametrize("region", ["", "cn", "intl"])
+@pytest.mark.parametrize("region", ["", "cn"])
 def test_T11_save_accepts_blank_or_known_region(client, store, fernet_key, region):
-    """空串（不改动现有值）与表里的两个键都要放行 —— 校验不是「必填」。"""
+    """空串（不改动现有值）与表里的键都要放行 —— 校验不是「必填」。
+
+    `intl` 不在这张表里：它决定嵌入出站去境外，存不存得下现在是 **geo 判定**（见 T13），
+    不再是「地域键合法就一律收下」。
+    """
     _seed_user(store)
     r = _save(client, region)
     assert r.status_code == 200, f"region={region!r} 被拒了：{r.status_code} {r.text[:200]}"
@@ -282,13 +287,64 @@ def test_T12_save_validates_against_the_same_table(client, store, fernet_key, mo
 
     另写一份 `{"cn", "intl"}` 字面量也能过 T11/T11b（两个合法值恰好就是这两个），
     这条才分得出「同一张表」与「抄了一份恰好相同的字面量」。
+
+    新地域指向的是**白名单主机**：这条问的是「地域键查哪张表」，不是 geo 放不放 ——
+    指到非白名单主机上，判定会先被 geo 门拦下（T13 那条的地盘），这条就答非所问了。
     """
     import core.embeddings as E
 
-    monkeypatch.setitem(E.DASHSCOPE_BASE_URLS, "us", "http://us.invalid/v1")
+    monkeypatch.setitem(E.DASHSCOPE_BASE_URLS, "us", "https://api.deepseek.com/v1")
     _seed_user(store)
     r = _save(client, "us")
 
     assert r.status_code == 200, f"表里加了 us，保存端点仍报非法：{r.status_code} {r.text[:200]}"
     stored = asyncio.run(store.get_user_api_config(USER_ID))
     assert stored["embedding_region"] == "us"
+
+
+def test_T13_saving_intl_is_judged_by_the_same_geo_rule(client, store, fernet_key, monkeypatch):
+    """`embedding_region` 决定嵌入出站去哪，保存它要过与出站**同一道** geo 判定（缺陷 73）。
+
+    只堵出站不堵保存，用户会在下一次试连/蒸馏里撞上拒绝，而保存那一刻一声不响 ——
+    他只会以为自己填错了 key。所以这里必须当场 403 + 理由 + 记一条审计。
+
+    判定注入成**两维**（境内 + 非白名单才拦），不看 ip2region 库在不在：库缺席时
+    `is_domestic_ip` 一律回 True，「境外 IP 放行」那半条会随环境变红。
+    """
+    import core.embeddings as E
+    import routers.auth as auth_mod
+    import web.geo_guard as G
+    import web.llm_gate as gate
+
+    domestic, foreign, reason = "1.1.1.1", "8.8.8.8", "境内不支持境外模型"
+
+    def verdict(ip, url):
+        # 空 url 与真判定同口径（`check_api_allowed` 首行）：这次不改 base_url，无从判。
+        if not url or G.is_whitelisted_base_url(url) or ip == foreign:
+            return True, ""
+        return False, reason
+
+    monkeypatch.setattr(G, "check_api_allowed", verdict)
+    monkeypatch.setattr(gate, "check_api_allowed", verdict)
+    audited: list[tuple] = []
+    # 打路由模块里的那个绑定：`routers.auth` 是 `from web.llm_gate import ...` 取的名，
+    # 改 `web.llm_gate` 的模块属性拦不到它。
+    monkeypatch.setattr(
+        auth_mod, "emit_geo_block_audit",
+        lambda uid, ip, url, r: audited.append((uid, ip, url, r)),
+    )
+    _seed_user(store)
+
+    blocked = _save(client, "intl", ip=domestic)
+    assert blocked.status_code == 403, f"国内 IP 存 intl 被放行了：{blocked.text[:200]}"
+    assert blocked.json()["detail"] == reason
+    assert [a[2] for a in audited] == [E.DASHSCOPE_BASE_URLS["intl"]], (
+        f"审计的不是嵌入端点那一次拒绝：{audited}")
+    assert (audited[0][0], audited[0][1]) == (USER_ID, domestic)
+
+    stored = asyncio.run(store.get_user_api_config(USER_ID))
+    assert stored["embedding_region"] == "cn", "被拦的那次仍然落库了"
+
+    allowed = _save(client, "intl", ip=foreign)
+    assert allowed.status_code == 200, f"境外 IP 存 intl 也被拦：{allowed.text[:200]}"
+    assert len(audited) == 1, f"放行的那次不该记审计：{audited}"

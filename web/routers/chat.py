@@ -23,6 +23,7 @@ from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
+from web.llm_resolution import resolve_embedding
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -171,18 +172,15 @@ async def _ensure_session(
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
     all_characters = await text_manager._build_all_characters(card_rec["text_id"], existing_cards, user_id)
 
-    emb_key = ""
-    emb_region = ""
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            emb_key = user_cfg["embedding_key"]
-            emb_region = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
 
     rag = text_manager._indexing_service.get_rag_for_session(
-        card_rec["text_id"], text_rec["content"], all_characters, emb_key, emb_region
+        card_rec["text_id"], text_rec["content"],
+        all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
     )
     new_id = await asyncio.to_thread(
         text_manager._create_session, card,
@@ -280,6 +278,7 @@ async def _do_chat(
     message: str,
     storage: StorageBase,
     sessions: dict[str, Any],
+    *,
     user_role: str = "",
     hidden: bool = False,
     user_id: str = "",
@@ -683,7 +682,14 @@ async def send_message(
         raise HTTPException(503, "请先在设置页配置 API Key")
     if req.stream:
         return await _do_chat_stream(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview, req.agent_mode)
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, req.voice_mode, req.affinity_enabled, req.client_tz, req.reply_to_id, req.reply_to_preview, req.agent_mode)
+    return await _do_chat(
+        req.session_id, req.message, storage, sessions,
+        user_role=req.user_role, hidden=req.hidden, user_id=user_id,
+        web_search=req.web_search, voice_mode=req.voice_mode,
+        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        reply_to_id=req.reply_to_id, reply_to_preview=req.reply_to_preview,
+        agent_mode=req.agent_mode,
+    )
 
 
 @router.post("/revoke")
@@ -833,7 +839,13 @@ async def legacy_chat(
 ) -> dict[str, Any]:
     """Legacy /api/chat -> same as /api/chat/send."""
     user_id = user["id"]
-    return await _do_chat(req.session_id, req.message, storage, sessions, req.user_role, req.hidden, user_id, req.web_search, voice_mode=False, affinity_enabled=req.affinity_enabled, client_tz=req.client_tz, agent_mode=req.agent_mode)
+    return await _do_chat(
+        req.session_id, req.message, storage, sessions,
+        user_role=req.user_role, hidden=req.hidden, user_id=user_id,
+        web_search=req.web_search, voice_mode=False,
+        affinity_enabled=req.affinity_enabled, client_tz=req.client_tz,
+        agent_mode=req.agent_mode,
+    )
 
 
 @legacy_router.post("/api/reset")

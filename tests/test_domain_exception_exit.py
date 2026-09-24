@@ -84,6 +84,16 @@ class _Store:
     async def get_session_owned(self, session_id: str, user_id: str):
         return self._session
 
+    # 名单缓存的两条出入口 —— `resolve_characters` 必经，签名与 SQLiteStore 一致。
+    # 这个桩原先缺它们：SSE 那条宽捕获把 AttributeError 一并吞了，用例看着是绿的。
+    async def get_characters_owned(
+        self, text_id: str, user_id: str, *, version: int,
+    ) -> list | None:
+        return None                      # 无缓存 → 调用方会跑识别
+
+    async def save_characters(self, text_id: str, characters: list, *, version: int) -> None:
+        return None
+
     async def export_session(self, session_id: str, fmt: str) -> str:
         raise self._export_exc
 

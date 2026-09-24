@@ -74,6 +74,7 @@ async def _rebuild_group_session(
     from core.rag import CollectionUnusableError, RAGEngine
     from core.group_session import GroupSession
     from deps import get_rag_config, get_memory_manager
+    from web.llm_resolution import resolve_embedding
 
     session = await storage.get_group_session_owned(group_id, user_id)
     if not session:
@@ -86,12 +87,12 @@ async def _rebuild_group_session(
     rag_config = get_rag_config()
     # Inject per-user embedding config
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            rag_config["embedding_key"] = user_cfg["embedding_key"]
-            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
+    if emb.key:
+        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     memory_manager = get_memory_manager()
 
@@ -287,16 +288,17 @@ async def create_group(
     from core.chat_engine import ChatEngine
     from core.rag import CollectionUnusableError, RAGEngine
     from deps import get_rag_config, get_memory_manager
+    from web.llm_resolution import resolve_embedding
 
     rag_config = get_rag_config()
     # Inject per-user embedding config
     try:
-        user_cfg = await storage.get_user_api_config(user_id)
-        if user_cfg.get("embedding_key"):
-            rag_config["embedding_key"] = user_cfg["embedding_key"]
-            rag_config["embedding_region"] = user_cfg.get("embedding_region", "cn")
+        user_cfg = await storage.get_user_api_config(user_id) or {}
     except Exception:
-        pass
+        user_cfg = {}
+    emb = resolve_embedding(user_cfg)
+    if emb.key:
+        rag_config["embedding_key"], rag_config["embedding_region"] = emb.key, emb.region
 
     memory_manager = get_memory_manager()
 
@@ -526,14 +528,15 @@ async def send_message(
 
     async def _save_user_message(key: str) -> int:
         return await storage.save_group_message(
-            group_id, user_speaker, "user", req.message, user_speaker_card_id,
+            group_id, user_speaker, "user", req.message,
+            speaker_card_id=user_speaker_card_id,
             reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
         )
 
     async def _save_char_message(key: str) -> int:
         return await storage.save_group_message(
             group_id, group.engines[req.target_card_id].card.name,
-            "assistant", resp, req.target_card_id, client_key=key,
+            "assistant", resp, speaker_card_id=req.target_card_id, client_key=key,
         )
 
     user_save, rep = await group.outbox.write(_save_user_message, ping=storage.ping)
@@ -628,7 +631,8 @@ async def broadcast_message(
             if not req.auto_mode:
                 async def _save_user_message(key: str) -> int:
                     return await storage.save_group_message(
-                        group_id, user_speaker, "user", req.message, user_speaker_card_id,
+                        group_id, user_speaker, "user", req.message,
+                        speaker_card_id=user_speaker_card_id,
                         reply_to_id=req.reply_to_id, reply_to_preview=reply_preview, client_key=key,
                     )
 
@@ -661,7 +665,8 @@ async def broadcast_message(
                             # await 的，等它回来时 r 已经是下一轮那个角色了。
                             async def _save_silent(key: str, r=r) -> int:
                                 return await storage.save_group_message(
-                                    group_id, r["speaker"], "silent", "", r["card_id"], client_key=key,
+                                    group_id, r["speaker"], "silent", "",
+                                    speaker_card_id=r["card_id"], client_key=key,
                                 )
 
                             silent_save, rep = await outbox.write(_save_silent, ping=ping)
@@ -681,8 +686,8 @@ async def broadcast_message(
 
                         async def _save_char(key: str, r=r) -> int:
                             return await storage.save_group_message(
-                                group_id, r["speaker"], "assistant", r["reply"], r["card_id"],
-                                client_key=key,
+                                group_id, r["speaker"], "assistant", r["reply"],
+                                speaker_card_id=r["card_id"], client_key=key,
                             )
 
                         char_save, rep = await outbox.write(_save_char, ping=ping)
