@@ -717,7 +717,7 @@ def test_closed_grammar_rejects_every_listed_shape():
                     f"（期望「{_KIND_REASON[kind]}」）")
 
 
-# ── I3：两份定义的一致性 ──────────────────────────────────────────────────────
+# ── I3：多份定义的一致性 ──────────────────────────────────────────────────────
 
 @_COMPOSE
 def test_every_db_healthcheck_is_verbatim_identical():
