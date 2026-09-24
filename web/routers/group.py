@@ -139,8 +139,11 @@ async def _rebuild_group_session(
             except CollectionUnusableError as exc:
                 # 集合维度与当前 embedder 不符（如迁移前 384 旧集合）：确定性不可用。
                 # 只降级记日志、不 index() 重建 —— 不把静默失败换成静默重建（烧 embed/写库）。
-                print(f"[Group WARN] card_id={card_id} text_id={text_id} "
-                      f"text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：{exc}")
+                logger.warning(
+                    "[Group WARN] card_id=%s text_id=%s "
+                    "text 集合不可用（向量维度不符/损坏），降级跳过场景检索、不自动重建：%s",
+                    card_id, text_id, exc,
+                )
             except Exception:
                 rag.index(text_rec["content"])
             text_rag_cache[text_id] = rag

@@ -22,8 +22,6 @@ Run: python tests/test_rag_unusable.py   (also pytest-collectable)
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import io
 import logging
 import sys
 from pathlib import Path
@@ -300,8 +298,12 @@ def _stub(storage, name: str, **kw) -> None:
     setattr(storage, name, AsyncMock(**kw))
 
 
-def test_caller_group_rebuild_degrades_no_index():
-    """web group.py _rebuild_group_session：CollectionUnusableError → 该卡跳过场景检索 + index 不触发。"""
+def test_caller_group_rebuild_degrades_no_index(caplog):
+    """web group.py _rebuild_group_session：CollectionUnusableError → 该卡跳过场景检索 + index 不触发。
+
+    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
+    而容器 stdout 到不了面板。
+    """
     from core.schema import CharacterCard, SpeakingStyle
 
     async def _run() -> None:
@@ -326,7 +328,7 @@ def test_caller_group_rebuild_degrades_no_index():
         _stub(storage, "get_text_owned", side_effect=[{"content": "正文A"}, {"content": "正文B"}])
         _stub(storage, "get_group_messages", return_value=[])
 
-        buf = io.StringIO()
+        caplog.set_level(logging.WARNING)
 
         async def _fake_llm(_user_id, _storage):
             return MagicMock()
@@ -338,8 +340,7 @@ def test_caller_group_rebuild_degrades_no_index():
             patch("deps.get_memory_manager", return_value=MagicMock()), \
             patch("core.rag.RAGEngine") as rag_cls, \
             patch("core.chat_engine.ChatEngine"), \
-            patch("core.group_session.GroupSession"), \
-            contextlib.redirect_stdout(buf)):
+            patch("core.group_session.GroupSession")):
             inst = MagicMock()
             inst.load_existing.side_effect = CollectionUnusableError(
                 "dim 384 != 1024", stored_dim=384, expected_dim=1024)
@@ -347,8 +348,9 @@ def test_caller_group_rebuild_degrades_no_index():
             group = await grp._rebuild_group_session("grp1", "u1", storage)
         assert group is not None
         assert inst.index.call_count == 0, "维度不符集合在 group 路径也绝不 index"
-        assert "集合不可用" in buf.getvalue() and "不自动重建" in buf.getvalue(), \
-            "group 降级必须留下可见日志"
+        log = "\n".join(r.getMessage() for r in caplog.records)
+        assert "集合不可用" in log and "不自动重建" in log, \
+            f"group 降级必须留下可见日志：{log!r}"
 
     asyncio.run(_run())
     print("  [PASS] group.py 路径：维度不符降级跳过场景检索、index 未调用、有可见日志")
@@ -367,16 +369,16 @@ def main() -> int:
         test_query_no_match_still_returns_empty,
         test_query_no_collection_returns_empty,
         test_caller_mcp_degrades_no_index,
-        test_caller_group_rebuild_degrades_no_index,
     ]
     print("=== RAG UNUSABLE-COLLECTION REGRESSION ===\n")
     for t in tests:
         t()
-        # 另两条（test_caller_indexing_service_*）断言的是 **logging** 记录，靠 pytest 的
-        # `caplog` fixture 拿（spec-119：落点从 print 改成模块 logger）—— 手跑这条入口没有
-        # fixture，故只列在此处、不静默少跑：
+        # 另三条（test_caller_indexing_service_* ×2、test_caller_group_rebuild_*）断言的是
+        # **logging** 记录，靠 pytest 的 `caplog` fixture 拿（spec-119：落点从 print 改成模块
+        # logger）—— 手跑这条入口没有 fixture，故只列在此处、不静默少跑：
     print("  [SKIP] test_caller_indexing_service_degrades_no_index / "
-          "..._generic_error_still_degrades：只在 pytest 下跑（用 caplog 断言日志）")
+          "..._generic_error_still_degrades / ..._group_rebuild_degrades_no_index："
+          "只在 pytest 下跑（用 caplog 断言日志）")
     print("\n=== ALL %d TESTS PASSED ===" % len(tests))
     print("load_existing: dimension-blindness fixed (mismatch raises, never silent-True)")
     print("query/query_with_emotion: failures raise, genuine no-match still returns []")

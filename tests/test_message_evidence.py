@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -288,14 +289,17 @@ class TestRefreshKeepsEvidence:
         assert msgs and msgs[0]["evidence"] is None
 
 
-def test_parse_failure_is_visible_not_silent(capsys):
+def test_parse_failure_is_visible_not_silent(caplog):
     """解析失败与「本来就没有」可辨 —— 前者打日志，后者不打。"""
+    caplog.set_level(logging.WARNING)
+    caplog.clear()
     assert parse_evidence(None) is None
-    assert capsys.readouterr().out == ""
+    assert not caplog.records, "「本来就没有」不该留下日志"
     assert parse_evidence("{不是 JSON") is None
-    assert "解析失败" in capsys.readouterr().out
+    assert "解析失败" in "\n".join(r.getMessage() for r in caplog.records)
+    caplog.clear()
     assert parse_evidence('{"a": 1}') is None  # 是合法 JSON 但不是数组
-    assert "不是 JSON 数组" in capsys.readouterr().out
+    assert "不是 JSON 数组" in "\n".join(r.getMessage() for r in caplog.records)
 
 
 # ── 2c. PG 侧：已建库重跑迁移（缺陷 21/23/26 的教训）──────────────────

@@ -185,8 +185,11 @@ async def upload_text(
                 if temp_path.exists():
                     os.unlink(temp_path)
             except OSError as exc:
-                print(f"[upload] 临时文件清理失败（不顶掉响应）：{temp_path} —— {exc!r}"
-                      "；已知上游行为见 AGENTS.md 缺陷 47/48")
+                logger.warning(
+                    "[upload] 临时文件清理失败（不顶掉响应）：%s —— %r"
+                    "；已知上游行为见 AGENTS.md 缺陷 47/48",
+                    temp_path, exc,
+                )
 
     else:
         raise HTTPException(400, "Must provide file")
