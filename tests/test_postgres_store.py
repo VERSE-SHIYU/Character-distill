@@ -1380,6 +1380,26 @@ async def _start_once() -> None:
 
 class TestPgMigrationLedger:
 
+    @staticmethod
+    async def _drop_residue(store: PostgresStore, *, tables=(), files=()) -> None:
+        """删掉本用例在长期库上造出的探针表与账本行 —— 只清自己造的那几个名字。
+
+        探针表只长在 PG 一侧，`TestPgFreshSchemaClosure` 的列级闭环把它报成「单侧多出来
+        的表」，于是**第二次**跑同一个库时那三条锁红，红得与改动无关。账本行（`777_*` /
+        `779_*`）同样是残留，只是跑整份文件时恰好被 `TestPgPublishedFromBackfill` 的
+        `DROP TABLE schema_migrations` 冲掉 —— 别把清理挂在那个巧合上：只跑本类、或换了
+        顺序，行就留下了。
+
+        用例名与主语都是「长期库」（`_pg` 那批统一连 `charsim_test`，不是一次性容器），
+        不清理即每次运行都在给同一个库加残留。
+        """
+        async with await store._connect() as conn:
+            for name in tables:
+                await conn.execute(f"DROP TABLE IF EXISTS {name}")
+            for name in files:
+                await conn.execute(
+                    "DELETE FROM schema_migrations WHERE filename = $1", name)
+
     @_pg
     async def test_recorded_file_is_not_executed_again(self, tmp_path: Path, monkeypatch):
         """重启不再执行已记录文件。
@@ -1389,8 +1409,8 @@ class TestPgMigrationLedger:
         计数同时挡住反方向的假绿：一份也不跑的实现会让第二遍安然无事、也照样绿。
         """
         base = await _baseline()
+        tag = uuid.uuid4().hex
         try:
-            tag = uuid.uuid4().hex
             d = tmp_path / "m"
             d.mkdir()
             body = f"CREATE TABLE ledger_probe_once_{tag} (id TEXT);\n"
@@ -1415,6 +1435,11 @@ class TestPgMigrationLedger:
                 f"重启后又执行了已记账的迁移（共 {sent.count(body)} 次）：账本没生效，"
                 "或「已记录即跳过」的判定写歪了。")
         finally:
+            await self._drop_residue(
+                base,
+                tables=(f"ledger_probe_once_{tag}",),
+                files=(f"777_probe_once_{tag}.sql",),
+            )
             await base.close()
 
     @_pg
@@ -1460,8 +1485,8 @@ class TestPgMigrationLedger:
         「报了错但偷偷重跑并覆盖记账」与「跳过」在日志上长得一模一样。
         """
         base = await _baseline()
+        tag = uuid.uuid4().hex
         try:
-            tag = uuid.uuid4().hex
             name = f"779_probe_drift_{tag}.sql"
             d = tmp_path / "m"
             d.mkdir()
@@ -1492,6 +1517,8 @@ class TestPgMigrationLedger:
                     "SELECT sha256 FROM schema_migrations WHERE filename = $1", name)
             assert after == before, "账本摘要被改写了 —— 内容不符时不该重跑，更不该覆盖记账"
         finally:
+            # 本用例只留下账本行（正文是 `SELECT 1`，没有表）。
+            await self._drop_residue(base, files=(f"779_probe_drift_{tag}.sql",))
             await base.close()
 
 
