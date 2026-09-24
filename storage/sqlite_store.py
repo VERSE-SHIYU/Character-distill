@@ -5351,17 +5351,17 @@ class SQLiteStore(StorageBase):
             print(f"[SQLiteStore] Get pending delete propagations failed: {exc}")
             raise
 
-    async def mark_delete_propagated(self, id: int) -> None:
-        """Mark a delete propagation outbox row as synced."""
+    async def remove_delete_propagation(self, id: int) -> None:
+        """Delete a delete propagation outbox row the peer has acknowledged."""
         try:
             async with await self._connect() as conn:
                 await conn.execute(
-                    "UPDATE cross_border_delete_outbox SET synced = 1 WHERE id = ?",
+                    "DELETE FROM cross_border_delete_outbox WHERE id = ?",
                     (id,),
                 )
                 await conn.commit()
         except Exception as exc:
-            print(f"[SQLiteStore] Mark delete propagated failed: {exc}")
+            print(f"[SQLiteStore] Remove delete propagation failed: {exc}")
             raise
 
     async def delete_remote_card(self, card_id: str) -> None:

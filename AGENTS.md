@@ -114,7 +114,7 @@ config.yaml 现值（现读，非转述）：
 
 ### 三、已知缺陷
 
-> **全表状态口径（2026-09-23 现跑现数）**：1–98 共 98 条 —— **已修 74**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**；**本轮 2026-09-23 收口（六条从「记账」移入「已修」）：Spec B 五条 —— 68：`f7fd0b6`、69：`17626d6`、95：`c417827`、56：`c826ed8`、57：`8580286`；Spec 82 一条 —— 82**）/ **记账 13**（47、58、64、66、67、80、81、86、87、88、89、90、96）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）/ **可见性已修、口径待定 1**（94）。**待办 = 记账 13**。
+> **全表状态口径（2026-09-23 现跑现数）**：1–98 共 98 条 —— **已修 75**（含 32、33；40：commit 一 `53bed63` + commit 二；42：`7009d77` → `3e2670d` → `2c9fee9` → `fbb9066` → `efa36a6` → `c959553` → 结案四提交 → 收口一提交；59–63 与 65 同批修完，锁在 `tests/test_llm_access_gate.py`；35：`dc7b09f` + `34bf075`；36：`0605bdf` → `ef43b38`；**本轮 2026-09-22 收口：83：`15c6a6a` + `8efb67c` + `b259e82`、84：随 `8efb67c`、85：`238610d` + `680eafe`**；**本轮 2026-09-23 收口（六条从「记账」移入「已修」）：Spec B 五条 —— 68：`f7fd0b6`、69：`17626d6`、95：`c417827`、56：`c826ed8`、57：`8580286`；Spec 82 一条 —— 82**；**本轮 2026-09-23 收口（一条从「记账」移入「已修」）：Spec 80/81 一条 —— 81（80 仍留「记账」桶，见其条目：PG 不可达，按主次不修）**）/ **记账 12**（47、58、64、66、67、80、86、87、88、89、90、96）/ **另开议题 4**（71–74，见「三之三」E）/ **纵深防御 1**（3）/ **已移出 1**（10，见「三之二」）/ **已裁定 2**（31 保留、70 不设锁）/ **证伪 1**（37）/ **环境事实仍在 1**（50）/ **可见性已修、口径待定 1**（94）。**待办 = 记账 12**。
 > **上面两处顺延（75–82；35 / 36 与 83–90）已由这次重算销账（2026-09-22）** —— 那一行改标现数日期后，75–79 / 91 / 92 与 35 / 36 已在「已修」桶内、80–82 与 86–90 在「记账」桶内、83–85 随本轮收口从「记账」移入「已修」，都不必再逐条另述。**同轮还有 93 / 97 / 98 移入「已修」、94 单列「可见性已修、口径待定」**（上一次重算漏了这四条，桶数因此虚记 —— 与「83–85」同形，一并销账）。**那两句顺延句已删**：它们留着会与重算后的行当场矛盾（「那行仍标着 2026-09-19」「35 已算多」），正是 §四「台账状态行不是事实」的老毛病；按 120 行那次重算的先例，理由失效即自然删除。
 > **99–104 是 `published_from` 一案（本分支）并入 main 时按 main 现有最大号**顺延**过来的六条**（并线时本线原编 86–91，与 main 的 86–91 撞号 —— 撞的是编号不是内容，按「按 main 上现有最大编号顺延」改号，两边条目都留）。状态：**已修 6**（99–104）/ **记账 0**（**99 已于 2026-09-23 随 `5148ab6` 从「记账」移入「已修」**：PG 侧补了 applied 表；SQLite 侧没有对应机制，那一面归 90，故 90 仍记账）—— **不重算上面那行的桶**：那条口径标着 2026-09-22 现跑现数、只覆盖 1–98，这六条产生在同一天但并入更晚，整行重算留到下次收口（此处只写顺延、不改数）。**注意本分支已推送的 commit message 里仍写着旧号 86–91**（`d17ee54` / `ef6deb6` / `04dc4ef` / `b86b1fd`）：推送后不改写历史，故那几处是历史坐标，以台账现号为准。
 > **本行的重算已执行（2026-09-17）**：触发条件（本轮收口批次 30 / 43 / 54 全部走完）已满足 → 整行按现数重算 → 原先那句顺延（「**不逐条订正**：本轮批次里的 30 / 54 尚未收口，今天改完明天又滞后」）**理由随之失效，自然删除**。**顺延本身是正当的**（判据没收口时逐条订正，明天又滞后），**错的是它当时兜着一个事实错误**：30 已于 `885735c` 收口、54 已于 `23fb813` 收口，却写成「尚未收口」—— 与同一行前半的「记账待补 0（30 已于 `885735c` 收口）」当场自相矛盾。**要顺延就写顺延，但顺延句里不许出现会过期的断言**；断言会过期，就是「台账状态行不是事实」的又一次显形。任何「还剩几条 / 某条什么状态」一律走下一行的现数配方。
@@ -1176,15 +1176,21 @@ PROBE_IMAGE         false
 - **真实库副本读数**（只读副本，活库未动）：`refresh_tokens` **926 → 926**、`user_secrets` **4 → 4**、`users` 4、`cards` 23、`sessions` 18 全部不变；重建后 `users` 残留 legacy 列 **0**、`users_mig` 残留 **0**。（副本上需先清掉下述 82 条的残骸，否则卡在 `table users_mig already exists`。）
 - **全量**：SQLite 形态 **1384 passed / 69 skipped / 1 xfailed = 1454 collected**；PG 形态（一次性 `postgres:16-alpine` 起在 127.0.0.1:5455，跑完即删）**1451 passed / 2 skipped / 1 xfailed = 1454 collected**。基线 `e41b6a6` 现跑 `--collect-only` = **1452**（worktree 现测，用后即删），差量 **+2 / 消失 0**（新文件恰 2 条）。
 
-**80. 活库 25 行 `refresh_tokens` 孤儿 —— 用户已删、token 还在** —— 状态：**记账**（不修，2026-09-21）
-- **读数（现跑）**：`PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe e2e/scratch/probe_residue_readings.py` 的 §2 遍历全库每张表的每个 FK 子句，唯一的孤儿类是 `refresh_tokens.user_id → users.id：25 行孤儿`；同库 `users` 4 行、`refresh_tokens` 926 行。§1 另证四个验收 id 在这张表里没有残留。
-- **性质**：鉴权面残留 —— 行还在，指向的用户已经不在了。与本次改动无关，是活库既有状态（`e2e/scratch/probe_residue_readings.py` 只读打开，未写）。
-- **处置方向**：与「删用户」路径放一起核，先判这 25 行是删用户时的漏写还是历史数据的既有形态，再决定清不清。
+**80. 活库 25 行 `refresh_tokens` 孤儿 —— 用户已删、token 还在** —— 状态：**记账**（不修，2026-09-23）
+- **读数（2026-09-21，本地 SQLite）**：`PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe e2e/scratch/probe_residue_readings.py` 的 §2 遍历全库每张表的每个 FK 子句，唯一的孤儿类是 `refresh_tokens.user_id → users.id：25 行孤儿`；同库 `users` 4 行、`refresh_tokens` 926 行。§1 另证四个验收 id 在这张表里没有残留。
+- **PG 不可达（基线 `cc9f231` 核实，两条独立保证）**：① `migrations_pg/001_init.sql` 给 `refresh_tokens.user_id` 建了外键 `REFERENCES users(id) ON DELETE CASCADE`，PG 总是强制外键 —— 删用户时这些行由库自己级联清掉；② 即便没有级联，`postgres_store.py:2718` 的 `delete_user` 在**同一个事务**里显式执行了 `DELETE FROM refresh_tokens WHERE user_id = $1`。**线上用 PG，故这是 SQLite 专属现象**，按主次规则（PG 为准、SQLite 只保接口一致）不修、不补测试。
+- **生产只读核查**（预期 0）：`SELECT count(*) FROM refresh_tokens r LEFT JOIN users u ON u.id = r.user_id WHERE u.id IS NULL;`
 
-**81. `cross_border_delete_outbox` 有指向已删 fork 的行，且该表没有任何应用清理入口** —— 状态：**记账**（不修，2026-09-21）
-- **读数（现跑）**：`e2e/scratch/probe_residue_readings.py` §1 → `0c1779b40d15 → [('cross_border_delete_outbox', 1)]`；直读该行 = `(1, 'card_delete', '0c1779b40d15', '', 0, '2026-09-20 03:43:25')`，列名 `id / op_type / target_id / payload / synced / created_at` → **`synced = 0`，即一条仍待同步的删除传播**（不是「已上传后的残留」）。
-- **性质**：**机制缺口，不是单行脏数据** —— 全仓对这张表的应用侧触点只有两个：`get_pending_delete_propagations`（`SELECT ... WHERE synced = 0`）与 `mark_delete_propagated`（`UPDATE ... SET synced = 1`），**没有任何删除路径**（`grep -rn "cross_border_delete_outbox"` 的命中只落在 `storage/*_store.py` 与两份迁移里）。要清只能手写 `DELETE FROM`，而手写 SQL 正好绕过存储层的级联与断开（缺陷 75 / 78 修的就是那两条路）。所以这一行清不掉是结构性的：清掉它，下次删除还会再造一行。
-- **处置方向**：补一个「已上传 / 已过期 outbox 行」的回收入口，让这类清理走应用自己的路径，而不是手写 SQL。
+**81. `cross_border_delete_outbox` 有指向已删 fork 的行，且该表没有任何应用清理入口** —— 状态：**已修**（Spec 80/81，2026-09-23；与代码 / 测试同一个 commit）
+- **读数（2026-09-21）**：`e2e/scratch/probe_residue_readings.py` §1 → `0c1779b40d15 → [('cross_border_delete_outbox', 1)]`；直读该行 = `(1, 'card_delete', '0c1779b40d15', '', 0, '2026-09-20 03:43:25')` → **`synced = 0`，一条仍待同步的删除传播**。
+- **本地那一行卡住的原因 —— 环境，不是缺陷**：删除转发只在配置了 `PEER_NODE_URL` 时才执行（`web/cross_border_sync.py` 单轮入口开头即返回），本地没配 → 永远不转发。对端接收端点是幂等的（`web/routers/inter_node.py`，目标不存在也返回 200），只要配了对端，这一行就能正常传播出去。
+- **根因（读代码在 PG 上发现的 3 个真问题，本轮一并修）**：
+  1. **删除补发被嵌在卡片补发的 `else` 分支里** —— 卡片查询一抛异常，本轮删除补发整段被跳过，两件互不相关的事被绑死。
+  2. **已传播的行永不回收**：对端确认后只 `UPDATE ... SET synced = 1`，而全仓唯一读这张表的地方只读 `synced = 0` 的行 —— `synced = 1` 没有任何读者，表无界增长。
+  3. **失败静默**：`forward_delete_to_peer` 非 200 或异常时直接返回 False，不留状态码 / 异常，线上无从排查。
+- **处置**：① 单轮逻辑抽成 `_resync_once(storage)`，`_cross_border_resync_loop` 只管「sleep 60 秒再调它」；DM / 卡片 / 删除三段各自独立捕获异常、互不影响，删除段从卡片的 `else` 里移出。② 对端确认后**直接删行**，不再标 `synced = 1`：`mark_delete_propagated` 改为删除语义并改名 `remove_delete_propagation(id)`，`storage/base.py` 抽象签名 + SQLite 同步改（SQLite 只求接口一致、能跑，不单测）。**不写迁移、不停用 `synced` 列** —— 存量里已是 `synced = 1` 的行从此不会再被读到，要不要清由 Shiyu 手动决定。③ 失败路径打印 `op_type` / `target_id` + 状态码或异常，沿用该文件既有 `print` 风格，不引日志框架、不加计数。
+- **守它的测试**（`tests/test_cross_border_sync.py`）：问题 3 → `test_forward_delete_to_peer_logs_status_on_non_200` / `test_forward_delete_to_peer_logs_exception`；问题 1 → `test_delete_resync_survives_card_query_failure`；问题 2 → `test_delete_resync_removes_row_after_ack` / `test_delete_resync_keeps_row_without_ack`（后三条走真 PG，一次性 `postgres:16-alpine`）。
+- **生产只读核查**：`SELECT synced, count(*) FROM cross_border_delete_outbox GROUP BY synced;`（看积压与历史行各多少）；若决定清理历史行，再 `DELETE FROM cross_border_delete_outbox WHERE synced = 1;`。
 
 **82. 活库残留一张 `users_mig`（4 行，DDL 无 `nickname` / `username_lower`）—— 数据丢失风险** —— 状态：**已修**（2026-09-23，Spec 82；与代码 / 测试同属一个 commit）
 - **根因**：`users_mig` **只可能**由 `sqlite_store.py` 里 SQLite < 3.35 的「原表重建」回落分支产生 —— 那段建表语句**没带 `IF NOT EXISTS`，不幂等**：中途失败一次即在库里留下残骸，此后每次启动都在这句上报 `table users_mig already exists`，init 失败、**应用直接起不来**（成功路径会把该表改名回 `users`，不留残骸）。3.35+ 走原生 `DROP COLUMN`，根本不产生这张表。

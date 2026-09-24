@@ -117,7 +117,11 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
       user_purge  → /api/inter-node/user/purge
 
     Returns True if the peer acknowledged (HTTP 200), False otherwise.
-    The caller (resync loop) is responsible for marking the outbox row synced.
+    The caller (resync loop) is responsible for removing the outbox row.
+
+    Every failure path prints op_type / target_id plus the status code or the
+    exception — a bare False is indistinguishable from "there was nothing to
+    send", so the row would sit in the outbox with nothing to debug from.
     """
     peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
     if not peer_url:
@@ -146,8 +150,18 @@ async def forward_delete_to_peer(op_type: str, target_id: str, payload: str, sto
                 json=body,
                 headers=headers,
             )
-        return resp.status_code == 200
-    except Exception:
+        if resp.status_code != 200:
+            print(
+                f"[cross_border_sync] Delete forward rejected: op_type={op_type} "
+                f"target_id={target_id} status={resp.status_code}"
+            )
+            return False
+        return True
+    except Exception as exc:
+        print(
+            f"[cross_border_sync] Delete forward failed: op_type={op_type} "
+            f"target_id={target_id} error={exc!r}"
+        )
         return False
 
 
@@ -246,70 +260,76 @@ async def forward_user_profile_to_peer(user_id: str, username: str, home_region:
         return False
 
 
-async def _cross_border_resync_loop() -> None:
-    """Periodically retry unsynced cross-border DMs and public cards.
+async def _resync_once(storage: StorageBase) -> None:
+    """One resync round: DMs, cards, then the delete outbox.
 
-    Runs every 60 seconds.  Silently no-ops when PEER_NODE_URL is unset
-    (single-node deployment).
+    The three sections are independent — each guards its own query, so one
+    failing does not cancel the others.  DM/card rows get a `synced` flag;
+    outbox rows are **removed** once the peer acknowledges them.
+
+    Silent no-op when PEER_NODE_URL is unset (single-node deployment).
     """
+    peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
+    if not peer_url:
+        return
+
+    # ── DM resync ──
+    try:
+        msgs = await storage.get_unsynced_cross_border_messages_unscoped(limit=100)
+    except Exception as exc:
+        print(f"[cross_border_resync] DM query failed: {exc}")
+    else:
+        for msg in msgs:
+            ok = await forward_dm_to_peer(msg, storage)
+            if ok:
+                try:
+                    await storage.mark_message_synced(msg["id"])
+                except Exception as exc:
+                    print(
+                        f"[cross_border_resync] Mark DM synced failed for {msg['id']}: {exc}"
+                    )
+
+    # ── Card resync ──
+    try:
+        cards = await storage.get_unsynced_cross_border_cards_unscoped(limit=100)
+    except Exception as exc:
+        print(f"[cross_border_resync] Card query failed: {exc}")
+    else:
+        for card in cards:
+            ok = await forward_card_to_peer(card, storage)
+            if ok:
+                try:
+                    await storage.mark_card_synced(card["id"])
+                except Exception as exc:
+                    print(
+                        f"[cross_border_resync] Mark card synced failed for {card['id']}: {exc}"
+                    )
+
+    # ── Delete propagation resync ──
+    try:
+        pending = await storage.get_pending_delete_propagations(limit=100)
+    except Exception as exc:
+        print(f"[cross_border_resync] Delete outbox query failed: {exc}")
+    else:
+        for row in pending:
+            ok = await forward_delete_to_peer(
+                row["op_type"], row["target_id"], row.get("payload", ""), storage,
+            )
+            if ok:
+                try:
+                    await storage.remove_delete_propagation(row["id"])
+                except Exception as exc:
+                    print(
+                        f"[cross_border_resync] Remove delete propagation failed "
+                        f"for {row['id']}: {exc}"
+                    )
+
+
+async def _cross_border_resync_loop() -> None:
+    """Retry cross-border sync every 60 seconds — one `_resync_once` per tick."""
     while True:
         await asyncio.sleep(60)
 
-        peer_url = os.getenv("PEER_NODE_URL", "").rstrip("/")
-        if not peer_url:
-            continue
-
         from deps import get_storage
 
-        storage = get_storage()
-
-        # ── DM resync ──
-        try:
-            msgs = await storage.get_unsynced_cross_border_messages_unscoped(limit=100)
-        except Exception as exc:
-            print(f"[cross_border_resync] DM query failed: {exc}")
-        else:
-            for msg in msgs:
-                ok = await forward_dm_to_peer(msg, storage)
-                if ok:
-                    try:
-                        await storage.mark_message_synced(msg["id"])
-                    except Exception as exc:
-                        print(
-                            f"[cross_border_resync] Mark DM synced failed for {msg['id']}: {exc}"
-                        )
-
-        # ── Card resync ──
-        try:
-            cards = await storage.get_unsynced_cross_border_cards_unscoped(limit=100)
-        except Exception as exc:
-            print(f"[cross_border_resync] Card query failed: {exc}")
-        else:
-            for card in cards:
-                ok = await forward_card_to_peer(card, storage)
-                if ok:
-                    try:
-                        await storage.mark_card_synced(card["id"])
-                    except Exception as exc:
-                        print(
-                            f"[cross_border_resync] Mark card synced failed for {card['id']}: {exc}"
-                        )
-
-            # ── Delete propagation resync ──
-            try:
-                pending = await storage.get_pending_delete_propagations(limit=100)
-            except Exception as exc:
-                print(f"[cross_border_resync] Delete outbox query failed: {exc}")
-            else:
-                for row in pending:
-                    ok = await forward_delete_to_peer(
-                        row["op_type"], row["target_id"], row.get("payload", ""), storage,
-                    )
-                    if ok:
-                        try:
-                            await storage.mark_delete_propagated(row["id"])
-                        except Exception as exc:
-                            print(
-                                f"[cross_border_resync] Mark delete propagated failed "
-                                f"for {row['id']}: {exc}"
-                            )
+        await _resync_once(get_storage())
