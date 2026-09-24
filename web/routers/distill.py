@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 import os
@@ -33,6 +35,7 @@ from limiter import limiter
 from routers.auth import get_current_user
 from web.llm_resolution import resolve_embedding
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/distill", tags=["distill"])
 legacy_router = APIRouter(tags=["legacy-distill"])
@@ -164,7 +167,7 @@ def _dispatch_persist(task_id: str, snap: dict[str, Any]) -> None:
         submit_to_main_loop(_persist_snap(task_id, snap), timeout=10)
     except Exception as exc:
         # 进度记录写失败不致命：蒸馏照常，下次状态变更再追上
-        print(f"[distill] Persist task {task_id} state failed (non-fatal): {exc}")
+        logger.warning("Persist task %s state failed (non-fatal): %s", task_id, exc, exc_info=True)
 
 
 def _set_task(task_id: str, updates: dict[str, Any]) -> None:
@@ -230,8 +233,11 @@ def _confirm_terminal_persist(task_id: str) -> None:
     except Exception as exc:
         # 区别于普通 non-fatal：这是终态确认的第二次失败，DB 行可能滞留 running 占
         # count_running 槽，只能靠下次 boot reconcile 置 interrupted。
-        print(f"[distill] Task {task_id} TERMINAL persist failed in final confirm: {exc}. "
-              f"DB row may stay running; boot reconcile will flip it to interrupted.")
+        logger.error(
+            "Task %s TERMINAL persist failed in final confirm: %s. "
+            "DB row may stay running; boot reconcile will flip it to interrupted.",
+            task_id, exc, exc_info=True,
+        )
 
 
 class DistillTaskRequest(BaseModel):
@@ -255,7 +261,7 @@ async def cancel_distill_tasks_by_text_id(text_id: str) -> int:
     try:
         return await get_storage().cancel_distills_by_text_id(text_id, "文本已删除，任务已取消")
     except Exception as exc:
-        print(f"[distill] DB cancel by text failed (non-fatal): {exc}")
+        logger.error("DB cancel by text failed (non-fatal): %s", exc, exc_info=True)
         return 0
 
 
@@ -306,7 +312,7 @@ def _generate_awakening(llm, card: CharacterCard, storage=None) -> str:
             return ""
         return result
     except Exception as exc:
-        print(f"[distill] Generate awakening failed (non-fatal): {exc}")
+        logger.warning("Generate awakening failed (non-fatal): %s", exc, exc_info=True)
         return ""
 
 
@@ -390,7 +396,8 @@ def _run_distill_task(
             try:
                 submit_to_main_loop(_save(), timeout=10)
             except Exception as exc:
-                print(f"[distill] Persist chunk {index} of {task_id} failed (non-fatal): {exc}")
+                logger.warning("Persist chunk %s of %s failed (non-fatal): %s",
+                               index, task_id, exc, exc_info=True)
 
         stream = distiller.distill_incremental_stream(
             content, name,
@@ -483,10 +490,10 @@ def _run_distill_task(
 
         if data is None:
             if not stripped:
-                print(f"[distill] Empty format output for {name} — Map/Reduce likely failed upstream")
+                logger.error("Empty format output for %s - Map/Reduce likely failed upstream", name)
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：服务内部异常，请重试", "character": name})
             else:
-                print(f"[distill] JSON parse failed for {name}. First 200 chars: {stripped[:200]}")
+                logger.error("JSON parse failed for %s (first 200 chars): %r", name, stripped[:200])
                 _set_task(task_id, {"status": "error", "message": "蒸馏失败：LLM 返回格式不正确", "character": name})
             return
 
@@ -495,7 +502,7 @@ def _run_distill_task(
             card = CharacterCard.model_validate(data)
         except Exception as exc:
             # ValidationError 的 str() 带字段名与输入值（可能含原文片段），只进日志
-            print(f"[distill] Card validation failed for {name}: {exc}")
+            logger.error("Card validation failed for %s: %s", name, exc, exc_info=True)
             _set_task(task_id, {"status": "error", "message": "蒸馏失败：数据校验错误，请重试", "character": name})
             return
 
@@ -507,7 +514,7 @@ def _run_distill_task(
                 card_dict["tags"] = tags
                 card = CharacterCard.model_validate(card_dict)
         except Exception as exc:
-            print(f"[distill] Auto-tagging failed (silent): {exc}")
+            logger.warning("Auto-tagging failed (silent): %s", exc, exc_info=True)
 
         # Step 4: persist via the main event loop (run_coroutine_threadsafe)
         # so the asyncpg pool stays on its home loop.
@@ -555,7 +562,7 @@ def _run_distill_task(
                 )
                 print(f"[distill] Persisted awakening_message to card {result['card_id']}")
             except Exception as exc:
-                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
+                logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
         update_dict = {
             "status": "done",
@@ -569,8 +576,7 @@ def _run_distill_task(
         _set_task(task_id, update_dict)
 
     except Exception as exc:
-        import traceback
-        print(f"[distill] Background task {task_id} failed: {exc}\n{traceback.format_exc()}")
+        logger.error("Background distill task %s failed: %s", task_id, exc, exc_info=True)
         # 上屏走唯一出口，**此处不再拼「蒸馏失败：」前缀** —— 前缀在异常自带的
         # user_message 里已经有了，两边各拼一次就是缺陷 17 的双重前缀。
         _set_task(task_id, {"status": "error", "message": user_facing_error(exc), "text_id": text_id, "character": char_name})
@@ -787,7 +793,7 @@ async def _distill_start_impl(
             existing = await storage.find_interrupted_distill(user_id, req.text_id, req.character_name)
         except Exception as exc:
             # 发现失败当新任务：宁可整跑，不因发现环节拒启动
-            print(f"[distill] Resume discovery failed (non-fatal, start fresh): {exc}")
+            logger.warning("Resume discovery failed (non-fatal, start fresh): %s", exc, exc_info=True)
 
     if existing is not None:
         task_id = existing["task_id"]
@@ -971,7 +977,7 @@ async def cancel_distill_task(
         await storage.update_distill_task(task_id, status="error", message="已取消")
     except Exception as exc:
         # DB 写失败仍有内存停止信号，bg 线程 abort 时还会再补一次终态落库
-        print(f"[distill] Cancel task {task_id} DB update failed (non-fatal): {exc}")
+        logger.warning("Cancel task %s DB update failed (non-fatal): %s", task_id, exc, exc_info=True)
     return {"ok": True}
 
 
@@ -1048,7 +1054,7 @@ async def distill_stream(
             if not char_name:
                 char_name = target_character_name(chars)
         except Exception as exc:
-            print(f"[distill] Identify failed: {exc}")
+            logger.error("Identify failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
         aliases = aliases_for(chars, char_name)
@@ -1061,7 +1067,7 @@ async def distill_stream(
             try:
                 piece, done = await asyncio.to_thread(_next_piece, stream)
             except Exception as exc:
-                print(f"[distill] Stream failed: {exc}")
+                logger.error("Distill stream failed: %s", exc, exc_info=True)
                 # 上屏唯一出口（adapters.llm_adapter.user_facing_error）：已知 LLM 失败取上屏表、
                 # 自带话术的异常取 user_message、其余给通用文案。裸 str(exc) 会把
                 # finish_reason / max_tokens / 分片计数带上屏。**不要在 web/ 里 import 异常类** ——
@@ -1101,7 +1107,7 @@ async def distill_stream(
         try:
             card = CharacterCard.model_validate(data)
         except Exception as exc:
-            print(f"[distill] Card validation failed: {exc}")
+            logger.error("Card validation failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': '蒸馏失败：数据校验错误，请重试'}, ensure_ascii=False, default=str)}\n\n"
             return
 
@@ -1112,7 +1118,7 @@ async def distill_stream(
                 embedding_key=emb.key, embedding_region=emb.region,
             )
         except Exception as exc:
-            print(f"[distill] Save card failed: {exc}")
+            logger.error("Save card failed: %s", exc, exc_info=True)
             yield f"data: {json.dumps({'error': user_facing_error(exc)}, ensure_ascii=False, default=str)}\n\n"
             return
 
@@ -1131,7 +1137,7 @@ async def distill_stream(
                 await get_storage().update_card(result.get("card_id", ""), card.model_dump())
                 print(f"[distill] Persisted awakening_message to card {result.get('card_id', '')}")
             except Exception as exc:
-                print(f"[distill] Persist awakening_message to card failed (non-fatal): {exc}")
+                logger.warning("Persist awakening_message to card failed (non-fatal): %s", exc, exc_info=True)
 
         # 注意：这里的 done 是 SSE **流结束标记**，与任务契约里 _task_affordances 的
         # done（任务终态判据）只是撞名。本流不建 DB 任务行、不产任务状态对象，故不带
@@ -1185,7 +1191,7 @@ async def reindex_rag(
             engine._all_characters = chars
             count += 1
         except Exception as exc:
-            print(f"[distill] Reindex session {sid} failed: {exc}")
+            logger.error("Reindex session %s failed: %s", sid, exc, exc_info=True)
 
     return {"reindexed_sessions": count, "characters_found": len(chars)}
 
@@ -1387,7 +1393,7 @@ async def start_session(
     try:
         await storage.save_session(session_id, req.card_id, req.user_role, user.get("avatar_data", ""), user_id)
     except Exception as exc:
-        print(f"[distill] Persist session failed (non-fatal): {exc}")
+        logger.warning("Persist session failed (non-fatal): %s", exc, exc_info=True)
 
     # ── Inject opening line ──
     # 本函数开头的 503 门保证 `per_user_llm` 不为 None（`get_text_manager(llm=None)` 恒返
@@ -1424,7 +1430,7 @@ async def start_session(
         else:
             opening = card.first_message or ""
     except Exception as exc:
-        print(f"[start_session] Generate opening line failed (non-fatal): {exc}")
+        logger.warning("Generate opening line failed (non-fatal): %s", exc, exc_info=True)
         opening = card.first_message or ""
 
     # Save opening to DB + engine.history (seed only, no backfill to card)

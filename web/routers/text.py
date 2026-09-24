@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import os
 import threading
@@ -26,6 +28,8 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 # ── Upload task store (background upload progress) ─────
@@ -82,7 +86,7 @@ def _run_upload_task(task_id: str, text_id: str, user_id: str) -> None:
 
         submit_to_main_loop(_do())
     except Exception as exc:
-        print(f"[text] Upload task {task_id} failed: {exc}")
+        logger.error("Upload task %s failed: %s", task_id, exc, exc_info=True)
         with _upload_task_lock:
             _upload_tasks[task_id] = {
                 "status": "error", "message": user_facing_error(exc), "user_id": user_id}

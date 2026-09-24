@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import collections
 import json
@@ -24,6 +26,8 @@ from core.reflection_service import ReflectionService
 from core.telemetry import set_current_attr
 from core.affinity_service import AffinityService, calc_stage
 from core.evaluation_pipeline import EvaluationPipeline, EvalContext
+
+logger = logging.getLogger(__name__)
 
 
 # Canary token (2.4): a per-process random string embedded in the system prompt.
@@ -159,7 +163,7 @@ class ChatEngine:
                 self._stage, self._stage_emoji = calc_stage(self._affinity)
                 self._prev_stage = self._stage
             except Exception as exc:
-                print(f"[ChatEngine] Initial affinity calc failed, using defaults: {exc}")
+                logger.warning("Initial affinity calc failed, using defaults: %s", exc, exc_info=True)
 
         self._last_rag_context: str = ""
         # 本轮对话的检索追溯（证据侧出口，与 _last_rag_context 是两回事：后者是 prompt
@@ -624,7 +628,7 @@ class ChatEngine:
                 timeout=15,
             )
         except Exception as exc:
-            print(f"[Affinity] Save state failed (non-fatal): {exc}")
+            logger.warning("Save affinity state failed (non-fatal): %s", exc, exc_info=True)
 
     def ingest_reaction_signals(self, signals: list[dict]) -> None:
         """对外接口：转发给 ReactionService（保持群聊等外部调用不破）。"""
@@ -662,7 +666,7 @@ class ChatEngine:
                     ])
                     self._last_reaction_id = max(r["reaction_id"] for r in new_reactions)
             except Exception as exc:
-                print(f"[Affinity] Fetch reactions failed (non-fatal): {exc}")
+                logger.warning("Fetch reactions failed (non-fatal): %s", exc, exc_info=True)
 
         user_role = (self.user_role or "对方").strip()
         old_stage = self._stage
@@ -1321,7 +1325,7 @@ class ChatEngine:
             self._try_record_usage("chat_silence_gate", llm=llm)
             should = "true" in result.strip().lower()
         except Exception as exc:
-            print(f"[Silence] LLM gate failed, falling back to normal reply: {exc}")
+            logger.warning("Silence LLM gate failed, falling back to normal reply: %s", exc, exc_info=True)
             return ""
 
         if not should:
@@ -1499,6 +1503,6 @@ class ChatEngine:
                 return ""
             return "；".join(t for _, t in top)
         except Exception as exc:
-            print(f"[Reunion] Memory fetch failed (non-fatal): {exc}")
+            logger.warning("Reunion memory fetch failed (non-fatal): %s", exc, exc_info=True)
             return ""
 

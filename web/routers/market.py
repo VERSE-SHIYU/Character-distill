@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 import time
 import uuid
@@ -20,6 +22,8 @@ from limiter import get_client_ip, limiter
 from storage.base import StorageBase
 from core.utils import try_record_usage
 from routers.auth import get_current_user, get_optional_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/market", tags=["market"])
 
@@ -552,7 +556,7 @@ async def publish_card(
     try:
         await storage.mark_card_unsynced(ok)
     except Exception as exc:
-        print(f"[market] Mark card unsynced failed for {ok}: {exc}")
+        logger.error("Mark card unsynced failed for %s: %s", ok, exc, exc_info=True)
 
     # Synchronously forward to peer node so the card is visible
     # on both regions immediately (best-effort, don't block response).
@@ -561,7 +565,7 @@ async def publish_card(
         if card_record:
             await forward_card_to_peer(card_record, storage)
     except Exception as exc:
-        print(f"[market] Forward card to peer failed for {ok}: {exc}")
+        logger.error("Forward card to peer failed for %s: %s", ok, exc, exc_info=True)
 
     return {"ok": True, "card_id": ok}
 

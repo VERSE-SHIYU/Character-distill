@@ -10,6 +10,7 @@
 AGENTS.md §四「授权失败一律 404」，voice.py preview_audio / voice_synthesize 同口径。
 """
 import asyncio
+import logging
 
 import pytest
 from fastapi import HTTPException
@@ -73,11 +74,13 @@ def test_foreign_and_missing_are_indistinguishable():
     assert ei_foreign.value.detail == ei_missing.value.detail
 
 
-def test_failure_message_is_generic_and_the_log_keeps_the_raw_text(monkeypatch, capsys):
-    """缺陷 94（泄漏那半）：任务状态给通用文案，上游原文只留 print 那句日志。
+def test_failure_message_is_generic_and_the_log_keeps_the_raw_text(monkeypatch, caplog):
+    """缺陷 94（泄漏那半）：任务状态给通用文案，上游原文只留日志那一句。
 
     收走原文 ≠ 扔掉原文 —— 上屏那句不许含内部标识，日志里必须还有。
+    日志断言走 `caplog`（spec-119）：原文此前只落 stdout，面板上看不见。
     """
+    caplog.set_level(logging.ERROR)
     raw = "RuntimeError: upstream 500 boom at adapters/llm_adapter.py:200"
 
     def _boom(coro):
@@ -93,4 +96,5 @@ def test_failure_message_is_generic_and_the_log_keeps_the_raw_text(monkeypatch, 
     assert task["status"] == "error"
     assert task["message"] == "服务暂时不可用，请稍后重试"
     assert raw not in task["message"]
-    assert raw in capsys.readouterr().out, "原文被收走的同时也从日志里丢了"
+    logs = "\n".join(r.getMessage() for r in caplog.records)
+    assert raw in logs, "原文被收走的同时也从日志里丢了"

@@ -15,6 +15,7 @@ D  distill_task_status 只读覆盖：DB running + 内存活跃 → 覆盖 messa
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import uuid
 
@@ -132,8 +133,13 @@ class TestASetTaskAccounting:
 
 
 class TestA2TerminalConfirm:
-    def test_failed_terminal_confirm_logs_keeps_entry(self, monkeypatch, capsys):
-        """A2：终态确认写失败 → 独立日志、不 pop、_db 不动。"""
+    def test_failed_terminal_confirm_logs_keeps_entry(self, monkeypatch, caplog):
+        """A2：终态确认写失败 → 独立日志、不 pop、_db 不动。
+
+        日志断言走 `caplog` 而不是 stdout（spec-119）：这条「独立日志」的意义就是让人
+        在面板上看得见 —— 只落容器 stdout 的 print 到不了那里。
+        """
+        caplog.set_level(logging.ERROR)
         store = _FakeStore()
         _install(monkeypatch, store)
         _seed_task("tB", "error", 40, ("running", 40))
@@ -145,8 +151,8 @@ class TestA2TerminalConfirm:
             t = D._tasks["tB"]
             assert t["_db"] == ("running", 40)
             assert "tB" in D._tasks
-        out = capsys.readouterr().out
-        assert "TERMINAL persist failed in final confirm" in out
+        logs = "\n".join(r.getMessage() for r in caplog.records)
+        assert "TERMINAL persist failed in final confirm" in logs, logs
 
     def test_second_confirm_success_pops(self, monkeypatch):
         """A2：补写成功 → DB 终态 + 写缓存 pop。"""

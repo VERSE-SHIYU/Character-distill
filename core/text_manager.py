@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import csv
 import io
@@ -22,6 +24,8 @@ from core.schema import CharacterCard
 from core.text_failure import TEXT_FAILURE_MESSAGES as _MSG
 from core.utils import try_record_usage
 from storage.base import StorageBase, new_review_id
+
+logger = logging.getLogger(__name__)
 
 
 def new_session_entry(engine: Any, card: Any, user_id: str) -> dict[str, Any]:
@@ -110,7 +114,7 @@ class TextManager:
                 new_review_id(), card_id, user_id, "flag", reason
             )
         except Exception as exc:
-            print(f"[TextManager] Record review flag failed (non-fatal): {exc}")
+            logger.warning("Record review flag failed (non-fatal): %s", exc, exc_info=True)
 
     @staticmethod
     def _parse_wechat_json(data: dict) -> str:
@@ -435,7 +439,7 @@ class TextManager:
                     try:
                         card = CharacterCard.model_validate_json(c["card_json"])
                     except Exception as exc:
-                        print(f"[TextManager] Parse cached card failed: {exc}")
+                        logger.warning("Parse cached card failed, re-distilling: %s", exc, exc_info=True)
                         card = None
                     break
 
@@ -503,7 +507,7 @@ class TextManager:
                 else:
                     print(f"[TextManager] Opening variation invalid, using original")
             except Exception as exc:
-                print(f"[TextManager] Opening variation failed, using original: {exc}")
+                logger.warning("Opening variation failed, using original: %s", exc, exc_info=True)
 
         try:
             all_characters = await self._build_all_characters(text_id, existing_cards, user_id)
@@ -519,7 +523,7 @@ class TextManager:
         try:
             await self._storage.save_session(session_id, card_id, "", "", user_id)
         except Exception as exc:
-            print(f"[TextManager] Persist session failed (non-fatal): {exc}")
+            logger.warning("Persist session failed (non-fatal): %s", exc, exc_info=True)
 
         # Fire-and-forget scene index (non-blocking, degraded silently)
         if self._indexing_service:

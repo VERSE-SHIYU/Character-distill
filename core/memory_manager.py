@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import math
 import os
 import threading
@@ -11,6 +13,8 @@ from typing import Any
 
 from core import concurrency as C  # 派生与上下文传播（ctx_thread）
 from core.utils import try_record_usage
+
+logger = logging.getLogger(__name__)
 
 # ── 加权检索常量（两级门控: base = α·rel + β·rec + γ·imp, final = base × (1+λ·emo)）──
 RERANK_ALPHA = 0.60    # 语义相关性权重（含原 DELTA 并入）
@@ -209,7 +213,7 @@ class MemoryManager:
             )
             print("[MemoryManager] Mem0 initialized (DeepSeek LLM + DashScope Embedding via shared cache)")
         except Exception as exc:
-            print(f"[MemoryManager] Mem0 init failed: {exc}")
+            logger.error("Mem0 init failed: %s", exc, exc_info=True)
             self._enabled = False
 
     @property
@@ -239,7 +243,7 @@ class MemoryManager:
             if isinstance(results, dict):
                 results = results.get("results", [])
         except Exception as exc:
-            print(f"[MemoryManager] Search failed: {exc}")
+            logger.warning("Mem0 search failed: %s", exc, exc_info=True)
             return []
 
         now = datetime.now(timezone.utc)
@@ -327,9 +331,7 @@ class MemoryManager:
                 result = self._mem.add(messages, **kwargs)
                 print(f"[MemoryManager] add OK: card={card_id} result_len={len(result) if isinstance(result, list) else 'N/A'}")
             except Exception as exc:
-                print(f"[MemoryManager] Add failed: {exc}")
-                import traceback
-                traceback.print_exc()
+                logger.warning("Mem0 add failed: %s", exc, exc_info=True)
 
         C.ctx_thread(_do_add, daemon=True).start()  # context 传播点：记忆入库线程
 
@@ -343,7 +345,7 @@ class MemoryManager:
                 results = results.get("results", [])
             return results
         except Exception as exc:
-            print(f"[MemoryManager] Get all failed: {exc}")
+            logger.warning("Mem0 get_all failed: %s", exc, exc_info=True)
             return []
 
     def add_manual(self, text: str, card_id: str, metadata: dict | None = None) -> bool:
@@ -362,7 +364,7 @@ class MemoryManager:
             print(f"[MemoryManager] manual add result: {result}")
             return True
         except Exception as exc:
-            print(f"[MemoryManager] manual add failed: {exc}")
+            logger.warning("Mem0 manual add failed: %s", exc, exc_info=True)
             return False
 
     def reflect(self, card_id: str, llm, recent_memories: list[dict], char_name: str,
@@ -417,9 +419,7 @@ class MemoryManager:
                     )
                     print(f"[Reflection] wrote insight (ok={ok}): {insight[:120]}")
             except Exception as exc:
-                print(f"[Reflection] failed: {exc}")
-                import traceback
-                traceback.print_exc()
+                logger.warning("Reflection insight write failed: %s", exc, exc_info=True)
 
         C.ctx_thread(_do_reflect, daemon=True).start()  # context 传播点：反思线程
 
@@ -431,7 +431,7 @@ class MemoryManager:
             self._mem.update(memory_id=memory_id, data=text)
             return True
         except Exception as exc:
-            print(f"[MemoryManager] update failed: {exc}")
+            logger.warning("Mem0 update failed: %s", exc, exc_info=True)
             return False
 
     def delete(self, memory_id: str) -> bool:
@@ -442,7 +442,7 @@ class MemoryManager:
             self._mem.delete(memory_id)
             return True
         except Exception as exc:
-            print(f"[MemoryManager] Delete failed: {exc}")
+            logger.warning("Mem0 delete failed: %s", exc, exc_info=True)
             return False
 
     def delete_all(self, card_id: str) -> bool:
@@ -453,5 +453,5 @@ class MemoryManager:
             self._mem.delete_all(user_id=card_id)
             return True
         except Exception as exc:
-            print(f"[MemoryManager] Delete all failed: {exc}")
+            logger.warning("Mem0 delete_all failed: %s", exc, exc_info=True)
             return False

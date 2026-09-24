@@ -451,14 +451,14 @@ async def register(
         from cross_border_sync import forward_user_profile_to_peer
         await forward_user_profile_to_peer(user["id"], user.get("username", ""), node_region, user.get("avatar_data", ""))
     except Exception as exc:
-        print(f"[auth] Forward user profile to peer failed: {exc}")
+        logger.error("Forward user profile to peer failed: %s", exc, exc_info=True)
 
     # Record consent
     try:
         client_ip = get_client_ip(request)
         await storage.record_user_consent(user["id"], CURRENT_TERMS_VERSION, CURRENT_PRIVACY_VERSION, client_ip)
     except Exception as exc:
-        print(f"[auth] Failed to record consent for {user_id}: {exc}")
+        logger.error("Failed to record consent for %s: %s", user_id, exc, exc_info=True)
 
     # First user with seed code becomes admin
     admin_seed = os.getenv("ADMIN_INVITE_CODE", "")
@@ -731,7 +731,7 @@ async def test_embedding(
         raise
     except Exception as exc:
         # 日志只放 user id 与异常，绝不放 key。
-        print(f"[auth] Embedding test failed for user {user['id']}: {exc!r}")
+        logger.warning("Embedding test failed for user %s: %r", user["id"], exc)
         return {"ok": False, "error": describe_embedding_failure(exc), "detail": str(exc)}
 
 

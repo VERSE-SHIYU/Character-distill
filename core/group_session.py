@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 from typing import Any
 
 from core.chat_engine import ChatEngine
 from core.context_engine import _count_tokens
 from core.message_outbox import MessageOutbox
+
+logger = logging.getLogger(__name__)
 
 MAX_HISTORY_TOKENS = 2000
 
@@ -136,7 +140,7 @@ class GroupSession:
                 if prev:
                     engine.load_affinity(prev)
             except Exception as exc:
-                print(f"[GroupSession] Load group affinity failed (card={target_card_id}): {exc}")
+                logger.warning("Load group affinity failed (card=%s): %s", target_card_id, exc, exc_info=True)
 
         # 记录用户消息到群聊历史
         self.group_history.append({
@@ -180,7 +184,7 @@ class GroupSession:
                     asyncio.to_thread(engine._evaluate_affinity, message, response)
                 )
             except Exception as exc:
-                print(f"[GroupSession] Schedule affinity eval failed (card={target_card_id}): {exc}")
+                logger.warning("Schedule affinity eval failed (card=%s): %s", target_card_id, exc, exc_info=True)
 
         return response
 
@@ -237,7 +241,7 @@ class GroupSession:
                     if prev:
                         eng.load_affinity(prev)
                 except Exception as exc:
-                    print(f"[GroupSession] Load group affinity failed (card={cid}): {exc}")
+                    logger.warning("Load group affinity failed (card=%s): %s", cid, exc, exc_info=True)
         else:
             for cid in target_card_ids:
                 eng = self.engines.get(cid)
@@ -371,6 +375,6 @@ class GroupSession:
                     asyncio.to_thread(engine._evaluate_affinity, message, response)
                 )
             except Exception as exc:
-                print(f"[GroupSession] Schedule affinity eval failed (card={card_id}): {exc}")
+                logger.warning("Schedule affinity eval failed (card=%s): %s", card_id, exc, exc_info=True)
 
         return {"card_id": card_id, "reply": response, "speaker": engine.card.name}

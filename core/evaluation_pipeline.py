@@ -6,12 +6,16 @@ SIDE-EFFECT 层每步独立 try/except，互不影响，永不回滚 CORE 状态
 
 from __future__ import annotations
 
+import logging
+
 import time
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
 from core.utils import try_record_usage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -130,20 +134,21 @@ class EvaluationPipeline:
                     break
                 except Exception as exc:
                     if attempt == 0:
-                        print(f"[EvaluationPipeline] LLM call failed (attempt 1/2), retrying in 2s session={ctx.session_id}: {exc}")
+                        logger.warning("LLM call failed (attempt 1/2), retrying in 2s session=%s: %s",
+                                   ctx.session_id, exc, exc_info=True)
                         time.sleep(2)
                     else:
                         raise
             data = ctx.affinity_service.parse_evaluation_reply(reply)
             if data is None:
-                print(f"[EvaluationPipeline] EVAL FAILED session={ctx.session_id}: "
-                      f"no JSON object found in LLM reply (first 200 chars): {reply[:200]!r}")
+                logger.warning(
+                    "Affinity eval produced no JSON object session=%s "
+                    "(first 200 chars): %r", ctx.session_id, reply[:200],
+                )
                 return None
             return data
         except Exception as exc:
-            print(f"[EvaluationPipeline] EVAL FAILED session={ctx.session_id}: {exc}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("Affinity eval failed session=%s: %s", ctx.session_id, exc, exc_info=True)
             return None
 
     # ── SIDE-EFFECT 1: 时间事件 ───────────────────────────────
@@ -172,7 +177,7 @@ class EvaluationPipeline:
             )
             print(f"[EvaluationPipeline] Saved time_event: {evt} at {due_at} (id={event_id})")
         except Exception as exc:
-            print(f"[EvaluationPipeline] Save time_event failed: {exc}")
+            logger.warning("Save time_event failed: %s", exc, exc_info=True)
 
     # ── SIDE-EFFECT 2: 好感持久化 ─────────────────────────────
 
@@ -201,7 +206,8 @@ class EvaluationPipeline:
                 )
                 print(f"[EvaluationPipeline] Group affinity saved ({_t.time()-_t0:.2f}s)")
             except Exception as exc:
-                print(f"[EvaluationPipeline] Group affinity save failed (group={ctx.group_id} card={ctx.card_id}): {exc}")
+                logger.warning("Group affinity save failed (group=%s card=%s): %s",
+                                   ctx.group_id, ctx.card_id, exc, exc_info=True)
         elif ctx.session_id:
             try:
                 from core.scheduling import submit_to_main_loop
@@ -215,4 +221,5 @@ class EvaluationPipeline:
                 )
                 print(f"[EvaluationPipeline] Session affinity state saved ({_t.time()-_t0:.2f}s)")
             except Exception as exc:
-                print(f"[EvaluationPipeline] Session affinity state save failed (session={ctx.session_id}): {exc}")
+                logger.warning("Session affinity state save failed (session=%s): %s",
+                                   ctx.session_id, exc, exc_info=True)

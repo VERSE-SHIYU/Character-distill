@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import logging
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -209,17 +210,21 @@ def test_query_no_collection_returns_empty():
 
 # ── 调用路径回归：维度不符集合 → 三条 load_existing 调用路径都降级、都绝不 index() ──
 
-def test_caller_indexing_service_degrades_no_index():
+def test_caller_indexing_service_degrades_no_index(caplog):
     """indexing_service（单卡 chat 主路径）：CollectionUnusableError → 特定 WARN + None 降级 + index 不触发。
 
     守卫必须在宽 except 之前：维度不符是确定性不可用，要和瞬时 build 故障分开记日志、
     也不落进任何可能触发 index() 的兜底（此处 _get_or_build_rag 顺序执行 index()，
-    异常上抛即天然跳过；具体捕获只为区分日志与语义）。"""
+    异常上抛即天然跳过；具体捕获只为区分日志与语义）。
+
+    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
+    而容器 stdout 到不了面板。
+    """
     from core.indexing_service import IndexingService
 
     svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
-    buf = io.StringIO()
-    with patch("core.indexing_service.RAGEngine") as cls, contextlib.redirect_stdout(buf):
+    caplog.set_level(logging.WARNING)
+    with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = CollectionUnusableError(
             "dim 384 != 1024", stored_dim=384, expected_dim=1024)
@@ -227,27 +232,28 @@ def test_caller_indexing_service_degrades_no_index():
         got = svc.get_rag_for_session("t_unusable", "正文内容")
         assert got is None, "维度不符集合必须降级返回 None（不静默空、不重建）"
         inst.index.assert_not_called()
-    log = buf.getvalue()
+    log = "\n".join(r.getMessage() for r in caplog.records)
     assert "维度不符不可用" in log and "不自动重建" in log, \
         f"维度不符必须有专属可见 WARN（区分于瞬时故障）：{log!r}"
-    assert "RAG build failed" not in log, "维度不符不应误报成 build 失败：{log!r}"
+    assert "RAG build failed" not in log, f"维度不符不应误报成 build 失败：{log!r}"
     print("  [PASS] indexing_service 路径：None 降级、index 未调用、维度不符专属 WARN")
 
 
-def test_caller_indexing_service_generic_error_still_degrades():
+def test_caller_indexing_service_generic_error_still_degrades(caplog):
     """indexing_service：非维度普通故障仍走宽 except 降级 None（专属守卫不误伤，也不 500）。"""
     from core.indexing_service import IndexingService
 
     svc = IndexingService(storage=MagicMock(), rag_config={"embedding_key": "k"})
-    buf = io.StringIO()
-    with patch("core.indexing_service.RAGEngine") as cls, contextlib.redirect_stdout(buf):
+    caplog.set_level(logging.WARNING)
+    with patch("core.indexing_service.RAGEngine") as cls:
         inst = MagicMock()
         inst.load_existing.side_effect = RuntimeError("embed API 瞬断")
         cls.return_value = inst
         got = svc.get_rag_for_session("t_transient", "正文内容")
         assert got is None, "瞬时 build 故障也必须降级 None，不能 500"
         inst.index.assert_not_called()
-    assert "RAG build failed (degraded)" in buf.getvalue(), "瞬时故障走原宽 except 日志"
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "RAG build failed (degraded)" in log, f"瞬时故障走原宽 except 日志：{log!r}"
     print("  [PASS] indexing_service 路径：非维度异常仍走 generic 降级日志（守卫未误伤）")
 
 
@@ -360,14 +366,17 @@ def main() -> int:
         test_query_with_emotion_dim_error_raises_not_empty,
         test_query_no_match_still_returns_empty,
         test_query_no_collection_returns_empty,
-        test_caller_indexing_service_degrades_no_index,
-        test_caller_indexing_service_generic_error_still_degrades,
         test_caller_mcp_degrades_no_index,
         test_caller_group_rebuild_degrades_no_index,
     ]
     print("=== RAG UNUSABLE-COLLECTION REGRESSION ===\n")
     for t in tests:
         t()
+        # 另两条（test_caller_indexing_service_*）断言的是 **logging** 记录，靠 pytest 的
+        # `caplog` fixture 拿（spec-119：落点从 print 改成模块 logger）—— 手跑这条入口没有
+        # fixture，故只列在此处、不静默少跑：
+    print("  [SKIP] test_caller_indexing_service_degrades_no_index / "
+          "..._generic_error_still_degrades：只在 pytest 下跑（用 caplog 断言日志）")
     print("\n=== ALL %d TESTS PASSED ===" % len(tests))
     print("load_existing: dimension-blindness fixed (mismatch raises, never silent-True)")
     print("query/query_with_emotion: failures raise, genuine no-match still returns []")

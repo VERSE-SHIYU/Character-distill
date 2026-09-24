@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 from typing import Any
@@ -20,6 +22,8 @@ from core.nonfatal import nonfatal
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from web.llm_resolution import resolve_embedding
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/history", tags=["history"])
 
@@ -308,7 +312,7 @@ async def resume_session(
             # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
             engine.load_affinity(data)
     except Exception as exc:
-        print(f"[history] Restore affinity failed (non-fatal): {exc}")
+        logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
 
     # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
     if _body.client_tz:

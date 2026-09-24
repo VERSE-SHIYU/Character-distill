@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import asyncio
 import json
 import random
 import time
-import traceback
 from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -24,6 +25,8 @@ from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
 from adapters.llm_adapter import llm_error_payload, user_facing_error
 from web.llm_resolution import resolve_embedding
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 legacy_router = APIRouter(tags=["legacy-chat"])
@@ -217,7 +220,7 @@ async def _ensure_session(
             # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
             engine.load_affinity(data)
     except Exception as exc:
-        print(f"[chat] Restore affinity failed (non-fatal): {exc}")
+        logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
     # 条目整份来自 `new_session_entry`（上面那句把新 id 下的条目搬到原 id 名下），
     # `lock` / `retract_state` / `outbox` 都随条目一起过来 —— 不在这里补默认值。
 
@@ -310,7 +313,7 @@ async def _do_chat(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
                     )
             except Exception as exc:
-                print(f"[chat] Save user_role failed (non-fatal): {exc}")
+                logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
     if client_tz and session.get("engine"):
         session["engine"]._user_tz = client_tz
 
@@ -331,11 +334,12 @@ async def _do_chat(
             print(f"[perf] _do_chat total took {_t.time()-_t0:.2f}s")
             rag_ctx = getattr(engine, '_last_rag_context', '') or ''
     except Exception as exc:
-        print(f"[chat] Chat failed: {exc}")
         # LLM 侧未完成终态放行到统一出口（web/server.py 按 finish_reason 配 400/502/503）；
         # 其余仍就地 500。判据走 llm_error_payload，不 import 异常类（边界锁）。
         if llm_error_payload(exc) is not None:
-            raise
+            raise  # 原样上抛 —— 由全局处理器记录（web/server.py）
+        # HTTPException 不经全局处理器，就地记一条；否则这条路的失败不留痕。
+        logger.error("Chat failed: %s", exc, exc_info=True)
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     # Determine retraction before persisting (session-level state machine)
@@ -468,7 +472,7 @@ async def _do_chat_stream(
                         session_id, db_s.get("card_id", ""), user_role, db_s.get("avatar_data", ""), user_id,
                     )
             except Exception as exc:
-                print(f"[chat] Save user_role failed (non-fatal): {exc}")
+                logger.warning("Save user_role failed (non-fatal): %s", exc, exc_info=True)
     if client_tz and session.get("engine"):
         session["engine"]._user_tz = client_tz
 
@@ -617,11 +621,10 @@ async def _do_chat_stream(
                     if full_reply.strip():
                         await asyncio.to_thread(engine.post_stream_process, llm_msg, full_reply)
             except Exception as hk_exc:
-                print(f"[chat] Post-stream housekeeping failed (non-fatal): {hk_exc}")
+                logger.warning("Post-stream housekeeping failed (non-fatal): %s", hk_exc, exc_info=True)
 
         except Exception as exc:
-            print(f"[chat] Chat stream failed: {exc}")
-            print(f"[chat] Traceback:\n{traceback.format_exc()}")
+            logger.error("Chat stream failed: %s", exc, exc_info=True)
             # Only roll back when NOTHING was produced — if any token streamed out,
             # the user already saw partial content; keep their message + partial reply.
             if not tokens:
@@ -633,7 +636,7 @@ async def _do_chat_stream(
                     try:
                         await storage.delete_messages_after(session_id, user_msg_id)
                     except Exception as rollback_exc:
-                        print(f"[chat] Rollback user message failed (non-fatal): {rollback_exc}")
+                        logger.error("Rollback user message failed (non-fatal): %s", rollback_exc, exc_info=True)
             # Sync engine.history: pop phantom user message if chat_stream's own
             # except block didn't clean up (e.g. exception after generator exit)
             engine = session.get("engine")
@@ -728,7 +731,7 @@ async def revoke_messages(
         if engine:
             engine.history = _rebuild_history_from_db(messages)
     except Exception as exc:
-        print(f"[chat] Rebuild history after revoke failed (non-fatal): {exc}")
+        logger.warning("Rebuild history after revoke failed (non-fatal): %s", exc, exc_info=True)
 
     return {"deleted": count}
 

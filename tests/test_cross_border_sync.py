@@ -7,6 +7,7 @@ network calls are made.
 
 from __future__ import annotations
 
+import logging
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -208,42 +209,45 @@ def _mock_httpx(monkeypatch, response=None, error=None):
     return patch("httpx.AsyncClient", return_value=mock_client)
 
 
-async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, capsys):
-    """对端回非 200 时，输出里必须留下 op_type / target_id / 状态码。
+async def test_forward_delete_to_peer_logs_status_on_non_200(monkeypatch, caplog):
+    """对端回非 200 时，日志里必须留下 op_type / target_id / 状态码。
 
     只返回 False 而不留痕的话，线上「删不掉、也传不出去」这件事在日志里完全不可见 ——
     运维只能看到对端数据没被删，查不出是哪一条、卡在哪个状态码上。
+
+    断言走 `caplog` 而不是 stdout（spec-119）：这条要求的意义正是「面板上看得见」，
+    而容器 stdout 到不了面板。
     """
     from cross_border_sync import forward_delete_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
-    capsys.readouterr()  # 丢掉更早的输出
+    caplog.set_level(logging.ERROR)
 
     with _mock_httpx(monkeypatch, response=MockResponse(503)):
         ok = await forward_delete_to_peer("card_delete", "card-xyz", "", MagicMock())
 
     assert ok is False
-    out = capsys.readouterr().out
-    assert "card_delete" in out, f"输出里没有 op_type：{out!r}"
-    assert "card-xyz" in out, f"输出里没有 target_id：{out!r}"
-    assert "503" in out, f"输出里没有状态码：{out!r}"
+    out = "\n".join(r.getMessage() for r in caplog.records)
+    assert "card_delete" in out, f"日志里没有 op_type：{out!r}"
+    assert "card-xyz" in out, f"日志里没有 target_id：{out!r}"
+    assert "503" in out, f"日志里没有状态码：{out!r}"
 
 
-async def test_forward_delete_to_peer_logs_exception(monkeypatch, capsys):
+async def test_forward_delete_to_peer_logs_exception(monkeypatch, caplog):
     """连不上对端时，同样要留下 op_type / target_id（异常本身另附）。"""
     from cross_border_sync import forward_delete_to_peer
 
     monkeypatch.setenv("PEER_NODE_URL", "http://sg-node:7860")
-    capsys.readouterr()
+    caplog.set_level(logging.ERROR)
 
     with _mock_httpx(monkeypatch, error=RuntimeError("boom-unreachable")):
         ok = await forward_delete_to_peer("user_purge", "usr-abc", "", MagicMock())
 
     assert ok is False
-    out = capsys.readouterr().out
-    assert "user_purge" in out, f"输出里没有 op_type：{out!r}"
-    assert "usr-abc" in out, f"输出里没有 target_id：{out!r}"
-    assert "boom-unreachable" in out, f"输出里没有异常信息：{out!r}"
+    out = "\n".join(r.getMessage() for r in caplog.records)
+    assert "user_purge" in out, f"日志里没有 op_type：{out!r}"
+    assert "usr-abc" in out, f"日志里没有 target_id：{out!r}"
+    assert "boom-unreachable" in out, f"日志里没有异常信息：{out!r}"
 
 
 # ── _resync_once：一轮补发的边界 ─────────────────────────────────────────
