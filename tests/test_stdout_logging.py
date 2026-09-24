@@ -10,19 +10,18 @@ from __future__ import annotations
 import logging
 import re
 
-from core.stdout_logging import install_stdout_logging
+from core.stdout_logging import _StdoutHandler, install_stdout_logging
 
 _ROOT = logging.getLogger()
 
 
-def _handlers_added_since(before: list[logging.Handler]) -> list[logging.Handler]:
-    """`before` 之后新挂到根日志器上的 handler。
+def _our_handlers() -> list[logging.Handler]:
+    """根上属于本模块的 handler。
 
-    按「快照前后差集」认人，**不看** `handler.stream is sys.stdout`：捕获夹具会替换
-    `sys.stdout`，handler 持有的又是构造期那一个 —— 照身份认会在捕获开启时认不出来，
-    那样的判据依赖的是夹具，不是被测物。
+    按**类型**认人，不按对象身份，也不看 `handler.stream is sys.stdout`：捕获夹具会替换
+    `sys.stdout`，handler 又是模块级单例 —— 照身份认的判据依赖的是夹具，不是被测物。
     """
-    return [h for h in _ROOT.handlers if h not in before]
+    return [h for h in _ROOT.handlers if isinstance(h, _StdoutHandler)]
 
 
 def _probe_logger(name: str) -> logging.Logger:
@@ -34,17 +33,23 @@ def _probe_logger(name: str) -> logging.Logger:
 
 
 def test_install_is_idempotent_and_sits_at_warning():
-    """装几次都只有一个 handler，且级别与环形缓冲同级。"""
+    """装几次都只剩一个 handler，且级别与环形缓冲同级。
+
+    起点先清干净再装：别的用例（如 `test_llm_access_gate` 起真 app 的 lifespan）早就
+    把本模块的单例挂上去了，按「装前装后差集」算会得空 —— 那判的是「这次调用新挂了
+    几个」，不是「根上最终有几个」。
+    """
     before = list(_ROOT.handlers)
+    _ROOT.handlers[:] = [h for h in before if not isinstance(h, _StdoutHandler)]
     try:
         install_stdout_logging()
         install_stdout_logging()
 
-        added = _handlers_added_since(before)
-        assert len(added) == 1, f"装两次应只多出一个 handler，实得 {len(added)}"
-        assert added[0].level == logging.WARNING, (
+        ours = _our_handlers()
+        assert len(ours) == 1, f"装两次应只留一个 handler，实得 {len(ours)}"
+        assert ours[0].level == logging.WARNING, (
             f"handler 级别应是 WARNING（与环形缓冲同级），"
-            f"实得 {logging.getLevelName(added[0].level)}"
+            f"实得 {logging.getLevelName(ours[0].level)}"
         )
     finally:
         _ROOT.handlers[:] = before
