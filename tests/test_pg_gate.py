@@ -29,6 +29,9 @@
 
   3. **门的消费者**（连这个库的服务有没有真的等它）。`depends_on` 退成短式列表、`condition`
      改成 `service_started`、或者新服务连库却不声明依赖 —— 探针还红着，但没人等它了。
+     判据 3 的前提是「这份文件里有消费者」。只作测试库、消费者在宿主机上的单服务编排
+     （`docker-compose.test.yml`）没有这个前提，故登记在 `_NO_IN_FILE_CONSUMER` 里 ——
+     「无从判断」要写下来，不能默认通过。
 
 **这一版为什么重写：判据不能再对着「代理」判。** 上一版把模型交给两处代理：自己
 `yaml.safe_load`，再按字面量认消费者。三条变异本轮实测，**旧锁全绿**（`5 passed`，
@@ -187,6 +190,29 @@ _NOT_A_DB_CONSUMER: dict[tuple[str, str], str] = {
     ("docker-compose.prod.yml", "fail2ban"):
         "只读 nginx 日志做封禁，无 depends_on、无连接串、无 env_file",
 }
+
+# 判据 3 / 4(a) 的**文件级**例外：本文件里根本没有服务会连这个库的那些编排。
+#
+# 与上面那张表判的不是同一件事：上面的表说「这个服务不连库」，这张说「这份文件里没有
+# 消费者可判」。是「无从判断」，不是「判断通过」—— 故单独一张表，理由里写清凭什么。
+# 键 = (文件名, 库服务名)，值 = 人写的理由。机械校验（陈旧 / 缺登记 / 空理由）走
+# policy_table —— 判据 3 只负责「现场没有消费者的库必须登记在案」这一个方向。
+_NO_IN_FILE_CONSUMER: dict[tuple[str, str], str] = {
+    ("docker-compose.test.yml", "postgres"):
+        "单服务编排：只起一个 PG 给测试用，消费者是宿主机上的 pytest 进程，不在本文件里；"
+        "本文件里没有可判的服务，判据 3（消费者必须等门）在此无从判断",
+}
+
+
+def _dbs_without_in_file_consumer() -> set[tuple[str, str]]:
+    """现场「本文件内一个硬消费者都没有」的 (文件名, 库服务名) —— 必须与上表对账。"""
+    out: set[tuple[str, str]] = set()
+    for path in compose_model.project_files():
+        model = compose_model.effective_model(path)
+        for db in _db_services(model):
+            if not _hard_consumers(model, db):
+                out.add((path.name, db))
+    return out
 
 
 def _needs_registration(file_name: str, model: dict) -> set[tuple[str, str]]:
@@ -604,8 +630,13 @@ def test_lock_is_not_vacuous():
         assert dbs, (f"{path.name} 里解析不出任何「镜像为 postgres」的服务 —— "
                      "该文件的判据在空转")
         for db in dbs:
+            if (path.name, db) in _NO_IN_FILE_CONSUMER:
+                continue
             hard = _hard_consumers(model, db)
-            assert hard, f"{path.name}:{db} 解析不出任何硬消费者 —— 判据 3 在空转"
+            assert hard, (
+                f"{path.name}:{db} 解析不出任何硬消费者 —— 判据 3 在空转。本文件里确实没有"
+                "服务会连它（例如只给测试用的单服务编排）时，登记进 `_NO_IN_FILE_CONSUMER` "
+                "并写清凭什么 —— 「没有消费者」是要写下来的事实，不是默认通过的空白")
             assert any(how != _HARD_BY_DEP for how in hard.values()), (
                 f"{path.name}:{db} 的硬消费者全靠 depends_on 认出来 —— 连接串识别器可能是"
                 "瞎的。Y-2/Y-3 正是从「只认 `@<服务名>:` 字面量」底下穿过去的两种写法，"
@@ -758,3 +789,22 @@ def test_exemption_table_does_not_exempt_a_real_consumer():
     assert both == [], (
         f"这些服务既在豁免表里、又被硬证据认定连库：{both} —— 豁免表说「它不连库」，识别器"
         "说「它连了」，两处判据相反。删掉豁免条目：它该等门")
+
+
+@_COMPOSE
+def test_no_in_file_consumer_table_is_current():
+    """`_NO_IN_FILE_CONSUMER` 与现场对账：既不陈旧、也不缺理由。
+
+    **陈旧那个方向是这张表唯一的报警器。** 判据 3 只在「现场没有消费者却未登记」时红；
+    反过来，某份文件后来长出一个消费者、名单却还挂着，**判据 3 会继续跳过它** —— 那条
+    消费者于是谁也没等门，而锁全绿。删掉/忘删的代价正落在这里。
+    """
+    observed = _dbs_without_in_file_consumer()
+    stale = sorted(policy_table.stale_keys(_NO_IN_FILE_CONSUMER, observed))
+    assert stale == [], (
+        f"这些 (文件, 库服务) 现场已经有本文件内的硬消费者了，却还挂在 `_NO_IN_FILE_CONSUMER` "
+        f"里：{stale} —— 它现在有消费者可判，该等门，不该被豁免")
+    blank = sorted(policy_table.empty_reasons(_NO_IN_FILE_CONSUMER))
+    assert blank == [], (
+        f"`_NO_IN_FILE_CONSUMER` 里这些条目没写理由（或理由不是字符串）：{blank} —— "
+        "「这份文件里为什么没有消费者」是判据 3 唯一的依据，写不出理由等于没人复核过")
