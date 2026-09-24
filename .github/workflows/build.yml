@@ -54,7 +54,9 @@ jobs:
         env:
           POSTGRES_USER: charsim
           POSTGRES_PASSWORD: ci_test_password
-          POSTGRES_DB: charsim
+          # 库名必须以 `_test` 结尾：tests/conftest.py 的会话检查据此判定「连的是测试库」，
+          # 不以 `_test` 结尾就整场中止（本地与 CI 用的是同一条规则）。
+          POSTGRES_DB: charsim_test
         ports:
           - 5432:5432
         options: >-
@@ -121,7 +123,10 @@ jobs:
       - name: Run tests
         env:
           STORAGE_BACKEND: postgres
-          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
+          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim_test
+          # conftest 以 TEST_DATABASE_URL 为**唯一**的测试库来源，再拿它盖掉 DATABASE_URL。
+          # 两条同值：CI 与本地走的是同一套规则（本地缺省指向 docker-compose.test.yml 的 55432）。
+          TEST_DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim_test
           JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
           # 声明「本环境保证有 PG」：依赖 PG 的用例据此**拒绝 skip**（连不上就直接红），
           # 而不是静默跳过。本地不设它 → 没 PG 时显式 skip 并给出原因。
@@ -211,7 +216,8 @@ jobs:
       - name: Run tests
         env:
           STORAGE_BACKEND: postgres
-          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim
+          DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim_test
+          TEST_DATABASE_URL: postgresql://charsim:ci_test_password@localhost:5432/charsim_test
           JWT_SECRET: ci-test-only-jwt-secret-not-for-production-use-0123456789abcdef
           REQUIRE_PG_TESTS: "1"
           # 与 gate 同一条理由：哨兵也要真跑门锁，不允许靠「没有 docker」静默跳过 ——
