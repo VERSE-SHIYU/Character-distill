@@ -1,0 +1,24 @@
+# ============================================================
+# 测试专用 PG —— 测试一律连这个库，护住开发库
+#
+# 启动：docker compose -f docker-compose.test.yml up -d
+# 关闭并清空：docker compose -f docker-compose.test.yml down
+#
+# 与 docker-compose.local.yml 的关键区别（不是「另一份开发编排」）：
+#   1. 端口 55432，与开发库的 5432 错开 —— 跑测试时开发库可以照常在跑；
+#   2. 库名 charsim_test，以 `_test` 结尾，conftest 的会话检查据此判定「你连的是测试库」；
+#   3. 数据目录挂 tmpfs：容器一停数据即清空，测试之间不留残骸；
+#   4. 用户名/口令写死为一次性测试值，**不读 .env** —— 测试连哪个库不由本机 .env 决定。
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: charsim
+      POSTGRES_PASSWORD: ci_test_password
+      POSTGRES_DB: charsim_test
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
