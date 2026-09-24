@@ -179,7 +179,8 @@ class TestBuildTimeAwarenessBlock:
 
     def _make_engine(self) -> ChatEngine:
         card = CharacterCard(name="测试角色")
-        return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
+        return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None,
+                          session_id="t", is_new_session=True)
 
     def test_hour_follows_the_request_timezone(self):
         set_current_timezone("Australia/Sydney")

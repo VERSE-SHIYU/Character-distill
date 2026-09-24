@@ -90,8 +90,13 @@ def _seed(store, user_id, role=_ROLE) -> str:
     return sid
 
 
-def _stub_text_manager(sessions, engine, rebuilt_id) -> object:
-    """`_create_session` 把替身引擎塞进 `sessions`，两条路径随后各自认领它。"""
+def _stub_text_manager(sessions, engine) -> object:
+    """`_create_session` 把替身引擎塞进 `sessions` 的**原 id** 名下。
+
+    替身按 `session_id` 入参登记（而不是自己编一个 id 再等路由搬过来）—— 路由那边
+    「先造后改名」已经删了，替身若还照老样子登记，就会把真路径藏起来：用例照绿，
+    可它验的是替身自己的行为。
+    """
 
     class _StubIndexing:
         def get_rag_for_session(self, *_a, **_kw):
@@ -103,9 +108,10 @@ def _stub_text_manager(sessions, engine, rebuilt_id) -> object:
         async def _build_all_characters(self, *_a, **_kw):
             return [{"name": "张三", "aliases": []}]
 
-        def _create_session(self, *_a, **_kw):
-            sessions[rebuilt_id] = new_session_entry(engine, None, "")
-            return rebuilt_id
+        def _create_session(self, *_a, **kw):
+            sid = kw["session_id"]
+            sessions[sid] = new_session_entry(engine, None, "")
+            return sid
 
     return _StubTextManager()
 
@@ -145,7 +151,7 @@ class TestResumeRestoresUserRole:
         monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
         monkeypatch.setattr(
             deps, "get_text_manager",
-            lambda *_a, **_kw: _stub_text_manager(sessions, engine, "ses_rebuilt"))
+            lambda *_a, **_kw: _stub_text_manager(sessions, engine))
 
         resp = client.post(f"/api/history/{sid}/resume", json={})
         assert resp.status_code == 200, resp.text
@@ -168,7 +174,7 @@ class TestEnsureSessionRestoresUserRole:
         monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
         monkeypatch.setattr(
             deps, "get_text_manager",
-            lambda *_a, **_kw: _stub_text_manager(sessions, engine, "ses_rebuilt"))
+            lambda *_a, **_kw: _stub_text_manager(sessions, engine))
 
         session = _run_async(_ensure_session(sid, store, sessions, user_id))
         assert session["engine"] is engine
@@ -193,7 +199,7 @@ class TestEmptyRoleStaysEmpty:
         monkeypatch.setattr(deps, "get_user_llm", _fake_user_llm)
         monkeypatch.setattr(
             deps, "get_text_manager",
-            lambda *_a, **_kw: _stub_text_manager(sessions, engine, "ses_rebuilt"))
+            lambda *_a, **_kw: _stub_text_manager(sessions, engine))
 
         _run_async(_ensure_session(sid, store, sessions, user_id))
         assert engine.user_role == "保留我"

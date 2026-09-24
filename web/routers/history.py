@@ -249,7 +249,8 @@ async def resume_session(
             card_rec["text_id"], text_rec["content"],
             all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
         )
-        new_session_id = await asyncio.wait_for(
+        # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
+        await asyncio.wait_for(
             asyncio.to_thread(
                 text_manager._create_session,
                 card,
@@ -257,6 +258,8 @@ async def resume_session(
                 rag=rag,
                 card_id=card_rec["id"],
                 user_id=user_id,
+                session_id=session_id,
+                is_new_session=False,
             ),
             timeout=120.0,
         )
@@ -266,10 +269,7 @@ async def resume_session(
         print(f"[history] Rebuild engine for {session_id} failed: {exc}")
         raise HTTPException(500, "操作失败，请稍后重试") from exc
 
-    # 6. Steal the engine into the original session_id
-    if new_session_id != session_id:
-        sessions[session_id] = sessions.pop(new_session_id, {})
-    engine = sessions[session_id].get("engine")
+    engine = sessions.get(session_id, {}).get("engine")
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
@@ -302,7 +302,6 @@ async def resume_session(
         engine.user_role = db_session["user_role"]
 
     # 8. Restore affinity from DB — each session has independent scores
-    engine._session_id = session_id
     try:
         data, source = await read_persisted_affinity(session_id, storage)
         if source == 'state':

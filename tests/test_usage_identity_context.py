@@ -715,6 +715,8 @@ def test_chat_sse_lands_usage_row_with_request_identity(monkeypatch):
         CharacterCard(name="甲", identity="测试"),
         card_id="c_lock",
         storage=store,
+        session_id=sid,
+        is_new_session=True,
     )
     sessions = deps.get_sessions()
     # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——
