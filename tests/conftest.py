@@ -274,3 +274,47 @@ async def registered_globals():
     deps._main_loop = prev[0]
     scheduling.set_loop_submitter(prev[1])
     llm_adapter.set_call_guard(prev[2])
+
+
+# ── 测试 app 的 lifespan：只有这一份 ──────────────────────────────────────────
+#
+# 自带 FastAPI + TestClient 的测试文件（`test_message_backfill.py`、`test_ownership_404.py`）
+# 需要的 lifespan 只做一件事：把投递实现注册到当前运行的 loop —— 生产里这就是
+# `web/server.py::_lifespan` 的 `set_main_loop(loop)`。以前这份 lifespan（连同客户端
+# 退出夹具）在两个文件里各写了一遍，第三个这样的文件就会抄第三份。
+#
+# 用法固定两步，缺一不可：
+#     app = FastAPI(lifespan=app_lifespan)
+#     client = open_test_client(app)
+# 裸 `TestClient(app)` 也能建，但**不进 `with` 就不跑 lifespan** —— 投递实现始终未注册，
+# 用例里的写盘全走已不存在的退路：看着绿，测的不是生产形状（缺陷 123）。
+@contextlib.asynccontextmanager
+async def app_lifespan(app):
+    """测试 app 的 lifespan：在 `registered_globals` 里注册投递实现，退出时还原。"""
+    import asyncio
+
+    async with registered_globals():
+        import deps
+
+        deps.set_main_loop(asyncio.get_running_loop())
+        yield
+
+
+_OPEN_TEST_CLIENTS = contextlib.ExitStack()
+
+
+def open_test_client(app) -> "TestClient":
+    """建一个**跑 lifespan** 的 TestClient，由下面的夹具统一 `with` 退出。"""
+    from fastapi.testclient import TestClient
+
+    return _OPEN_TEST_CLIENTS.enter_context(TestClient(app))
+
+
+@pytest.fixture(autouse=True)
+def _test_clients_run_their_lifespan():
+    """`open_test_client` 建的客户端统一在这里退出（不退出就永远不跑 lifespan）。
+
+    全库 autouse：绝大多数用例没建过客户端，`close()` 一个空栈是空操作。
+    """
+    yield
+    _OPEN_TEST_CLIENTS.close()

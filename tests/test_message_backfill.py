@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import uuid
 
@@ -34,7 +33,7 @@ from routers.distill import router as distill_router
 from routers.group import router as group_router
 from routers.history import router as history_router
 from storage.sqlite_store import SQLiteStore
-from conftest import registered_globals
+from conftest import open_test_client, registered_globals, app_lifespan
 
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────────
@@ -190,33 +189,8 @@ def _rate_limit_off(monkeypatch):
     monkeypatch.setattr(_lim_.limiter, "enabled", False)
 
 
-@contextlib.asynccontextmanager
-async def _test_lifespan(app):
-    """测试 app 的 lifespan：只做生产 lifespan 里与本文件相关的那一件事 —— 注册投递实现。
-
-    生产里这是 `web/server.py::_lifespan` 的 `set_main_loop(loop)`。改前 `_client` 返回裸
-    `TestClient(app)`，不进 `with` 就不跑 lifespan，投递实现始终未注册 —— 用例里的写盘全
-    经 `core.scheduling` 的退路跑掉：看着绿，测的不是生产形状（缺陷 123）。
-    """
-    async with registered_globals():
-        import deps
-
-        deps.set_main_loop(asyncio.get_running_loop())
-        yield
-
-
-_OPEN_CLIENTS = contextlib.ExitStack()
-
-
-@pytest.fixture(autouse=True)
-def _clients_run_their_lifespan():
-    """`_client` 建的 TestClient 统一在这里 `with` 退出（不退出就永远不跑 lifespan）。"""
-    yield
-    _OPEN_CLIENTS.close()
-
-
 def _client(st: _FlakyStore, user_id: str) -> TestClient:
-    app = FastAPI(lifespan=_test_lifespan)
+    app = FastAPI(lifespan=app_lifespan)
     for r in (chat_router, distill_router, history_router, group_router):
         app.include_router(r)
     app.state.limiter = limiter
@@ -225,7 +199,7 @@ def _client(st: _FlakyStore, user_id: str) -> TestClient:
         "id": user_id, "username": "testuser", "role": "user",
     }
     app.dependency_overrides[get_memory_manager] = lambda: _MemMgr()
-    return _OPEN_CLIENTS.enter_context(TestClient(app))
+    return open_test_client(app)
 
 
 def _run(coro):

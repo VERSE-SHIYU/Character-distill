@@ -16,14 +16,13 @@ storage 面测。
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from conftest import registered_globals
+from conftest import open_test_client, app_lifespan
 from core.text_manager import new_session_entry
 from deps import get_memory_manager, get_storage, get_tts_engine, get_voice_client
 from routers.auth import get_current_user
@@ -137,7 +136,7 @@ def _no_ambient_state(monkeypatch, store):
 
 
 def _make_client(store, user_id):
-    app = FastAPI(lifespan=_test_lifespan)
+    app = FastAPI(lifespan=app_lifespan)
     for r in (card_router, chat_router, group_router, market_router, memory_router,
               message_router, voice_router, distill_router):
         app.include_router(r)
@@ -148,37 +147,7 @@ def _make_client(store, user_id):
     app.dependency_overrides[get_memory_manager] = lambda: _MemMgr()
     app.dependency_overrides[get_voice_client] = lambda: _VoiceClient()
     app.dependency_overrides[get_tts_engine] = lambda: object()
-    return _OPEN_CLIENTS.enter_context(TestClient(app))
-
-
-@contextlib.asynccontextmanager
-async def _test_lifespan(app):
-    """测试 app 的 lifespan：只做生产 lifespan 里与本文件相关的那一件事 —— 注册投递实现。
-
-    生产里这是 `web/server.py::_lifespan` 的 `set_main_loop(loop)`。改前 `_make_client`
-    返回裸 `TestClient(app)`，不进 `with` 就不跑 lifespan，投递实现始终未注册 —— 发一条
-    消息那条链上引擎的几处 `submit_to_main_loop(...)`（读 reactions、读 session、落
-    affinity）全走 `core.scheduling` 的退路：看着绿，测的不是生产形状（缺陷 123）。
-    退路一拿掉，这几处当场报错、协程被丢下，表现为 `never awaited` 飘在用例头上。
-    """
-    async with registered_globals():
-        import deps
-
-        deps.set_main_loop(asyncio.get_running_loop())
-        yield
-
-
-_OPEN_CLIENTS = contextlib.ExitStack()
-
-
-@pytest.fixture(autouse=True)
-def _clients_run_their_lifespan():
-    """`_make_client` 建的 TestClient 统一在这里 `with` 退出（不退出就永远不跑 lifespan）。
-
-    与 `test_message_backfill.py` 同一份理由、同一个机制（`conftest.registered_globals`）。
-    """
-    yield
-    _OPEN_CLIENTS.close()
+    return open_test_client(app)
 
 
 @pytest.fixture
