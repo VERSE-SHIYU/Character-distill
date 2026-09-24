@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 DEFAULT_TZ = "Asia/Shanghai"  # 时区缺失/非法时的回退
+
+# 请求入口（`web/server.py` 的 AuthMiddleware）定出来的「本次请求的时区」。
+# 空串 = 没人定（进程外调用、后台任务、单元测试）→ `UserClock` 回退 DEFAULT_TZ。
+# 放在本模块是因为它是「用户本地时间的唯一抽象来源」，读它的人只该是 `UserClock`。
+_current_timezone: ContextVar[str] = ContextVar("current_timezone", default="")
+
+
+def set_current_timezone(tz: str) -> None:
+    """把请求入口定出来的时区设进上下文（空串 = 没定出来）。"""
+    _current_timezone.set(tz)
 
 
 def _safe_zone(tz: str | None) -> ZoneInfo:
@@ -20,14 +31,18 @@ class UserClock:
 
     @staticmethod
     def now(tz: str | None = None) -> datetime:
-        return datetime.now(_safe_zone(tz))  # 始终返回 aware datetime
+        return datetime.now(_safe_zone(tz or _current_timezone.get()))  # 始终返回 aware datetime
 
     @staticmethod
-    def to_user_tz(dt: datetime, tz: str | None) -> datetime:
-        """把任意 datetime 归一到用户时区；naive 视为 UTC。"""
+    def to_user_tz(dt: datetime, tz: str | None = None) -> datetime:
+        """把任意 datetime 归一到用户时区；naive 视为 UTC。
+
+        `tz` 不给（或给空）时用请求入口设的当前时区 —— 业务代码一律不传，传了就是
+        在绕开「请求入口统一确定」这条规则。
+        """
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(_safe_zone(tz))
+        return dt.astimezone(_safe_zone(tz or _current_timezone.get()))
 
 
 def describe_time_period(hour: int) -> str:

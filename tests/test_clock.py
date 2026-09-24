@@ -6,9 +6,17 @@ C. ChatEngine _build_time_awareness_block — prevents regression to server-time
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+import pytest
 
 from core.chat_engine import ChatEngine
-from core.clock import UserClock, describe_time_period, DEFAULT_TZ
+from core.clock import (
+    DEFAULT_TZ,
+    UserClock,
+    describe_time_period,
+    set_current_timezone,
+)
 from core.schema import CharacterCard
 
 
@@ -52,6 +60,50 @@ class TestUserClock:
         assert result.tzinfo is not None
         # UTC+0 → Sydney is UTC+10 or UTC+11, so hour should not be 12
         assert result.hour != 12
+
+
+# ── A2. 请求入口设的「当前时区」 ──────────────────────────────────────────────
+
+
+class TestRequestTimezoneContext:
+    """`now()` / `to_user_tz(dt)` 不传时区时，读请求入口设的那个时区。
+
+    这是「用户时区在请求入口统一确定」的 core 侧一半：设值方在 `web/server.py` 的
+    AuthMiddleware（按 `Time-Zone` 头 → 用户已存时区 → 不设），本类只锁 `UserClock`
+    的读取规则 —— 指定的用，没指定的回退 `DEFAULT_TZ`，显式传参优先于上下文。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_request_tz(self):
+        """每条用例后复位 —— ContextVar 在同一线程内是所有用例共享的。"""
+        yield
+        set_current_timezone("")
+
+    def test_now_reads_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        assert UserClock.now().tzinfo == ZoneInfo("Asia/Tokyo"), (
+            f"now() 没读到请求时区，实际 {UserClock.now().tzinfo}")
+
+    def test_to_user_tz_reads_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        dt = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert UserClock.to_user_tz(dt).hour == 21, (
+            f"UTC 12:00 在东京应是 21:00，实际 {UserClock.to_user_tz(dt).hour}")
+
+    def test_falls_back_to_default_when_unset(self):
+        dt = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert UserClock.now().tzinfo == ZoneInfo(DEFAULT_TZ)
+        assert UserClock.to_user_tz(dt).tzinfo == ZoneInfo(DEFAULT_TZ)
+
+    def test_explicit_arg_beats_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        assert UserClock.now("Europe/Berlin").tzinfo == ZoneInfo("Europe/Berlin"), (
+            "显式传的时区被上下文盖掉了")
+
+    def test_invalid_request_timezone_falls_back(self):
+        set_current_timezone("Mars/Base")
+        assert UserClock.now().tzinfo == ZoneInfo(DEFAULT_TZ), (
+            "非法时区名没有回退")
 
 
 # ── B. describe_time_period ──────────────────────────────────────────────────
