@@ -49,7 +49,7 @@
 
 - **调试脚本不入 main**：一次性复现/调试脚本必须留在 `.gitignore` 覆盖的本地目录（如 `scripts/` 或 `e2e/scratch/`），绝不 `git add` 入库。**但被正文引用数字的探针，其产物经 `tests/perf/evidence_writer.py` 写入 `docs/evidence/` 并登记清单；这不是例外，是该类产物的唯一路径** —— 落点固定、写时按白名单脱敏、登记在写入时完成，三件都由出口强制，不由作者记性保证。正文引用这类数字一律写 `ev:<id>`，契约见 `docs/evidence/README.md`
 - **发现 spec 外 bug 先报告**：执行过程中发现未纳入当前 spec 的 bug — 停下，口头报告根因与修复方案，经确认后才单独立项修复
-- **存储改动只保证 PG（2026-09-24 起）**：新的存储改动只保证 PG 正确；SQLite 只同步到「接口还能跑」为止，不为它写用例、不为它做迁移。SQLite 自 2026-09-24 起不再测试、不再维护，计划择期退役
+- **存储改动只保证 PG（2026-09-24 起）**：新的存储改动只保证 PG 正确；SQLite 只同步到「接口还能跑」为止，不为它写用例。SQLite 自 2026-09-24 起不再测试、不再维护，计划择期退役。**迁移上有一条例外**：PG 新增**列**时，`storage/migrations/` 里补一份同语义的孪生迁移并登记进 `sqlite_store.py` 的迁移次序表，此外不加。理由是冻结后第一次加列暴露了「接口还能跑」与「不做迁移」互斥 —— 新列没有那个列就谈不上接口能跑，而两侧真库的列集锁（`tests/test_postgres_store.py::TestPgFreshSchemaClosure::test_fresh_sqlite_and_fresh_pg_have_the_same_columns`）要求列集相等且不许开豁免，**列集锁是二者的仲裁**
 - **跑测试前先起测试库**：本地一律 `docker compose -f docker-compose.test.yml up -d --wait`，测试连它的 `charsim_test`（55432）。`tests/conftest.py` 会话开始时核一次库名，不以 `_test` 结尾即整场中止 —— 开发库 `charsim` 不再有任何被测试碰到的路径
 - **失败必须进 logging，不许只 `print`**：`print` 写 fd 1，既不上面板（`core/log_collector.py` 的 `RingBufferHandler`，收 WARNING+）也不进告警邮件（`core/alerting.py` 的 `AlertHandler`，`ALERT_LEVEL = logging.ERROR`）—— 只 `print` 的失败等于只有翻容器 stdout 才看得见。
   - **往上抛的错误**不必逐处改：`web/server.py` 的全局异常处理器统一记一条带堆栈的 ERROR。**打印后 `raise` 的 `print` 保留不动。**

@@ -676,6 +676,10 @@ class StorageBase(ABC):
         """Update a user's display nickname."""
 
     @abstractmethod
+    async def update_user_timezone(self, user_id: str, tz: str) -> None:
+        """Update a user's last-known IANA timezone (`''` = unknown)."""
+
+    @abstractmethod
     async def record_geo_block(self, user_id: str, ip: str, base_url: str, reason: str) -> None:
         """Record a geo-blocking event for compliance audit trail."""
 
