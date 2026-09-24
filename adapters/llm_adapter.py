@@ -601,7 +601,7 @@ class LLMAdapter:
             if isinstance(data, dict) and "llm" in data:
                 llm_cfg = data["llm"]
         except Exception as exc:
-            logger.error("[LLMAdapter] Config file load failed, using defaults: %s", exc)
+            logger.error("[LLMAdapter] Config file load failed, using defaults: %s", exc, exc_info=True)
             pass
 
         self._base_url = base_url or str(llm_cfg.get("base_url", "https://api.deepseek.com"))

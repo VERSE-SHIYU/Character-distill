@@ -105,7 +105,7 @@ class TextManager:
                 guard_card_obj, card, self._llm, storage=self._storage,
             )
         except Exception as exc:
-            logger.error("[TextManager] Card guard crashed (flagging): %s", exc)
+            logger.error("[TextManager] Card guard crashed (flagging): %s", exc, exc_info=True)
             return GuardVerdict(error=True, error_msg=f"{type(exc).__name__}: {exc}")
 
     async def _flag_review(self, card_id: str, user_id: str, reason: str) -> None:
