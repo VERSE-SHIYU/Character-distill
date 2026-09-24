@@ -80,7 +80,28 @@
     "M10 一处吞错退回 `print`（失败只落容器 stdout，面板与告警都看不见）": [
       [
         "tests/test_failure_alerting.py",
-        "assert found == [], ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger：{found}\" )",
+        "assert sorted(found) == sorted(_KEPT_PRINTS), ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger",
+        0
+      ]
+    ],
+    "M11 吞错写进 `else:` 分支（旧判据只读 `.body`，整类静默跳过）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert sorted(found) == sorted(_KEPT_PRINTS), ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger",
+        0
+      ]
+    ],
+    "M12 `print` 之后 `raise HTTPException` 不算交给日志（旧判据当「必然抛出」放过）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert sorted(found) == sorted(_KEPT_PRINTS), ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger",
+        0
+      ]
+    ],
+    "M13 唯一的豁免失效（那处被改好）→ 相等比较必须变红": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert sorted(found) == sorted(_KEPT_PRINTS), ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger",
         0
       ]
     ]

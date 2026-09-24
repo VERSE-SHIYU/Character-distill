@@ -204,15 +204,23 @@ def _is_wide(handler: ast.ExceptHandler) -> bool:
 
 
 def _raises_5xx(handler: ast.ExceptHandler) -> bool:
-    """分支体内（含嵌套）有 `raise HTTPException(<500..599 整数字面量>)`。"""
+    """分支体内（含嵌套）有 `raise HTTPException(5xx)`。
+
+    位置与关键字 `status_code=` 两种写法都算：只读 `args[0]` 的话
+    `HTTPException(status_code=500, ...)` 能整条绕过去（spec-119 约束 8）。
+    """
     for node in ast.walk(handler):
         if not isinstance(node, ast.Raise) or not isinstance(node.exc, ast.Call):
             continue
         func = node.exc.func
         name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name != "HTTPException" or not node.exc.args:
+        if name != "HTTPException":
             continue
-        arg = node.exc.args[0]
+        if node.exc.args:
+            arg = node.exc.args[0]
+        else:
+            arg = next(
+                (kw.value for kw in node.exc.keywords if kw.arg == "status_code"), None)
         if isinstance(arg, ast.Constant) and isinstance(arg.value, int) and 500 <= arg.value < 600:
             return True
     return False

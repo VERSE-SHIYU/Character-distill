@@ -111,7 +111,10 @@ def _extract_audio_from_video(filepath: Path) -> Path:
     )
     if result.returncode != 0:
         # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 38 同形态）。
-        print(f"[voice] ffmpeg extract failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
+        logger.warning(
+            "[voice] ffmpeg extract failed: %s",
+            result.stderr.decode()[:400] if result.stderr else "unknown",
+        )
         raise HTTPException(400, "视频音频提取失败，请换成音频文件或换一个视频重试")
     filepath.unlink()  # Remove original video, keep audio only
     return wav_path
@@ -458,7 +461,10 @@ async def speech_to_text(
         )
         if result.returncode != 0:
             # ffmpeg 的 stderr 含服务器路径，只进日志不上屏（缺陷 39 收口，形态同 :110 / :380）。
-            print(f"[voice] ffmpeg asr-convert failed: {result.stderr.decode()[:400] if result.stderr else 'unknown'}")
+            logger.warning(
+                "[voice] ffmpeg asr-convert failed: %s",
+                result.stderr.decode()[:400] if result.stderr else "unknown",
+            )
             raise HTTPException(400, "音频转码失败，请换一个音频文件重试")
 
         with open(tmp_wav_path, "rb") as f:

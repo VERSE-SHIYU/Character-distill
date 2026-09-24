@@ -830,7 +830,10 @@ async def _distill_start_impl(
                 chunk_size=chunk_size, text_fingerprint=text_fp,
             )
             if affected == 0:
-                print(f"[distill] Resume row {task_id} gone before restamp; refusing to start")
+                logger.error(
+                    "[distill] Resume row %s gone before restamp; refusing to start",
+                    task_id,
+                )
                 raise HTTPException(503, "蒸馏任务创建失败，请稍后重试")
         else:
             # 新任务：纯 INSERT。主键冲突是真异常（新铸 uuid），由下面 except 兜成 503。
@@ -1216,7 +1219,7 @@ async def update_card(
         validated = CharacterCard.model_validate(req.card_json)
     except Exception as exc:
         # 上屏不带 `{exc}`：那是 pydantic 的字段级报错（内部字段名），细节只进日志。
-        print(f"[distill] Card validation failed: {exc}")
+        logger.warning("[distill] Card validation failed: %s", exc)
         raise HTTPException(400, "角色卡数据校验失败，请检查字段后重试") from exc
     result = await storage.update_card(card_id, validated.model_dump())
     return {"ok": True, "card": result}

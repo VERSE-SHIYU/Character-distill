@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, NamedTuple
 
@@ -12,6 +13,8 @@ from chromadb.errors import NotFoundError
 from core.embeddings import create_safe_embedding_fn
 from core.schema import scene_evidence
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时装饰器原样返回，零开销）
+
+logger = logging.getLogger(__name__)
 
 
 def _set_hits(sp, result) -> None:
@@ -567,7 +570,7 @@ class RAGEngine:
         except NotFoundError:
             return False
         except Exception as exc:
-            print(f"[RAGEngine] load_existing 获取集合失败（{collection_name}）：{exc}")
+            logger.warning("[RAGEngine] load_existing 获取集合失败（%s）：%s", collection_name, exc)
             return False
         if col.count() == 0:
             return False
@@ -595,7 +598,7 @@ class RAGEngine:
             try:
                 self._client.delete_collection(name=name)
             except Exception as exc:
-                print(f"删除 Chroma collection 失败：{exc}")
+                logger.warning("删除 Chroma collection 失败：%s", exc)
 
         self.collection = None
         self.collection_name = None
