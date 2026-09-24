@@ -698,19 +698,17 @@ async def distill_by_text_id(
         return result
     except DistillError:
         # 领域异常：放行到统一出口（web/server.py 的 `_DOMAIN_ERROR_STATUS`）配码取文案。
-        # 原先这里 `str(exc)` 直接上屏，而 DistillError 的 `str()` 是运维口径
-        # （`user_message｜ops_detail`）—— 后半截不该给用户看（缺陷 38）。
+        # **必须排在下面 `except ValueError` 之前**：`DistillError` 就是 `ValueError` 的
+        # 子类（`core/distiller.py:190`），否则会被下面那条接住、`str(exc)` 直接上屏 ——
+        # 而 DistillError 的 `str()` 是运维口径（`user_message｜ops_detail`），后半截
+        # 不该给用户看（缺陷 38）。
         raise
     except ValueError as exc:
-        # **不迁**：下面的 `except Exception` 也够不着它，但这条的实参是**本仓为人写的
-        # 用户/属主校验文案**（如 TextManager 的 "Text not found"，出处
-        # `core/text_failure.py`），不是领域异常。它没有 `user_message`，走
-        # user_facing_error 会落到通用文案、把用户需要的信息删掉 —— 与 text.py /
-        # history.py 的 A 类同源。**别为统一而统一。**
+        # **不迁**：这条的实参是**本仓为人写的用户/属主校验文案**（如 TextManager 的
+        # "Text not found"，出处 `core/text_failure.py`），不是领域异常。它没有
+        # `user_message`，走 user_facing_error 会落到通用文案、把用户需要的信息删掉 ——
+        # 与 text.py / history.py 的 A 类同源。**别为统一而统一。**
         raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        print(f"[distill] Distill failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.post("/start")
@@ -845,7 +843,7 @@ async def _distill_start_impl(
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"[distill] Create distill task row failed; refusing to start: {exc}")
+        logger.error("Create distill task row failed; refusing to start: %s", exc, exc_info=True)
         raise HTTPException(503, "蒸馏任务创建失败，请稍后重试") from exc
 
     with _task_lock:
@@ -1232,13 +1230,9 @@ async def list_cards(
 ) -> list[dict[str, Any]]:
     """List all distilled character cards for a text."""
     user_id = user["id"]
-    try:
-        result = await storage.list_cards(text_id, user_id)
-        print(f"[distill] list_cards text_id={text_id} user_id={user_id} => {len(result)} cards")
-        return result
-    except Exception as exc:
-        print(f"[distill] List cards failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    result = await storage.list_cards(text_id, user_id)
+    print(f"[distill] list_cards text_id={text_id} user_id={user_id} => {len(result)} cards")
+    return result
 
 
 @router.get("/cards/standalone")
@@ -1248,11 +1242,7 @@ async def list_standalone_cards(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict[str, Any]]:
     """List standalone cards (forked from market, no text attachment)."""
-    try:
-        return await storage.list_standalone_cards(user["id"])
-    except Exception as exc:
-        print(f"[distill] List standalone cards failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    return await storage.list_standalone_cards(user["id"])
 
 
 @router.get("/cards/{card_id}/export")
@@ -1274,11 +1264,7 @@ async def export_card(
     if not record:
         raise HTTPException(404, "Card not found")
 
-    try:
-        card = CharacterCard.model_validate_json(record["card_json"])
-    except Exception as exc:
-        print(f"[distill] Parse card {card_id} failed: {exc}")
-        raise HTTPException(500, "Card data is corrupted") from exc
+    card = CharacterCard.model_validate_json(record["card_json"])
 
     if format == "tavern":
         body = export_tavern_json(card, first_mes)
@@ -1334,60 +1320,46 @@ async def start_session(
     if not card_rec:
         raise HTTPException(404, "Card not found")
 
-    try:
-        card = CharacterCard.model_validate_json(card_rec["card_json"])
-    except Exception as exc:
-        print(f"[distill] Parse card {req.card_id} failed: {exc}")
-        raise HTTPException(500, "Card data is corrupted") from exc
+    card = CharacterCard.model_validate_json(card_rec["card_json"])
 
 
-
-    try:
-        if req.text_id:
-            text_rec = await storage.get_text_owned(req.text_id, user_id)
-            if not text_rec:
-                raise HTTPException(404, "Text not found")
-            content = text_rec["content"]
-            existing_cards = await storage.list_cards(req.text_id, user_id)
-            all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
-            try:
-                user_cfg = await storage.get_user_api_config(user_id) or {}
-            except Exception:
-                user_cfg = {}
-            emb = resolve_embedding(user_cfg)
-            session_id = await asyncio.to_thread(
-                text_manager._create_session, card,
-                all_characters=all_characters, rag=None,
-                card_id=req.card_id, user_id=user_id,
-                user_role=req.user_role,
+    if req.text_id:
+        text_rec = await storage.get_text_owned(req.text_id, user_id)
+        if not text_rec:
+            raise HTTPException(404, "Text not found")
+        content = text_rec["content"]
+        existing_cards = await storage.list_cards(req.text_id, user_id)
+        all_characters = await text_manager._build_all_characters(req.text_id, existing_cards, user_id)
+        try:
+            user_cfg = await storage.get_user_api_config(user_id) or {}
+        except Exception:
+            user_cfg = {}
+        emb = resolve_embedding(user_cfg)
+        session_id = await asyncio.to_thread(
+            text_manager._create_session, card,
+            all_characters=all_characters, rag=None,
+            card_id=req.card_id, user_id=user_id,
+            user_role=req.user_role,
+        )
+        # Fire-and-forget scene index via isolated service
+        indexing_service = get_indexing_service()
+        if indexing_service:
+            indexing_service.schedule_scene_index(
+                req.text_id, req.card_id, content, card.name,
+                all_characters=all_characters,
+                embedding_key=emb.key, embedding_region=emb.region,
             )
-            # Fire-and-forget scene index via isolated service
-            indexing_service = get_indexing_service()
-            if indexing_service:
-                indexing_service.schedule_scene_index(
-                    req.text_id, req.card_id, content, card.name,
-                    all_characters=all_characters,
-                    embedding_key=emb.key, embedding_region=emb.region,
-                )
-        else:
-            # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
-            # 卡片 prompt）—— 这里原先手搓 ChatEngine 并直接写 sessions[id]，漏了 user_id，
-            # 于是 `_ensure_session` 的属主门整段被跳过（谁拿到 session_id 谁都能用）。
-            session_id = await asyncio.to_thread(
-                text_manager._create_session, card,
-                all_characters=[], rag=None,
-                card_id=req.card_id, user_id=user_id,
-                user_role=req.user_role,
-            )
-            all_characters = []
-    except HTTPException:
-        # 属主门的 404 这类有语义的拒绝不能被下面的宽 except 重抛成 500：
-        # 4xx 的客户端条件一旦报成服务端错误，「非属主」与「服务端故障」就不可分，
-        # 且与 §四 的 404 口径冲突。宽 except 只兜真正意外的东西。
-        raise
-    except Exception as exc:
-        print(f"[distill] Create session for card {req.card_id} failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    else:
+        # 独立卡片模式：不加载原文、不构建 RAG。走**唯一**的建会话点（rag=None 即纯
+        # 卡片 prompt）—— 这里原先手搓 ChatEngine 并直接写 sessions[id]，漏了 user_id，
+        # 于是 `_ensure_session` 的属主门整段被跳过（谁拿到 session_id 谁都能用）。
+        session_id = await asyncio.to_thread(
+            text_manager._create_session, card,
+            all_characters=[], rag=None,
+            card_id=req.card_id, user_id=user_id,
+            user_role=req.user_role,
+        )
+        all_characters = []
 
     try:
         await storage.save_session(session_id, req.card_id, req.user_role, user.get("avatar_data", ""), user_id)
@@ -1512,12 +1484,8 @@ async def legacy_distill(
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "Text cannot be empty")
-    try:
-        upload_result = await text_manager.upload_text("legacy_upload.txt", text, user_id=user_id)
-        text_id = upload_result["text_id"]
-    except Exception as exc:
-        print(f"[distill] Auto-save text failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    upload_result = await text_manager.upload_text("legacy_upload.txt", text, user_id=user_id)
+    text_id = upload_result["text_id"]
 
     char_name = await _resolve_character_name(text, req.character_name, distiller)
 
@@ -1527,10 +1495,10 @@ async def legacy_distill(
             embedding_key=emb.key, embedding_region=emb.region,
         )
     except DistillError:
-        raise      # 放行到统一出口（web/server.py）：配码取文案，路由不碰（缺陷 38）
+        # 放行到统一出口（web/server.py）配码取文案；**必须在 `except ValueError` 之前**
+        # —— `DistillError` 是它的子类，否则被接住后 `str(exc)` 会把运维口径
+        # （`user_message｜ops_detail`）整条上屏（缺陷 38）。
+        raise
     except ValueError as exc:
         # **不迁**，理由同 `/run` 那处：实参是本仓为人写的用户/属主校验文案，不是领域异常。
         raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        print(f"[distill] Distill failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc

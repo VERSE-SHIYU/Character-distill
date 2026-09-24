@@ -269,9 +269,6 @@ async def delete_user(
         return {"ok": True, "deleted": counts}
     except ValueError:
         raise HTTPException(404, "用户不存在")
-    except Exception as exc:
-        print(f"[admin] Delete user failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 class BatchDeleteRequest(BaseModel):
@@ -398,17 +395,11 @@ async def delete_invite(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete a single invite code."""
-    try:
-        ok = await storage.delete_invite_code(code)
-        if not ok:
-            raise HTTPException(404, "邀请码不存在")
-        await forward_invite_code_delete_to_peer(code)
-        return {"ok": True}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[admin] Delete invite failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    ok = await storage.delete_invite_code(code)
+    if not ok:
+        raise HTTPException(404, "邀请码不存在")
+    await forward_invite_code_delete_to_peer(code)
+    return {"ok": True}
 
 
 @router.delete("/invites/used")
@@ -419,12 +410,8 @@ async def delete_used_invites(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Delete all used invite codes."""
-    try:
-        count = await storage.delete_used_invites()
-        return {"ok": True, "deleted": count}
-    except Exception as exc:
-        print(f"[admin] Delete used invites failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    count = await storage.delete_used_invites()
+    return {"ok": True, "deleted": count}
 
 
 @router.get("/usage")

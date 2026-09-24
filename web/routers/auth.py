@@ -370,13 +370,7 @@ async def send_code(
     await storage.save_verification_code(email, code, req.purpose)
 
     purpose_label = {"register": "注册", "reset_password": "重置密码", "bind_email": "绑定邮箱"}.get(req.purpose, "验证")
-    try:
-        send_verification_code(email, code, purpose_label)
-    except Exception as exc:
-        # 绑定却不用 = 诊断整条丢弃：用户只看到「邮件发送失败」，运维无从知道是 SMTP 还是
-        # Resend 的哪一步炸了（缺陷 39 顺带，与「线索不能丢」同族）。
-        print(f"[auth] Send verification code failed: {exc!r}")
-        raise HTTPException(500, "邮件发送失败，请稍后重试")
+    send_verification_code(email, code, purpose_label)
     return {"ok": True}
 
 
@@ -676,11 +670,7 @@ async def update_api_config(
     except ValueError as exc:
         # 仓储层「语句执行了却没改到行」= 用户不存在（`update_user_api_config` 的契约）。
         # 这跟写库失败不是一回事：500 会让人去查数据库，404 才说清是身份对不上。
-        # 必须排在下面那条通用 except 之前，否则被吞成 500。
         raise HTTPException(404, "用户不存在") from exc
-    except Exception as exc:
-        print(f"[auth] Update API config failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
 
 @router.post("/test-embedding")

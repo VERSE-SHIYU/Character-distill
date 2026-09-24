@@ -202,11 +202,7 @@ async def upload_text(
         )
         thread.start()
 
-    try:
-        record = await storage.get_text_owned(text_id, user_id)
-    except Exception as exc:
-        print(f"[text] Get text record failed: {exc}")
-        raise HTTPException(500, "获取文本记录失败，请稍后重试") from exc
+    record = await storage.get_text_owned(text_id, user_id)
 
     response: dict[str, Any] = record or {"id": text_id}
     if record:
@@ -256,11 +252,7 @@ async def list_texts(
 ) -> list[dict[str, Any]]:
     """List all uploaded texts (without full content body)."""
     user_id = user["id"]
-    try:
-        texts = await storage.list_texts(user_id)
-    except Exception as exc:
-        print(f"[text] List texts failed: {exc}")
-        raise HTTPException(500, "获取文本列表失败，请稍后重试") from exc
+    texts = await storage.list_texts(user_id)
 
     for t in texts:
         content = t.pop("content", None) or ""
@@ -381,11 +373,7 @@ async def list_trash(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted texts for the current user."""
-    try:
-        texts = await storage.get_deleted_texts(user["id"])
-    except Exception as exc:
-        print(f"[text] List trash failed: {exc}")
-        raise HTTPException(500, "获取回收站列表失败，请稍后重试") from exc
+    texts = await storage.get_deleted_texts(user["id"])
     for t in texts:
         t.pop("content", None)
     return texts
