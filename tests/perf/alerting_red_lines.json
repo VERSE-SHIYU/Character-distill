@@ -1,0 +1,90 @@
+{
+  "driver": "tests/perf/alerting_mutations.py",
+  "domain": [
+    "tests/test_failure_alerting.py"
+  ],
+  "mutations": {
+    "M1 处理器退回 `traceback.print_exc()`：异常只落 stdout，面板与邮件都看不见": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert [(r.levelno, bool(r.exc_info)) for r in recs] == [(logging.ERROR, True)], \\ f\"未捕获的异常必须留一条带堆栈的 ERROR，实得 ",
+        0
+      ]
+    ],
+    "M2 500 响应体把异常原文端给前端（契约变了，且漏内部细节）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert (resp.status_code, resp.json()) == ( 500, {\"detail\": \"服务器内部错误，请稍后重试\"}, ), f\"返回给前端的响应变了：{resp.status_cod",
+        0
+      ]
+    ],
+    "M3 处理器不带请求方法与路径：留了痕，但排障只剩堆栈": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert \"GET\" in recs[0].getMessage() and \"/__spec119_boom__\" in recs[0].getMessage(), \\ f\"日志没说是哪个请求挂的，排障只剩堆栈：{",
+        0
+      ]
+    ],
+    "M4 nonfatal 忽略调用方给的 level，一律按 ERROR 记（兜底动作开始发邮件）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert _levels_for(caplog, marker) == [logging.WARNING], \\ f\"应恰有一条 WARNING（吞掉 ≠ 沉默），实得 {_levels_for(caplog, ma",
+        0
+      ]
+    ],
+    "M5 nonfatal 的默认档降到 WARNING（数据没存进去 / 请求失败不再发邮件）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert _levels_for(caplog, marker) == [logging.ERROR], \\ f\"不传 level 时必须是 ERROR，实得 {_levels_for(caplog, marker)",
+        0
+      ]
+    ],
+    "M6 nonfatal 吞掉之后重新抛出（非致命失败变成硬错误，兜底这件东西没了）": [
+      [
+        "tests/test_failure_alerting.py",
+        "raise RuntimeError(\"warn-boom\")",
+        0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "raise RuntimeError(\"boom\")",
+        0
+      ]
+    ],
+    "M7 告警门槛降到 WARNING：已经兜底的后台动作也开始发信": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert alerts == [], \"WARNING 记成了告警 —— 兜底动作失败会开始发邮件\"",
+        0
+      ]
+    ],
+    "M8 告警门槛升到 CRITICAL：线上 500 与「数据没存进去」都不再发信": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert len(alerts) == 1, \"默认档（数据没存进去 / 请求失败）必须发得出告警\"",
+        0
+      ],
+      [
+        "tests/test_failure_alerting.py",
+        "assert len(alerts) == 1, \"线上 500 却没发告警 —— 这正是本份要修的事\"",
+        0
+      ]
+    ],
+    "M9 扫描面里出现一个解析不动的文件 → 判据当场炸在守卫上（不许静默跳过）": [
+      [
+        "tests/test_failure_alerting.py",
+        "raise AssertionError(f\"{path}: 扫描目标无法解析：{exc}\") from exc",
+        0
+      ]
+    ],
+    "M10 一处吞错退回 `print`（失败只落容器 stdout，面板与告警都看不见）": [
+      [
+        "tests/test_failure_alerting.py",
+        "assert found == [], ( \"这些地方的失败只落在容器 stdout 里，面板与告警都看不见 —— \" f\"改用 nonfatal 或模块 logger：{found}\" )",
+        0
+      ]
+    ]
+  },
+  "controls": [],
+  "skipped": []
+}
