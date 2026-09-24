@@ -547,8 +547,8 @@ class Distiller:
 
         这里是全仓唯一一处判「是不是截断」——`_collect_stream` 与 `_chat_accounted`
         两处的 ``except`` 都调它。重修环两处 ``except`` 问的**不是**这个问题（是
-        「确定性终态还是瞬时硬失败」：硬失败要留给下一次尝试），故不调它、直接
-        `raise`。两个条件都必要：
+        「确定性终态还是瞬时失败」），问的是 `_unfinished_disposition` —— 与这里同守
+        一处判据、读同一个 `incomplete_response_info`。两个条件都必要：
 
         - 不是 ``length`` 的未完成终态（``content_filter`` 要改输入、资源不足可稍后
           重试）不是截断，重修无用；
@@ -565,6 +565,28 @@ class Distiller:
         if info is None or info[0] != "length":
             return None
         return info[1] or partial or None
+
+    @staticmethod
+    def _unfinished_disposition(exc: BaseException) -> str:
+        """未完成终态在**重修环**里的处置分档；与 `_truncation_evidence` 同守一处判据。
+
+        `_truncation_evidence` 回答「有没有可修的截断证据」，这里回答「该不该上抛」——
+        两者读同一个 `incomplete_response_info`、按同一个 ``length`` 分流，只是各自的
+        半问不同。三档：
+
+        - ``"fatal"``：非 ``length`` 的未完成终态（``content_filter`` 要改输入、资源
+          不足可稍后重试）——上游的确定性结论，重修无用，原样上抛，由 `web/server.py`
+          那张 finish_reason 表配码与上屏；
+        - ``"truncated"``：``length`` 终态，**含空正文那一格**——不上抛。有正文时它是
+          重修的证据；空正文时没东西可修，但那是一次空响应（上游抖动 / 限流夹带），与
+          网络抖动同形，下一次尝试还有机会。无论哪一格，「上游说过 length」这个事实
+          都要留下，调用方据此置 ``truncated``，免得三次用尽后报成「格式异常」；
+        - ``""``：不是未完成终态（网络 / 超时这类瞬时硬失败）。
+        """
+        info = incomplete_response_info(exc)
+        if info is None:
+            return ""
+        return "truncated" if info[0] == "length" else "fatal"
 
     @staticmethod
     def _prompt_chars(system_prompt: str, messages: list[dict[str, Any]]) -> int:
@@ -831,13 +853,18 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            if incomplete_response_info(exc) is not None:
-                # **未完成终态原样上抛**：上游的确定性结论（content_filter 要改输入、
+            disposition = Distiller._unfinished_disposition(exc)
+            if disposition == "fatal":
+                # **确定性终态原样上抛**：上游的确定性结论（content_filter 要改输入、
                 # 资源不足可稍后重试），重修无用。按它的 finish_reason 在
                 # `web/server.py` 那张表里配码与上屏 —— 不能在这里吞成「也被截断」，
                 # 那会让用户看到「超长，请重试」而真实原因是内容被过滤。
                 raise
-            # 瞬时硬失败（网络 / 超时）：留给 Attempt 3 再试一次。
+            if disposition == "truncated":
+                # length 但正文是空的：这轮没东西可修，但它是空响应不是确定性结论，
+                # 留给 Attempt 3 再试一次；「上游说过 length」仍要留下。
+                truncated = True
+            # 瞬时硬失败（网络 / 超时 / 空正文的 length）：留给 Attempt 3 再试一次。
             last_error = f"fix_reply LLM call failed: {exc}"
 
         # Attempt 3: full retry — re-invoke LLM with original prompt.
@@ -869,9 +896,12 @@ class Distiller:
                 except json.JSONDecodeError as exc:
                     last_error = str(exc)
         except Exception as exc:
-            if incomplete_response_info(exc) is not None:
+            disposition = Distiller._unfinished_disposition(exc)
+            if disposition == "fatal":
                 # 同 Attempt 2：未完成终态是确定性结论，原样上抛给统一出口分档。
                 raise
+            if disposition == "truncated":
+                truncated = True
             last_error = f"full retry LLM call failed: {exc}"
 
         # All attempts exhausted — log raw output and raise readable error
