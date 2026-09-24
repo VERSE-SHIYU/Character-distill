@@ -1183,14 +1183,12 @@ def test_l14_unregistered_fallback_semantics():
     with _snapshot(S.get_loop_submitter, S.set_loop_submitter, None):
         for wait in (True, False):
             coro = _value()
-            try:
-                with pytest.raises(RuntimeError):
-                    S.submit_to_main_loop(coro, wait=wait)
-            finally:
-                # 旧代码在这条路径上会真的把协程跑掉（退路）—— 那时 close 会报
-                # 「cannot reuse already awaited coroutine」，与本用例的判据无关。
-                with contextlib.suppress(RuntimeError):
-                    coro.close()
+            with pytest.raises(RuntimeError):
+                S.submit_to_main_loop(coro, wait=wait)
+            # 拒绝就得把协程一并收掉：拒绝方是**唯一**还持有它的人，丢下就是一条
+            # `coroutine ... was never awaited` 飘在别人的用例头上（R2）。
+            assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED, (
+                f"wait={wait}：未注册时拒绝了投递，却把调用方建好的协程丢下了")
 
 
 async def test_l14_registered_submitter_refuses_to_block_on_its_own_loop():
@@ -1214,12 +1212,11 @@ async def test_l14_registered_submitter_refuses_to_block_on_its_own_loop():
     deps.set_main_loop(asyncio.get_running_loop())
     try:
         coro = _noop()
-        try:
-            with pytest.raises(RuntimeError):
-                S.submit_to_main_loop(coro, wait=True, timeout=0.5)
-        finally:
-            with contextlib.suppress(RuntimeError):
-                coro.close()
+        with pytest.raises(RuntimeError):
+            S.submit_to_main_loop(coro, wait=True, timeout=0.5)
+        # 与上面同一条理由：自等被拒时也要把协程收掉（R2）。
+        assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED, (
+            "自等被拒时把调用方建好的协程丢下了")
     finally:
         deps.set_main_loop(prev_loop)
         S.set_loop_submitter(prev_submitter)

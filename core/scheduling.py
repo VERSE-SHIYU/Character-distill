@@ -40,8 +40,13 @@ def submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600) -> Any
     已注册实现时委托给它，并**原样返回它的返回值**（`wait=True` 时是协程的结果）。
     未注册时抛 `RuntimeError` —— 不许在本线程另起 loop：那会跨 loop 触碰连接池，
     而且让测试在错误的线程上过关（见模块头）。
+
+    拒绝时**先 `close()` 掉 *coro***：调用方把协程交出来就不再持有它，扔回异常而不管
+    协程的话，谁都不会 await 它 —— GC 时飘一条 `coroutine ... was never awaited`，
+    而且因为是别人的栈帧被 GC 到，症状挂在**别的**用例头上（最难查的那种串味）。
     """
     if _submitter is None:
+        coro.close()
         raise RuntimeError(
             "未注册投递实现：submit_to_main_loop 需要 web 层启动时经 "
             "scheduling.set_loop_submitter 注册；独立进程请自行注册"

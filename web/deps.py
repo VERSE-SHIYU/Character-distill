@@ -224,6 +224,10 @@ def _submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600):
     loop，而当前 loop 正卡在这句 `result()` 上 —— 堵满 timeout（生产上 15 秒），异常
     还会被调用方的宽 `except` 吞成一行 warning，症状是「保存静默不生效且不报错」。
     必须在投递**之前**报错：async 路由里该写成 `await asyncio.to_thread(...)`。
+
+    拒绝时**先 `close()` 掉 *coro***：理由与 `core.scheduling.submit_to_main_loop`
+    的未注册分支同一条 —— 丢下调用方的协程，GC 时那条 `never awaited` 会飘在别人的
+    用例头上。
     """
     if wait and _main_loop is not None:
         try:
@@ -231,6 +235,7 @@ def _submit_to_main_loop(coro, *, wait: bool = True, timeout: float = 600):
         except RuntimeError:
             running = None
         if running is _main_loop:
+            coro.close()
             raise RuntimeError("主 loop 线程上不得阻塞等主 loop")
     fut = asyncio.run_coroutine_threadsafe(coro, _main_loop)
     if wait:
