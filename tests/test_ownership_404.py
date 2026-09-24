@@ -22,6 +22,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from conftest import open_test_client, app_lifespan
 from core.text_manager import new_session_entry
 from deps import get_memory_manager, get_storage, get_tts_engine, get_voice_client
 from routers.auth import get_current_user
@@ -135,7 +136,7 @@ def _no_ambient_state(monkeypatch, store):
 
 
 def _make_client(store, user_id):
-    app = FastAPI()
+    app = FastAPI(lifespan=app_lifespan)
     for r in (card_router, chat_router, group_router, market_router, memory_router,
               message_router, voice_router, distill_router):
         app.include_router(r)
@@ -146,7 +147,7 @@ def _make_client(store, user_id):
     app.dependency_overrides[get_memory_manager] = lambda: _MemMgr()
     app.dependency_overrides[get_voice_client] = lambda: _VoiceClient()
     app.dependency_overrides[get_tts_engine] = lambda: object()
-    return TestClient(app)
+    return open_test_client(app)
 
 
 @pytest.fixture

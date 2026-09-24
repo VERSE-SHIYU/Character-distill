@@ -209,11 +209,13 @@ async def _ensure_session(
     # Restore affinity from DB
     try:
         data, source = await read_persisted_affinity(session_id, storage)
+        # 走 to_thread：升级分支里 `load_affinity` 会调 `_save_affinity_state`，那是
+        # `submit_to_main_loop(wait=True)` —— 在本 loop 上直接调就是主 loop 等自己。
         if source == 'state':
-            engine.load_affinity(data, initialized=True)
+            await asyncio.to_thread(engine.load_affinity, data, initialized=True)
         else:
             # legacy（已评估旧格式）或全新默认行 → load_affinity 自行判定升级/初值计算
-            engine.load_affinity(data)
+            await asyncio.to_thread(engine.load_affinity, data)
     except Exception as exc:
         logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
     # 条目整份来自 `new_session_entry`（`_create_session` 登记的就是原 id），
