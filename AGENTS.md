@@ -51,6 +51,11 @@
 - **发现 spec 外 bug 先报告**：执行过程中发现未纳入当前 spec 的 bug — 停下，口头报告根因与修复方案，经确认后才单独立项修复
 - **存储改动只保证 PG（2026-09-24 起）**：新的存储改动只保证 PG 正确；SQLite 只同步到「接口还能跑」为止，不为它写用例、不为它做迁移。SQLite 自 2026-09-24 起不再测试、不再维护，计划择期退役
 - **跑测试前先起测试库**：本地一律 `docker compose -f docker-compose.test.yml up -d --wait`，测试连它的 `charsim_test`（55432）。`tests/conftest.py` 会话开始时核一次库名，不以 `_test` 结尾即整场中止 —— 开发库 `charsim` 不再有任何被测试碰到的路径
+- **失败必须进 logging，不许只 `print`**：`print` 写 fd 1，既不上面板（`core/log_collector.py` 的 `RingBufferHandler`，收 WARNING+）也不进告警邮件（`core/alerting.py` 的 `AlertHandler`，`ALERT_LEVEL = logging.ERROR`）—— 只 `print` 的失败等于只有翻容器 stdout 才看得见。
+  - **往上抛的错误**不必逐处改：`web/server.py` 的全局异常处理器统一记一条带堆栈的 ERROR。**打印后 `raise` 的 `print` 保留不动。**
+  - **吞掉的错误**必须走 `core/nonfatal.nonfatal`（异步、整块可失败后继续）或模块 `logger`（同步，或需要给调用方一个兜底返回值）。级别就是「发不发邮件」：**ERROR = 数据没有存进去，或者用户的请求失败了；WARNING = 已经兜底、不影响结果的后台动作**（好感度评估、阅读进度、预热、缓存）。
+  - 判据是 `tests/test_failure_alerting.py::test_no_print_swallowed_failures_left_in_production_code`（扫 `storage/postgres_store.py` / `web` / `core`：「`print` 文本含 `fail` 且下一条语句不必然 `raise`」的结果必须为 0）。断言这类日志的用例走 `caplog`，**不要断言 stdout** —— 只断言「有日志」会让 ERROR 写成 WARNING 也照绿，而那一档之差就是发不发邮件
+  - 例外不在名单里，在判据里：`core/distiller.py` 那处 print 后跟 `if truncated: raise … / raise …`，属「必然抛出」，由全局处理器接住
 
 ## 蒸馏管线
 
@@ -1641,12 +1646,19 @@ PROBE_IMAGE         false
 - **变异（现跑，2026-09-22）**：把 `_load_env_probe()` 改回 `return importlib.reload(M)` → 上面那条三文件命令**红 4 条**，与修前逐条同集；还原后 28 passed。
 - **判据命令**：`git grep -n "importlib.reload" tests/test_llm_adapter_retry.py` → **0**（本条没有「应为 0」以外的验收值）。
 
-**119. 全站没有「`print` 型失败」的告警 —— 失败只到容器 stdout，owner 不翻 `docker logs` 就无从得知** —— 状态：**记账**（不修，2026-09-22）
+**119. 全站没有「`print` 型失败」的告警 —— 失败只到容器 stdout，owner 不翻 `docker logs` 就无从得知** —— 状态：**已修**（2026-09-24，`f3cdf64` + `6cc15e3` + `9015b8b` + 本批 sweep `0c7b2b7` + `95d6e7d`）
 - **归属**：72 线（第 3 步的失败日志正好落在这一格的盲区里，顺手记账）。
 - **形态**：`core/alerting.AlertHandler`（`3fb3dbf`）挂的是 **root logger** 的 ERROR 级 handler，投递到 `ALERT_EMAIL`；后台日志面板（`core/log_collector.install_log_collector`）同样只收 **logging 记录**。而路线里大量失败处理是 `print(f"[xxx] ... failed ...")` 形态 —— `print` 写 fd 1，**不进 logging 管道**，于是既不上面板、也不进告警。
 - **本轮落点**：第 3 步给 `web/routers/auth.py::test_embedding` 加的失败日志正是 `print` 形态（与其余路由同风格，spec 明确点名），所以它**看得见但不会告警** —— 这条日志的可见性止于容器输出。
-- **读数（2026-09-22 现跑）**：`git grep -nE "^\s*print\(f?\"\[[a-z_]+\][^\"]*[Ff]ail" -- web core storage` → **115** 行。这些处**没有一处**会被 `AlertHandler` 收到。
-- **为什么只记不修**：把 `print` 改判 `logging` 是**全站面的口径变更**（哪些失败该 ERROR、哪些本就是 INFO），牵动面板噪声与节流键 `(logger 名, 异常类型)`，属产品决策；本轮范围外（spec §5「不做告警与监控」）。
+- **修法（一个落点 + 两条口径 + 约定）**：
+  1. **往上抛的不动**：**295** 处「print 文本含 `fail`、下一条语句是 `raise`」保留，由 `web/server.py` 的全局异常处理器（`6cc15e3`）统一记一条带堆栈、带 `METHOD path` 的 ERROR —— 一处覆盖整条路，`AlertHandler` 由此收到那些失败。响应体**一字不改**（仍是 `{"detail": "服务器内部错误，请稍后重试"}`）。
+  2. **吞掉的改走 logging**：`core/nonfatal.nonfatal` 加了 keyword-only 的 `level`（`f3cdf64`，默认仍是 `logging.ERROR`，现有调用行为不变），其余用模块 `logger`。级别口径：**ERROR = 数据没有存进去，或者用户的请求失败了；WARNING = 已经兜底、不影响结果的后台动作**（好感度评估、阅读进度、预热、缓存）。落点：`storage/postgres_store.py` 5 处（`9015b8b`）+ `web` / `core` 其余 24 个文件（`0c7b2b7` + `95d6e7d`）。`sqlite_store.py` 不动（SQLite 已退役，见 80/112）。
+  3. **断言 stdout 的用例改 `caplog`**（与所在落点同 commit）—— 只断言「有日志」会让 ERROR 被写成 WARNING 也照绿，而那一档之差就是「发不发邮件」。
+  4. **约定入 `AGENTS.md`**（「开发工作流约束」末条）：吞掉错误必须写日志、不许只 `print`；往上抛的由全局处理器统一记录。
+- **读数（2026-09-24 现跑）**：全区间 `git diff -U0 1b09328..HEAD -- core web storage` 删掉 **130** 行 `print(`、新增 **129** 个失败记录调用（`logger.error`/`logger.warning` 124 + `nonfatal(` 5）。按级别：**ERROR（发邮件）45 处、WARNING（只上面板）84 处**。
+- **判据命令**：`pytest tests/test_failure_alerting.py::test_no_print_swallowed_failures_left_in_production_code` —— 扫 `storage/postgres_store.py` / `web` / `core`，「`print` 文本含 `fail` 且下一条语句不必然 `raise`」的结果必须为 **0**；该判据按「必然抛出」精化，不靠行号例外清单（`core/distiller.py` 那处 print 后跟 `if truncated: raise … / raise …`，判为必然抛出，属 ①，不动）。
+- **红源**：`tests/test_failure_alerting.py` 四组 —— 全局处理器（改动前那条是 `traceback.print_exc()`，无 logging 记录、无告警）；`nonfatal(level=WARNING)` 只记 WARNING 且不发信、默认档仍发信（`f3cdf64` 前根本没有 `level` 参数）；吞错落点的级别；以及上面那条扫描判据。变异表与产物见 `tests/perf/alerting_mutations.py` / `alerting_red_lines.json`（每个判别器都有专属变异撞过，由 `tests/test_lock_coverage.py` 核闭合）。
+- **残留（不在本条，另计）**：**44** 处「print 后紧接 `raise HTTPException`」（其中 43 处 print 文本含 `fail`）**不经全局处理器** —— `ExceptionMiddleware` 就地消化了 `HTTPException`，它到不了 `@app.exception_handler(Exception)`（已实测：挂一条抛 `HTTPException` 的路由，全局处理器一次都没记）。故 ① 的覆盖对它们不成立、失败仍只到 stdout。修法需 Shiyu 定夺（逐处记一条，或加一个按异常链 `__cause__`/`__context__` 判定的 HTTPException 处理器），本条未做。
 
 **120. 保存设置不校验 `embedding_region` —— 存进一个构造器不认识的地域，该用户此后走嵌入的路径全线 `KeyError`** —— 状态：**已修**（`2af4ee8`，第 3 步，2026-09-23）
 - **归属**：72 线（S0 第 3 条查实）。
