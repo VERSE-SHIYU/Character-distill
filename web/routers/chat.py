@@ -18,7 +18,7 @@ from storage.base import StorageBase
 from limiter import limiter
 from routers.auth import get_current_user
 from core.affinity_service import read_persisted_affinity, resolve_session_affinity
-from core.message_outbox import FlushReport, SaveState, save_field
+from core.message_outbox import FlushReport, SaveState, save_field, terminal_frame
 from core.nonfatal import nonfatal
 from core.schema import evidence_snapshots, evidence_to_json
 from core import telemetry as T  # OTel 埋点（OTEL_ENABLED 关时零开销）
@@ -40,16 +40,6 @@ def _stream_error_payload(exc: Exception) -> dict[str, Any]:
     if payload is not None:
         return payload
     return {"error": user_facing_error(exc)}
-
-
-def _terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
-    """本轮结束帧（done / error **同一个出口**）—— 都并上这轮的补写报告。
-
-    错误帧也必须带：这一轮里顺路补写成功的更早消息，后端已经给了它们真实行 id，不送到
-    前端那条消息就永远停在「未保存」（刷新才恢复）。两处各拼一次的话，改了一处漏另一处。
-    """
-    merged = {**payload, **report.as_json()}
-    return f"data: {json.dumps(merged, ensure_ascii=False, default=str)}\n\n"
 
 
 # 非流式：上游返回不完整响应不是「服务端出错」——content_filter 更是用户输入问题，
@@ -420,7 +410,7 @@ async def _do_chat(
         if pending_summary:
             # 摘要也走队列（写失败会补上），但**不**上报给前端：摘要不在界面上，
             # 标「未保存」只会让人去找一条看不见的消息。
-            sum_save, rep = await outbox.write(
+            _, rep = await outbox.write(
                 lambda key, text=pending_summary: storage.save_message(
                     session_id, "summary", text, "", client_key=key,
                 ),
@@ -599,7 +589,7 @@ async def _do_chat_stream(
                     if new_summary != last_saved:
                         pending_summary = new_summary
                 if pending_summary:
-                    sum_save, rep = await outbox.write(
+                    _, rep = await outbox.write(
                         lambda key, text=pending_summary: storage.save_message(
                             session_id, "summary", text, "", client_key=key,
                         ),
@@ -619,7 +609,7 @@ async def _do_chat_stream(
             }
             if engine and engine.last_summary:
                 done_payload["summary"] = engine.last_summary
-            yield _terminal_frame(done_payload, report)
+            yield terminal_frame(done_payload, report)
 
             # ── Post-done housekeeping (does NOT block UI unlock) ──
             try:
@@ -650,7 +640,7 @@ async def _do_chat_stream(
             engine = session.get("engine")
             if engine and engine.history and engine.history[-1].get("role") == "user":
                 engine.history.pop()
-            yield _terminal_frame(_stream_error_payload(exc), report)
+            yield terminal_frame(_stream_error_payload(exc), report)
 
     # OTel context 传播点：invoke_agent 根 span 包住整个 SSE（TTFT→首 token），
     # 子链路在 to_thread / ctx_submit 线程里经 context 拷贝自动挂到本根下。

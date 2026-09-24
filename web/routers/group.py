@@ -21,23 +21,13 @@ from limiter import limiter
 from storage.base import StorageBase
 from routers.auth import get_current_user
 from core.chat_engine import calc_stage
-from core.message_outbox import FlushReport, save_field
+from core.message_outbox import FlushReport, save_field, terminal_frame
 from core.nonfatal import nonfatal
 
 router = APIRouter(prefix="/api/group", tags=["group"])
 
 # 群聊已消化点赞游标: group_id → 最大 reaction_id
 _group_last_reaction_id: dict[str, int] = {}
-
-
-def _terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
-    """本轮结束帧（done / error **同一个出口**）—— 都并上这轮的补写报告。
-
-    错误帧也必须带：这一轮里顺路补写成功的更早消息，后端已经给了它们真实行 id，不送到
-    前端那条消息就永远停在「未保存」（刷新才恢复）。两处各拼一次的话，改了一处漏另一处。
-    """
-    merged = {**payload, **report.as_json()}
-    return f"data: {json.dumps(merged, ensure_ascii=False)}\n\n"
 
 
 class CreateGroupRequest(BaseModel):
@@ -710,7 +700,7 @@ async def broadcast_message(
 
             # Done — all replies sent。补上与丢掉的读数随 done 帧一起给前端：这一轮里
             # 每一次写都会顺带补写队列头，前端据此把先前标了「未保存」的消息填回真 id。
-            yield _terminal_frame({'done': True}, report)
+            yield terminal_frame({'done': True}, report)
 
             # 后台评估点赞触发的 affinity 变化（不阻塞回复）
             asyncio.create_task(
@@ -721,7 +711,7 @@ async def broadcast_message(
             raise
         except Exception as exc:
             print(f"[group] Broadcast stream failed: {exc}")
-            yield _terminal_frame({'error': user_facing_error(exc)}, report)
+            yield terminal_frame({'error': user_facing_error(exc)}, report)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

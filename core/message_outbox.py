@@ -24,8 +24,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from core.nonfatal import nonfatal
@@ -83,6 +84,17 @@ class FlushReport:
         """并进另一次 flush 的读数 —— 一轮里有好几笔写，每笔各 flush 一次。"""
         self.flushed += other.flushed
         self.dropped += other.dropped
+
+
+def terminal_frame(payload: dict[str, Any], report: FlushReport) -> str:
+    """本轮结束帧（done / error **同一个出口**）—— 都并上这轮的补写报告。
+
+    错误帧也必须带：这一轮里顺路补写成功的更早消息，后端已经给了它们真实行 id，不送到
+    前端那条消息就永远停在「未保存」（刷新才恢复）。两个路由（一对一 / 群聊）各留一份
+    副本的话，改了一处漏另一处 —— 所以它在这里，一份。
+    """
+    merged = {**payload, **report.as_json()}
+    return f"data: {json.dumps(merged, ensure_ascii=False, default=str)}\n\n"
 
 
 class MessageOutbox:
