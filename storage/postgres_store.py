@@ -2202,7 +2202,7 @@ class PostgresStore(StorageBase):
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
                               u.bio, u.last_active_at, u.presence_visibility, u.following_visible,
-                              u.home_region
+                              u.home_region, u.timezone
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.id = $1""",
@@ -2643,6 +2643,18 @@ class PostgresStore(StorageBase):
         except Exception as exc:
             print(f"[PostgresStore] Update user bio failed: {exc}")
             raise
+
+    async def update_user_timezone(self, user_id: str, tz: str) -> None:
+        """Update a user's last-known IANA timezone (`''` = unknown)."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET timezone = $1 WHERE id = $2",
+                    tz, user_id,
+                )
+        except Exception as exc:
+            print(f"[PostgresStore] Update user timezone failed: {exc}")
+            raise StoreError("update_user_timezone", exc) from exc
 
     async def update_user_nickname(self, user_id: str, nickname: str) -> None:
         """Update a user's display nickname."""

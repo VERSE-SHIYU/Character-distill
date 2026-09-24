@@ -43,7 +43,6 @@ class TestGapLogic:
         engine.llm = MagicMock()
         engine.rag = MagicMock()
         engine._session_id = "test-session"
-        engine._user_tz = "Asia/Shanghai"
         engine._memory = None
         # 本类不测存储：存储传 None，走不到投递，也就用不着注册投递实现。
         engine._storage = None

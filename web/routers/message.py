@@ -192,11 +192,7 @@ async def retract_dm_message(
         raise HTTPException(403, "只能撤回自己发送的消息")
 
     # Mark retracted locally (also enqueues cross-border outbox atomically)
-    try:
-        await storage.retract_dm_message(message_id)
-    except Exception as exc:
-        print(f"[message] Retract DM failed: {exc}")
-        raise HTTPException(500, "撤回失败")
+    await storage.retract_dm_message(message_id)
 
     return {"ok": True}
 

@@ -59,7 +59,8 @@ def main():
     print(f"Model: {llm.model}  Base: {llm._base_url}\n")
 
     # ── 构建真实角色 system prompt（评测场景的产物） ──
-    engine = ChatEngine(llm=llm, rag=None, card=card, card_id="diag", storage=None)
+    engine = ChatEngine(llm=llm, rag=None, card=card, card_id="diag", storage=None,
+                        session_id="diag", is_new_session=True)
     real_sp = engine._compose_system_prompt(
         "今天是几月几号？", voice_mode=False, include_dynamic=False,
     )

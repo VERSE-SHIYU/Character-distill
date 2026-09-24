@@ -524,7 +524,7 @@ def test_C6_reunion_greeting_reaches_messages_when_its_save_fails(flaky, store, 
     deps.get_sessions().pop(sid, None)
     _backdate(store, sid)
 
-    r = client.post(f"/api/history/{sid}/resume", json={"client_tz": "Asia/Shanghai"})
+    r = client.post(f"/api/history/{sid}/resume", json={})
     assert r.status_code == 200, f"重逢这一步就失败了：{r.status_code} {r.text[:300]}"
     tail = r.json()["messages"][-1]
 

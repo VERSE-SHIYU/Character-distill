@@ -623,6 +623,22 @@ class TestUserCrud:
         users = await store.get_all_users()
         assert len(users) >= 1
 
+    async def test_timezone_column_roundtrips(self, store, user_id):
+        """028_users_timezone.sql：新建的用户 timezone 是空串（未知），写回后读得回来。
+
+        空串是**有意义的初值**而不是缺省：它表示「还不知道这个用户的时区」，
+        请求入口据此回退到 `UserClock` 的 DEFAULT_TZ。
+        """
+        await store.create_user(user_id, f"tz_{uuid.uuid4().hex[:8]}", "hash")
+        got = await store.get_user_by_id(user_id)
+        assert got.get("timezone") == "", (
+            f"新用户的 timezone 应为空串，实际 {got.get('timezone')!r}")
+
+        await store.update_user_timezone(user_id, "Europe/Berlin")
+        got = await store.get_user_by_id(user_id)
+        assert got.get("timezone") == "Europe/Berlin", (
+            f"写回的时区读不回来，实际 {got.get('timezone')!r}")
+
 
 # ── User purge: distill cascade + deletion impact (F) ────────────────────────
 

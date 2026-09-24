@@ -824,15 +824,10 @@ async def at_reply(
         raise HTTPException(400, "被@角色不属于同一本书")
 
     # 2. 解析角色卡设定
-    try:
-        card_json_str = at_card.get("card_json") or "{}"
-        if isinstance(card_json_str, dict):
-            card_json_str = _json.dumps(card_json_str, ensure_ascii=False)
-        char = CharacterCard.model_validate(_json.loads(card_json_str))
-    except Exception as exc:
-        # 上屏不带 `{exc}`：那是 pydantic 的字段级报错，细节只进日志（缺陷 38 同形态）。
-        print(f"[market] Card parse failed: {exc}")
-        raise HTTPException(500, "角色卡解析失败，请稍后重试")
+    card_json_str = at_card.get("card_json") or "{}"
+    if isinstance(card_json_str, dict):
+        card_json_str = _json.dumps(card_json_str, ensure_ascii=False)
+    char = CharacterCard.model_validate(_json.loads(card_json_str))
 
     # 3. 拼 system_prompt（轻量版，只用角色核心设定）
     traits = "\n".join(f"- {t}" for t in (char.personality_traits or []))
@@ -850,16 +845,11 @@ async def at_reply(
         user_content = f"（上文评论：{body.parent_comment_content}）\n{body.comment_content}"
 
     # 5. 调 LLM（用发起人的 API key）
-    try:
-        llm = await get_user_llm(user["id"], storage)
-        ai_text = await asyncio.to_thread(
-            llm.chat, system_prompt, [{"role": "user", "content": user_content}]
-        )
-        try_record_usage(storage, llm, action="chat_ai_reply", source="market")
-    except Exception as exc:
-        # 上屏不带 `{exc}`：上游/驱动原文只进日志（缺陷 38 同形态）。
-        print(f"[market] AI reply failed: {exc}")
-        raise HTTPException(500, "AI 生成失败，请稍后重试")
+    llm = await get_user_llm(user["id"], storage)
+    ai_text = await asyncio.to_thread(
+        llm.chat, system_prompt, [{"role": "user", "content": user_content}]
+    )
+    try_record_usage(storage, llm, action="chat_ai_reply", source="market")
 
     # 6. 版本标注（author_username 由 get_card + LEFT JOIN users 提供）
     ai_version_label = f"{char.name}（{at_card.get('name', char.name)} · @{at_card.get('author_username') or ''}）"

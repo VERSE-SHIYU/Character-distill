@@ -49,7 +49,7 @@ class TestComputeInitialAffinity:
     def test_empty_role_is_stranger(self):
         """user_role="" → stranger branch: affinity<=18, mood="警觉", inner_voice contains "不认识"."""
         card = _make_card(CLOSE_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["affinity"] <= 18, affinity
         assert affinity["mood"] == "警觉", affinity
@@ -58,7 +58,7 @@ class TestComputeInitialAffinity:
     def test_close_relationship(self):
         """user_role matches a close relationship → affinity>=55, stage != "陌生", mood != "警觉"."""
         card = _make_card(CLOSE_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["affinity"] >= 55, affinity
         assert affinity["stage"] != "陌生", affinity
@@ -68,14 +68,14 @@ class TestComputeInitialAffinity:
         """target is a substring of user_role → still matches close relationship."""
         card = _make_card(CLOSE_REL)
         engine = ChatEngine(_StubLLM(), None, card, card_id="t",
-                            user_role="角色A（角色B/角色C）", storage=None)
+                            user_role="角色A（角色B/角色C）", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["affinity"] >= 55, affinity
 
     def test_hostile_relationship(self):
         """relation="仇人" → mood="敌意", affinity<=15."""
         card = _make_card(ENEMY_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="仇人甲", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="仇人甲", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["mood"] == "敌意", affinity
         assert affinity["affinity"] <= 15, affinity
@@ -83,7 +83,7 @@ class TestComputeInitialAffinity:
     def test_unknown_role_falls_back_to_stranger(self):
         """user_role not in relationships → stranger fallback, affinity<=18."""
         card = _make_card(CLOSE_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="路人甲", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="路人甲", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["affinity"] <= 18, affinity
 
@@ -97,7 +97,7 @@ class TestChatEnginePropagatesUserRole:
     def test_with_user_role_shows_familiar(self):
         """user_role="角色B" + close rel → familiar stage (not stranger)."""
         card = _make_card(CLOSE_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["stage"] != "陌生", affinity
         assert affinity["mood"] != "警觉", affinity
@@ -106,7 +106,7 @@ class TestChatEnginePropagatesUserRole:
     def test_without_user_role_shows_stranger(self):
         """user_role="" (missing) → stranger stage."""
         card = _make_card(CLOSE_REL)
-        engine = ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
+        engine = ChatEngine(_StubLLM(), None, card, card_id="t", session_id="t", is_new_session=True, storage=None)
         affinity = engine.get_affinity()
         assert affinity["stage"] == "陌生", affinity
 
@@ -135,7 +135,7 @@ def test_load_affinity_initialized_flag_skips_recompute():
     新架构：affinity_initialized=1 的会话 → 直接 from_persist 恢复，绝不重算。
     """
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=None)
+    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", session_id="t", is_new_session=True, storage=None)
     original_aff = engine.get_affinity()
 
     # 插桩验证 _compute_initial_affinity 不被调用
@@ -162,8 +162,10 @@ def test_load_affinity_legacy_upgrade():
     也成立，说不了任何话。
     """
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
-    engine._session_id = "legacy_upgrade"
+    engine = ChatEngine(
+        _StubLLM(), None, card, card_id="t", user_role="角色B",
+        session_id="legacy_upgrade", is_new_session=True, storage=AsyncMock(),
+    )
 
     old_data = {
         "affinity": 72, "trust": 55, "mood": "开心", "guard": 28,
@@ -194,8 +196,10 @@ def test_load_affinity_uninitialized_computes_and_saves():
     纯默认值行 → _compute_initial_affinity 被调用一次，且算出的初值真写进了存储。
     """
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
-    engine._session_id = "test_sesh"
+    engine = ChatEngine(
+        _StubLLM(), None, card, card_id="t", user_role="角色B",
+        session_id="test_sesh", is_new_session=True, storage=AsyncMock(),
+    )
 
     called = False
     original = engine._compute_initial_affinity
@@ -286,8 +290,10 @@ def test_affinity_engine_roundtrip():
     from core.affinity_service import AffinityService
 
     card = _make_card(CLOSE_REL)
-    engine = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=AsyncMock())
-    engine._session_id = "roundtrip_engine"
+    engine = ChatEngine(
+        _StubLLM(), None, card, card_id="t", user_role="角色B",
+        session_id="roundtrip_engine", is_new_session=True, storage=AsyncMock(),
+    )
 
     # 设非默认值
     engine._affinity = 80
@@ -316,8 +322,10 @@ def test_affinity_engine_roundtrip():
     assert parsed is not None
 
     # 只读恢复：新引擎不需要存储，也就不注册投递实现
-    engine2 = ChatEngine(_StubLLM(), None, card, card_id="t", user_role="角色B", storage=None)
-    engine2._session_id = "roundtrip_engine"
+    engine2 = ChatEngine(
+        _StubLLM(), None, card, card_id="t", user_role="角色B",
+        session_id="roundtrip_engine", is_new_session=True, storage=None,
+    )
     engine2.load_affinity(parsed, initialized=True)
 
     after = engine2.get_affinity()

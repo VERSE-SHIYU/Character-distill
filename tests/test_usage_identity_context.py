@@ -232,15 +232,21 @@ def _contextvar_def(path: Path, name: str) -> str:
 
 
 def test_only_one_identity_contextvar_exists():
-    """全仓上下文变量只有两个：身份一个、嵌入超时一个。
+    """全仓上下文变量只有三个：身份一个、嵌入超时一个、当前时区一个。
 
     **白名单按 `file:line 名字` 整串钉死，不按名字**：按名字放行的话，在另一个模块里
     再写一遍 `LLM_CALLER = ContextVar("llm_caller")` 也能过 —— 而那正是要挡的形态
     （`web/` 没有 `__init__.py`，同名两个变量各看各的，中间件设的值另一边读不到）。
     新增一条 ContextVar 时，**先回答它是不是第二份身份**，再来改这里。
+
+    `_current_timezone`（缺陷 96）的答案：**不是**。它装的是「本次请求该用哪个时区」，
+    不是「谁在调」—— 判断身份的问题它一个都答不上，读口也只有一个（`UserClock`），
+    写口与 `LLM_CALLER` 同在 `AuthMiddleware.dispatch` 那一个出口。多一条时区不会让
+    「谁在调」多出第二个答案，这正是本条要挡的东西。
     """
     hits = _contextvar_defs(_py_files(_REPO / "core", _REPO / "web", _REPO / "adapters"))
     allowed = sorted([
+        _contextvar_def(_REPO / "core" / "clock.py", "_current_timezone"),
         _contextvar_def(_REPO / "core" / "embeddings.py", "_EMBED_DEADLINE"),
         _contextvar_def(_REPO / "core" / "request_context.py", "LLM_CALLER"),
     ])
@@ -709,6 +715,8 @@ def test_chat_sse_lands_usage_row_with_request_identity(monkeypatch):
         CharacterCard(name="甲", identity="测试"),
         card_id="c_lock",
         storage=store,
+        session_id=sid,
+        is_new_session=True,
     )
     sessions = deps.get_sessions()
     # 条目形状只从 `new_session_entry` 拿（不手搓 dict），也不在这里补字段 ——

@@ -35,7 +35,6 @@ _daily_visits: dict[str, tuple[str, int]] = {}
 
 class ResumeRequest(BaseModel):
     """Resume a session after server restart."""
-    client_tz: str = ""
     voice_mode: bool = False
 
 
@@ -55,11 +54,7 @@ async def list_sessions(
 ) -> dict[str, Any]:
     """Paginated session list with optional keyword and character filters."""
     user_id = user["id"]
-    try:
-        return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id, card_id)
-    except Exception as exc:
-        print(f"[history] List sessions failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    return await storage.list_sessions(keyword, character, text_id, page, page_size, user_id, card_id)
 
 
 @router.get("/trash")
@@ -69,12 +64,8 @@ async def list_trash(
     storage: StorageBase = Depends(get_storage),
 ) -> list[dict]:
     """List soft-deleted sessions (trash bin)."""
-    try:
-        user_id = user["id"]
-        return await storage.list_trash_sessions(user_id)
-    except Exception as exc:
-        print(f"[history] List trash failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    user_id = user["id"]
+    return await storage.list_trash_sessions(user_id)
 
 
 @router.delete("/trash/purge")
@@ -84,13 +75,9 @@ async def purge_trash(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Permanently delete all sessions in trash."""
-    try:
-        user_id = user["id"]
-        count = await storage.purge_trash(user_id)
-        return {"ok": True, "purged": count}
-    except Exception as exc:
-        print(f"[history] Purge trash failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    user_id = user["id"]
+    count = await storage.purge_trash(user_id)
+    return {"ok": True, "purged": count}
 
 
 @router.post("/clear-all")
@@ -100,13 +87,9 @@ async def clear_all_sessions(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Soft-delete all sessions (move to trash)."""
-    try:
-        user_id = user["id"]
-        count = await storage.clear_all_sessions(user_id)
-        return {"ok": True, "deleted": count}
-    except Exception as exc:
-        print(f"[history] Clear all sessions failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    user_id = user["id"]
+    count = await storage.clear_all_sessions(user_id)
+    return {"ok": True, "deleted": count}
 
 
 # ---- Parameterized routes (/{session_id}/...) ----
@@ -135,9 +118,6 @@ async def export_session(
         # 走 user_facing_error 会删掉用户需要的信息。
         # 契约锁：tests/test_security_authz.py::TestErrorSanitization::test_10_value_error_400。
         raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        print(f"[history] Export session failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
     if format.lower().strip() == "txt":
         return PlainTextResponse(content)
@@ -155,11 +135,7 @@ async def get_session_detail(
     session = await storage.get_session_owned(session_id, user["id"])
     if not session:
         raise HTTPException(404, "Session not found")
-    try:
-        messages = await storage.get_messages(session_id)
-    except Exception as exc:
-        print(f"[history] Get messages failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    messages = await storage.get_messages(session_id)
     # 落库的 evidence 是快照 JSON 文本，在此解成结构 —— 这是前端「刷新后仍能看到检索来源」
     # 的唯一解码出口。老消息该列是 NULL → None（= 没有关联证据），不造 []。
     for m in messages:
@@ -225,11 +201,7 @@ async def resume_session(
         raise HTTPException(404, "Text not found")
 
     # 2. Parse card
-    try:
-        card = CharacterCard.model_validate_json(card_rec["card_json"])
-    except Exception as exc:
-        print(f"[history] Parse card {card_id} failed: {exc}")
-        raise HTTPException(500, "Card data is corrupted") from exc
+    card = CharacterCard.model_validate_json(card_rec["card_json"])
 
     # 3. Build all_characters from sibling cards
     existing_cards = await storage.list_cards(card_rec["text_id"], user_id)
@@ -250,7 +222,8 @@ async def resume_session(
             card_rec["text_id"], text_rec["content"],
             all_characters=all_characters, embedding_key=emb.key, embedding_region=emb.region,
         )
-        new_session_id = await asyncio.wait_for(
+        # 原会话 id 直接进构造：引擎一出生就在原 id 名下，不再「新 id 造好再搬过来」。
+        await asyncio.wait_for(
             asyncio.to_thread(
                 text_manager._create_session,
                 card,
@@ -258,28 +231,19 @@ async def resume_session(
                 rag=rag,
                 card_id=card_rec["id"],
                 user_id=user_id,
+                session_id=session_id,
             ),
             timeout=120.0,
         )
     except asyncio.TimeoutError:
         raise HTTPException(504, "会话恢复超时，请稍后重试")
-    except Exception as exc:
-        print(f"[history] Rebuild engine for {session_id} failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
 
-    # 6. Steal the engine into the original session_id
-    if new_session_id != session_id:
-        sessions[session_id] = sessions.pop(new_session_id, {})
-    engine = sessions[session_id].get("engine")
+    engine = sessions.get(session_id, {}).get("engine")
     if engine is None:
         raise HTTPException(500, "Engine not found after rebuild")
 
     # 6. Load history from DB and inject into engine
-    try:
-        db_messages = await storage.get_messages(session_id)
-    except Exception as exc:
-        print(f"[history] Load messages for {session_id} failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    db_messages = await storage.get_messages(session_id)
 
     # Convert DB roles to engine roles, skipping summary (not a valid LLM role)
     engine.history = [
@@ -303,7 +267,6 @@ async def resume_session(
         engine.user_role = db_session["user_role"]
 
     # 8. Restore affinity from DB — each session has independent scores
-    engine._session_id = session_id
     try:
         data, source = await read_persisted_affinity(session_id, storage)
         # 走 to_thread：升级分支里 `load_affinity` 会调 `_save_affinity_state`，那是
@@ -317,11 +280,8 @@ async def resume_session(
         logger.warning("Restore affinity failed (non-fatal): %s", exc, exc_info=True)
 
     # 9. Generate reunion greeting (before any save_message — updated_at must not be polluted)
-    if _body.client_tz:
-        engine._user_tz = _body.client_tz
-
     # ── 今日到访计数 ──
-    _daily_visit_today = UserClock.now(engine._user_tz).strftime("%Y-%m-%d")
+    _daily_visit_today = UserClock.now().strftime("%Y-%m-%d")
     _prev_date, _prev_count = _daily_visits.get(session_id, ("", 0))
     _visit_count = _prev_count + 1 if _prev_date == _daily_visit_today else 1
     _daily_visits[session_id] = (_daily_visit_today, _visit_count)
@@ -398,13 +358,7 @@ async def restore_session(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Restore a soft-deleted session from trash."""
-    try:
-        ok = await restore("session", session_id, user, storage)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[history] Restore session failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    ok = await restore("session", session_id, user, storage)
     if not ok:
         raise HTTPException(404, "Session not found in trash")
     return {"ok": True}
@@ -419,16 +373,10 @@ async def delete_session(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, bool]:
     """Soft-delete a session (move to trash), or hard-delete if permanent=true."""
-    try:
-        if permanent:
-            ok = await hard_delete("session", session_id, user, storage)
-        else:
-            ok = await soft_delete("session", session_id, user, storage)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[history] Delete session failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    if permanent:
+        ok = await hard_delete("session", session_id, user, storage)
+    else:
+        ok = await soft_delete("session", session_id, user, storage)
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"ok": True}
@@ -446,13 +394,7 @@ async def permanent_delete_session(
     Note: `DELETE /{session_id}?permanent=true` remains as a deprecated alias
     for backward compatibility.
     """
-    try:
-        ok = await hard_delete("session", session_id, user, storage)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[history] Hard delete session failed: {exc}")
-        raise HTTPException(500, "操作失败，请稍后重试") from exc
+    ok = await hard_delete("session", session_id, user, storage)
     if not ok:
         raise HTTPException(404, "Session not found")
     return {"ok": True}

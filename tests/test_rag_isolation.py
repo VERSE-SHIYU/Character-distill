@@ -50,7 +50,8 @@ async def test_create_session_rag_none():
 
     from core.chat_engine import ChatEngine
     llm = MagicMock()
-    engine = ChatEngine(llm, None, card, card_id="test", storage=None)
+    engine = ChatEngine(llm, None, card, card_id="test", storage=None,
+                        session_id="test", is_new_session=True)
     assert engine.rag is None, f"Expected rag=None, got {engine.rag}"
     assert engine._ctx_engine.rag is None
     # Build system prompt should work without RAG

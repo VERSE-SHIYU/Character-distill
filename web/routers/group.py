@@ -150,6 +150,9 @@ async def _rebuild_group_session(
             memory_manager=memory_manager,
             card_id=card_id,
             storage=storage,
+            session_id="",          # 群引擎没有一对一会话
+            group_id=group_id,
+            is_new_session=True,    # 群好感随后由 load_affinity(prev) 覆盖
         )
         engines[card_id] = engine
 
@@ -306,6 +309,8 @@ async def create_group(
 
     memory_manager = get_memory_manager()
 
+    # 群身份先于引擎生成：每个引擎出生时就带上它，不再等「要评估好感度了」再补。
+    group_id = uuid.uuid4().hex[:12]
     engines: dict[str, ChatEngine] = {}
     card_infos: list[dict] = []
     text_rag_cache: dict[str, RAGEngine] = {}
@@ -317,13 +322,7 @@ async def create_group(
         if not card_rec:
             raise HTTPException(404, f"角色卡 {card_id} 不存在")
 
-        try:
-            card = CharacterCard.model_validate_json(card_rec["card_json"])
-        except Exception as exc:
-            import traceback
-            print(f"[GroupCreate ERROR] card_id={card_id} model_validate_json: {exc}")
-            traceback.print_exc()
-            raise HTTPException(500, "操作失败，请稍后重试") from exc
+        card = CharacterCard.model_validate_json(card_rec["card_json"])
 
         # Track played character name
         if persona_type == "character" and card_id == persona_card_id:
@@ -360,6 +359,9 @@ async def create_group(
             memory_manager=memory_manager,
             card_id=card_id,
             storage=storage,
+            session_id="",          # 群引擎没有一对一会话
+            group_id=group_id,
+            is_new_session=True,    # 群好感随后由 load_affinity(prev) 覆盖
         )
         engines[card_id] = engine
         card_infos.append({"card_id": card_id, "name": card.name})
@@ -376,7 +378,6 @@ async def create_group(
         persona_name = persona_name or played_card_name
 
     from core.group_session import GroupSession
-    group_id = uuid.uuid4().hex[:12]
     group = GroupSession(
         group_id, engines,
         user_persona_type=persona_type,
@@ -510,12 +511,7 @@ async def send_message(
         raise HTTPException(410, "群聊已被删除")
 
     async with group.lock:
-        try:
-            resp = await group.send(req.target_card_id, req.message)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(500, "操作失败，请稍后重试") from exc
+        resp = await group.send(req.target_card_id, req.message)
 
     # Persist to DB
     reply_preview = ""

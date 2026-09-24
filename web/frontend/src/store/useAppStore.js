@@ -8,11 +8,6 @@ import { applyFlushReport, withSaveResult } from '../utils/withSaveResult'
 import { FALLBACK } from '../config/navigation'
 import { scoped, bumpScope } from './scope'
 
-const clientTz = () => {
-  try { return Intl.DateTimeFormat().resolvedOptions().timeZone }
-  catch { return '' }
-}
-
 let _cidSeq = 0
 const withCid = (msg) => ({ ...msg, _cid: msg._cid ?? `m${++_cidSeq}` })
 
@@ -1156,7 +1151,6 @@ const useAppStore = create((set, get) => {
           text_id: card.text_id,
           card_id: _cardId,
           user_role: get().getUserRole(_cardId),
-          client_tz: clientTz(),
         }, 120000, abort.signal)
 
         sessionId = result.session_id
@@ -1242,7 +1236,6 @@ const useAppStore = create((set, get) => {
           text_id: card.text_id || '',
           card_id: cardId,
           user_role: get().getUserRole(cardId),
-          client_tz: clientTz(),
         }, undefined, abort.signal)
 
         sessionId = result.session_id
@@ -1352,7 +1345,6 @@ const useAppStore = create((set, get) => {
         text_id: card.text_id || '',
         card_id: cardId,
         user_role: get().getUserRole(cardId),
-        client_tz: clientTz(),
       })
 
       const sessionId = result.session_id
@@ -1404,7 +1396,6 @@ const useAppStore = create((set, get) => {
         web_search: get().webSearchEnabled,
         agent_mode: get().agentMode,
         affinity_enabled: get().affinityEnabled,
-        client_tz: clientTz(),
       })
       setScoped((s) => {
         const msgs = [...s.messages]
@@ -1507,7 +1498,7 @@ const useAppStore = create((set, get) => {
       get().fetchAffinity()
     }
 
-    const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, agent_mode: get().agentMode, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled, client_tz: clientTz() }
+    const body = { session_id: sessionId, message, stream: true, user_role: get().sessionUserRole, web_search: get().webSearchEnabled, agent_mode: get().agentMode, voice_mode: voiceEnabled, affinity_enabled: get().affinityEnabled }
     if (reply_to_id) { body.reply_to_id = reply_to_id; body.reply_to_preview = reply_to_preview }
 
     const cancel = streamSSE(
@@ -1687,7 +1678,7 @@ const useAppStore = create((set, get) => {
   resumeSession: async (sessionId) => {
     set({ resumeLoading: true })
     try {
-      const data = await postJSON(`/api/history/${sessionId}/resume`, { client_tz: clientTz(), voice_mode: get().voiceEnabled })
+      const data = await postJSON(`/api/history/${sessionId}/resume`, { voice_mode: get().voiceEnabled })
       const session = data.session || {}
       const messages = (data.messages || []).map((m) => withSaveResult(withCid({
         role: m.role,

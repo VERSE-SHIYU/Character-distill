@@ -425,8 +425,15 @@ class _FailingSaveStore(SQLiteStore):
 
 
 class TestCStartRefusesOnDBFailure:
-    def test_save_failure_returns_503_and_no_thread(self, tmp_path, user_id, monkeypatch):
-        """C：落库失败 → 503 拒绝启动，不建内存条目、不启后台线程。"""
+    def test_save_failure_returns_503_and_no_thread(self, tmp_path, user_id, monkeypatch, caplog):
+        """C：落库失败 → 503 拒绝启动，不建内存条目、不启后台线程，**且留一条带堆栈的 ERROR**。
+
+        最后那半是本份（spec-71 A-2）加的：这里**保留** 503 包装（契约由本类钉着，不是
+        漏删的），它的副作用是 `HTTPException` 不经过 `web/server.py` 的全局处理器 ——
+        失败线索原先只有一句 `print` 落在 stdout，面板与告警邮件都看不见。改成
+        `logger.error(..., exc_info=True)` 后才有下面这条记录；变异（改回 `print`）
+        当场把断言打红。
+        """
         tid = f"txt_{uuid.uuid4().hex}"
         failing = _FailingSaveStore(_db_path(tmp_path))
         _run_async(failing.save_text(tid, "src.txt", "正文", user_id=user_id))
@@ -442,13 +449,20 @@ class TestCStartRefusesOnDBFailure:
         monkeypatch.setattr("core.concurrency.ctx_thread",
                             lambda *a, **k: started.append(a) or threading.Thread())
 
-        resp = client.post("/api/distill/start",
-                           json={"text_id": tid, "character_name": "甲", "force": False})
+        with caplog.at_level(logging.ERROR):
+            resp = client.post("/api/distill/start",
+                               json={"text_id": tid, "character_name": "甲", "force": False})
         assert resp.status_code == 503
         assert "蒸馏任务创建失败" in resp.json()["detail"]
         assert started == []                          # 未启后台线程
         with D._task_lock:
             assert D._tasks == {}                     # 未建内存写缓存条目
+
+        # 503 这条路径上没有全局处理器接住它（HTTPException 被 ExceptionMiddleware 吃掉），
+        # 所以「失败看得见」全靠这里自己记 —— 记漏了，线上只留下一句 stdout。
+        recs = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert [(r.levelno, bool(r.exc_info)) for r in recs] == [(logging.ERROR, True)], \
+            f"503 路径该恰有一条带堆栈的 ERROR，实得 {[(r.levelno, bool(r.exc_info)) for r in recs]}"
 
 
 # ── 路由测试（E）：/start 任务级续跑门（断言 5 / 6）─────────────────────────

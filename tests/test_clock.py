@@ -6,9 +6,18 @@ C. ChatEngine _build_time_awareness_block — prevents regression to server-time
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+import pytest
 
 from core.chat_engine import ChatEngine
-from core.clock import UserClock, describe_time_period, DEFAULT_TZ
+from core.clock import (
+    DEFAULT_TZ,
+    UserClock,
+    describe_time_period,
+    is_valid_timezone,
+    set_current_timezone,
+)
 from core.schema import CharacterCard
 
 
@@ -54,6 +63,72 @@ class TestUserClock:
         assert result.hour != 12
 
 
+# ── A2. 请求入口设的「当前时区」 ──────────────────────────────────────────────
+
+
+class TestRequestTimezoneContext:
+    """`now()` / `to_user_tz(dt)` 不传时区时，读请求入口设的那个时区。
+
+    这是「用户时区在请求入口统一确定」的 core 侧一半：设值方在 `web/server.py` 的
+    AuthMiddleware（按 `Time-Zone` 头 → 用户已存时区 → 不设），本类只锁 `UserClock`
+    的读取规则 —— 指定的用，没指定的回退 `DEFAULT_TZ`，显式传参优先于上下文。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_request_tz(self):
+        """每条用例后复位 —— ContextVar 在同一线程内是所有用例共享的。"""
+        yield
+        set_current_timezone("")
+
+    def test_now_reads_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        assert UserClock.now().tzinfo == ZoneInfo("Asia/Tokyo"), (
+            f"now() 没读到请求时区，实际 {UserClock.now().tzinfo}")
+
+    def test_to_user_tz_reads_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        dt = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert UserClock.to_user_tz(dt).hour == 21, (
+            f"UTC 12:00 在东京应是 21:00，实际 {UserClock.to_user_tz(dt).hour}")
+
+    def test_falls_back_to_default_when_unset(self):
+        dt = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        assert UserClock.now().tzinfo == ZoneInfo(DEFAULT_TZ)
+        assert UserClock.to_user_tz(dt).tzinfo == ZoneInfo(DEFAULT_TZ)
+
+    def test_explicit_arg_beats_request_timezone(self):
+        set_current_timezone("Asia/Tokyo")
+        assert UserClock.now("Europe/Berlin").tzinfo == ZoneInfo("Europe/Berlin"), (
+            "显式传的时区被上下文盖掉了")
+
+    def test_invalid_request_timezone_falls_back(self):
+        set_current_timezone("Mars/Base")
+        assert UserClock.now().tzinfo == ZoneInfo(DEFAULT_TZ), (
+            "非法时区名没有回退")
+
+
+# ── A3. is_valid_timezone ────────────────────────────────────────────────────
+
+
+class TestIsValidTimezone:
+    """入口拿它把「请求头 / 库里的名字能不能解析」判一次 —— 判不过就当没有。
+
+    与 `_safe_zone` 的区别是**问法**：`_safe_zone` 问「用哪个时区」（必有答案，兜底
+    DEFAULT_TZ），这里问「这个名字算不算数」（有真假）。入口要的是后者：写库前得先知道
+    该不该写。
+    """
+
+    def test_accepts_iana_name(self):
+        assert is_valid_timezone("Australia/Sydney") is True
+
+    def test_rejects_empty(self):
+        assert is_valid_timezone("") is False
+        assert is_valid_timezone(None) is False
+
+    def test_rejects_garbage(self):
+        assert is_valid_timezone("Mars/Base") is False
+
+
 # ── B. describe_time_period ──────────────────────────────────────────────────
 
 
@@ -86,51 +161,38 @@ class TestDescribeTimePeriod:
         assert describe_time_period(3) == "深夜"
 
 
-# ── C. Regression: _build_time_awareness_block uses _user_tz ─────────────────
+# ── C. Regression: _build_time_awareness_block reads the request timezone ────
 
 
 class TestBuildTimeAwarenessBlock:
-    """If someone reverts _build_time_awareness_block to bare datetime.now()
-    (server timezone), these tests will fail."""
+    """引擎自己**不再存**时区（缺陷 96 步骤 4）：`_build_time_awareness_block` 读的是
+    请求入口设的那个上下文。
+
+    两条配一对才咬得住：第一条要求它听上下文的（写死默认时区的实现会红），第二条要求
+    上下文没设时回退 `DEFAULT_TZ`（写死某个具体时区的实现会红）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_request_tz(self):
+        yield
+        set_current_timezone("")
 
     def _make_engine(self) -> ChatEngine:
         card = CharacterCard(name="测试角色")
-        return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None)
+        return ChatEngine(_StubLLM(), None, card, card_id="t", storage=None,
+                          session_id="t", is_new_session=True)
 
-    def test_sydney_tz_hour_in_output(self):
-        """Output contains the correct hour for Sydney."""
-        engine = self._make_engine()
-        engine._user_tz = "Australia/Sydney"
-        block = engine._build_time_awareness_block()
+    def test_hour_follows_the_request_timezone(self):
+        set_current_timezone("Australia/Sydney")
+        block = self._make_engine()._build_time_awareness_block()
         expected_hour = UserClock.now("Australia/Sydney").hour
         assert f"{expected_hour:02d}:" in block, (
             f"Sydney hour {expected_hour:02d} not found in output:\n{block}"
         )
 
-    def test_shanghai_tz_hour_in_output(self):
-        """Output contains the correct hour for Shanghai."""
-        engine = self._make_engine()
-        engine._user_tz = "Asia/Shanghai"
-        block = engine._build_time_awareness_block()
-        expected_hour = UserClock.now("Asia/Shanghai").hour
+    def test_falls_back_to_default_when_request_timezone_unset(self):
+        block = self._make_engine()._build_time_awareness_block()
+        expected_hour = UserClock.now(DEFAULT_TZ).hour
         assert f"{expected_hour:02d}:" in block, (
-            f"Shanghai hour {expected_hour:02d} not found in output:\n{block}"
+            f"{DEFAULT_TZ} hour {expected_hour:02d} not found in output:\n{block}"
         )
-
-    def test_sydney_and_shanghai_differ(self):
-        """Sydney and Shanghai engines produce different hour strings."""
-        e1 = self._make_engine()
-        e1._user_tz = "Australia/Sydney"
-        e2 = self._make_engine()
-        e2._user_tz = "Asia/Shanghai"
-
-        syd_hour = UserClock.now("Australia/Sydney").hour
-        sha_hour = UserClock.now("Asia/Shanghai").hour
-
-        # If both use the same tz or bare datetime.now(), hours would match
-        # (during the ~6h overlap window when both regions share the same
-        #  wall-clock hour number, we skip the equality assertion).
-        if syd_hour != sha_hour:
-            assert syd_hour != sha_hour, "timezones should differ"
-            assert f"{syd_hour:02d}:" in e1._build_time_awareness_block()
-            assert f"{sha_hour:02d}:" in e2._build_time_awareness_block()

@@ -1,10 +1,9 @@
 """Inter-node endpoints: DM receive (HMAC-authenticated, no JWT).
 
-下方 8 处 ``except Exception → HTTPException(500, f"...: {exc}")`` **故意保留异常原文上屏**，
-不迁到 web/server.py 的统一出口：本路由的「用户」是**对端部署的运维**，异常原文是跨节点
-排障的唯一线索。收到统一出口后对面只剩「操作失败，请稍后重试」，那是把可排障变成不可排障。
-（同族：A 类 text.py / history.py 的 `str(exc)` 是唯一上屏通道 —— 理由不同，结论相同：
-**上屏文案该不该收，看有没有正当消费者，不看它像不像泄漏**。）
+下方 8 处原先 `except Exception → HTTPException(500, f"...: {exc}")`，把异常原文拼进
+`detail` 上屏。现已删掉包装、交给 web/server.py 的统一出口：`detail` 只剩通用文案，
+原文随**带堆栈的 ERROR** 进日志（告警邮件与面板都看得到），排障线索不再靠响应体。
+对端也不读 `detail`（`web/cross_border_sync.py` 只看状态码），收掉不影响节点协作。
 """
 
 from __future__ import annotations
@@ -52,10 +51,7 @@ async def receive_dm(
     if existing:
         return {"ok": True, "duplicate": True}
 
-    try:
-        result = await storage.send_message(sender_id, receiver_id, content, cross_border_synced=1)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to store received message: {exc}")
+    result = await storage.send_message(sender_id, receiver_id, content, cross_border_synced=1)
 
     return {"ok": True, "message": result}
 
@@ -84,20 +80,17 @@ async def receive_card(
     if missing:
         raise HTTPException(400, f"Missing required fields: {', '.join(missing)}")
 
-    try:
-        await storage.upsert_remote_card(
-            card_id=card["id"],
-            origin_region=card["origin_region"],
-            user_id=card["user_id"],
-            name=card.get("name", ""),
-            card_json=card.get("card_json", "{}"),
-            avatar_data=card.get("avatar_data", ""),
-            market_description=card.get("market_description", ""),
-            market_tags=card.get("market_tags", ""),
-            origin_created_at=card.get("created_at", ""),
-        )
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to upsert received card: {exc}")
+    await storage.upsert_remote_card(
+        card_id=card["id"],
+        origin_region=card["origin_region"],
+        user_id=card["user_id"],
+        name=card.get("name", ""),
+        card_json=card.get("card_json", "{}"),
+        avatar_data=card.get("avatar_data", ""),
+        market_description=card.get("market_description", ""),
+        market_tags=card.get("market_tags", ""),
+        origin_created_at=card.get("created_at", ""),
+    )
 
     return {"ok": True, "card_id": card["id"]}
 
@@ -124,10 +117,7 @@ async def receive_card_delete(
     if not card_id:
         raise HTTPException(400, "Missing target_id")
 
-    try:
-        await storage.delete_remote_card(card_id)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to delete remote card: {exc}")
+    await storage.delete_remote_card(card_id)
 
     return {"ok": True, "target_id": card_id}
 
@@ -154,10 +144,7 @@ async def receive_dm_retract(
     if not message_id:
         raise HTTPException(400, "Missing target_id")
 
-    try:
-        await storage.retract_dm_message(message_id)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to retract DM: {exc}")
+    await storage.retract_dm_message(message_id)
 
     return {"ok": True, "target_id": message_id}
 
@@ -189,10 +176,7 @@ async def receive_invite_code(
     if existing:
         return {"ok": True, "duplicate": True}
 
-    try:
-        await storage.create_invite_code(code, created_by)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to store invite code: {exc}")
+    await storage.create_invite_code(code, created_by)
 
     return {"ok": True}
 
@@ -219,10 +203,7 @@ async def receive_invite_code_delete(
     if not code:
         raise HTTPException(400, "Missing required field: code")
 
-    try:
-        await storage.delete_invite_code(code)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to delete invite code: {exc}")
+    await storage.delete_invite_code(code)
 
     return {"ok": True}
 
@@ -249,10 +230,7 @@ async def receive_user_purge(
     if not user_id:
         raise HTTPException(400, "Missing target_id")
 
-    try:
-        counts = await storage.purge_remote_user_data(user_id)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to purge user data: {exc}")
+    counts = await storage.purge_remote_user_data(user_id)
 
     return {"ok": True, "target_id": user_id, "deleted": counts}
 
@@ -306,9 +284,6 @@ async def receive_user_sync(
     if not user_id or not username:
         raise HTTPException(400, "Missing required fields: id, username")
 
-    try:
-        await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
-    except Exception as exc:
-        raise HTTPException(500, f"Failed to store remote user profile: {exc}")
+    await storage.upsert_remote_user_profile(user_id, username, home_region, avatar_data)
 
     return {"ok": True, "user_id": user_id}

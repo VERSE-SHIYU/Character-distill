@@ -116,12 +116,24 @@ class ChatEngine:
         context_window: int = 100,
         *,
         storage,
+        session_id: str,
+        group_id: str = "",
+        is_new_session: bool,
     ) -> None:
         """注入模型适配器、RAG 引擎、角色卡与存储。
 
         ``storage`` 必填：它是**依赖**不是身份（归属由记账出口读上下文，缺陷 83），
         构造后往实例上写属性那条路已删 —— 路由晚写到一半（只写 `_storage` 忘了
         `_user_id`）就是群聊整轮不记账的那个形态（缺陷 83/84）。
+
+        ``session_id`` / ``group_id`` 是**身份**，构造时定死、之后无人再赋值：引擎出生
+        时就知道自己在哪个会话 / 哪个群。原先它们先初始化为空串、再由路由事后补 ——
+        「先造后改名」「真正要评估了才补群 id」都是那个形态的产物（缺陷 96）。群引擎
+        没有一对一会话，显式传空串。
+
+        ``is_new_session`` 必须是**显式入参**，不能拿 ``session_id`` 有无去推：构造函数
+        里那个 id 曾经恒为空串，于是「新会话才算初始好感度」永远为真；身份改由构造注入
+        之后，这条推断会静默反过来（续接的引擎也带 id），把库里恢复出来的状态盖掉。
         """
         self.llm: LLMAdapter = llm
         self.rag: RAGEngine = rag
@@ -132,9 +144,8 @@ class ChatEngine:
         self._card_id = card_id
         self._context_window = context_window
         self._storage = storage
-        self._session_id: str = ""
-        self._group_id: str = ""       # 群聊上下文：群 ID（空串=单聊或无上下文）
-        self._user_tz: str = ""
+        self._session_id: str = session_id
+        self._group_id: str = group_id  # 群聊上下文：群 ID（空串=单聊或无上下文）
         self.history: list[dict[str, Any]] = []
         # 四维好感度（通过 AffinityService 托管，@property 透明转发）
         self._affinity_service = AffinityService()
@@ -150,7 +161,7 @@ class ChatEngine:
         self._last_user_msg_at = None
 
         # 新会话：动态计算初始好感度（load_affinity 会在恢复旧会话时覆盖）
-        if not self._session_id:
+        if is_new_session:
             try:
                 init_data = self._compute_initial_affinity(card, user_role)
                 self._affinity = max(0, min(100, init_data.get("affinity", 50)))
@@ -688,7 +699,7 @@ class ChatEngine:
         if self._last_user_msg_at is not None:
             gap_hours = (datetime.now(timezone.utc) - self._last_user_msg_at).total_seconds() / 3600
             if WATCH_GAP_MIN_HOURS <= gap_hours < WATCH_GAP_MAX_HOURS:
-                today = UserClock.now(self._user_tz).strftime("%Y-%m-%d")
+                today = UserClock.now().strftime("%Y-%m-%d")
                 if _departure_notice_dates.get(self._session_id) != today:
                     _departure_notice_dates[self._session_id] = today
                     hours_str = f"{gap_hours:.1f}"
@@ -1034,7 +1045,7 @@ class ChatEngine:
 
     def _build_time_awareness_block(self) -> str:
         """构建「当前时间+时段+距上次对话间隔」提示片段。"""
-        now = UserClock.now(self._user_tz)
+        now = UserClock.now()
         period = describe_time_period(now.hour)
 
         interval_desc = ""
@@ -1054,7 +1065,7 @@ class ChatEngine:
                     if isinstance(updated_at, str):
                         updated_at = datetime.fromisoformat(updated_at)
                     if updated_at:
-                        user_updated = UserClock.to_user_tz(updated_at, self._user_tz)
+                        user_updated = UserClock.to_user_tz(updated_at)
                         days_ago = (now.date() - user_updated.date()).days
                         if days_ago == 0:
                             seconds = (now - user_updated).total_seconds()
@@ -1303,7 +1314,7 @@ class ChatEngine:
             return ""
 
         # ── Gate 2.5: 每日限额 ──
-        today = UserClock.now(self._user_tz).strftime("%Y-%m-%d")
+        today = UserClock.now().strftime("%Y-%m-%d")
         dates = state.get("dates", [])
         if dates.count(today) >= SILENCE_MAX_PER_DAY:
             return ""
@@ -1377,7 +1388,7 @@ class ChatEngine:
             return ""
 
         # Frequency gate: once per calendar day per session (user local time)
-        now_local = UserClock.now(self._user_tz)
+        now_local = UserClock.now()
         today = now_local.strftime("%Y-%m-%d")
         if _reunion_dates.get(self._session_id) == today:
             return ""
@@ -1400,7 +1411,7 @@ class ChatEngine:
                 return ""
 
             # Must be at least 6 hours since last activity
-            user_updated = UserClock.to_user_tz(updated_at, self._user_tz)
+            user_updated = UserClock.to_user_tz(updated_at)
             seconds_ago = (now_local - user_updated).total_seconds()
             if seconds_ago <= 6 * 3600:
                 return ""

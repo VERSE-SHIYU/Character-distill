@@ -143,6 +143,10 @@ _MIGRATIONS_AFTER_USER_REBUILD = (
     # 排在 AFTER 段即满足「晚于 056」—— 老库升级时必须先让 BEFORE 段整段跑完。
     # 判据见 tests/test_sqlite_fresh_schema.py::test_retired_texts_columns_stay_retired_after_restart。
     "094_retire_coref_columns.sql",
+    # 095 只给 users 加一列，与退役列块（那段边界）互不相干；排段尾是为保住
+    # 「段内编号单调」。它的存在是 README 那条唯一例外的实例 —— 只加 PG 列会让两侧真库的
+    # 列集锁红，而那条锁不许开豁免。
+    "095_users_timezone.sql",
 )
 
 # 有意不接线的迁移文件 —— **唯一豁免出口，必须带理由**。tests/test_migration_dispatch.py
@@ -2803,7 +2807,7 @@ class SQLiteStore(StorageBase):
                               u.avatar_data, u.banner_data,
                               u.profile_stats_visible, u.cards_visible, u.books_visible,
                               u.bio, u.last_active_at, u.presence_visibility, u.following_visible,
-                              u.home_region
+                              u.home_region, u.timezone
                        FROM users u
                        LEFT JOIN user_secrets s ON s.user_id = u.id
                        WHERE u.id = ?""",
@@ -3281,6 +3285,19 @@ class SQLiteStore(StorageBase):
         except Exception as exc:
             print(f"[SQLiteStore] Update user bio failed: {exc}")
             raise
+
+    async def update_user_timezone(self, user_id: str, tz: str) -> None:
+        """Update a user's last-known IANA timezone (`''` = unknown)."""
+        try:
+            async with await self._connect() as conn:
+                await conn.execute(
+                    "UPDATE users SET timezone = ? WHERE id = ?",
+                    (tz, user_id),
+                )
+                await conn.commit()
+        except Exception as exc:
+            print(f"[SQLiteStore] Update user timezone failed: {exc}")
+            raise StoreError("update_user_timezone", exc) from exc
 
     async def update_user_nickname(self, user_id: str, nickname: str) -> None:
         """Update a user's display nickname."""

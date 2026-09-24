@@ -38,9 +38,21 @@ export function removeAuth() {
   localStorage.removeItem(REFRESH_KEY)
 }
 
+/** 本机时区名（IANA）；取不到就空串 —— 后端拿它当「本次请求该用哪个时区」。 */
+export function clientTz() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '' }
+  catch { return '' }
+}
+
 export function getAuthHeaders() {
   const token = getToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  const tz = clientTz()
+  // 时区头在 token 三元**之外**：匿名 / 公开路径的请求也带得上（缺陷 96）。放进三元里
+  // 就只有登录后的请求带，后端对未登录请求永远只能回退默认时区。
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(tz ? { 'Time-Zone': tz } : {}),
+  }
 }
 
 const getP = () => globalThis.__authRefreshPromise || null

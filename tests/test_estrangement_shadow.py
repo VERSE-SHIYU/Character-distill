@@ -22,8 +22,8 @@ def _make_engine() -> ChatEngine:
     llm.chat.return_value = '{"affinity":50,"trust":30,"mood":"平静","guard":70,"inner_voice":"。","mood_emoji":"😊","importance":5}'
     llm.last_usage = {}
     rag = MagicMock()
-    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock())
-    engine._session_id = "test-shadow"
+    engine = ChatEngine(llm=llm, rag=rag, card=card, storage=MagicMock(),
+                        session_id="test-shadow", is_new_session=True)
     engine._affinity_service.clear_delta_ring()
     return engine
 
@@ -312,8 +312,8 @@ class TestShadowNoPsycheTriggers:
         llm = MagicMock()
         llm.chat.return_value = '{"affinity":50,"trust":30,"mood":"平静","guard":70,"inner_voice":"。","mood_emoji":"😊","importance":5}'
         llm.last_usage = {}
-        engine = ChatEngine(llm=llm, rag=MagicMock(), card=card, storage=MagicMock())
-        engine._session_id = "test-no-trigger"
+        engine = ChatEngine(llm=llm, rag=MagicMock(), card=card, storage=MagicMock(),
+                            session_id="test-no-trigger", is_new_session=True)
         engine._affinity_service.clear_delta_ring()
 
         _set_stage(engine, "亲近", 80)

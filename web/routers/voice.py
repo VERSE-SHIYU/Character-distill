@@ -301,16 +301,13 @@ async def preview_ref_audio(
         raise HTTPException(503, "GPT-SoVITS 未连接")
 
     test_text = "你好，这是我的声音，希望对你有帮助。"
-    try:
-        cache_path = await voice_client.synthesize(
-            text=test_text,
-            ref_audio_path=ref_path,
-            prompt_text=ref_data.get("ref_text", ""),
-        )
-        audio = Path(cache_path).read_bytes()
-        return Response(content=audio, media_type="audio/wav")
-    except Exception as exc:
-        raise HTTPException(500, "操作失败，请稍后重试")
+    cache_path = await voice_client.synthesize(
+        text=test_text,
+        ref_audio_path=ref_path,
+        prompt_text=ref_data.get("ref_text", ""),
+    )
+    audio = Path(cache_path).read_bytes()
+    return Response(content=audio, media_type="audio/wav")
 
 
 # ---- Reference audio for GPT-SoVITS voice cloning ----
@@ -417,18 +414,14 @@ async def delete_ref_audio(
     # 非属主与不存在同判 404：403 会让人靠状态码枚举出 card_id 存在。
     if not card:
         raise HTTPException(404, "角色卡不存在")
-    try:
-        ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
-        if ref_json_str:
-            ref_data = json.loads(ref_json_str)
-            filepath = ref_data.get("path")
-            if filepath and Path(filepath).exists():
-                Path(filepath).unlink()
-            await storage.update_session_voice_ref(card_id, "")
-        return JSONResponse({"ok": True})
-    except Exception as exc:
-        print(f"[voice] Delete ref audio failed: {exc}")
-        raise HTTPException(500, "删除参考音频失败，请稍后重试")
+    ref_json_str = await storage.get_session_voice_ref_owned(card_id, user["id"])
+    if ref_json_str:
+        ref_data = json.loads(ref_json_str)
+        filepath = ref_data.get("path")
+        if filepath and Path(filepath).exists():
+            Path(filepath).unlink()
+        await storage.update_session_voice_ref(card_id, "")
+    return JSONResponse({"ok": True})
 
 
 # ---- ASR (FunASR via WebSocket) ----
@@ -489,11 +482,6 @@ async def speech_to_text(
 
         return JSONResponse({"text": text.strip()})
 
-    except HTTPException:
-        raise
-    except Exception as exc:
-        print(f"[voice] ASR failed: {exc}")
-        raise HTTPException(500, "语音识别失败，请稍后重试")
     finally:
         for p in [tmp_in_path, tmp_wav_path]:
             try:

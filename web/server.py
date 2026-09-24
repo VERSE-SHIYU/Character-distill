@@ -39,6 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from limiter import get_client_ip, limiter
+from core.clock import is_valid_timezone, set_current_timezone
 from core.request_context import Caller, LLM_CALLER
 
 from security import SecurityHeadersMiddleware
@@ -288,7 +289,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "Time-Zone"],
 )
 
 # ---- Auth middleware ----
@@ -316,6 +317,24 @@ def _maybe_update_last_active(user_id: str) -> None:
     _last_active_ticks[user_id] = now
     import asyncio
     asyncio.ensure_future(get_storage().update_last_active(user_id))
+
+
+def _valid_tz(tz: object) -> str:
+    """头 / 库里的时区值：能被 `ZoneInfo` 解析才算数，否则当没有（空串）。
+
+    头里可能是伪造或旧客户端写的垃圾，库里可能是手改脏数据 —— 两处都得判一次，
+    不能拿「反正 `UserClock` 会兜底」当理由：兜底的是**用**，写库还得先判该不该写。
+    """
+    return tz if isinstance(tz, str) and is_valid_timezone(tz) else ""
+
+
+def _maybe_update_timezone(user_id: str, tz: str) -> None:
+    """把这次请求头里的时区落库 —— 与 `_maybe_update_last_active` 同一形态的顺手更新。
+
+    不需要节流表：写一次之后库值就等于头值了，下一次请求的 `header_tz != stored_tz`
+    自然不成立。只有用户真换了时区才会再写一次。
+    """
+    asyncio.ensure_future(get_storage().update_user_timezone(user_id, tz))
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -382,6 +401,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.identity_optional = public
         # 身份只设这一处：门的策略（geo）与记账的归属读的都是它（缺陷 35）
         LLM_CALLER.set(Caller(ip=get_client_ip(request), user_id=user_id))
+        # 时区也在这里**统一确定**（缺陷 96）：可解析的 `Time-Zone` 头 → 用户已存时区 →
+        # 不设（`UserClock` 回退 DEFAULT_TZ）。业务侧从此只认 `UserClock`，不再各处传时区。
+        # 无条件设一次而不是「有值才设」：contextvar 不设就可能留下上一个请求的值。
+        header_tz = _valid_tz(request.headers.get("Time-Zone"))
+        stored_tz = _valid_tz(user.get("timezone")) if user else ""
+        if header_tz and not public and user_id and header_tz != stored_tz:
+            _maybe_update_timezone(user_id, header_tz)
+        set_current_timezone(header_tz or stored_tz)
         return await call_next(request)
 
 
@@ -458,21 +485,17 @@ def read_settings_config(
     _user: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Read LLM + voice config for settings UI (authenticated users)."""
-    try:
-        llm = get_config().get("llm", {})
-        voice = get_config().get("voice", {})
-        has_key = bool(llm.get("api_key") or os.getenv("DEEPSEEK_API_KEY"))
-        return {
-            "base_url": str(llm.get("base_url", "")),
-            "model": str(llm.get("model", "")),
-            "api_key": "***" if has_key else "",
-            "summary_threshold": int(llm.get("summary_threshold", 50)),
-            "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
-            "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
-        }
-    except Exception as exc:
-        print(f"[server] Read settings config failed: {exc}")
-        raise HTTPException(500, "Read config failed") from exc
+    llm = get_config().get("llm", {})
+    voice = get_config().get("voice", {})
+    has_key = bool(llm.get("api_key") or os.getenv("DEEPSEEK_API_KEY"))
+    return {
+        "base_url": str(llm.get("base_url", "")),
+        "model": str(llm.get("model", "")),
+        "api_key": "***" if has_key else "",
+        "summary_threshold": int(llm.get("summary_threshold", 50)),
+        "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
+        "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
+    }
 
 
 class UpdateConfigRequest(BaseModel):
@@ -493,65 +516,60 @@ async def update_settings_config(
     storage: StorageBase = Depends(get_storage),
 ) -> dict[str, Any]:
     """Update LLM + voice config at runtime and persist to config.yaml."""
-    try:
-        cfg = get_config()
-        llm = cfg.setdefault("llm", {})
-        changes = []
+    cfg = get_config()
+    llm = cfg.setdefault("llm", {})
+    changes = []
 
-        def _changed(field: str, old: Any, new: Any) -> bool:
-            return new is not None and str(new).strip() and str(new).strip() != str(old).strip()
+    def _changed(field: str, old: Any, new: Any) -> bool:
+        return new is not None and str(new).strip() and str(new).strip() != str(old).strip()
 
-        for field, val in [("base_url", req.base_url), ("model", req.model), ("api_key", req.api_key), ("summary_threshold", req.summary_threshold)]:
-            old = llm.get(field, "")
-            if val is not None and (not isinstance(val, str) or val.strip()):
-                new_val = val.strip() if isinstance(val, str) else val
-                if str(new_val) != str(old):
-                    changes.append((field, str(old), str(new_val)))
-                    llm[field] = new_val
+    for field, val in [("base_url", req.base_url), ("model", req.model), ("api_key", req.api_key), ("summary_threshold", req.summary_threshold)]:
+        old = llm.get(field, "")
+        if val is not None and (not isinstance(val, str) or val.strip()):
+            new_val = val.strip() if isinstance(val, str) else val
+            if str(new_val) != str(old):
+                changes.append((field, str(old), str(new_val)))
+                llm[field] = new_val
 
-        voice = cfg.setdefault("voice", {})
-        for field, val in [("gptsovits_url", req.gptsovits_url), ("funasr_url", req.funasr_url)]:
-            old = voice.get(field, "")
-            if val is not None and val.strip() and val.strip() != str(old).strip():
-                changes.append((field, str(old), val.strip()))
-                voice[field] = val.strip()
+    voice = cfg.setdefault("voice", {})
+    for field, val in [("gptsovits_url", req.gptsovits_url), ("funasr_url", req.funasr_url)]:
+        old = voice.get(field, "")
+        if val is not None and val.strip() and val.strip() != str(old).strip():
+            changes.append((field, str(old), val.strip()))
+            voice[field] = val.strip()
 
-        cfg_path = _REPO_ROOT / "config.yaml"
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+    cfg_path = _REPO_ROOT / "config.yaml"
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
-        # Log config changes —— 审计写入失败不得让「已落盘」的配置保存回 500：
-        # config.yaml 在上面已经写完，回错会让人以为没保存。容忍策略就地写，
-        # 不藏回 store（store 现在对库失败一律上抛）。
-        if changes:
-            import uuid
-            for field, old_val, new_val in changes:
-                try:
-                    await storage.save_config_change(
-                        uuid.uuid4().hex[:12], admin_user["id"], admin_user.get("username", ""),
-                        field, old_val, new_val,
-                    )
-                except Exception as exc:
-                    logger.error("Save config change failed (non-fatal): %s", exc, exc_info=True)
+    # Log config changes —— 审计写入失败不得让「已落盘」的配置保存回 500：
+    # config.yaml 在上面已经写完，回错会让人以为没保存。容忍策略就地写，
+    # 不藏回 store（store 现在对库失败一律上抛）。
+    if changes:
+        import uuid
+        for field, old_val, new_val in changes:
+            try:
+                await storage.save_config_change(
+                    uuid.uuid4().hex[:12], admin_user["id"], admin_user.get("username", ""),
+                    field, old_val, new_val,
+                )
+            except Exception as exc:
+                logger.error("Save config change failed (non-fatal): %s", exc, exc_info=True)
 
-        # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
-        reset_llm_and_dependents()
+    # 先持久化到 config.yaml，再调用 reset_llm_and_dependents()
+    reset_llm_and_dependents()
 
-        return {
-            "base_url": str(llm.get("base_url", "")),
-            "model": str(llm.get("model", "")),
-            "api_key": "***" if llm.get("api_key") else "",
-            "summary_threshold": int(llm.get("summary_threshold", 50)),
-            "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
-            "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
-            # 保存**不拦**：全局 LLM 置 None 是 C4 已定的口径，管理员可能就是有意清空。
-            # 但调用方得知道这件事发生了 —— 没有个人 key 的用户此后一律 503。
-            "llm_available": get_llm() is not None,
-        }
-    except Exception as exc:
-        print(f"[server] Update config failed: {exc}")
-        # 上屏不带 `{exc}`：与上面的 read 分支同口径（缺陷 38 同形态）。
-        raise HTTPException(500, "Update config failed") from exc
+    return {
+        "base_url": str(llm.get("base_url", "")),
+        "model": str(llm.get("model", "")),
+        "api_key": "***" if llm.get("api_key") else "",
+        "summary_threshold": int(llm.get("summary_threshold", 50)),
+        "gptsovits_url": str(voice.get("gptsovits_url", "http://127.0.0.1:9880")),
+        "funasr_url": str(voice.get("funasr_url", "ws://127.0.0.1:10095")),
+        # 保存**不拦**：全局 LLM 置 None 是 C4 已定的口径，管理员可能就是有意清空。
+        # 但调用方得知道这件事发生了 —— 没有个人 key 的用户此后一律 503。
+        "llm_available": get_llm() is not None,
+    }
 
 
 @app.post("/api/settings/test-gptsovits")
