@@ -38,6 +38,7 @@ from pathlib import Path
 import pytest
 
 from storage.base import StoreError
+from storage.postgres_store import PostgresStore
 from storage.sqlite_store import SQLiteStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -264,6 +265,30 @@ class TestFailureIsDistinguishable:
         # 两者都漏的（静默返回非空兜底）单独列出，供人审。
         missed = _REACHED - surfaced - {e.split(" -> ")[0] for e in returned_empty}
         assert not missed, f"这些方法库失败后既没上抛、也没返回空值，而是静默兜底：{sorted(missed)}"
+
+
+class TestTimezoneWriteFailureIsNamed:
+    """`update_user_timezone` 的库失败要带操作名 —— 与 `update_last_active` 同一写法（F2）。
+
+    口径不是「失败可辨」（那是 `TestFailureIsDistinguishable` 的事，裸 `raise` 也算可见），
+    而是**哪一步失败**：调用点在 `AuthMiddleware` 的异步更新里，拿到的是带 op 的
+    `StoreError`，不是一个裸的驱动异常。两个 store 同口径。
+
+    全桩，不碰 PG —— 同 `TestReleaseFailureDoesNotLeakTheSlot`，没跑 PG 的机器上也要真跑。
+    """
+
+    @pytest.mark.parametrize("factory", [
+        lambda: SQLiteStore(":memory:"),
+        lambda: PostgresStore("postgresql://probe:probe@127.0.0.1:1/probe"),
+    ], ids=["sqlite", "postgres"])
+    def test_timezone_write_failure_is_named(self, factory):
+        store = factory()
+        store._connect = _boom  # type: ignore[method-assign]
+        with pytest.raises(StoreError) as ei:
+            asyncio.run(store.update_user_timezone("usr_x", "Asia/Tokyo"))
+        assert ei.value.op == "update_user_timezone"
+        assert BOOM in _chain_text(ei.value), (
+            "异常链里没有驱动错误 —— 抛的是别的早退，判据打错靶子了")
 
 
 class TestZeroSevenNineRegression:

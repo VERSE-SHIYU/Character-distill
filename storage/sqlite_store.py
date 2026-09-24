@@ -3297,7 +3297,7 @@ class SQLiteStore(StorageBase):
                 await conn.commit()
         except Exception as exc:
             print(f"[SQLiteStore] Update user timezone failed: {exc}")
-            raise
+            raise StoreError("update_user_timezone", exc) from exc
 
     async def update_user_nickname(self, user_id: str, nickname: str) -> None:
         """Update a user's display nickname."""

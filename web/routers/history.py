@@ -259,7 +259,6 @@ async def resume_session(
                 card_id=card_rec["id"],
                 user_id=user_id,
                 session_id=session_id,
-                is_new_session=False,
             ),
             timeout=120.0,
         )

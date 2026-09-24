@@ -190,7 +190,7 @@ async def _ensure_session(
         text_manager._create_session, card,
         all_characters=all_characters, rag=rag,
         card_id=card_id, user_id=user_id,
-        session_id=session_id, is_new_session=False,
+        session_id=session_id,
     )
 
     engine = sessions.get(session_id, {}).get("engine")
