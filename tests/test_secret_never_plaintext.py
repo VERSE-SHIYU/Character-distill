@@ -29,7 +29,7 @@ import uuid
 import pytest
 from pwdlib import PasswordHash
 
-from conftest import PG_ENV, registered_globals
+from conftest import PG_ENV, main_loop_registered
 
 import deps
 from core.schema import CharacterCard
@@ -88,13 +88,12 @@ async def _turn(engine, sid: str) -> None:
 
     `_evaluate_affinity` 是同步函数，其中几处 `submit_to_main_loop(wait=True)` 在主 loop
     线程上调用即自等、必被拒（缺陷 123 的生产形态）。故经 `asyncio.to_thread` 让它站到
-    工作线程上 —— 这正是 async 路由该有的写法；投递实现由 `registered_globals` 作用域内
-    的 `set_main_loop` 注册。改前这里手工 `await store.save_affinity_state(...)` 绕开那条
-    链（退路一拿掉就绕不开了），那样测的是「用例自己会写库」，不是「链路会写库」。
+    工作线程上 —— 这正是 async 路由该有的写法；投递实现由 `main_loop_registered` 注册到
+    当前运行的 loop。改前这里手工 `await store.save_affinity_state(...)` 绕开那条链
+    （退路一拿掉就绕不开了），那样测的是「用例自己会写库」，不是「链路会写库」。
     """
     engine._session_id = sid
-    async with registered_globals():
-        deps.set_main_loop(asyncio.get_running_loop())
+    async with main_loop_registered():
         await asyncio.to_thread(engine._evaluate_affinity, "你好", "……")
 
 

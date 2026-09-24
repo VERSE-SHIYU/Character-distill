@@ -276,12 +276,28 @@ async def registered_globals():
     llm_adapter.set_call_guard(prev[2])
 
 
+# ── 「注册到当前运行的 loop」：这一步只有这一份 ───────────────────────────────
+#
+# 生产里装配代码做的就是这件事（`web/server.py::_lifespan` 的 `set_main_loop(loop)`）。
+# 测试 app 的 lifespan 和需要真跑投递链路的用例（`test_secret_never_plaintext.py::_turn`）
+# 都要它：`registered_globals` 负责装卸与还原，这里再补上「指向哪个 loop」。
+@contextlib.asynccontextmanager
+async def main_loop_registered():
+    """`registered_globals()` + 把投递实现指向当前运行的 loop。"""
+    import asyncio
+
+    import deps
+
+    async with registered_globals():
+        deps.set_main_loop(asyncio.get_running_loop())
+        yield
+
+
 # ── 测试 app 的 lifespan：只有这一份 ──────────────────────────────────────────
 #
 # 自带 FastAPI + TestClient 的测试文件（`test_message_backfill.py`、`test_ownership_404.py`）
-# 需要的 lifespan 只做一件事：把投递实现注册到当前运行的 loop —— 生产里这就是
-# `web/server.py::_lifespan` 的 `set_main_loop(loop)`。以前这份 lifespan（连同客户端
-# 退出夹具）在两个文件里各写了一遍，第三个这样的文件就会抄第三份。
+# 需要的 lifespan 只做一件事：把投递实现注册到当前运行的 loop。以前这份 lifespan（连同
+# 客户端退出夹具）在两个文件里各写了一遍，第三个这样的文件就会抄第三份。
 #
 # 用法固定两步，缺一不可：
 #     app = FastAPI(lifespan=app_lifespan)
@@ -290,13 +306,8 @@ async def registered_globals():
 # 用例里的写盘全走已不存在的退路：看着绿，测的不是生产形状（缺陷 123）。
 @contextlib.asynccontextmanager
 async def app_lifespan(app):
-    """测试 app 的 lifespan：在 `registered_globals` 里注册投递实现，退出时还原。"""
-    import asyncio
-
-    async with registered_globals():
-        import deps
-
-        deps.set_main_loop(asyncio.get_running_loop())
+    """测试 app 的 lifespan：注册投递实现，退出时还原。"""
+    async with main_loop_registered():
         yield
 
 
