@@ -99,12 +99,17 @@ def test_the_lifespan_routes_error_to_stdout(capsys):
 
     判据落在「启动之后 ERROR 出现在 stdout」上，而不是「根日志器上多了某个对象」：
     后者要靠对象身份认人，前者才是这条线要保证的事。
+
+    起点先剔除根上的本模块 handler：`test_llm_access_gate` 排在本文件前面，它起的真 app
+    lifespan 早就装过一个了 —— 不剔的话，把 lifespan 里的装配调用删掉这条照样绿，
+    「装配处负责装」就无从判起。
     """
     from fastapi.testclient import TestClient
 
     import server
 
     before = list(_ROOT.handlers)
+    _ROOT.handlers[:] = [h for h in before if not isinstance(h, _StdoutHandler)]
     try:
         with TestClient(server.app):
             _probe_logger("stdout_logging_probe_lifespan").error("stdout-probe-lifespan")
