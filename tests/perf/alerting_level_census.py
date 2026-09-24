@@ -1,11 +1,18 @@
 """spec-119 读数普查：本批**新增**的失败记录调用，按「发不发告警邮件」分档。
 
-**为什么入库**：台账 119 与交付报告里「删掉 130 行 `print(`、新增 129 个失败记录调用、
-按级别 ERROR 45 / WARNING 84」是文档引用的数字 —— 按 §四「文档引用的数字，其产数脚本与
+**为什么入库**：台账 119 与交付报告里「删掉 124 行 `print(`、新增 123 个失败记录调用、
+按级别 ERROR 43 / WARNING 80」是文档引用的数字 —— 按 §四「文档引用的数字，其产数脚本与
 原始产物也要入库」，产出它们的这一份必须进仓，且支持 `--end` 回放历史版本：
 
-    python tests/perf/alerting_level_census.py                    # 1b09328..HEAD
+    python tests/perf/alerting_level_census.py                    # 9bb2d97..HEAD
     python tests/perf/alerting_level_census.py --end 9015b8b      # 只看前三个 commit 的量
+
+**`BASE` 是本分支与 `origin/main` 的**分叉点**，不是某个固定的老 main**：本分支 rebase 过
+两次（原 base `1b09328` → `e6b1698` → 现 `9bb2d97`），旧 base 会把 main 自己带进来的落点
+一并算成「本批新增」。分叉点用 `git merge-base origin/main HEAD` 重算，rebase 后要同步这
+一个字面量。`e6b1698` 与 `9bb2d97` 两个 base 下**同一个 HEAD** 的读数是同一组
+（124 / 123 / 43 / 80）—— 被跳过的那些 main 提交没有动过本批的落点。换 base 读数就变的
+情形确实存在（`1b09328` 作 base 时读到 130 / 129 / 45 / 84），故 base 必须跟着分叉点走。
 
 **为什么只数 diff 里的新增行**：本条的命题是「这一改动了哪些落点」，不是「全仓今天有多少
 print」—— 后者会把改动前就存在的调用算进来。多行调用不影响计数：每个调用只有一行带
@@ -34,7 +41,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = "1b09328"
+BASE = "9bb2d97"          # 本分支与 origin/main 的分叉点；rebase 后用 git merge-base 重算
 EXCLUDE_PREFIX = ("tests/",)
 EXCLUDE_FILES = ("core/nonfatal.py",)
 _CALL = re.compile(r"\b(logger\.error|logger\.warning|nonfatal)\(")
