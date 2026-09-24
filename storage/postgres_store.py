@@ -1134,13 +1134,34 @@ class PostgresStore(StorageBase):
             raise StoreError("delete_card", exc) from exc
 
     async def restore_card(self, card_id: str) -> bool:
-        """Restore a soft-deleted card."""
+        """Restore a soft-deleted card, undoing its cross-border delete in the same transaction.
+
+        Two halves of the undo, both required for the peer to end up with the card:
+          - a `card_delete` outbox row may still be queued (a resync tick is 60s
+            apart); left in place, the peer deletes the card we just restored;
+          - `cross_border_synced` is still 1 from the earlier publish, and the card
+            resync only picks `= 0` rows — so a replica the peer already deleted
+            can never be rebuilt without resetting the flag.
+
+        No `visibility` branch: a private card has no queued delete, and resetting
+        the flag on one is harmless since the resync query is public-only anyway.
+        """
         try:
             async with await self._connect() as conn:
-                await conn.execute(
-                    "UPDATE cards SET deleted_at = NULL WHERE id = $1",
-                    card_id,
-                )
+                async with conn.transaction():
+                    await conn.execute(
+                        "UPDATE cards SET deleted_at = NULL WHERE id = $1",
+                        card_id,
+                    )
+                    await conn.execute(
+                        """DELETE FROM cross_border_delete_outbox
+                           WHERE op_type = 'card_delete' AND target_id = $1""",
+                        card_id,
+                    )
+                    await conn.execute(
+                        "UPDATE cards SET cross_border_synced = 0 WHERE id = $1",
+                        card_id,
+                    )
             return True
         except Exception as exc:
             print(f"[PostgresStore] Restore card failed: {exc}")

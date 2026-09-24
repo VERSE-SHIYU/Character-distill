@@ -1173,15 +1173,16 @@ PROBE_IMAGE         false
 - **PG 不可达（基线 `cc9f231` 核实，两条独立保证）**：① `migrations_pg/001_init.sql` 给 `refresh_tokens.user_id` 建了外键 `REFERENCES users(id) ON DELETE CASCADE`，PG 总是强制外键 —— 删用户时这些行由库自己级联清掉；② 即便没有级联，`postgres_store.py:2718` 的 `delete_user` 在**同一个事务**里显式执行了 `DELETE FROM refresh_tokens WHERE user_id = $1`。**线上用 PG，故这是 SQLite 专属现象**，按主次规则（PG 为准、SQLite 只保接口一致）不修、不补测试。
 - **生产只读核查**（预期 0）：`SELECT count(*) FROM refresh_tokens r LEFT JOIN users u ON u.id = r.user_id WHERE u.id IS NULL;`
 
-**81. `cross_border_delete_outbox` 有指向已删 fork 的行，且该表没有任何应用清理入口** —— 状态：**已修**（Spec 80/81，2026-09-23；与代码 / 测试同一个 commit）
+**81. `cross_border_delete_outbox` 有指向已删 fork 的行，且该表没有任何应用清理入口** —— 状态：**已修**（Spec 80/81 修问题 1–3，2026-09-23；Spec 81b 补修问题 4「恢复卡片不回撤跨境删除」；两轮都与代码 / 测试同一个 commit）
 - **读数（2026-09-21）**：`e2e/scratch/probe_residue_readings.py` §1 → `0c1779b40d15 → [('cross_border_delete_outbox', 1)]`；直读该行 = `(1, 'card_delete', '0c1779b40d15', '', 0, '2026-09-20 03:43:25')` → **`synced = 0`，一条仍待同步的删除传播**。
 - **本地那一行卡住的原因 —— 环境，不是缺陷**：删除转发只在配置了 `PEER_NODE_URL` 时才执行（`web/cross_border_sync.py` 单轮入口开头即返回），本地没配 → 永远不转发。对端接收端点是幂等的（`web/routers/inter_node.py`，目标不存在也返回 200），只要配了对端，这一行就能正常传播出去。
-- **根因（读代码在 PG 上发现的 3 个真问题，本轮一并修）**：
+- **根因（读代码在 PG 上发现的 4 个真问题：1–3 由 Spec 80/81 修，4 由 Spec 81b 补修）**：
   1. **删除补发被嵌在卡片补发的 `else` 分支里** —— 卡片查询一抛异常，本轮删除补发整段被跳过，两件互不相关的事被绑死。
   2. **已传播的行永不回收**：对端确认后只 `UPDATE ... SET synced = 1`，而全仓唯一读这张表的地方只读 `synced = 0` 的行 —— `synced = 1` 没有任何读者，表无界增长。
   3. **失败静默**：`forward_delete_to_peer` 非 200 或异常时直接返回 False，不留状态码 / 异常，线上无从排查。
-- **处置**：① 单轮逻辑抽成 `_resync_once(storage)`，`_cross_border_resync_loop` 只管「sleep 60 秒再调它」；DM / 卡片 / 删除三段各自独立捕获异常、互不影响，删除段从卡片的 `else` 里移出。② 对端确认后**直接删行**，不再标 `synced = 1`：`mark_delete_propagated` 改为删除语义并改名 `remove_delete_propagation(id)`，`storage/base.py` 抽象签名 + SQLite 同步改（SQLite 只求接口一致、能跑，不单测）。**不写迁移、不停用 `synced` 列** —— 存量里已是 `synced = 1` 的行从此不会再被读到，要不要清由 Shiyu 手动决定。③ 失败路径打印 `op_type` / `target_id` + 状态码或异常，沿用该文件既有 `print` 风格，不引日志框架、不加计数。
-- **守它的测试**（`tests/test_cross_border_sync.py`）：问题 3 → `test_forward_delete_to_peer_logs_status_on_non_200` / `test_forward_delete_to_peer_logs_exception`；问题 1 → `test_delete_resync_survives_card_query_failure`；问题 2 → `test_delete_resync_removes_row_after_ack` / `test_delete_resync_keeps_row_without_ack`（后三条走真 PG，一次性 `postgres:16-alpine`）。
+  4. **恢复卡片不回撤跨境删除**：`restore_card` 只 `SET deleted_at = NULL` —— 既不撤销还在排队的 `card_delete`（补发 60 秒一轮，下一轮照发，对端把用户刚恢复的卡硬删掉），也不把 `cross_border_synced` 归零（补发查询只挑 `= 0`，这张卡永远选不中，对端副本删了就再也建不回来）。
+- **处置**：① 单轮逻辑抽成 `_resync_once(storage)`，`_cross_border_resync_loop` 只管「sleep 60 秒再调它」；DM / 卡片 / 删除三段各自独立捕获异常、互不影响，删除段从卡片的 `else` 里移出。② 对端确认后**直接删行**，不再标 `synced = 1`：`mark_delete_propagated` 改为删除语义并改名 `remove_delete_propagation(id)`，`storage/base.py` 抽象签名 + SQLite 同步改（SQLite 只求接口一致、能跑，不单测）。**不写迁移、不停用 `synced` 列** —— 存量里已是 `synced = 1` 的行从此不会再被读到，要不要清由 Shiyu 手动决定。③ 失败路径打印 `op_type` / `target_id` + 状态码或异常，沿用该文件既有 `print` 风格，不引日志框架、不加计数。④ **恢复卡片时同事务回撤**（Spec 81b）：`restore_card` 在同一事务里 `SET deleted_at = NULL` + `DELETE FROM cross_border_delete_outbox WHERE op_type = 'card_delete' AND target_id = $1` + `SET cross_border_synced = 0`。不加「是否公开」判断（私有卡本就没有排队的删除；归零也无害，补发查询只挑公开卡，少一个分支行为不变）；不新增接口、不新增操作类型（对端收卡走 `upsert_remote_card`，重发即重建）。**只改 PG**：SQLite 是单节点、没有对端，不存在这个问题。
+- **守它的测试**（`tests/test_cross_border_sync.py`）：问题 3 → `test_forward_delete_to_peer_logs_status_on_non_200` / `test_forward_delete_to_peer_logs_exception`；问题 1 → `test_delete_resync_survives_card_query_failure`；问题 2 → `test_delete_resync_removes_row_after_ack` / `test_delete_resync_keeps_row_without_ack`；问题 4 → `test_restore_card_drops_queued_delete` / `test_restore_card_requeues_card_for_forwarding` / `test_delete_requeues_after_ack_and_restore`（走真 PG，一次性 `postgres:16-alpine`）。
 - **生产只读核查**：`SELECT synced, count(*) FROM cross_border_delete_outbox GROUP BY synced;`（看积压与历史行各多少）；若决定清理历史行，再 `DELETE FROM cross_border_delete_outbox WHERE synced = 1;`。
 
 **82. 活库残留一张 `users_mig`（4 行，DDL 无 `nickname` / `username_lower`）—— 数据丢失风险** —— 状态：**已修**（2026-09-23，Spec 82；与代码 / 测试同属一个 commit）
