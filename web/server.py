@@ -76,6 +76,7 @@ from web.llm_gate import install_llm_gate
 from web.demo_gate import install_demo_gate
 from storage.base import StorageBase
 from core.log_collector import install_log_collector
+from core.stdout_logging import install_stdout_logging
 from core.alerting import install_alert_handler
 
 logger = logging.getLogger(__name__)
@@ -105,8 +106,9 @@ async def _lifespan(app: FastAPI):
     validate_jwt_secret()
     validate_inter_node_secret()
     install_log_collector()
-    # 与面板同一个装配处：面板负责「留在进程里等人来查」，告警负责「推出去」。
-    # `ALERT_EMAIL` 未配置时不安装，只记一条 WARNING（见 core/alerting）。
+    install_stdout_logging()
+    # 三个出口同一个装配处：面板「留在进程里等人来查」、stdout「推给 docker logs」、
+    # 告警「推去邮箱」。`ALERT_EMAIL` 未配置时不安装告警，只记一条 WARNING（见 core/alerting）。
     install_alert_handler()
     loop = asyncio.get_running_loop()
     # context 传播点注记：`asyncio.to_thread` 会拷贝 contextvar（标准库内部走
