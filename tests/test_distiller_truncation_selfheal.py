@@ -11,6 +11,8 @@ _parse_json_with_retry——为截断建的「请精简输出」重修环，主�
   4. map 阶段（`async_chat` 那条链）不受牵连
   5. 非截断的未完成终态（如 content_filter）不被吞成「超长被截断」，原样上抛
   6. 上游已确定截断但 JSON 合法而缺字段时，重修走 schema 支而非截断支（O3）
+  7. `length` 但**空正文**的终态（没东西可修的那一格）算瞬时失败，重修环继续下一次
+     尝试，而不是提前上抛；用尽后仍报「超长被截断」这条线索
 
 生产侧的边界锁另有一份：`core/` 不得出现异常类名，见
 tests/test_chat_stream_error.py::test_no_exception_class_leaks_into_core_web_storage。
@@ -136,9 +138,10 @@ class TestTruncationSelfHeal:
         重修环里原先写的是 `if incomplete_response_info(exc) is not None: truncated = True`
         —— 任何未完成终态都被当成截断。于是内容被上游安全策略过滤时，用户看到的是
         「生成内容超长被截断，请重试」，运维指引还叫抬 `max_tokens`：两条都指错方向
-        （content_filter 要改输入，重试无用）。现在判据收在 `_truncation_evidence`：
-        只有 `length` 且有非空正文才算截断，其余终态原样上抛，由 web/server.py 那张
-        finish_reason 分档表配码与上屏。
+        （content_filter 要改输入，重试无用）。现在判据收在 `_unfinished_disposition`：
+        **非 `length`** 的未完成终态原样上抛，由 web/server.py 那张 finish_reason 分档
+        表配码与上屏；`length` 的两格都不上抛（有正文走重修支，空正文按瞬时失败继续下
+        一次尝试——后者的锁是本类最后两条用例）。
 
         变异：把环内两处 `except` 改回重构前形态（判据不变，但分支体从 `raise` 改回
         `truncated = True` + 写 `last_error`，即任何未完成终态都吞成截断）→ 本用例红
@@ -158,6 +161,47 @@ class TestTruncationSelfHeal:
             "该按 content_filter 分档原样上抛，而不是包成 DistillError"
         assert "超长被截断" not in str(ei.value), "真实原因是内容被过滤，不是超长"
         assert "超长被截断" not in ei.value.user_message
+
+    def test_empty_length_repair_is_transient_and_reaches_attempt_3(self):
+        """空正文的 `length` 终态 = 瞬时失败：重修环不提前上抛，仍走 Attempt 3。
+
+        `length` 那一格有两种：有正文（有可修的东西，走截断支）与**一个字都没生成**
+        （没得修，但也不是确定性结论）。后者原先和 content_filter 一起被
+        `if incomplete_response_info(exc) is not None: raise` 拦在 Attempt 2，于是环
+        只用 2 次就上抛——上游这次碰巧吐空正文（限流夹带的一次空响应、上游抖动），
+        用户却直接拿到失败，连第 3 次尝试的机会都没有。
+
+        变异：把两处 `except` 判据改回 `incomplete_response_info(exc) is not None` →
+        本用例红（第 2 次就抛 IncompleteResponseError，`distill` 拿不到卡）。
+        """
+        llm = _llm(side_effect=[_truncated(PARTIAL), _incomplete("length"), FULL])
+        card = Distiller(llm).distill("有些文本", "阿Q")
+
+        assert card.name == "阿Q"
+        assert llm.chat.call_count == 3, (
+            f"空 length 该按瞬时失败继续到 Attempt 3，实得 {llm.chat.call_count} 次"
+        )
+
+    def test_empty_length_exhausted_still_reports_truncation_not_format(self):
+        """三次都用尽、且首轮没有截断信号时，上屏仍须是「超长被截断」。
+
+        首轮故意给 SHAPE_BAD（合法 JSON 但缺字段）：此时 `truncated` 不会由上游信号
+        预置，只能靠重修两轮里读到的 `length` 补上。补不上就会把「上游说过 length」
+        这条排障线索换成「格式异常」——同一份失败，两个方向相反的处理建议。
+        """
+        llm = _llm(side_effect=[
+            SHAPE_BAD,
+            _incomplete("length"),
+            _incomplete("length"),
+        ])
+        with pytest.raises(ValueError) as ei:
+            Distiller(llm).distill("有些文本", "阿Q")
+
+        assert llm.chat.call_count == 3
+        screen = ei.value.user_message
+        assert "超长被截断" in screen and "格式异常" not in screen, (
+            f"上游两次报 length，上屏却是：{screen!r}"
+        )
 
     def test_shape_branch_beats_truncation_branch_when_both_signals_present(self):
         """O3：上游已确定截断 + 回的 JSON 合法但缺字段 → 重修走 **schema 支**。
